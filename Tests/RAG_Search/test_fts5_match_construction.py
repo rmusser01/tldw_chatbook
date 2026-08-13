@@ -19,6 +19,12 @@ itself) and `test_and_construction_is_byte_identical_to_the_shipped_escaper`
 (same property, now asked for explicitly). Every OTHER pin here sets its
 construction by hand and is unaffected by which one ships.
 
+**TASK-15700 Part B (2026-08-13) added two more constructions**, the rows
+its re-run of the sweep pre-registers: `prefix` (the content tokens as
+PREFIX terms, promoting the 15400 sweep's report-only probe) and
+`and_then_prefix` (the AND primary with a prefix fallback). Their pins live
+in their own section below; the properties they extend are the same four.
+
 Four properties, each with a mutation that reds it:
 
 * **Expression shape per construction.** `_fts5_match_expressions` returns
@@ -27,7 +33,9 @@ Four properties, each with a mutation that reds it:
   falls back to the FULL AND when trimming empties the query, never to an
   empty MATCH expression -- an FTS5 syntax error); `or` ORs the content
   tokens and returns `""` (= "no rows", the existing skip contract) when
-  trimming empties them; `and_then_or` returns both forms.
+  trimming empties them; `and_then_or` returns both forms; `prefix` stars
+  the content tokens (`""` on an empty trim, as `or`) and `and_then_prefix`
+  returns the full AND with that prefix form as its fallback.
 * **The fallback fires ONLY on zero primary rows.** Counted with a spy on
   the SQL-executing helper, per sub-leg: one AND row means exactly one
   query. Dropping the zero-row guard (running the fallback unconditionally)
@@ -37,7 +45,8 @@ Four properties, each with a mutation that reds it:
   the FORM that matched it and nothing else: `"and"` for an implicit-AND
   expression (full or stopword-trimmed), `"or"` for the content-token OR
   form -- whether that form was reached as `and_then_or`'s fallback or run
-  as the `or` construction's primary. Task 2's negative-composition counter
+  as the `or` construction's primary -- and `"prefix"` likewise for the two
+  prefix-bearing constructions. Task 2's negative-composition counter
   and Task 5's mechanism prose both read this key, so it must name the form,
   not the position: under the `or` construction NO row is a fallback row,
   and fallback-ness is derivable from (construction, form) whenever it is
@@ -71,8 +80,11 @@ from tldw_chatbook.RAG_Search.simplified.rag_service import (
     FTS_MATCH_AND,
     FTS_MATCH_CONSTRUCTION_AND,
     FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM,
+    FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX,
+    FTS_MATCH_CONSTRUCTION_PREFIX,
     FTS_MATCH_CONSTRUCTIONS,
     FTS_MATCH_OR,
+    FTS_MATCH_PREFIX,
     _FTS5_STOPWORDS,
     RAGService,
 )
@@ -202,6 +214,12 @@ PROMPT_ROWS = [
 ]
 AND_HIT_QUERY = "wombat burrow"                      # every token present
 OR_ONLY_QUERY = "how does the wombat template work"  # "template"/"work" absent
+# The PREFIX mechanism at fixture scale (TASK-15700): the prompt says
+# "inspection", the query says "inspect". Both tokens are content words, so
+# no stopword trim reaches it and the OR form would only find it by dropping
+# the second token entirely -- while `"wombat"* "inspect"*` matches it as the
+# implicit AND it is. This is the shape behind the 15400 probe's 3 rescues.
+PREFIX_ONLY_QUERY = "wombat inspect"
 
 
 # --- expression shape -------------------------------------------------------
@@ -367,6 +385,199 @@ def test_a_repeated_token_is_still_one_term_and_suppresses_the_fallback():
     )
 
 
+# --- the prefix constructions (TASK-15700 Part B) --------------------------
+#
+# Two pre-registered rows, added for the 15700 re-run. `prefix` is the
+# construction the 15400 sweep's report-only probe measured a 3-rescue lead
+# on; `and_then_prefix` is the composition (AND primary, prefix fallback)
+# that gets BOTH protections -- every current AND hit preserved by
+# construction, and its widening rows confined to tier 2 by Part A's merge.
+#
+# THE PROVENANCE RULE: `prefix` must build the expression the probe built,
+# byte for byte, or the lead it is being promoted on was measured on a
+# different query. The probe (`Tests/RAG_Eval/harness/fusion_sweep.py`,
+# `prefix_probe_expression`) SPACE-joins one `"tok"*` per CONTENT token --
+# an implicit AND over prefix terms, not a disjunction -- and returns ""
+# when trimming empties the token list. The byte-identity is pinned at the
+# probe's own site (`test_fusion_decision_rule.py`); the shape is pinned
+# here on the probe's own example query.
+
+
+def test_prefix_construction_stars_each_content_token_outside_the_quotes():
+    """The probe's form: implicit AND over prefix terms, star OUTSIDE.
+
+    `"tok"*` is "a phrase whose last token is a prefix"; the star INSIDE the
+    quotes is part of the literal string and matches nothing (FTS5's own
+    tokenizer drops it), which would silently reduce this construction to
+    the trimmed AND. The expression below is character-for-character the one
+    `prefix_probe_expression` pins for the same query.
+    """
+    service = _make_service(construction=FTS_MATCH_CONSTRUCTION_PREFIX)
+
+    primary, fallback = service._fts5_match_expressions("the shift log")
+    assert primary == '"shift"* "log"*'
+    assert fallback is None
+
+
+def test_prefix_construction_returns_no_rows_when_trimming_empties_the_query():
+    """A stopword prefix (`"the"*`) is junk that matches most of the corpus.
+
+    So the content-token trim is not optional here, and when it leaves
+    nothing the answer is honestly no rows -- `""`, the existing skip
+    contract -- exactly as under `or`. The probe returns `""` for this query
+    too.
+    """
+    service = _make_service(construction=FTS_MATCH_CONSTRUCTION_PREFIX)
+
+    assert service._fts5_match_expressions("what about the") == ("", None)
+
+
+def test_and_then_prefix_returns_the_and_primary_and_the_prefix_fallback():
+    """The composition: no AND hit is widened, and zero-row sub-legs widen."""
+    service = _make_service(construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX)
+
+    primary, fallback = service._fts5_match_expressions("notes about the vendor")
+    assert primary == '"notes" "about" "the" "vendor"'
+    assert fallback == '"notes"* "vendor"*'
+
+
+def test_and_then_prefix_has_no_fallback_when_every_token_is_a_stopword():
+    """Nothing to widen TO: a stopword-only prefix form is junk, not a query."""
+    service = _make_service(construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX)
+
+    assert service._fts5_match_expressions("what about the") == (
+        '"what" "about" "the"',
+        None,
+    )
+
+
+def test_and_then_prefix_never_suppresses_a_fallback_on_an_identical_term_set():
+    """THE SUPPRESSION PIN -- a prefix fallback is ALWAYS wider.
+
+    `and_then_or`'s suppression asks "do both forms reduce to the same
+    single FTS5 term?", because an OR over one term IS that term and
+    re-running it can only return the same zero rows. That reasoning does
+    NOT transfer: `"wombat"*` and `"wombat"` are the same TERM SET and
+    different QUERIES -- the prefix form matches every word starting with
+    it. Copying the suppression across would silence the fallback on exactly
+    the single-content-token queries the probe's rescues came from.
+
+    Suppression fires here only when the prefix expression is EMPTY (the
+    all-stopword case above), which is the "nothing to widen to" case rather
+    than a term-set comparison.
+    """
+    service = _make_service(construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX)
+
+    assert service._fts5_match_expressions("wombat") == ('"wombat"', '"wombat"*')
+    # ...including the repeated-token shape `and_then_or` folds to one term.
+    assert service._fts5_match_expressions("wombat wombat") == (
+        '"wombat" "wombat"',
+        '"wombat"* "wombat"*',
+    )
+    assert service._fts5_match_expressions("Wombat wombat,") == (
+        '"Wombat" "wombat,"',
+        '"Wombat"* "wombat,"*',
+    )
+
+    # The contrast that makes the pin discriminating: the OR composition
+    # suppresses every one of those, because for IT the two forms really are
+    # the same query.
+    or_service = _make_service(construction="and_then_or")
+    assert or_service._fts5_match_expressions("wombat") == ('"wombat"', None)
+    assert or_service._fts5_match_expressions("wombat wombat")[1] is None
+
+
+def test_the_prefix_form_really_is_wider_than_the_and_over_the_same_terms():
+    """The suppression pin's premise, against real FTS5.
+
+    "Semantically wider" is a measurable claim, not a slogan: the same
+    single term matches strictly more documents with the star than without.
+    If this ever stopped being true, suppressing the fallback would be
+    correct and the pin above would be the wrong rule.
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE VIRTUAL TABLE docs USING fts5(title, content)")
+    conn.execute(
+        "INSERT INTO docs(title, content) VALUES (?, ?)",
+        ("Burrow survey", "The wombats were counted at dusk."),
+    )
+    conn.commit()
+
+    def match(expression):
+        return conn.execute(
+            "SELECT rowid FROM docs WHERE docs MATCH ?", (expression,)
+        ).fetchall()
+
+    service = _make_service(construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX)
+    primary, fallback = service._fts5_match_expressions("wombat")
+
+    assert match(primary) == [], "the AND form must NOT reach 'wombats'"
+    assert match(fallback) == [(1,)], "the prefix form must"
+    conn.close()
+
+
+def test_a_zero_row_and_falls_back_to_the_prefix_form_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The prefix mechanism end to end: one extra query, one rescue.
+
+    The seeded prompt says "inspection"; the query says "inspect". No
+    stopword list and no disjunction reaches that -- the prefix form does,
+    which is the mechanism behind the probe's 3 rescues.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            prompts database.
+        monkeypatch: pytest's monkeypatch fixture; installs the
+            `_prompts_fts` call-counting spy.
+    """
+    db_path, _ids = _seed_prompts(tmp_path, PROMPT_ROWS)
+    service = _make_service(
+        construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX,
+        prompts_db_path=db_path,
+    )
+    calls = _prompts_fts_spy(monkeypatch)
+
+    results = asyncio.run(
+        service._keyword_search(
+            PREFIX_ONLY_QUERY, top_k=5, keyword_source_types={"prompt"}
+        )
+    )
+
+    assert [r.metadata["doc_title"] for r in results] == ["Wombat shift handover"]
+    assert len(calls) == 2, f"expected primary + ONE fallback, got {calls}"
+    assert calls[0] == '"wombat" "inspect"'
+    assert calls[1] == '"wombat"* "inspect"*'
+    assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_PREFIX]
+
+
+def test_the_prefix_construction_stamps_its_rows_as_the_prefix_form(
+    tmp_path: Path,
+) -> None:
+    """Under `prefix` the prefix expression IS the primary -- and the stamp
+    still names the FORM, so the sweep's negative-composition counter reads
+    the same value under both prefix-bearing constructions and lets the
+    construction column say which of them was a fallback.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            prompts database.
+    """
+    db_path, _ids = _seed_prompts(tmp_path, PROMPT_ROWS)
+    service = _make_service(
+        construction=FTS_MATCH_CONSTRUCTION_PREFIX, prompts_db_path=db_path
+    )
+
+    results = asyncio.run(
+        service._keyword_search(
+            PREFIX_ONLY_QUERY, top_k=5, keyword_source_types={"prompt"}
+        )
+    )
+
+    assert [r.metadata["doc_title"] for r in results] == ["Wombat shift handover"]
+    assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_PREFIX]
+
+
 def test_stopword_trimming_is_case_and_punctuation_insensitive():
     """FTS5 reads `About,` as the term `about`; so must the trimmer."""
     service = _make_service(construction="or")
@@ -396,12 +607,20 @@ def test_every_token_stays_individually_quoted_in_every_construction():
                 continue
             # Tokens never contain whitespace, so stripping the OR
             # operators and splitting on spaces yields exactly the terms --
-            # every one of which must be a quoted literal.
+            # every one of which must be a quoted literal. A prefix term is
+            # that same quoted literal with FTS5's star appended OUTSIDE the
+            # closing quote (TASK-15700); stripping one trailing star is
+            # therefore part of reading the term, and a star moved INSIDE
+            # the quotes leaves the term looking quoted here but reds the
+            # expression-shape and behavioural pins above.
             terms = expression.replace(" OR ", " ").split(" ")
             bare = [
                 term
                 for term in terms
-                if not (term.startswith('"') and term.endswith('"'))
+                if not (
+                    term.removesuffix("*").startswith('"')
+                    and term.removesuffix("*").endswith('"')
+                )
             ]
             assert bare == [], (
                 f"{construction}: unquoted term(s) {bare} in {expression!r}"
@@ -889,6 +1108,30 @@ def test_each_construction_gets_its_own_hybrid_cache_key():
         for construction in FTS_MATCH_CONSTRUCTIONS
     }
     assert len(set(keys.values())) == len(FTS_MATCH_CONSTRUCTIONS), keys
+
+
+def test_the_two_prefix_constructions_key_distinctly_from_every_other_row():
+    """TASK-15700's two new values, named rather than counted.
+
+    The test above is a set-size check over `FTS_MATCH_CONSTRUCTIONS`, so it
+    would still pass if a new construction were simply never added to that
+    tuple. These two are asserted by name: a per-service cache plus a sweep
+    that mutates the construction between rows is exactly the shape that
+    reported "k doesn't matter" in TASK-4110, and the two new rows enter that
+    sweep.
+    """
+    cache = SimpleRAGCache(enabled=True)
+
+    def key(construction):
+        return cache._make_key(
+            "quokka", "hybrid", 10, None, None, None, (0.7, 5, 2), construction
+        )
+
+    assert key("prefix") != key(FTS_MATCH_AND)
+    assert key("and_then_prefix") != key(FTS_MATCH_AND)
+    assert key("prefix") != key("and_then_prefix")
+    assert key("prefix") != key("and_then_or")
+    assert key("and_then_prefix") != key("and_then_or")
 
 
 def test_the_keyword_search_type_keys_the_construction_too():

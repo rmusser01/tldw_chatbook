@@ -69,8 +69,8 @@ does — `rag_service.py:1240/:1334`), so a stale cache cannot move the census
 in either direction. What the control row actually catches is **census-method
 drift**: the counting method, the corpus or the golden set having moved out
 from under the control's 20, and — via `_validate_constructions` beside it —
-a construction VOCABULARY drift that would silently degrade rows 2-4 to the
-control and report all four censuses equal.
+a construction VOCABULARY drift that would silently degrade every non-control
+row to the control and report all six censuses equal.
 
 What protects the SCORED passes from a shared cache is different and lives
 elsewhere: Task 1 put the construction in the hybrid cache key, and this
@@ -124,6 +124,7 @@ __all__ = [
     "CONTROL_NAME",
     "DEFAULT_K",
     "FTS_MATCH_OR_FORM",
+    "FTS_MATCH_PREFIX_FORM",
     "HYBRID_MODE",
     "LEVER_PRECEDENCE",
     "NEAR_PROBE_DISTANCE",
@@ -140,6 +141,7 @@ __all__ = [
     "StrategyReport",
     "SweepReport",
     "WARN_BAND",
+    "WIDENING_FORMS",
     "combined_strategy",
     "format_construction_matrix",
     "format_matrix",
@@ -386,13 +388,43 @@ SHIPPED_CONTROL_CENSUS = 20
 #: composition is recorded per row and read beside the construction column.
 FTS_MATCH_OR_FORM = "or"
 
-#: The four pre-registered candidates, at the SHIPPED fusion parameters
+#: The same, for the PREFIX form TASK-15700's two new rows can run
+#: (`rag_service.FTS_MATCH_PREFIX`; pinned equal by
+#: `test_the_prefix_form_stamp_is_the_engines_own_constant`).
+FTS_MATCH_PREFIX_FORM = "prefix"
+
+#: The forms that WIDEN a query beyond the implicit AND over its own tokens
+#: — what the negative composition counts (TASK-15700 extends it from the OR
+#: form alone to any of these, which is what "count any non-primary form"
+#: means with the vocabulary the engine actually stamps).
+#:
+#: Read this list beside the CONSTRUCTION column, never alone. The AND form
+#: is the primary of every construction that can run it, so it is never here;
+#: but a widening form is a FALLBACK's under `and_then_or`/`and_then_prefix`
+#: and a PRIMARY's under `or`/`prefix` — same stamp, opposite meaning for the
+#: tie-break. Counting the form (and saying so) is what keeps the number
+#: honest under both; deriving "non-primary" per row would need the engine's
+#: table here and would silently read 0 for the two widening-primary rows,
+#: exactly where the noise cost is highest.
+WIDENING_FORMS = (FTS_MATCH_OR_FORM, FTS_MATCH_PREFIX_FORM)
+
+#: The pre-registered candidates, at the SHIPPED fusion parameters
 #: (`SearchConfig`'s own defaults: rrf_k 5, pool x2, alpha 0.7 — pinned
 #: against that class rather than copied from the spec's prose). Holding
 #: fusion fixed is what makes the census column attributable to the
 #: construction alone; a row that also moved rrf_k would confound the two
 #: arcs' levers in one number. Names stay <= 10 characters — the matrix
 #: column width is the dataclass's own stated rule.
+#:
+#: FOUR rows for TASK-15400, plus TWO for TASK-15700's re-run under the
+#: form-tiered merge. The first four keep their exact meaning — same names,
+#: same constructions, same fusion parameters, control still first — because
+#: the re-run is read against the same baseline (`SHIPPED_CONTROL_CENSUS`
+#: stays 20). The new rows are the spec's promotion of the 15400 sweep's
+#: report-only prefix probe (`prefix`, the best of the two probes at 3
+#: rescues) and its composition with the AND primary (`and_pfx`), which is
+#: the row that matters if `and_or` STILL loses the vector-blind fixture
+#: under the fixed merge.
 CONSTRUCTION_STRATEGIES: tuple[Strategy, ...] = (
     Strategy("and", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
              fts_match_construction="and"),
@@ -402,6 +434,10 @@ CONSTRUCTION_STRATEGIES: tuple[Strategy, ...] = (
              fts_match_construction="or"),
     Strategy("and_or", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
              fts_match_construction="and_then_or"),
+    Strategy("prefix", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
+             fts_match_construction="prefix"),
+    Strategy("and_pfx", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
+             fts_match_construction="and_then_prefix"),
 )
 
 #: The token distance the NEAR probe asks for. FTS5's default is also 10;
@@ -544,10 +580,15 @@ class NegativeComposition:
 
     Attributes:
         queries: Negative queries measured.
-        fallback_rows: FTS-only rows inside the top-k carrying the OR form.
-            Under `and_then_or` these ARE fallback rows; under `or` they are
-            that construction's primaries — the construction column
-            disambiguates, which is why this counts the FORM and says so.
+        fallback_rows: FTS-only rows inside the top-k carrying a WIDENING
+            form — the OR form or (TASK-15700) the prefix form,
+            `WIDENING_FORMS`. Under `and_then_or`/`and_then_prefix` these ARE
+            fallback rows; under `or`/`prefix` they are that construction's
+            primaries — the construction column disambiguates, which is why
+            this counts the FORM and says so. The name is kept from
+            TASK-15400 because the report column and every reader's mental
+            model are attached to it; what it counts widened, not what it
+            means.
         fts_only_rows: All FTS-only rows inside the top-k, whatever form
             matched them. The denominator `fallback_rows` is read against.
     """
@@ -1091,7 +1132,7 @@ def negative_composition(
     k: int = DEFAULT_K,
     source_types: Sequence[str] = SOURCE_TYPES,
 ) -> NegativeComposition:
-    """Count the keyword leg's rows inside hybrid top-k for the negatives.
+    """Count the keyword leg's WIDENED rows inside hybrid top-k for negatives.
 
     Re-runs each negative through the seam the scored pass just ran, so the
     search cache serves it (same query, same top_k, same key) and the rows
@@ -1129,7 +1170,7 @@ def negative_composition(
             form = (
                 provenance.get("fts_match") if isinstance(provenance, Mapping) else None
             )
-            if form == FTS_MATCH_OR_FORM:
+            if form in WIDENING_FORMS:
                 fallback_rows += 1
     return NegativeComposition(
         queries=len(negatives),
@@ -1292,9 +1333,9 @@ def _validate_constructions(strategies: Sequence[Strategy]) -> None:
     The engine resolves an unrecognized `fts_match_construction` to the
     shipped ``and`` with ONE warning per service instance
     (`_resolved_fts_match_construction`) — a deliberate fail-safe for
-    production that is a silent flattener for a sweep: rows 2-4 would each
-    measure the control, all four censuses would read 20, the control's own
-    self-check would PASS, and the table would report "the construction makes
+    production that is a silent flattener for a sweep: every non-control row
+    would measure the control, all six censuses would read 20, the control's
+    own self-check would PASS, and the table would report "the construction makes
     no difference". That is the 4110 failure through a different door, so the
     vocabulary is checked against the engine's own tuple rather than trusted
     as four string literals.
@@ -1829,7 +1870,7 @@ def format_construction_matrix(report: SweepReport) -> str:
         f"{'row':<10}{'construction':>19}{'census':>8}{'resc':>6}{'zero':>6}"
         f"{'P@k':>8}{'R@k':>8}{'MRR':>8}{'NDCG':>8}{'docs':>6}"
         f"{'rescue':>8}{'rank':>6}{'mech':>11}"
-        f"{'neg-or':>8}{'neg-fts':>8}{'secs':>7}"
+        f"{'neg-wide':>10}{'neg-fts':>8}{'secs':>7}"
     )
     lines.append(header)
     lines.append("-" * len(header))
@@ -1854,16 +1895,18 @@ def format_construction_matrix(report: SweepReport) -> str:
             f"{('yes' if entry.rescue.present else 'NO'):>8}"
             f"{(entry.rescue.rank if entry.rescue.rank is not None else '-'):>6}"
             f"{entry.rescue.mechanism:>11}"
-            f"{('-' if negatives is None else negatives.fallback_rows):>8}"
+            f"{('-' if negatives is None else negatives.fallback_rows):>10}"
             f"{('-' if negatives is None else negatives.fts_only_rows):>8}"
             f"{(0.0 if entry.elapsed_s is None else entry.elapsed_s):>7.1f}"
         )
     lines.append(
-        "'neg-or' = FTS-only rows carrying the OR form inside hybrid top-k "
-        "across the negatives ('neg-fts' = all FTS-only rows there). Under "
-        "`and_then_or` those OR rows are fallbacks; under `or` they are that "
-        "construction's primaries — the construction column disambiguates. "
-        "Recorded for the tie-break (fewer is better), never gated."
+        f"'neg-wide' = FTS-only rows carrying a WIDENING form "
+        f"({'/'.join(WIDENING_FORMS)}) inside hybrid top-k across the "
+        "negatives ('neg-fts' = all FTS-only rows there). Under "
+        "`and_then_or`/`and_then_prefix` those rows are fallbacks; under "
+        "`or`/`prefix` they are that construction's primaries — the "
+        "construction column disambiguates. Recorded for the tie-break "
+        "(fewer is better), never gated."
     )
     lines.append(
         "'rescue' is hard constraint (a): the vector-blind fixture must keep "

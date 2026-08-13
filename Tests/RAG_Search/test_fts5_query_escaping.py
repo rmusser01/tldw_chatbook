@@ -384,8 +384,9 @@ def test_keyword_row_matching_only_on_title_is_never_citation_empty(tmp_path):
 # --- The same safety property, through every MATCH construction ------------
 #
 # TASK-15400 puts three more MATCH constructions behind
-# `SearchConfig.fts_match_construction`, and one of them (`and_then_or`)
-# issues a SECOND query the tests above never reach. The injection property
+# `SearchConfig.fts_match_construction` (TASK-15700 adds two more, covered
+# in their own section below), and one of them (`and_then_or`) issues a
+# SECOND query the tests above never reach. The injection property
 # is a property of the EXPRESSION BUILDER, not of the AND join, so every
 # case above is re-run through the OR form and through the fallback path:
 # an operator-shaped token, a column-filter attempt, a hyphenated numeric,
@@ -537,15 +538,178 @@ def test_an_all_stopword_query_never_emits_an_empty_match_expression(tmp_path):
     _insert(conn, "Anything", "Any content at all.")
     service = _make_service(tmp_path)
 
-    for construction in ("and", "and_stopword_trim", "and_then_or"):
+    for construction in ("and", "and_stopword_trim", "and_then_or", "and_then_prefix"):
         service.config.search.fts_match_construction = construction
         primary, fallback = service._fts5_match_expressions("what about the")
         assert primary, f"{construction} emitted an empty primary expression"
         _match(conn, primary)
         assert fallback is None, construction
 
-    # `or` is the one construction whose answer is honestly "no rows" --
-    # and "" is the existing skip contract, never a query.
-    service.config.search.fts_match_construction = "or"
-    assert service._fts5_match_expressions("what about the") == ("", None)
+    # `or` and `prefix` are the constructions whose answer is honestly "no
+    # rows" -- and "" is the existing skip contract, never a query. (A
+    # stopword PREFIX, `"the"*`, is junk that matches most of a corpus, so
+    # trimming is not optional under the prefix form either.)
+    for construction in ("or", "prefix"):
+        service.config.search.fts_match_construction = construction
+        assert service._fts5_match_expressions("what about the") == (
+            "",
+            None,
+        ), construction
+
+
+# --- the same safety property, through the PREFIX form (TASK-15700) --------
+#
+# The two constructions the 15700 re-run pre-registers (`prefix`,
+# `and_then_prefix`) emit a term shape no earlier case covers: the quoted
+# literal with FTS5's star appended OUTSIDE the closing quote. The families
+# above are re-run through both of them (primary AND fallback), plus the two
+# failure modes specific to the star's placement -- inside the quotes it is
+# an inert character in the literal, and a bare `*` with no term in front of
+# it is a syntax error.
+
+
+@pytest.mark.parametrize("construction", ["prefix", "and_then_prefix"])
+@pytest.mark.parametrize("query", HOSTILE_QUERIES)
+def test_hostile_tokens_stay_inert_in_the_prefix_form(tmp_path, construction, query):
+    """Every expression a prefix construction can emit must execute cleanly.
+
+    Same discipline as the OR-form case above and the same real FTS5 parse:
+    both halves of the pair are checked, so `and_then_prefix`'s FALLBACK
+    expression -- the one carrying the stars -- is covered as well as its
+    plain-AND primary. Mutation check: dropping the per-token quoting from
+    the prefix join (`lathe*` instead of `"lathe"*`) reds this with
+    `OperationalError` on the `Obsidian-3` case.
+    """
+    conn = _fts5_conn()
+    _insert(
+        conn,
+        "Lathe Maintenance Log",
+        "The Obsidian-3 lathe shows spindle runout under load.",
+    )
+
+    service = _make_service(tmp_path)
+    service.config.search.fts_match_construction = construction
+    primary, fallback = service._fts5_match_expressions(query)
+
+    for expression in (primary, fallback):
+        if not expression:
+            continue
+        _match(conn, expression)
     conn.close()
+
+
+def test_the_prefix_star_goes_outside_the_quotes(tmp_path):
+    """Star placement is a BEHAVIOURAL fact, not a formatting preference.
+
+    Outside the closing quote the star is FTS5's prefix operator: `"spind"*`
+    is "a phrase whose last token starts with spind". Inside it, the star is
+    just a character in the literal -- FTS5's own tokenizer drops it -- so
+    `"spind*"` is the plain term `spind`, which matches nothing here. The
+    construction would silently degrade to the trimmed AND it is supposed to
+    widen, with no error anywhere to notice.
+    """
+    conn = _fts5_conn()
+    _insert(
+        conn,
+        "Lathe Maintenance Log",
+        "The Obsidian-3 lathe shows spindle runout under load.",
+    )
+    service = _make_service(tmp_path)
+    service.config.search.fts_match_construction = "prefix"
+
+    primary, fallback = service._fts5_match_expressions("spind runou")
+    assert primary == '"spind"* "runou"*'
+    assert fallback is None
+    assert _match(conn, primary) == [(1,)]
+
+    # The mutation, spelled out: the same tokens with the star inside the
+    # quotes parse fine and match NOTHING.
+    assert _match(conn, '"spind*" "runou*"') == []
+    conn.close()
+
+
+def test_a_bare_asterisk_token_never_reaches_the_prefix_expression(tmp_path):
+    """`*` alone is FTS5 syntax with nothing to apply it to.
+
+    The tokenizer drops any token with no alphanumeric character, so a typed
+    `*` cannot become a term at all -- and a query that is nothing but
+    wildcards short-circuits on `""` rather than emitting `*` or `""*`.
+    Checked through both prefix constructions, and executed for the case
+    that does emit an expression.
+    """
+    conn = _fts5_conn()
+    _insert(conn, "Wombat log", "The wombat burrow was surveyed at dusk.")
+    service = _make_service(tmp_path)
+
+    service.config.search.fts_match_construction = "prefix"
+    assert service._fts5_match_expressions("* wombat") == ('"wombat"*', None)
+    assert _match(conn, '"wombat"*') == [(1,)]
+    assert service._fts5_match_expressions("* **") == ("", None)
+
+    service.config.search.fts_match_construction = "and_then_prefix"
+    assert service._fts5_match_expressions("* wombat") == (
+        '"wombat"',
+        '"wombat"*',
+    )
+    assert service._fts5_match_expressions("* **") == ("", None)
+
+    # ...and the bare wildcard FTS5 would have choked on, for contrast.
+    with pytest.raises(sqlite3.OperationalError):
+        _match(conn, "*")
+    conn.close()
+
+
+def test_user_typed_operator_words_never_become_operators_in_the_prefix_form(
+    tmp_path,
+):
+    """`OR`/`NOT` typed by the user stay function words under the star too.
+
+    The prefix form trims them as the stopwords they are, so the emitted
+    expression contains no operator the builder did not put there -- and the
+    surviving terms are quoted literals with the star outside.
+    """
+    conn = _fts5_conn()
+    _insert(conn, "Lathe Log", "The lathe spindle was replaced.")
+    service = _make_service(tmp_path)
+    service.config.search.fts_match_construction = "prefix"
+
+    primary, fallback = service._fts5_match_expressions("lathe OR NOT spind")
+    assert primary == '"lathe"* "spind"*'
+    assert fallback is None
+    assert _match(conn, primary) == [(1,)]
+    conn.close()
+
+
+def test_the_prefix_fallback_path_runs_a_hostile_query_without_raising(
+    tmp_path, monkeypatch
+):
+    """End to end through the media sub-leg, the `and_then_prefix` composition.
+
+    Mirrors the `and_then_or` case above and for the same reason: every
+    sub-leg swallows its own errors, so "returns a list" would be vacuous.
+    The query's AND finds nothing (the seed says "spindle", the query says
+    "spind") while carrying the documented injection token `Obsidian-3`, so a
+    returned row is proof the hostile PREFIX expression both parsed and
+    matched -- and its stamp names the form that did it.
+    """
+    service = _make_service(tmp_path)
+    service.config.search.fts_match_construction = "and_then_prefix"
+
+    executed = []
+    original = RAGService._perform_fts5_search
+
+    def spy(self, pool, query, limit, allowed_ids=None):
+        rows = original(self, pool, query, limit, allowed_ids)
+        executed.append(self._fts5_match_expressions(query))
+        return rows
+
+    monkeypatch.setattr(RAGService, "_perform_fts5_search", spy)
+
+    query = "Obsidian-3 spind runou"
+    results = asyncio.run(service._keyword_search(query, top_k=5))
+
+    assert executed, "the media sub-leg never reached FTS5"
+    primary, fallback = executed[0]
+    assert primary == '"Obsidian-3" "spind" "runou"'
+    assert fallback == '"Obsidian-3"* "spind"* "runou"*'
+    assert [row.metadata["fts_match"] for row in results] == ["prefix"], results

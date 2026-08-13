@@ -150,35 +150,48 @@ KEYWORD_LEG_SOURCE_TYPES = frozenset(
 CHACHA_KEYWORD_SOURCE_TYPES = frozenset({SOURCE_TYPE_NOTE, SOURCE_TYPE_CONVERSATION})
 
 
-# --- The keyword leg's MATCH construction (TASK-15400) ----------------------
+# --- The keyword leg's MATCH construction (TASK-15400, TASK-15700) ---------
 #
-# The four candidates the arc's spec pre-registers, selected by
+# The candidates the two arcs' specs pre-register, selected by
 # `SearchConfig.fts_match_construction` and resolved by
 # `RAGService._fts5_match_expressions`. See that method for what each one
 # builds and why; see the config field for why this is not a user knob.
+#
+# The last two are TASK-15700's additions for the sweep's re-run under the
+# form-tiered merge: the 15400 sweep ran prefix matching as a REPORT-ONLY
+# probe (it rescued 3 of the 40 zero-row golden queries, the best of the two
+# probes) and the spec promotes it to a full matrix row, plus the obvious
+# composition of it with the AND primary.
 FTS_MATCH_CONSTRUCTION_AND = "and"
 FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM = "and_stopword_trim"
 FTS_MATCH_CONSTRUCTION_OR = "or"
 FTS_MATCH_CONSTRUCTION_AND_THEN_OR = "and_then_or"
+FTS_MATCH_CONSTRUCTION_PREFIX = "prefix"
+FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX = "and_then_prefix"
 FTS_MATCH_CONSTRUCTIONS = (
     FTS_MATCH_CONSTRUCTION_AND,
     FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM,
     FTS_MATCH_CONSTRUCTION_OR,
     FTS_MATCH_CONSTRUCTION_AND_THEN_OR,
+    FTS_MATCH_CONSTRUCTION_PREFIX,
+    FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX,
 )
 
-# The two values `metadata["fts_match"]` can take. They name the FORM that
+# The values `metadata["fts_match"]` can take. They name the FORM that
 # matched a row and NOTHING else: `and` is an implicit-AND expression (full
 # or stopword-trimmed), `or` is the content-token OR form -- whether that
 # form ran as `and_then_or`'s fallback or as the `or` construction's own
-# primary. Deliberately NOT `or_fallback`: under the `or` construction every
-# row comes from the primary query, so a name carrying "fallback" would weld
-# a false position claim onto a true form fact, and Task 5's mechanism prose
-# reads this key verbatim. Fallback-ness is derivable whenever it is wanted
-# (construction + form), so it gets no second field. The naming also extends
-# to the spec's probe axis (`near`, prefix) as `or_fallback` could not.
+# primary -- and `prefix` is the content-token PREFIX form, likewise either
+# `and_then_prefix`'s fallback or `prefix`'s own primary. Deliberately NOT
+# `or_fallback`: under the `or` construction every row comes from the primary
+# query, so a name carrying "fallback" would weld a false position claim onto
+# a true form fact, and Task 5's mechanism prose reads this key verbatim.
+# Fallback-ness is derivable whenever it is wanted (construction + form), so
+# it gets no second field. That naming is what let the probe axis (`near`,
+# prefix) become a shippable construction here without a rename.
 FTS_MATCH_AND = "and"
 FTS_MATCH_OR = "or"
+FTS_MATCH_PREFIX = "prefix"
 
 # Which FORM each construction's PRIMARY and FALLBACK expressions run --
 # deliberately shaped as a pair, parallel to `_fts5_match_expressions`'
@@ -201,6 +214,8 @@ FTS_MATCH_FORMS_BY_CONSTRUCTION: Dict[str, Tuple[str, Optional[str]]] = {
     FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM: (FTS_MATCH_AND, None),
     FTS_MATCH_CONSTRUCTION_OR: (FTS_MATCH_OR, None),
     FTS_MATCH_CONSTRUCTION_AND_THEN_OR: (FTS_MATCH_AND, FTS_MATCH_OR),
+    FTS_MATCH_CONSTRUCTION_PREFIX: (FTS_MATCH_PREFIX, None),
+    FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX: (FTS_MATCH_AND, FTS_MATCH_PREFIX),
 }
 
 # A small fixed English function-word list, consulted by every construction
@@ -3600,8 +3615,9 @@ class RAGService:
         every form is individually quoted by ``_quote_fts5_token`` -- only
         the JOIN between tokens is in play here, never the quoting.
 
-        The four pre-registered candidates
-        (``SearchConfig.fts_match_construction``):
+        The pre-registered candidates
+        (``SearchConfig.fts_match_construction``) -- TASK-15400's four, then
+        TASK-15700's two:
 
         * ``and`` (pre-TASK-15400; still the fail-safe for an unrecognized
           value) -- implicit AND over every token. Byte-identical to
@@ -3623,12 +3639,32 @@ class RAGService:
           NOT, as the sweep measured, every hit the LEG contributes to
           fusion: the round-robin merge re-ranks the untouched rows. That
           is why this candidate was disqualified (see
-          ``_escape_fts5_query``).
+          ``_escape_fts5_query``) -- and why TASK-15700 fixed that merge and
+          re-ran the sweep with the two rows below added.
+        * ``prefix`` (TASK-15700) -- the content tokens as PREFIX terms,
+          space-joined: an implicit AND over ``"tok"*``. Byte-identical to
+          the expression the 15400 sweep's report-only probe measured its
+          3-rescue lead on (``prefix_probe_expression``,
+          `Tests/RAG_Eval/harness/fusion_sweep.py`); reproducing THAT form
+          is what makes the lead evidence for this construction rather than
+          for a different query. Stopwords are trimmed for a sharper reason
+          than under ``or``: a stopword prefix (``"the"*``) matches most of a
+          corpus. When trimming empties the list the answer is honestly no
+          rows (``""``). It widens as a PRIMARY form, so the tiered merge
+          cannot protect the untouched AND rows from it -- the sweep's matrix
+          has to show what it displaces.
+        * ``and_then_prefix`` (TASK-15700) -- the AND form as primary, the
+          prefix form as the per-sub-leg zero-row fallback: the composition
+          with BOTH protections, every AND hit preserved inside a sub-leg by
+          construction and the widened rows confined behind the primary ones
+          by the tiered merge.
 
-        The fallback is suppressed when it cannot widen anything -- when
+        The OR fallback is suppressed when it cannot widen anything -- when
         both forms reduce to the same single FTS5 term -- since re-running
         it costs one query per zero-row sub-leg and can only return the same
-        zero rows.
+        zero rows. That test belongs to the OR composition alone: a PREFIX
+        fallback over identical terms is STRICTLY wider, so
+        ``and_then_prefix`` suppresses only an empty prefix expression.
 
         Args:
             query: Raw search query.
@@ -3655,6 +3691,33 @@ class RAGService:
             # only-function-word query is byte-identical to the pre-arc
             # construction rather than a syntax error or an empty answer.
             return " ".join(quoted) or and_expression, None
+
+        if construction in (
+            FTS_MATCH_CONSTRUCTION_PREFIX,
+            FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX,
+        ):
+            # The star goes OUTSIDE the quotes: FTS5 reads `"tok"*` as "a
+            # phrase whose last token is a prefix", while a star inside the
+            # quotes is an inert character in the literal (the tokenizer
+            # drops it) and would silently reduce this to the trimmed AND.
+            prefix_expression = " ".join(f"{token}*" for token in quoted)
+
+            if construction == FTS_MATCH_CONSTRUCTION_PREFIX:
+                # Trimming empties -> "" (the skip contract), never the full
+                # AND: a stopword PREFIX (`"the"*`) matches most of a corpus,
+                # so the honest answer is no rows, exactly as under `or`.
+                return prefix_expression, None
+
+            # and_then_prefix. The fallback is suppressed ONLY when there is
+            # nothing to widen to (an empty prefix expression) -- never on
+            # the term-set equality `and_then_or` uses. A prefix form over
+            # the same terms is a STRICTLY WIDER query ("wombat" vs every
+            # word starting with it), so the OR composition's "both forms
+            # reduce to one identical term" reasoning does not transfer:
+            # copying it would silence the fallback on exactly the
+            # single-content-token queries the 15400 probe's rescues came
+            # from.
+            return and_expression, prefix_expression or None
 
         or_expression = " OR ".join(quoted)
 

@@ -31,13 +31,21 @@ Five properties, each with the mutation that reds it:
 
 * **(a) The AC#2 displacement pin.** One sub-leg's primary rank-1 row must
   lead a fallback sub-leg's many rows. RED on the pre-arc round-robin
-  (media interleaves first); reds again if the tiering is removed.
+  (media interleaves first); reds again if the tiering is removed. Pinned
+  twice, once per fallback form the engine can run: the incident's own OR
+  fallback, and (TASK-15700 Part B) the PREFIX fallback of
+  `and_then_prefix` -- the composition whose whole case rests on this
+  tiering holding for a form the incident never involved.
 * **(b) All-primary byte-identity.** When no sub-leg fell back -- which is
   EVERY sub-leg under the shipped `and_stopword_trim`, under the legacy
-  `and`, and under `or` -- the merged list is the SAME OBJECTS IN THE SAME
-  ORDER a single unpartitioned `interleave_rankings` produces. Compared by
-  object identity against the real gathered rankings, so this is byte
-  identity and not a re-derivation. Reds if the tier order is inverted.
+  `and`, under `or` and under TASK-15700's `prefix` -- the merged list is
+  the SAME OBJECTS IN THE SAME ORDER a single unpartitioned
+  `interleave_rankings` produces. Compared by object identity against the
+  real gathered rankings, so this is byte identity and not a re-derivation.
+  Reds if the tier order is inverted -- for a construction that HAS a
+  fallback; under an all-primary one tier 2 is empty and the inversion is a
+  provable no-op (Task 1's mutation note, and the reason the prefix
+  parametrization here is coverage rather than a second inversion pin).
 * **(c) Rank-fairness between primaries is KEPT.** Two primary sub-legs,
   many rows vs one: the round-robin order is unchanged. This is the pin
   that stops the fix overreaching -- rank-fairness among primaries is
@@ -72,10 +80,13 @@ from tldw_chatbook.RAG_Search.simplified.rag_service import (
     FTS_MATCH_CONSTRUCTION_AND,
     FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM,
     FTS_MATCH_CONSTRUCTION_AND_THEN_OR,
+    FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX,
     FTS_MATCH_CONSTRUCTION_OR,
+    FTS_MATCH_CONSTRUCTION_PREFIX,
     FTS_MATCH_CONSTRUCTIONS,
     FTS_MATCH_FORMS_BY_CONSTRUCTION,
     FTS_MATCH_OR,
+    FTS_MATCH_PREFIX,
     RAGService,
     _fusion_doc_key,
 )
@@ -99,6 +110,23 @@ MEDIA_OR_ONLY_ROWS = [
     ("Template library", "The template library indexes every studio template."),
     ("Work rota", "The work rota covers the dusk and dawn shifts."),
     ("Wombat rescue log", "A wombat rescue log entry from the salt flats."),
+]
+
+# The same displacement shape, driven by the PREFIX form (TASK-15700 Part B,
+# the `and_then_prefix` row). The note carries every query token verbatim, so
+# the notes sub-leg matches the full implicit AND and is never widened. No
+# media row contains "template" or "work" as whole words -- only longer words
+# they are prefixes OF -- so the media sub-leg finds zero AND rows, falls back
+# to `"wombat"* "template"* "work"*` and returns three.
+PREFIX_DISPLACEMENT_QUERY = "wombat template work"
+PREFIX_NOTE_AND_HIT = (
+    "Saltmarsh hide",
+    "The wombat template work is logged at the hide each dusk.",
+)
+MEDIA_PREFIX_ONLY_ROWS = [
+    ("Wombat templates rota", "The wombat templates working rota for the burrow."),
+    ("Wombat templating notes", "Wombat templating workshop notes from the studio."),
+    ("Wombat templated log", "A wombat templated workbook entry from the flats."),
 ]
 
 
@@ -321,6 +349,52 @@ def test_a_primary_rank_1_row_leads_a_fallback_sub_legs_many_rows(
     assert set(stamps[1:]) == {FTS_MATCH_OR}, stamps
 
 
+def test_a_prefix_fallback_sub_leg_tiers_behind_a_primary_sub_leg(
+    tmp_path: Path,
+) -> None:
+    """THE AC#2 PIN's shape under TASK-15700's own new construction.
+
+    `and_then_prefix` is the composition the arc pre-registered on the
+    strength of BOTH protections: the AND primary preserves every current
+    hit inside a sub-leg, and Part A's tiering keeps the widened rows from
+    re-ranking the untouched ones across sub-legs. The second half is only
+    true if the tier partition reads the FORM the fallback actually ran --
+    it is asserted here against real prefix rows rather than against the
+    monkeypatched stand-in the stamp pin uses.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            media and notes databases.
+    """
+    media_path = _seed_media(tmp_path, MEDIA_PREFIX_ONLY_ROWS)
+    notes_path = _seed_notes(tmp_path, [PREFIX_NOTE_AND_HIT])
+    service = _make_service(
+        construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX,
+        media_db_path=media_path,
+        chachanotes_db_path=notes_path,
+    )
+
+    results = asyncio.run(
+        service._keyword_search(
+            PREFIX_DISPLACEMENT_QUERY, top_k=10, keyword_source_types={"media", "note"}
+        )
+    )
+
+    # The fixture must reproduce the shape or the pin passes vacuously: one
+    # untouched primary row, several prefix-fallback rows.
+    stamps = [r.metadata["fts_match"] for r in results]
+    assert stamps.count(FTS_MATCH_AND) == 1, stamps
+    assert stamps.count(FTS_MATCH_PREFIX) >= 2, stamps
+    assert FTS_MATCH_OR not in stamps, stamps
+
+    assert results[0].metadata["source_type"] == "note", [
+        (r.metadata["source_type"], r.metadata["fts_match"]) for r in results
+    ]
+    assert results[0].metadata["doc_title"] == "Saltmarsh hide"
+    assert stamps[0] == FTS_MATCH_AND
+    assert set(stamps[1:]) == {FTS_MATCH_PREFIX}, stamps
+
+
 # --- (b) all-primary byte-identity: the shipped default cannot move ---
 
 
@@ -330,6 +404,7 @@ def test_a_primary_rank_1_row_leads_a_fallback_sub_legs_many_rows(
         FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM,
         FTS_MATCH_CONSTRUCTION_OR,
         FTS_MATCH_CONSTRUCTION_AND,
+        FTS_MATCH_CONSTRUCTION_PREFIX,
     ],
 )
 def test_all_primary_constructions_merge_byte_identically_to_a_plain_interleave(
@@ -498,6 +573,8 @@ def test_tier_two_rows_never_take_a_slot_tier_one_wanted(tmp_path: Path) -> None
         (FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM, FTS_MATCH_AND),
         (FTS_MATCH_CONSTRUCTION_OR, FTS_MATCH_OR),
         (FTS_MATCH_CONSTRUCTION_AND_THEN_OR, FTS_MATCH_AND),
+        (FTS_MATCH_CONSTRUCTION_PREFIX, FTS_MATCH_PREFIX),
+        (FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX, FTS_MATCH_AND),
     ],
 )
 def test_primary_form_is_one_definition_per_construction(
@@ -699,6 +776,7 @@ def test_an_unstamped_row_lands_in_tier_one_under_every_construction(
         FTS_MATCH_CONSTRUCTION_AND,
         FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM,
         FTS_MATCH_CONSTRUCTION_OR,
+        FTS_MATCH_CONSTRUCTION_PREFIX,
     ],
 )
 def test_a_construction_without_a_fallback_can_never_produce_a_tier_two_row(

@@ -32,10 +32,12 @@ from Tests.RAG_Eval.harness.fusion_sweep import (
     CONTROL,
     CONTROL_NAME,
     FTS_MATCH_OR_FORM,
+    FTS_MATCH_PREFIX_FORM,
     LEVER_PRECEDENCE,
     NEAR_PROBE_DISTANCE,
     SHIPPED_CONTROL_CENSUS,
     WARN_BAND,
+    WIDENING_FORMS,
     LegCensus,
     NegativeComposition,
     Qualification,
@@ -973,14 +975,31 @@ def test_the_sweep_restores_the_construction_it_found(monkeypatch):
     )
 
 
-def test_the_construction_matrix_is_the_four_the_spec_pre_registered():
+def test_the_construction_matrix_is_the_six_the_specs_pre_registered():
+    """DISCLOSED (2026-08-13, TASK-15700 Task 2): four rows became SIX.
+
+    The 15400 spec pre-registered four; the 15700 spec adds two for the
+    re-run under the form-tiered merge (`prefix`, the promotion of the
+    report-only probe that rescued 3, and `and_pfx`, its composition with
+    the AND primary). The four original rows are asserted UNCHANGED —
+    position, name and construction — because the re-run is read against
+    the same control baseline; a row that quietly changed meaning would
+    make the two matrices incomparable.
+    """
     names = tuple(s.name for s in CONSTRUCTION_STRATEGIES)
-    assert names == ("and", "and_trim", "or", "and_or")
+    assert names == ("and", "and_trim", "or", "and_or", "prefix", "and_pfx")
     assert names[0] == CONSTRUCTION_CONTROL_NAME, "the control row must be first"
     assert all(len(name) <= 10 for name in names), "the matrix column is 10 wide"
     assert tuple(s.fts_match_construction for s in CONSTRUCTION_STRATEGIES) == (
         "and", "and_stopword_trim", "or", "and_then_or",
+        "prefix", "and_then_prefix",
     )
+    # The 15400 rows, still meaning exactly what they meant: same order, same
+    # constructions, appended to rather than rewritten.
+    assert names[:4] == ("and", "and_trim", "or", "and_or")
+    assert tuple(
+        s.fts_match_construction for s in CONSTRUCTION_STRATEGIES[:4]
+    ) == ("and", "and_stopword_trim", "or", "and_then_or")
     # The SHIPPED fusion parameters, held fixed: this arc measures the
     # construction, and a row that also moved rrf_k would confound the two.
     for strategy in CONSTRUCTION_STRATEGIES:
@@ -1035,9 +1054,10 @@ def test_every_construction_row_names_a_construction_the_engine_KNOWS():
 
     The engine resolves an unknown `fts_match_construction` to the shipped
     `and` with one warning per service instance. A renamed value would leave
-    rows 2-4 each measuring the control: four censuses of 20, a control row
-    whose self-check passes, and a table saying "the construction makes no
-    difference" — TASK-4110's failure through a different door.
+    every non-control row measuring the control: six censuses of 20, a
+    control row whose self-check passes, and a table saying "the
+    construction makes no difference" — TASK-4110's failure through a
+    different door.
     """
     from tldw_chatbook.RAG_Search.simplified.rag_service import (
         FTS_MATCH_CONSTRUCTIONS,
@@ -1049,6 +1069,11 @@ def test_every_construction_row_names_a_construction_the_engine_KNOWS():
         "the matrix must sweep every construction the engine can be put in, "
         "or a candidate ships unmeasured"
     )
+    # ...and the gate the sweep itself runs accepts the shipped matrix. The
+    # membership assertions above are this function's premise; calling it is
+    # what proves the two new rows (TASK-15700) get past the guard rather
+    # than stopping the sweep on their first invocation.
+    fusion_sweep._validate_constructions(CONSTRUCTION_STRATEGIES)
 
 
 def test_a_construction_the_engine_does_not_know_stops_the_sweep(monkeypatch):
@@ -1077,6 +1102,50 @@ def test_the_or_form_stamp_is_the_engines_own_constant():
     from tldw_chatbook.RAG_Search.simplified.rag_service import FTS_MATCH_OR
 
     assert FTS_MATCH_OR_FORM == FTS_MATCH_OR
+
+
+def test_the_prefix_form_stamp_is_the_engines_own_constant():
+    """Same guarantee for TASK-15700's second widening form."""
+    from tldw_chatbook.RAG_Search.simplified.rag_service import FTS_MATCH_PREFIX
+
+    assert FTS_MATCH_PREFIX_FORM == FTS_MATCH_PREFIX
+
+
+def test_the_widening_forms_are_every_form_a_fallback_can_run():
+    """The counter's vocabulary, derived from the ENGINE's own table.
+
+    `WIDENING_FORMS` is what the negative composition counts. A construction
+    that adds a THIRD widening form (or renames one) and does not appear
+    here would make the noise column read 0 for the row that produces the
+    most noise — the counter would be blind exactly where it is load-
+    bearing. `FTS_MATCH_FORMS_BY_CONSTRUCTION` is the engine's own statement
+    of which forms a fallback ever runs, so it is the oracle rather than a
+    second hand-maintained list.
+
+    The equality is one-directional on purpose: every fallback form must be
+    counted, and `WIDENING_FORMS` may not contain a form no construction can
+    produce (which would be a dead string, the failure the pin above
+    guards).
+    """
+    from tldw_chatbook.RAG_Search.simplified.rag_service import (
+        FTS_MATCH_FORMS_BY_CONSTRUCTION,
+    )
+
+    fallback_forms = {
+        fallback
+        for _primary, fallback in FTS_MATCH_FORMS_BY_CONSTRUCTION.values()
+        if fallback is not None
+    }
+    assert fallback_forms == set(WIDENING_FORMS), (
+        f"engine fallback forms {sorted(fallback_forms)} vs counted "
+        f"{sorted(WIDENING_FORMS)}"
+    )
+    # ...and the AND form is deliberately NOT one of them: it is some
+    # construction's primary everywhere it appears, so counting it would
+    # report the shipped default as pure noise.
+    from tldw_chatbook.RAG_Search.simplified.rag_service import FTS_MATCH_AND
+
+    assert FTS_MATCH_AND not in WIDENING_FORMS
 
 
 # ---------------------------------------------------------------------------
@@ -1179,24 +1248,51 @@ NEGATIVE_GOLDEN = (
 )
 
 
-def test_only_fts_only_rows_in_the_or_form_count_as_fallback_rows():
+def test_only_fts_only_rows_in_a_widening_form_count_as_fallback_rows():
+    """DISCLOSED (2026-08-13, TASK-15700 Task 2): the counted vocabulary grew.
+
+    It counted the OR form alone; it now counts any WIDENING form, which the
+    prefix row makes a live distinction rather than a hypothetical one. The
+    other two clauses are unchanged: an AND-form row is not noise, and a row
+    the vector leg also returned is not FTS-only.
+    """
     rows = [
-        hybrid_row("1", fts_rank=1, vector_rank=None, fts_match="or"),   # counted
-        hybrid_row("2", fts_rank=2, vector_rank=None, fts_match="and"),  # AND form
-        hybrid_row("3", fts_rank=3, vector_rank=4, fts_match="or"),      # merged
-        hybrid_row("4", fts_rank=None, vector_rank=1, fts_match=None),   # vector
+        hybrid_row("1", fts_rank=1, vector_rank=None, fts_match="or"),      # counted
+        hybrid_row("2", fts_rank=2, vector_rank=None, fts_match="and"),     # AND form
+        hybrid_row("3", fts_rank=3, vector_rank=4, fts_match="or"),         # merged
+        hybrid_row("4", fts_rank=None, vector_rank=1, fts_match=None),      # vector
+        hybrid_row("5", fts_rank=4, vector_rank=None, fts_match="prefix"),  # counted
     ]
     composition = negative_composition(
         FakeSeam(rows), FakeRuntime(), NEGATIVE_GOLDEN, K, ("media",)
     )
 
     assert isinstance(composition, NegativeComposition)
-    assert composition.fallback_rows == 1
-    assert composition.fts_only_rows == 2, (
+    assert composition.fallback_rows == 2
+    assert composition.fts_only_rows == 3, (
         "the denominator the fallback count is read against — how many rows "
         "the keyword leg put into these results at all"
     )
     assert composition.queries == 1
+
+
+def test_a_prefix_form_row_is_counted_under_both_prefix_constructions():
+    """The counter reads the FORM, and the construction column disambiguates.
+
+    Under `and_then_prefix` a prefix row IS a fallback; under `prefix` it is
+    that construction's primary. Both are noise in a negative's top-k and
+    both are counted — the number would be uninterpretable if the widest
+    candidate reported zero, which is exactly what a "count only fallbacks"
+    rule would produce for the row with the most to answer for.
+    """
+    rows = [hybrid_row("1", fts_rank=1, vector_rank=None, fts_match="prefix")]
+
+    composition = negative_composition(
+        FakeSeam(rows), FakeRuntime(), NEGATIVE_GOLDEN, K, ("media",)
+    )
+
+    assert composition.fallback_rows == 1
+    assert composition.fts_only_rows == 1
 
 
 def test_the_negative_composition_only_looks_at_negative_queries():
@@ -1466,6 +1562,52 @@ def test_fts5_prefix_syntax_is_the_star_outside_the_quotes():
         assert hits(hostile) == 0
     finally:
         db.close()
+
+
+def test_the_prefix_construction_builds_the_probes_own_expression():
+    """THE PROVENANCE PIN (TASK-15700): the row inherits the probe's lead.
+
+    The `prefix` matrix row exists because THIS probe rescued 3 of the 40
+    zero-row golden queries in the 15400 sweep — the only variant that
+    rescued anything. That lead transfers to the shipped construction only
+    if the construction sends the same expression: a different join (an OR
+    of prefixes rather than the probe's implicit AND), a different token set
+    (stopwords kept), or the star inside the quotes would each be a
+    DIFFERENT query, and the 3 rescues would be evidence for something the
+    engine does not do.
+
+    Checked over shapes that separate every one of those: multi-token
+    (join), a stopword-bearing query (token set), an all-stopword query
+    (the empty contract), a hostile token (quoting), and a single token
+    (where an OR join and an AND join coincide and would hide a difference).
+    """
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+    from tldw_chatbook.RAG_Search.simplified.rag_service import (
+        FTS_MATCH_CONSTRUCTION_PREFIX,
+        RAGService,
+    )
+
+    config = RAGConfig()
+    config.embedding.model = "mock"
+    config.embedding.device = "cpu"
+    config.vector_store.type = "memory"
+    config.vector_store.persist_directory = None
+    config.search.enable_cache = False
+    config.search.fts_match_construction = FTS_MATCH_CONSTRUCTION_PREFIX
+    service = RAGService(config)
+
+    for query in (
+        "the shift log",
+        "template building",
+        "notes about the vendor",
+        "what about the",
+        "templ-3",
+        'templates" OR "wombat',
+        "wombat",
+    ):
+        primary, fallback = service._fts5_match_expressions(query)
+        assert primary == prefix_probe_expression(RAGService, query), query
+        assert fallback is None, query
 
 
 def with_engine_tokenizer(service: FakeLegService) -> FakeLegService:

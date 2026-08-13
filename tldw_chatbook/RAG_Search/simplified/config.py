@@ -492,6 +492,14 @@ class SearchConfig:
     # An unrecognized value warns once and behaves as "and" (fail-safe to the
     # PRE-ARC behaviour, which is the one every escaping/pushdown pin still
     # describes), matching how `hybrid_alpha`/`rrf_k` degrade.
+    #
+    # TASK-15700 (2026-08-13) added TWO more valid values -- `prefix` and
+    # `and_then_prefix` -- for its re-run of that sweep under the form-tiered
+    # sub-leg merge. They are shippable (vocabulary, cache key and escaping
+    # suite, exactly like the others) but nothing has been decided by adding
+    # them: this default moves only if the re-run's matrix picks one under
+    # the same pre-registered rule, and a null re-run leaves
+    # `and_stopword_trim` exactly where it is.
     fts_match_construction: str = "and_stopword_trim"
 
     # Parent document inclusion settings (RAG pipeline feature)
