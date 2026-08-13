@@ -3,6 +3,13 @@
 from .library_collections_panel import LibraryCollectionsPanel
 from .library_conversations_canvas import LibraryConversationsCanvas
 from .library_export_canvas import LibraryExportCanvas
+from .library_entry_canvases import (
+    LibraryLandingCanvas,
+    LibraryLandingCanvasState,
+    LibraryLandingRecentItem,
+    LibraryStudyHandoffCanvas,
+    LibraryStudyHandoffCanvasState,
+)
 from .library_ingest_canvas import (
     LibraryIngestCanvas,
     LibraryIngestPreflightSummary,
@@ -73,6 +80,9 @@ __all__ = [
     "LibraryCollectionsPanel",
     "LibraryConversationsCanvas",
     "LibraryExportCanvas",
+    "LibraryLandingCanvas",
+    "LibraryLandingCanvasState",
+    "LibraryLandingRecentItem",
     "LibraryIngestCanvas",
     "LibraryIngestPreflightSummary",
     "LibraryIngestQueuePanel",
@@ -84,6 +94,8 @@ __all__ = [
     "LibraryPromptsListCanvas",
     "LibraryRail",
     "LibrarySearchRagPanel",
+    "LibraryStudyHandoffCanvas",
+    "LibraryStudyHandoffCanvasState",
     "LibrarySkillsListCanvas",
     "SKILL_MODEL_HINT_COPY",
     "next_skill_context",

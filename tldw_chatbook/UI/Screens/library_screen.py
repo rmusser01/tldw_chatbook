@@ -279,6 +279,7 @@ from ...Library.library_rail_state import (
     serialize_library_rail_preferences,
 )
 from ...Library.library_shell_state import (
+    LIBRARY_CANVAS_LANDING_COPY,
     LIBRARY_CANVAS_KIND_NOTES_CREATE,
     LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_DELETE_SELECTED_TOOLTIP,
@@ -370,6 +371,9 @@ from ...Widgets.Library import (
     LibraryIngestCanvas,
     LibraryIngestPreflightSummary,
     LibraryIngestQueuePanel,
+    LibraryLandingCanvas,
+    LibraryLandingCanvasState,
+    LibraryLandingRecentItem,
     LibraryMediaCanvas,
     LibraryMediaTrashCanvas,
     LibraryMediaViewer,
@@ -382,6 +386,8 @@ from ...Widgets.Library import (
     PROMPT_DISCARD_TOOLTIP_BUSY,
     PROMPT_DISCARD_TOOLTIP_CLEAN,
     PROMPT_DISCARD_TOOLTIP_DIRTY,
+    LibraryStudyHandoffCanvas,
+    LibraryStudyHandoffCanvasState,
     SKILL_DISCARD_TOOLTIP_CLEAN,
     SKILL_DISCARD_TOOLTIP_DIRTY,
     library_dim_label_text,
@@ -699,6 +705,15 @@ class LibraryEntryReconcileResult(Enum):
     ALREADY_CURRENT = "already-current"
     SUPERSEDED = "superseded"
     FAILED = "failed"
+
+
+@dataclasses.dataclass(frozen=True)
+class LibraryEntryFocusIdentity:
+    """Portable semantic focus and scroll identity for an entry canvas."""
+
+    widget_id: str = ""
+    source_id: str = ""
+    scroll_offset: tuple[int, int] | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1542,6 +1557,20 @@ def _sync_library_canvas(
         elif kind == "export":
             canvas = screen.query_one("#library-export-canvas", LibraryExportCanvas)
             sync_args = (screen._build_library_export_state(),)
+        elif kind == "landing":
+            canvas = screen.query_one(
+                "#library-landing-canvas", LibraryLandingCanvas
+            )
+            sync_args = (screen._library_landing_canvas_state(),)
+        elif kind == "handoff":
+            canvas = screen.query_one(
+                "#library-study-handoff-canvas", LibraryStudyHandoffCanvas
+            )
+            shell = build_library_shell_state(
+                screen._build_library_shell_input(),
+                selected_row_id=screen._library_selected_row_id,
+            )
+            sync_args = (screen._library_study_handoff_canvas_state(shell.canvas_target),)
         else:
             raise ValueError(
                 f"Unsupported Library canvas kind for targeted sync: {kind!r}"
@@ -1571,41 +1600,6 @@ def _sync_library_canvas(
         # the restore runs first (portable focus + scroll), then the site's
         # own follow-up gets the last word on where focus lands.
         follow_up: Callable[[], None] | None = then
-        if kind == "conversations":
-            focused = screen.focused
-            if focused is not None and canvas in focused.ancestors_with_self:
-                focused_id = focused.id
-                conversation_id = getattr(focused, "conversation_id", None)
-
-                def _restore_conversations_then_explicit(
-                    _focused_id: str | None = focused_id,
-                    _conversation_id: str | None = conversation_id,
-                    _explicit: Callable[[], None] | None = then,
-                ) -> None:
-                    target: Widget | None = None
-                    if _conversation_id:
-                        target = next(
-                            (
-                                candidate
-                                for candidate in canvas.query(
-                                    ".library-conversation-row"
-                                )
-                                if getattr(candidate, "conversation_id", None)
-                                == _conversation_id
-                            ),
-                            None,
-                        )
-                    if target is None and _focused_id and not _conversation_id:
-                        try:
-                            target = canvas.query_one(f"#{_focused_id}", Widget)
-                        except (NoMatches, QueryError):
-                            target = None
-                    if target is not None and not target.disabled:
-                        target.focus()
-                    if _explicit is not None:
-                        _explicit()
-
-                follow_up = _restore_conversations_then_explicit
         # Gated on the KIND, not on the screen-level workflow predicate
         # (review m5): the identity is the notes canvas's, and
         # ``_library_notes_workflow_active()`` is also true while a
@@ -3599,6 +3593,9 @@ class LibraryScreen(BaseAppScreen):
             tuple[int, tuple[object, ...]] | None
         ) = None
         self._library_entry_reconcile_retry_generation: int | None = None
+        self._library_entry_focus_capture: (
+            tuple[LibraryEntryFocusIdentity, Widget | None] | None
+        ) = None
         self._seed_local_source_snapshot_from_cache()
 
     def _library_footer_shortcuts_for_current_state(
@@ -6800,6 +6797,126 @@ class LibraryScreen(BaseAppScreen):
             self._selected_skill_name,
         )
 
+    def _library_entry_canvas_owner(self) -> Widget | None:
+        """Return the active direct child of the retained canvas host."""
+        try:
+            host = self.query_one("#library-canvas", Vertical)
+        except (NoMatches, QueryError):
+            return None
+        return next((child for child in host.children if child.display), None)
+
+    def _capture_library_entry_focus(self) -> LibraryEntryFocusIdentity | None:
+        """Capture a focused canvas descendant by stable control or row identity."""
+        focused = self.focused
+        owner = self._library_entry_canvas_owner()
+        if focused is None or owner is None or owner not in focused.ancestors_with_self:
+            self._library_entry_focus_capture = None
+            return None
+
+        source_id = ""
+        for attribute in (
+            "conversation_id",
+            "media_id",
+            "note_id",
+            "prompt_id",
+            "skill_name",
+            "record_id",
+            "source_id",
+        ):
+            value = getattr(focused, attribute, None)
+            if value is not None and str(value):
+                source_id = str(value)
+                break
+        scroll_offset: tuple[int, int] | None = None
+        if hasattr(owner, "scroll_x") and hasattr(owner, "scroll_y"):
+            scroll_offset = (int(owner.scroll_x), int(owner.scroll_y))
+        identity = LibraryEntryFocusIdentity(
+            widget_id=str(focused.id or ""),
+            source_id=source_id,
+            scroll_offset=scroll_offset,
+        )
+        self._library_entry_focus_capture = (identity, focused)
+        # Detach DOM focus before the owner removes its focused child. Textual
+        # otherwise falls back to unrelated screen chrome during teardown,
+        # which is indistinguishable from a user focus move at restore time.
+        # Any real focus move after this point lands on a non-None widget and
+        # is therefore protected by `_restore_library_entry_focus`'s guard.
+        self.set_focus(None)
+        return identity
+
+    def _restore_library_entry_focus(
+        self,
+        identity: LibraryEntryFocusIdentity,
+        *,
+        generation: int,
+        route_key: tuple[object, ...],
+    ) -> None:
+        """Restore one current semantic target without overriding user movement."""
+        if generation != self._library_snapshot_state_generation:
+            return
+        if route_key != self._library_entry_route_key():
+            return
+        capture = self._library_entry_focus_capture
+        outgoing_focus = (
+            capture[1] if capture is not None and capture[0] is identity else None
+        )
+        if self.focused is not outgoing_focus and self.focused is not None:
+            return
+
+        owner = self._library_entry_canvas_owner()
+        if owner is None:
+            return
+        target: Widget | None = None
+        if identity.source_id:
+            for candidate in owner.query(Widget):
+                if any(
+                    str(getattr(candidate, attribute, "") or "")
+                    == identity.source_id
+                    for attribute in (
+                        "conversation_id",
+                        "media_id",
+                        "note_id",
+                        "prompt_id",
+                        "skill_name",
+                        "record_id",
+                        "source_id",
+                    )
+                ):
+                    target = candidate
+                    break
+        elif identity.widget_id:
+            try:
+                target = owner.query_one(f"#{identity.widget_id}", Widget)
+            except (NoMatches, QueryError):
+                target = None
+        if target is not None and not getattr(target, "disabled", False):
+            target.focus()
+        if identity.scroll_offset is not None and hasattr(owner, "scroll_to"):
+            owner.scroll_to(
+                x=identity.scroll_offset[0],
+                y=identity.scroll_offset[1],
+                animate=False,
+                force=True,
+            )
+        if self._library_entry_focus_capture is capture:
+            self._library_entry_focus_capture = None
+
+    def _finish_library_entry_canvas_sync(
+        self,
+        identity: LibraryEntryFocusIdentity | None,
+        *,
+        generation: int,
+        route_key: tuple[object, ...],
+    ) -> None:
+        """Restore focus/scroll and complete one generation in one callback."""
+        if identity is not None:
+            self._restore_library_entry_focus(
+                identity,
+                generation=generation,
+                route_key=route_key,
+            )
+        self._complete_library_entry_reconcile(generation, route_key)
+
     def _schedule_library_entry_reconcile(
         self, generation: int, route_key: tuple[object, ...]
     ) -> None:
@@ -6956,6 +7073,12 @@ class LibraryScreen(BaseAppScreen):
         elif shell.canvas_kind == "skills" and self._library_skills_view == "list":
             sync_kind = "skills"
             expected_selector = "#library-skills-canvas"
+        elif shell.canvas_kind == "handoff":
+            sync_kind = "handoff"
+            expected_selector = "#library-study-handoff-canvas"
+        elif shell.canvas_kind == "empty":
+            sync_kind = "landing"
+            expected_selector = "#library-landing-canvas"
 
         if local_list_surface and self._library_lookup_error is not None:
             expected_selector = "#library-canvas-error"
@@ -6970,13 +7093,17 @@ class LibraryScreen(BaseAppScreen):
             if sync_kind is None:
                 self._complete_library_entry_reconcile(generation, route_key)
                 return LibraryEntryReconcileResult.APPLIED
-            completed = partial(
-                self._complete_library_entry_reconcile, generation, route_key
+            identity = self._capture_library_entry_focus()
+            finish = partial(
+                self._finish_library_entry_canvas_sync,
+                identity,
+                generation=generation,
+                route_key=route_key,
             )
             if _sync_library_canvas(
                 self,
                 sync_kind,
-                then=completed,
+                then=finish,
                 allow_screen_fallback=False,
             ):
                 self._library_entry_reconcile_retry_generation = None
@@ -7018,13 +7145,17 @@ class LibraryScreen(BaseAppScreen):
                     generation, route_key
                 )
             if sync_kind is not None:
-                completed = partial(
-                    self._complete_library_entry_reconcile, generation, route_key
+                identity = self._capture_library_entry_focus()
+                finish = partial(
+                    self._finish_library_entry_canvas_sync,
+                    identity,
+                    generation=generation,
+                    route_key=route_key,
                 )
                 if not _sync_library_canvas(
                     self,
                     sync_kind,
-                    then=completed,
+                    then=finish,
                     allow_screen_fallback=False,
                 ):
                     return self._retry_or_fail_library_entry_reconcile(
@@ -8057,8 +8188,45 @@ class LibraryScreen(BaseAppScreen):
             return self._hub_source_count_value(source_type)
 
         return (
-            f"Notes {value('notes')} · Media {value('media')} · "
-            f"Conversations {value('conversations')}"
+            f"Notes ({value('notes')}) · Media ({value('media')}) · "
+            f"Conversations ({value('conversations')})"
+        )
+
+    def _library_landing_canvas_state(self) -> LibraryLandingCanvasState:
+        """Build the landing owner's display-only snapshot."""
+        return LibraryLandingCanvasState(
+            purpose=LIBRARY_CANVAS_LANDING_COPY,
+            counts_line=self._hub_counts_line(),
+            recent_items=tuple(
+                LibraryLandingRecentItem(
+                    source_type=source_type,
+                    record_id=record_id,
+                    title=title,
+                    source_label=source_label,
+                )
+                for source_type, record_id, title, source_label in self._hub_recent_items()
+            ),
+        )
+
+    def _library_study_handoff_canvas_state(
+        self, kind: str
+    ) -> LibraryStudyHandoffCanvasState:
+        """Build one handoff owner's display-only snapshot."""
+        copy = self._study_handoff_copy(kind)
+        return LibraryStudyHandoffCanvasState(
+            header=copy["header"],
+            purpose=copy["purpose"],
+            context=copy["context"],
+            owner=copy["owner"],
+            recovery=copy["recovery"],
+            blocked=not self._has_local_sources(),
+            button_label=copy["button_label"],
+            button_id={
+                "study": "library-open-study",
+                "flashcards": "library-open-flashcards",
+                "quizzes": "library-open-quizzes",
+            }.get(kind, "library-open-study"),
+            action_label=copy["action_label"],
         )
 
     @classmethod
@@ -8443,76 +8611,6 @@ class LibraryScreen(BaseAppScreen):
                 id="library-workspaces-handoff",
                 classes="library-details-row",
             ),
-        )
-
-    def _study_handoff_detail_widget(self, kind: str) -> Vertical:
-        """Build the handoff canvas body: purpose, carried-forward sources,
-        ownership, snapshot readiness, and the Open action -- five elements,
-        down from the seven-line original (UX wave D1: no duplicated mode/
-        purpose lines, no "Primary action:" line, no WIP roadmap callout).
-        """
-        copy = self._study_handoff_copy(kind)
-        # D2: the ds-recovery-callout warning treatment is for the blocked
-        # (no local sources) state only; ready renders as a plain Static.
-        recovery_kwargs: dict[str, str] = (
-            {}
-            if self._has_local_sources()
-            else {"classes": "ds-recovery-callout is-blocked"}
-        )
-        action_button_id = {
-            "study": "library-open-study",
-            "flashcards": "library-open-flashcards",
-            "quizzes": "library-open-quizzes",
-        }.get(kind, "library-open-study")
-        handoff_toolbar = Horizontal(
-            Button(
-                copy["button_label"],
-                id=action_button_id,
-                # D3: the Open action is the canvas's primary control.
-                classes="library-canvas-action console-action-primary",
-                compact=True,
-                tooltip=(
-                    f"Open {copy['action_label']} with the current Library "
-                    "source snapshot, or globally when none is available."
-                ),
-            ),
-            id="library-study-handoff-actions",
-            classes="ds-toolbar",
-        )
-        handoff_toolbar.styles.height = "auto"
-        children: list[Static | Horizontal] = [
-            Static(
-                copy["purpose"],
-                id="library-study-handoff-purpose",
-            ),
-        ]
-        if copy["context"]:
-            # D1: omitted entirely (not "No ... will be carried forward.")
-            # when there is no Library source snapshot at all.
-            children.append(
-                Static(
-                    copy["context"],
-                    id="library-study-handoff-context",
-                )
-            )
-        children.append(
-            Static(
-                copy["owner"],
-                id="library-study-handoff-owner",
-            )
-        )
-        children.append(
-            Static(
-                copy["recovery"],
-                id="library-study-handoff-recovery",
-                **recovery_kwargs,
-            )
-        )
-        children.append(handoff_toolbar)
-        return Vertical(
-            *children,
-            id="library-study-handoff-detail",
-            classes="library-rag-region",
         )
 
     def _workspace_handoff_action_state(
@@ -9118,95 +9216,15 @@ class LibraryScreen(BaseAppScreen):
                     # restates the mode name a second, differently-worded way
                     # (formerly "Flashcards mode" + a duplicated description
                     # + next-action line).
-                    handoff_copy = LIBRARY_STUDY_HANDOFF_MODES.get(
-                        shell.canvas_target, LIBRARY_STUDY_HANDOFF_MODES["study"]
+                    yield LibraryStudyHandoffCanvas(
+                        self._library_study_handoff_canvas_state(shell.canvas_target),
+                        id="library-study-handoff-canvas",
                     )
-                    yield Static(
-                        handoff_copy["header"],
-                        id="library-active-mode-title",
-                        classes="destination-section",
-                    )
-                    yield self._study_handoff_detail_widget(shell.canvas_target)
                 else:
-                    yield Static(
-                        shell.canvas_empty_copy,
-                        id="library-canvas-landing",
-                        classes="destination-purpose",
-                        markup=False,
+                    yield LibraryLandingCanvas(
+                        self._library_landing_canvas_state(),
+                        id="library-landing-canvas",
                     )
-                    # F-010: the landing canvas is the wired hub, not a
-                    # one-line void -- per-source counts from the existing
-                    # helpers, quiet next-action rows that dispatch exactly
-                    # like their rail-row counterparts (same
-                    # `@on(.library-hub-action)` path, same dirty-edit
-                    # guards), and (task-2238) the recents as one clickable
-                    # row per source, jumping straight into the item via
-                    # the same route the Search/RAG "Open" action uses.
-                    yield Static(
-                        self._hub_counts_line(),
-                        id="library-hub-counts",
-                        classes="library-hub-meta",
-                        markup=False,
-                    )
-                    with Horizontal(id="library-hub-actions", classes="ds-toolbar"):
-                        for label, tooltip, row_id, target_id, button_id in (
-                            # task-2235 (R2): the canonical ingest CTA label
-                            # and tooltip match the rail-top primary button.
-                            # task-2857: relabeled "Import…" for consistency
-                            # with the canvas header/Start button/toast.
-                            (
-                                "Import…",
-                                "Add files, links, and transcripts to your Library.",
-                                LIBRARY_ROW_INGEST_MEDIA,
-                                "ingest-media",
-                                "library-hub-action-import",
-                            ),
-                            (
-                                "Search",
-                                "Search everything in the Library.",
-                                LIBRARY_ROW_BROWSE_SEARCH,
-                                "search",
-                                "library-hub-action-search",
-                            ),
-                            (
-                                "New note",
-                                "Create a new note.",
-                                LIBRARY_ROW_CREATE_NOTE,
-                                LIBRARY_CANVAS_KIND_NOTES_CREATE,
-                                "library-hub-action-new-note",
-                            ),
-                        ):
-                            action = Button(
-                                label,
-                                id=button_id,
-                                classes="library-hub-action console-action-subdued",
-                                compact=True,
-                                tooltip=tooltip,
-                            )
-                            # Same attributes the rail rows carry -- the
-                            # shared press handler reads them to dispatch.
-                            action.row_id = row_id
-                            action.target_kind = "canvas"
-                            action.target_id = target_id
-                            yield action
-                    # task-2238 (R2): the triad stays on top; the recents
-                    # follow as clickable rows, not one dim text line.
-                    for (
-                        source_type,
-                        record_id,
-                        title,
-                        source_label,
-                    ) in self._hub_recent_items():
-                        recent = Button(
-                            f"{source_label} · {escape_markup(title)}",
-                            id=f"library-hub-recent-{source_type}",
-                            classes="library-hub-recent console-action-subdued",
-                            compact=True,
-                            tooltip=f"Open {source_label.lower()}: {title}",
-                        )
-                        recent.source_type = source_type
-                        recent.record_id = record_id
-                        yield recent
 
     def _build_library_shell_input(self) -> LibraryShellInput:
         """Build the pure shell input from live counts and runtime state.

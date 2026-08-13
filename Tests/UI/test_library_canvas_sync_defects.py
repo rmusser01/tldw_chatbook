@@ -19,12 +19,16 @@ evidence for dev's converted sites, not only for the ones this branch added.
 
 from __future__ import annotations
 
+from functools import partial
+
 import pytest
 from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_selection_updates import _spy_screen_recomposes
 from Tests.UI.test_library_shell import (
+    _FakePromptScopeService,
+    _FakeSkillsScopeService,
     LIBRARY_TEST_SIZE,
     LibraryHarness,
     _active_library_screen,
@@ -32,6 +36,13 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_CONVERSATIONS,
+    LIBRARY_ROW_BROWSE_MEDIA,
+    LIBRARY_ROW_BROWSE_PROMPTS,
+    LIBRARY_ROW_BROWSE_SKILLS,
+)
+from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 
 
 def _notes(count: int = 6):
@@ -363,3 +374,202 @@ async def test_notes_row_press_to_editor_keeps_focus_inside_the_canvas(monkeypat
         assert canvas in focused.ancestors_with_self, (
             f"focus escaped the notes canvas to {focused.id!r} on row -> editor"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "row_id", "canvas_selector", "focus_selector"),
+    [
+        (
+            "conversations",
+            LIBRARY_ROW_BROWSE_CONVERSATIONS,
+            "#library-conversations-canvas",
+            "#library-conversations-filter",
+        ),
+        (
+            "media",
+            LIBRARY_ROW_BROWSE_MEDIA,
+            "#library-media-canvas",
+            "#library-media-type-filter",
+        ),
+        (
+            "prompts",
+            LIBRARY_ROW_BROWSE_PROMPTS,
+            "#library-prompts-canvas",
+            "#library-prompts-retry",
+        ),
+        (
+            "skills",
+            LIBRARY_ROW_BROWSE_SKILLS,
+            "#library-skills-canvas",
+            "#library-skills-filter",
+        ),
+    ],
+)
+async def test_entry_canvas_sync_restores_portable_focus_and_scroll(
+    kind,
+    row_id,
+    canvas_selector,
+    focus_selector,
+):
+    """Removing the shared finish callback loses focus or rendered completion."""
+    app = _build_test_app()
+    conversations = [
+        {
+            "title": f"Conversation {index}",
+            "conversation_id": f"chat-{index}",
+            "message_count": index,
+            "updated_at": f"2026-06-{(index % 28) + 1:02d}T10:00:00Z",
+        }
+        for index in range(24)
+    ]
+    media = _media(24)
+    _seed_conversations(app, conversations, media=media)
+    app.prompt_scope_service = _FakePromptScopeService(count=1)
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[{"name": f"skill-{index}"} for index in range(24)]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_COMPACT_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(row_id)
+        await _wait_for_selector(screen, pilot, focus_selector)
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+
+        canvas = screen.query_one(canvas_selector)
+        focused_before = screen.query_one(focus_selector)
+        focused_before.focus()
+        canvas.scroll_to(y=4, animate=False, force=True, immediate=True)
+        await pilot.pause()
+        scroll_before = (int(canvas.scroll_x), int(canvas.scroll_y))
+
+        if kind == "prompts":
+            screen._library_prompts_browse_error = "Changed prompt entry data"
+            screen._library_snapshot_state_generation += 1
+            screen._library_entry_reconcile_dirty = True
+            generation = screen._library_snapshot_state_generation
+            route_key = screen._library_entry_route_key()
+            identity = screen._capture_library_entry_focus()
+            finish = partial(
+                screen._finish_library_entry_canvas_sync,
+                identity,
+                generation=generation,
+                route_key=route_key,
+            )
+            assert _sync_library_canvas(
+                screen,
+                kind,
+                then=finish,
+                allow_screen_fallback=False,
+            )
+        else:
+            records = dict(screen._local_source_records)
+            counts = dict(screen._local_source_counts)
+            if kind == "conversations":
+                records["conversations"] = (
+                    *records["conversations"],
+                    {
+                        "title": "Changed conversation",
+                        "conversation_id": "chat-new",
+                        "message_count": 1,
+                        "updated_at": "2026-08-13T10:00:00Z",
+                    },
+                )
+                counts["conversations"] += 1
+            elif kind == "media":
+                records["media"] = (
+                    *records["media"],
+                    {
+                        "id": 99,
+                        "media_id": "99",
+                        "title": "Changed media",
+                        "type": "document",
+                        "content": "Changed",
+                        "ingestion_date": "2026-08-13T10:00:00Z",
+                    },
+                )
+                counts["media"] += 1
+            else:
+                skill_count, skill_context = records["skills"]
+                changed_context = dict(skill_context)
+                changed_context["available_skills"] = [
+                    *skill_context["available_skills"],
+                    {"name": "skill-new"},
+                ]
+                records["skills"] = (skill_count + 1, changed_context)
+            screen._apply_local_source_snapshot(
+                records,
+                counts,
+                dict(screen._local_source_total_known),
+                screen._library_lookup_error,
+                screen._library_lookup_recovery_state,
+                dict(screen._library_study_counts),
+            )
+
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.query_one(canvas_selector) is canvas
+        assert screen.focused is not None
+        assert screen.focused.id == focus_selector.lstrip("#")
+        if scroll_before != (0, 0):
+            assert (int(canvas.scroll_x), int(canvas.scroll_y)) == scroll_before
+        assert screen._library_snapshot_rendered_generation == (
+            screen._library_snapshot_state_generation
+        )
+
+
+@pytest.mark.asyncio
+async def test_entry_canvas_sync_does_not_focus_an_unrelated_replacement_row():
+    """Falling back from a missing semantic row to its reused index is wrong."""
+    app = _build_test_app()
+    conversations = [
+        {
+            "title": "Outgoing",
+            "conversation_id": "chat-outgoing",
+            "message_count": 1,
+            "updated_at": "2026-08-13T10:00:00Z",
+        },
+        {
+            "title": "Survivor",
+            "conversation_id": "chat-survivor",
+            "message_count": 1,
+            "updated_at": "2026-08-12T10:00:00Z",
+        },
+    ]
+    _seed_conversations(app, conversations)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
+        row = await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        row.focus()
+        await pilot.pause()
+
+        records = dict(screen._local_source_records)
+        records["conversations"] = (
+            {
+                "title": "Replacement at row zero",
+                "conversation_id": "chat-replacement",
+                "message_count": 1,
+                "updated_at": "2026-08-14T10:00:00Z",
+            },
+            conversations[1],
+        )
+        screen._apply_local_source_snapshot(
+            records,
+            dict(screen._local_source_counts),
+            dict(screen._local_source_total_known),
+            screen._library_lookup_error,
+            screen._library_lookup_recovery_state,
+            dict(screen._library_study_counts),
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert getattr(screen.focused, "conversation_id", None) != "chat-replacement"

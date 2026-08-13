@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import statistics
 import time
 
@@ -14,8 +15,15 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_SKILLS,
+    LIBRARY_ROW_CREATE_STUDY,
 )
-from tldw_chatbook.Widgets.Library import LibraryConversationsCanvas
+from tldw_chatbook.Widgets.Library import (
+    LibraryConversationsCanvas,
+    LibraryLandingCanvas,
+    LibraryLandingCanvasState,
+    LibraryLandingRecentItem,
+    LibraryStudyHandoffCanvas,
+)
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
@@ -26,6 +34,251 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+
+
+def _compositor_text(screen: LibraryScreen) -> str:
+    """Return only text actually painted in the current terminal frame."""
+    return "\n".join(
+        "".join(segment.text for segment in strip)
+        for strip in screen._compositor.render_strips()
+    )
+
+
+def _assert_widget_text_is_painted(
+    screen: LibraryScreen, selector: str, expected: str
+) -> None:
+    """Assert a widget and its literal label are inside the rendered viewport."""
+    widget = screen.query_one(selector)
+    viewport = screen.region
+    assert viewport.contains_region(widget.region)
+    lines = [
+        "".join(segment.text for segment in strip)
+        for strip in screen._compositor.render_strips()
+    ]
+    painted = "\n".join(
+        line[widget.region.x : widget.region.right]
+        for line in lines[widget.region.y : widget.region.bottom]
+    )
+    assert expected in painted, (
+        f"{selector} region={widget.region!r} display={widget.display!r} "
+        f"painted={painted!r} frame={_compositor_text(screen)!r}"
+    )
+
+
+def _apply_changed_snapshot(
+    screen: LibraryScreen,
+    *,
+    conversations: tuple[dict[str, object], ...] | None = None,
+    notes: tuple[dict[str, object], ...] | None = None,
+    study_decks: int | None = None,
+) -> bool:
+    """Apply one literal changed snapshot through the production boundary."""
+    records = dict(screen._local_source_records)
+    counts = dict(screen._local_source_counts)
+    if conversations is not None:
+        records["conversations"] = conversations
+        counts["conversations"] = len(conversations)
+    if notes is not None:
+        records["notes"] = notes
+        counts["notes"] = len(notes)
+    study_counts = dict(screen._library_study_counts)
+    if study_decks is not None:
+        study_counts["study_decks"] = study_decks
+    return screen._apply_local_source_snapshot(
+        records,
+        counts,
+        dict(screen._local_source_total_known),
+        screen._library_lookup_error,
+        screen._library_lookup_recovery_state,
+        study_counts,
+    )
+
+
+@pytest.mark.asyncio
+async def test_landing_snapshot_sync_retains_actions_focus_and_updates_recents():
+    """Recomposing the inline landing branch would replace all three actions."""
+    app = _build_test_app()
+    conversations = _two_conversations()
+    _seed_conversations(app, conversations[:1])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        landing = screen.query_one("#library-landing-canvas", LibraryLandingCanvas)
+        import_button = screen.query_one("#library-hub-action-import")
+        search_button = screen.query_one("#library-hub-action-search")
+        new_note_button = screen.query_one("#library-hub-action-new-note")
+        search_button.focus()
+        await pilot.pause()
+
+        changed = _apply_changed_snapshot(
+            screen,
+            conversations=(conversations[1], conversations[0]),
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert changed is True
+        assert screen.query_one("#library-landing-canvas") is landing
+        assert screen.query_one("#library-hub-action-import") is import_button
+        assert screen.query_one("#library-hub-action-search") is search_button
+        assert screen.query_one("#library-hub-action-new-note") is new_note_button
+        assert screen.focused is search_button
+        assert "Conversations (2)" in str(
+            screen.query_one("#library-hub-counts").renderable
+        )
+        recent = screen.query_one("#library-hub-recent-conversations")
+        assert getattr(recent, "record_id", "") == "chat-2"
+
+
+@pytest.mark.asyncio
+async def test_landing_deferred_recents_converge_on_latest_state(monkeypatch):
+    """Capturing recents before the deferred await would mount stale rows."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        landing = screen.query_one("#library-landing-canvas", LibraryLandingCanvas)
+        first = LibraryLandingCanvasState(
+            purpose=landing.state.purpose,
+            counts_line="Conversations (1)",
+            recent_items=(
+                LibraryLandingRecentItem(
+                    "conversations", "stale", "Stale row", "Conversation"
+                ),
+            ),
+        )
+        latest = LibraryLandingCanvasState(
+            purpose=landing.state.purpose,
+            counts_line="Conversations (1)",
+            recent_items=(
+                LibraryLandingRecentItem(
+                    "conversations", "latest", "Latest row", "Conversation"
+                ),
+            ),
+        )
+
+        recents_owner = landing.query_one("#library-hub-recents")
+        original_remove = recents_owner.remove_children
+        removal_started = asyncio.Event()
+        release_removal = asyncio.Event()
+
+        async def delayed_remove():
+            removal_started.set()
+            await release_removal.wait()
+            await original_remove()
+
+        monkeypatch.setattr(recents_owner, "remove_children", delayed_remove)
+        landing.state = first
+        replacement = asyncio.create_task(landing._replace_recent_rows())
+        await removal_started.wait()
+        landing.state = latest
+        release_removal.set()
+        await replacement
+
+        recents = list(landing.query(".library-hub-recent"))
+        assert [getattr(recent, "record_id", "") for recent in recents] == ["latest"]
+
+
+@pytest.mark.asyncio
+async def test_study_handoff_snapshot_sync_retains_open_action_and_paints_readiness():
+    """A source/readiness change must patch the mounted handoff owner in place."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_CREATE_STUDY)
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-canvas")
+        handoff = screen.query_one(
+            "#library-study-handoff-canvas", LibraryStudyHandoffCanvas
+        )
+        open_button = screen.query_one("#library-open-study")
+        assert "Import sources or create notes first" in _compositor_text(screen)
+
+        changed = _apply_changed_snapshot(
+            screen,
+            notes=(
+                {
+                    "id": "note-1",
+                    "title": "Retained source",
+                    "content": "Body",
+                    "last_modified": "2026-08-13T10:00:00Z",
+                },
+            ),
+            study_decks=2,
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        painted = _compositor_text(screen)
+        assert changed is True
+        assert screen.query_one("#library-study-handoff-canvas") is handoff
+        assert screen.query_one("#library-open-study") is open_button
+        assert "Source snapshot is ready." in painted
+        assert "Study decks (2)" in painted
+        assert "Retained source" in painted
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(60, 20), (170, 48)])
+@pytest.mark.parametrize("surface", ["landing", "handoff"])
+async def test_retained_entry_actions_paint_before_and_after_sync(size, surface):
+    """Existence is insufficient when compact geometry clips an entry action."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        if size[0] == 60 and surface == "landing":
+            # Compact Library is a one-pane presentation. Expose its mounted
+            # content stage so the render oracle measures the owner rather than
+            # correctly-hidden children behind the entry rail.
+            screen._library_notes_stage = "notes"
+            screen._set_library_rail_collapsed(True)
+            await pilot.pause()
+        if surface == "handoff":
+            await screen._select_library_rail_row(LIBRARY_ROW_CREATE_STUDY)
+            await _wait_for_selector(screen, pilot, "#library-open-study")
+            if size[0] == 60:
+                screen._set_library_rail_collapsed(True)
+                await pilot.pause()
+            checks = (("#library-open-study", "Continue in Study"),)
+        else:
+            checks = (
+                ("#library-hub-action-import", "Import…"),
+                ("#library-hub-action-search", "Search"),
+                ("#library-hub-action-new-note", "New note"),
+            )
+        for selector, expected in checks:
+            _assert_widget_text_is_painted(screen, selector, expected)
+
+        _apply_changed_snapshot(
+            screen,
+            notes=(
+                {
+                    "id": "note-geometry",
+                    "title": "Geometry source",
+                    "content": "Body",
+                    "last_modified": "2026-08-13T10:00:00Z",
+                },
+            ),
+            study_decks=2,
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        for selector, expected in checks:
+            _assert_widget_text_is_painted(screen, selector, expected)
 
 
 @pytest.mark.asyncio
