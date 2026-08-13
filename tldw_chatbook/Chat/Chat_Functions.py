@@ -87,6 +87,10 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
 from tldw_chatbook.config import load_settings  # noqa: E402
 from .chat_persistence_service import ChatPersistenceService  # noqa: E402
+from .provider_continuation import (  # noqa: E402
+    dump_provider_continuation_json,
+    read_provider_continuation_json,
+)
 #
 ####################################################################################################
 #
@@ -2396,7 +2400,7 @@ def generate_chat_history_content(
         else:
             conversation_name = f"chat-{timestamp}"
 
-    chat_data = {
+    chat_data: Dict[str, Any] = {
         "conversation_id": conversation_id,  # Can be None if new chat not yet saved to DB
         "conversation_name": conversation_name,
         "timestamp": timestamp,
@@ -2406,6 +2410,7 @@ def generate_chat_history_content(
         # Assuming 'history' is like chatbot: List[Tuple[Optional[str], Optional[str]]]
     }
 
+    contains_private = False
     for item in history:  # Iterating through the provided history structure
         if isinstance(item, tuple) and len(item) == 2:  # Expected (user_msg, bot_msg)
             user_msg, bot_msg = item
@@ -2418,11 +2423,41 @@ def generate_chat_history_content(
         elif (
             isinstance(item, dict) and "role" in item and "content" in item
         ):  # Already in desired format
-            chat_data["history"].append(item)
+            projected = {"role": item["role"], "content": item["content"]}
+            for source_key, export_key, expected_type in (
+                ("id", "id", str),
+                ("parent_message_id", "parent_id", str),
+                ("timestamp", "timestamp", str),
+                ("variant_number", "variant_number", int),
+                ("is_selected_variant", "is_selected_variant", bool),
+                ("total_variants", "total_variants", int),
+            ):
+                value = item.get(source_key)
+                if type(value) is expected_type:
+                    projected[export_key] = value
+            if "variant_of" in item and (
+                item["variant_of"] is None or isinstance(item["variant_of"], str)
+            ):
+                projected["variant_of"] = item["variant_of"]
+
+            private_value = item.get("provider_continuation_json")
+            if private_value is None and isinstance(item.get("_private"), dict):
+                private_value = item["_private"].get("provider_continuation")
+            private = read_provider_continuation_json(private_value)
+            if item["role"] == "assistant" and private.checkpoint is not None:
+                canonical = dump_provider_continuation_json(private.checkpoint)
+                projected["_private"] = {
+                    "provider_continuation": json.loads(canonical or "null")
+                }
+                contains_private = True
+            chat_data["history"].append(projected)
         else:
-            logging.warning(
-                f"Unexpected item format in history for JSON export: {item}"
-            )
+            logging.warning("Unexpected item format in history for JSON export.")
+
+    if contains_private:
+        chat_data["private_data_warning"] = (
+            "This JSON contains private provider continuation data."
+        )
 
     return json.dumps(
         chat_data, indent=2

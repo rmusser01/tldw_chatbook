@@ -16,7 +16,7 @@ import threading
 import zipfile
 import hashlib
 import html
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +33,10 @@ from .chatbook_models import (
 )
 from ..Chat.citation_service_factory import (
     build_local_citation_conversation_service,
+)
+from ..Chat.provider_continuation import (
+    dump_provider_continuation_json,
+    parse_provider_continuation_json,
 )
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
@@ -270,7 +274,7 @@ class ChatbookCreator:
             # Initialize manifest
             logger.info("ChatbookCreator.create_chatbook: Initializing manifest")
             manifest = ChatbookManifest(
-                version=ChatbookVersion.V1,
+                version=ChatbookVersion.V2,
                 name=name,
                 description=description,
                 author=author,
@@ -515,8 +519,9 @@ class ChatbookCreator:
                     )
                     continue
 
-                # Get DB messages and merge any sidecar RAG/citation context.
-                db_messages = db.get_messages_for_conversation(conv_id)
+                # V2 is a graph package, so include inactive variants and
+                # tombstones rather than flattening the currently visible path.
+                db_messages = self._conversation_graph_messages(db, str(conv_id))
                 context_messages = conversation_service.get_messages_with_context(
                     conv_id
                 )
@@ -535,8 +540,8 @@ class ChatbookCreator:
                 if hasattr(last_modified, "isoformat"):
                     last_modified = last_modified.isoformat()
 
-                exported_messages = []
-                citation_messages = []
+                exported_messages: list[dict[str, Any]] = []
+                citation_messages: list[dict[str, Any]] = []
                 # Positions >= 1 are batch-fetched per CHUNK of messages —
                 # batching keeps the query count low while bounding peak
                 # memory (the rows carry BLOBs; an attachment-heavy
@@ -578,14 +583,32 @@ class ChatbookCreator:
                     )
                     citation_metadata.update(citation_report_metadata)
 
+                active_leaf = db.get_conversation_active_leaf(str(conv_id))
+                if not isinstance(active_leaf, (str, int)):
+                    active_leaf = None
                 conv_data = {
                     "id": conv["id"],
                     "name": title,
                     "created_at": created_at,
                     "updated_at": last_modified,
                     "character_id": conv.get("character_id"),
+                    "active_leaf_message_id": str(active_leaf)
+                    if active_leaf is not None
+                    else None,
                     "messages": exported_messages,
                 }
+                conv_data["selected_path_message_ids"] = self._selected_path_ids(
+                    exported_messages,
+                    conv_data["active_leaf_message_id"],
+                )
+                contains_private = any(
+                    "_private" in message for message in exported_messages
+                )
+                if contains_private:
+                    conv_data["private_data_warning"] = (
+                        "This conversation contains private provider continuation data."
+                    )
+                    citation_metadata["contains_private_provider_continuation"] = True
 
                 # Write conversation file
                 conv_file = self._conversation_export_path(
@@ -627,9 +650,50 @@ class ChatbookCreator:
     # queries while bounding how many attachment BLOBs sit in memory at once.
     _ATTACHMENT_FETCH_CHUNK = 50
 
+    @staticmethod
+    def _conversation_graph_messages(
+        db: CharactersRAGDB, conversation_id: str
+    ) -> list[dict[str, Any]]:
+        """Return every row needed to reconstruct one conversation graph."""
+        cursor = db.execute_query(
+            """
+            SELECT id, conversation_id, parent_message_id, sender, content,
+                   image_data, image_mime_type, timestamp, role, deleted,
+                   variant_of, variant_number, is_selected_variant,
+                   total_variants, provider_continuation_json
+              FROM messages
+             WHERE conversation_id = ?
+             ORDER BY timestamp ASC, rowid ASC
+            """,
+            (conversation_id,),
+        )
+        rows = cursor.fetchall()
+        if not isinstance(rows, list):
+            # Keep lightweight DB fakes from older V1 tests usable; real
+            # sqlite cursors always return a list here.
+            return list(db.get_messages_for_conversation(conversation_id))
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def _selected_path_ids(
+        messages: Sequence[Mapping[str, Any]], active_leaf_message_id: object
+    ) -> list[str]:
+        """Return the root-to-leaf owner path without flattening siblings."""
+        by_id = {str(message["id"]): message for message in messages}
+        current = str(active_leaf_message_id) if active_leaf_message_id else None
+        path: list[str] = []
+        seen: set[str] = set()
+        while current in by_id and current not in seen:
+            seen.add(current)
+            path.append(current)
+            parent = by_id[current].get("parent_id")
+            current = str(parent) if parent is not None else None
+        path.reverse()
+        return path
+
     def _export_message_chunk(
         self,
-        chunk: list[Mapping[str, Any]],
+        chunk: Sequence[Mapping[str, Any]],
         extra_attachments: Mapping[str, list],
         conv_dir: Path,
         exported_messages: list,
@@ -645,7 +709,7 @@ class ChatbookCreator:
             exported_messages: Accumulator for every exported message dict.
             citation_messages: Accumulator for citation-bearing messages.
         """
-        for msg in chunk:
+        for order, msg in enumerate(chunk, start=len(exported_messages)):
             timestamp = (
                 msg.get("timestamp")
                 or msg.get("created_at")
@@ -655,13 +719,31 @@ class ChatbookCreator:
                 timestamp = timestamp.isoformat()
             message_id = msg.get("id")
             message_data = {
-                "id": message_id,
+                "id": str(message_id),
+                "parent_id": str(msg["parent_message_id"])
+                if msg.get("parent_message_id") is not None
+                else None,
                 "role": msg.get("role") or msg.get("sender"),
                 "content": msg["message"]
                 if "message" in msg
                 else msg.get("content", ""),
                 "timestamp": timestamp,
+                "order": order,
+                "deleted": bool(msg.get("deleted")),
+                "variant_of": str(msg["variant_of"])
+                if msg.get("variant_of") is not None
+                else None,
+                "variant_number": int(msg.get("variant_number") or 1),
+                "is_selected_variant": bool(msg.get("is_selected_variant")),
+                "total_variants": int(msg.get("total_variants") or 1),
             }
+            private_json = msg.get("provider_continuation_json")
+            if private_json is not None:
+                checkpoint = parse_provider_continuation_json(private_json)
+                canonical = dump_provider_continuation_json(checkpoint)
+                message_data["_private"] = {
+                    "provider_continuation": json.loads(canonical or "null")
+                }
             attachment_entries = self._export_message_attachments(
                 msg,
                 extra_attachments.get(str(message_id), []),
@@ -766,8 +848,8 @@ class ChatbookCreator:
 
     @staticmethod
     def _merge_message_context(
-        db_messages: list[Mapping[str, Any]],
-        context_messages: list[Mapping[str, Any]],
+        db_messages: Sequence[Mapping[str, Any]],
+        context_messages: Sequence[Mapping[str, Any]],
     ) -> list[dict[str, Any]]:
         context_by_id = {
             str(message.get("id")): message for message in context_messages
@@ -1744,6 +1826,16 @@ class ChatbookCreator:
                 f.write("\n## Tags\n\n")
                 f.write(", ".join(manifest.tags))
                 f.write("\n")
+
+            if any(
+                item.metadata.get("contains_private_provider_continuation")
+                for item in manifest.content_items
+            ):
+                f.write("\n## Private provider data\n\n")
+                f.write(
+                    "This chatbook contains private provider continuation data. "
+                    "Share it only with trusted recipients.\n"
+                )
 
             f.write("\n## Structure\n\n")
             f.write("```\n")

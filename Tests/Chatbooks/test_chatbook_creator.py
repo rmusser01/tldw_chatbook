@@ -240,7 +240,7 @@ class TestChatbookCreator:
             manifest_data = json.loads(zf.read("manifest.json"))
             assert manifest_data["name"] == "Test Chatbook"
             assert manifest_data["description"] == "A test chatbook"
-            assert manifest_data["version"] == "1.0"
+            assert manifest_data["version"] == "2.0"
 
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
