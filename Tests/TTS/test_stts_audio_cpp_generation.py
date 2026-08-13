@@ -968,7 +968,7 @@ async def test_studio_profile_preview_forwards_only_identity_and_private_resolve
                 ),
             )
         ),
-        get_reference=AsyncMock(return_value=profile_reference)
+        get_reference=AsyncMock(return_value=profile_reference),
     )
     app = SimpleNamespace(
         _ensure_tts_profile_service=AsyncMock(return_value=profile_service),
