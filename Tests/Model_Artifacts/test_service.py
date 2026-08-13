@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import builtins
+import concurrent.futures
 import dataclasses
+import errno
 import hashlib
 import json
 import multiprocessing
@@ -20,7 +22,7 @@ from typing import Any
 import pytest
 
 from Tests.Model_Artifacts.lease_processes import hold_set
-from Tests.Model_Artifacts.gguf_test_helpers import make_gguf
+from Tests.Model_Artifacts.gguf_test_helpers import TensorFixture, make_gguf
 import tldw_chatbook.Model_Artifacts as artifacts_module
 from tldw_chatbook.Model_Artifacts import gguf_admission
 from tldw_chatbook.Model_Artifacts import service as service_module
@@ -1681,6 +1683,595 @@ def test_import_local_gguf_promotes_path_private_full_digest_artifact(
     assert payload_writes[0].name == "model.gguf"
     assert payload_writes[0].parent.parent == service.staging_path
     assert payload_writes[0] != source.resolve()
+
+
+def test_import_cancel_during_copy_removes_only_its_stage(tmp_path: Path) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    prior_source = tmp_path / "prior.gguf"
+    prior_payload = make_gguf(architecture="llama", name="Prior", file_type=7)
+    prior_source.write_bytes(prior_payload)
+    prior_result = service.import_local_gguf(prior_source)
+    prior_destination = service.artifact_path(prior_result.reference)
+    prior_manifest = (prior_destination / "manifest.json").read_bytes()
+    prior_managed_payload = (prior_destination / "model.gguf").read_bytes()
+    unrelated_stage = service.staging_path / "unrelated" / "keep"
+    unrelated_stage.parent.mkdir()
+    unrelated_stage.write_bytes(b"keep")
+
+    source = tmp_path / "cancel.gguf"
+    payload = make_gguf(
+        architecture="llama",
+        name="Cancelled",
+        file_type=7,
+        tensors=(TensorFixture(data=b"x" * (2 * 1024 * 1024 + 41)),),
+    )
+    source.write_bytes(payload)
+    source_before = source.stat()
+    cancel_requested = threading.Event()
+    saw_partial_stage = False
+
+    def observe_copy(progress: service_module.LocalGGUFImportProgress) -> None:
+        nonlocal saw_partial_stage
+        if progress.phase != "copy" or progress.bytes_done >= len(payload):
+            return
+        staged = tuple(service.staging_path.glob("install-*/model.gguf"))
+        assert len(staged) == 1
+        saw_partial_stage = staged[0].stat().st_size == progress.bytes_done
+        cancel_requested.set()
+
+    with pytest.raises(
+        service_module.ArtifactStateError,
+        match="^artifact installation cancelled$",
+    ) as caught:
+        service.import_local_gguf(
+            source,
+            cancelled=cancel_requested.is_set,
+            progress=observe_copy,
+        )
+
+    assert saw_partial_stage is True
+    assert str(source) not in str(caught.value)
+    assert source.read_bytes() == payload
+    assert source.stat().st_mtime_ns == source_before.st_mtime_ns
+    assert (prior_destination / "manifest.json").read_bytes() == prior_manifest
+    assert (prior_destination / "model.gguf").read_bytes() == prior_managed_payload
+    assert tuple(service.artifacts_path.rglob("manifest.json")) == (
+        prior_destination / "manifest.json",
+    )
+    assert tuple(service.staging_path.iterdir()) == (unrelated_stage.parent,)
+    assert unrelated_stage.read_bytes() == b"keep"
+
+
+def test_import_source_mutation_before_recheck_never_promotes(tmp_path: Path) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    prior_source = tmp_path / "prior.gguf"
+    prior_payload = make_gguf(architecture="llama", name="Prior", file_type=7)
+    prior_source.write_bytes(prior_payload)
+    prior_result = service.import_local_gguf(prior_source)
+    prior_destination = service.artifact_path(prior_result.reference)
+    prior_manifest = (prior_destination / "manifest.json").read_bytes()
+    prior_managed_payload = (prior_destination / "model.gguf").read_bytes()
+
+    source = tmp_path / "replaced.gguf"
+    payload = make_gguf(
+        architecture="llama",
+        name="Replaced",
+        file_type=7,
+        tensors=(TensorFixture(data=b"y" * (2 * 1024 * 1024 + 41)),),
+    )
+    source.write_bytes(payload)
+    source_before = source.stat()
+    replacement = tmp_path / "replacement.gguf"
+    replacement.write_bytes(payload)
+    os.utime(
+        replacement,
+        ns=(source_before.st_atime_ns, source_before.st_mtime_ns),
+    )
+    replaced = False
+
+    def replace_selected_name(
+        progress: service_module.LocalGGUFImportProgress,
+    ) -> None:
+        nonlocal replaced
+        if replaced or progress.phase != "copy" or progress.bytes_done >= len(payload):
+            return
+        os.replace(replacement, source)
+        replaced = True
+
+    with pytest.raises(
+        gguf_admission.GGUFSourceChangedError,
+        match="^Selected local GGUF changed during validation$",
+    ):
+        service.import_local_gguf(source, progress=replace_selected_name)
+
+    assert replaced is True
+    assert source.read_bytes() == payload
+    assert source.stat().st_mtime_ns == source_before.st_mtime_ns
+    assert (prior_destination / "manifest.json").read_bytes() == prior_manifest
+    assert (prior_destination / "model.gguf").read_bytes() == prior_managed_payload
+    assert tuple(service.artifacts_path.rglob("manifest.json")) == (
+        prior_destination / "manifest.json",
+    )
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
+def test_import_same_bytes_under_two_names_returns_same_reference(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    payload = make_gguf(architecture="llama", name="Same", file_type=7)
+    first_source = tmp_path / "first-name.gguf"
+    second_source = tmp_path / "renamed.gguf"
+    first_source.write_bytes(payload)
+    second_source.write_bytes(payload)
+    first_before = first_source.stat()
+    second_before = second_source.stat()
+
+    first = service.import_local_gguf(first_source)
+    first_manifest = (
+        service.artifact_path(first.reference) / "manifest.json"
+    ).read_bytes()
+    second = service.import_local_gguf(second_source)
+
+    assert first.reference == second.reference
+    assert first.already_installed is False
+    assert second.already_installed is True
+    manifests = tuple(service.artifacts_path.rglob("manifest.json"))
+    assert manifests == (service.artifact_path(first.reference) / "manifest.json",)
+    assert manifests[0].read_bytes() == first_manifest
+    assert first_source.read_bytes() == payload
+    assert second_source.read_bytes() == payload
+    assert first_source.stat().st_mtime_ns == first_before.st_mtime_ns
+    assert second_source.stat().st_mtime_ns == second_before.st_mtime_ns
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
+def test_import_changed_bytes_returns_different_full_revision(tmp_path: Path) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    first_payload = make_gguf(
+        architecture="llama",
+        name="Changed",
+        file_type=7,
+        tensors=(TensorFixture(data=b"\x00"),),
+    )
+    second_payload = first_payload[:-1] + b"\x01"
+    first_source = tmp_path / "first.gguf"
+    second_source = tmp_path / "second.gguf"
+    first_source.write_bytes(first_payload)
+    second_source.write_bytes(second_payload)
+
+    first = service.import_local_gguf(first_source)
+    second = service.import_local_gguf(second_source)
+
+    assert first.reference.revision == (
+        f"sha256-{hashlib.sha256(first_payload).hexdigest()}"
+    )
+    assert second.reference.revision == (
+        f"sha256-{hashlib.sha256(second_payload).hexdigest()}"
+    )
+    assert first.reference.revision != second.reference.revision
+    assert len(tuple(service.artifacts_path.rglob("manifest.json"))) == 2
+    assert (
+        service.artifact_path(first.reference) / "model.gguf"
+    ).read_bytes() == first_payload
+    assert (
+        service.artifact_path(second.reference) / "model.gguf"
+    ).read_bytes() == second_payload
+
+
+def test_concurrent_identical_imports_converge_on_one_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    payload = make_gguf(architecture="llama", name="Concurrent", file_type=7)
+    first_source = tmp_path / "first.gguf"
+    second_source = tmp_path / "second.gguf"
+    first_source.write_bytes(payload)
+    second_source.write_bytes(payload)
+    barrier = threading.Barrier(2)
+    staged_operations: list[Path] = []
+    staging_lock = threading.Lock()
+    real_commit = service._commit_verified_staging
+
+    def commit_after_both_calls_reach_reference_lock(
+        descriptor: ArtifactDescriptor,
+        staging: Path,
+        *,
+        cancelled: Callable[[], bool],
+        on_finalizing: Callable[[], None] | None = None,
+    ) -> bool:
+        with staging_lock:
+            staged_operations.append(staging)
+        barrier.wait(timeout=10)
+        return real_commit(
+            descriptor,
+            staging,
+            cancelled=cancelled,
+            on_finalizing=on_finalizing,
+        )
+
+    monkeypatch.setattr(
+        service,
+        "_commit_verified_staging",
+        commit_after_both_calls_reach_reference_lock,
+    )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = (
+            executor.submit(service.import_local_gguf, first_source),
+            executor.submit(service.import_local_gguf, second_source),
+        )
+        results = tuple(future.result(timeout=20) for future in futures)
+
+    assert len(staged_operations) == 2
+    assert staged_operations[0] != staged_operations[1]
+    assert results[0].reference == results[1].reference
+    assert sorted(result.already_installed for result in results) == [False, True]
+    manifests = tuple(service.artifacts_path.rglob("manifest.json"))
+    assert manifests == (service.artifact_path(results[0].reference) / "manifest.json",)
+    assert (
+        service.artifact_path(results[0].reference) / "model.gguf"
+    ).read_bytes() == payload
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
+def test_import_cancel_after_other_writer_promotes_never_deletes_destination(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = tmp_path / "store"
+    winner_service = service_module.ModelArtifactService(store)
+    loser_service = service_module.ModelArtifactService(store)
+    prior_source = tmp_path / "prior.gguf"
+    prior_payload = make_gguf(architecture="llama", name="Prior", file_type=7)
+    prior_source.write_bytes(prior_payload)
+    prior_result = winner_service.import_local_gguf(prior_source)
+    prior_destination = winner_service.artifact_path(prior_result.reference)
+    prior_manifest = (prior_destination / "manifest.json").read_bytes()
+    prior_managed_payload = (prior_destination / "model.gguf").read_bytes()
+
+    payload = make_gguf(architecture="llama", name="Winner", file_type=7)
+    winner_source = tmp_path / "winner.gguf"
+    loser_source = tmp_path / "loser.gguf"
+    winner_source.write_bytes(payload)
+    loser_source.write_bytes(payload)
+    winner_before = winner_source.stat()
+    loser_before = loser_source.stat()
+    barrier = threading.Barrier(2)
+    winner_promoted = threading.Event()
+    cancel_loser = threading.Event()
+    winner_commit = winner_service._commit_verified_staging
+    loser_commit = loser_service._commit_verified_staging
+
+    def commit_winner(
+        descriptor: ArtifactDescriptor,
+        staging: Path,
+        *,
+        cancelled: Callable[[], bool],
+        on_finalizing: Callable[[], None] | None = None,
+    ) -> bool:
+        barrier.wait(timeout=10)
+        result = winner_commit(
+            descriptor,
+            staging,
+            cancelled=cancelled,
+            on_finalizing=on_finalizing,
+        )
+        winner_promoted.set()
+        return result
+
+    def cancel_then_commit_loser(
+        descriptor: ArtifactDescriptor,
+        staging: Path,
+        *,
+        cancelled: Callable[[], bool],
+        on_finalizing: Callable[[], None] | None = None,
+    ) -> bool:
+        barrier.wait(timeout=10)
+        assert winner_promoted.wait(timeout=10)
+        cancel_loser.set()
+        return loser_commit(
+            descriptor,
+            staging,
+            cancelled=cancelled,
+            on_finalizing=on_finalizing,
+        )
+
+    monkeypatch.setattr(
+        winner_service,
+        "_commit_verified_staging",
+        commit_winner,
+    )
+    monkeypatch.setattr(
+        loser_service,
+        "_commit_verified_staging",
+        cancel_then_commit_loser,
+    )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        winner_future = executor.submit(
+            winner_service.import_local_gguf,
+            winner_source,
+        )
+        loser_future = executor.submit(
+            loser_service.import_local_gguf,
+            loser_source,
+            cancelled=cancel_loser.is_set,
+        )
+        winner = winner_future.result(timeout=20)
+        with pytest.raises(
+            service_module.ArtifactStateError,
+            match="^artifact installation cancelled$",
+        ):
+            loser_future.result(timeout=20)
+
+    destination = winner_service.artifact_path(winner.reference)
+    assert winner.already_installed is False
+    assert (destination / "model.gguf").read_bytes() == payload
+    assert (
+        json.loads((destination / "manifest.json").read_text(encoding="utf-8"))[
+            "descriptor"
+        ]["reference"]
+        == winner.reference.to_dict()
+    )
+    assert winner_source.read_bytes() == payload
+    assert loser_source.read_bytes() == payload
+    assert winner_source.stat().st_mtime_ns == winner_before.st_mtime_ns
+    assert loser_source.stat().st_mtime_ns == loser_before.st_mtime_ns
+    assert (prior_destination / "manifest.json").read_bytes() == prior_manifest
+    assert (prior_destination / "model.gguf").read_bytes() == prior_managed_payload
+    assert tuple(winner_service.staging_path.iterdir()) == ()
+
+
+@pytest.mark.parametrize(
+    "error_number",
+    (errno.ENOSPC, errno.EACCES),
+    ids=("ENOSPC", "EACCES"),
+)
+def test_import_copy_io_failure_preserves_source_and_prior_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_number: int,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    prior_source = tmp_path / "prior.gguf"
+    prior_payload = make_gguf(architecture="llama", name="Prior", file_type=7)
+    prior_source.write_bytes(prior_payload)
+    prior_result = service.import_local_gguf(prior_source)
+    prior_destination = service.artifact_path(prior_result.reference)
+    prior_manifest = (prior_destination / "manifest.json").read_bytes()
+    prior_managed_payload = (prior_destination / "model.gguf").read_bytes()
+
+    source = tmp_path / "failure.gguf"
+    payload = make_gguf(architecture="llama", name="Failure", file_type=7)
+    source.write_bytes(payload)
+    source_before = source.stat()
+    real_open = builtins.open
+
+    class FailingStagingWriter:
+        def __init__(self, handle: Any) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> FailingStagingWriter:
+            self._handle.__enter__()
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self._handle.__exit__(*args)
+
+        def write(self, _chunk: bytes) -> int:
+            raise OSError(error_number, "injected staging write failure")
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._handle, name)
+
+    def fail_staging_write(file, mode="r", *args, **kwargs):
+        handle = real_open(file, mode, *args, **kwargs)
+        path = Path(file)
+        if (
+            mode == "xb"
+            and path.name == "model.gguf"
+            and path.parent.parent == service.staging_path
+        ):
+            return FailingStagingWriter(handle)
+        return handle
+
+    monkeypatch.setattr(builtins, "open", fail_staging_write)
+
+    with pytest.raises(
+        service_module.ArtifactStateError,
+        match="^artifact import I/O failed$",
+    ) as caught:
+        service.import_local_gguf(source)
+
+    assert isinstance(caught.value.__cause__, OSError)
+    assert caught.value.__cause__.errno == error_number
+    assert source.read_bytes() == payload
+    assert source.stat().st_mtime_ns == source_before.st_mtime_ns
+    assert (prior_destination / "manifest.json").read_bytes() == prior_manifest
+    assert (prior_destination / "model.gguf").read_bytes() == prior_managed_payload
+    assert tuple(service.artifacts_path.rglob("manifest.json")) == (
+        prior_destination / "manifest.json",
+    )
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
+def test_import_corrupt_staged_bytes_before_commit_never_promotes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    prior_source = tmp_path / "prior.gguf"
+    prior_payload = make_gguf(architecture="llama", name="Prior", file_type=7)
+    prior_source.write_bytes(prior_payload)
+    prior_result = service.import_local_gguf(prior_source)
+    prior_destination = service.artifact_path(prior_result.reference)
+    prior_manifest = (prior_destination / "manifest.json").read_bytes()
+    prior_managed_payload = (prior_destination / "model.gguf").read_bytes()
+
+    source = tmp_path / "corrupt.gguf"
+    payload = make_gguf(
+        architecture="llama",
+        name="Corrupt",
+        file_type=7,
+        tensors=(TensorFixture(data=b"\x00"),),
+    )
+    source.write_bytes(payload)
+    source_before = source.stat()
+    digest = hashlib.sha256(payload).hexdigest()
+    expected_reference = ArtifactRef(
+        f"local-gguf-{digest[:16]}",
+        f"sha256-{digest}",
+        "filetype-7",
+    )
+    real_commit = service._commit_verified_staging
+    staged_byte_mutated = False
+
+    def corrupt_then_commit(
+        descriptor: ArtifactDescriptor,
+        staging: Path,
+        *,
+        cancelled: Callable[[], bool],
+        on_finalizing: Callable[[], None] | None = None,
+    ) -> bool:
+        nonlocal staged_byte_mutated
+        target = staging / "model.gguf"
+        with target.open("r+b", buffering=0) as handle:
+            handle.seek(-1, os.SEEK_END)
+            original = handle.read(1)
+            handle.seek(-1, os.SEEK_END)
+            handle.write(bytes((original[0] ^ 1,)))
+            os.fsync(handle.fileno())
+        staged_byte_mutated = True
+        return real_commit(
+            descriptor,
+            staging,
+            cancelled=cancelled,
+            on_finalizing=on_finalizing,
+        )
+
+    monkeypatch.setattr(
+        service,
+        "_commit_verified_staging",
+        corrupt_then_commit,
+    )
+
+    with pytest.raises(
+        service_module.ArtifactIntegrityError,
+        match="^payload file does not match descriptor: model.gguf$",
+    ):
+        service.import_local_gguf(source)
+
+    assert staged_byte_mutated is True
+    assert source.read_bytes() == payload
+    assert source.stat().st_mtime_ns == source_before.st_mtime_ns
+    assert service.artifact_path(expected_reference).exists() is False
+    assert (prior_destination / "manifest.json").read_bytes() == prior_manifest
+    assert (prior_destination / "model.gguf").read_bytes() == prior_managed_payload
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
+def test_import_cancel_immediately_before_promotion_never_publishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    source = tmp_path / "pre-promotion-cancel.gguf"
+    payload = make_gguf(architecture="llama", name="Cancel", file_type=7)
+    source.write_bytes(payload)
+    source_before = source.stat()
+    digest = hashlib.sha256(payload).hexdigest()
+    destination = service.artifact_path(
+        ArtifactRef(
+            f"local-gguf-{digest[:16]}",
+            f"sha256-{digest}",
+            "filetype-7",
+        )
+    )
+    real_exists = service._managed_path_exists
+    destination_probes = 0
+    phases: list[str] = []
+
+    def observe_destination(path: Path) -> bool:
+        nonlocal destination_probes
+        exists = real_exists(path)
+        if path == destination:
+            destination_probes += 1
+        return exists
+
+    monkeypatch.setattr(service, "_managed_path_exists", observe_destination)
+
+    with pytest.raises(
+        service_module.ArtifactStateError,
+        match="^artifact installation cancelled$",
+    ):
+        service.import_local_gguf(
+            source,
+            cancelled=lambda: destination_probes >= 2,
+            progress=lambda update: phases.append(update.phase),
+        )
+
+    assert destination_probes == 2
+    assert "finalize" not in phases
+    assert source.read_bytes() == payload
+    assert source.stat().st_mtime_ns == source_before.st_mtime_ns
+    assert destination.exists() is False
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
+def test_import_finalizing_is_point_of_no_return(tmp_path: Path) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    source = tmp_path / "finalizing.gguf"
+    payload = make_gguf(architecture="llama", name="Finalizing", file_type=7)
+    source.write_bytes(payload)
+    cancel_requested = threading.Event()
+    phases: list[str] = []
+
+    def cancel_at_finalizing(
+        progress: service_module.LocalGGUFImportProgress,
+    ) -> None:
+        phases.append(progress.phase)
+        if progress.phase == "finalize":
+            cancel_requested.set()
+
+    result = service.import_local_gguf(
+        source,
+        cancelled=cancel_requested.is_set,
+        progress=cancel_at_finalizing,
+    )
+
+    assert cancel_requested.is_set()
+    assert phases[-1] == "finalize"
+    assert result.already_installed is False
+    assert (
+        service.artifact_path(result.reference) / "model.gguf"
+    ).read_bytes() == payload
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
+def test_reconcile_removes_only_abandoned_import_stage(tmp_path: Path) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    live_stage, live_lease = service._create_install_staging()
+    live_payload = live_stage / "model.gguf"
+    live_payload.write_bytes(b"live")
+    abandoned_stage = service.staging_path / "install-abandoned"
+    abandoned_stage.mkdir()
+    (abandoned_stage / "model.gguf").write_bytes(b"abandoned")
+
+    try:
+        report = service.reconcile()
+
+        assert set(report.staging_entries) == {live_stage, abandoned_stage}
+        assert report.staging_removed == ("install-abandoned",)
+        assert live_stage.is_dir()
+        assert live_payload.read_bytes() == b"live"
+        assert abandoned_stage.exists() is False
+    finally:
+        live_lease.release()
+        shutil.rmtree(live_stage, ignore_errors=True)
+
+    assert tuple(service.staging_path.iterdir()) == ()
 
 
 @pytest.mark.parametrize("phase", ("_copy_payload", "_verify_payload"))

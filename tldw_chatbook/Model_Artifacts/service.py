@@ -3165,10 +3165,10 @@ class ModelArtifactService:
                 LeaseMode.EXCLUSIVE,
                 timeout_seconds=self._lease_timeout_seconds,
             ):
+                _raise_if_install_cancelled(cancelled)
                 if self._managed_path_exists(destination):
                     self._verify_existing_destination(destination, descriptor)
                     return True
-                _raise_if_install_cancelled(cancelled)
                 self._verify_payload(
                     staging,
                     descriptor.files,
