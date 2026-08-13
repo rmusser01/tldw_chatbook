@@ -1025,11 +1025,12 @@ class ProviderStep(SetupStep):
         self._discovery_visible = True
         if self.selected_provider_key:
             credential_rotated = self._sync_live_credential_revision()
+            if credential_rotated:
+                return
             provider_draft = self._effective_provider_draft()
             discovery_key = self._model_discovery_key(provider_draft)
             if (
-                credential_rotated
-                or discovery_key != self._selected_discovery_key
+                discovery_key != self._selected_discovery_key
                 or self._selected_discovery_state
                 in {
                     "idle",
@@ -1100,6 +1101,13 @@ class ProviderStep(SetupStep):
         for draft in self._provider_drafts.values():
             draft.clear_secret()
         self._provider_drafts.clear()
+
+    def prepare_retry_after_failed_save(self) -> None:
+        """Release the failed draft, then restore live boundary resolvers."""
+
+        self.clear_sensitive_state()
+        self._environment_provider = _process_environment
+        self._credential_observation_key = os.urandom(32)
 
     def _environment(self) -> Mapping[str, str]:
         """Read the current environment through the injected live provider."""
@@ -1338,7 +1346,7 @@ class ProviderStep(SetupStep):
             draft.auth_collapsed = self.query_one(
                 "#setup-provider-auth-toggle", Collapsible
             ).collapsed
-        except Exception:
+        except NoMatches:
             return
         draft.clear_requested = self._clear_requested
         draft.detected_servers = self._detected_servers
@@ -1403,7 +1411,26 @@ class ProviderStep(SetupStep):
         self._credential_decision_generation += 1
         self._credential_revision += 1
         self._invalidate_provider_test()
+        if self._selected_discovery_done is not None:
+            self._selected_discovery_done.set()
+        self._selected_discovery_key = None
+        self._selected_discovery_credential_decision = None
+        self._selected_discovery_state = "cancelled"
+        self._selected_provider_models.clear()
         self._capture_provider_ui_draft()
+        provider_draft = self._effective_provider_draft()
+        stage_provider = getattr(self.wizard, "stage_provider_setup", None)
+        if provider_draft is not None and callable(stage_provider):
+            stage_provider(provider_draft)
+        if self.is_mounted and provider_draft is not None:
+            self._begin_selected_provider_discovery(
+                provider_draft, sync_live_credential=False
+            )
+        invalidate_handoff = getattr(
+            self.wizard, "invalidate_provider_model_handoff", None
+        )
+        if callable(invalidate_handoff):
+            invalidate_handoff()
         return True
 
     def _remember_current_credential(self) -> None:
@@ -1540,7 +1567,8 @@ class ProviderStep(SetupStep):
 
         from tldw_chatbook.Chat.provider_test_evidence import ProviderDraftIdentity
 
-        self._sync_live_credential_revision()
+        if self._sync_live_credential_revision():
+            return
         tested = self._last_tested_provider_identity
         current_credential_source, _, _ = self._credential_at_request_boundary()
         credential_source_matches = (
@@ -1640,11 +1668,12 @@ class ProviderStep(SetupStep):
             status.update("The stored key will be removed when you continue.")
             return
         credential_source, _, _ = self._credential_at_request_boundary()
-        unavailable = (
-            " Connection testing is unavailable for this provider."
-            if not test_available
-            else ""
-        )
+        if test_available:
+            unavailable = ""
+        elif self.selected_provider_key in self._OPENAI_COMPATIBLE_PROBE_PROVIDERS:
+            unavailable = " Enter a valid endpoint to enable connection testing."
+        else:
+            unavailable = " Connection testing is unavailable for this provider."
         if credential_source == "stored":
             status.update(
                 f"An API key is already configured for this provider.{unavailable}"
@@ -1841,13 +1870,18 @@ class ProviderStep(SetupStep):
         return {"api_settings": {discovery_key.provider_key: settings}}
 
     def _begin_selected_provider_discovery(
-        self, provider_draft: wizard_state.FirstRunProviderDraft | str | None
+        self,
+        provider_draft: wizard_state.FirstRunProviderDraft | str | None,
+        *,
+        sync_live_credential: bool = True,
     ) -> None:
         """Start one selected-provider probe/catalog request generation."""
 
-        credential_rotated = self._sync_live_credential_revision()
+        credential_rotated = (
+            self._sync_live_credential_revision() if sync_live_credential else False
+        )
         if credential_rotated:
-            provider_draft = self._effective_provider_draft()
+            return
         elif isinstance(provider_draft, str):
             canonical_key = self._canonical_provider_key(provider_draft)
             if canonical_key != self.selected_provider_key:
@@ -2666,6 +2700,37 @@ class ModelStep(SetupStep):
         # instead of leaving a stale custom value in place.
         self._model_id_from_custom_input: bool = False
         self._model_load_generation = 0
+
+    def invalidate_credential_bound_selection(self) -> None:
+        """Drop model state derived under a credential that has rotated."""
+
+        self._model_load_generation += 1
+        self._shown_for_discovery_key = None
+        self._selection_discovery_key = None
+        self._rendered_discovery_key = None
+        self.selected_model_id = ""
+        self._model_id_from_custom_input = False
+        if not self.is_mounted:
+            return
+        try:
+            custom = self.query_one("#setup-model-custom", Input)
+            with custom.prevent(Input.Changed):
+                custom.value = ""
+            self._clear_model_radio_selection()
+        except Exception:
+            return
+        if self.is_active:
+            self.on_show()
+            self.run_worker(
+                partial(
+                    self._render_models,
+                    [],
+                    discovery_key=self._current_discovery_key(),
+                    load_generation=self._model_load_generation,
+                ),
+                exclusive=True,
+                group="setup-model-credential-clear",
+            )
 
     def compose_step(self) -> ComposeResult:
         with Vertical(classes="setup-model"):
@@ -6217,6 +6282,12 @@ class SummaryStep(SetupStep):
         return {"exit_route": self.exit_route}
 
 
+class _ProviderSaveStatus(Static):
+    """Focusable live status for an irreversible provider save."""
+
+    can_focus = True
+
+
 class SetupWizardContainer(WizardContainer):
     """Navigates over the active-step subset; commits on Next via one worker."""
 
@@ -6225,6 +6296,7 @@ class SetupWizardContainer(WizardContainer):
         app_instance,
         rerun: bool = False,
         resume_draft: wizard_state.SetupDraft | None = None,
+        provider_dismiss_warning_seconds: float = 2.0,
         **kwargs,
     ):
         self.rerun = rerun
@@ -6241,6 +6313,9 @@ class SetupWizardContainer(WizardContainer):
         self._provider_commit_write_started = False
         self._provider_cleanup_requested = False
         self._provider_dismiss_pending = False
+        self._provider_dismiss_warning_seconds = max(
+            0.0, float(provider_dismiss_warning_seconds)
+        )
         self._draft_mutation_lock = asyncio.Lock()
         self._draft_mutations_terminal = False
         # (task-2040) MUST be set before ``_create_steps()``: step
@@ -6299,6 +6374,18 @@ class SetupWizardContainer(WizardContainer):
         """Return the model committed with the current staged provider."""
 
         return self._committed_provider_model
+
+    def invalidate_provider_model_handoff(self) -> None:
+        """Clear model state derived from a superseded provider credential."""
+
+        self._first_run_selected_provider_models = {}
+        self.wizard_data.pop(wizard_state.STEP_MODEL, None)
+        model_index = self._step_index_for_id(wizard_state.STEP_MODEL)
+        if model_index is None:
+            return
+        model_step = self.steps[model_index]
+        if isinstance(model_step, ModelStep):
+            model_step.invalidate_credential_bound_selection()
 
     def clear_provider_setup_sensitive_state(self) -> None:
         """Fence provider work and release raw state at the valid boundary."""
@@ -6401,7 +6488,8 @@ class SetupWizardContainer(WizardContainer):
         normalized_model = model_id.strip()
         owner = getattr(self, "_first_run_provider_discovery_owner", None)
         if isinstance(owner, ProviderStep) and owner.is_mounted:
-            owner._sync_live_credential_revision()
+            if owner._sync_live_credential_revision():
+                return False
             current_draft = owner._effective_provider_draft()
             if current_draft is None or not self.stage_provider_setup(current_draft):
                 return False
@@ -6517,6 +6605,12 @@ class SetupWizardContainer(WizardContainer):
         )
         with Container(classes="wizard-steps-container"):
             yield from self.steps
+        yield _ProviderSaveStatus(
+            "",
+            id="setup-provider-save-status",
+            classes="setup-step-error hidden",
+            markup=False,
+        )
         yield WizardNavigation(classes="wizard-navigation")
 
     def _post_mount_hook(self) -> None:
@@ -7224,7 +7318,11 @@ class SetupWizardContainer(WizardContainer):
             self._sync_action_controls()
 
     def _sync_action_controls(self) -> None:
-        blocked = self._advancing or self._failure_action_running
+        blocked = (
+            self._advancing
+            or self._failure_action_running
+            or self._provider_dismiss_pending
+        )
         try:
             if blocked:
                 for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
@@ -7883,6 +7981,12 @@ class SetupWizardContainer(WizardContainer):
         task = self._provider_commit_task
         if task is not None and not task.done() and self._provider_commit_write_started:
             self._provider_dismiss_pending = True
+            self._show_provider_save_status(
+                "Finishing save…",
+                focus=True,
+                announce=True,
+            )
+            self._sync_action_controls()
             self.run_worker(
                 self._settle_provider_write_then_dismiss(task, result),
                 exclusive=True,
@@ -7894,22 +7998,81 @@ class SetupWizardContainer(WizardContainer):
     async def _settle_provider_write_then_dismiss(
         self,
         task: asyncio.Task[bool],
-        result: Optional[dict],
+        result: dict | None,
     ) -> None:
         """Wait for an irreversible executor write before releasing its draft."""
 
         try:
-            await asyncio.shield(task)
+            try:
+                saved = await asyncio.wait_for(
+                    asyncio.shield(task),
+                    timeout=self._provider_dismiss_warning_seconds,
+                )
+            except TimeoutError:
+                self._show_provider_save_status(
+                    "Saving is taking longer than expected. Keep this setup "
+                    "screen open; it will finish automatically, or let you "
+                    "retry here if it fails.",
+                    focus=True,
+                    announce=True,
+                )
+                saved = await asyncio.shield(task)
         except asyncio.CancelledError:
             if not task.done():
-                self._provider_dismiss_pending = False
                 return
-        except Exception:
-            # The task's done callback observes the exact exception. Dismissal
-            # only needs to wait until the writer no longer owns the draft.
-            pass
+        except Exception:  # noqa: BLE001 - task boundary must recover any writer error.
+            saved = False
         self._provider_dismiss_pending = False
-        self._complete_dismiss_screen(result)
+        if saved:
+            self._complete_dismiss_screen(result)
+            return
+        self._recover_from_provider_save_failure()
+
+    def _show_provider_save_status(
+        self,
+        message: str,
+        *,
+        focus: bool = False,
+        announce: bool = False,
+    ) -> None:
+        """Publish bounded save state only while this container is mounted."""
+
+        if not self.is_mounted:
+            return
+        try:
+            status = self.query_one("#setup-provider-save-status", _ProviderSaveStatus)
+        except NoMatches:
+            return
+        status.update(message)
+        status.set_class(not message, "hidden")
+        if focus:
+            status.focus()
+        if announce:
+            self.notify(message, severity="information")
+
+    def _recover_from_provider_save_failure(self) -> None:
+        """Release failed-save secrets and return to an enabled Provider step."""
+
+        self.clear_provider_setup_sensitive_state()
+        owner = getattr(self, "_first_run_provider_discovery_owner", None)
+        if isinstance(owner, ProviderStep):
+            owner.prepare_retry_after_failed_save()
+        if not self.is_mounted:
+            return
+        provider_index = self._step_index_for_id(wizard_state.STEP_PROVIDER)
+        if provider_index is not None:
+            self.show_step(provider_index)
+        self._show_provider_save_status(
+            "Couldn't finish saving the provider. Review the endpoint and "
+            "credential, then retry.",
+            announce=True,
+        )
+        self._sync_action_controls()
+        if isinstance(owner, ProviderStep) and owner.is_mounted:
+            try:
+                owner.query_one("#setup-provider-endpoint", Input).focus()
+            except NoMatches:
+                return
 
     def _complete_dismiss_screen(self, result: Optional[dict]) -> None:
         """Clear provider state and dismiss after all irreversible work settles."""
@@ -7996,16 +8159,19 @@ class FirstRunSetupWizard(WizardScreen):
         app_instance,
         rerun: bool = False,
         resume_draft: wizard_state.SetupDraft | None = None,
+        provider_dismiss_warning_seconds: float = 2.0,
     ):
         super().__init__(app_instance)
         self.rerun = rerun
         self.resume_draft = resume_draft
+        self.provider_dismiss_warning_seconds = provider_dismiss_warning_seconds
 
     def compose(self) -> ComposeResult:
         yield SetupWizardContainer(
             self.app_instance,
             rerun=self.rerun,
             resume_draft=self.resume_draft,
+            provider_dismiss_warning_seconds=self.provider_dismiss_warning_seconds,
         )
         # TASK-1505: the wizard's keys are otherwise undiscoverable — one
         # quiet, always-visible line names them.
