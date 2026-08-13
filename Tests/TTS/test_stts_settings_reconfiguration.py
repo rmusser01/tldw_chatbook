@@ -39,6 +39,10 @@ from tldw_chatbook.TTS.TTS_Generation import (
     TTSSettingsPublication,
     TTSSettingsPublicationTicket,
 )
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    build_global_speech_tts_save_proposal,
+    load_global_speech_tts_state,
+)
 
 
 class RecordingFactory(FakeAdapterFactory):
@@ -315,7 +319,7 @@ def test_settings_save_event_defaults_to_provider_settings_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_confirmation_cleanup_event_removes_persisted_app_tts_key(
+async def test_cross_provider_event_persists_fields_and_removes_confirmation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -344,18 +348,30 @@ async def test_confirmation_cleanup_event_removes_persisted_app_tts_key(
         },
     )
     handler = STTSEventHandler(RecordingApp())
-    handler._stts_service = ImmediatePublicationService()
+    service = ImmediatePublicationService()
+    handler._stts_service = service
+    original = load_global_speech_tts_state(config_module.settings, environment={})
+    draft = deepcopy(original)
+    draft.providers["elevenlabs"]["stability"] = 0.7
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        draft,
+        configure_provider="elevenlabs",
+    )
 
     await handler.handle_settings_save(
         STTSSettingsSaveEvent(
-            {},
-            delete_setting_keys=("OPENAI_NONE_HTTP_CONFIRMATION",),
+            proposal.settings,
+            delete_setting_keys=proposal.delete_setting_keys,
         )
     )
 
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert "OPENAI_NONE_HTTP_CONFIRMATION" not in saved["app_tts"]
     assert saved["app_tts"]["OPENAI_AUTH_MODE"] == "api_key"
+    assert saved["app_tts"]["ELEVENLABS_VOICE_STABILITY"] == 0.7
+    service.reconfigure_provider.assert_awaited_once()
+    assert service.reconfigure_provider.await_args.args[0] == "elevenlabs"
 
 
 @pytest.mark.asyncio

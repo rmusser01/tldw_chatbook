@@ -2547,6 +2547,100 @@ async def test_invalid_persisted_confirmation_cleanup_settles_saved_baseline() -
 
 
 @pytest.mark.asyncio
+async def test_cross_provider_save_cleans_stale_confirmation_after_success() -> None:
+    endpoint = normalize_openai_compatible_endpoint(
+        "http://voice.example.test:8765/v1/audio/speech"
+    )
+    fingerprint = openai_destination_fingerprint("openai", endpoint)
+    state = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": endpoint.speech_url,
+                    "OPENAI_AUTH_MODE": "api_key",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": fingerprint,
+                }
+            }
+        },
+        environment={},
+    )
+    app = _PanelHarness(configure_provider="elevenlabs", state=state)
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        assert panel.has_unsaved_changes() is True
+        assert app.events == []
+        original_source = panel.state.provider_sources["elevenlabs"]
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        event = app.events[0]
+        assert event.settings == {}
+        assert event.delete_setting_keys == ("OPENAI_NONE_HTTP_CONFIRMATION",)
+        assert panel.state.openai_plaintext_confirmation_cleanup_needed is True
+
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=event.request_id or 0,
+                persisted=True,
+                provider_statuses={},
+            )
+        )
+        await pilot.pause()
+
+        assert panel.state.openai_plaintext_confirmation_cleanup_needed is False
+        assert (
+            panel.original_state.openai_plaintext_confirmation_cleanup_needed is False
+        )
+        assert panel.state.provider_sources["elevenlabs"] is original_source
+        assert panel.original_state.provider_sources["elevenlabs"] is original_source
+        assert panel.has_unsaved_changes() is False
+
+
+@pytest.mark.asyncio
+async def test_cross_provider_failed_save_keeps_stale_confirmation_dirty() -> None:
+    endpoint = normalize_openai_compatible_endpoint(
+        "http://voice.example.test:8765/v1/audio/speech"
+    )
+    fingerprint = openai_destination_fingerprint("openai", endpoint)
+    state = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": endpoint.speech_url,
+                    "OPENAI_AUTH_MODE": "api_key",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": fingerprint,
+                }
+            }
+        },
+        environment={},
+    )
+    app = _PanelHarness(configure_provider="elevenlabs", state=state)
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.events[0].request_id or 0,
+                persisted=False,
+                provider_statuses={},
+                failure_phase="before_replace",
+            )
+        )
+        await pilot.pause()
+
+        assert panel.state.openai_plaintext_confirmation_cleanup_needed is True
+        assert (
+            panel.original_state.openai_plaintext_confirmation_cleanup_needed is True
+        )
+        assert panel.has_unsaved_changes() is True
+
+
+@pytest.mark.asyncio
 async def test_overlapping_save_is_blocked_without_losing_the_pending_baseline() -> (
     None
 ):

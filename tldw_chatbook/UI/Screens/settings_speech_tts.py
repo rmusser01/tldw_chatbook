@@ -2012,6 +2012,12 @@ def build_global_speech_tts_save_proposal(
             settings["OPENAI_NONE_HTTP_CONFIRMATION"] = (
                 draft_confirmation.origin_fingerprint
             )
+    if (
+        original.openai_plaintext_confirmation_cleanup_needed
+        or draft.openai_plaintext_confirmation_cleanup_needed
+    ) and "OPENAI_NONE_HTTP_CONFIRMATION" not in settings:
+        if "OPENAI_NONE_HTTP_CONFIRMATION" not in delete_setting_keys:
+            delete_setting_keys.append("OPENAI_NONE_HTTP_CONFIRMATION")
     # The saved default-profile pick is a distinct precedence rung above the
     # raw defaults axes (`preferences`, above) and is never part of that
     # snapshot, so it is diffed here independent of `configure_provider`.

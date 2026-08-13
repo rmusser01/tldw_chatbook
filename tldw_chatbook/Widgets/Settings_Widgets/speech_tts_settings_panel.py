@@ -3013,12 +3013,6 @@ class SpeechTTSSettingsPanel(Vertical):
                 and "OPENAI_NONE_HTTP_CONFIRMATION" in proposal.delete_setting_keys
             ):
                 self.state.openai_plaintext_confirmation = None
-                self.state.openai_plaintext_confirmation_cleanup_needed = False
-            elif (
-                self.configure_provider == "openai"
-                and "OPENAI_NONE_HTTP_CONFIRMATION" in proposal.settings
-            ):
-                self.state.openai_plaintext_confirmation_cleanup_needed = False
         except GlobalSpeechTTSValidationError as error:
             self._show_validation_error(error)
             self._refresh_status_rows()
@@ -3083,14 +3077,15 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_defaults = (
             deepcopy(self.state.defaults) if defaults_changed else None
         )
+        provider_configuration_changed = (
+            self.configure_provider in proposal.changed_provider_ids
+        )
         self._pending_saved_provider_id = (
-            self.configure_provider
-            if proposal.settings or proposal.delete_setting_keys
-            else None
+            self.configure_provider if provider_configuration_changed else None
         )
         self._pending_saved_provider_values = (
             deepcopy(self.state.providers[self.configure_provider])
-            if proposal.settings or proposal.delete_setting_keys
+            if provider_configuration_changed
             else None
         )
         self._pending_saved_openai_confirmation = (
@@ -3100,9 +3095,9 @@ class SpeechTTSSettingsPanel(Vertical):
             else None
         )
         self._pending_saved_openai_confirmation_cleanup_needed = (
-            self.state.openai_plaintext_confirmation_cleanup_needed
-            if self.configure_provider == "openai"
-            and (proposal.settings or proposal.delete_setting_keys)
+            False
+            if "OPENAI_NONE_HTTP_CONFIRMATION" in proposal.settings
+            or "OPENAI_NONE_HTTP_CONFIRMATION" in proposal.delete_setting_keys
             else None
         )
         if guided_packages:
@@ -3572,14 +3567,6 @@ class SpeechTTSSettingsPanel(Vertical):
                 )
             if saved_provider_id is not None and saved_provider_values is not None:
                 self.original_state.providers[saved_provider_id] = saved_provider_values
-                if saved_provider_id == "openai":
-                    self.original_state.openai_plaintext_confirmation = (
-                        saved_openai_confirmation
-                    )
-                    if saved_openai_confirmation_cleanup_needed is not None:
-                        self.original_state.openai_plaintext_confirmation_cleanup_needed = (
-                            saved_openai_confirmation_cleanup_needed
-                        )
                 if (
                     self.state.provider_sources[saved_provider_id]
                     is not GlobalSpeechTTSEffectiveSource.ENVIRONMENT
@@ -3590,6 +3577,16 @@ class SpeechTTSSettingsPanel(Vertical):
                     self.original_state.provider_sources[saved_provider_id] = (
                         GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
                     )
+            if saved_openai_confirmation_cleanup_needed is not None:
+                self.original_state.openai_plaintext_confirmation = (
+                    saved_openai_confirmation
+                )
+                self.state.openai_plaintext_confirmation_cleanup_needed = (
+                    saved_openai_confirmation_cleanup_needed
+                )
+                self.original_state.openai_plaintext_confirmation_cleanup_needed = (
+                    saved_openai_confirmation_cleanup_needed
+                )
 
         self._record_save_runtime_statuses(
             result,

@@ -568,6 +568,98 @@ def test_correcting_invalid_endpoint_deletes_rejected_persisted_confirmation() -
     assert proposal.delete_setting_keys == ("OPENAI_NONE_HTTP_CONFIRMATION",)
 
 
+def test_cross_provider_save_owns_only_selected_fields_and_global_cleanup() -> None:
+    confirmed = normalize_openai_compatible_endpoint(
+        "http://voice.example.test:8765/v1/audio/speech"
+    )
+    fingerprint = openai_destination_fingerprint("openai", confirmed)
+    original = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": "https://api.openai.com/v1/audio/speech",
+                    "OPENAI_AUTH_MODE": "api_key",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": fingerprint,
+                }
+            }
+        },
+        environment={},
+    )
+    draft = deepcopy(original)
+    draft.providers["elevenlabs"]["stability"] = 0.7
+
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        draft,
+        configure_provider="elevenlabs",
+    )
+
+    assert proposal.changed_provider_ids == ("elevenlabs",)
+    assert proposal.settings["ELEVENLABS_VOICE_STABILITY"] == 0.7
+    assert all(not key.startswith("OPENAI_") for key in proposal.settings)
+    assert "openai_api_key" not in proposal.settings
+    assert proposal.delete_setting_keys == ("OPENAI_NONE_HTTP_CONFIRMATION",)
+
+
+def test_cross_provider_cleanup_only_does_not_claim_provider_fields() -> None:
+    original = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_AUTH_MODE": "api_key",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": "malformed",
+                }
+            }
+        },
+        environment={},
+    )
+
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        deepcopy(original),
+        configure_provider="elevenlabs",
+    )
+
+    assert proposal.settings == {}
+    assert proposal.changed_provider_ids == ()
+    assert proposal.delete_setting_keys == ("OPENAI_NONE_HTTP_CONFIRMATION",)
+
+
+def test_stale_confirmation_cannot_reactivate_after_cross_provider_cleanup() -> None:
+    prior_endpoint = normalize_openai_compatible_endpoint(
+        "http://prior.example.test:8765/v1/audio/speech"
+    )
+    fingerprint = openai_destination_fingerprint("openai", prior_endpoint)
+    original = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": (
+                        "http://current.example.test:8765/v1/audio/speech"
+                    ),
+                    "OPENAI_AUTH_MODE": "none",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": fingerprint,
+                }
+            }
+        },
+        environment={},
+    )
+    cleaned = deepcopy(original)
+    original.openai_plaintext_confirmation_cleanup_needed = False
+    cleaned.openai_plaintext_confirmation_cleanup_needed = False
+    cleaned.providers["openai"]["base_url"] = prior_endpoint.speech_url
+
+    with pytest.raises(GlobalSpeechTTSValidationError) as error:
+        build_global_speech_tts_save_proposal(
+            original,
+            cleaned,
+            configure_provider="openai",
+        )
+
+    assert error.value.field_id == "authentication_mode"
+    assert cleaned.openai_plaintext_confirmation is None
+
+
 @pytest.mark.parametrize(
     "base_url",
     (
