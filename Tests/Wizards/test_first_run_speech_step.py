@@ -11,6 +11,7 @@ functions through the actual @work-decorated bodies.
 """
 
 import asyncio
+import builtins
 from pathlib import Path
 import threading
 from types import MethodType, SimpleNamespace
@@ -26,6 +27,7 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, RadioButton, Static
 
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+    PARAKEET_PRECISIONS,
     parakeet_descriptor,
     parakeet_reference,
     parakeet_v2_descriptor,
@@ -56,6 +58,33 @@ from tldw_chatbook.Widgets.ModelArtifacts import (
     ModelActivationControls,
     ModelInstallModal,
 )
+
+
+def test_curated_speech_helpers_do_not_import_the_full_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_import = builtins.__import__
+
+    def reject_curated_registry(name: str, *args: object, **kwargs: object):
+        if name == "tldw_chatbook.Model_Artifacts.curated_registry":
+            raise AssertionError("speech helpers imported the full curated registry")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_curated_registry)
+    policy = __import__(
+        "tldw_chatbook.UI.Wizards.first_run_speech_step_state",
+        fromlist=["routing_policy"],
+    ).routing_policy()
+    model_ids = frozenset({"nemo-parakeet-tdt-0.6b-v2", "nemo-parakeet-tdt-0.6b-v3"})
+
+    assert SpeechSetupStep._curated_model_ids() == model_ids
+    assert SpeechSetupStep._curated_selections() == frozenset(
+        (model_id, precision) for model_id in model_ids for precision in ("int8", "f32")
+    )
+    assert model_ids == frozenset(
+        {policy.parakeet_v2_model_id, policy.parakeet_v3_model_id}
+    )
+    assert PARAKEET_PRECISIONS == ("int8", "f32")
 
 
 def _installed_item(

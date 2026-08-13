@@ -197,6 +197,13 @@ git commit -m "feat(tts): close audio cpp recipe accounting"
 - Modify: `Tests/TTS/test_audio_cpp_recipes.py` (admitted artifact IDs only)
 - Modify: `Tests/Model_Artifacts/test_curated_registry.py`
 - Modify: `Tests/TTS/test_audio_cpp_artifact_catalog.py`
+- Modify: `tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py` (compose-purity integration fix)
+- Modify: `Tests/Wizards/test_first_run_speech_step.py` (compose-purity regression test)
+
+Plan deviation: Task 3's expanded curated registry exposed that the speech
+setup helpers unnecessarily loaded the full registry during composition. The
+narrow integration fix projects the same exact Parakeet choices directly from
+the existing routing policy and canonical precision constant.
 
 - [ ] **Step 1: Write failing exact-join tests**
 

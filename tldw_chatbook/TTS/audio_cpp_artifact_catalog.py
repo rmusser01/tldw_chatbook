@@ -421,10 +421,13 @@ def _curated_entry(
     from tldw_chatbook.TTS.audio_cpp_recipes import AudioCppFileKind
 
     required = {signal.relative_path: signal for signal in recipe.required_files}
+    optional = {signal.relative_path: signal for signal in recipe.optional_files}
+    signals = required | optional
     files_by_path = {file.managed_path: file for file in package.files}
-    if files_by_path.keys() != required.keys() or any(
-        files_by_path[path].size_bytes < signal.minimum_size_bytes
-        for path, signal in required.items()
+    manifest_paths = files_by_path.keys()
+    if not required.keys() <= manifest_paths <= signals.keys() or any(
+        files_by_path[path].size_bytes < signals[path].minimum_size_bytes
+        for path in manifest_paths
     ):
         raise ValueError("audio.cpp manifest recipe file closure does not match")
     if recipe.package_format is not AudioCppFileKind.GGUF:

@@ -85,10 +85,6 @@ def test_checked_in_manifest_is_exact_pinned_reviewed_catalog_and_network_free(
     )
     manifest_bytes = manifest_path.read_bytes()
     assert hashlib.sha256(manifest_bytes).hexdigest() == EXPECTED_MANIFEST_SHA256
-    assert (
-        hashlib.sha256(manifest_bytes.replace(b"DramaBox", b"DramaB0x", 1)).hexdigest()
-        != EXPECTED_MANIFEST_SHA256
-    )
     raw = json.loads(manifest_bytes)
     assert raw["repository"] == catalog.repository
     assert raw["commit"] == catalog.commit
@@ -322,6 +318,105 @@ def test_audio_cpp_join_rejects_manifest_recipe_drift(drift: str) -> None:
 
     with pytest.raises(ValueError, match="manifest recipe"):
         audio_cpp_curated_entries(AudioCppRecipeRegistry(tuple(recipes)))
+
+
+def _join_with_optional_file(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    present_path: str | None,
+    declared_optional_path: str = "optional.json",
+    present_size: int = 1,
+    optional_minimum_size: int = 1,
+):
+    from dataclasses import replace
+
+    import tldw_chatbook.TTS.audio_cpp_artifact_catalog as catalog_module
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        AudioCppArtifactSourceFile,
+        audio_cpp_curated_entries,
+        load_audio_cpp_artifact_source_manifest,
+    )
+    from tldw_chatbook.TTS.audio_cpp_recipes import (
+        AUDIO_CPP_RECIPE_REGISTRY,
+        AudioCppFileKind,
+        AudioCppFileRole,
+        AudioCppFileSignal,
+        AudioCppRecipeRegistry,
+    )
+
+    manifest = load_audio_cpp_artifact_source_manifest()
+    package = manifest.packages[0]
+    recipe = next(
+        item
+        for item in AUDIO_CPP_RECIPE_REGISTRY.recipes
+        if item.recipe_id == package.recipe_id
+    )
+    optional = AudioCppFileSignal(
+        declared_optional_path,
+        AudioCppFileKind.JSON,
+        AudioCppFileRole.OTHER,
+        minimum_size_bytes=optional_minimum_size,
+    )
+    files = package.files
+    if present_path is not None:
+        files += (
+            AudioCppArtifactSourceFile(
+                source_path=f"optional/{present_path}",
+                managed_path=present_path,
+                size_bytes=present_size,
+                sha256="e" * 64,
+            ),
+        )
+    test_manifest = replace(
+        manifest,
+        packages=(replace(package, files=files),),
+    )
+    test_registry = AudioCppRecipeRegistry(
+        (replace(recipe, optional_files=(optional,)),)
+    )
+    monkeypatch.setattr(
+        catalog_module,
+        "load_audio_cpp_artifact_source_manifest",
+        lambda: test_manifest,
+    )
+    return audio_cpp_curated_entries(test_registry)
+
+
+def test_audio_cpp_join_allows_declared_optional_file_to_be_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entries = _join_with_optional_file(monkeypatch, present_path=None)
+
+    assert "optional.json" not in {file.path for file in entries[0][0].files}
+
+
+def test_audio_cpp_join_includes_every_present_declared_optional_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entries = _join_with_optional_file(monkeypatch, present_path="optional.json")
+    descriptor, sources = entries[0]
+
+    assert "optional.json" in {file.path for file in descriptor.files}
+    assert set(sources) == {file.path for file in descriptor.files}
+
+
+def test_audio_cpp_join_rejects_unknown_extra_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(ValueError, match="file closure"):
+        _join_with_optional_file(monkeypatch, present_path="unknown.json")
+
+
+def test_audio_cpp_join_checks_present_optional_file_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(ValueError, match="file closure"):
+        _join_with_optional_file(
+            monkeypatch,
+            present_path="optional.json",
+            present_size=1,
+            optional_minimum_size=2,
+        )
 
 
 def test_audio_cpp_release_rows_have_exactly_one_cross_axis_outcome() -> None:

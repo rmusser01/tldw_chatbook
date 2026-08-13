@@ -58,6 +58,7 @@ from textual.worker import Worker, get_current_worker
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.config import get_runtime_config_snapshot
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+    PARAKEET_PRECISIONS,
     active_managed_parakeet_dir,
     parakeet_descriptor,
     parakeet_v2_managed_service,
@@ -4395,8 +4396,8 @@ class SpeechSetupStep(SetupStep):
     own Parakeet install surface already uses -- no duplicate artifact or
     network logic (AC#4). Language/precision options are enumerated from the
     canonical STT policy/catalog (first_run_speech_step_state, backed by
-    tldw_chatbook.STT.routing) and gated to what a curated descriptor can
-    download for the exact selected model and precision (AC#2).
+    tldw_chatbook.STT.routing) and gated to the exact managed Parakeet model
+    and precision combinations (AC#2).
 
     Runtime gate (review Important 4): the `onnx-asr` extra is optional --
     missing it means a downloaded Parakeet artifact could never actually run.
@@ -4498,10 +4499,8 @@ class SpeechSetupStep(SetupStep):
         and precision catalogs.
 
         Entirely pure/I/O-free: it builds from ``self`` bookkeeping already
-        in memory and the two catalog helpers in ``first_run_speech_step_state``
-        (backed by ``curated_registry()``, which itself only builds
-        descriptors in memory -- no network or filesystem access happens
-        here). Any I/O (checking installed state) is deferred to ``on_show``.
+        in memory and the canonical Parakeet routing policy/precision values.
+        Any I/O (checking installed state) is deferred to ``on_show``.
 
         Returns:
             The composed widgets: title, optional prefill line, status line
@@ -4650,26 +4649,18 @@ class SpeechSetupStep(SetupStep):
                         disabled=not option.selectable or self._lifecycle_pending,
                     )
 
-    # -- pure, I/O-free helpers (curated_registry() only builds descriptors
-    # in memory -- see its own module docstring) -------------------------
+    # -- pure, I/O-free helpers ------------------------------------------
     @staticmethod
     def _curated_model_ids() -> frozenset[str]:
-        from tldw_chatbook.Model_Artifacts.curated_registry import curated_registry
-
-        return frozenset(
-            descriptor.model_id for descriptor in curated_registry().list()
-        )
+        policy = speech_state.routing_policy()
+        return frozenset({policy.parakeet_v2_model_id, policy.parakeet_v3_model_id})
 
     @staticmethod
     def _curated_selections() -> frozenset[tuple[str, str]]:
-        from tldw_chatbook.Model_Artifacts.curated_registry import curated_registry
-
-        policy = speech_state.routing_policy()
         return frozenset(
-            (descriptor.model_id, descriptor.precision)
-            for descriptor in curated_registry().list()
-            if descriptor.model_id
-            in {policy.parakeet_v2_model_id, policy.parakeet_v3_model_id}
+            (model_id, precision)
+            for model_id in SpeechSetupStep._curated_model_ids()
+            for precision in PARAKEET_PRECISIONS
         )
 
     def _selection(self) -> speech_state.SpeechSelection:
