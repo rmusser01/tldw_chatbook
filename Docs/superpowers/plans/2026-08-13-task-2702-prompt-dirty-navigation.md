@@ -28,7 +28,7 @@ structure.
 - Modify: `Tests/UI/test_library_prompts_canvas.py:7440-7465`
 - Modify: `tldw_chatbook/UI/Screens/library_screen.py:575-585,6003-6035`
 
-- [ ] **Step 1: Strengthen the existing mounted flush regression**
+- [x] **Step 1: Strengthen the existing mounted flush regression**
 
 In
 `test_library_prompt_flush_pending_work_vetoes_dirty_editor`, record
@@ -50,7 +50,7 @@ assert notifications == [
 ]
 ```
 
-- [ ] **Step 2: Run the exact test and verify RED**
+- [x] **Step 2: Run the exact test and verify RED**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -61,7 +61,7 @@ assert notifications == [
 Expected RED: the dirty refusal produces no notification. The clean assertion
 must already pass, proving the future notifier is not unconditional.
 
-- [ ] **Step 3: Implement the fixed warning at the existing barrier**
+- [x] **Step 3: Implement the fixed warning at the existing barrier**
 
 Add the content-free constant
 `LIBRARY_PROMPT_DIRTY_VETO_COPY = "Unsaved Prompt changes — Save or Discard changes first."`
@@ -70,7 +70,7 @@ and `_notify_prompt_dirty_veto()` beside the Skill sibling. In
 false. Leave every note/skill barrier and the combined return expression
 unchanged; notification failure must not change the fail-closed veto.
 
-- [ ] **Step 4: Rerun the exact test GREEN**
+- [x] **Step 4: Rerun the exact test GREEN**
 
 Run the Step 2 command and require one pass.
 
@@ -82,7 +82,7 @@ Run the Step 2 command and require one pass.
 - Modify: `tldw_chatbook/Widgets/Library/__init__.py:10-20,60-80`
 - Modify: `tldw_chatbook/UI/Screens/library_screen.py:341-360`
 
-- [ ] **Step 1: Pin the clean action and literal reason**
+- [x] **Step 1: Pin the clean action and literal reason**
 
 Extend
 `test_library_prompt_editing_shows_unsaved_marker_and_save_clears_it` only as
@@ -93,7 +93,7 @@ disabled, and carries exactly:
 No unsaved Prompt changes to discard.
 ```
 
-- [ ] **Step 2: Run the exact test and verify RED**
+- [x] **Step 2: Run the exact test and verify RED**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -103,7 +103,7 @@ No unsaved Prompt changes to discard.
 
 Expected RED: `#library-prompt-discard` is absent.
 
-- [ ] **Step 3: Add and export the Prompt tooltip constants, then render**
+- [x] **Step 3: Add and export the Prompt tooltip constants, then render**
 
 Define beside the Prompt canvas constants:
 
@@ -135,7 +135,7 @@ yield Button(
 
 Only mutation and a clean working copy disable this action.
 
-- [ ] **Step 4: Rerun the exact test GREEN through the clean assertions**
+- [x] **Step 4: Rerun the exact test GREEN through the clean assertions**
 
 Run the Step 2 command and require the clean action assertions to pass.
 
@@ -145,7 +145,7 @@ Run the Step 2 command and require the clean action assertions to pass.
 - Modify: `Tests/UI/test_library_prompts_canvas.py:7897-7940`
 - Modify: `tldw_chatbook/UI/Screens/library_screen.py:18240-18335,18610-19010`
 
-- [ ] **Step 1: Strengthen the existing no-recompose regression**
+- [x] **Step 1: Strengthen the existing no-recompose regression**
 
 Capture the clean Discard widget identity. After editing, assert the same widget
 instance is enabled with exactly:
@@ -158,14 +158,14 @@ After the existing real save reaches `Saved.`, assert the same widget instance
 is disabled again with the clean tooltip. This node already proves the Prompt
 meta and editor fields do not recompose.
 
-- [ ] **Step 2: Run the exact test and verify RED**
+- [x] **Step 2: Run the exact test and verify RED**
 
 Run the Task 2 Step 2 command.
 
 Expected RED: the mounted action stays in its clean disabled state after the
 field change.
 
-- [ ] **Step 3: Implement one targeted Discard patcher**
+- [x] **Step 3: Implement one targeted Discard patcher**
 
 Add `_set_library_prompt_discard_enabled()` beside
 `_sync_library_prompt_save_action_widgets()`. It updates only `disabled` and
@@ -179,7 +179,7 @@ Call it from the common successful create/update save settlement after
 that already recompose project the correct state from `dirty` and need no second
 mechanism.
 
-- [ ] **Step 4: Rerun the exact test GREEN**
+- [x] **Step 4: Rerun the exact test GREEN**
 
 Run the Task 2 Step 2 command and require one pass.
 
@@ -190,7 +190,7 @@ Run the Task 2 Step 2 command and require one pass.
   the Prompt dirty-state tests)
 - Modify: `tldw_chatbook/UI/Screens/library_screen.py:19280-19335`
 
-- [ ] **Step 1: Add the compatibility dead-end regression**
+- [x] **Step 1: Add the compatibility dead-end regression**
 
 Use a real Prompt database/service and mount a compatibility-only structured
 artifact with blank System/User lanes. Prove `Update original` and
@@ -203,7 +203,7 @@ Discard enables. Press it and prove all of the established clean-Back tail:
 - the local source snapshot refreshes exactly once; and
 - deferred first-row focus lands on the first Prompt row.
 
-- [ ] **Step 2: Run the exact new node and verify RED**
+- [x] **Step 2: Run the exact new node and verify RED**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -214,7 +214,7 @@ Discard enables. Press it and prove all of the established clean-Back tail:
 Expected RED: pressing the mounted Discard action has no handler/list-return
 effect.
 
-- [ ] **Step 3: Add the explicit screen handler**
+- [x] **Step 3: Add the explicit screen handler**
 
 Handle `#library-prompt-discard`. Refuse during mutation or while clean.
 Otherwise reset the Prompt editor, request the current Prompt browse scope,
@@ -222,13 +222,13 @@ refresh the local source snapshot, and arm first-row focus using the same exact
 operations and ordering as the clean Back tail. Do not persist and do not add a
 confirmation modal or state.
 
-- [ ] **Step 4: Rerun the exact new node GREEN**
+- [x] **Step 4: Rerun the exact new node GREEN**
 
 Run the Step 2 command and require one pass.
 
 ### Task 5: Mutation proofs and affected verification
 
-- [ ] **Step 1: Prove all behavior boundaries are non-vacuous**
+- [x] **Step 1: Prove all behavior boundaries are non-vacuous**
 
 Temporarily bypass the Prompt notifier; Task 1's exact dirty-flush node must go
 RED while its clean assertion remains green. Restore it. Temporarily omit the
@@ -236,7 +236,7 @@ live Discard dirty patch; Task 3's exact node must go RED on the disabled action
 Restore it. Temporarily bypass the Discard handler; Task 4's exact node must go
 RED on its unchanged editor/list assertions. Restore and rerun all three GREEN.
 
-- [ ] **Step 2: Run focused sibling verification**
+- [x] **Step 2: Run focused sibling verification**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -245,7 +245,7 @@ RED on its unchanged editor/list assertions. Restore and rerun all three GREEN.
   -q -k 'flush_pending_work_vetoes_dirty_editor or prompt_discard or editing_shows_unsaved_marker_and_save_clears_it or flush_pending_work_skill_veto_notifies'
 ```
 
-- [ ] **Step 3: Run the full Prompt canvas file once**
+- [x] **Step 3: Run the full Prompt canvas file once**
 
 ```bash
 ../../.venv/bin/python -m pytest Tests/UI/test_library_prompts_canvas.py -q
@@ -254,7 +254,7 @@ RED on its unchanged editor/list assertions. Restore and rerun all three GREEN.
 Classify any failure against unchanged `origin/dev`; do not weaken unrelated
 tests.
 
-- [ ] **Step 4: Run static checks over every owned Python file**
+- [x] **Step 4: Run static checks over every owned Python file**
 
 ```bash
 ../../.venv/bin/ruff check \
@@ -294,7 +294,7 @@ The exact changed ranges above are baseline-green before implementation. If
 edits shift their end lines, widen only the affected range and record it. Do not
 whole-file-format the three monolithic files.
 
-- [ ] **Step 5: Run the Impeccable detector once at final state**
+- [x] **Step 5: Run the Impeccable detector once at final state**
 
 ```bash
 node /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.agents/skills/impeccable/scripts/detect.mjs \
@@ -307,7 +307,7 @@ node /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.agents/skills/impeccable
 
 ### Task 6: Commit behavior and close out TASK-2702
 
-- [ ] **Step 1: Commit the verified behavior**
+- [x] **Step 1: Commit the verified behavior**
 
 ```bash
 git add \
@@ -318,14 +318,14 @@ git add \
 git commit -m "fix(library): explain dirty Prompt navigation veto"
 ```
 
-- [ ] **Step 2: Complete task hygiene**
+- [x] **Step 2: Complete task hygiene**
 
 Check all acceptance criteria, add concise Implementation Notes with exact
 test/static evidence and the ADR decision, and set TASK-2702 to Done without a
 CLI operation that strips existing task sections. Add a lesson only if a new,
 generalizable incident actually occurred.
 
-- [ ] **Step 3: Commit closeout and verify the cumulative branch**
+- [x] **Step 3: Commit closeout and verify the cumulative branch**
 
 ```bash
 git add \
