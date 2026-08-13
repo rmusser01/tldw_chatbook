@@ -284,11 +284,10 @@ class LoopDeps:
     # (or an absent name -- a call the hook doesn't mention is presumed
     # fine) dispatches normally, anything else is treated as a refusal
     # string that is fed back to the model as that call's tool result
-    # instead of invoking it. Exceptions are caught, logged, and treated
-    # as "proceed" for every call in the batch -- the hook fails OPEN
-    # here; MCP-specific fail-closed behavior lives inside the Task 6
-    # closure, not in this generic runtime. ``None`` (the default) is a
-    # no-op: every call proceeds, byte-identical to pre-Task-4 behavior.
+    # instead of invoking it. Exceptions fail closed for continuation
+    # batches; legacy non-continuation batches retain their fail-open
+    # behavior. ``None`` (the default) is a no-op: every call proceeds,
+    # byte-identical to pre-Task-4 behavior.
     review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
     # skill_file: the fourth runtime tool (task-3, skills-foundation). Unlike
     # a ToolProvider entry, its schema is pinned into runtime_schemas by the
@@ -380,12 +379,22 @@ class LoopDeps:
 def _continuation_calls_match(
     checkpoint: ProviderContinuationCheckpoint,
     calls: list[ToolCall],
+    assistant_content: str,
+    assistant_message: dict | None,
 ) -> bool:
     """Return whether the active checkpoint's newest batch is exactly ``calls``."""
     try:
         dump_provider_continuation_json(checkpoint)
         canonical_calls = checkpoint.rounds[-1].calls
-        if checkpoint.state != "active" or len(canonical_calls) != len(calls):
+        echoed_content = (
+            assistant_message.get("content") if assistant_message is not None else None
+        )
+        if (
+            checkpoint.state != "active"
+            or checkpoint.rounds[-1].assistant_content != assistant_content
+            or echoed_content not in {None, assistant_content}
+            or len(canonical_calls) != len(calls)
+        ):
             return False
         if len({call.call_id for call in calls}) != len(calls):
             return False
@@ -890,7 +899,9 @@ def run_agent_loop(
                 not _valid_continuation_context(
                     context, deps.persist_provider_continuation
                 )
-                or not _continuation_calls_match(candidate, calls)
+                or not _continuation_calls_match(
+                    candidate, calls, turn.text, turn.assistant_message
+                )
             ):
                 return continuation_error()
             expected_revision = (
@@ -1000,7 +1011,9 @@ def run_agent_loop(
         if deps.review_tool_calls is not None and calls:
             try:
                 verdicts = deps.review_tool_calls(list(calls)) or {}
-            except Exception:  # noqa: BLE001 — fail OPEN here; the
+            except Exception:  # noqa: BLE001 — policy differs by lifecycle
+                if continuation_checkpoint is not None:
+                    return continuation_error()
                 # MCP-specific fail-closed policy lives in the Task 6
                 # closure that builds this callable, not in this generic
                 # runtime.
@@ -1023,10 +1036,10 @@ def run_agent_loop(
             # ever attempted, and a child's own records -- written during
             # the parent's still-in-progress spawn dispatch -- landed in the
             # log BEFORE the parent's own record that caused them.
-            # MUST stay at this `for call in calls:` body level, OUTSIDE the
-            # `if verdict != "proceed": ... else: ...` pair below: that is
-            # what captures the review-hook refusal path too, and it is
-            # pinned by test_run_log_on_record.py.
+            # The continuation refusal path below emits this record only
+            # after its atomic Finished barrier. All dispatch paths emit it
+            # here, before the side effect, and legacy refusals retain their
+            # pre-existing record order.
             if deps.should_cancel():
                 return _outcome(RUN_CANCELLED)
             recent_calls.append((call.name, json.dumps(call.args, sort_keys=True)))
@@ -1095,6 +1108,42 @@ def run_agent_loop(
                 verdict = verdicts[call.call_id]
             else:
                 verdict = verdicts.get(call.name, "proceed")
+            if continuation_checkpoint is not None and verdict != "proceed":
+                continuation_cap = (
+                    min(budget.max_tool_result_chars, 16_000)
+                    if budget.max_tool_result_chars > 0
+                    else 16_000
+                )
+                content = _truncate_tool_result(
+                    verdict,
+                    continuation_cap,
+                    call.name,
+                )
+                if not transition_call(call, "failed", ContinuationResult(content)):
+                    return continuation_error()
+                _emit_record(
+                    deps,
+                    "tool_call",
+                    content=json.dumps(call.args, sort_keys=True, default=str),
+                    tool=call.name,
+                    status="",
+                    call_id=call.call_id,
+                )
+                _emit_record(
+                    deps,
+                    "tool_result",
+                    content=verdict,
+                    tool=call.name,
+                    status="refused",
+                    call_id=call.call_id,
+                )
+                add(STEP_TOOL_RESULT, tool_name=call.name, result=content[:2000])
+                if restoring_batch:
+                    if not expand_restore_history(continuation_checkpoint):
+                        return continuation_error()
+                else:
+                    _append_tool_result(messages, call, content)
+                continue
             if continuation_checkpoint is not None and not transition_call(
                 call, "executing"
             ):
@@ -1336,7 +1385,8 @@ def run_agent_loop(
             # Capture BEFORE _truncate_tool_result below: the log is the
             # lossless record, history is the capped view of it. This single
             # point covers every dispatch branch above -- builtin, MCP,
-            # skill, runtime tools -- and the review-hook refusal path.
+            # skill, runtime tools -- plus legacy review-hook refusals. A
+            # continuation refusal was already finalized and recorded above.
             # Final-review IMPORTANT 3: tool_catalog.py documents `status` as
             # "ok or error", but this used to write only "ok" (any
             # "proceed" verdict, even a dispatch that actually failed -- see
@@ -1400,7 +1450,7 @@ def run_agent_loop(
             add(
                 STEP_TOOL_RESULT,
                 tool_name=call.name,
-                result=(content if continuation_checkpoint is not None else content[:2000]),
+                result=content[:2000],
             )
             if restoring_batch and continuation_checkpoint is not None:
                 if not expand_restore_history(continuation_checkpoint):

@@ -863,6 +863,17 @@ def test_call_transition_state_machine_is_revision_checked(
     assert failed.checkpoint_revision == 3
     assert failed.rounds[0].calls[0].state == "failed"
 
+    refused = transition_provider_call(
+        pending,
+        call_id="call_1",
+        expected_revision=1,
+        target="failed",
+        result=ContinuationResult("review refused"),
+    )
+    assert refused.checkpoint_revision == 2
+    assert refused.rounds[0].calls[0].state == "failed"
+    assert refused.rounds[0].calls[0].result == ContinuationResult("review refused")
+
     with pytest.raises(ContinuationConflictError, match="revision conflict"):
         transition_provider_call(
             executing,
@@ -875,7 +886,7 @@ def test_call_transition_state_machine_is_revision_checked(
     illegal = [
         (pending, "pending", None),
         (pending, "completed", ContinuationResult("4")),
-        (pending, "failed", ContinuationResult("failed")),
+        (pending, "failed", None),
         (executing, "pending", None),
         (executing, "executing", None),
         (executing, "completed", None),

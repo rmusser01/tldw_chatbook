@@ -164,18 +164,20 @@ def test_barriers_precede_all_observable_runtime_hooks(turn_kind: str) -> None:
         call_id="call-1" if turn_kind == "native" else "",
         raw_arguments=raw,
     )
+    fence_text = (
+        '```tool_call\n{"name":"calculator","arguments":'
+        '{"expression":"2+2"},"call_id":"fence-1"}\n```'
+    )
     checkpoint = _checkpoint(
-        ContinuationCall(call.call_id or "fence-1", "calculator", raw, "pending")
+        ContinuationCall(call.call_id or "fence-1", "calculator", raw, "pending"),
+        assistant_content=fence_text if turn_kind == "fence" else "",
     )
     if turn_kind == "native":
         turn = _native_turn((call,), checkpoint)
     else:
         call = replace(call, call_id="fence-1")
         turn = ModelTurn(
-            text=(
-                '```tool_call\n{"name":"calculator","arguments":'
-                '{"expression":"2+2"},"call_id":"fence-1"}\n```'
-            ),
+            text=fence_text,
             provider_continuation=checkpoint,
         )
 
@@ -386,7 +388,9 @@ def test_finished_result_is_one_total_bounded_provider_string(
     result_step = next(step for step in outcome.steps if step.kind == STEP_TOOL_RESULT)
     history_result = histories[1][-1]["content"]
     assert len(finished.result.value) == expected_cap
-    assert finished.result.value == result_step.result == history_result
+    assert finished.result.value == history_result
+    assert result_step.result == finished.result.value[:2000]
+    assert len(result_step.result) <= 2000
 
 
 def test_cycle_4a_barriers_order_batch_review_execute_finish_history_and_model() -> (
@@ -940,7 +944,7 @@ def test_cycle_4c_pending_resume_requires_fresh_review_then_barrier() -> None:
             persist=persist,
             invoke=lambda call: invoked.append(call) or ToolResult(ok=True),
             review=review,
-            cancel=lambda: len(events) >= 2,
+            cancel=lambda: len(events) >= 1,
             expand=lambda actual: [],
         ),
         restore_provider_continuation=checkpoint,
@@ -952,13 +956,125 @@ def test_cycle_4c_pending_resume_requires_fresh_review_then_barrier() -> None:
 
     assert outcome.status == "cancelled"
     assert invoked == []
-    assert order.index("review") < order.index("ToolCallExecuting")
-    assert [type(event) for event in events] == [
-        ToolCallExecuting,
-        ToolCallFinished,
-    ]
+    assert order.index("review") < order.index("ToolCallFinished")
+    assert [type(event) for event in events] == [ToolCallFinished]
+    assert events[-1].expected_checkpoint_revision == 1
     assert events[-1].target_state == "failed"
     assert events[-1].result == ContinuationResult("fresh refusal")
+
+
+def test_refusal_finished_failure_leaves_pending_without_executing_or_observability() -> None:
+    order: list[str] = []
+    history = []
+    call = ToolCall(
+        "calculator", {"expression": "2+2"}, "call-1", '{"expression":"2+2"}'
+    )
+
+    def persist(event) -> None:
+        order.append(type(event).__name__)
+        if isinstance(event, ToolCallFinished):
+            raise RuntimeError("PRIVATE-REFUSAL-CANARY")
+
+    outcome = run_agent_loop(
+        CONFIG,
+        history,
+        [CALCULATOR],
+        _deps(
+            [_native_turn((call,), _checkpoint(_pending_call()))],
+            order=order,
+            persist=persist,
+            invoke=lambda actual: order.append("invoke") or ToolResult(ok=True),
+            review=lambda batch: {"call-1": "denied"},
+            on_record=lambda kind, payload: order.append(f"record:{kind}"),
+        ),
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert "ToolCallExecuting" not in order
+    assert "invoke" not in order
+    assert "record:tool_call" not in order
+    assert "record:tool_result" not in order
+    assert "step:tool_call" not in order
+    assert "step:tool_result" not in order
+    assert not any(row.get("role") == "tool" for row in history)
+
+
+@pytest.mark.parametrize("restored", [False, True])
+def test_continuation_review_exception_fails_closed_without_logging_or_dispatch(
+    capfd, restored: bool
+) -> None:
+    call = ToolCall(
+        "calculator", {"expression": "2+2"}, "call-1", '{"expression":"2+2"}'
+    )
+    events = []
+    invoked = []
+
+    def review(batch):
+        raise RuntimeError("PRIVATE-REVIEW-CANARY")
+
+    checkpoint = _checkpoint(_pending_call())
+    deps = _deps(
+        [] if restored else [_native_turn((call,), checkpoint)],
+        order=[],
+        persist=events.append,
+        invoke=lambda actual: invoked.append(actual) or ToolResult(ok=True),
+        review=review,
+        expand=(lambda actual: []) if restored else None,
+    )
+    kwargs = (
+        {
+            "restore_provider_continuation": checkpoint,
+            "restore_provider_target": ContinuationRestoreTarget(
+                "deepseek",
+                "deepseek-v4-flash",
+                "responses",
+                "https://api.deepseek.com/v1",
+            ),
+            "resume_provider_continuation": True,
+        }
+        if restored
+        else {}
+    )
+    outcome = run_agent_loop(CONFIG, [], [CALCULATOR], deps, **kwargs)
+
+    assert outcome.status == RUN_ERROR
+    assert [type(event) for event in events] == ([] if restored else [ToolBatchReady])
+    assert invoked == []
+    captured = capfd.readouterr()
+    assert "PRIVATE-REVIEW-CANARY" not in captured.out + captured.err
+    assert "PRIVATE-REVIEW-CANARY" not in repr(outcome)
+
+
+@pytest.mark.parametrize("contradiction", ["turn", "assistant"])
+def test_tool_batch_requires_exact_assistant_content_association(contradiction: str) -> None:
+    call = ToolCall(
+        "calculator", {"expression": "2+2"}, "call-1", '{"expression":"2+2"}'
+    )
+    checkpoint = _checkpoint(_pending_call(), assistant_content="canonical")
+    turn = _native_turn((call,), checkpoint)
+    if contradiction == "turn":
+        turn = replace(turn, text="different")
+    else:
+        turn = replace(
+            turn,
+            text="canonical",
+            assistant_message={**turn.assistant_message, "content": "different"},
+        )
+    events = []
+    outcome = run_agent_loop(
+        CONFIG,
+        [],
+        [CALCULATOR],
+        _deps(
+            [turn],
+            order=[],
+            persist=events.append,
+            invoke=lambda actual: pytest.fail("mismatch must not invoke"),
+        ),
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert events == []
 
 
 @pytest.mark.parametrize("field", ["provider", "model", "protocol", "api_base_url"])

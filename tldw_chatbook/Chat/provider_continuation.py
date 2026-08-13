@@ -596,6 +596,10 @@ def transition_provider_call(
 ) -> ProviderContinuationCheckpoint:
     """Apply one legal optimistic call-state transition.
 
+    ``pending -> failed`` is the atomic review-refusal path: it records an
+    exact result for a call that performed no external side effect. All other
+    terminal transitions still require ``executing`` first.
+
     Args:
         checkpoint: Current canonical checkpoint.
         call_id: Globally unique call to update.
@@ -648,7 +652,7 @@ def transition_provider_call(
             return checkpoint
         raise ContinuationValidationError(_INVALID_MESSAGE) from None
     if not (
-        (current.state == "pending" and target == "executing")
+        (current.state == "pending" and target in {"executing", "failed"})
         or (current.state == "executing" and terminal_target)
     ):
         raise ContinuationValidationError(_INVALID_MESSAGE) from None
