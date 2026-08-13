@@ -116,6 +116,33 @@ def _assert_inside(widget, viewport) -> None:
     assert region.right <= viewport.right
 
 
+def _assert_full_button_label_fits(button: Button, expected_label: str) -> None:
+    """Assert the mounted button renders its complete label inside its chrome."""
+    rendered_line = button.render_line(0)
+    rendered_text = rendered_line.text
+    internal_chrome_cells = len(rendered_text) - len(rendered_text.strip())
+    rendered_label_capacity = button.content_region.width - internal_chrome_cells
+
+    assert str(button.label) == expected_label
+    assert rendered_label_capacity >= button.label.cell_length, (
+        f"{button.id} region={button.region.width}, "
+        f"content={button.content_region.width}, "
+        f"label_capacity={rendered_label_capacity}, "
+        f"label_cells={button.label.cell_length}, "
+        f"rendered={rendered_text!r}"
+    )
+    assert rendered_text.strip() == expected_label
+
+
+def _assert_full_static_copy_fits(copy: Static, expected_copy: str) -> None:
+    """Assert mounted one-line copy is neither clipped nor ellipsized."""
+    rendered_text = copy.render_line(0).text.rstrip()
+
+    assert str(copy.render()) == expected_copy
+    assert copy.content_region.width >= len(expected_copy)
+    assert rendered_text == expected_copy
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(100, 32), (140, 42)])
 async def test_collapsed_status_row_stays_one_line_and_left_anchored(
@@ -136,6 +163,8 @@ async def test_collapsed_status_row_stays_one_line_and_left_anchored(
         assert expand.region.x == collapsed.content_region.x
         _assert_inside(expand, viewport)
         _assert_inside(copy, viewport)
+        _assert_full_button_label_fits(expand, "Status ▴")
+        _assert_full_static_copy_fits(copy, "Status hidden")
         assert expand.region.right <= copy.region.x
 
 
@@ -159,6 +188,7 @@ async def test_expanded_status_row_keeps_toggle_left_and_scroller_in_viewport(
         assert collapse.region.x == expanded.content_region.x
         _assert_inside(collapse, viewport)
         _assert_inside(scroller, viewport)
+        _assert_full_button_label_fits(collapse, "Status ▾")
         assert collapse.region.right <= scroller.region.x
         assert scroller.region.right == viewport.right
 
