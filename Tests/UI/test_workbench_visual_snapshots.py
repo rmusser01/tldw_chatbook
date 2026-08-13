@@ -224,9 +224,7 @@ async def test_task_15705_console_collapsed_inspector_rail_visual_parity_sweep(
             transcript = screen.query_one("#console-transcript-region")
 
             assert inspector_handle.display is True
-            assert workspace.content_region.contains_region(
-                inspector_handle.region
-            ), (
+            assert workspace.content_region.contains_region(inspector_handle.region), (
                 f"Inspector handle escapes workspace at {size}: "
                 f"handle={inspector_handle.region}, "
                 f"workspace={workspace.content_region}"
