@@ -91,9 +91,7 @@ class _FolderService:
                 folders=(_folder("personal", None, "/Personal"),),
                 notes=({"id": "loose", "title": "Loose"},),
             )
-        return _page(
-            folders=(_folder("ideas", "personal", "/Personal/Ideas"),)
-        )
+        return _page(folders=(_folder("ideas", "personal", "/Personal/Ideas"),))
 
 
 def _screen_fake(service: _FolderService):
@@ -118,9 +116,7 @@ async def test_initial_tree_load_uses_one_bounded_bulk_call_and_no_note_detail()
     service = _FolderService()
     fake = _screen_fake(service)
 
-    await LibraryScreen._load_library_notes_tree(
-        fake, generation=1, refresh_root=True
-    )
+    await LibraryScreen._load_library_notes_tree(fake, generation=1, refresh_root=True)
 
     assert len(service.calls) == 1
     call = service.calls[0]
@@ -136,15 +132,11 @@ async def test_initial_tree_load_uses_one_bounded_bulk_call_and_no_note_detail()
 async def test_expansion_reuses_root_and_issues_one_bulk_branch_call():
     service = _FolderService()
     fake = _screen_fake(service)
-    await LibraryScreen._load_library_notes_tree(
-        fake, generation=1, refresh_root=True
-    )
+    await LibraryScreen._load_library_notes_tree(fake, generation=1, refresh_root=True)
     fake._library_notes_tree_expanded_ids.add("personal")
     fake._library_notes_tree_generation = 2
 
-    await LibraryScreen._load_library_notes_tree(
-        fake, generation=2, refresh_root=False
-    )
+    await LibraryScreen._load_library_notes_tree(fake, generation=2, refresh_root=False)
 
     assert len(service.calls) == 2
     assert service.calls[-1]["expanded_folder_ids"] == ("personal",)
@@ -157,12 +149,52 @@ async def test_stale_tree_result_does_not_replace_newer_state():
     fake = _screen_fake(service)
     fake._library_notes_tree_generation = 2
 
-    await LibraryScreen._load_library_notes_tree(
-        fake, generation=1, refresh_root=True
-    )
+    await LibraryScreen._load_library_notes_tree(fake, generation=1, refresh_root=True)
 
     assert fake._library_notes_tree_root_page is None
     assert fake._library_notes_tree_loading is True
+
+
+@pytest.mark.asyncio
+async def test_missing_folder_capability_finishes_loading_and_repaints_status(
+    monkeypatch,
+):
+    fake = _screen_fake(SimpleNamespace())  # type: ignore[arg-type]
+    fake._status_repaints = 0
+    monkeypatch.setattr(
+        LibraryScreen,
+        "_sync_library_notes_tree_canvas_if_present",
+        lambda self: setattr(self, "_status_repaints", self._status_repaints + 1),
+    )
+
+    await LibraryScreen._load_library_notes_tree(fake, generation=1, refresh_root=True)
+
+    assert fake._library_notes_tree_loading is False
+    assert "unavailable" in fake._library_notes_tree_error.casefold()
+    assert fake._status_repaints == 1
+
+
+@pytest.mark.asyncio
+async def test_load_more_failure_repaints_actionable_status(monkeypatch):
+    class _FailingPagingService:
+        async def load_note_folder_tree_batch(self, **kwargs):
+            raise RuntimeError("offline")
+
+    fake = _screen_fake(_FailingPagingService())  # type: ignore[arg-type]
+    fake._library_notes_tree_root_page = _page(next_note_offset=1)
+    fake._library_notes_tree_expanded_page = _page()
+    fake._status_repaints = 0
+    monkeypatch.setattr(
+        LibraryScreen,
+        "_sync_library_notes_tree_canvas_if_present",
+        lambda self: setattr(self, "_status_repaints", self._status_repaints + 1),
+    )
+
+    await LibraryScreen._load_more_library_notes_tree(fake, generation=1)
+
+    assert fake._library_notes_tree_loading is False
+    assert "try again" in fake._library_notes_tree_error.casefold()
+    assert fake._status_repaints == 1
 
 
 class _PagingFolderService:
@@ -201,7 +233,10 @@ async def test_membership_cursor_finishes_current_note_page_before_advancing_not
     await LibraryScreen._load_more_library_notes_tree(fake, generation=2)
     assert service.calls[-1]["note_offset"] == 0
     assert service.calls[-1]["membership_offset"] == 1
-    assert {item.membership_id for item in fake._library_notes_tree_expanded_page.memberships} == {
+    assert {
+        item.membership_id
+        for item in fake._library_notes_tree_expanded_page.memberships
+    } == {
         "m1a",
         "m1b",
     }
@@ -257,11 +292,15 @@ class _MutationService:
 
     async def rename_note_folder(self, **kwargs):
         self.calls.append(("rename", kwargs))
-        return SimpleNamespace(folder=replace(_folder("ideas", None, "/Renamed"), version=2))
+        return SimpleNamespace(
+            folder=replace(_folder("ideas", None, "/Renamed"), version=2)
+        )
 
     async def move_note_folder(self, **kwargs):
         self.calls.append(("move_folder", kwargs))
-        return SimpleNamespace(folder=replace(_folder("ideas", "work", "/Work/Ideas"), version=2))
+        return SimpleNamespace(
+            folder=replace(_folder("ideas", "work", "/Work/Ideas"), version=2)
+        )
 
     async def delete_note_folder(self, **kwargs):
         self.calls.append(("delete_folder", kwargs))
@@ -271,7 +310,9 @@ class _MutationService:
 
     async def restore_note_folder(self, **kwargs):
         self.calls.append(("restore_folder", kwargs))
-        return SimpleNamespace(folder=replace(_folder("ideas", None, "/Ideas"), version=3))
+        return SimpleNamespace(
+            folder=replace(_folder("ideas", None, "/Ideas"), version=3)
+        )
 
 
 class _FailingMutationService(_MutationService):
@@ -296,8 +337,8 @@ def _mutation_fake(service: _MutationService):
     fake._library_notes_deleted_folder_receipt = None
     fake._library_notes_tree_selected_placement_id = ""
     fake._refreshes = []
-    fake._request_library_notes_tree_refresh = (
-        lambda **kwargs: fake._refreshes.append(kwargs)
+    fake._request_library_notes_tree_refresh = lambda **kwargs: fake._refreshes.append(
+        kwargs
     )
     return fake
 
@@ -559,14 +600,16 @@ async def test_live_host_renders_duplicate_placements_and_preserves_focus_at_60x
         focused_placement = placements[-1].placement_id
         await _wait_until(
             pilot,
-            lambda: str(getattr(screen.focused, "placement_id", ""))
-            == focused_placement,
+            lambda: (
+                str(getattr(screen.focused, "placement_id", "")) == focused_placement
+            ),
         )
         screen.refresh(recompose=True)
         await _wait_until(
             pilot,
-            lambda: str(getattr(screen.focused, "placement_id", ""))
-            == focused_placement,
+            lambda: (
+                str(getattr(screen.focused, "placement_id", "")) == focused_placement
+            ),
         )
 
         await pilot.resize_terminal(60, 20)
@@ -584,6 +627,5 @@ async def test_live_host_renders_duplicate_placements_and_preserves_focus_at_60x
         assert "Q3 retro" in painted
         assert any(label in painted for label in ("Ideas", "Reading"))
         assert any(
-            status in painted
-            for status in ("Synced placement", "Needs owner review")
+            status in painted for status in ("Synced placement", "Needs owner review")
         )

@@ -17,14 +17,12 @@ async def test_name_dialog_echoes_action_and_initial_name():
     app = App()
     async with app.run_test() as pilot:
         await app.push_screen(
-            LibraryNoteFolderNameDialog(
-                title="Rename folder", initial_name="Ideas"
-            )
+            LibraryNoteFolderNameDialog(title="Rename folder", initial_name="Ideas")
         )
         await pilot.pause()
-        assert str(app.screen.query_one("#library-note-folder-dialog-title", Static).renderable) == (
-            "Rename folder"
-        )
+        assert str(
+            app.screen.query_one("#library-note-folder-dialog-title", Static).renderable
+        ) == ("Rename folder")
         assert app.screen.query_one("#library-note-folder-name", Input).value == "Ideas"
 
 

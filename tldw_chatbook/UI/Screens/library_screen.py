@@ -1321,9 +1321,18 @@ def _apply_library_row_toggle(
         # (PR #665 review; same escape lesson as the Library redesign). A
         # missing stash (unexpected widget shape) raises into the fallback
         # full recompose below.
-        label_rest = button._library_row_label_rest
         glyph = f"{marker} " if kind == "notes" else marker
-        button.label = f"{glyph}{label_rest}"
+        if kind == "notes":
+            matching_buttons = tuple(
+                candidate
+                for candidate in screen.query(".library-notes-row")
+                if str(getattr(candidate, "note_id", "") or "") == row_id
+            )
+        else:
+            matching_buttons = (button,)
+        for matching_button in matching_buttons:
+            label_rest = matching_button._library_row_label_rest
+            matching_button.label = f"{glyph}{label_rest}"
         count_static.update(f"{selection.count} selected")
         export_button.disabled = selection.count == 0
         # F-018: the reason/action tooltip flips in place with `disabled`
@@ -9447,6 +9456,8 @@ class LibraryScreen(BaseAppScreen):
         load_batch = getattr(service, "load_note_folder_tree_batch", None)
         if not callable(load_batch):
             self._library_notes_tree_loading = False
+            self._library_notes_tree_error = "Folder navigation is unavailable."
+            LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
             return
         common = {
             "scope": "local_note",
@@ -9545,7 +9556,7 @@ class LibraryScreen(BaseAppScreen):
                 )
                 if not continuing_memberships:
                     membership_note_offset = note_offset
-        except Exception:
+        except Exception:  # noqa: BLE001 - normalized folder service boundary
             logger.opt(exception=True).warning(
                 "Failed to continue the Database Notes folder navigator."
             )
@@ -9554,6 +9565,7 @@ class LibraryScreen(BaseAppScreen):
                     "Could not load more folder contents — try again."
                 )
                 self._library_notes_tree_loading = False
+                LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
             return
         if generation != self._library_notes_tree_generation:
             return
@@ -9577,6 +9589,7 @@ class LibraryScreen(BaseAppScreen):
             if generation == self._library_notes_tree_generation:
                 self._library_notes_tree_loading = False
                 self._library_notes_tree_error = "Folder navigation is unavailable."
+                LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
             return
         call_kwargs = {
             "scope": "local_note",
@@ -9599,7 +9612,7 @@ class LibraryScreen(BaseAppScreen):
                     expanded_folder_ids=expanded_ids,
                     **call_kwargs,
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001 - normalized folder service boundary
             logger.opt(exception=True).warning(
                 "Failed to load the Database Notes folder navigator."
             )
@@ -9702,7 +9715,7 @@ class LibraryScreen(BaseAppScreen):
                             note_id=note_id,
                             expected_version=int(payload["membership_version"]),
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001 - preserve both placements
                         logger.opt(exception=True).warning(
                             "Database Notes move kept both placements after "
                             "the source detach failed."
@@ -9764,7 +9777,7 @@ class LibraryScreen(BaseAppScreen):
         except PolicyDeniedError as exc:
             self._library_notes_notice = exc.user_message
             return False
-        except Exception:
+        except Exception:  # noqa: BLE001 - render a safe mutation failure
             logger.opt(exception=True).warning(
                 f"Database Notes tree mutation {operation!r} failed."
             )
@@ -25668,8 +25681,18 @@ class LibraryScreen(BaseAppScreen):
         Rebuilds only the mounted Notes canvas.
         """
         event.stop()
-        rows = self._build_library_notes_state().rows
-        self._library_notes_row_selection.select_all(r.note_id for r in rows)
+        projection = self._build_library_notes_tree_projection()
+        if projection is None:
+            note_ids = (
+                row.note_id for row in self._build_library_notes_state().rows
+            )
+        else:
+            note_ids = (
+                row.note_id
+                for row in projection.rows
+                if row.kind == "note" and row.note_id
+            )
+        self._library_notes_row_selection.select_all(note_ids)
         _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-select-clear")

@@ -126,9 +126,12 @@ class FolderPlacementId:
         return f"folder:{quote(folder_id, safe='')}"
 
     @staticmethod
-    def note(folder_id: str, note_id: str) -> str:
-        """Return the tree placement identifier for a note in one folder."""
-        return f"note:{quote(folder_id, safe='')}:{quote(note_id, safe='')}"
+    def note(folder_id: str, note_id: str, membership_id: str | None = None) -> str:
+        """Return a folder/note identity, optionally for one exact membership."""
+        placement = f"note:{quote(folder_id, safe='')}:{quote(note_id, safe='')}"
+        if membership_id is None:
+            return placement
+        return f"{placement}:{quote(membership_id, safe='')}"
 
     @staticmethod
     def unfiled(note_id: str) -> str:

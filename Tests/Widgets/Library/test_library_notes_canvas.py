@@ -126,9 +126,7 @@ async def test_sync_mode_placement_sentence_names_files_mode(widget_pilot):  # n
         sync_panel_state=_sync_state(),
     ) as pilot:
         await pilot.pause()
-        purpose = pilot.app.query_one(
-            "#library-notes-sync-purpose", Static
-        ).renderable
+        purpose = pilot.app.query_one("#library-notes-sync-purpose", Static).renderable
         text = getattr(purpose, "plain", str(purpose))
         assert "Files mode" in text
         assert "directly" in text
@@ -219,9 +217,17 @@ async def test_selected_folder_exposes_manual_folder_actions(widget_pilot):  # n
     ) as pilot:
         await pilot.pause()
         assert pilot.app.query_one("#library-notes-folder-new", Button)
-        assert pilot.app.query_one("#library-notes-folder-rename", Button).disabled is False
-        assert pilot.app.query_one("#library-notes-folder-move", Button).disabled is False
-        assert pilot.app.query_one("#library-notes-folder-remove", Button).disabled is False
+        assert (
+            pilot.app.query_one("#library-notes-folder-rename", Button).disabled
+            is False
+        )
+        assert (
+            pilot.app.query_one("#library-notes-folder-move", Button).disabled is False
+        )
+        assert (
+            pilot.app.query_one("#library-notes-folder-remove", Button).disabled
+            is False
+        )
 
 
 async def test_selected_managed_folder_disables_folder_mutations(widget_pilot):  # noqa: F811
@@ -253,8 +259,14 @@ async def test_managed_placement_disables_move_and_remove_but_allows_add(
         tree_selected_placement_id="note:ideas:n1",
     ) as pilot:
         await pilot.pause()
-        assert pilot.app.query_one("#library-notes-placement-add", Button).disabled is False
-        assert pilot.app.query_one("#library-notes-placement-move", Button).disabled is True
+        assert (
+            pilot.app.query_one("#library-notes-placement-add", Button).disabled
+            is False
+        )
+        assert (
+            pilot.app.query_one("#library-notes-placement-move", Button).disabled
+            is True
+        )
         remove = pilot.app.query_one("#library-notes-placement-remove", Button)
         assert remove.disabled is True
         assert "sync" in str(remove.tooltip).lower()

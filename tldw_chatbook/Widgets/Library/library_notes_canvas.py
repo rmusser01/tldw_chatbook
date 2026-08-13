@@ -673,9 +673,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             else None
         )
         selected_folder_protected = bool(
-            selected is not None
-            and selected.kind == "folder"
-            and selected.protected
+            selected is not None and selected.kind == "folder" and selected.protected
         )
         protected_reason = (
             "This folder is managed by sync; change its sync root instead."
@@ -687,9 +685,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 classes="library-canvas-action",
                 compact=True,
                 disabled=operation_running or selected_folder_protected,
-                tooltip=(
-                    protected_reason if selected_folder_protected else None
-                ),
+                tooltip=(protected_reason if selected_folder_protected else None),
             )
             if selected is not None and selected.kind == "folder":
                 for label, button_id in (

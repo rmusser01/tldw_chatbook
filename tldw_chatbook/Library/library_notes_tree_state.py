@@ -14,9 +14,7 @@ from tldw_chatbook.Notes.note_folder_models import (
 )
 
 LibraryNotesTreeRowKind = Literal["folder", "note", "unfiled"]
-LibraryNotesTreeSemanticStatus = Literal[
-    "normal", "connected", "needs_attention"
-]
+LibraryNotesTreeSemanticStatus = Literal["normal", "connected", "needs_attention"]
 
 UNFILED_PLACEMENT_ID = "virtual:unfiled"
 
@@ -43,10 +41,7 @@ def merge_note_folder_pages(
         membership.membership_id: membership for membership in base.memberships
     }
     memberships.update(
-        {
-            membership.membership_id: membership
-            for membership in incoming.memberships
-        }
+        {membership.membership_id: membership for membership in incoming.memberships}
     )
     notes = {_record_id(note): note for note in base.notes}
     notes.update({_record_id(note): note for note in incoming.notes})
@@ -58,9 +53,7 @@ def merge_note_folder_pages(
         total_notes=max(base.total_notes, incoming.total_notes),
         next_offset=incoming.next_offset,
         next_folder_offset=incoming.next_folder_offset,
-        total_memberships=max(
-            base.total_memberships, incoming.total_memberships
-        ),
+        total_memberships=max(base.total_memberships, incoming.total_memberships),
         next_membership_offset=incoming.next_membership_offset,
     )
 
@@ -200,7 +193,9 @@ def _note_row(
         status_text = ""
     path = folder.path.strip("/").replace("/", " / ")
     return LibraryNotesTreeRow(
-        placement_id=FolderPlacementId.note(folder.folder_id, note_id),
+        placement_id=FolderPlacementId.note(
+            folder.folder_id, note_id, membership.membership_id
+        ),
         kind="note",
         label=title,
         depth=depth,
@@ -249,8 +244,7 @@ def build_library_notes_tree(
         while folder_id is not None and folder_id not in seen:
             seen.add(folder_id)
             managed_folder_active[folder_id] = (
-                managed_folder_active.get(folder_id, True)
-                and membership.owner_active
+                managed_folder_active.get(folder_id, True) and membership.owner_active
             )
             folder = folders.get(folder_id)
             folder_id = folder.parent_id if folder is not None else None
