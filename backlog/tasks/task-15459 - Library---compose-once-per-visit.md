@@ -109,22 +109,47 @@ confirming the SAME failure still reproduces, then restoring) -- not merely
 re-run-and-hope:
 
 - **9 of 14 are pre-existing, unrelated to this diff** (reproduce byte-for-byte with the
-  production change neutralized): `test_action_library_notes_files_back_returns_to_
-  database` (already documented above -- `WorkspaceProbe` drift from the 15457 merge),
-  `test_library_note_sync_routes_cancel_pending_navigator_focus` (focus lands on
-  `console-rail-section-toggle-library-details` instead of `library-notes-filter` --
-  same symptom class the 15457 reconciliation notes describe as a residual focus-escape
-  risk), `test_revoke_button_enabled_for_a_granted_skill_and_pressing_it_revokes`,
-  `test_library_shell_media_viewer_inplace_large_document_latency_and_parse_proxy`,
-  `test_library_shell_note_undo_blocks_concurrent_create_and_delete`,
-  `test_library_ingest_canvas_metadata_placeholders_are_optional_labeled`,
-  `test_reset_to_defaults_resets_text_inputs_and_persistence`,
-  `test_conflict_resolution_discard_keeps_cancel_first_confirmation`,
-  `test_file_notes_production_shell_preserves_canvas_across_breakpoints`. None of these
-  touch `__init__`/`restore_state`/`on_mount`/`_apply_local_source_snapshot`; several
-  reproduce the exact `console-rail-section-toggle-library-details` focus-escape
-  signature the 15457 reconciliation notes already flagged as a residual risk. Not fixed
-  here -- out of this task's scope.
+  production change neutralized). Two have an INDEPENDENTLY VERIFIED origin commit
+  (correcting an earlier, wrong revision of this section that attributed both to "the
+  15457 merge" without checking -- caught in review):
+  - `test_action_library_notes_files_back_returns_to_database`: the `WorkspaceProbe`
+    test double never picked up `cancel_reload_confirmation` -- verified via
+    `git show 062c3ee30` that this method (and its `library_screen.py` call site,
+    `action_library_notes_files_back`) was added by commit `062c3ee30` ("fix: confirm
+    destructive File Notes reload"), merged via PR #1546
+    (`codex/file-notes-final-acceptance`, 2026-08-11 18:19), a File Notes PR wholly
+    separate from task-15457 (PR #1581, merged 2026-08-13). `git merge-base
+    --is-ancestor 062c3ee30 ebf56a763` confirms it landed on `dev` well before 15457.
+  - `test_library_note_recompose_and_fifty_route_cycles_return_to_baseline`'s OWN
+    unrelated failure further down (`exercised_groups` missing `library_note_create`/
+    `library_note_delete`): `git log -S'"library_note_create"'` on `library_screen.py`
+    shows commit `4d4dceebc` ("feat(library): add notes delete undo receipt") REMOVED
+    every `run_worker(..., group="library_note_create"/"library_note_delete")` call
+    site (verified via `git show 4d4dceebc`), merged via PR #1558
+    (`codex/notes-delete-undo-receipt`, 2026-08-11 22:28) -- also separate from 15457.
+    The test still expects the retired group names.
+  - `test_library_note_sync_routes_cancel_pending_navigator_focus` (focus lands on
+    `console-rail-section-toggle-library-details` instead of `library-notes-filter`):
+    UNLIKE the two above, this one's 15457 attribution holds up under the same
+    verification standard -- `git blame` on `handle_library_notes_sync_back`'s exit
+    call shows `_sync_library_canvas(self, "notes")` (the canvas-scoped-sync call
+    whose focus-restoration follow-up is implicated) was introduced by commit
+    `976dbafcb6`, dated 2026-08-11 18:20 -- the codex/dev implementation task-15457's
+    own reconciliation notes name as the merged mechanism. Not bisected further than
+    that (which commit specifically broke the follow-up, vs. it never having covered
+    this exact manual-attribute-seeding path -- out of this task's scope either way).
+  - The remaining six (`test_revoke_button_enabled_for_a_granted_skill_and_pressing_it_
+    revokes`, `test_library_shell_media_viewer_inplace_large_document_latency_and_parse_
+    proxy`, `test_library_shell_note_undo_blocks_concurrent_create_and_delete`,
+    `test_library_ingest_canvas_metadata_placeholders_are_optional_labeled`,
+    `test_reset_to_defaults_resets_text_inputs_and_persistence`,
+    `test_conflict_resolution_discard_keeps_cancel_first_confirmation`,
+    `test_file_notes_production_shell_preserves_canvas_across_breakpoints`) were NOT
+    further bisected to a specific origin commit -- only confirmed via mutation-testing
+    this task's own diff to reproduce identically with it neutralized. No claim is made
+    about which other commit is responsible. None of these nine touch `__init__`/
+    `restore_state`/`on_mount`/`_apply_local_source_snapshot`. Not fixed here -- out of
+    this task's scope.
 - **4 of 14 are load/order flakiness, not real failures**: `test_library_shell_blank_
   note_untouched_is_gc_from_real_db_on_back`, `test_library_shell_ingest_canvas_happy_
   path_open_in_library`, `test_library_screen_membership_load_retry_and_apply_retry_are_
@@ -140,10 +165,54 @@ re-run-and-hope:
   vary the notes count each iteration (a stand-in for a real background count change),
   restoring its original intent (recompose-churn resilience) under the new contract. Only
   after that fix does the test reach its OWN unrelated, pre-existing failure further down
-  (`exercised_groups` missing `library_note_create`/`library_note_delete` -- confirmed via
-  the same mutation-bisection to reproduce identically with production code reverted, so
-  a Notes create/delete worker-group routing drift, most likely also from 15457). Test
-  fix committed; the pre-existing failure is not fixed here -- out of scope.
+  (`exercised_groups` -- see `4d4dceebc`/PR #1558 above). Test fix committed; the
+  pre-existing failure is not fixed here -- out of scope.
+
+**Review round 2 (NOT APPROVED -> addressed):** two Importants.
+
+1. **The flagship AC test was flaky, and the review's own bisect caught what the 14-failure
+   triage above missed.** Root cause: the decorative Create-rail counts (`study_decks`/
+   `flashcards_due`/`quizzes` via `_study_count_or_none`, and the Prompts/Skills rail
+   counts via `_prompts_count_or_none`/`_skills_context_or_none`) swallow ANY exception
+   and degrade to `None` (their own docstrings say so), so under thread-pool contention
+   the pre-mount cache seed and this visit's reconcile fetch can legitimately disagree on
+   a purely decorative field even when the STRUCTURAL data (notes/media/conversations
+   rows, counts, lookup state) never changed. Folding `study_counts`/the two rail counts
+   into the single flat `unchanged` comparison made that disagreement force a full
+   recompose -- correct-but-unlucky, and it made AC#1's "exactly once" non-deterministic.
+   **Fix (`_apply_local_source_snapshot`):** split the comparison into two domains --
+   `_structural_records_for_comparison`/the counts+total_known+lookup_error+recovery_state
+   fields (STRUCTURAL: what a mounted canvas actually renders, notes/media/conversations
+   plus the Skills canvas's real `available_skills`/`blocked_skills` payload) vs.
+   `_decorative_rail_counts_for_comparison`/`study_counts` (DECORATIVE: the Create-rail
+   badges plus the Prompts/Skills rail COUNT only). A structural change still recomposes;
+   a decorative-only change patches the rail in place via `rail.sync_state` (the identical
+   targeted mechanism the pre-existing Ingest/Prompts/Search carve-out already used) --
+   never a recompose. `records["prompts"]`'s second slot is permanently `()` (Prompt rows
+   have their own exact browse owner), so that whole entry is decorative; `records
+   ["skills"]` is split, since its payload IS the real Skills canvas content while its
+   count is the decorative badge. `notes_true_count`'s effect on `counts["notes"]`/
+   `total_known["notes"]` was deliberately LEFT structural per this review's own framing
+   ("sources/rows/notes") -- not folded into the decorative bucket.
+   **Root-cause-confirmed, not just theorized:** `test_library_shell_decorative_count_
+   flap_patches_rail_in_place_without_recompose` injects the exact transient exception --
+   a fake `study_scope_service.count_decks` that succeeds on its first call (populating
+   the cache with `study_decks=3`) and raises on its second (this visit's reconcile) --
+   and was itself mutation-tested: temporarily re-folding `study_counts` back into the
+   flat `structural_unchanged` check reproduces the reviewer's exact reported failure
+   message ("a decorative-only count flap forced a whole-screen recompose"), confirming
+   both that the test reproduces the real bug and that the fix resolves it. The flagship
+   AC test (`test_library_shell_repeat_visit_composes_exactly_once_when_data_is_unchanged`)
+   was re-run 6x consecutively post-fix: 6/6 passed (previously flaky at the exact
+   assertion the review reported).
+2. **Attribution corrected** (see the rewritten "9 of 14" bullet above): the
+   `test_action_library_notes_files_back_returns_to_database` failure is `062c3ee30`/
+   PR #1546, not "the 15457 merge" as an earlier revision of these notes wrongly claimed
+   (and the dangling "already documented above" cross-reference that claim left behind,
+   also flagged in review, is gone -- this section is now the single place the failure is
+   documented). The `exercised_groups` failure is likewise `4d4dceebc`/PR #1558, not 15457.
+   The `sync_routes_cancel_pending_navigator_focus` 15457 attribution was independently
+   re-verified via `git blame` (see above) and holds.
 
 **Files changed:** `tldw_chatbook/UI/Screens/library_screen.py`,
 `Tests/UI/test_library_shell.py`.
