@@ -4,6 +4,7 @@
 **Status:** Approved design, pending implementation plan  
 **Existing decisions:** ADR-050, ADR-051  
 **Upstream artifact host:** `audio-cpp/audio.cpp-gguf` on Hugging Face
+**Pinned artifact commit:** `597048d9a920592808d7d4e2acd7b9c4596a143a`
 
 ## Summary
 
@@ -54,22 +55,27 @@ of every impact.
 
 ### 1. Static pinned artifact manifest
 
-A checked-in manifest declares the downloadable audio.cpp artifacts. A small
-maintainer-only refresh command accepts an **explicit 40-character Hugging Face
-commit**, reads that immutable tree, and emits deterministic reviewable data. It
-never resolves `main` on behalf of the running application.
+A checked-in manifest declares the downloadable audio.cpp artifacts at
+`597048d9a920592808d7d4e2acd7b9c4596a143a`. A small maintainer-only refresh
+command accepts an **explicit 40-character Hugging Face commit**, reads that
+immutable tree, and emits deterministic reviewable data. It never resolves
+`main` on behalf of the running application.
 
-Each manifest record contains:
+The manifest stores one repository/commit header. Each package record contains
+only artifact-source facts that cannot be derived from the recipe:
 
-- exact Hugging Face repository and commit;
 - recipe ID/revision and package variant;
-- exact `ArtifactRef` components;
-- source path and pinned `/resolve/<commit>/...` URL for every file;
+- a stable artifact ID;
+- upstream source path for every file;
 - managed relative path for every file;
 - byte size and SHA-256 for every file;
-- family, precision, and package display metadata;
-- artifact-specific license ID, license source, and usage notice; and
-- the evidence reference used for the compatibility projection.
+- artifact-specific license ID, license source, and usage notice.
+
+Registry construction derives pinned `/resolve/<commit>/...` URLs,
+`ArtifactRef.revision`, variant/precision, family, display metadata, runtime
+constraint, tasks, and compatibility evidence from the manifest header plus the
+exact recipe. Those values are not duplicated in the manifest. The join asserts
+that the derived descriptor matches both authorities.
 
 Large Hugging Face LFS files may use the exact LFS SHA-256 and declared size.
 Small Git-managed files do not have a content SHA-256 in their Git object ID;
@@ -88,6 +94,45 @@ The recipe registry remains the compatibility authority. It is expanded so all
 67 package entries across the pinned 21-family release inventory are explicitly
 classified. The implementation is data-driven: a new family is represented by
 recipe data, not a new conditional installer path.
+
+Two independent classifications remain separate:
+
+- **Recipe support:** the existing `approved`, `explicitly_unsupported`, and
+  `open_gap` states. Approved recipes enter the matching registry. By task
+  completion, no release-accounting row may remain `open_gap`; every variant is
+  either approved or carries a reviewed explicit-unsupported reason.
+- **Artifact availability:** `downloadable` or `local_only`, evaluated only for
+  approved recipes. Downloadable means the pinned official tree contains a
+  complete reviewed closure. Local-only means the recipe remains supported for
+  explicit local scanning but the pinned official tree cannot supply its exact
+  closure.
+
+The combined accounting projection therefore has exactly three public outcomes:
+`downloadable` (approved recipe plus admitted artifact), `local_only` (approved
+recipe without an admitted artifact), or `explicitly_unsupported`. It cannot
+represent `open_gap` at task completion.
+
+At the pinned artifact commit, the initial source-availability boundary is 56
+GGUF variants with a named official primary file and 11 variants absent as an
+exact package closure. The 11 start as local-only when their recipes are
+approved:
+
+- `supertonic_3_safetensors`;
+- `pocket_tts_english_safetensors`;
+- `chatterbox_safetensors`;
+- `omnivoice_safetensors`;
+- `qwen3_tts_1_7b_base_safetensors`;
+- `qwen3_tts_0_6b_base_safetensors`;
+- `voxcpm2_safetensors`;
+- `index_tts2_safetensors`;
+- `glm_tts_q8_0`;
+- `outetts_1_0_1b_q8_0`; and
+- `vietneu_tts_v3_turbo_q8_0`.
+
+The 56 named-primary-file variants are not automatically downloadable. The
+manifest audit must still prove their full required closure, license, digests,
+and compatibility mapping; a failure leaves an approved recipe local-only or
+classifies the recipe explicitly unsupported with evidence.
 
 A Model Library row exists only when a pure catalog join proves all of these:
 
@@ -229,14 +274,31 @@ an assignment, clears a global default, or deletes clone reference material.
 ### Commit
 
 Confirmation carries only the preview fingerprint and explicit resolutions.
-The removal owner:
+The artifact service gains one narrow removal-authority capability. It acquires
+the existing locks exactly once in the service's established
+`lifecycle -> artifact` order, pins the exact installed target, and exposes only
+`commit()` and `close()`. The existing public `delete()` delegates to this same
+capability for compatibility; it does not implement a second locking path.
 
-1. acquires the exact artifact's exclusive operation lease;
-2. recomputes the artifact and consumer snapshot;
-3. rejects any drift as **Review changed dependencies**;
-4. invokes `ModelArtifactService.delete()` for that exact self-contained root;
-5. re-reads installed state and reports the converged result; and
-6. releases all retained ownership on every terminal path.
+The removal coordinator executes acquisition, revalidation, commit, and release
+through one retained worker so authority is never split across widget or
+executor lifetimes:
+
+1. acquire the service-owned removal authority in the established lock order;
+2. recompute the artifact and consumer snapshot while that exclusive authority
+   is held;
+3. reject any drift as **Review changed dependencies** and close without
+   mutation;
+4. call the authority's `commit()` to remove that exact self-contained root
+   without reacquiring either lock;
+5. re-read installed state and report the converged result; and
+6. close the authority on every terminal path, retaining the worker if cleanup
+   cannot yet settle.
+
+The authority does not promise named process-owner enumeration from OS locks;
+the current lease layer cannot provide it. The preview reports named Chatbook
+owners from Settings/profile/runtime state and reports any remaining lease
+contention generically as **Another operation is using this package**.
 
 Mutations that save or stage a dependency on an installed managed artifact use
 a transient shared artifact lease while validating and publishing that
@@ -377,4 +439,3 @@ one ownership decision across two authorities.
 | Separate companion artifacts composed through links | The scanner and generated config require one canonical package root; a composed view adds unnecessary namespace authority. |
 | Force-delete leased artifacts | Can disrupt staged/live generations and violates the shared artifact owner's contract. |
 | Rewrite affected profiles/assignments on removal | Silently changes durable user intent and risks deleting private clone reference assets. |
-

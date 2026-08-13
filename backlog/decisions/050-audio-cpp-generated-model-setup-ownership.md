@@ -131,12 +131,16 @@ Settings and Speech Lab.
 ### TASK-13207 amendment: pinned Model Library packages
 
 Reviewed audio.cpp packages offered by Model Library are described by a static
-Chatbook catalog pinned to one exact commit of the official
+Chatbook catalog pinned to commit
+`597048d9a920592808d7d4e2acd7b9c4596a143a` of the official
 `audio-cpp/audio.cpp-gguf` Hugging Face repository. Hugging Face hosts the
-bytes; the built-in recipe registry remains the compatibility authority. Every
-visible package needs exact file sizes and SHA-256 values, artifact-specific
-license evidence, a complete companion-file closure, and an exact recipe
-mapping. Runtime does not browse or reinterpret moving repository state.
+bytes; the built-in recipe registry remains the compatibility authority. Recipe
+support and official-artifact availability are independent: an approved recipe
+may remain local-only, while an explicitly unsupported recipe cannot become
+downloadable merely because a similarly named file exists. Every visible
+package needs exact file sizes and SHA-256 values, artifact-specific license
+evidence, a complete companion-file closure, and an exact recipe mapping.
+Runtime does not browse or reinterpret moving repository state.
 
 An explicit Model Library install provisions one self-contained managed package
 root without activating it, saving Settings, selecting a TTS/Studio default, or
@@ -151,7 +155,9 @@ references, character assignments, runtime generations, and artifact leases.
 Live/staged leases block removal. Durable consumers may remain only after the
 user explicitly acknowledges that they will become unavailable; Chatbook never
 retargets or deletes them as a removal side effect. The final removal
-revalidates the preview under the exact artifact's exclusive lease.
+uses one service-owned authority that acquires the existing lifecycle then
+artifact locks exactly once, revalidates the preview under that authority, and
+commits without calling the public lock-acquiring delete path recursively.
 
 Package companions live in the same managed root as the selected variant. The
 scanner and generated configuration both require one canonical package root;

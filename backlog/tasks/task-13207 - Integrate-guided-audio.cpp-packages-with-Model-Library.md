@@ -36,5 +36,5 @@ Connect reviewed audio.cpp model artifacts to the existing Model Library and pro
 - [ ] #5 Removal requires an explicit resolution for every blocking dependency, never silently retargets a configuration/profile/character, never deletes a reference asset as a side effect, and does not disrupt an immutable live child snapshot.
 - [ ] #6 Interrupted install/remove, checksum failure, missing files, shared ownership, and source disappearance produce truthful recoverable state with no partial authority transfer or orphaned registry entry.
 - [ ] #7 Hermetic store/UI/dependency tests and a clean-profile UAT cover install → exact-root return → guided Save → sample generation plus blocked and approved removal, with no network or large artifact requirement in normal CI.
-- [ ] #8 The pinned 21-family, 67-package inventory is fully classified through generic recipe/catalog data: every variant is reviewed as downloadable, local-only, or explicitly unsupported, with no family-specific installer path or silent accounting gap.
+- [ ] #8 The pinned 21-family, 67-package inventory has no open recipe gap and keeps recipe support separate from artifact availability: every variant is reviewed as downloadable, local-only, or explicitly unsupported, with no family-specific installer path or silent accounting gap.
 <!-- AC:END -->
