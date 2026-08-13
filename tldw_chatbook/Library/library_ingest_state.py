@@ -23,6 +23,9 @@ from typing import Any, Sequence
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age as format_batch_relative_age,
 )
+from tldw_chatbook.Local_Ingestion.ingest_parse_progress import (
+    INGEST_PARSE_PROGRESS_MESSAGE_MAX_CHARS,
+)
 from tldw_chatbook.Library.ingest_capabilities import (
     MULTI_PAGE_SCRAPE_METHODS,
     _is_installed as _dependency_installed,
@@ -1565,6 +1568,8 @@ def format_ingest_progress_line(
     payload = progress or {}
     message = payload.get("message")
     text = " ".join(message.split()) if isinstance(message, str) else ""
+    if text:
+        text = text[:INGEST_PARSE_PROGRESS_MESSAGE_MAX_CHARS]
     if not text:
         phase = payload.get("phase")
         text = _INGEST_PROGRESS_PHASE_LABELS.get(phase, "")
@@ -1575,8 +1580,8 @@ def format_ingest_progress_line(
         text
         and isinstance(percent, (int, float))
         and not isinstance(percent, bool)
-        and math.isfinite(percent)
         and 0 <= percent <= 100
+        and math.isfinite(percent)
     ):
         return f"{round(percent)}% Â· {text}"
     return text

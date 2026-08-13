@@ -1100,6 +1100,26 @@ def test_format_ingest_progress_line_omits_invalid_percentages(percent) -> None:
     ) == "Extracting"
 
 
+def test_format_ingest_progress_line_normalizes_and_bounds_message() -> None:
+    """An unbounded server message would flood the queue detail line."""
+    message = "Extracting\n" + ("x" * 200)
+
+    rendered = format_ingest_progress_line(
+        {"message": message}, state=IngestJobState.PARSING
+    )
+
+    assert rendered == "Extracting " + ("x" * 149)
+    assert "\n" not in rendered
+
+
+def test_format_ingest_progress_line_omits_enormous_integer_percent() -> None:
+    """Converting invalid giant telemetry to float must not crash formatting."""
+    assert format_ingest_progress_line(
+        {"phase": "extracting", "percent": 10**400},
+        state=IngestJobState.PARSING,
+    ) == "Extracting"
+
+
 @pytest.mark.parametrize(
     ("progress", "expected"),
     [
