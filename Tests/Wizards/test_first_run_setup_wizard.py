@@ -1,8 +1,9 @@
 """Pilot tests for the first-run setup wizard skeleton."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from textual import on
@@ -20,8 +21,10 @@ from textual.widgets import (
     Switch,
 )
 
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
-from tldw_chatbook.config import ConfigMutationResult
+from tldw_chatbook.config import ConfigMutationResult, RuntimeConfigSnapshot
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
     STTSSettingsSaveResult,
@@ -29,6 +32,11 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     ModelDiscoveryError,
     ModelDiscoveryResult,
+)
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    ConsoleFirstChatIntent,
+    HandoffChannel,
+    PendingHandoffStore,
 )
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardNavigation,
@@ -52,6 +60,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     TRACK_QUICK,
     FirstRunModelDiscoveryKey,
     SetupDraft,
+    is_untouched_default_session,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     CLOUD_PROBE_TIMEOUT_SECONDS,
@@ -129,6 +138,58 @@ def _raising_compose_step(self):
     """Generator-shaped compose helper that fails before yielding widgets."""
     raise RuntimeError("sensitive compose detail")
     yield  # pragma: no cover
+
+
+def test_untouched_default_session_requires_no_user_owned_state() -> None:
+    defaults = ConsoleSessionSettings(
+        provider="openai",
+        model="model-a",
+        source="derived",
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+    )
+
+    assert is_untouched_default_session(session, (), "", ()) is True
+    assert is_untouched_default_session(session, (), "draft", ()) is False
+    assert is_untouched_default_session(session, (object(),), "", ()) is False
+    assert is_untouched_default_session(session, (), "", (object(),)) is False
+
+    session.settings = replace(defaults, temperature=0.19, source="user")
+    assert is_untouched_default_session(session, (), "", ()) is False
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("has_user_work", True),
+        ("assistant_kind", "character"),
+        ("character_name", "Private character"),
+        ("user_display_name_override", "Private user"),
+        ("character_system_template", "Private roleplay prompt"),
+        ("identity_revision", 1),
+        ("todos", [{"content": "private tool task"}]),
+    ],
+)
+def test_untouched_default_session_rejects_roleplay_tool_and_custom_state(
+    field_name: str,
+    value: object,
+) -> None:
+    defaults = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        source="derived",
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+    )
+    setattr(session, field_name, value)
+
+    assert is_untouched_default_session(session, (), "", ()) is False
 
 
 @pytest.mark.asyncio
@@ -1111,7 +1172,7 @@ async def test_escape_asks_for_confirmation_instead_of_dismissing():
 async def test_escape_pressed_with_no_settle_pause_still_opens_confirmation():
     """TASK-2314: a single Escape pressed the instant the wizard appears --
     with NO settling pause first, unlike every other test in this file --
-    must still reach the finish-later confirmation. Live UAT reproduction
+    must still reach the Welcome-step Skip setup confirmation. Live UAT reproduction
     showed this single-press path always worked; this test pins it so a
     future fix for the double-press race (below) cannot regress it by
     swallowing early Escapes wholesale."""
@@ -1129,7 +1190,7 @@ async def test_escape_pressed_with_no_settle_pause_still_opens_confirmation():
 
 
 @pytest.mark.asyncio
-async def test_rapid_double_escape_during_first_render_reaches_finish_later_flow():
+async def test_rapid_double_escape_during_first_render_keeps_skip_setup_open():
     """TASK-2314 regression, from a live reproduction: the wizard is pushed
     while several heavy steps are still settling (10 composed steps, the
     full provider catalog). A user who presses Escape once, perceives no
@@ -1200,7 +1261,7 @@ async def test_clicking_keep_going_immediately_is_never_swallowed():
 
 
 @pytest.mark.asyncio
-async def test_next_button_click_drives_quick_track_to_completion():
+async def test_next_button_click_drives_quick_track_to_summary():
     """Regression test for a real Textual double-dispatch trap.
 
     Textual's @on-decorated handlers are collected across the WHOLE MRO
@@ -1224,20 +1285,19 @@ async def test_next_button_click_drives_quick_track_to_completion():
 
         seen_step_ids = []
         for _ in range(10):
-            if app.wizard_result != "UNSET":
-                break
             await pilot.click("#wizard-next")
             await pilot.pause(0.2)
             step = container.steps[container.current_step]
             seen_step_ids.append(step.config.id if step.config else None)
+            if isinstance(step, SummaryStep):
+                break
 
-        assert app.wizard_result == {"completed": True, "exit_route": None}
+        assert app.wizard_result == "UNSET"
         # Exactly the quick-track subset, each step visited once, in order.
         assert seen_step_ids == [
             "provider",
             "model",
             "voice",
-            "summary",
             "summary",
         ]
         assert set(container.wizard_data.keys()) == {
@@ -1245,8 +1305,9 @@ async def test_next_button_click_drives_quick_track_to_completion():
             "provider",
             "model",
             "voice",
-            "summary",
         }
+        assert container.query_one("#wizard-next", Button).display is False
+        assert container.query_one("#wizard-cancel", Button).display is False
 
 
 @pytest.mark.asyncio
@@ -10073,7 +10134,7 @@ async def test_summary_quick_track_shows_defaults_note():
 
 
 @pytest.mark.asyncio
-async def test_summary_first_run_exit_buttons_set_expected_routes():
+async def test_summary_primary_first_run_exit_buttons_set_expected_routes():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -10098,7 +10159,13 @@ async def test_summary_first_run_exit_buttons_set_expected_routes():
         assert {b.id for b in step.query(Button)} == {
             "setup-exit-chat",
             "setup-exit-home",
+            "setup-exit-settings",
         }
+        assert [str(button.label) for button in step.query(Button)] == [
+            "Review provider setup",
+            "Explore Home",
+            "Review settings",
+        ]
         # Direct handler call, not pilot.click(): the actions row sits below
         # what fits in this fixed 120x40 test viewport (same clipping the
         # provider-catalog tests above hit -- see _on_keep's comment), so a
@@ -10111,7 +10178,7 @@ async def test_summary_first_run_exit_buttons_set_expected_routes():
 
 
 @pytest.mark.asyncio
-async def test_summary_rerun_exit_buttons_are_done_and_go_to_chat():
+async def test_summary_primary_rerun_complete_actions_start_chatting():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -10127,16 +10194,33 @@ async def test_summary_rerun_exit_buttons_are_done_and_go_to_chat():
     step = SummaryStep(
         wizard=wizard,
         config=WizardStepConfig(id="summary", title="Summary", step_number=9),
-        load_config=lambda: {},
+        load_config=lambda: {
+            "api_settings": {"openai": {"api_key": "test-key"}},
+            "chat_defaults": {"provider": "openai", "model": "model-a"},
+        },
         rag_deps_installed=lambda: False,
+        speech_installed=lambda: False,
+        speech_runtime_installed=lambda: False,
     )
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        step.on_show()
+        for _ in range(20):
+            if str(step.query_one("#setup-exit-chat", Button).label) == (
+                "Start chatting"
+            ):
+                break
+            await pilot.pause(0.05)
         assert {b.id for b in step.query(Button)} == {
-            "setup-exit-done",
             "setup-exit-chat",
+            "setup-exit-home",
+            "setup-exit-settings",
         }
+        assert [str(button.label) for button in step.query(Button)] == [
+            "Start chatting",
+            "Explore Home",
+            "Review settings",
+        ]
         # See the comment in the first-run-exit test above: direct handler
         # call, not pilot.click() -- the actions row is clipped below this
         # fixed test viewport.
@@ -10147,7 +10231,7 @@ async def test_summary_rerun_exit_buttons_are_done_and_go_to_chat():
 
 
 @pytest.mark.asyncio
-async def test_summary_exit_button_advances_the_wizard_without_an_event():
+async def test_summary_destination_button_advances_without_an_event():
     """SummaryStep's own exit buttons must drive the SAME advance/finalize
     path as the wizard-level Next button (Summary is the last active step),
     but they have no Button.Pressed event targeting "#wizard-next" to hand
@@ -10176,21 +10260,19 @@ async def test_summary_exit_button_advances_the_wizard_without_an_event():
                 break
             step = container.steps[container.current_step]
             if isinstance(step, SummaryStep):
-                step._exit_chat()
+                step._exit_home()
             else:
                 await pilot.click("#wizard-next")
             await pilot.pause(0.2)
-        from tldw_chatbook.Constants import TAB_CHAT
+        from tldw_chatbook.Constants import TAB_HOME
 
-        assert app.wizard_result == {"completed": True, "exit_route": TAB_CHAT}
+        assert app.wizard_result == {"completed": True, "exit_route": TAB_HOME}
 
 
 @pytest.mark.asyncio
-async def test_ctrl_n_on_summary_dismisses_and_completes():
-    """F-B regression (UAT): pressing ctrl+n while ON the Summary step (the
-    last active step) must finish the wizard exactly like clicking its own
-    exit buttons or the WizardNavigation "Finish" button does -- dismiss the
-    screen and persist first_run.setup_completed.
+async def test_ctrl_n_on_summary_does_not_bypass_explicit_destination():
+    """Summary has no global Next/Finish action, so its shortcut must not
+    silently complete setup without one of the three visible destinations.
 
     Reaches Summary directly via select_track + show_step (not by clicking
     through every prior step) so this test isolates ctrl+n's own dispatch
@@ -10210,11 +10292,13 @@ async def test_ctrl_n_on_summary_dismisses_and_completes():
         await pilot.press("ctrl+n")
         await pilot.pause(0.3)
 
-        assert app.wizard_result == {"completed": True, "exit_route": None}
+        assert app.wizard_result == "UNSET"
+        assert container.steps[container.current_step].config.id == STEP_SUMMARY
+        assert app.focused is container.query_one("#setup-exit-chat", Button)
 
 
 @pytest.mark.asyncio
-async def test_ctrl_n_still_works_after_focus_was_on_a_now_hidden_widget():
+async def test_ctrl_n_recovers_hidden_widget_focus_and_stops_at_summary():
     """F-B ROOT CAUSE (found via live tmux repro + diagnostic instrumentation,
     not the worker-group theory below): Textual's own focus-recovery when
     the currently-focused widget becomes hidden (Screen._reset_focus, run
@@ -10234,9 +10318,9 @@ async def test_ctrl_n_still_works_after_focus_was_on_a_now_hidden_widget():
     guaranteed focus chain to resolve bindings through and can go silently
     inert -- confirmed live: a diagnostic log line inside
     advance_programmatically() fired for three consecutive successful
-    ctrl+n presses and produced NOTHING on the fourth (Summary -> Finish),
-    while clicking the same "Finish" button worked immediately after and
-    also proved app.focused had indeed become None by then.
+    ctrl+n presses and produced NOTHING on the fourth transition. Summary
+    now deliberately has no global Next/Finish action; its explicit primary
+    destination must receive focus instead.
 
     Round-2 regression + fix: the FIRST cut of this fix always re-focused
     the persistent nav bar's own Next/Cancel button after every step change.
@@ -10303,18 +10387,20 @@ async def test_ctrl_n_still_works_after_focus_was_on_a_now_hidden_widget():
         assert app.focused is custom_input  # sanity: focus is inside Model's own Input
 
         for _ in range(10):
-            if app.wizard_result != "UNSET":
-                break
             await pilot.press("ctrl+n")
             await pilot.pause(0.2)
-            # Once the wizard has actually completed, the screen is
-            # dismissed and app.focused legitimately going None reflects
-            # that there is no more wizard to hold it -- only check the
-            # focus invariant while the wizard is still open.
-            if app.wizard_result == "UNSET":
-                _assert_focus_on_current_step_content()
+            _assert_focus_on_current_step_content()
+            if container.steps[container.current_step].config.id == STEP_SUMMARY:
+                break
+        else:
+            raise AssertionError("ctrl+n never reached Summary")
 
-        assert app.wizard_result == {"completed": True, "exit_route": None}
+        assert app.wizard_result == "UNSET"
+        assert app.focused is container.query_one("#setup-exit-chat", Button)
+        await pilot.press("ctrl+n")
+        await pilot.pause(0.2)
+        assert container.steps[container.current_step].config.id == STEP_SUMMARY
+        assert app.focused is container.query_one("#setup-exit-chat", Button)
 
 
 @pytest.mark.asyncio
@@ -10377,6 +10463,164 @@ def test_finalize_worker_uses_a_dedicated_group_not_wizard_advance():
 
 
 @pytest.mark.asyncio
+async def test_finalize_stages_exact_first_chat_after_successful_setup_mutation(
+    monkeypatch,
+):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.Constants import TAB_CHAT
+
+    pending = PendingHandoffStore()
+    console = MagicMock()
+    console.prepare_console_first_chat_target.return_value = "session-exact"
+    app_instance = MagicMock(
+        app_config={},
+        pending_handoffs=pending,
+        screen_stack=[console],
+    )
+    container = SetupWizardContainer(app_instance)
+    container._complete_setup_locked = AsyncMock(return_value=True)
+    container._dismiss_screen = MagicMock()
+    snapshot = RuntimeConfigSnapshot(
+        41,
+        {
+            "chat_defaults": {"provider": "llama_cpp", "model": "local-a"},
+            "api_settings": {
+                "llama_cpp": {
+                    "api_url": "http://127.0.0.1:8080/v1",
+                    "model": "local-a",
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        wizard_module,
+        "get_runtime_config_snapshot",
+        lambda: snapshot,
+        raising=False,
+    )
+
+    await container._finalize(TAB_CHAT)
+
+    container._complete_setup_locked.assert_awaited_once()
+    console.prepare_console_first_chat_target.assert_called_once_with(
+        provider="llama_cpp",
+        model="local-a",
+        config_revision=41,
+    )
+    claim = pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert claim is not None
+    assert claim.value == ConsoleFirstChatIntent(
+        "session-exact", "llama_cpp", "local-a", 41
+    )
+    assert "api_url" not in repr(claim.value)
+    pending.release(claim)
+    container._dismiss_screen.assert_called_once_with(
+        {"completed": True, "exit_route": TAB_CHAT}
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalize_does_not_stage_first_chat_when_setup_mutation_fails():
+    from tldw_chatbook.Constants import TAB_CHAT
+
+    pending = PendingHandoffStore()
+    app_instance = MagicMock(
+        app_config={},
+        pending_handoffs=pending,
+        screen_stack=[],
+    )
+    container = SetupWizardContainer(app_instance)
+    container._complete_setup_locked = AsyncMock(return_value=False)
+    container._show_completion_save_error = MagicMock()
+    container._dismiss_screen = MagicMock()
+
+    await container._finalize(TAB_CHAT)
+
+    assert pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT) is None
+    container._show_completion_save_error.assert_called_once()
+    container._dismiss_screen.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_finalize_reserves_future_target_only_without_console_owner(
+    monkeypatch,
+):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.Constants import TAB_CHAT
+
+    pending = PendingHandoffStore()
+    app_instance = MagicMock(
+        app_config={},
+        pending_handoffs=pending,
+        screen_stack=[],
+    )
+    container = SetupWizardContainer(app_instance)
+    container._complete_setup_locked = AsyncMock(return_value=True)
+    container._dismiss_screen = MagicMock()
+    monkeypatch.setattr(
+        wizard_module,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshot(
+            43,
+            {
+                "chat_defaults": {"provider": "openai", "model": "model-a"},
+                "api_settings": {
+                    "openai": {"api_key": "test-key", "model": "model-a"}
+                },
+            },
+        ),
+    )
+
+    await container._finalize(TAB_CHAT)
+
+    claim = pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert claim is not None
+    assert pending.claim_reserves_new_console_session(claim) is True
+    assert claim.value.session_id
+    assert pending.release(claim) is True
+
+
+@pytest.mark.asyncio
+async def test_finalize_keeps_wizard_open_when_mounted_console_refuses_target(
+    monkeypatch,
+):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.Constants import TAB_CHAT
+
+    pending = PendingHandoffStore()
+    console = MagicMock()
+    console.prepare_console_first_chat_target.return_value = None
+    app_instance = MagicMock(
+        app_config={},
+        pending_handoffs=pending,
+        screen_stack=[console],
+    )
+    container = SetupWizardContainer(app_instance)
+    container._complete_setup_locked = AsyncMock(return_value=True)
+    container._show_first_chat_handoff_error = MagicMock()
+    container._dismiss_screen = MagicMock()
+    monkeypatch.setattr(
+        wizard_module,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshot(
+            47,
+            {
+                "chat_defaults": {"provider": "openai", "model": "model-a"},
+                "api_settings": {
+                    "openai": {"api_key": "test-key", "model": "model-a"}
+                },
+            },
+        ),
+    )
+
+    await container._finalize(TAB_CHAT)
+
+    assert pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT) is None
+    container._show_first_chat_handoff_error.assert_called_once()
+    container._dismiss_screen.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_finalize_and_dismiss_screen_never_double_dismiss():
     """F3 hardening: a duplicate entry into _finalize/_dismiss_screen (e.g.
     a stray extra Finish click/ctrl+n racing the "setup-wizard-finalize"
@@ -10395,7 +10639,9 @@ async def test_finalize_and_dismiss_screen_never_double_dismiss():
         dismiss_calls = []
         wizard.dismiss = lambda result=None: dismiss_calls.append(result)
 
-        await pilot.press("ctrl+n")
+        summary = container.steps[container.current_step]
+        assert isinstance(summary, SummaryStep)
+        summary._exit_home()
         await pilot.pause(0.3)
         assert len(dismiss_calls) == 1
         assert container._finalized is True
@@ -10749,7 +10995,7 @@ class TestCommandPaletteReentry:
         # Final-review finding 2: this push must wire the app-level result
         # callback, exactly like the Settings button and the auto-offer
         # path (app.py's _push_first_run_wizard) already do -- without it,
-        # a truthy exit_route off the Summary step's "Go to Console" button is
+        # a truthy exit_route off the Summary step's "Start chatting" button is
         # silently dropped instead of navigating anywhere.
         assert callback == screen.app.handle_first_run_wizard_result
 
@@ -12083,28 +12329,27 @@ class TestComposeCrashPolicy:
 
 @pytest.mark.asyncio
 async def test_welcome_exit_paths_state_their_consequences():
-    """TASK-2154.9 (FR-01): the three Welcome exits are no longer
-    indistinguishable -- the nav cancel button is relabeled to its real
-    effect ("Finish later", same dialog as Esc, destructive error styling
-    dropped), the whole-wizard skip link says it is permanent ("don't ask
-    again") with a tooltip naming the way back, and the Esc hint copy stays
-    accurate."""
+    """Welcome has one Skip action; later steps expose one Exit action."""
     wizard = _make_wizard()
     app = _HostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         cancel = wizard.query_one("#wizard-cancel", Button)
-        assert str(cancel.label) == "Finish later"
+        assert str(cancel.label) == "Skip setup"
         assert cancel.variant == "default"
-
-        skip = wizard.query_one("#setup-skip-entirely", Button)
-        assert str(skip.label) == "Skip setup — don't ask again"
-        tooltip = str(skip.tooltip or "")
-        assert "won't be offered again" in tooltip
-        assert "Settings ▸ Diagnostics" in tooltip
+        assert len(wizard.query("#setup-skip-entirely")) == 0
 
         hints = wizard.query_one("#setup-key-hints", Static)
-        assert "Esc finish later" in str(hints.render())
+        assert "Esc skip setup" in str(hints.render())
+
+        container = wizard.query_one(SetupWizardContainer)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        assert provider_index is not None
+        container.show_step(provider_index)
+        await pilot.pause()
+
+        assert str(cancel.label) == "Exit setup"
+        assert "Esc exit setup" in str(hints.render())
 
 
 @pytest.mark.asyncio

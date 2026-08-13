@@ -66,6 +66,32 @@ FirstRunSummaryAction = Literal[
 ]
 
 
+def is_untouched_default_session(
+    session: object,
+    messages: object,
+    draft: object,
+    staged_attachments: object,
+) -> bool:
+    """Delegate first-run eligibility to Console's canonical pure predicate."""
+
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+    from tldw_chatbook.Chat.console_chat_store import (
+        is_untouched_default_session as console_session_is_untouched,
+    )
+
+    if not isinstance(session, ConsoleChatSession):
+        return False
+    try:
+        return console_session_is_untouched(
+            session,
+            messages,  # type: ignore[arg-type]
+            draft,  # type: ignore[arg-type]
+            staged_attachments,  # type: ignore[arg-type]
+        )
+    except (TypeError, ValueError):
+        return False
+
+
 class _CredentialValueOwner:
     """Provide an in-memory value slot that dataclass serialization cannot see."""
 

@@ -62,6 +62,7 @@ from Tests.UI.test_product_maturity_phase1_first_run import (
     _test_cli_setting,
 )
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
+from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
@@ -158,6 +159,24 @@ def _build_fresh_wizard_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     return app
 
 
+def _persist_complete_custom_provider_setup() -> None:
+    """Persist a credential-free provider/model pair through the real API."""
+
+    assert save_settings_to_cli_config(
+        {
+            "api_settings.custom": {
+                "api_url": "http://127.0.0.1:8080/v1",
+                "model": "model-a",
+            },
+            "chat_defaults": {"provider": "custom", "model": "model-a"},
+            WIZARD_STATE_SECTION: {
+                SETUP_STARTED_KEY: True,
+                SETUP_COMPLETED_KEY: True,
+            },
+        }
+    )
+
+
 async def _open_settings_diagnostics(pilot) -> None:
     """Navigate the real shell to Settings, then its Diagnostics category."""
     app = pilot.app
@@ -207,13 +226,13 @@ async def test_fresh_config_splash_disabled_wizard_auto_offers(
 
 
 # ---------------------------------------------------------------------------
-# 2. Esc -> confirm -> Finish later -> dismissed; next boot shows the resume
+# 2. Mid-flow Esc -> confirm -> Exit setup -> next boot shows recovery
 #    toast instead of re-pushing (checklist item 4).
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_escape_finish_later_dismisses_and_next_boot_offers_recovery(
+async def test_escape_exit_setup_dismisses_and_next_boot_offers_recovery(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
@@ -225,6 +244,20 @@ async def test_escape_finish_later_dismisses_and_next_boot_offers_recovery(
             )
             await pilot.pause(0.2)
 
+            _press(app.screen, "#wizard-next")
+            await pilot.pause(0.2)
+            assert (
+                app.screen.query_one(SetupWizardContainer)
+                .steps[
+                    app.screen.query_one(SetupWizardContainer).current_step
+                ]
+                .config.id
+                == STEP_PROVIDER
+            )
+            assert str(app.screen.query_one("#wizard-cancel", Button).label) == (
+                "Exit setup"
+            )
+
             await pilot.press("escape")
             await pilot.pause(0.2)
             # The confirm dialog is on top; the wizard must still be mounted.
@@ -234,12 +267,15 @@ async def test_escape_finish_later_dismisses_and_next_boot_offers_recovery(
             # `isinstance` captures the real contract (a confirm dialog is
             # up) without pinning to the exact subclass name.
             assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
-            _press(app.screen, "#confirm-button")  # confirm_label="Finish later"
+            assert str(app.screen.query_one("#confirm-button", Button).label) == (
+                "Exit setup"
+            )
+            _press(app.screen, "#confirm-button")
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
             )
             # Dismissed back onto whatever was underneath (Home), not
-            # navigated anywhere -- Escape/Finish-later carries no exit route.
+            # navigated anywhere -- Exit setup carries no exit route.
             assert app.current_tab == "home"
 
             # The started flag is persisted by a `@work(thread=True)` worker
@@ -1507,7 +1543,7 @@ async def test_full_track_skip_everything_leaves_app_usable(
                 "appearance",
             ]
 
-            # Exit via "Explore on my own" (TAB_HOME) to prove the app is
+            # Exit via "Explore Home" (TAB_HOME) to prove the app is
             # usable afterwards, not just that the wizard closed.
             _press(app.screen, "#setup-exit-home")
             await _wait_until(
@@ -1526,17 +1562,15 @@ async def test_full_track_skip_everything_leaves_app_usable(
 
 
 # ---------------------------------------------------------------------------
-# 4. Re-run entry over Settings -> finishing via "Done" returns to Settings
-#    (exit_route None path; checklist item 6, partial -- prefill/"configured"
-#    copy is covered at the unit level in Tests/Wizards/).
+# 4. Re-run entry over Settings -> Review settings returns to Settings.
 # ---------------------------------------------------------------------------
 
 
 async def _open_rerun_wizard_from_settings(pilot):
     """Drive the real Settings ▸ Diagnostics ▸ "Run setup wizard" button.
 
-    Returns the pushed FirstRunSetupWizard screen. Shared by the "Done" and
-    "Go to Console" re-entry tests below.
+    Returns the pushed FirstRunSetupWizard screen. Shared by the Summary
+    destination tests below.
     """
     app = pilot.app
     await _wait_until(
@@ -1569,7 +1603,7 @@ async def _walk_rerun_quick_track_to_summary(pilot, wizard_screen) -> "SetupWiza
 
 
 @pytest.mark.asyncio
-async def test_rerun_over_settings_done_returns_to_settings(
+async def test_rerun_over_settings_review_settings_returns_to_settings(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _prepare_clean_environment(monkeypatch, tmp_path)
@@ -1581,31 +1615,30 @@ async def test_rerun_over_settings_done_returns_to_settings(
         async with app.run_test(size=(180, 55)) as pilot:
             wizard_screen = await _open_rerun_wizard_from_settings(pilot)
             await _walk_rerun_quick_track_to_summary(pilot, wizard_screen)
-            # Rerun summary exposes "Done"/"Go to Console", not the first-run
-            # exit pair -- "Done" is the exit_route=None path.
-            assert len(app.screen.query("#setup-exit-done")) == 1
+            assert [
+                str(app.screen.query_one(selector, Button).label)
+                for selector in (
+                    "#setup-exit-chat",
+                    "#setup-exit-home",
+                    "#setup-exit-settings",
+                )
+            ] == ["Review provider setup", "Explore Home", "Review settings"]
 
-            _press(app.screen, "#setup-exit-done")
+            _press(app.screen, "#setup-exit-settings")
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
             )
-            # the final-review fix wave wired a result callback onto this push
-            # (settings_screen.py's handle_run_setup_wizard now passes
-            # app_instance.handle_first_run_wizard_result), but "Done"'s
-            # exit_route is None -- _handle_first_run_wizard_result() is a
-            # no-op for a falsy exit_route, so this must still simply pop
-            # back to Settings with no navigation side effect.
             assert type(app.screen).__name__ == "SettingsScreen"
             assert app.current_tab == "settings"
 
 
 @pytest.mark.asyncio
-async def test_rerun_over_settings_go_to_chat_navigates_to_chat(
+async def test_rerun_over_settings_start_chatting_navigates_to_chat(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Final-review finding 2: before the fix, both re-entry pushes
     (Settings' button and the command palette) omitted the result
-    callback, so a truthy exit_route off the Summary step's "Go to Console"
+    callback, so a truthy exit_route off the Summary step's "Start chatting"
     button was silently dropped -- the button looked live but did nothing.
     Now that settings_screen.py's push wires
     app_instance.handle_first_run_wizard_result, this must actually
@@ -1613,6 +1646,7 @@ async def test_rerun_over_settings_go_to_chat_navigates_to_chat(
     test_full_track_skip_everything_leaves_app_usable above.
     """
     _prepare_clean_environment(monkeypatch, tmp_path)
+    _persist_complete_custom_provider_setup()
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
     navigation_messages = _capture_navigation_messages(monkeypatch, app)
@@ -1621,7 +1655,13 @@ async def test_rerun_over_settings_go_to_chat_navigates_to_chat(
         async with app.run_test(size=(180, 55)) as pilot:
             wizard_screen = await _open_rerun_wizard_from_settings(pilot)
             await _walk_rerun_quick_track_to_summary(pilot, wizard_screen)
-            assert len(app.screen.query("#setup-exit-chat")) == 1
+            await _wait_until(
+                pilot,
+                lambda: str(
+                    app.screen.query_one("#setup-exit-chat", Button).label
+                )
+                == "Start chatting",
+            )
 
             navigation_messages.clear()
             _press(app.screen, "#setup-exit-chat")
@@ -1724,10 +1764,7 @@ async def test_wizard_navigation_visible_at_80x24(
             rendered_text = "\n".join(
                 "".join(segment.text for segment in strip) for strip in strips
             )
-            # TASK-2154.9 (FR-01): the cancel button now carries its
-            # consequence as the label -- "Finish later" (same dialog as
-            # Esc) -- so the rendered frame is checked for that wording.
-            for expected in ("Back", "Next", "Finish later"):
+            for expected in ("Back", "Next", "Skip setup"):
                 assert expected in rendered_text, (
                     f"{expected!r} button text missing from the rendered frame"
                 )
@@ -1934,26 +1971,17 @@ async def test_exact_draft_model_controls_remain_keyboard_visible_in_compact_vie
 
 
 @pytest.mark.asyncio
-async def test_summary_exit_buttons_visible_at_120x40_full_track(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+async def test_summary_three_actions_visible_and_focused_on_full_track(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    size: tuple[int, int],
 ) -> None:
-    """TASK-1495 AC #3: the Full-track Summary step's exit buttons ("Start
-    chatting" / "Explore on my own") must be on screen at 120x40 after
-    walking the entire 8-step full track -- these could previously render
-    below the same non-scrolling fold as the Provider step's key Input,
-    just reached via a longer path (more accumulated summary rows).
-    SetupWizardContainer.show_step() (unrelated to this fix) auto-focuses
-    the incoming step's first focusable descendant -- Summary's first exit
-    Button -- and Textual's own Screen.set_focus(scroll_visible=True) then
-    scrolls it into view, but only because ".setup-step" is now an actual
-    scroll region at all (TASK-1495's CSS change); before the fix nothing
-    under the step was scrollable, so focus-follows-into-view had nothing
-    to work with.
-    """
+    """Summary keeps exactly three actions visible, unique, and focused."""
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
-        async with app.run_test(size=(120, 40)) as pilot:
+        async with app.run_test(size=size) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
             )
@@ -1990,27 +2018,41 @@ async def test_summary_exit_buttons_visible_at_120x40_full_track(
 
             exit_chat = app.screen.query_one("#setup-exit-chat", Button)
             exit_home = app.screen.query_one("#setup-exit-home", Button)
+            exit_settings = app.screen.query_one("#setup-exit-settings", Button)
+            assert [
+                button.id
+                for button in app.screen.query(".setup-summary-actions Button")
+            ] == ["setup-exit-chat", "setup-exit-home", "setup-exit-settings"]
+            assert app.focused is exit_chat
+            assert container.query_one("#wizard-next", Button).display is False
+            assert container.query_one("#wizard-cancel", Button).display is False
             strips = app.screen._compositor.render_strips()
             rendered_text = "\n".join(
                 "".join(segment.text for segment in strip) for strip in strips
             )
             for button, label in (
-                (exit_chat, "Open Console"),
-                (exit_home, "Explore on my own"),
+                (exit_chat, "Review provider setup"),
+                (exit_home, "Explore Home"),
+                (exit_settings, "Review settings"),
             ):
                 region = button.region
                 assert region.width > 0 and region.height > 0, (
                     f"{label!r} exit button has an empty region: {region}"
                 )
-                assert region.y >= 0 and region.bottom <= 40 and region.right <= 120, (
-                    f"{label!r} exit button clipped at 120x40: {region}"
+                assert (
+                    region.y >= 0
+                    and region.bottom <= size[1]
+                    and region.right <= size[0]
+                ), (
+                    f"{label!r} exit button clipped at {size[0]}x{size[1]}: {region}"
                 )
                 assert button in app.screen._compositor.visible_widgets, (
                     f"{label!r} exit button's region looked on-screen but the "
                     "compositor never painted it"
                 )
-            assert "Open Console" in rendered_text
-            assert "Explore on my own" in rendered_text
+            assert "Review provider setup" in rendered_text
+            assert "Explore Home" in rendered_text
+            assert "Review settings" in rendered_text
 
 
 @pytest.mark.asyncio
@@ -2464,6 +2506,16 @@ async def test_back_next_mashing_across_provider_model_does_not_double_advance(
             else:
                 raise AssertionError("mashing left the wizard unable to complete")
 
+            _persist_complete_custom_provider_setup()
+            summary = container.steps[container.current_step]
+            summary.on_show()
+            await _wait_until(
+                pilot,
+                lambda: str(
+                    app.screen.query_one("#setup-exit-chat", Button).label
+                )
+                == "Start chatting",
+            )
             _press(app.screen, "#setup-exit-chat")
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"

@@ -568,6 +568,54 @@ class ConsoleChatSession:
     todo_store: SessionTodoStore = field(default_factory=SessionTodoStore)
 
 
+def is_untouched_default_session(
+    session: ConsoleChatSession,
+    messages: Iterable[object],
+    draft: str,
+    staged_attachments: Iterable[object],
+) -> bool:
+    """Return whether visible session state proves a default tab is untouched."""
+
+    if not isinstance(session, ConsoleChatSession):
+        return False
+    if type(draft) is not str or draft:
+        return False
+    sentinel = object()
+    try:
+        if next(iter(messages), sentinel) is not sentinel:
+            return False
+        if next(iter(staged_attachments), sentinel) is not sentinel:
+            return False
+    except (TypeError, RuntimeError):
+        return False
+    baseline = session.canonical_settings_baseline
+    if baseline is None or session.settings != baseline:
+        return False
+    return not (
+        session.title != DEFAULT_CONSOLE_SESSION_TITLE
+        or session.persisted_conversation_id is not None
+        or session.draft != ""
+        or session.has_user_work
+        or session.pending_attachments
+        or session.one_shot_prefill is not None
+        or session.rag_scope_holder.scope is not None
+        or not session.context_policy_overrides.is_empty
+        or session.context_policy_error is not None
+        or session.runtime_backend != "local"
+        or session.assistant_kind != "generic"
+        or session.assistant_id != "console"
+        or session.assistant_authority_id is not None
+        or session.character_id is not None
+        or session.character_name is not None
+        or session.user_display_name_override is not None
+        or session.character_system_template is not None
+        or session.speech_preferences != ConsoleSpeechPreferences()
+        or session.identity_revision != 0
+        or session.ephemeral
+        or session.todos
+    )
+
+
 class ConsoleChatStore:
     """Manage native Console sessions and messages before UI integration."""
 
@@ -773,6 +821,7 @@ class ConsoleChatStore:
     def create_session(
         self,
         *,
+        session_id: str | None = None,
         title: str = DEFAULT_CONSOLE_SESSION_TITLE,
         workspace_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
@@ -788,12 +837,23 @@ class ConsoleChatStore:
         """Create and activate a new native Console session.
 
         Args:
+            session_id: Optional validated identity reserved by a typed handoff.
             canonical_settings_baseline: Exact canonical defaults that equal
                 ``settings``. Omit when the settings have no proven provenance.
             ephemeral: When True the session is temporary -- never written to
                 local storage until ``promote_ephemeral_session`` clears the
                 flag.
         """
+        if session_id is not None:
+            if (
+                type(session_id) is not str
+                or not session_id
+                or session_id != session_id.strip()
+                or len(session_id) > 256
+            ):
+                raise ValueError("session id is invalid")
+            if session_id in self._sessions:
+                raise ValueError("session id already exists")
         if (
             canonical_settings_baseline is not None
             and (
@@ -806,6 +866,7 @@ class ConsoleChatStore:
         ):
             raise ValueError("canonical baseline must equal the session settings.")
         session = ConsoleChatSession(
+            id=session_id or str(uuid4()),
             title=title,
             workspace_id=workspace_id or self.workspace_context.active_workspace_id,
             settings=settings,
@@ -847,30 +908,13 @@ class ConsoleChatStore:
         session = self._sessions.get(session_id)
         if session is None or not isinstance(expected_settings, ConsoleSessionSettings):
             return False
-        if (
-            session.title != DEFAULT_CONSOLE_SESSION_TITLE
-            or session.persisted_conversation_id is not None
-            or session.settings != expected_settings
-            or session.canonical_settings_baseline != expected_settings
-            or session.draft != ""
-            or session.has_user_work
-            or session.pending_attachments
-            or session.one_shot_prefill is not None
-            or session.rag_scope_holder.scope is not None
-            or not session.context_policy_overrides.is_empty
-            or session.context_policy_error is not None
-            or session.runtime_backend != "local"
-            or session.assistant_kind != "generic"
-            or session.assistant_id != "console"
-            or session.assistant_authority_id is not None
-            or session.character_id is not None
-            or session.character_name is not None
-            or session.user_display_name_override is not None
-            or session.character_system_template is not None
-            or session.speech_preferences != ConsoleSpeechPreferences()
-            or session.identity_revision != 0
-            or session.ephemeral
-            or session.todos
+        if session.canonical_settings_baseline != expected_settings:
+            return False
+        if not is_untouched_default_session(
+            session,
+            self._messages_by_session.get(session_id, ()),
+            session.draft,
+            session.pending_attachments,
         ):
             return False
         # Every real message and display-only tool marker is assigned to its

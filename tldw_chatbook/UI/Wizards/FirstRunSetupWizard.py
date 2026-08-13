@@ -55,6 +55,8 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 from textual.worker import Worker, get_current_worker
 
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.config import get_runtime_config_snapshot
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
     active_managed_parakeet_dir,
     parakeet_descriptor,
@@ -68,10 +70,6 @@ from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
     run_parakeet_vad_provision,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_model_artifact_root
-from tldw_chatbook.STT.transcribe_cpp_config import (
-    configure_model_path as configure_transcribe_cpp_model_path,
-    is_gguf_file,
-)
 from tldw_chatbook.STT.parakeet_external import (
     ExternalParakeetVerificationError,
     format_external_parakeet_recovery,
@@ -81,6 +79,10 @@ from tldw_chatbook.STT.parakeet_sources import (
     ParakeetSourceErrorCode,
     ParakeetSourceKey,
     PreparedExternalSelection,
+)
+from tldw_chatbook.STT.transcribe_cpp_config import (
+    configure_model_path as configure_transcribe_cpp_model_path,
+    is_gguf_file,
 )
 from tldw_chatbook.Third_Party.textual_fspicker import (
     FileOpen,
@@ -415,7 +417,7 @@ class SetupStep(WizardStep):
         return [
             Static(
                 "This required step couldn't be shown. Retry here, continue "
-                "in Settings, or finish setup later.",
+                "in Settings, or exit setup and return later.",
                 classes="setup-step-error",
             ),
             Horizontal(
@@ -426,7 +428,7 @@ class SetupStep(WizardStep):
                     disabled=manual_settings_context_for_required_step(failure.step_id)
                     is None,
                 ),
-                Button("Finish later", id="setup-step-later"),
+                Button("Exit setup", id="setup-step-later"),
                 classes="setup-step-recovery-actions",
             ),
         ]
@@ -6421,24 +6423,6 @@ class WelcomeStep(SetupStep):
                 yield SetupRadioButton(
                     "Full setup — configure everything", id="setup-track-full"
                 )
-            # TASK-1507: tertiary treatment — quiet, link-like, clearly a
-            # control but visually subordinate to the track choice above.
-            # TASK-2154.9 (FR-01): unlike Cancel/Esc (finish later, resumed
-            # via toast), this path commits first_run.setup_completed and is
-            # NEVER auto-offered again -- the label must carry that
-            # consequence; the tooltip names the manual way back
-            # (Settings ▸ Diagnostics ▸ Run Setup Wizard).
-            skip_button = Button(
-                "Skip setup — don't ask again",
-                id="setup-skip-entirely",
-                variant="default",
-                classes="setup-tertiary-button",
-            )
-            skip_button.tooltip = (
-                "Close setup for good — it won't be offered again on launch. "
-                "You can still rerun it from Settings ▸ Diagnostics."
-            )
-            yield skip_button
             yield Static("", classes="setup-step-error")
 
     def get_step_data(self) -> Dict[str, Any]:
@@ -6583,6 +6567,7 @@ class SummaryStep(SetupStep):
         # step's own runtime gate instead of only checking files-on-disk.
         self._speech_runtime_installed = speech_runtime_installed
         self.exit_route: Optional[str] = None
+        self.provider_model_complete = False
 
     def compose_step(self) -> ComposeResult:
         with Vertical(classes="setup-summary"):
@@ -6604,14 +6589,11 @@ class SummaryStep(SetupStep):
         # (TASK-1495 AC #3 -- full-track content previously pushed them
         # below the fold at 120x40).
         with Horizontal(classes="setup-summary-actions"):
-            if getattr(self.wizard, "rerun", False):
-                yield Button("Done", id="setup-exit-done", variant="primary")
-                yield Button("Go to Console", id="setup-exit-chat")
-            else:
-                # CN-06 (TASK-2154.13): name the destination the button lands
-                # on -- the tab, palette, and guide all say "Console".
-                yield Button("Open Console", id="setup-exit-chat", variant="primary")
-                yield Button("Explore on my own", id="setup-exit-home")
+            yield Button(
+                "Review provider setup", id="setup-exit-chat", variant="primary"
+            )
+            yield Button("Explore Home", id="setup-exit-home")
+            yield Button("Review settings", id="setup-exit-settings")
 
     def on_show(self) -> None:
         super().on_show()
@@ -6701,6 +6683,28 @@ class SummaryStep(SetupStep):
             speech_installed=speech_installed,
             speech_runtime_installed=speech_runtime_installed,
         )
+        row_states = {row.label: row.state for row in rows}
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            ROW_CONFIGURED,
+            build_first_run_summary_actions,
+        )
+
+        primary, _, _ = build_first_run_summary_actions(
+            provider_configured=row_states.get("Provider") == ROW_CONFIGURED,
+            model_configured=row_states.get("Default model") == ROW_CONFIGURED,
+        )
+        self.provider_model_complete = primary == "start_chatting"
+        primary_button = self.query_one("#setup-exit-chat", Button)
+        primary_button.label = (
+            "Start chatting"
+            if self.provider_model_complete
+            else "Review provider setup"
+        )
+        primary_button.tooltip = (
+            "Open Console with this provider and model."
+            if self.provider_model_complete
+            else "Return to Provider and finish the connection and model setup."
+        )
         # Static.update() parses "[...]" as Rich markup by default, so any
         # bracketed literal in a label/detail (e.g. a package extra name)
         # must be escaped or it silently vanishes from the rendered text.
@@ -6749,6 +6753,9 @@ class SummaryStep(SetupStep):
 
     @on(Button.Pressed, "#setup-exit-chat")
     def _exit_chat(self) -> None:
+        if not self.provider_model_complete:
+            self.wizard.review_provider_setup()
+            return
         from tldw_chatbook.Constants import TAB_CHAT
 
         self._finish(TAB_CHAT)
@@ -6759,9 +6766,9 @@ class SummaryStep(SetupStep):
 
         self._finish(TAB_HOME)
 
-    @on(Button.Pressed, "#setup-exit-done")
-    def _exit_done(self) -> None:
-        self._finish(None)
+    @on(Button.Pressed, "#setup-exit-settings")
+    def _exit_settings(self) -> None:
+        self.wizard.open_provider_settings()
 
     def _finish(self, exit_route: Optional[str]) -> None:
         self.exit_route = exit_route
@@ -7025,7 +7032,7 @@ class SetupWizardContainer(WizardContainer):
                 "are also saved, and you can continue from Settings ▸ Diagnostics."
             )
         return (
-            "Steps you've already completed are saved. You can finish setup any "
+            "Steps you've already completed are saved. You can continue setup any "
             "time from Settings ▸ Diagnostics."
         )
 
@@ -7541,20 +7548,42 @@ class SetupWizardContainer(WizardContainer):
         """
         self._refresh_active_ids()
         self.update_progress()
-        # TASK-2154.9 (FR-01): the base nav's "Cancel" routes to the same
-        # finish-later ConfirmationDialog as Esc here
-        # (SetupWizardContainer.action_cancel → FirstRunSetupWizard's) --
-        # label it with its actual consequence and drop the destructive
-        # error styling. Scoped to this container so the Chatbook
-        # creation/import wizards, whose Cancel really aborts, keep the
-        # base "Cancel".
-        try:
-            cancel = self.query_one("#wizard-cancel", Button)
-            cancel.label = "Finish later"
-            cancel.variant = "default"
-        except NoMatches:
-            pass
+        self._sync_exit_controls()
         self._restore_resume_target()
+
+    def _sync_exit_controls(self) -> None:
+        """Keep global navigation distinct from Summary destination actions."""
+
+        try:
+            step = self.steps[self.current_step]
+            step_id = step.config.id if step.config is not None else ""
+            back = self.query_one("#wizard-back", Button)
+            next_button = self.query_one("#wizard-next", Button)
+            cancel = self.query_one("#wizard-cancel", Button)
+            hints = self.screen.query_one("#setup-key-hints", Static)
+        except (IndexError, NoMatches):
+            return
+
+        on_summary = step_id == wizard_state.STEP_SUMMARY
+        back.display = True
+        next_button.display = not on_summary
+        cancel.display = not on_summary
+        cancel.variant = "default"
+        if on_summary:
+            hints.update("Ctrl+B back")
+        elif step_id == wizard_state.STEP_WELCOME:
+            cancel.label = "Skip setup"
+            cancel.tooltip = (
+                "Close setup and stop showing it at launch. You can rerun it "
+                "from Settings ▸ Diagnostics."
+            )
+            hints.update("Ctrl+N next · Ctrl+B back · Esc skip setup")
+        else:
+            cancel.label = "Exit setup"
+            cancel.tooltip = (
+                "Save completed steps and continue later from Settings ▸ Diagnostics."
+            )
+            hints.update("Ctrl+N next · Ctrl+B back · Esc exit setup")
 
     def _restore_resume_target(self) -> None:
         """Show a validated resume target and clear its marker after paint."""
@@ -7993,6 +8022,7 @@ class SetupWizardContainer(WizardContainer):
             return
         step_index = self._resolve_visible_index(step_index)
         super().show_step(step_index)
+        self._sync_exit_controls()
         try:
             current_step = self.steps[self.current_step]
             # TASK-1496/1498: "focusable" alone is not enough — a widget
@@ -8261,6 +8291,7 @@ class SetupWizardContainer(WizardContainer):
                     button.disabled = False
             except NoMatches:
                 pass
+        self._sync_exit_controls()
 
     async def _checkpoint_required_failure(
         self, action: _SetupFailureAction
@@ -8291,7 +8322,7 @@ class SetupWizardContainer(WizardContainer):
                 if self._failure_action_is_current(action):
                     action.step.show_step_error(
                         "Manual setup is unavailable for this step. "
-                        "Retry or finish later."
+                        "Retry or exit setup and return later."
                     )
                 return
             if await self._checkpoint_required_failure(action) is not True:
@@ -8437,14 +8468,12 @@ class SetupWizardContainer(WizardContainer):
     def advance_programmatically(self) -> None:
         """Same commit-and-advance path as clicking Next, without an event.
 
-        SummaryStep's own exit buttons ("Open Console", "Explore on my
-        own", "Done", "Go to Console") are not the "#wizard-next" button, so
-        they have no Button.Pressed event to hand to handle_next() above --
-        which requires one, to call event.prevent_default() (see that
+        SummaryStep's three destination buttons are not the "#wizard-next"
+        button, so they have no Button.Pressed event to hand to handle_next()
+        above -- which requires one to call event.prevent_default() (see that
         method's docstring for why). This is the extracted guard + worker
-        dispatch body, shared by both callers; the real Next button's
-        dispatch semantics (the prevent_default() suppression) are
-        unchanged.
+        dispatch body shared by both callers; the real Next button's dispatch
+        semantics (the prevent_default() suppression) are unchanged.
         """
         if self._advancing or self._failure_action_running or not self.can_proceed:
             return
@@ -8521,6 +8550,17 @@ class SetupWizardContainer(WizardContainer):
         (self.select_track(...) inside _advance()) all working from the
         keyboard exactly as they do from the mouse.
         """
+        try:
+            current = self.steps[self.current_step]
+            step_id = current.config.id if current.config is not None else ""
+        except IndexError:
+            return
+        if step_id == wizard_state.STEP_SUMMARY:
+            try:
+                self.query_one("#setup-exit-chat", Button).focus()
+            except NoMatches:
+                pass
+            return
         self.advance_programmatically()
 
     def action_back(self) -> None:
@@ -8537,6 +8577,34 @@ class SetupWizardContainer(WizardContainer):
         previous = self._previous_active_index(self.current_step)
         if previous is not None:
             self.show_step(previous)
+
+    def review_provider_setup(self) -> None:
+        """Return an incomplete Summary to the provider step without mutation."""
+
+        provider_index = self._step_index_for_id(wizard_state.STEP_PROVIDER)
+        if provider_index is not None:
+            self.show_step(provider_index)
+
+    def open_provider_settings(self) -> None:
+        """Checkpoint the wizard before routing to provider settings."""
+
+        self.run_worker(
+            self._open_provider_settings(),
+            exclusive=True,
+            group="setup-wizard-review-settings",
+        )
+
+    async def _open_provider_settings(self) -> None:
+        if not await self.persist_current_checkpoint():
+            self._show_completion_save_error()
+            return
+        self._dismiss_screen(
+            {
+                "completed": False,
+                "exit_route": "settings",
+                "exit_context": {"category": "providers-models"},
+            }
+        )
 
     # -- explicit whole-wizard skip ---------------------------------------
     @on(Button.Pressed, "#setup-skip-entirely")
@@ -8871,7 +8939,87 @@ class SetupWizardContainer(WizardContainer):
         if not saved:
             self._show_completion_save_error()
             return
+        from tldw_chatbook.Constants import TAB_CHAT
+
+        if exit_route == TAB_CHAT and not self._stage_console_first_chat_handoff():
+            self._show_first_chat_handoff_error()
+            return
         self._dismiss_screen({"completed": True, "exit_route": exit_route})
+
+    def _stage_console_first_chat_handoff(self) -> bool:
+        """Stage a revision-fenced, secret-free target after setup commits."""
+
+        from uuid import uuid4
+
+        from tldw_chatbook.Chat.console_session_settings import (
+            build_default_console_session_settings,
+        )
+        from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+            ConsoleFirstChatIntent,
+            HandoffChannel,
+        )
+
+        try:
+            snapshot = get_runtime_config_snapshot()
+            defaults = build_default_console_session_settings(snapshot.values)
+            provider = provider_config_key(defaults.provider)
+            model = str(defaults.model or "").strip()
+            if not provider or not model:
+                return False
+
+            session_id: str | None = None
+            console_owner_found = False
+            for screen in reversed(tuple(self.app_instance.screen_stack)):
+                prepare = getattr(
+                    screen,
+                    "prepare_console_first_chat_target",
+                    None,
+                )
+                if not callable(prepare):
+                    continue
+                console_owner_found = True
+                session_id = prepare(
+                    provider=provider,
+                    model=model,
+                    config_revision=snapshot.generation,
+                )
+                break
+            if console_owner_found and session_id is None:
+                return False
+            if session_id is None:
+                session_id = str(uuid4())
+            intent = ConsoleFirstChatIntent(
+                session_id=session_id,
+                provider=provider,
+                model=model,
+                config_revision=snapshot.generation,
+            )
+            if console_owner_found:
+                self.app_instance.pending_handoffs.stage(
+                    HandoffChannel.CONSOLE_FIRST_CHAT,
+                    intent,
+                )
+            else:
+                self.app_instance.pending_handoffs.stage_reserved_console_first_chat(
+                    intent
+                )
+        except Exception as exc:  # noqa: BLE001 - keep the UI boundary retryable
+            logger.warning(
+                "First-chat handoff could not be staged (error_type={})",
+                type(exc).__name__,
+            )
+            return False
+        return True
+
+    def _show_first_chat_handoff_error(self) -> None:
+        """Keep a failed handoff retry attached to the mounted Summary."""
+
+        try:
+            self.steps[self.current_step].show_step_error(
+                "Console could not open this setup yet. Review the provider and try again."
+            )
+        except (IndexError, AttributeError):
+            logger.warning("First-chat handoff error could not render (category=ui)")
 
     def _dismiss_screen(self, result: Optional[dict]) -> None:
         """F3 hardening: the single choke point both ``_finalize`` (Finish)
@@ -9109,7 +9257,7 @@ class FirstRunSetupWizard(WizardScreen):
         # TASK-1505: the wizard's keys are otherwise undiscoverable — one
         # quiet, always-visible line names them.
         yield Static(
-            "Ctrl+N next · Ctrl+B back · Esc finish later",
+            "Ctrl+N next · Ctrl+B back · Esc skip setup",
             id="setup-key-hints",
             classes="setup-key-hints",
         )
@@ -9146,8 +9294,9 @@ class FirstRunSetupWizard(WizardScreen):
             ] = True
 
     def action_cancel(self) -> None:
+        mode = "exit"
         message = (
-            "Steps you've already completed are saved. You can finish "
+            "Steps you've already completed are saved. You can continue "
             "setup any time from Settings ▸ Diagnostics."
         )
         try:
@@ -9156,13 +9305,23 @@ class FirstRunSetupWizard(WizardScreen):
                 return
             if container._advancing or container._failure_action_running:
                 return
-            message = container.finish_later_message()
+            step = container.steps[container.current_step]
+            step_id = step.config.id if step.config is not None else ""
+            if step_id == wizard_state.STEP_WELCOME:
+                mode = "skip"
+                message = (
+                    "Skip setup and stop showing it at launch? You can rerun "
+                    "setup from Settings ▸ Diagnostics."
+                )
+            else:
+                message = container.finish_later_message()
         except NoMatches:
             pass
+        self._pending_cancel_mode = mode
         dialog = _SettlingGuardedConfirmationDialog(
-            title="Finish setup later?",
+            title="Skip setup?" if mode == "skip" else "Exit setup?",
             message=message,
-            confirm_label="Finish later",
+            confirm_label="Skip setup" if mode == "skip" else "Exit setup",
             cancel_label="Keep going",
         )
         self.app.push_screen(dialog, self._handle_cancel_confirm)
@@ -9180,6 +9339,17 @@ class FirstRunSetupWizard(WizardScreen):
                 self.query_one(AppearanceStep).revert_preview()
             except Exception:
                 pass
+            if getattr(self, "_pending_cancel_mode", "exit") == "skip":
+                try:
+                    container = self.query_one(SetupWizardContainer)
+                except NoMatches:
+                    return
+                container.run_worker(
+                    container._skip_entirely(),
+                    exclusive=True,
+                    group="setup-wizard-advance",
+                )
+                return
             self.run_worker(
                 self._finish_later(),
                 exclusive=True,
@@ -9197,7 +9367,7 @@ class FirstRunSetupWizard(WizardScreen):
             saved = False
         if not saved:
             self.notify(
-                "Setup progress could not be saved. Retry Finish later.",
+                "Setup progress could not be saved. Retry Exit setup.",
                 severity="error",
             )
             return

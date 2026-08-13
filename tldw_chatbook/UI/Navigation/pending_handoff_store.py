@@ -46,6 +46,43 @@ class ConsoleProviderIntent:
         object.__setattr__(self, "provider", normalized)
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleFirstChatIntent:
+    """Secret-free request to activate one exact first-run Console session."""
+
+    session_id: str
+    provider: str
+    model: str
+    config_revision: int
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.session_id) is not str
+            or not self.session_id
+            or self.session_id != self.session_id.strip()
+            or len(self.session_id) > 256
+        ):
+            raise ValueError("Console first-chat session is invalid")
+        if type(self.provider) is not str:
+            raise TypeError("Console first-chat provider must be text")
+        normalized_provider = provider_config_key(self.provider)
+        if (
+            not normalized_provider
+            or _PROVIDER_IDENTIFIER_PATTERN.fullmatch(normalized_provider) is None
+        ):
+            raise ValueError("Console first-chat provider is invalid")
+        if (
+            type(self.model) is not str
+            or not self.model
+            or self.model != self.model.strip()
+            or len(self.model) > 512
+        ):
+            raise ValueError("Console first-chat model is invalid")
+        if type(self.config_revision) is not int or self.config_revision < 1:
+            raise ValueError("Console first-chat config revision is invalid")
+        object.__setattr__(self, "provider", normalized_provider)
+
+
 class HandoffChannel(StrEnum):
     """Typed single-slot channels owned by the application."""
 
@@ -59,6 +96,7 @@ class HandoffChannel(StrEnum):
     #: settled conversation's session (and Task 5's mount-claim reads the
     #: same channel for wake delivery).
     CONSOLE_FLEET_COMPLETION = "console_fleet_completion"
+    CONSOLE_FIRST_CHAT = "console_first_chat"
     STUDY_SCOPE = "study_scope"
     STUDY_INITIAL_SECTION = "study_initial_section"
     STUDY_ORIGIN = "study_origin"
@@ -99,6 +137,7 @@ class _Slot:
     revision: int = 0
     pending: tuple[int, Any] | None = None
     in_flight: _InFlight | None = None
+    reserved_revisions: set[int] = field(default_factory=set)
 
 
 class PendingHandoffStore:
@@ -117,17 +156,44 @@ class PendingHandoffStore:
 
     def stage(self, channel: HandoffChannel, value: Any) -> int:
         """Normalize and replace the latest pending value for a channel."""
+        return self._stage(channel, value, reserves_new_session=False)
+
+    def stage_reserved_console_first_chat(
+        self,
+        intent: ConsoleFirstChatIntent,
+    ) -> int:
+        """Stage a first-chat intent whose absent exact target may be created."""
+
+        return self._stage(
+            HandoffChannel.CONSOLE_FIRST_CHAT,
+            intent,
+            reserves_new_session=True,
+        )
+
+    def _stage(
+        self,
+        channel: HandoffChannel,
+        value: Any,
+        *,
+        reserves_new_session: bool,
+    ) -> int:
         self._assert_owner_thread()
         slot = self._slot_for(channel)
         normalized = self._detached_value(channel, value)
+        if slot.pending is not None:
+            slot.reserved_revisions.discard(slot.pending[0])
         slot.revision += 1
         slot.pending = (slot.revision, normalized)
+        if reserves_new_session:
+            slot.reserved_revisions.add(slot.revision)
         return slot.revision
 
     def clear_pending(self, channel: HandoffChannel) -> int:
         """Advance a channel and remove its latest unclaimed value."""
         self._assert_owner_thread()
         slot = self._slot_for(channel)
+        if slot.pending is not None:
+            slot.reserved_revisions.discard(slot.pending[0])
         slot.revision += 1
         slot.pending = None
         return slot.revision
@@ -171,7 +237,25 @@ class PendingHandoffStore:
         if current is None or current.claim is not claim:
             return False
         slot.in_flight = None
+        slot.reserved_revisions.discard(claim.revision)
         return True
+
+    def claim_reserves_new_console_session(
+        self,
+        claim: HandoffClaim[ConsoleFirstChatIntent],
+    ) -> bool:
+        """Return reservation metadata only for the exact in-flight claim."""
+
+        self._assert_owner_thread()
+        slot = self._slot_for_claim(claim)
+        if claim.channel is not HandoffChannel.CONSOLE_FIRST_CHAT:
+            raise ValueError("reservation metadata requires a first-chat claim")
+        current = slot.in_flight
+        return (
+            current is not None
+            and current.claim is claim
+            and claim.revision in slot.reserved_revisions
+        )
 
     def release(self, claim: HandoffClaim[Any]) -> bool:
         """Release an exact claim without overwriting a newer revision."""
@@ -224,6 +308,8 @@ class PendingHandoffStore:
             prompt_status = "ready" if should_requeue else "expired"
         if should_requeue:
             slot.pending = (claim.revision, current.retained_value)
+        else:
+            slot.reserved_revisions.discard(claim.revision)
         return True, prompt_status
 
     def _prompt_is_unexpired(self, value: PromptVariableApplication) -> bool:
@@ -310,6 +396,15 @@ class PendingHandoffStore:
             return ConsoleFleetCompletionTarget(
                 conversation_id=value.conversation_id,
                 session_id=value.session_id,
+            )
+        if channel is HandoffChannel.CONSOLE_FIRST_CHAT:
+            if not isinstance(value, ConsoleFirstChatIntent):
+                raise TypeError("Console first-chat handoff must be typed")
+            return ConsoleFirstChatIntent(
+                session_id=value.session_id,
+                provider=value.provider,
+                model=value.model,
+                config_revision=value.config_revision,
             )
         if channel is HandoffChannel.STUDY_SCOPE:
             if not isinstance(value, StudyScopeContext):
