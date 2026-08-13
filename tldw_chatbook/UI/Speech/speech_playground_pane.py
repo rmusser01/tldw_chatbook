@@ -1161,6 +1161,7 @@ class SpeechPlaygroundPane(
             row = self.query_one("#speech-axis-row", SpeechAxisRow)
         except NoMatches:
             return
+        row.update_defaults(self.axis_defaults)
         row.update_values(self.axis_values)
 
     # NOTE (task-15476): there used to be a second handler here,

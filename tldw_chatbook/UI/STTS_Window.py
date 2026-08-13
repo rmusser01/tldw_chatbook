@@ -1377,6 +1377,34 @@ def _seed_axis_defaults(
         return {}
 
 
+def _rebase_inherited_axis_values(
+    values: Mapping[str, str],
+    *,
+    old_defaults: Mapping[str, str],
+    new_defaults: Mapping[str, str],
+) -> dict[str, str]:
+    """Move inherited retained axes to fresh defaults and keep real overrides."""
+
+    rebased = dict(values)
+    missing = object()
+    for axis in set(old_defaults) | set(new_defaults):
+        current = rebased.get(axis, missing)
+        old_default = old_defaults.get(axis, missing)
+        new_default = new_defaults.get(axis, missing)
+        if old_default == new_default:
+            continue
+        is_session_override = current is not missing and (
+            old_default is missing or current != old_default
+        )
+        if is_session_override:
+            continue
+        if new_default is missing:
+            rebased.pop(axis, None)
+        else:
+            rebased[axis] = new_default
+    return rebased
+
+
 class STTSWindow(Container):
     """Main S/TT/S window containing all sub-windows"""
 
@@ -1446,13 +1474,30 @@ class STTSWindow(Container):
         if previous is not None and revision <= previous:
             return
         snapshot = SpeechSettingsPane._read_global_preferences()
+        playgrounds = list(self.query(SpeechPlaygroundPane))
+        if not playgrounds:
+            load_result = self._studio_load_result
+            studio_snapshot = None if load_result is None else load_result.snapshot
+            old_defaults = _seed_axis_defaults(
+                studio_snapshot,
+                self._global_preferences,
+            )
+            new_defaults = _seed_axis_defaults(studio_snapshot, snapshot)
+            self._playground_axis_values = _rebase_inherited_axis_values(
+                self._playground_axis_values,
+                old_defaults=old_defaults,
+                new_defaults=new_defaults,
+            )
         self._global_preferences = snapshot
         self._last_global_preferences_revision = revision
-        for pane_type in (SpeechSettingsPane, SpeechPlaygroundPane):
-            for pane in self.query(pane_type):
-                callback = getattr(pane, "refresh_global_preferences", None)
-                if callable(callback):
-                    callback(snapshot)
+        for pane in self.query(SpeechSettingsPane):
+            callback = getattr(pane, "refresh_global_preferences", None)
+            if callable(callback):
+                callback(snapshot)
+        for pane in playgrounds:
+            callback = getattr(pane, "refresh_global_preferences", None)
+            if callable(callback):
+                callback(snapshot)
 
     def compose(self) -> ComposeResult:
         """Compose a non-interactive shell until Studio preferences are loaded."""

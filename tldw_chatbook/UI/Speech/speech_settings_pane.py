@@ -241,6 +241,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
         self._adoption_pending = False
         self._busy = False
         self._load_applied = False
+        self._forced_global_provider_draft: StudioTTSPreferencesSnapshot | None = None
 
     @property
     def saved_snapshot(self) -> StudioTTSPreferencesSnapshot:
@@ -318,9 +319,45 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
 
         if type(snapshot) is not TTSPreferencesSnapshot:
             raise TypeError("global preferences must be a TTS preferences snapshot")
-        self._global_preferences = snapshot
         if not self.is_mounted:
+            self._global_preferences = snapshot
             return
+
+        provider_value = self.query_one("#studio-tts-provider", Select).value
+        previous_effective_provider = self._effective_provider()
+        draft = self._collect_candidate(show_errors=False)
+        self._global_preferences = snapshot
+        provider_changed = (
+            provider_value == _INHERIT
+            and previous_effective_provider != snapshot.provider_id
+        )
+        if provider_changed:
+            retained_draft = self._forced_global_provider_draft
+            if (
+                previous_effective_provider == "audio_cpp"
+                and retained_draft is not None
+                and draft is not None
+            ):
+                draft = replace(
+                    draft,
+                    selection=replace(
+                        draft.selection,
+                        response_format=retained_draft.selection.response_format,
+                        speed=retained_draft.selection.speed,
+                    ),
+                )
+            draft = draft or retained_draft or self._saved_snapshot
+            self._forced_global_provider_draft = (
+                draft if snapshot.provider_id == "audio_cpp" else None
+            )
+            self._applying_controls = True
+            try:
+                self._populate_provider_controls(
+                    _INHERIT,
+                    draft,
+                )
+            finally:
+                self._applying_controls = False
         self._sync_source_copy()
         self._sync_dirty_state()
 
@@ -619,6 +656,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             )
 
     def _apply_snapshot(self, snapshot: StudioTTSPreferencesSnapshot) -> None:
+        self._forced_global_provider_draft = None
         selection = snapshot.selection
         provider_value = selection.provider_id or _INHERIT
         self._applying_controls = True
@@ -1125,6 +1163,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
         ):
             self._set_error("provider", "Choose a supported provider or Inherit")
             return
+        self._forced_global_provider_draft = None
         self._applying_controls = True
         try:
             self.query_one("#studio-tts-provider", Select).value = provider_value

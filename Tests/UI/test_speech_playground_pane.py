@@ -1262,6 +1262,15 @@ async def test_mounted_playground_refresh_preserves_draft_and_focus(
         assert pane.axis_values["tts-model-select"] == "pocket-tts"
         assert pane.axis_values["tts-voice-select"] == "alba"
 
+        row = pane.query_one("#speech-axis-row")
+        assert row.defaults == pane.axis_defaults
+        model_chip = pane.query_one(f"#{axis_chip_id('tts-model-select')}", Static)
+        speed_chip = pane.query_one(f"#{axis_chip_id('tts-speed-input')}", Static)
+        assert not model_chip.has_class("speech-chip-override")
+        assert "pocket-tts" in str(model_chip.tooltip)
+        assert speed_chip.has_class("speech-chip-override")
+        assert "1.2" in str(speed_chip.tooltip)
+
 
 def test_playground_refresh_requires_exact_global_snapshot_type() -> None:
     pane = SpeechPlaygroundPane()

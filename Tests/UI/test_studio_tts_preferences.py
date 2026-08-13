@@ -67,6 +67,18 @@ def _global_pocket() -> TTSPreferencesSnapshot:
     )
 
 
+def _global_audio_cpp() -> TTSPreferencesSnapshot:
+    return TTSPreferencesSnapshot(
+        provider_id="audio_cpp",
+        model_mode="exact",
+        model_id="kokoro-82m",
+        voice_mode="exact",
+        voice_id="af_heart",
+        response_format="wav",
+        speed=1.0,
+    )
+
+
 class _Store:
     def __init__(
         self,
@@ -139,6 +151,15 @@ class _Host(App[None]):
     ) -> None:
         del kwargs
         self.notices.append((message, severity))
+
+
+class _STTSHost(App[None]):
+    def __init__(self, window: STTSWindow) -> None:
+        super().__init__()
+        self.window = window
+
+    def compose(self) -> ComposeResult:
+        yield self.window
 
 
 def _pane(
@@ -335,6 +356,78 @@ async def test_mounted_settings_refreshes_global_sources_without_losing_draft_fo
         )
 
 
+@pytest.mark.asyncio
+async def test_inherited_provider_refresh_repopulates_dependent_controls_both_ways() -> (
+    None
+):
+    pane = _pane(_Store())
+    app = _Host(pane)
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await pilot.pause()
+        provider = pane.query_one("#studio-tts-provider", Select)
+        model_mode = pane.query_one("#studio-tts-model-mode", Select)
+        model_id = pane.query_one("#studio-tts-model-id", Input)
+        voice_mode = pane.query_one("#studio-tts-voice-mode", Select)
+        voice_id = pane.query_one("#studio-tts-voice-id", Input)
+        output_format = pane.query_one("#studio-tts-format", Select)
+        speed = pane.query_one("#studio-tts-speed", Input)
+
+        model_mode.value = "exact"
+        await pilot.pause()
+        model_id.value = "unsaved-cross-provider-model"
+        output_format.value = "flac"
+        speed.value = "1.4"
+        model_id.focus()
+        await pilot.pause()
+
+        pane.refresh_global_preferences(_global_audio_cpp())
+        await pilot.pause()
+
+        assert provider.value == "__inherit__"
+        assert model_mode.value == "exact"
+        assert model_id.value == "unsaved-cross-provider-model"
+        assert model_id.has_focus
+        assert voice_mode.value == "__inherit__"
+        assert voice_id.value == ""
+        assert output_format.value == "wav"
+        assert output_format.disabled
+        assert speed.value == "1.0"
+        assert speed.disabled
+        assert "audio.cpp" in str(
+            pane.query_one("#studio-tts-provider-source", Static).render()
+        )
+        assert "Fixed by audio.cpp" in str(
+            pane.query_one("#studio-tts-format-source", Static).render()
+        )
+
+        pane.refresh_global_preferences(_global_pocket())
+        await pilot.pause()
+
+        assert provider.value == "__inherit__"
+        assert model_mode.value == "exact"
+        assert model_id.value == "unsaved-cross-provider-model"
+        assert model_id.has_focus
+        assert voice_mode.value == "__inherit__"
+        assert voice_id.value == ""
+        assert output_format.value == "flac"
+        assert not output_format.disabled
+        assert speed.value == "1.4"
+        assert not speed.disabled
+        assert "alba" in str(
+            pane.query_one("#studio-tts-voice-source", Static).render()
+        )
+        assert "Studio override" in str(
+            pane.query_one("#studio-tts-model-source", Static).render()
+        )
+        assert "Studio override" in str(
+            pane.query_one("#studio-tts-format-source", Static).render()
+        )
+        assert "Studio override" in str(
+            pane.query_one("#studio-tts-speed-source", Static).render()
+        )
+
+
 def test_settings_refresh_requires_exact_global_snapshot_type() -> None:
     pane = _pane(_Store())
 
@@ -417,6 +510,85 @@ def test_retained_window_safely_caches_refresh_when_no_pane_is_mounted(
     )
 
     assert window._global_preferences is snapshot
+
+
+@pytest.mark.asyncio
+async def test_absent_playground_rebases_inherited_axes_before_actual_remount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_global = _global_openai()
+    new_global = _global_pocket()
+    monkeypatch.setattr(
+        SpeechSettingsPane,
+        "_read_global_preferences",
+        staticmethod(lambda: old_global),
+    )
+    monkeypatch.setattr(STTSWindow, "on_mount", lambda self: None)
+    monkeypatch.setattr(
+        STTSWindow,
+        "_global_provider_configuration_states",
+        staticmethod(dict),
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda self, *args, **kwargs: None,
+    )
+    window = STTSWindow(SimpleNamespace())
+    window._studio_load_result = StudioTTSLoadResult(
+        StudioTTSPreferencesSnapshot(),
+        StudioTTSLoadState.LOADED,
+    )
+    app = _STTSHost(window)
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        window._mount_view("playground", force=True)
+        await pilot.pause()
+        first = window.query_one(SpeechPlaygroundPane)
+        first.axis_values = {
+            "tts-provider-select": "openai",
+            "tts-model-select": "tts-1-hd",
+            "tts-voice-select": "shimmer",
+            "tts-format-select": "mp3",
+            "tts-speed-input": "1.7",
+        }
+        first._refresh_axis_markers()
+
+        window.select_view("settings")
+        await pilot.pause()
+        assert not window.query(SpeechPlaygroundPane)
+
+        monkeypatch.setattr(
+            SpeechSettingsPane,
+            "_read_global_preferences",
+            staticmethod(lambda: new_global),
+        )
+        window.receive_provider_configuration_changed(
+            STTSProviderConfigurationChanged("openai", 4, 9)
+        )
+        window.select_view("playground")
+        await pilot.pause()
+
+        remounted = window.query_one(SpeechPlaygroundPane)
+        assert remounted is not first
+        assert remounted.axis_values == {
+            "tts-provider-select": "openai",
+            "tts-model-select": "pocket-tts",
+            "tts-voice-select": "alba",
+            "tts-format-select": "wav",
+            "tts-speed-input": "1.7",
+        }
+        for inherited_axis in (
+            "tts-provider-select",
+            "tts-model-select",
+            "tts-voice-select",
+            "tts-format-select",
+        ):
+            chip = remounted.query_one(f"#speech-axis-{inherited_axis}", Static)
+            assert not chip.has_class("speech-chip-override"), inherited_axis
+        speed_chip = remounted.query_one("#speech-axis-tts-speed-input", Static)
+        assert speed_chip.has_class("speech-chip-override")
+        assert "1.2" in str(speed_chip.tooltip)
 
 
 @pytest.mark.asyncio

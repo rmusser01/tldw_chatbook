@@ -248,6 +248,19 @@ class SpeechAxisRow(Grid):
                 f"({self.defaults.get(axis, UNSET_VALUE)})"
             )
 
+    def update_defaults(self, defaults: dict[str, str]) -> None:
+        """Replace the row's persisted-default copy before its next repaint.
+
+        The pane and row deliberately own detached dictionaries. Global
+        preference refreshes must therefore update both copies; otherwise
+        labels and tooltips compare fresh values with stale defaults.
+
+        Args:
+            defaults: Fresh persisted defaults per comparison axis.
+        """
+
+        self.defaults = dict(defaults)
+
     def compose(self) -> ComposeResult:
         """Yield a labelled, editable control per axis, marking overrides."""
         for axis in AXIS_CONTROLS:
