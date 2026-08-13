@@ -345,6 +345,16 @@ async def test_children_finishing_inside_their_turn_never_wake(tmp_path):
         )
         assert not wake.has_pending(session.id)
 
+        # A run-id-less survivor (child died before create_run: no row, no
+        # result, nothing to wake on -- Task 2's consumer contract).
+        wake.on_fleet_drained(
+            _drain(session.id, _survivor(None, session_id=session.id))
+        )
+        assert await _quiet(lambda: gateway.payloads), (
+            "a child with no run row has nothing deliverable"
+        )
+        assert not wake.has_pending(session.id)
+
         wake.on_fleet_drained(
             _drain(session.id, _survivor(run_id, session_id=session.id))
         )
@@ -795,19 +805,29 @@ async def test_mount_claim_delivers_a_marked_conversations_result_from_the_db(
         )
         runs_db.set_status(within_id, "done", "the within-turn answer")
         runs_db.set_status(parent_id, "done", "turn final")
-        # A survivor delivered under an EARLIER mark: updated_at pushed
-        # well before this mark's created_at -> excluded.
+        # A survivor delivered under an EARLIER mark: a GENUINE survivor
+        # by the parent rule (its own parent's terminal write predates it)
+        # whose settle predates this mark's created_at -- so ONLY the mark
+        # bound can exclude it, which is exactly the pin.
+        old_parent_id = runs_db.create_run(
+            conversation_id=conversation_id, agent_kind="primary"
+        )
+        runs_db.set_status(old_parent_id, "done", "old turn final")
         old_id = runs_db.create_run(
             conversation_id=conversation_id,
             agent_kind="subagent",
             task="old job",
-            parent_run_id=parent_id,
+            parent_run_id=old_parent_id,
         )
         runs_db.set_status(old_id, "done", "the already-delivered answer")
         with runs_db.connection() as conn:
             conn.execute(
                 "UPDATE agent_runs SET updated_at = ? WHERE id = ?",
-                ("2020-01-01T00:00:00.000000Z", old_id),
+                ("2020-01-01T00:00:10.000000Z", old_parent_id),
+            )
+            conn.execute(
+                "UPDATE agent_runs SET updated_at = ? WHERE id = ?",
+                ("2020-01-01T00:00:20.000000Z", old_id),
             )
         app.conversation_local_marks_service.set_mark(
             conversation_id, ConversationLocalMarksService.FLEET_UNSEEN
