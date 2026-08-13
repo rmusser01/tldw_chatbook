@@ -11,6 +11,13 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Agents.agent_models import (
+    FinalContinuation,
+    ProviderContinuationEvent,
+    ToolBatchReady,
+    ToolCallExecuting,
+    ToolCallFinished,
+)
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.citation_trace_models import (
@@ -51,6 +58,12 @@ from tldw_chatbook.Chat.console_speech import (
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.provider_continuation import (
+    ProviderContinuationCheckpoint,
+    dump_provider_continuation_json,
+    read_provider_continuation_json,
+    transition_provider_call,
+)
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
@@ -778,14 +791,79 @@ class ConsoleChatStore:
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
         self._resolve_context_policy_on_resume(session.id)
+        restored_nodes = self._hydrate_provider_continuations_from_persistence(
+            persisted_conversation_id,
+            list(all_nodes),
+        )
         self._ingest_full_tree(
             session.id,
-            all_nodes,
+            restored_nodes,
             active_leaf_persisted_id=active_leaf_persisted_id,
         )
         self._hydrate_generation_metadata_from_persistence(session.id)
         self._bump_payload_revision(session.id)
         return session
+
+    def _hydrate_provider_continuations_from_persistence(
+        self,
+        conversation_id: str,
+        nodes: list[ConsoleChatMessage],
+    ) -> list[ConsoleChatMessage]:
+        """Tolerantly attach private checkpoints without exposing their data."""
+        database = getattr(self.persistence, "db", None) if self.persistence else None
+        getter = getattr(database, "get_messages_for_conversation", None)
+        if not callable(getter):
+            return nodes
+        try:
+            rows = getter(conversation_id, limit=100_000)
+        except Exception:
+            logger.warning("Console continuation restore was unavailable.")
+            return nodes
+        by_persisted_id = {
+            node.persisted_message_id: node
+            for node in nodes
+            if node.persisted_message_id is not None
+        }
+        local_client_id = getattr(database, "client_id", None)
+        for row in rows:
+            persisted_id = str(row.get("id") or "")
+            safe = read_provider_continuation_json(
+                row.get("provider_continuation_json")
+            )
+            node = by_persisted_id.get(persisted_id)
+            if node is None and (safe.checkpoint is not None or safe.warning):
+                node = ConsoleChatMessage(
+                    id=persisted_id,
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content=str(row.get("content") or ""),
+                    persisted_message_id=persisted_id,
+                    parent_message_id=(
+                        str(row["parent_message_id"])
+                        if row.get("parent_message_id") is not None
+                        else None
+                    ),
+                )
+                nodes.append(node)
+                by_persisted_id[persisted_id] = node
+            if node is None:
+                continue
+            node.parent_message_id = (
+                str(row["parent_message_id"])
+                if row.get("parent_message_id") is not None
+                else None
+            )
+            node.provider_continuation = safe.checkpoint
+            node.provider_continuation_warning = safe.warning
+            node.provider_continuation_remote = bool(
+                safe.checkpoint is not None
+                and local_client_id is not None
+                and row.get("client_id") not in (None, local_client_id)
+            )
+            version = row.get("version")
+            node.provider_continuation_message_version = (
+                version if type(version) is int else None
+            )
+        return nodes
 
     def _hydrate_generation_metadata_from_persistence(self, session_id: str) -> None:
         """Batch-fetch and apply generation-metadata sidecar rows on resume.
@@ -3135,6 +3213,73 @@ class ConsoleChatStore:
             raise KeyError(f"Unknown Console message: {message_id}")
         return self._message_session_index[message_id]
 
+    def interrupted_provider_continuation_message(
+        self,
+        session_id: str | None = None,
+    ) -> ConsoleChatMessage | None:
+        """Return the active-path owner needing explicit recovery, if any."""
+        target_session_id = session_id or self.active_session_id
+        if target_session_id is None or target_session_id not in self._sessions:
+            return None
+        for message in reversed(self.messages_for_session(target_session_id)):
+            checkpoint = message.provider_continuation
+            if checkpoint is not None and checkpoint.state == "active":
+                return message
+        return None
+
+    def discard_provider_continuation(
+        self,
+        message_id: str,
+        *,
+        expected_message_version: int,
+    ) -> bool:
+        """Optimistically clear one whole checkpoint without running tools."""
+        message = self._message_or_raise(message_id)
+        persisted_id = message.persisted_message_id
+        database = getattr(self.persistence, "db", None) if self.persistence else None
+        updater = getattr(database, "update_provider_continuation", None)
+        if persisted_id is None or not callable(updater):
+            raise RuntimeError(
+                "Interrupted run could not be discarded; reload and retry."
+            )
+        session_id = self._message_session_index[message_id]
+        children = self._children_by_parent.get(session_id, {})
+        if (
+            not message.content
+            and not message.attachments
+            and message.image_data is None
+            and children.get(message_id)
+        ):
+            raise RuntimeError("Interrupted run changed; reload before discarding.")
+        updater(
+            message_id=persisted_id,
+            expected_message_version=expected_message_version,
+            provider_continuation_json=None,
+        )
+        message.provider_continuation = None
+        message.provider_continuation_message_version = expected_message_version + 1
+        message.provider_continuation_remote = False
+        if message.content or message.attachments or message.image_data is not None:
+            self._bump_payload_revision(session_id)
+            return True
+
+        parent_id = self._native_parent_by_message.pop(message_id, None)
+        siblings = children.get(parent_id, [])
+        if message_id in siblings:
+            siblings.remove(message_id)
+        if not siblings:
+            children.pop(parent_id, None)
+        self._nodes_by_session.get(session_id, {}).pop(message_id, None)
+        self._message_session_index.pop(message_id, None)
+        self._pending_persistence_message_ids.discard(message_id)
+        if self._active_leaf_by_session.get(session_id) == message_id:
+            self._active_leaf_by_session[session_id] = parent_id
+            self._persist_active_leaf(session_id, parent_id)
+        self._recompute_active_path(session_id)
+        self._bump_payload_revision(session_id)
+        self._bump_conversation_context_epoch(session_id)
+        return True
+
     def active_leaf(self, session_id: str) -> str | None:
         """Return the native id of the session's active-leaf node (or ``None``)."""
         self._session_or_raise(session_id)
@@ -4838,6 +4983,156 @@ class ConsoleChatStore:
                 "Portable sync receipt is missing or inconsistent; reconcile and retry.",
             )
         return ContinuationDurabilityResult(True, "portable_projection_durable")
+
+    def persist_provider_continuation_event(
+        self,
+        event: ProviderContinuationEvent,
+    ) -> None:
+        """Commit one runtime continuation event before its next side effect.
+
+        The runtime callback is synchronous because it is invoked on the
+        controller's existing agent worker thread. Persistent primary runs
+        use the schema-v36 dedicated create/update operations; explicitly
+        ephemeral runs retain no checkpoint and remain non-resumable.
+
+        Args:
+            event: Typed lifecycle event emitted by the shared agent runtime.
+
+        Raises:
+            RuntimeError: If ownership, optimistic state, persistence, or the
+                durability barrier cannot be proven without private details.
+        """
+        context = event.context
+        if context.durability == "ephemeral":
+            return
+        if context.agent_kind != "primary" or not context.owner_message_id:
+            raise RuntimeError("Durable continuation needs a distinct assistant owner.")
+        message = self._message_or_raise(context.owner_message_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise RuntimeError("Durable continuation owner is unavailable.")
+        persistence = self.persistence
+        database = getattr(persistence, "db", None) if persistence is not None else None
+        if database is None:
+            raise RuntimeError(
+                "Provider continuation could not be saved; retry or discard the interrupted run."
+            )
+
+        checkpoint, content = self._continuation_event_value(message, event)
+        private_json = dump_provider_continuation_json(checkpoint)
+        if private_json is None:
+            raise RuntimeError("Durable continuation state is unavailable.")
+
+        message_version: int | None
+        if message.persisted_message_id is None:
+            if not isinstance(event, ToolBatchReady) or (
+                event.expected_checkpoint_revision is not None
+            ):
+                raise RuntimeError("Durable continuation owner is unavailable.")
+            session_id = self._message_session_index[message.id]
+            conversation_id = self.persist_session_if_needed(session_id)
+            if conversation_id is None:
+                raise RuntimeError(
+                    "Provider continuation could not be saved; retry or discard the interrupted run."
+                )
+            creator = getattr(database, "create_assistant_with_continuation", None)
+            if not callable(creator):
+                raise RuntimeError("Durable continuation storage is unavailable.")
+            creator(
+                message_id=message.id,
+                conversation_id=conversation_id,
+                parent_message_id=self._previous_persisted_message_id(message),
+                content=content,
+                provider_continuation_json=private_json,
+            )
+            message.persisted_message_id = message.id
+            self._pending_persistence_message_ids.discard(message.id)
+            message_version = 1
+        else:
+            version_reader = getattr(persistence, "get_message_version", None)
+            durable_version = (
+                version_reader(message.persisted_message_id)
+                if callable(version_reader)
+                else None
+            )
+            message_version = message.provider_continuation_message_version
+            if message_version is None:
+                message_version = durable_version
+            if durable_version != message_version:
+                raise RuntimeError("Continuation version conflict; reload and retry.")
+            updater = getattr(database, "update_provider_continuation", None)
+            if type(message_version) is not int or not callable(updater):
+                raise RuntimeError("Durable continuation version is unavailable.")
+            updater(
+                message_id=message.persisted_message_id,
+                expected_message_version=message_version,
+                provider_continuation_json=private_json,
+                content=content,
+            )
+            message_version += 1
+
+        message.provider_continuation = checkpoint
+        message.provider_continuation_message_version = message_version
+        message.provider_continuation_remote = False
+        message.content = content
+        payload = {
+            "content": content,
+            "provider_continuation_json": private_json,
+            "role": ConsoleMessageRole.ASSISTANT.value,
+        }
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        durability = self.ensure_provider_continuation_durable(
+            message_id=message.persisted_message_id,
+            message_version=message_version,
+            payload_hash=canonical_payload_hash(payload),
+        )
+        if not durability.ready:
+            raise RuntimeError(durability.reason)
+
+    @staticmethod
+    def _continuation_event_value(
+        message: ConsoleChatMessage,
+        event: ProviderContinuationEvent,
+    ) -> tuple[ProviderContinuationCheckpoint, str]:
+        """Resolve a typed event without logging its private payload."""
+        current = message.provider_continuation
+        if isinstance(event, ToolBatchReady):
+            if event.expected_checkpoint_revision is None:
+                if current is not None:
+                    raise RuntimeError("Continuation revision conflict.")
+            elif (
+                current is None
+                or current.checkpoint_revision != event.expected_checkpoint_revision
+            ):
+                raise RuntimeError("Continuation revision conflict.")
+            return event.checkpoint, message.content
+        if current is None:
+            raise RuntimeError("Durable continuation owner is unavailable.")
+        if isinstance(event, ToolCallExecuting):
+            checkpoint = transition_provider_call(
+                current,
+                call_id=event.call_id,
+                expected_revision=event.expected_checkpoint_revision,
+                target="executing",
+            )
+            return checkpoint, message.content
+        if isinstance(event, ToolCallFinished):
+            checkpoint = transition_provider_call(
+                current,
+                call_id=event.call_id,
+                expected_revision=event.expected_checkpoint_revision,
+                target=event.target_state,
+                result=event.result,
+            )
+            return checkpoint, message.content
+        if isinstance(event, FinalContinuation):
+            if event.expected_checkpoint_revision is None:
+                if current is not None:
+                    raise RuntimeError("Continuation revision conflict.")
+            elif current.checkpoint_revision != event.expected_checkpoint_revision:
+                raise RuntimeError("Continuation revision conflict.")
+            return event.checkpoint, event.assistant_content
+        raise RuntimeError("Unsupported continuation event.")
 
     def _enqueue_sync_v2_message_if_ready(
         self,

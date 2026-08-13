@@ -73,10 +73,8 @@ from ..Console_Modules.prompt_queue import ConsolePromptDispatchStatus, ConsoleP
 from ..Console_Modules.left_rail import ConsoleLeftRail
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
-from ..Console_Modules.transcript import (
-    ConsoleTranscriptRegion,
-    _ConsoleTranscriptReadingState,
-)
+from ..Console_Modules.provider_continuation_recovery import ProviderContinuationTranscriptRegion as ConsoleTranscriptRegion
+from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules.wiring import build_console_controllers
 from ..Console_Modules.session import (
     _canonical_card_character_id,
@@ -14242,15 +14240,14 @@ class ChatScreen(BaseAppScreen):
 
                 # A zero-arg builder, not a pre-built widget, for the same
                 # reason `character_avatar_widget_builder` above is one --
-                # with a sharper edge here, since the surface is CACHED on
-                # the screen; full reasoning in `ConsoleTranscriptRegion.
-                # __init__`'s docstring. Sizing stays on this side: it
-                # describes this pane's place among its grid siblings
+                # Sizing stays here because it describes this pane among its siblings
                 # (3fr / 13fr / 4fr), exactly as both rails are wired.
                 main_column = ConsoleTranscriptRegion(
                     session_surface_builder=(
                         lambda: self._ensure_console_session_surface()
                     ),
+                    recovery_message_builder=(lambda: self._ensure_console_chat_store().interrupted_provider_continuation_message()),
+                    on_recovery_action=(lambda action, message_id, version: self._ensure_console_chat_controller().recover_provider_continuation(action, message_id, version)),
                 )
                 main_column.styles.width = "13fr"
                 # TASK-2154.1 (LY-09): in single-pane mode the min-width

@@ -1,0 +1,277 @@
+"""Console ownership and recovery for durable provider continuation."""
+
+from __future__ import annotations
+
+from tldw_chatbook.Agents.agent_models import (
+    ContinuationEventContext,
+    ToolBatchReady,
+)
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationCall,
+    ContinuationRound,
+    ProviderContinuationCheckpoint,
+)
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+
+def _active_checkpoint() -> ProviderContinuationCheckpoint:
+    return ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k2",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="active",
+        rounds=(
+            ContinuationRound(
+                assistant_content="",
+                reasoning_blocks=("PRIVATE-REASONING-CANARY",),
+                calls=(
+                    ContinuationCall(
+                        call_id="PRIVATE-CALL-ID",
+                        name="calculator",
+                        arguments='{"expression":"2+2"}',
+                        state="pending",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+def test_first_tool_batch_force_creates_preallocated_owner_and_stream_reuses_it() -> (
+    None
+):
+    """Removing the event write would let tool dispatch precede its durable owner."""
+    database = CharactersRAGDB(":memory:", "console-continuation-test")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        session = store.create_session(title="Durable continuation")
+        user = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Use the calculator",
+            persist=True,
+        )
+        owner = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=True,
+        )
+        checkpoint = _active_checkpoint()
+
+        assert user.persisted_message_id is not None
+        assert owner.persisted_message_id is None
+        store.persist_provider_continuation_event(
+            ToolBatchReady(
+                context=ContinuationEventContext(
+                    owner_message_id=owner.id,
+                    run_id="run-primary",
+                    agent_kind="primary",
+                    durability="persistent",
+                ),
+                checkpoint=checkpoint,
+                expected_checkpoint_revision=None,
+            )
+        )
+
+        created = database.get_message_by_id(owner.id)
+        assert created is not None
+        assert created["content"] == ""
+        assert created["provider_continuation_json"] is not None
+        assert store.get_message(owner.id).persisted_message_id == owner.id
+        assert store.get_message(owner.id).provider_continuation == checkpoint
+
+        store.append_stream_chunk(owner.id, "The answer is 4.")
+        store.mark_message_complete(owner.id)
+
+        updated = database.get_message_by_id(owner.id)
+        assert updated is not None
+        assert updated["content"] == "The answer is 4."
+        assert updated["provider_continuation_json"] is not None
+        assert (
+            sum(
+                1
+                for message in database.get_messages_for_conversation(
+                    session.persisted_conversation_id
+                )
+                if message["sender"] == "assistant"
+            )
+            == 1
+        )
+    finally:
+        database.close_connection()
+
+
+def _store_with_checkpoint(*, content: str = ""):
+    database = CharactersRAGDB(":memory:", "console-continuation-test")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+    session = store.create_session(title="Recovery")
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="Use a tool", persist=True
+    )
+    owner = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=content, persist=True
+    )
+    store.persist_provider_continuation_event(
+        ToolBatchReady(
+            ContinuationEventContext(owner.id, "run", "primary", "persistent"),
+            _active_checkpoint(),
+            None,
+        )
+    )
+    return database, store, session, owner
+
+
+def test_restore_hydrates_blank_owner_without_exposing_private_fields() -> None:
+    database, store, session, owner = _store_with_checkpoint()
+    try:
+        restored = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        loaded = restored.restore_persisted_session(
+            title="Recovery",
+            workspace_id=None,
+            persisted_conversation_id=session.persisted_conversation_id,
+            all_nodes=[],
+            active_leaf_persisted_id=owner.id,
+        )
+        interrupted = restored.interrupted_provider_continuation_message(loaded.id)
+        assert interrupted is not None
+        assert interrupted.id == owner.id
+        assert interrupted.provider_continuation == _active_checkpoint()
+        assert "PRIVATE" not in repr(interrupted)
+    finally:
+        database.close_connection()
+
+
+def test_discard_blank_owner_tombstones_and_visible_owner_is_retained() -> None:
+    for content, retained in (("", False), ("Visible preface", True)):
+        database, store, session, owner = _store_with_checkpoint(content=content)
+        try:
+            version = store.get_message(owner.id).provider_continuation_message_version
+            persisted_id = store.get_message(owner.id).persisted_message_id
+            assert version is not None
+            assert persisted_id is not None
+            assert store.discard_provider_continuation(
+                owner.id,
+                expected_message_version=version,
+            )
+            row = database.get_message_by_id(persisted_id)
+            if retained:
+                assert row is not None and row["content"] == content
+                assert store.get_message(owner.id).provider_continuation is None
+            else:
+                assert row is None
+                assert (
+                    store.interrupted_provider_continuation_message(session.id) is None
+                )
+        finally:
+            database.close_connection()
+
+
+def test_discard_stale_version_preserves_checkpoint() -> None:
+    database, store, _session, owner = _store_with_checkpoint(content="Visible")
+    try:
+        persisted_id = store.get_message(owner.id).persisted_message_id
+        assert persisted_id is not None
+        try:
+            store.discard_provider_continuation(owner.id, expected_message_version=99)
+        except Exception:
+            pass
+        row = database.get_message_by_id(persisted_id)
+        assert row is not None and row["provider_continuation_json"] is not None
+        assert store.get_message(owner.id).provider_continuation is not None
+    finally:
+        database.close_connection()
+
+
+async def test_resume_target_mismatch_blocks_before_bridge_or_tool() -> None:
+    database, store, _session, owner = _store_with_checkpoint(content="Visible")
+
+    class Gateway:
+        calls = 0
+
+        async def resolve_for_send(self, selection):
+            self.calls += 1
+            return type(
+                "Resolution",
+                (),
+                {
+                    "ready": True,
+                    "provider": "ZAI",
+                    "model": "glm-5",
+                    "base_url": "https://api.z.ai/v1",
+                    "api_mode": "chat_completions",
+                },
+            )()
+
+    gateway = Gateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, agent_bridge=object()
+    )
+    try:
+        version = store.get_message(owner.id).provider_continuation_message_version
+        assert version is not None
+        assert not await controller.recover_provider_continuation(
+            "resume", owner.id, version
+        )
+        assert gateway.calls == 1
+        assert store.get_message(owner.id).provider_continuation is not None
+    finally:
+        database.close_connection()
+
+
+async def test_new_turn_is_blocked_without_provider_or_tool_dispatch() -> None:
+    database, store, session, _owner = _store_with_checkpoint(content="Visible")
+
+    class Gateway:
+        calls = 0
+
+        async def resolve_for_send(self, selection):
+            self.calls += 1
+            raise AssertionError("interrupted work must be recovered explicitly")
+
+    gateway = Gateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    try:
+        result = await controller.submit_draft("new text", session_id=session.id)
+        assert not result.accepted
+        assert result.visible_copy == (
+            "Recover the interrupted tool run before sending a new message: "
+            "Resume or Discard it first."
+        )
+        assert gateway.calls == 0
+    finally:
+        database.close_connection()
+
+
+def test_ephemeral_event_writes_no_checkpoint_and_offers_no_recovery() -> None:
+    database = CharactersRAGDB(":memory:", "console-continuation-test")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        session = store.create_session(title="Temporary", ephemeral=True)
+        owner = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        store.persist_provider_continuation_event(
+            ToolBatchReady(
+                ContinuationEventContext(owner.id, "run", "primary", "ephemeral"),
+                _active_checkpoint(),
+                None,
+            )
+        )
+        assert store.get_message(owner.id).provider_continuation is None
+        assert store.interrupted_provider_continuation_message(session.id) is None
+        assert (
+            database.get_messages_for_conversation(
+                session.persisted_conversation_id or "missing"
+            )
+            == []
+        )
+    finally:
+        database.close_connection()

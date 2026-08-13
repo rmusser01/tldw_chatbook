@@ -73,6 +73,10 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderStreamSignals,
     ProviderToolCalls,
 )
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRestoreTarget,
+    ProviderContinuationCheckpoint,
+)
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -2321,6 +2325,12 @@ class ConsoleAgentBridge:
         # leaves cancellation exactly as it was.
         revoke_approvals: Callable[[str], object] | None = None,
         native_tools_enabled: bool | None = None,
+        restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
+        restore_provider_target: ContinuationRestoreTarget | None = None,
+        expand_provider_continuation: (
+            Callable[[ProviderContinuationCheckpoint], list[dict]] | None
+        ) = None,
+        resume_provider_continuation: bool = False,
     ) -> tuple[str, RunOutcome]:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP, by task-545/T6 for a per-run builtin_gate, and extended again
@@ -2977,6 +2987,10 @@ class ConsoleAgentBridge:
             install_skill_tool=install_skill_tool,
             run_skill_script_tool=run_skill_script_tool,
             revoke_approvals=revoke_approvals,
+            persist_provider_continuation=(
+                self._store.persist_provider_continuation_event
+            ),
+            expand_provider_continuation=expand_provider_continuation,
             # PR3a-1 Task 1: every fleet child gets its own model-call
             # lifeline, entered on the child's own thread and torn down
             # when the CHILD finishes -- never when this turn does.
@@ -3073,6 +3087,15 @@ class ConsoleAgentBridge:
                 ),
                 should_cancel=should_cancel,
                 supersede_run_id=supersede_run_id,
+                continuation_owner_message_id=assistant_message_id,
+                continuation_durability=(
+                    "ephemeral"
+                    if self._store.session_is_ephemeral(session_id)
+                    else "persistent"
+                ),
+                restore_provider_continuation=restore_provider_continuation,
+                restore_provider_target=restore_provider_target,
+                resume_provider_continuation=resume_provider_continuation,
             )
         finally:
             # PR2b Task 1: clear the published service in the SAME

@@ -123,6 +123,11 @@ from tldw_chatbook.Chat.console_visual_transcript import (
     resolve_effective_compaction_representation,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRestoreTarget,
+    ProviderContinuationCheckpoint,
+    validate_continuation_restore,
+)
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleMessagePresentation,
     ConsolePresentationContext,
@@ -2264,6 +2269,11 @@ class ConsoleChatController:
             A human-readable refusal message if the send must be blocked
             right now, otherwise ``None`` when the send is allowed.
         """
+        if self.store.interrupted_provider_continuation_message(session_id) is not None:
+            return (
+                "Recover the interrupted tool run before sending a new message: "
+                "Resume or Discard it first."
+            )
         if self.prompt_queue_coordinator.controls_generation(session_id):
             return (
                 "Queued messages control the next turn. "
@@ -2288,6 +2298,87 @@ class ConsoleChatController:
             f"({', '.join(titles)}{suffix}). "
             "Wait for one to finish or interrupt it."
         )
+
+    async def recover_provider_continuation(
+        self,
+        action: str,
+        message_id: str,
+        expected_message_version: int,
+    ) -> bool:
+        """Perform one explicit, optimistic recovery action."""
+        if action == "discard":
+            try:
+                return self.store.discard_provider_continuation(
+                    message_id,
+                    expected_message_version=expected_message_version,
+                )
+            except Exception:
+                return False
+        if action not in {"resume", "take_over"}:
+            return False
+        try:
+            message = self.store.get_message(message_id)
+            checkpoint = message.provider_continuation
+            session_id = self.store.session_id_for_message(message_id)
+        except KeyError:
+            return False
+        if (
+            checkpoint is None
+            or checkpoint.state != "active"
+            or message.provider_continuation_message_version != expected_message_version
+            or (message.provider_continuation_remote and action != "take_over")
+            or (not message.provider_continuation_remote and action != "resume")
+            or any(
+                call.state == "executing"
+                for round_ in checkpoint.rounds
+                for call in round_.calls
+            )
+        ):
+            return False
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection_for_session(session_id)
+        )
+        if not getattr(resolution, "ready", False):
+            message.provider_continuation_warning = (
+                "Provider credentials are not ready. Fix Settings, then retry."
+            )
+            return False
+        target = ContinuationRestoreTarget(
+            provider=provider_config_key(str(getattr(resolution, "provider", ""))),
+            model=str(getattr(resolution, "model", "") or ""),
+            protocol=str(
+                getattr(resolution, "continuation_protocol", None)
+                or getattr(resolution, "api_mode", None)
+                or "chat_completions"
+            ),
+            api_base_url=str(getattr(resolution, "base_url", "")).rstrip("/"),
+        )
+        try:
+            validate_continuation_restore(checkpoint, target)
+        except Exception:
+            message.provider_continuation_warning = "Pinned provider settings no longer match. Restore those settings or Discard."
+            return False
+        translator = getattr(
+            self.provider_gateway, "expand_provider_continuation", None
+        )
+        if not callable(translator) or self._agent_bridge is None:
+            message.provider_continuation_warning = (
+                "This provider cannot safely resume here. Discard the interrupted run."
+            )
+            return False
+        result = await self._run_agent_reply(
+            resolution=resolution,
+            provider_messages=self._provider_messages_for_session(session_id),
+            assistant_message_id=message_id,
+            prepare_retry=False,
+            variant_mode=False,
+            restore_provider_continuation=checkpoint,
+            restore_provider_target=target,
+            expand_provider_continuation=translator,
+            resume_provider_continuation=True,
+            turn_context=self.resolve_turn_execution_context(session_id),
+        )
+        return result.accepted
 
     @property
     def run_state_history(self) -> list[ConsoleRunStatus]:
@@ -9372,6 +9463,12 @@ class ConsoleChatController:
         citation_repair_session: ConsoleCitationRepairSession | None = None,
         stream_signals: ConsoleProviderStreamSignals | None = None,
         turn_context: ConsoleTurnExecutionContext | None = None,
+        restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
+        restore_provider_target: ContinuationRestoreTarget | None = None,
+        expand_provider_continuation: (
+            Callable[[ProviderContinuationCheckpoint], list[dict]] | None
+        ) = None,
+        resume_provider_continuation: bool = False,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
         logger.info(
@@ -9612,6 +9709,10 @@ class ConsoleChatController:
                 # tool for real). Run-keyed, so a live sibling child --
                 # which shares this same session -- keeps its own card.
                 revoke_approvals=self.revoke_approval_rounds_for_run,
+                restore_provider_continuation=restore_provider_continuation,
+                restore_provider_target=restore_provider_target,
+                expand_provider_continuation=expand_provider_continuation,
+                resume_provider_continuation=resume_provider_continuation,
             )
         except asyncio.CancelledError:
             if cancel_event.is_set():
@@ -10949,6 +11050,20 @@ class ConsoleChatController:
             ``ConsoleSubmitResult`` carrying the refusal copy.
         """
         target_id = session_id if session_id else (self.store.active_session_id or "")
+        if self.store.interrupted_provider_continuation_message(target_id) is not None:
+            visible_copy = (
+                "Recover the interrupted tool run before sending a new message: "
+                "Resume or Discard it first."
+            )
+            if append_row and any(
+                session.id == target_id for session in self.store.sessions()
+            ):
+                self.store.append_message(
+                    target_id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=visible_copy,
+                )
+            return ConsoleSubmitResult(False, False, visible_copy)
         if self.prompt_queue_coordinator.authorizes(
             queue_authorization, target_id
         ) and self.run_state_for(target_id).status in {
