@@ -3,6 +3,16 @@
 from __future__ import annotations
 
 from textual.app import App, ComposeResult
+from textual.widgets import Button, Static
+
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_destination_shells import _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
+
+from tldw_chatbook.Agents.agent_models import ContinuationEventContext, ToolBatchReady
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -13,8 +23,11 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRound,
     ProviderContinuationCheckpoint,
 )
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
     ProviderContinuationRecoveryCallout,
+    ProviderContinuationTranscriptRegion,
     provider_continuation_recovery_state,
 )
 
@@ -56,14 +69,23 @@ def _message(
 
 
 class _RecoveryApp(App):
-    def __init__(self, message: ConsoleChatMessage) -> None:
+    def __init__(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        replay_available: bool = True,
+    ) -> None:
         super().__init__()
         self.message = message
+        self.replay_available = replay_available
         self.actions: list[tuple[str, str, int]] = []
 
     def compose(self) -> ComposeResult:
         yield ProviderContinuationRecoveryCallout(
-            state=provider_continuation_recovery_state(self.message),
+            state=provider_continuation_recovery_state(
+                self.message,
+                replay_available=self.replay_available,
+            ),
             on_action=self._record,
         )
 
@@ -97,7 +119,7 @@ async def test_executing_recovery_blocks_resume_and_explains_why() -> None:
     app = _RecoveryApp(_message(call_state="executing"))
     async with app.run_test(size=(42, 16)) as pilot:
         await pilot.pause()
-        assert len(app.screen.query("#console-continuation-resume")) == 0
+        assert not app.screen.query_one("#console-continuation-resume", Button).display
         detail = str(app.screen.query_one("#console-continuation-impact").render())
         assert "may already have run" in detail
         assert app.actions == []
@@ -107,8 +129,218 @@ async def test_remote_recovery_offers_take_over_not_resume() -> None:
     app = _RecoveryApp(_message(remote=True))
     async with app.run_test(size=(46, 18)) as pilot:
         await pilot.pause()
-        assert len(app.screen.query("#console-continuation-resume")) == 0
+        assert not app.screen.query_one("#console-continuation-resume", Button).display
         assert len(app.screen.query("#console-continuation-take-over")) == 1
         warning = str(app.screen.query_one("#console-continuation-impact").render())
         assert "other device may still be running" in warning
         assert "exactly-once" not in warning
+
+
+async def test_unavailable_replay_is_honest_and_discard_remains_enabled() -> None:
+    app = _RecoveryApp(_message(), replay_available=False)
+    async with app.run_test(size=(46, 18)) as pilot:
+        await pilot.pause()
+        resume = app.screen.query_one("#console-continuation-resume", Button)
+        discard = app.screen.query_one("#console-continuation-discard", Button)
+        impact = str(app.screen.query_one("#console-continuation-impact").render())
+        assert resume.display
+        assert resume.disabled
+        assert not discard.disabled
+        assert "replay support" in impact
+        assert "provider integration" in impact
+
+
+class _RegionApp(App):
+    def __init__(
+        self,
+        message_builder,
+        *,
+        replay_available: bool = True,
+        on_action=None,
+    ) -> None:
+        super().__init__()
+        self.message_builder = message_builder
+        self.replay_available = replay_available
+        self.on_action = on_action or (lambda *_args: True)
+
+    def compose(self) -> ComposeResult:
+        yield ProviderContinuationTranscriptRegion(
+            session_surface_builder=lambda: Static("Visible transcript"),
+            recovery_message_builder=self.message_builder,
+            recovery_replay_available_builder=lambda: self.replay_available,
+            on_recovery_action=self.on_action,
+        )
+
+
+async def test_invalid_private_hydration_shows_safe_warning_without_actions() -> None:
+    database = CharactersRAGDB(":memory:", "console-continuation-invalid-ui")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        session = store.create_session(title="Invalid recovery")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="keep this",
+            persist=True,
+        )
+        owner = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Visible content survives",
+            persist=True,
+        )
+        store.persist_provider_continuation_event(
+            ToolBatchReady(
+                ContinuationEventContext(owner.id, "run", "primary", "persistent"),
+                _message().provider_continuation,
+                None,
+            )
+        )
+        original_getter = database.get_messages_for_conversation
+
+        def invalid_private_rows(conversation_id, *, limit=100_000):
+            rows = original_getter(conversation_id, limit=limit)
+            return [
+                {
+                    **row,
+                    "provider_continuation_json": (
+                        "PRIVATE_INVALID_CANARY"
+                        if str(row["id"]) == owner.persisted_message_id
+                        else None
+                    ),
+                }
+                for row in rows
+            ]
+
+        database.get_messages_for_conversation = invalid_private_rows
+        restored = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        loaded = restored.restore_persisted_session(
+            title="Invalid recovery",
+            workspace_id=None,
+            persisted_conversation_id=session.persisted_conversation_id,
+            all_nodes=store.messages_for_session(session.id),
+            active_leaf_persisted_id=owner.persisted_message_id,
+        )
+        hydrated = restored.messages_for_session(loaded.id)[-1]
+        assert hydrated.content == "Visible content survives"
+
+        app = _RegionApp(lambda: hydrated)
+        async with app.run_test(size=(42, 16)) as pilot:
+            await pilot.pause()
+            rendered = "\n".join(
+                str(widget.render())
+                for widget in app.screen.query("ProviderContinuationRecoveryCallout *")
+                if hasattr(widget, "render")
+            )
+            assert "Exact tool continuation was discarded." in rendered
+            assert "PRIVATE_INVALID_CANARY" not in rendered
+            assert not any(button.display for button in app.screen.query(Button))
+    finally:
+        database.close_connection()
+
+
+async def test_failed_recovery_uses_specific_message_warning() -> None:
+    message = _message()
+
+    async def fail_recovery(*_args) -> bool:
+        message.provider_continuation_warning = "Pinned provider settings no longer match. Restore those settings or Discard."
+        return False
+
+    app = _RegionApp(lambda: message, on_action=fail_recovery)
+    async with app.run_test(size=(48, 18)) as pilot:
+        await pilot.pause()
+        resume = app.screen.query_one("#console-continuation-resume", Button)
+        resume.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        rendered = str(app.screen.query_one("#console-continuation-impact").render())
+        assert "Pinned provider settings no longer match" in rendered
+        assert "Reload the conversation" not in rendered
+
+
+async def test_failed_recovery_without_new_warning_reenables_safe_actions() -> None:
+    async def raise_recovery(*_args) -> bool:
+        raise RuntimeError("private provider failure")
+
+    app = _RegionApp(lambda: _message(), on_action=raise_recovery)
+    async with app.run_test(size=(48, 18)) as pilot:
+        await pilot.pause()
+        resume = app.screen.query_one("#console-continuation-resume", Button)
+        resume.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        discard = app.screen.query_one("#console-continuation-discard", Button)
+        assert not discard.disabled
+        assert "Reload the conversation" in str(
+            app.screen.query_one("#console-continuation-status").render()
+        )
+
+
+async def test_real_screen_sync_mounts_updates_and_clears_recovery_callout() -> None:
+    database = CharactersRAGDB(":memory:", "console-continuation-reactive-ui")
+    app_instance = _build_test_app()
+    app_instance.chachanotes_db = database
+    app_instance.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "local-model",
+    }
+    app_instance.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:9099",
+            "model": "local-model",
+        }
+    }
+    host = ConsoleHarness(app_instance)
+    try:
+        async with host.run_test(size=(92, 32)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-main-column")
+            callout = console.query_one(ProviderContinuationRecoveryCallout)
+            assert not callout.display
+
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            assert session_id is not None
+            store.append_message(
+                session_id,
+                role=ConsoleMessageRole.USER,
+                content="Use a tool",
+                persist=True,
+            )
+            owner = store.append_message(
+                session_id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="Visible preface",
+                persist=True,
+            )
+            store.persist_provider_continuation_event(
+                ToolBatchReady(
+                    ContinuationEventContext(
+                        owner.id,
+                        "run",
+                        "primary",
+                        "persistent",
+                    ),
+                    _message().provider_continuation,
+                    None,
+                )
+            )
+            await console._sync_native_console_chat_ui()
+            assert callout.display
+            assert "Interrupted tool run" in str(
+                callout.query_one("#console-continuation-title").render()
+            )
+
+            discard = callout.query_one("#console-continuation-discard", Button)
+            discard.focus()
+            await pilot.pause()
+            assert console.focused is discard
+            await pilot.press("enter")
+            await pilot.pause()
+            assert not callout.display
+            assert store.get_message(owner.id).provider_continuation is None
+            assert console.focused is not None
+            assert console.focused is not discard
+    finally:
+        database.close_connection()

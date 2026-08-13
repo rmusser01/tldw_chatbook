@@ -14246,7 +14246,7 @@ class ChatScreen(BaseAppScreen):
                     session_surface_builder=(
                         lambda: self._ensure_console_session_surface()
                     ),
-                    recovery_message_builder=(lambda: self._ensure_console_chat_store().interrupted_provider_continuation_message()),
+                    recovery_message_builder=(lambda: self._ensure_console_chat_store().provider_continuation_recovery_message()), recovery_replay_available_builder=(lambda: self._ensure_console_chat_controller().provider_continuation_replay_available()),
                     on_recovery_action=(lambda action, message_id, version: self._ensure_console_chat_controller().recover_provider_continuation(action, message_id, version)),
                 )
                 main_column.styles.width = "13fr"
@@ -15527,6 +15527,8 @@ class ChatScreen(BaseAppScreen):
             transcript = None
 
         messages = self._native_console_messages()
+        if region := self._console_transcript_region_or_none():
+            region.sync_recovery()
         if transcript is not None:
             transcript.set_presentation_context(self._console_presentation_context())
             self._sync_console_citation_count_discovery(messages)

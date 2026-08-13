@@ -2335,12 +2335,21 @@ class ConsoleChatController:
             )
         ):
             return False
+        translator = getattr(self.provider_gateway, "expand_provider_continuation", None)
+        if not callable(translator) or self._agent_bridge is None:
+            self.store.set_provider_continuation_warning(
+                message_id,
+                "Continuation replay support is not enabled for this provider integration. "
+                "Enable or configure it, or Discard the interrupted run.",
+            )
+            return False
         resolution = await self.provider_gateway.resolve_for_send(
             self._provider_selection_for_session(session_id)
         )
         if not getattr(resolution, "ready", False):
-            message.provider_continuation_warning = (
-                "Provider credentials are not ready. Fix Settings, then retry."
+            self.store.set_provider_continuation_warning(
+                message_id,
+                "Provider credentials are not ready. Fix Settings, then retry.",
             )
             return False
         target = ContinuationRestoreTarget(
@@ -2356,14 +2365,9 @@ class ConsoleChatController:
         try:
             validate_continuation_restore(checkpoint, target)
         except Exception:
-            message.provider_continuation_warning = "Pinned provider settings no longer match. Restore those settings or Discard."
-            return False
-        translator = getattr(
-            self.provider_gateway, "expand_provider_continuation", None
-        )
-        if not callable(translator) or self._agent_bridge is None:
-            message.provider_continuation_warning = (
-                "This provider cannot safely resume here. Discard the interrupted run."
+            self.store.set_provider_continuation_warning(
+                message_id,
+                "Pinned provider settings no longer match. Restore those settings or Discard.",
             )
             return False
         result = await self._run_agent_reply(
@@ -2379,6 +2383,12 @@ class ConsoleChatController:
             turn_context=self.resolve_turn_execution_context(session_id),
         )
         return result.accepted
+
+    def provider_continuation_replay_available(self) -> bool:
+        """Return whether the selected gateway exposes a replay translator."""
+        return self._agent_bridge is not None and callable(
+            getattr(self.provider_gateway, "expand_provider_continuation", None)
+        )
 
     @property
     def run_state_history(self) -> list[ConsoleRunStatus]:

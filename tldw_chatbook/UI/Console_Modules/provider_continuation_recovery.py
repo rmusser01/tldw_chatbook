@@ -25,13 +25,25 @@ class ProviderContinuationRecoveryState:
     message_version: int
     mode: str
     impact: str
+    replay_available: bool = False
 
 
 def provider_continuation_recovery_state(
     message: ConsoleChatMessage | None,
+    *,
+    replay_available: bool = False,
 ) -> ProviderContinuationRecoveryState | None:
     """Project an assistant checkpoint into fixed user-facing recovery copy."""
-    if message is None or message.provider_continuation is None:
+    if message is None:
+        return None
+    if message.provider_continuation is None and message.provider_continuation_warning:
+        return ProviderContinuationRecoveryState(
+            message.id,
+            message.provider_continuation_message_version or 0,
+            "notice",
+            message.provider_continuation_warning,
+        )
+    if message.provider_continuation is None:
         return None
     checkpoint = message.provider_continuation
     if checkpoint.state != "active":
@@ -48,17 +60,38 @@ def provider_continuation_recovery_state(
             "A tool may already have run. Resume is blocked to avoid repeating a side effect; discard this interrupted run to continue.",
         )
     if message.provider_continuation_remote:
+        impact = (
+            "This run was active elsewhere. The other device may still be running it; "
+            "take over only after checking there, or discard it."
+        )
+        if not replay_available:
+            impact = (
+                "Take over is unavailable until continuation replay support is enabled "
+                "for this provider integration. The other device may still be running; "
+                "you can still discard this interrupted run."
+            )
         return ProviderContinuationRecoveryState(
             message.id,
             version,
             "remote",
-            "This run was active elsewhere. The other device may still be running it; take over only after checking there, or discard it.",
+            message.provider_continuation_warning or impact,
+            replay_available,
+        )
+    impact = (
+        "The provider paused while tools may not have finished. Resume after reviewing "
+        "approvals, or discard this interrupted run."
+    )
+    if not replay_available:
+        impact = (
+            "Resume is unavailable until continuation replay support is enabled for this "
+            "provider integration. You can still discard this interrupted run."
         )
     return ProviderContinuationRecoveryState(
         message.id,
         version,
         "local",
-        "The provider paused while tools may not have finished. Resume after reviewing approvals, or discard this interrupted run.",
+        message.provider_continuation_warning or impact,
+        replay_available,
     )
 
 
@@ -103,33 +136,65 @@ class ProviderContinuationRecoveryCallout(Vertical):
     def __init__(
         self,
         *,
-        state: ProviderContinuationRecoveryState,
+        state: ProviderContinuationRecoveryState | None,
         on_action: ContinuationAction,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
-        self.state = state
+        self.recovery_state = state
         self._on_action = on_action
         self._busy = False
 
     def compose(self) -> ComposeResult:
         yield Static("Interrupted tool run", id="console-continuation-title")
-        yield Static(self.state.impact, id="console-continuation-impact")
+        yield Static("", id="console-continuation-impact")
         yield Static("Choose an action to continue.", id="console-continuation-status")
         with Horizontal(id="console-continuation-actions"):
-            if self.state.mode == "local":
-                yield Button(
-                    "Resume",
-                    id="console-continuation-resume",
-                    variant="warning",
-                )
-            elif self.state.mode == "remote":
-                yield Button(
-                    "Take over",
-                    id="console-continuation-take-over",
-                    variant="warning",
-                )
+            yield Button(
+                "Resume",
+                id="console-continuation-resume",
+                variant="warning",
+            )
+            yield Button(
+                "Take over",
+                id="console-continuation-take-over",
+                variant="warning",
+            )
             yield Button("Discard", id="console-continuation-discard")
+
+    def on_mount(self) -> None:
+        """Apply initial state after the fixed controls are mounted."""
+        self.sync_recovery(self.recovery_state)
+
+    def sync_recovery(
+        self,
+        state: ProviderContinuationRecoveryState | None,
+    ) -> None:
+        """Update fixed callout controls without removing or recomposing them."""
+        self.recovery_state = state
+        self._busy = False
+        if state is None:
+            self.display = False
+            return
+        self.display = True
+        self.query_one("#console-continuation-title", Static).update(
+            "Continuation warning" if state.mode == "notice" else "Interrupted tool run"
+        )
+        self.query_one("#console-continuation-impact", Static).update(state.impact)
+        self.query_one("#console-continuation-status", Static).update(
+            "The visible message is unchanged. No action is required."
+            if state.mode == "notice"
+            else "Choose an available action to continue."
+        )
+        resume = self.query_one("#console-continuation-resume", Button)
+        take_over = self.query_one("#console-continuation-take-over", Button)
+        discard = self.query_one("#console-continuation-discard", Button)
+        resume.display = state.mode == "local"
+        take_over.display = state.mode == "remote"
+        discard.display = state.mode != "notice"
+        resume.disabled = not state.replay_available
+        take_over.disabled = not state.replay_available
+        discard.disabled = False
 
     @on(Button.Pressed)
     def _handle_action(self, event: Button.Pressed) -> None:
@@ -139,7 +204,8 @@ class ProviderContinuationRecoveryCallout(Vertical):
             "console-continuation-discard": "discard",
         }
         action = action_by_id.get(event.button.id or "")
-        if action is None or self._busy:
+        state = self.recovery_state
+        if action is None or self._busy or state is None:
             return
         event.stop()
         self._busy = True
@@ -151,16 +217,19 @@ class ProviderContinuationRecoveryCallout(Vertical):
         self.run_worker(
             self._dispatch(action),
             exclusive=True,
-            group=f"provider-continuation-{self.state.message_id}",
+            group=f"provider-continuation-{state.message_id}",
         )
 
     async def _dispatch(self, action: str) -> None:
         succeeded = False
+        starting_state = self.recovery_state
+        if starting_state is None:
+            return
         try:
             result = self._on_action(
                 action,
-                self.state.message_id,
-                self.state.message_version,
+                starting_state.message_id,
+                starting_state.message_version,
             )
             succeeded = (
                 bool(await result) if inspect.isawaitable(result) else bool(result)
@@ -169,14 +238,24 @@ class ProviderContinuationRecoveryCallout(Vertical):
             succeeded = False
         if succeeded:
             self.display = False
+            self.screen.focus_next("#console-transcript-region *")
             return
         self._busy = False
-        self.query_one("#console-continuation-status", Static).update(
-            "Recovery did not complete. Reload the conversation and try again."
+        if self.recovery_state == starting_state:
+            self.sync_recovery(starting_state)
+            self.query_one("#console-continuation-status", Static).update(
+                "Recovery did not complete. Reload the conversation and try again."
+            )
+        else:
+            self.sync_recovery(self.recovery_state)
+        first = next(
+            (
+                button
+                for button in self.query(Button)
+                if button.display and not button.disabled
+            ),
+            None,
         )
-        for button in self.query(Button):
-            button.disabled = False
-        first = self.query(Button).first()
         if first is not None:
             first.focus()
 
@@ -190,22 +269,40 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
         session_surface_builder: Callable[[], Widget],
         recovery_message_builder: Callable[[], ConsoleChatMessage | None],
         on_recovery_action: ContinuationAction,
+        recovery_replay_available_builder: Callable[[], bool] = lambda: False,
         **kwargs: object,
     ) -> None:
         super().__init__(session_surface_builder=session_surface_builder, **kwargs)
         self._recovery_message_builder = recovery_message_builder
+        self._recovery_replay_available_builder = recovery_replay_available_builder
         self._on_recovery_action = on_recovery_action
 
     def compose(self) -> ComposeResult:
-        state = provider_continuation_recovery_state(self._recovery_message_builder())
-        if state is not None:
-            yield ProviderContinuationRecoveryCallout(
-                state=state,
-                on_action=self._on_recovery_action,
-            )
         transcript_region = frame_console_region(
             Vertical(id="console-transcript-region", classes="console-region"),
             top=False,
         )
         with transcript_region:
+            yield ProviderContinuationRecoveryCallout(
+                state=self._recovery_state(),
+                on_action=self._recover,
+            )
             yield self._session_surface_builder()
+
+    def _recovery_state(self) -> ProviderContinuationRecoveryState | None:
+        return provider_continuation_recovery_state(
+            self._recovery_message_builder(),
+            replay_available=self._recovery_replay_available_builder(),
+        )
+
+    def sync_recovery(self) -> None:
+        """Synchronize the always-mounted recovery placeholder in place."""
+        self.query_one(ProviderContinuationRecoveryCallout).sync_recovery(
+            self._recovery_state()
+        )
+
+    async def _recover(self, action: str, message_id: str, version: int) -> bool:
+        result = self._on_recovery_action(action, message_id, version)
+        succeeded = bool(await result) if inspect.isawaitable(result) else bool(result)
+        self.sync_recovery()
+        return succeeded

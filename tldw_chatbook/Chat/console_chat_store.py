@@ -730,6 +730,7 @@ class ConsoleChatStore:
         character_id: int | None = None,
         character_name: str | None = None,
         ephemeral: bool = False,
+        remote_active: bool = False,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
 
@@ -794,6 +795,7 @@ class ConsoleChatStore:
         restored_nodes = self._hydrate_provider_continuations_from_persistence(
             persisted_conversation_id,
             list(all_nodes),
+            remote_active=remote_active,
         )
         self._ingest_full_tree(
             session.id,
@@ -808,6 +810,8 @@ class ConsoleChatStore:
         self,
         conversation_id: str,
         nodes: list[ConsoleChatMessage],
+        *,
+        remote_active: bool = False,
     ) -> list[ConsoleChatMessage]:
         """Tolerantly attach private checkpoints without exposing their data."""
         database = getattr(self.persistence, "db", None) if self.persistence else None
@@ -824,7 +828,6 @@ class ConsoleChatStore:
             for node in nodes
             if node.persisted_message_id is not None
         }
-        local_client_id = getattr(database, "client_id", None)
         for row in rows:
             persisted_id = str(row.get("id") or "")
             safe = read_provider_continuation_json(
@@ -855,9 +858,7 @@ class ConsoleChatStore:
             node.provider_continuation = safe.checkpoint
             node.provider_continuation_warning = safe.warning
             node.provider_continuation_remote = bool(
-                safe.checkpoint is not None
-                and local_client_id is not None
-                and row.get("client_id") not in (None, local_client_id)
+                safe.checkpoint is not None and remote_active
             )
             version = row.get("version")
             node.provider_continuation_message_version = (
@@ -3227,6 +3228,30 @@ class ConsoleChatStore:
                 return message
         return None
 
+    def provider_continuation_recovery_message(
+        self,
+        session_id: str | None = None,
+    ) -> ConsoleChatMessage | None:
+        """Return an active owner or safe warning for transcript recovery UI."""
+        target_session_id = session_id or self.active_session_id
+        if target_session_id is None or target_session_id not in self._sessions:
+            return None
+        for message in reversed(self.messages_for_session(target_session_id)):
+            if message.provider_continuation_warning:
+                return message
+            checkpoint = message.provider_continuation
+            if checkpoint is not None and checkpoint.state == "active":
+                return message
+        return None
+
+    def set_provider_continuation_warning(
+        self,
+        message_id: str,
+        warning: str,
+    ) -> None:
+        """Set bounded visible recovery copy without exposing private state."""
+        self._message_or_raise(message_id).provider_continuation_warning = warning
+
     def discard_provider_continuation(
         self,
         message_id: str,
@@ -3259,6 +3284,7 @@ class ConsoleChatStore:
         message.provider_continuation = None
         message.provider_continuation_message_version = expected_message_version + 1
         message.provider_continuation_remote = False
+        message.provider_continuation_warning = None
         if message.content or message.attachments or message.image_data is not None:
             self._bump_payload_revision(session_id)
             return True

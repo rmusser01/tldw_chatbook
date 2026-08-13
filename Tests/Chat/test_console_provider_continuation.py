@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from tldw_chatbook.Agents.agent_models import (
     ContinuationEventContext,
     ToolBatchReady,
@@ -149,6 +151,48 @@ def test_restore_hydrates_blank_owner_without_exposing_private_fields() -> None:
         database.close_connection()
 
 
+def test_restore_never_infers_remote_state_from_database_client_id() -> None:
+    database, _store, session, owner = _store_with_checkpoint()
+    try:
+        database.get_connection().execute(
+            "UPDATE messages SET client_id = ? WHERE id = ?",
+            ("legacy-other-client", owner.id),
+        )
+        database.get_connection().commit()
+        restored = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        loaded = restored.restore_persisted_session(
+            title="Recovery",
+            workspace_id=None,
+            persisted_conversation_id=session.persisted_conversation_id,
+            all_nodes=[],
+            active_leaf_persisted_id=owner.id,
+        )
+        interrupted = restored.interrupted_provider_continuation_message(loaded.id)
+        assert interrupted is not None
+        assert not interrupted.provider_continuation_remote
+    finally:
+        database.close_connection()
+
+
+def test_restore_accepts_only_explicit_trusted_remote_active_marker() -> None:
+    database, _store, session, owner = _store_with_checkpoint()
+    try:
+        restored = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        loaded = restored.restore_persisted_session(
+            title="Recovery",
+            workspace_id=None,
+            persisted_conversation_id=session.persisted_conversation_id,
+            all_nodes=[],
+            active_leaf_persisted_id=owner.id,
+            remote_active=True,
+        )
+        interrupted = restored.interrupted_provider_continuation_message(loaded.id)
+        assert interrupted is not None
+        assert interrupted.provider_continuation_remote
+    finally:
+        database.close_connection()
+
+
 def test_discard_blank_owner_tombstones_and_visible_owner_is_retained() -> None:
     for content, retained in (("", False), ("Visible preface", True)):
         database, store, session, owner = _store_with_checkpoint(content=content)
@@ -190,11 +234,33 @@ def test_discard_stale_version_preserves_checkpoint() -> None:
         database.close_connection()
 
 
+def test_successful_discard_clears_prior_recovery_warning() -> None:
+    database, store, session, owner = _store_with_checkpoint(content="Visible")
+    try:
+        version = store.get_message(owner.id).provider_continuation_message_version
+        assert version is not None
+        store.set_provider_continuation_warning(
+            owner.id,
+            "Pinned provider settings no longer match. Restore them or Discard.",
+        )
+
+        assert store.discard_provider_continuation(
+            owner.id,
+            expected_message_version=version,
+        )
+        assert store.provider_continuation_recovery_message(session.id) is None
+    finally:
+        database.close_connection()
+
+
 async def test_resume_target_mismatch_blocks_before_bridge_or_tool() -> None:
     database, store, _session, owner = _store_with_checkpoint(content="Visible")
 
     class Gateway:
         calls = 0
+
+        def expand_provider_continuation(self, _checkpoint):
+            return []
 
         async def resolve_for_send(self, selection):
             self.calls += 1
@@ -215,6 +281,11 @@ async def test_resume_target_mismatch_blocks_before_bridge_or_tool() -> None:
         store=store, provider_gateway=gateway, agent_bridge=object()
     )
     try:
+        assert controller.provider_continuation_replay_available()
+        assert not ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+        ).provider_continuation_replay_available()
         version = store.get_message(owner.id).provider_continuation_message_version
         assert version is not None
         assert not await controller.recover_provider_continuation(
@@ -222,6 +293,39 @@ async def test_resume_target_mismatch_blocks_before_bridge_or_tool() -> None:
         )
         assert gateway.calls == 1
         assert store.get_message(owner.id).provider_continuation is not None
+    finally:
+        database.close_connection()
+
+
+async def test_resume_without_translator_sets_specific_unavailable_warning() -> None:
+    database, store, _session, owner = _store_with_checkpoint(content="Visible")
+
+    class Gateway:
+        async def resolve_for_send(self, _selection):
+            return SimpleNamespace(
+                ready=True,
+                provider="Moonshot",
+                model="kimi-k2",
+                base_url="https://api.moonshot.ai/v1",
+                api_mode="chat_completions",
+            )
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=Gateway(),
+        agent_bridge=object(),
+    )
+    try:
+        version = store.get_message(owner.id).provider_continuation_message_version
+        assert version is not None
+        assert not controller.provider_continuation_replay_available()
+        assert not await controller.recover_provider_continuation(
+            "resume", owner.id, version
+        )
+        assert store.get_message(owner.id).provider_continuation_warning == (
+            "Continuation replay support is not enabled for this provider integration. "
+            "Enable or configure it, or Discard the interrupted run."
+        )
     finally:
         database.close_connection()
 
