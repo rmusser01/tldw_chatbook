@@ -78,7 +78,9 @@ def _json_depth_is_bounded(value: object, limit: int) -> bool:
         if depth > limit:
             return False
         if isinstance(current, dict):
-            stack.extend((item, depth + 1) for item in current.values())
+            stack.extend(
+                (item, depth + 1) for key, item in current.items() if key != "_private"
+            )
         elif isinstance(current, list):
             stack.extend((item, depth + 1) for item in current)
     return True
@@ -3165,7 +3167,8 @@ def load_chat_history_from_file_and_save_to_db(
         exported_format = chat_data_dict.get("format")
         exported_version = chat_data_dict.get("format_version")
         if exported_format == _EXPORTED_HISTORY_FORMAT and (
-            exported_version != _EXPORTED_HISTORY_FORMAT_VERSION
+            type(exported_version) is not int
+            or exported_version != _EXPORTED_HISTORY_FORMAT_VERSION
         ):
             raise ValueError("Unsupported exported chat history format.")
         if (
@@ -3210,12 +3213,6 @@ def load_chat_history_from_file_and_save_to_db(
                     raise ValueError("Invalid exported chat history.")
                 staged = {"sender": role, "role": role, "content": content}
                 private = message.get("_private")
-                if private is not None:
-                    total_private_bytes += len(
-                        json.dumps(private, separators=(",", ":")).encode("utf-8")
-                    )
-                    if total_private_bytes > _MAX_EXPORTED_HISTORY_PRIVATE_BYTES:
-                        raise ValueError("Invalid exported chat history.")
                 checkpoint = None
                 if (
                     role == "assistant"
@@ -3233,15 +3230,27 @@ def load_chat_history_from_file_and_save_to_db(
                         and checkpoint.rounds[-1].assistant_content != content
                     ):
                         checkpoint = None
+                canonical = None
+                if checkpoint is not None:
+                    canonical = dump_provider_continuation_json(checkpoint)
+                    private_bytes = len(
+                        (f'{{"provider_continuation":{canonical}}}').encode("utf-8")
+                    )
+                    if (
+                        total_private_bytes + private_bytes
+                        > _MAX_EXPORTED_HISTORY_PRIVATE_BYTES
+                    ):
+                        checkpoint = None
+                        canonical = None
+                    else:
+                        total_private_bytes += private_bytes
                 if private is not None and checkpoint is None:
                     logger.warning(
                         "Exact tool continuation was discarded for message {}.",
                         ordinal,
                     )
                 if checkpoint is not None:
-                    staged["provider_continuation_json"] = (
-                        dump_provider_continuation_json(checkpoint)
-                    )
+                    staged["provider_continuation_json"] = canonical
                 staged_messages.append(staged)
 
             title = chat_data_dict.get("conversation_name")
@@ -3318,7 +3327,9 @@ def load_chat_history_from_file_and_save_to_db(
                     history_pairs.append((user_m, bot_m))
             else:
                 logger.warning(
-                    f"Skipping malformed message pair at index {pair_idx} in '{filename_for_log}': {raw_pair}"
+                    "Skipping malformed message pair {} (category={}).",
+                    pair_idx,
+                    type(raw_pair).__name__,
                 )
 
         if not history_pairs:

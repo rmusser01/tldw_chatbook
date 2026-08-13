@@ -489,9 +489,14 @@ class ChatbookImporter:
 
                 graph_messages = None
                 if manifest.version == ChatbookVersion.V2:
-                    if not isinstance(conv_data, dict) or str(
-                        conv_data.get("id")
-                    ) != str(conv_id):
+                    if (
+                        not isinstance(conv_data, dict)
+                        or type(conv_id) is not str
+                        or not conv_id.strip()
+                        or type(conv_data.get("id")) is not str
+                        or not conv_data["id"].strip()
+                        or conv_data["id"] != conv_id
+                    ):
                         raise ValueError("Invalid V2 conversation identity.")
                     graph_messages = self._validate_v2_conversation_graph(conv_data)
 
@@ -758,19 +763,36 @@ class ChatbookImporter:
                 ):
                     raise ValueError("Invalid V2 conversation graph.")
                 total_id_chars += len(target or "")
-            private = raw.get("_private")
-            if private is not None:
-                total_private_bytes += len(
-                    json.dumps(private, separators=(",", ":")).encode("utf-8")
-                )
             if (
                 total_id_chars > _MAX_V2_TOTAL_ID_CHARS
                 or total_content_chars > _MAX_V2_TOTAL_CONTENT_CHARS
-                or total_private_bytes > _MAX_V2_TOTAL_PRIVATE_BYTES
             ):
                 raise ValueError("Invalid V2 conversation graph.")
-            messages.append(raw)
-            by_id[message_id] = raw
+            item = raw
+            private = raw.get("_private")
+            if (
+                isinstance(private, dict)
+                and set(private) == {"provider_continuation"}
+                and role == "assistant"
+            ):
+                checkpoint = read_provider_continuation_json(
+                    private.get("provider_continuation")
+                ).checkpoint
+                if checkpoint is not None:
+                    canonical = dump_provider_continuation_json(checkpoint)
+                    private_bytes = len(
+                        (f'{{"provider_continuation":{canonical}}}').encode("utf-8")
+                    )
+                    if (
+                        total_private_bytes + private_bytes
+                        > _MAX_V2_TOTAL_PRIVATE_BYTES
+                    ):
+                        item = dict(raw)
+                        item["_private"] = {"provider_continuation": None}
+                    else:
+                        total_private_bytes += private_bytes
+            messages.append(item)
+            by_id[message_id] = item
             orders.add(order)
         if orders != set(range(len(messages))):
             raise ValueError("Invalid V2 conversation graph.")

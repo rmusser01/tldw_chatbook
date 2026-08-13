@@ -288,6 +288,129 @@ def test_exported_json_requires_exact_marker_without_stealing_legacy_shape() -> 
         database.close_connection()
 
 
+def test_unmarked_legacy_collision_never_logs_private_malformed_pair() -> None:
+    payload = {
+        "conversation_name": "Must stay legacy",
+        "char_name": "Legacy owner",
+        "history": [
+            {
+                "role": "assistant",
+                "content": "visible answer",
+                "_private": {"provider_continuation": "PRIVATE-LEGACY-PAIR-CANARY"},
+            }
+        ],
+    }
+    diagnostics = io.StringIO()
+    sink_id = character_chat_module.logger.add(diagnostics, format="{message}")
+    database = CharactersRAGDB(":memory:", "json-legacy-log-privacy")
+    try:
+        result = load_chat_history_from_file_and_save_to_db(
+            database, io.BytesIO(json.dumps(payload).encode())
+        )
+
+        assert result == (None, None)
+        diagnostic = diagnostics.getvalue()
+        assert "Skipping malformed message pair 0 (category=dict)." in diagnostic
+        assert "PRIVATE-LEGACY-PAIR-CANARY" not in diagnostic
+    finally:
+        character_chat_module.logger.remove(sink_id)
+        database.close_connection()
+
+
+@pytest.mark.parametrize("format_version", [True, 1.0])
+def test_exported_json_rejects_non_integer_format_version(format_version) -> None:
+    payload = {
+        "format": "tldw_chat_history",
+        "format_version": format_version,
+        "conversation_name": "Wrong version type",
+        "history": [{"role": "assistant", "content": "visible answer"}],
+    }
+    database = CharactersRAGDB(":memory:", "json-format-version-type")
+    try:
+        assert load_chat_history_from_file_and_save_to_db(
+            database, io.BytesIO(json.dumps(payload).encode())
+        ) == (None, None)
+        assert (
+            database.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == 0
+        )
+    finally:
+        database.close_connection()
+
+
+def test_exported_json_private_bound_counts_utf8_not_ascii_escapes(monkeypatch) -> None:
+    checkpoint = _checkpoint()
+    checkpoint["rounds"][0]["reasoning_blocks"] = ["😀"]
+    private = {"provider_continuation": checkpoint}
+    monkeypatch.setattr(
+        character_chat_module,
+        "_MAX_EXPORTED_HISTORY_PRIVATE_BYTES",
+        len(json.dumps(private, separators=(",", ":"), ensure_ascii=False).encode()),
+    )
+    payload = {
+        "format": "tldw_chat_history",
+        "format_version": 1,
+        "conversation_name": "Unicode private",
+        "history": [
+            {
+                "role": "assistant",
+                "content": "visible answer",
+                "_private": private,
+            }
+        ],
+    }
+    database = CharactersRAGDB(":memory:", "json-unicode-private-bound")
+    try:
+        conversation_id, _ = load_chat_history_from_file_and_save_to_db(
+            database, io.BytesIO(json.dumps(payload).encode())
+        )
+        assert conversation_id is not None
+        row = database.get_messages_for_conversation(conversation_id)[0]
+        assert row["content"] == "visible answer"
+        assert row["provider_continuation_json"] is not None
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize("private_kind", ["oversize", "deep"])
+def test_invalid_private_resource_drops_without_rejecting_visible_json(
+    monkeypatch, private_kind
+) -> None:
+    checkpoint = _checkpoint()
+    if private_kind == "oversize":
+        monkeypatch.setattr(
+            character_chat_module, "_MAX_EXPORTED_HISTORY_PRIVATE_BYTES", 1
+        )
+        private_value = checkpoint
+    else:
+        private_value = "PRIVATE-DEEP-CANARY"
+        for _ in range(40):
+            private_value = [private_value]
+    payload = {
+        "format": "tldw_chat_history",
+        "format_version": 1,
+        "conversation_name": "Private resource",
+        "history": [
+            {
+                "role": "assistant",
+                "content": "visible answer",
+                "_private": {"provider_continuation": private_value},
+            }
+        ],
+    }
+    database = CharactersRAGDB(":memory:", "json-private-resource")
+    try:
+        conversation_id, _ = load_chat_history_from_file_and_save_to_db(
+            database, io.BytesIO(json.dumps(payload).encode())
+        )
+        assert conversation_id is not None
+        row = database.get_messages_for_conversation(conversation_id)[0]
+        assert row["content"] == "visible answer"
+        assert row["provider_continuation_json"] is None
+    finally:
+        database.close_connection()
+
+
 def test_exported_json_rejects_oversize_path_before_open(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -344,7 +467,6 @@ def test_exported_json_rejects_aggregate_content_before_database_writes(
     ("constant", "value"),
     [
         ("_MAX_EXPORTED_HISTORY_TOTAL_ID_CHARS", 0),
-        ("_MAX_EXPORTED_HISTORY_PRIVATE_BYTES", 0),
         ("_MAX_EXPORTED_HISTORY_JSON_DEPTH", 2),
     ],
 )

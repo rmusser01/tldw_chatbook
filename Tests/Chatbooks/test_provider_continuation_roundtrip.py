@@ -410,17 +410,39 @@ def test_invalid_v2_graph_fails_without_partial_import(
     assert destination.get_conversation_by_name("Graph") == []
 
 
+@pytest.mark.parametrize("identity_case", ["mismatch", "missing", "numeric", "blank"])
 def test_v2_manifest_item_identity_mismatch_fails_without_partial_import(
-    tmp_path: Path, chachanotes_template_db: Path
+    tmp_path: Path, chachanotes_template_db: Path, identity_case
 ) -> None:
     source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
     export_path = _create_export(tmp_path, source_paths, conversation_id)
+
+    def mutate_manifest(manifest):
+        item = next(
+            item for item in manifest["content_items"] if item["type"] == "conversation"
+        )
+        if identity_case == "missing":
+            item["id"] = "None"
+        elif identity_case == "numeric":
+            item["id"] = 1
+        elif identity_case == "blank":
+            item["id"] = ""
+
+    def mutate_conversation(conversation):
+        if identity_case == "mismatch":
+            conversation["id"] = "other"
+        elif identity_case == "missing":
+            conversation.pop("id")
+        elif identity_case == "numeric":
+            conversation["id"] = 1
+        elif identity_case == "blank":
+            conversation["id"] = ""
+
     broken = _rewrite_export(
         export_path,
         tmp_path / "identity-mismatch.chatbook.zip",
-        mutate_conversation=lambda conversation: conversation.__setitem__(
-            "id", "other"
-        ),
+        mutate_manifest=mutate_manifest,
+        mutate_conversation=mutate_conversation,
     )
     destination_path = tmp_path / "destination.db"
     shutil.copyfile(chachanotes_template_db, destination_path)
@@ -502,6 +524,98 @@ def test_v2_graph_accepts_exact_resource_limits(monkeypatch) -> None:
     monkeypatch.setattr(importer_module, "_MAX_V2_GRAPH_DEPTH", 1)
 
     assert len(ChatbookImporter._validate_v2_conversation_graph(_linear_graph(1))) == 1
+
+
+def test_v2_private_bound_counts_utf8_not_ascii_escapes(monkeypatch) -> None:
+    import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
+
+    graph = _linear_graph(1)
+    checkpoint = json.loads(_checkpoint_json())
+    checkpoint["rounds"][0]["reasoning_blocks"] = ["😀"]
+    private = {"provider_continuation": checkpoint}
+    graph["messages"][0]["role"] = "assistant"
+    graph["messages"][0]["_private"] = private
+    monkeypatch.setattr(
+        importer_module,
+        "_MAX_V2_TOTAL_PRIVATE_BYTES",
+        len(json.dumps(private, separators=(",", ":"), ensure_ascii=False).encode()),
+    )
+
+    assert len(ChatbookImporter._validate_v2_conversation_graph(graph)) == 1
+
+
+def test_v2_oversize_private_drops_without_rejecting_visible_graph(
+    tmp_path: Path, chachanotes_template_db: Path, monkeypatch
+) -> None:
+    import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
+
+    source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
+    export_path = _create_export(tmp_path, source_paths, conversation_id)
+    monkeypatch.setattr(importer_module, "_MAX_V2_TOTAL_PRIVATE_BYTES", 1)
+    destination_path = tmp_path / "destination-private-bound.db"
+    shutil.copyfile(chachanotes_template_db, destination_path)
+    status = ImportStatus()
+    importer = ChatbookImporter({"ChaChaNotes": str(destination_path)})
+    importer.temp_dir = tmp_path / "imports-private-bound"
+    importer.temp_dir.mkdir()
+
+    success, message = importer.import_chatbook(export_path, import_status=status)
+
+    assert success, message
+    assert status.warnings == ["Exact tool continuation was discarded for message 3."]
+    destination = CharactersRAGDB(str(destination_path), "verify")
+    imported_id = str(destination.get_conversation_by_name("Graph")[0]["id"])
+    rows = destination.execute_query(
+        "SELECT provider_continuation_json FROM messages WHERE conversation_id = ?",
+        (imported_id,),
+    ).fetchall()
+    assert len(rows) == 4
+    assert all(row["provider_continuation_json"] is None for row in rows)
+
+
+def test_v2_deep_private_reaches_canonical_parser_before_discard(
+    tmp_path: Path, chachanotes_template_db: Path, monkeypatch
+) -> None:
+    import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
+
+    source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
+    export_path = _create_export(tmp_path, source_paths, conversation_id)
+
+    def make_private_deep(conversation):
+        private_value = "PRIVATE-DEEP-V2-CANARY"
+        for _ in range(40):
+            private_value = [private_value]
+        conversation["messages"][2]["_private"]["provider_continuation"] = private_value
+
+    broken = _rewrite_export(
+        export_path,
+        tmp_path / "deep-private.chatbook.zip",
+        mutate_conversation=make_private_deep,
+    )
+
+    def forbidden_raw_private_dump(*_args, **_kwargs):
+        raise AssertionError("graph validation must not serialize raw private data")
+
+    monkeypatch.setattr(importer_module.json, "dumps", forbidden_raw_private_dump)
+    destination_path = tmp_path / "destination-deep-private.db"
+    shutil.copyfile(chachanotes_template_db, destination_path)
+    status = ImportStatus()
+    importer = ChatbookImporter({"ChaChaNotes": str(destination_path)})
+    importer.temp_dir = tmp_path / "imports-deep-private"
+    importer.temp_dir.mkdir()
+
+    success, message = importer.import_chatbook(broken, import_status=status)
+
+    assert success, message
+    assert status.warnings == ["Exact tool continuation was discarded for message 3."]
+    destination = CharactersRAGDB(str(destination_path), "verify")
+    imported_id = str(destination.get_conversation_by_name("Graph")[0]["id"])
+    assert (
+        destination.execute_query(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id = ?", (imported_id,)
+        ).fetchone()[0]
+        == 4
+    )
 
 
 def test_v1_flat_import_without_private_data_remains_supported(

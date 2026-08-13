@@ -591,7 +591,7 @@ class ChatbookCreator:
                 if not isinstance(active_leaf, (str, int)):
                     active_leaf = None
                 conv_data = {
-                    "id": conv["id"],
+                    "id": str(conv["id"]),
                     "name": title,
                     "created_at": created_at,
                     "updated_at": last_modified,
@@ -627,7 +627,7 @@ class ChatbookCreator:
                 # Add to manifest
                 manifest.content_items.append(
                     ContentItem(
-                        id=conv_id,
+                        id=str(conv_id),
                         type=ContentType.CONVERSATION,
                         title=title,
                         created_at=datetime.fromisoformat(conv_data["created_at"]),
