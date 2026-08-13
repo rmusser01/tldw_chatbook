@@ -328,6 +328,36 @@ async def test_turn_outcome_glyphs_outrank_the_unseen_badge(tmp_path):
         )
 
 
+@pytest.mark.asyncio
+async def test_unseen_mark_reaches_the_sidebar_browser_rows(tmp_path):
+    """The sidebar conversation-browser pipeline carries the ◈ glyph for a
+    marked, non-active session's row -- the same durable-mark backing as
+    the tab badge, threaded as a resolved glyph string per the PA-T8
+    no-model-import discipline."""
+    app = _build_test_app()
+    marks = _attach_real_marks_service(app, tmp_path)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
+        console = host.screen_stack[-1]
+        from Tests.UI.test_destination_shells import _wait_for_selector
+
+        await _wait_for_selector(console, pilot, "#console-session-surface")
+        console._ensure_console_chat_controller()
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        second = store.create_session(title="Marked in browser")
+        store.switch_session(first.id)
+        marks.set_mark(second.id, ConversationLocalMarksService.FLEET_UNSEEN)
+        bump_fleet_unseen_revision(app)
+
+        rows = console._native_console_browser_rows()
+        by_session = {row.native_session_id: row for row in rows}
+        assert by_session[second.id].run_marker == "◈", (
+            f"the marked row must carry the unseen glyph: {rows}"
+        )
+        assert by_session[first.id].run_marker == "", "unmarked rows stay clean"
+
+
 # ---------------------------------------------------------------------------
 # The deep-link mount claim.
 # ---------------------------------------------------------------------------
