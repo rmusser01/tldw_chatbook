@@ -3,8 +3,8 @@
 import json
 import pickle
 from collections.abc import Iterator, Mapping
-from copy import deepcopy
-from dataclasses import FrozenInstanceError, asdict
+from copy import copy, deepcopy
+from dataclasses import FrozenInstanceError, asdict, fields, replace
 
 import pytest
 
@@ -729,7 +729,8 @@ class TestFirstRunProviderContracts:
         second = credential_type("draft", "second-secret", 3)
 
         assert first == second
-        assert first.value == "first-secret"
+        assert not hasattr(first, "value")
+        assert not hasattr(first, "_value")
         assert "first-secret" not in repr(first)
         assert asdict(first) == {"source": "draft", "revision": 3}
         serialized = json.dumps(asdict(first), sort_keys=True)
@@ -739,6 +740,32 @@ class TestFirstRunProviderContracts:
         assert first.__slots__ == ("source", "revision")
         with pytest.raises(FrozenInstanceError):
             first.revision = 4
+
+    def test_credential_cannot_be_reconstructed_copied_pickled_or_subclassed(self):
+        secret = "sealed-credential-secret"
+        credential = setup_state.ProviderCredentialDraft("draft", secret, 3)
+
+        operations = (
+            lambda: replace(credential),
+            lambda: replace(credential, revision=4),
+            lambda: copy(credential),
+            lambda: deepcopy(credential),
+            lambda: pickle.dumps(credential),
+        )
+        for operation in operations:
+            with pytest.raises((TypeError, ValueError)) as exc_info:
+                operation()
+            assert secret not in str(exc_info.value)
+            assert len(str(exc_info.value)) < 160
+
+        with pytest.raises(TypeError):
+
+            class CredentialSubclass(setup_state.ProviderCredentialDraft):
+                pass
+
+        assert [item.name for item in fields(credential)] == ["source", "revision"]
+        assert asdict(credential) == {"source": "draft", "revision": 3}
+        assert secret not in repr(credential)
 
     @pytest.mark.parametrize(
         ("source", "value", "revision"),
@@ -1198,7 +1225,7 @@ class TestFirstRunProviderContracts:
         )
         assert mutation.semantic_identity.credential_source == "environment"
 
-    def test_none_source_prefers_declared_environment_over_legacy_inline_value(self):
+    def test_none_source_prefers_valid_inline_over_unset_environment_declaration(self):
         mutation = setup_state.build_first_run_provider_commit(
             _first_run_provider_draft(source="none", value="", revision=7),
             "custom-model",
@@ -1214,12 +1241,10 @@ class TestFirstRunProviderContracts:
         )
 
         provider_values = mutation.section_values["api_settings.custom"]
-        assert provider_values["api_key_env_var"] == "CUSTOM_API_KEY"
-        assert "api_key_env_var" not in mutation.delete_keys.get(
-            "api_settings.custom", ()
-        )
-        assert "api_key" in mutation.delete_keys["api_settings.custom"]
-        assert mutation.semantic_identity.credential_source == "environment"
+        assert provider_values["api_key"] == "legacy-inline-secret"
+        assert "api_key" not in mutation.delete_keys.get("api_settings.custom", ())
+        assert "api_key_env_var" in mutation.delete_keys["api_settings.custom"]
+        assert mutation.semantic_identity.credential_source == "stored"
 
     @pytest.mark.parametrize(
         ("model_id", "app_config"),

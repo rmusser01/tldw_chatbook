@@ -1125,6 +1125,52 @@ async def test_mounted_back_provider_identity_change_cannot_commit_old_model(cha
 
 
 @pytest.mark.asyncio
+async def test_mounted_unchanged_backtrack_preserves_model_and_discovery_request():
+    from unittest.mock import AsyncMock
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {"custom": {"api_url": "https://stable.example.test/v1"}}
+    }
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(
+        return_value=_typed_model_discovery_result("custom", "stable-model")
+    )
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        await pilot.pause(0.1)
+        await container._advance()
+        await pilot.pause(0.1)
+
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        model_step.query_one("#setup-model-custom", Input).value = "stable-model"
+        await pilot.pause()
+        original_key = model_step._shown_for_discovery_key
+        request_count = scope_service.discover_models.await_count
+
+        container.show_step(provider_index)
+        await container._advance()
+        await pilot.pause(0.1)
+
+        assert model_step._shown_for_discovery_key == original_key
+        assert model_step._effective_model_id() == "stable-model"
+        assert scope_service.discover_models.await_count == request_count
+
+
+@pytest.mark.asyncio
 async def test_model_step_late_render_is_fenced_by_exact_discovery_key():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -1319,6 +1365,32 @@ def _provider_endpoint_config(*provider_keys):
     }
 
 
+def _typed_model_discovery_result(provider: str, *model_ids: str):
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        DiscoveredModel,
+        ModelDiscoveryResult,
+    )
+
+    return ModelDiscoveryResult(
+        provider=provider,
+        provider_list_key=provider,
+        endpoint_fingerprint=f"https://{provider}.example.test/v1",
+        status="success",
+        models=tuple(
+            DiscoveredModel(
+                provider=provider,
+                provider_list_key=provider,
+                model_id=model_id,
+                display_name=model_id,
+                source="runtime_discovered",
+                endpoint_fingerprint=f"https://{provider}.example.test/v1",
+                discovered_at="2026-08-12T00:00:00Z",
+            )
+            for model_id in model_ids
+        ),
+    )
+
+
 class _StepHost(App):
     def __init__(self, step):
         super().__init__()
@@ -1336,7 +1408,7 @@ async def test_first_run_contacts_only_selected_provider():
     selected_discovery = AsyncMock(return_value=())
     scope_service = MagicMock()
     scope_service.discover_models = AsyncMock(
-        return_value=SimpleNamespace(status="success", models=("ollama-model",))
+        return_value=_typed_model_discovery_result("ollama", "ollama-model")
     )
     wizard = SimpleNamespace(
         app_instance=MagicMock(
@@ -1392,7 +1464,7 @@ async def test_provider_discovery_generation_discards_late_prior_provider():
     scope_service = MagicMock()
 
     async def discover_models(*, provider, **_kwargs):
-        return SimpleNamespace(status="success", models=(f"{provider}-scope",))
+        return _typed_model_discovery_result(provider, f"{provider}-scope")
 
     scope_service.discover_models = AsyncMock(side_effect=discover_models)
     wizard = SimpleNamespace(
@@ -1508,7 +1580,7 @@ async def test_provider_discovery_reentry_restarts_cancelled_request_and_discard
     selected_discovery = AsyncMock(side_effect=discover)
     scope_service = MagicMock()
     scope_service.discover_models = AsyncMock(
-        return_value=SimpleNamespace(status="success", models=("current-model",))
+        return_value=_typed_model_discovery_result("ollama", "current-model")
     )
     wizard = SimpleNamespace(
         app_instance=MagicMock(
@@ -1582,7 +1654,7 @@ async def test_provider_discovery_uses_exact_draft_settings_and_secret_free_key(
 
     scope_service = MagicMock()
     scope_service.discover_models = AsyncMock(
-        return_value=SimpleNamespace(status="success", models=("exact-model",))
+        return_value=_typed_model_discovery_result("custom", "exact-model")
     )
     wizard = SimpleNamespace(
         app_instance=MagicMock(
@@ -1645,13 +1717,13 @@ async def test_provider_credential_revision_change_discards_late_discovery_resul
     async def discover_models(*, staged_settings, **_kwargs):
         provider_settings = staged_settings["api_settings"]["custom"]
         if provider_settings.get("api_key") == "replacement-secret":
-            return SimpleNamespace(status="success", models=("current-model",))
+            return _typed_model_discovery_result("custom", "current-model")
         first_started.set()
         try:
             await release_first.wait()
         except asyncio.CancelledError:
-            return SimpleNamespace(status="success", models=("late-model",))
-        return SimpleNamespace(status="success", models=("late-model",))
+            return _typed_model_discovery_result("custom", "late-model")
+        return _typed_model_discovery_result("custom", "late-model")
 
     scope_service = MagicMock(discover_models=AsyncMock(side_effect=discover_models))
     wizard = SimpleNamespace(
@@ -1702,7 +1774,7 @@ async def test_provider_endpoint_change_discards_late_discovery_result():
     async def discover_models(**_kwargs):
         started.set()
         await release.wait()
-        return SimpleNamespace(status="success", models=("stale-model",))
+        return _typed_model_discovery_result("custom", "stale-model")
 
     app_config = {
         "api_settings": {
@@ -1809,7 +1881,103 @@ async def test_provider_step_stages_unset_declared_environment_source():
         assert ok, error
         draft = _staged_provider_draft(wizard)
         assert draft.credential.source == "environment"
-        assert draft.credential.value == "PRIVATE_OPENAI_KEY"
+        assert not hasattr(draft.credential, "value")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("inline_key", "environment", "expected_source"),
+    [
+        ("inline-secret", {}, "none"),
+        ("inline-secret", {"PRIVATE_OPENAI_KEY": "environment-secret"}, "none"),
+        (None, {}, "environment"),
+        (None, {"PRIVATE_OPENAI_KEY": "environment-secret"}, "environment"),
+    ],
+)
+async def test_provider_credential_precedence_matches_first_chat_readiness(
+    inline_key, environment, expected_source
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    provider_settings = {"api_key_env_var": "PRIVATE_OPENAI_KEY"}
+    if inline_key is not None:
+        provider_settings["api_key"] = inline_key
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={"api_settings": {"openai": provider_settings}},
+            llm_provider_catalog_scope_service=None,
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, environ=environment)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        ok, error = await step.commit()
+
+        assert ok, error
+        draft = _staged_provider_draft(wizard)
+        assert draft.credential.source == expected_source
+        assert "inline-secret" not in repr(draft)
+        assert "environment-secret" not in repr(draft)
+
+
+@pytest.mark.asyncio
+async def test_unchanged_provider_backtrack_preserves_discovery_key_and_request_count():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(
+        return_value=_typed_model_discovery_result("custom", "stable-model")
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={
+                "api_settings": {
+                    "custom": {"api_url": "https://stable.example.test/v1"}
+                }
+            },
+            llm_provider_catalog_scope_service=scope_service,
+        ),
+        note_key_entered=MagicMock(),
+        rerun=False,
+        staged_provider_draft=None,
+    )
+    staged = []
+
+    def stage_provider_setup(draft):
+        staged.append(draft)
+        wizard.staged_provider_draft = draft
+        return True
+
+    wizard.stage_provider_setup = MagicMock(side_effect=stage_provider_setup)
+    step = _provider_step(wizard=wizard, discover=AsyncMock(return_value=()))
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("custom")
+        await pilot.pause(0.1)
+        ok, error = await step.commit()
+        assert ok, error
+        await pilot.pause(0.1)
+        first_key = step._model_discovery_key(staged[-1])
+        first_request_count = scope_service.discover_models.await_count
+
+        ok, error = await step.commit()
+        assert ok, error
+        await pilot.pause(0.1)
+        second_key = step._model_discovery_key(staged[-1])
+
+        assert second_key == first_key
+        assert staged[-1].credential.revision == staged[-2].credential.revision
+        assert scope_service.discover_models.await_count == first_request_count
 
 
 @pytest.mark.asyncio
@@ -1938,7 +2106,7 @@ async def test_provider_initial_mount_only_runs_provider_neutral_local_discovery
     selected_discovery = AsyncMock(return_value=())
     scope_service = MagicMock()
     scope_service.discover_models = AsyncMock(
-        return_value=SimpleNamespace(status="success", models=())
+        return_value=_typed_model_discovery_result("openai")
     )
     wizard = SimpleNamespace(
         app_instance=MagicMock(
@@ -2075,7 +2243,7 @@ async def test_provider_step_commit_writes_key_and_notes_key_entered():
         draft = _staged_provider_draft(wizard)
         assert draft.provider == "openai"
         assert draft.credential.source == "draft"
-        assert draft.credential.value == "sk-new"
+        assert not hasattr(draft.credential, "value")
         wizard.note_key_entered.assert_called_once()
 
 
@@ -2178,7 +2346,7 @@ async def test_provider_home_on_initial_row_selects_and_stages_openai():
         draft = _staged_provider_draft(step.wizard)
         assert draft.provider == "openai"
         assert draft.credential.source == "environment"
-        assert draft.credential.value == "OPENAI_API_KEY"
+        assert not hasattr(draft.credential, "value")
 
 
 @pytest.mark.asyncio
@@ -2422,7 +2590,7 @@ async def test_provider_step_keep_preserves_existing_key_without_note():
         draft = _staged_provider_draft(wizard)
         assert draft.provider == "openai"
         assert draft.credential.source == "none"
-        assert draft.credential.value == ""
+        assert not hasattr(draft.credential, "value")
         wizard.note_key_entered.assert_not_called()
 
 
@@ -2454,7 +2622,7 @@ async def test_provider_step_clear_persists_empty_key_without_note():
         draft = _staged_provider_draft(wizard)
         assert draft.provider == "openai"
         assert draft.credential.source == "draft"
-        assert draft.credential.value == ""
+        assert not hasattr(draft.credential, "value")
         wizard.note_key_entered.assert_not_called()
 
 
@@ -2489,7 +2657,7 @@ async def test_provider_step_switching_provider_clears_key_input():
         draft = _staged_provider_draft(wizard)
         assert draft.provider == "anthropic"
         assert draft.credential.source == "none"
-        assert draft.credential.value == ""
+        assert not hasattr(draft.credential, "value")
 
 
 @pytest.mark.asyncio
@@ -2539,7 +2707,8 @@ async def test_provider_step_first_selection_stages_without_writing_defaults():
         assert ok, error
         draft = _staged_provider_draft(wizard)
         assert draft.provider == "openai"
-        assert draft.credential.value == "sk-new"
+        assert draft.credential.source == "draft"
+        assert not hasattr(draft.credential, "value")
 
 
 @pytest.mark.asyncio
@@ -2755,10 +2924,8 @@ async def test_model_step_clearing_custom_input_clears_stale_selection():
 
 
 @pytest.mark.asyncio
-async def test_model_step_clearing_custom_input_falls_back_to_radio_selection():
-    """Guards the "fall back to a radio selection if one is active" half of
-    the Bug-5 fix: clearing the custom Input after a radio pick was also
-    made must restore the radio's model, not blank it."""
+async def test_model_step_clearing_custom_input_does_not_restore_hidden_radio():
+    """A manual edit owns selection after it visibly clears the radio choice."""
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
 
@@ -2787,10 +2954,11 @@ async def test_model_step_clearing_custom_input_falls_back_to_radio_selection():
         custom_input.value = "my-custom-model"
         await pilot.pause()
         assert step.selected_model_id == "my-custom-model"
+        assert radio_set.pressed_button is None
 
         custom_input.value = ""
         await pilot.pause()
-        assert step.selected_model_id == "radio-model-a"
+        assert step.selected_model_id == ""
 
 
 @pytest.mark.asyncio
@@ -2962,9 +3130,7 @@ async def test_model_step_uses_scope_service_when_available():
     from unittest.mock import AsyncMock, MagicMock as Mock
     from types import SimpleNamespace
 
-    scope_result = SimpleNamespace(
-        status="success", models=("svc-model-a", "svc-model-b")
-    )
+    scope_result = _typed_model_discovery_result("openai", "svc-model-a", "svc-model-b")
     scope_service = Mock()
     scope_service.discover_models = AsyncMock(return_value=scope_result)
     app_instance = MagicMock(app_config={})
@@ -3003,6 +3169,113 @@ async def test_model_step_uses_scope_service_when_available():
             for button in radio_set.query(RadioButton)
         ]
         assert ids == ["svc-model-a", "svc-model-b"]
+
+
+def test_real_discovery_result_extracts_exact_safe_unique_model_ids():
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _model_ids_from_discovery_result,
+    )
+
+    result = _typed_model_discovery_result("openai", "model-a", "model-a", "model-b")
+
+    assert _model_ids_from_discovery_result(result) == ("model-a", "model-b")
+
+
+@pytest.mark.parametrize("malformed", ["object", "subclass", "unsafe", "oversized"])
+def test_real_discovery_result_rejects_malformed_or_unsafe_models(malformed):
+    from dataclasses import replace
+
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        DiscoveredModel,
+    )
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _model_ids_from_discovery_result,
+    )
+
+    result = _typed_model_discovery_result("openai", "safe-model")
+    model = result.models[0]
+    if malformed == "object":
+        models = (object(),)
+    elif malformed == "subclass":
+
+        class DiscoveredModelSubclass(DiscoveredModel):
+            pass
+
+        models = (
+            DiscoveredModelSubclass(
+                **{field: getattr(model, field) for field in model.__dataclass_fields__}
+            ),
+        )
+    elif malformed == "unsafe":
+        models = (replace(model, model_id="unsafe\nmodel"),)
+    else:
+        models = (replace(model, model_id="x" * 121),)
+
+    with pytest.raises(ValueError, match="discovery"):
+        _model_ids_from_discovery_result(replace(result, models=models))
+
+
+@pytest.mark.asyncio
+async def test_typing_manual_model_clears_keyboard_selected_radio():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "openai"}
+        },
+        commit_staged_provider_setup=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(
+        wizard, discover_models=AsyncMock(return_value=["radio-a", "radio-b"])
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        radio_set = step.query_one("#setup-model-choice", RadioSet)
+        radio_set.focus()
+        await pilot.press("down", "space")
+        await pilot.pause()
+        assert radio_set.pressed_button is not None
+
+        manual = step.query_one("#setup-model-custom", Input)
+        manual.value = "manual-model"
+        await pilot.pause()
+
+        assert radio_set.pressed_button is None
+        assert step._effective_model_id() == "manual-model"
+
+
+@pytest.mark.asyncio
+async def test_clicking_discovered_model_clears_visible_manual_input():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "openai"}
+        },
+        commit_staged_provider_setup=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(
+        wizard, discover_models=AsyncMock(return_value=["radio-a", "radio-b"])
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        manual = step.query_one("#setup-model-custom", Input)
+        manual.value = "manual-model"
+        await pilot.pause()
+
+        await pilot.click("#setup-model-option-1")
+        await pilot.pause()
+
+        assert manual.value == ""
+        assert step._effective_model_id() == "radio-b"
 
 
 @pytest.mark.asyncio

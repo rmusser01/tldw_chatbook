@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from unittest.mock import Mock
 
 import httpx
@@ -7,6 +9,7 @@ import pytest
 
 from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError
 from tldw_chatbook.LLM_Calls.qwencloud import normalize_qwencloud_base_url
+from tldw_chatbook.LLM_Provider_Catalog import openai_compatible_model_discovery
 from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
     build_models_url,
     discover_openai_compatible_models,
@@ -14,7 +17,6 @@ from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import
     normalize_models_response,
     supports_openai_compatible_model_discovery,
 )
-from tldw_chatbook.LLM_Provider_Catalog import openai_compatible_model_discovery
 
 
 def test_chat_completions_url_maps_to_models_url():
@@ -627,13 +629,28 @@ async def test_discovery_owned_async_client_uses_context_manager(monkeypatch):
         async def __aexit__(self, exc_type, exc, traceback):
             events.append("exit")
 
-        async def get(self, url, headers=None, params=None):
-            events.append(f"get:{url}")
-            return httpx.Response(
+        def stream(
+            self, method, url, headers=None, params=None, follow_redirects=False
+        ):
+            del headers, params, follow_redirects
+            events.append(f"stream:{method}:{url}")
+            response = httpx.Response(
                 200,
                 json={"data": [{"id": "runtime-a"}]},
-                request=httpx.Request("GET", url),
+                request=httpx.Request(method, url),
             )
+
+            class StreamContext:
+                async def __aenter__(self):
+                    events.append("stream-enter")
+                    return response
+
+                async def __aexit__(self, exc_type, exc, traceback):
+                    del exc_type, exc, traceback
+                    events.append("stream-exit")
+                    await response.aclose()
+
+            return StreamContext()
 
         async def aclose(self):
             events.append("manual-close")
@@ -655,7 +672,9 @@ async def test_discovery_owned_async_client_uses_context_manager(monkeypatch):
     assert events == [
         "init:10.0",
         "enter",
-        "get:https://api.example.test/v1/models",
+        "stream:GET:https://api.example.test/v1/models",
+        "stream-enter",
+        "stream-exit",
         "exit",
     ]
 
@@ -818,8 +837,8 @@ async def test_anthropic_paginates_with_after_id():
         )
     assert result.status == "success"
     assert [m.model_id for m in result.models] == ["claude-1", "claude-2"]
-    assert requests[0] == {"limit": "1000"}
-    assert requests[1] == {"limit": "1000", "after_id": "claude-1"}
+    assert requests[0] == {"limit": "100"}
+    assert requests[1] == {"limit": "100", "after_id": "claude-1"}
     # Anthropic auth headers, not Bearer:
     assert seen_headers["x-api-key"] == "sk-ant-test"
     assert seen_headers["anthropic-version"] == "2023-06-01"
@@ -883,3 +902,145 @@ async def test_discovery_maps_500_to_request_failed():
     assert result.status == "error"
     assert result.error is not None
     assert result.error.kind == "request_failed"
+
+
+class _ObservedStream(httpx.AsyncByteStream):
+    def __init__(self, chunks, *, gate: asyncio.Event | None = None):
+        self.chunks = chunks
+        self.gate = gate
+        self.closed = False
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            if self.gate is not None:
+                await self.gate.wait()
+            await asyncio.sleep(0)
+            yield chunk
+
+    async def aclose(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_discovery_streams_and_rejects_oversized_body_before_json_decode():
+    maximum = openai_compatible_model_discovery.MODEL_DISCOVERY_RESPONSE_MAX_BYTES
+    stream = _ObservedStream((b'{"data":', b'"' + b"x" * maximum + b'"}'))
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, stream=stream)
+        )
+    ) as client:
+        result = await discover_openai_compatible_models(
+            provider="Custom",
+            provider_list_key="Custom",
+            endpoint="https://api.example.test/v1",
+            api_key=None,
+            client=client,
+        )
+
+    assert result.status == "error"
+    assert result.models == ()
+    assert result.error is not None
+    assert result.error.kind == "invalid_response"
+    assert "large" in result.error.message.casefold()
+    assert stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_discovery_cancellation_closes_streamed_response():
+    gate = asyncio.Event()
+    stream = _ObservedStream((b'{"data": []}',), gate=gate)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, stream=stream)
+        )
+    ) as client:
+        task = asyncio.create_task(
+            discover_openai_compatible_models(
+                provider="Custom",
+                provider_list_key="Custom",
+                endpoint="https://api.example.test/v1",
+                api_key=None,
+                client=client,
+            )
+        )
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_discovery_rejects_model_count_over_bound_without_partial_cache_data():
+    maximum = openai_compatible_model_discovery.DISCOVERED_MODEL_MAX_COUNT
+    payload = {"data": [{"id": f"model-{index}"} for index in range(maximum + 1)]}
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, content=json.dumps(payload))
+        )
+    ) as client:
+        result = await discover_openai_compatible_models(
+            provider="Custom",
+            provider_list_key="Custom",
+            endpoint="https://api.example.test/v1",
+            api_key=None,
+            client=client,
+        )
+
+    assert result.status == "error"
+    assert result.models == ()
+    assert result.error is not None
+    assert result.error.kind == "invalid_response"
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "x" * 121,
+        "unsafe\nmodel",
+        "unsafe\x00model",
+    ],
+)
+def test_normalize_models_rejects_unsafe_or_oversized_model_ids(model_id):
+    with pytest.raises(ValueError, match="model id"):
+        normalize_models_response(
+            {"data": [{"id": model_id}]},
+            provider="Custom",
+            provider_list_key="Custom",
+            endpoint_fingerprint="https://api.example.test/v1",
+            now_iso="2026-08-12T00:00:00Z",
+        )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {
+            "nested": {
+                "nested": {
+                    "nested": {
+                        "nested": {
+                            "nested": {
+                                "nested": {"nested": {"nested": {"nested": "too-deep"}}}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {"many": list(range(300))},
+        {"large": "x" * 5000},
+    ],
+)
+def test_normalize_models_rejects_unbounded_metadata(metadata):
+    with pytest.raises(ValueError, match="metadata"):
+        normalize_models_response(
+            {"data": [{"id": "safe-model", "metadata": metadata}]},
+            provider="Custom",
+            provider_list_key="Custom",
+            endpoint_fingerprint="https://api.example.test/v1",
+            now_iso="2026-08-12T00:00:00Z",
+        )

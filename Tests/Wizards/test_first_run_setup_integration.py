@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
@@ -693,3 +694,65 @@ class TestWizardAtomicProviderHandoff:
         assert persisted["api_url"] == "https://example.test/v1/chat/completions"
         assert "api_key" not in persisted
         assert "api_key_env_var" not in persisted
+
+    @pytest.mark.asyncio
+    async def test_unchanged_inline_key_outranks_unset_declaration_after_atomic_commit(
+        self, temp_config, monkeypatch
+    ):
+        monkeypatch.delenv("CUSTOM_API_KEY", raising=False)
+        _write(
+            {
+                "api_settings.custom": {
+                    "api_url": "https://example.test/v1/chat/completions",
+                    "api_key": "active-inline-secret",
+                    "api_key_env_var": "CUSTOM_API_KEY",
+                }
+            }
+        )
+        app_config = _reload()
+        container = SetupWizardContainer(SimpleNamespace(app_config=app_config))
+        container.stage_provider_setup(
+            _typed_provider_draft(source="none", value="", revision=2)
+        )
+
+        assert await container.commit_staged_provider_setup("custom-model") is True
+
+        persisted = tomllib.loads(temp_config.read_text())["api_settings"]["custom"]
+        assert persisted["api_key"] == "active-inline-secret"
+        assert "api_key_env_var" not in persisted
+        readiness = get_provider_readiness("custom", _reload(), environ={})
+        assert readiness.ready is True
+        assert readiness.api_key_source == "config:api_settings.custom.api_key"
+
+    @pytest.mark.asyncio
+    async def test_explicit_environment_source_replaces_inline_key_atomically(
+        self, temp_config, monkeypatch
+    ):
+        monkeypatch.setenv("CUSTOM_API_KEY", "environment-secret")
+        _write(
+            {
+                "api_settings.custom": {
+                    "api_url": "https://example.test/v1/chat/completions",
+                    "api_key": "old-inline-secret",
+                    "api_key_env_var": "CUSTOM_API_KEY",
+                }
+            }
+        )
+        app_config = _reload()
+        container = SetupWizardContainer(SimpleNamespace(app_config=app_config))
+        container.stage_provider_setup(
+            _typed_provider_draft(
+                source="environment", value="CUSTOM_API_KEY", revision=3
+            )
+        )
+
+        assert await container.commit_staged_provider_setup("custom-model") is True
+
+        persisted = tomllib.loads(temp_config.read_text())["api_settings"]["custom"]
+        assert persisted["api_key_env_var"] == "CUSTOM_API_KEY"
+        assert "api_key" not in persisted
+        readiness = get_provider_readiness(
+            "custom", _reload(), environ={"CUSTOM_API_KEY": "environment-secret"}
+        )
+        assert readiness.ready is True
+        assert readiness.api_key_source == "env:CUSTOM_API_KEY"

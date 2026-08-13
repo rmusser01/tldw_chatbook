@@ -18,7 +18,7 @@ import json
 import math
 import re
 from collections.abc import Mapping
-from dataclasses import InitVar, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 from unicodedata import category as unicode_category
 
@@ -71,28 +71,23 @@ class _CredentialValueOwner:
 
     __slots__ = ("_value",)
 
-    @property
-    def value(self) -> str:
-        """Return the memory-only credential to the commit/request boundary."""
 
-        return self._value
-
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ProviderCredentialDraft(_CredentialValueOwner):
     """One bounded credential decision whose value is never a dataclass field."""
 
-    source: FirstRunCredentialSource
-    value: InitVar[str]
-    revision: int = 0
+    source: FirstRunCredentialSource = field(init=False)
+    revision: int = field(init=False)
 
-    def __post_init__(self, value: str) -> None:
-        if type(self.source) is not str or self.source not in _CREDENTIAL_SOURCES:
+    def __init__(
+        self,
+        source: FirstRunCredentialSource,
+        value: str,
+        revision: int = 0,
+    ) -> None:
+        if type(source) is not str or source not in _CREDENTIAL_SOURCES:
             raise ValueError("Credential source is invalid.")
-        if (
-            type(self.revision) is not int
-            or not 0 <= self.revision <= _MAX_IDENTITY_COUNTER
-        ):
+        if type(revision) is not int or not 0 <= revision <= _MAX_IDENTITY_COUNTER:
             raise ValueError("Credential revision is invalid.")
         if type(value) is not str or len(value) > _MAX_CREDENTIAL_CHARS:
             raise ValueError("Credential value is invalid.")
@@ -101,15 +96,44 @@ class ProviderCredentialDraft(_CredentialValueOwner):
             for character in value
         ):
             raise ValueError("Credential value is invalid.")
-        if self.source == "none" and value:
+        if source == "none" and value:
             raise ValueError("Credential value conflicts with its source.")
-        if self.source == "environment" and _ENV_VAR_PATTERN.fullmatch(value) is None:
+        if source == "environment" and _ENV_VAR_PATTERN.fullmatch(value) is None:
             raise ValueError("Credential environment variable is invalid.")
+        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "revision", revision)
         object.__setattr__(self, "_value", value)
+
+    def __getattribute__(self, name: str) -> object:
+        if name == "_value":
+            raise AttributeError("credential value is memory-only")
+        return object.__getattribute__(self, name)
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        del cls, kwargs
+        raise TypeError("ProviderCredentialDraft is sealed.")
+
+    def __copy__(self) -> object:
+        raise TypeError("Provider credentials are memory-only.")
+
+    def __deepcopy__(self, memo: object) -> object:
+        del memo
+        raise TypeError("Provider credentials are memory-only.")
+
+    def __reduce__(self) -> object:
+        raise TypeError("Provider credentials are memory-only.")
 
     def __reduce_ex__(self, protocol: int) -> object:
         del protocol
         raise TypeError("Provider credentials are memory-only.")
+
+
+def _credential_value_for_boundary(credential: ProviderCredentialDraft) -> str:
+    """Reveal a credential only to the first-run probe/persistence boundaries."""
+
+    if type(credential) is not ProviderCredentialDraft:
+        raise ValueError("Credential draft is invalid.")
+    return object.__getattribute__(credential, "_value")
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,7 +318,9 @@ def resolve_first_run_provider_draft(
     return provider_draft
 
 
-def _validated_first_run_model(model_id: object) -> str:
+def validate_first_run_model_id(model_id: object) -> str:
+    """Return one bounded display/config-safe model identifier."""
+
     if type(model_id) is not str:
         raise ValueError("Model is invalid.")
     model = model_id.strip()
@@ -326,7 +352,7 @@ def build_first_run_provider_commit(
         raise ValueError("Provider draft is invalid.")
     config = _validate_first_run_app_config(app_config, provider_draft.provider)
     effective_draft = resolve_first_run_provider_draft(provider_draft, config)
-    model = _validated_first_run_model(model_id)
+    model = validate_first_run_model_id(model_id)
     if effective_draft.endpoint:
         resolution = resolve_provider_endpoint(
             _first_run_provider_owner_key(effective_draft.provider),
@@ -336,6 +362,7 @@ def build_first_run_provider_commit(
             raise ValueError("Provider endpoint is invalid.")
 
     credential = provider_draft.credential
+    credential_value = _credential_value_for_boundary(credential)
 
     def shared_draft(source: str) -> ProviderSetupDraft:
         return ProviderSetupDraft(
@@ -346,26 +373,26 @@ def build_first_run_provider_commit(
             credential_revision=credential.revision,
             draft_generation=0,
             credential_value=(
-                credential.value
-                if credential.source == "draft" and credential.value
+                credential_value
+                if credential.source == "draft" and credential_value
                 else None
             ),
             credential_env_var=(
-                credential.value if credential.source == "environment" else None
+                credential_value if credential.source == "environment" else None
             ),
         )
 
     if credential.source == "none":
         try:
-            mutation = build_provider_setup_mutation(
-                shared_draft("environment"), config
-            )
+            mutation = build_provider_setup_mutation(shared_draft("stored"), config)
         except ValueError:
             try:
-                mutation = build_provider_setup_mutation(shared_draft("stored"), config)
+                mutation = build_provider_setup_mutation(
+                    shared_draft("environment"), config
+                )
             except ValueError:
                 mutation = build_provider_setup_mutation(shared_draft("none"), config)
-    elif credential.source == "draft" and not credential.value:
+    elif credential.source == "draft" and not credential_value:
         mutation = build_provider_setup_mutation(shared_draft("none"), config)
     else:
         mutation = build_provider_setup_mutation(
@@ -1264,6 +1291,7 @@ class SecretPresence:
     """Whether a provider secret exists — never the secret itself."""
 
     configured: bool
+    inline_configured: bool = False
     env_var: str | None = None
     env_var_set: bool = False
     env_var_declared: bool = False
@@ -1368,6 +1396,7 @@ def read_provider_secret_presence(
     inline = _is_real_secret(settings.get("api_key"))
     return SecretPresence(
         configured=inline or env_var_set,
+        inline_configured=inline,
         env_var=env_var,
         env_var_set=env_var_set,
         env_var_declared=env_var_declared,

@@ -569,6 +569,55 @@ def _provider_options(
     return options
 
 
+def _model_ids_from_discovery_result(result: object) -> tuple[str, ...]:
+    """Extract exact typed catalog IDs without accepting duck-typed payloads."""
+
+    from tldw_chatbook.Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        DiscoveredModel,
+        ModelDiscoveryResult,
+    )
+
+    if type(result) is not ModelDiscoveryResult:
+        raise ValueError("Model discovery result is invalid.")
+    if result.status != "success":
+        return ()
+    if type(result.models) is not tuple or len(result.models) > MODEL_IDS_MAX_COUNT:
+        raise ValueError("Model discovery result is invalid.")
+    model_ids: list[str] = []
+    seen: set[str] = set()
+    for discovered in result.models:
+        if type(discovered) is not DiscoveredModel:
+            raise ValueError("Model discovery result is invalid.")
+        try:
+            model_id = wizard_state.validate_first_run_model_id(discovered.model_id)
+        except ValueError as exc:
+            raise ValueError("Model discovery result is invalid.") from exc
+        if model_id in seen:
+            continue
+        seen.add(model_id)
+        model_ids.append(model_id)
+    return tuple(model_ids)
+
+
+def _legacy_model_ids(values: object) -> tuple[str, ...]:
+    """Validate the intentionally retained injected string-list test seam."""
+
+    from tldw_chatbook.Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
+
+    if type(values) not in {list, tuple} or len(values) > MODEL_IDS_MAX_COUNT:
+        raise ValueError("Legacy model discovery result is invalid.")
+    model_ids: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        model_id = wizard_state.validate_first_run_model_id(value)
+        if model_id in seen:
+            continue
+        seen.add(model_id)
+        model_ids.append(model_id)
+    return tuple(model_ids)
+
+
 class ProviderStep(SetupStep):
     """Choose a provider, supply credentials, verify without blocking."""
 
@@ -615,6 +664,8 @@ class ProviderStep(SetupStep):
         self._entered_key = False
         self._clear_requested = False
         self._credential_revision = 0
+        self._credential_decision_generation = 0
+        self._last_credential_decision: tuple[str, str | int] | None = None
         self._detected_endpoint_provider_key = ""
         self._provider_choice_interacted = False
         if wizard is not None:
@@ -898,6 +949,8 @@ class ProviderStep(SetupStep):
             source, value = "draft", typed_key
         elif self._clear_requested:
             source, value = "draft", ""
+        elif presence.inline_configured:
+            source, value = "none", ""
         elif presence.env_var and (presence.env_var_declared or presence.env_var_set):
             source, value = "environment", presence.env_var
         else:
@@ -953,10 +1006,11 @@ class ProviderStep(SetupStep):
             provider_endpoint_key(discovery_key.provider_key): provider_draft.endpoint
         }
         credential = provider_draft.credential
-        if credential.source == "draft" and credential.value:
-            settings["api_key"] = credential.value
+        credential_value = wizard_state._credential_value_for_boundary(credential)
+        if credential.source == "draft" and credential_value:
+            settings["api_key"] = credential_value
         elif credential.source == "environment":
-            settings["api_key_env_var"] = credential.value
+            settings["api_key_env_var"] = credential_value
         return {"api_settings": {discovery_key.provider_key: settings}}
 
     def _begin_selected_provider_discovery(
@@ -1069,13 +1123,8 @@ class ProviderStep(SetupStep):
                         ),
                         timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
                     )
-                    if str(getattr(result, "status", "")) == "success":
-                        models = tuple(
-                            model
-                            for model in (getattr(result, "models", ()) or ())
-                            if isinstance(model, str) and model.strip()
-                        )
-                    else:
+                    models = _model_ids_from_discovery_result(result)
+                    if result.status != "success":
                         failed = True
                 except asyncio.CancelledError:
                     raise
@@ -1205,16 +1254,16 @@ class ProviderStep(SetupStep):
             # provider A silently survived a switch to provider B and would
             # commit under B's api_settings section on Next.
             key_input.value = ""
-        if presence.env_var_set:
+        if presence.inline_configured:
+            status.update("An API key is already configured for this provider.")
+            key_input.display = False
+            actions.remove_class("hidden")
+        elif presence.env_var_set:
             status.update(
                 f"Found {presence.env_var} in your environment ✓ — nothing to store."
             )
             key_input.display = False
             actions.add_class("hidden")
-        elif presence.configured:
-            status.update("An API key is already configured for this provider.")
-            key_input.display = False
-            actions.remove_class("hidden")
         else:
             status.update("")
             key_input.display = True
@@ -1295,12 +1344,18 @@ class ProviderStep(SetupStep):
         check would otherwise treat "" exactly like "nothing to write").
         """
         self._clear_requested = True
+        self._credential_decision_generation += 1
         key_input = self.query_one("#setup-provider-key-input", Input)
         key_input.value = ""
         key_input.display = True
         self.query_one("#setup-provider-key-status", Static).update(
             "The stored key will be removed when you continue."
         )
+
+    @on(Input.Changed, "#setup-provider-key-input")
+    def _on_key_changed(self, event: Input.Changed) -> None:
+        del event
+        self._credential_decision_generation += 1
 
     @on(Input.Submitted, "#setup-provider-key-input")
     def _on_key_submitted(self, event: Input.Submitted) -> None:
@@ -1442,7 +1497,35 @@ class ProviderStep(SetupStep):
         self.provider_value_for_chat_defaults = self._display_value_for(
             self.selected_provider_key
         )
-        revision = self._credential_revision + 1
+        current_credential = self._credential_draft(revision=self._credential_revision)
+        previous_draft = getattr(self.wizard, "staged_provider_draft", None)
+        previous_credential = (
+            previous_draft.credential
+            if type(previous_draft) is wizard_state.FirstRunProviderDraft
+            and previous_draft.provider == self.selected_provider_key
+            else None
+        )
+        credential_decision: tuple[str, str | int] = (
+            current_credential.source,
+            (
+                wizard_state._credential_value_for_boundary(current_credential)
+                if current_credential.source == "environment"
+                else self._credential_decision_generation
+            ),
+        )
+        credential_unchanged = (
+            previous_credential is not None
+            and self._last_credential_decision == credential_decision
+        )
+        revision = (
+            previous_credential.revision
+            if credential_unchanged
+            else max(
+                self._credential_revision,
+                previous_credential.revision if previous_credential is not None else 0,
+            )
+            + 1
+        )
         provider_draft = self._effective_provider_draft(revision=revision)
         if provider_draft is None:
             return False, "The provider settings are invalid."
@@ -1450,9 +1533,13 @@ class ProviderStep(SetupStep):
         if not callable(stage) or not stage(provider_draft):
             return False, "Staging the provider settings failed."
         self._credential_revision = revision
-        self._begin_selected_provider_discovery(provider_draft)
+        self._last_credential_decision = credential_decision
+        discovery_key = self._model_discovery_key(provider_draft)
+        if discovery_key != self._selected_discovery_key or (
+            self._selected_discovery_state not in {"in_progress", "complete"}
+        ):
+            self._begin_selected_provider_discovery(provider_draft)
         self._last_committed_provider_value = self.provider_value_for_chat_defaults
-        self._clear_requested = False
         if typed_key:
             self._entered_key = True
             self.wizard.note_key_entered()
@@ -1664,15 +1751,16 @@ class ModelStep(SetupStep):
                     result = await svc.discover_models(
                         mode="local", provider=pk, staged_settings=None
                     )
-                    if str(getattr(result, "status", "")) == "success":
-                        return list(getattr(result, "models", ()) or ())
-                    return []
+                    return _model_ids_from_discovery_result(result)
 
         if discover is not None:
             try:
                 models = list(
-                    await asyncio.wait_for(
-                        discover(provider_key), timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS
+                    _legacy_model_ids(
+                        await asyncio.wait_for(
+                            discover(provider_key),
+                            timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
+                        )
                     )
                 )
             except Exception:
@@ -1750,7 +1838,30 @@ class ModelStep(SetupStep):
             button: The pressed radio row; its ``_model_id`` attribute (or
                 label when absent) supplies the model id to select.
         """
+        try:
+            custom_input = self.query_one("#setup-model-custom", Input)
+            with custom_input.prevent(Input.Changed):
+                custom_input.value = ""
+        except Exception:
+            pass
         self.set_selected_model(getattr(button, "_model_id", str(button.label)))
+
+    def _clear_model_radio_selection(self) -> None:
+        """Clear Textual's radio value and owner pointer without event races."""
+
+        try:
+            radio_set = self.query_one("#setup-model-choice", RadioSet)
+        except Exception:
+            return
+        pressed = radio_set.pressed_button
+        if pressed is None:
+            return
+        with (
+            radio_set.prevent(RadioButton.Changed),
+            pressed.prevent(RadioButton.Changed),
+        ):
+            radio_set._pressed_button = None
+            pressed.value = False
 
     @on(Input.Changed, "#setup-model-custom")
     def _on_custom_model(self, event: Input.Changed) -> None:
@@ -1765,6 +1876,7 @@ class ModelStep(SetupStep):
         """
         value = event.value.strip()
         if value:
+            self._clear_model_radio_selection()
             self.selected_model_id = value
             self._model_id_from_custom_input = True
             self._selection_discovery_key = self._current_discovery_key()
