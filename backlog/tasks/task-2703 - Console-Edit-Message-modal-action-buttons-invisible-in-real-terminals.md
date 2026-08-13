@@ -1,10 +1,15 @@
 ---
 id: TASK-2703
 title: 'Console Edit Message modal: action buttons invisible in real terminals'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-31'
-labels: [console, bug, ui]
+updated_date: '2026-08-13 20:54'
+labels:
+  - console
+  - bug
+  - ui
 dependencies: []
 ---
 
