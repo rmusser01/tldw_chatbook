@@ -60,6 +60,7 @@ from ...Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
 )
 from ...DB.ChaChaNotes_DB import ConflictError
+from ...DB.Prompts_DB import ConflictError as PromptConflictError
 from ...Library.export_progress import (
     ExportProgressThrottle,
     format_export_progress_line,
@@ -176,7 +177,6 @@ from ...Library.library_notes_sync_state import (
     sync_status_line,
 )
 from ...Library.library_prompts_state import (
-    LibraryPromptDeleteReceipt,
     PromptBrowseResult,
     PromptBrowseScope,
     PromptEditorState,
@@ -190,6 +190,11 @@ from ...Library.library_prompts_state import (
     prepare_prompt_artifact_save,
     prompt_editor_meta_line,
     require_artifact_save_supported,
+)
+from ...Prompt_Management.prompt_batch_models import (
+    PromptBatchDeleteResult,
+    PromptBatchRestoreResult,
+    PromptBatchTarget,
 )
 from ...Library.library_skills_state import (
     SkillEditorState,
@@ -2958,11 +2963,20 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_include_starter_content: bool = False
         self._library_prompt_delete_pending_fingerprint: str | None = None
         self._library_prompt_delete_inflight_fingerprint: str | None = None
+        self._library_prompt_mutation_generation: int = 0
+        self._library_prompt_delete_pending_targets: tuple[
+            PromptBatchTarget, ...
+        ] | None = None
+        self._library_prompt_delete_pending_entries: tuple[
+            PromptSelectionEntry, ...
+        ] | None = None
+        self._library_prompt_delete_pending_selection_generation: int | None = None
+        self._library_prompt_delete_pending_editor_prompt_id: int | None = None
         # TASK-15101 / ADR-055: delete and Undo both mutate the exact Prompt
         # browse result, rail count, and receipt. Admission is shared so the
         # two directions cannot interleave through separate worker groups.
         self._library_prompts_mutation_in_flight: bool = False
-        self._library_prompt_delete_receipt: LibraryPromptDeleteReceipt | None = None
+        self._library_prompt_delete_receipt: PromptBatchDeleteResult | None = None
         # Task 8b Fix wave 1 (Minor): the exact name that triggered the
         # current "name-in-use" status, captured at the moment that status
         # is set -- NOT re-derived from the live Name field at "Open
@@ -5959,6 +5973,8 @@ class LibraryScreen(BaseAppScreen):
         self,
     ) -> Callable[[], None] | Literal[False] | None:
         """Admit outgoing screen navigation after the awaited leave flush."""
+        if self._library_prompts_mutation_in_flight:
+            return False
         return self._acquire_file_notes_transition("screen")
 
     async def flush_pending_work(self) -> bool:
@@ -5976,6 +5992,8 @@ class LibraryScreen(BaseAppScreen):
             blocked, and stale Notes outcomes all veto navigation even when a
             presentation scalar or snapshot appears clean.
         """
+        if self._library_prompts_mutation_in_flight:
+            return False
         file_notes_flush_allowed = await self._flush_active_file_notes()
         note_flush = await self._flush_library_note_save()
         prompt_flush_allowed = await self._flush_library_prompt_save()
@@ -6014,6 +6032,8 @@ class LibraryScreen(BaseAppScreen):
                 exact ``open_source_id`` pair delegates to Library's existing
                 item opener.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         if not isinstance(context, Mapping):
             return
         target_row_id = self._library_navigation_context_target_row(context)
@@ -6103,6 +6123,8 @@ class LibraryScreen(BaseAppScreen):
         down. If unsaved edits survive any guard, the switch aborts and leaves
         the current route in place -- the same contract as a rail-row switch.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         if target_row_id is None:
             target_row_id = self._library_navigation_context_target_row(context)
         if target_row_id is None:
@@ -6136,6 +6158,8 @@ class LibraryScreen(BaseAppScreen):
         generation: int,
     ) -> None:
         """Apply mounted navigation context while source admission is held."""
+        if self._library_prompts_mutation_in_flight:
+            return
         if generation != self._library_navigation_context_generation:
             return
         note_flush = await self._flush_library_note_save()
@@ -6173,6 +6197,8 @@ class LibraryScreen(BaseAppScreen):
         ``_apply_navigation_context_after_flush``) while the pre-mount and
         clean-editor paths apply directly.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         self._supersede_library_notes_navigation()
         raw_open_source_type = context.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE)
         raw_open_source_id = context.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID)
@@ -6313,6 +6339,9 @@ class LibraryScreen(BaseAppScreen):
 
     async def _open_pending_library_source(self) -> None:
         """Consume one validated navigation target through Library's opener."""
+
+        if self._library_prompts_mutation_in_flight:
+            return
 
         pending = self._pending_library_source_open
         self._pending_library_source_open = None
@@ -9229,6 +9258,8 @@ class LibraryScreen(BaseAppScreen):
 
     def _queue_library_prompts_search(self, query: str) -> None:
         """Debounce one normalized search without blocking the UI loop."""
+        if self._library_prompts_mutation_in_flight:
+            return
         query = self._safe_text(query, max_length=200).strip()
         controller = self._library_prompt_browse_controller
         if query == controller.scope.query:
@@ -9773,6 +9804,8 @@ class LibraryScreen(BaseAppScreen):
             scope: The section-specific scope to open the form with (e.g.
                 ``ExportScope(kind="media", media_type=...)``).
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         if self._library_export_is_server_mode():
             # The section "Export..." actions bypass the rail row's own
             # server-disabled gate, so re-check here (Qodo review): export
@@ -12653,6 +12686,8 @@ class LibraryScreen(BaseAppScreen):
     async def _show_library_file_notes(self, event: Button.Pressed) -> None:
         """Leave Database Notes safely and lazily mount File Notes."""
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         if self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES:
             return
         await self._flush_library_note_save()
@@ -12680,6 +12715,8 @@ class LibraryScreen(BaseAppScreen):
     async def _show_library_database_notes(self, event: Button.Pressed) -> None:
         """Return to Database Notes only after the File Notes leave guard."""
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         await self._return_to_library_database_notes()
 
     @on(LibraryFileNotesWorkspace.ReloadConfirmationChanged)
@@ -12700,6 +12737,8 @@ class LibraryScreen(BaseAppScreen):
         sequence -- one seam, not a parallel key-driven path that could
         drift from the button's.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         if self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE:
             return
         if not await self._flush_active_file_notes():
@@ -12742,6 +12781,8 @@ class LibraryScreen(BaseAppScreen):
         dirty-edit guards).
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         button = event.button
         target_kind = str(getattr(button, "target_kind", "") or "")
         target_id = str(getattr(button, "target_id", "") or "")
@@ -12863,6 +12904,8 @@ class LibraryScreen(BaseAppScreen):
         originally omitted here, so a rail switch silently discarded dirty
         skill edits while Back/row-switch exits vetoed them.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         if not await self._flush_active_file_notes():
             return
         release_source = self._acquire_file_notes_transition("source")
@@ -12879,10 +12922,7 @@ class LibraryScreen(BaseAppScreen):
         row_id: str,
     ) -> None:
         """Recompose a rail destination while source admission is held."""
-        if self._library_prompts_mutation_in_flight and row_id in {
-            LIBRARY_ROW_BROWSE_PROMPTS,
-            LIBRARY_ROW_CREATE_PROMPT,
-        }:
+        if self._library_prompts_mutation_in_flight:
             return
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
@@ -14197,6 +14237,8 @@ class LibraryScreen(BaseAppScreen):
         the order here was the grammar fork this task closes.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self._library_prompts_sort_choices_visible = (
             not self._library_prompts_sort_choices_visible
         )
@@ -14294,6 +14336,8 @@ class LibraryScreen(BaseAppScreen):
         closes the strip -- no service request.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         requested = str(getattr(event.button, "choice_value", "") or "")
         self._library_prompts_sort_choices_visible = False
         scope = self._library_prompt_browse_controller.scope
@@ -14327,11 +14371,15 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-prompts-collection")
     def handle_library_prompts_collection(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self._library_prompt_collections_controller.open_manager("browse")
 
     @on(Button.Pressed, "#library-prompt-memberships-manage")
     def handle_library_prompt_memberships_manage(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         if self._library_prompt_collections_controller.membership_state.can_retry_load:
             self._load_library_prompt_memberships()
         else:
@@ -14340,6 +14388,8 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-prompt-memberships-apply")
     def handle_library_prompt_memberships_apply(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self.run_worker(
             self._library_prompt_collections_controller.apply_memberships(),
             exclusive=True,
@@ -14349,18 +14399,24 @@ class LibraryScreen(BaseAppScreen):
     @on(Input.Changed, "#library-prompts-filter")
     def handle_library_prompts_filter_changed(self, event: Input.Changed) -> None:
         """Queue the service-backed Prompt search after a short debounce."""
+        if self._library_prompts_mutation_in_flight:
+            return
         self._queue_library_prompts_search(event.value)
 
     @on(Input.Submitted, "#library-prompts-filter")
     def handle_library_prompts_filter(self, event: Input.Submitted) -> None:
         """Flush the pending debounced search once when Enter is pressed."""
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self._flush_library_prompts_search(event.value)
 
     @on(Button.Pressed, "#library-prompts-retry")
     def handle_library_prompts_retry(self, event: Button.Pressed) -> None:
         """Retry the failed exact Prompt scope with a fresh request token."""
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self._stop_library_prompts_search_debounce()
         self._library_prompt_browse_controller.retry(
             focus_identity="library-prompts-retry"
@@ -14370,6 +14426,8 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_prompts_page_previous(self, event: Button.Pressed) -> None:
         """Request the previous exact Prompt page."""
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         scope = self._library_prompt_browse_controller.scope
         if scope.page <= 1:
             return
@@ -14385,6 +14443,8 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_prompts_page_next(self, event: Button.Pressed) -> None:
         """Request the next exact Prompt page."""
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         controller = self._library_prompt_browse_controller
         if controller.scope.page >= controller.result.total_pages:
             return
@@ -18040,6 +18100,8 @@ class LibraryScreen(BaseAppScreen):
         uses while ``_refresh_library_prompt_detail`` is in flight; there is
         nothing to fetch here.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         self._clear_library_prompt_selection(announce=True)
         self._selected_prompt_id = None
         self._library_prompts_view = "editor"
@@ -18077,7 +18139,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_block_state = None
         self._library_prompt_detached_structured = False
         self._library_prompt_include_starter_content = False
-        self._library_prompt_delete_pending_fingerprint = None
+        self._clear_library_prompt_delete_pending()
         self._library_prompt_editor_armed = False
         self._invalidate_library_prompt_history()
         self._library_prompt_collections_controller.invalidate()
@@ -18458,6 +18520,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the editor's "Save" action.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self.run_worker(
             self._save_library_prompt(),
             exclusive=True,
@@ -18505,6 +18569,8 @@ class LibraryScreen(BaseAppScreen):
         check for a not-yet-created prompt) and the post-write bookkeeping
         (adopting the freshly created id) differ, per ``is_create`` below.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         if self._library_prompts_view != "editor":
             return
         selected_prompt_id = self._selected_prompt_id
@@ -19117,6 +19183,8 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             ``True`` when the editor was exited; ``False`` on a dirty veto.
         """
+        if self._library_prompts_mutation_in_flight:
+            return False
         if not await self._flush_library_prompt_save():
             return False
         self._reset_library_prompt_editor_state()
@@ -19321,6 +19389,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press emitted by the Prompt editor's Copy action.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         if self._library_prompts_view != "editor":
             return
         if self._library_prompt_action_artifact_type() is None:
@@ -19715,86 +19785,283 @@ class LibraryScreen(BaseAppScreen):
             return
         fields = self._read_library_prompt_editor_fields()
         artifact_type = self._library_prompt_action_artifact_type()
-        fingerprint = self._library_prompt_delete_fingerprint()
-        if fields is None or artifact_type is None or fingerprint is None:
+        version = self._library_prompt_version
+        if (
+            fields is None
+            or artifact_type is None
+            or not isinstance(version, int)
+            or isinstance(version, bool)
+        ):
             if artifact_type is None:
                 self._notify_library_prompt_unsupported_artifact_type()
             return
+        entry = PromptSelectionEntry(
+            local_id=self._selected_prompt_id,
+            expected_version=version,
+            title=fields[0],
+            artifact_type=artifact_type,
+        )
+        self._open_library_prompt_delete_confirmation(
+            (entry,),
+            dirty=self._library_prompt_dirty,
+            selection_generation=None,
+            editor_prompt_id=self._selected_prompt_id,
+        )
+
+    @on(Button.Pressed, "#library-prompts-delete-selected")
+    def handle_library_prompts_delete_selected(self, event: Button.Pressed) -> None:
+        """Confirm deletion of the immutable selected Prompt snapshot."""
+        event.stop()
+        if (
+            self._library_prompts_mutation_in_flight
+            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS
+            or self._library_prompts_view != "list"
+            or not self._library_prompt_select_mode
+        ):
+            return
+        entries = self._library_prompt_selection.canonical_entries
+        if not entries:
+            return
+        self._open_library_prompt_delete_confirmation(
+            entries,
+            dirty=False,
+            selection_generation=self._library_prompt_selection.generation,
+            editor_prompt_id=None,
+        )
+
+    def _open_library_prompt_delete_confirmation(
+        self,
+        entries: tuple[PromptSelectionEntry, ...],
+        *,
+        dirty: bool,
+        selection_generation: int | None,
+        editor_prompt_id: int | None,
+    ) -> None:
+        """Capture a strict snapshot and expose only an opaque modal token."""
+        self._library_prompt_mutation_generation += 1
+        fingerprint = str(self._library_prompt_mutation_generation)
+        targets = tuple(
+            PromptBatchTarget(entry.local_id, entry.expected_version)
+            for entry in entries
+        )
         self._library_prompt_delete_pending_fingerprint = fingerprint
+        self._library_prompt_delete_pending_targets = targets
+        self._library_prompt_delete_pending_entries = entries
+        self._library_prompt_delete_pending_selection_generation = (
+            selection_generation
+        )
+        self._library_prompt_delete_pending_editor_prompt_id = editor_prompt_id
         self.app.push_screen(
             PromptDeleteConfirmationModal(
                 PromptDeleteRequest(
-                    items=(PromptDeleteItem(fields[0], artifact_type),),
+                    items=tuple(
+                        PromptDeleteItem(entry.title, entry.artifact_type)
+                        for entry in entries
+                    ),
                     fingerprint=fingerprint,
-                    dirty=self._library_prompt_dirty,
+                    dirty=dirty,
                 )
             ),
             self._settle_library_prompt_delete,
         )
 
     def _library_prompt_delete_fingerprint(self) -> str | None:
-        """Return the body-free identity captured by a delete confirmation."""
-        prompt_id = self._selected_prompt_id
-        if self._library_prompts_view != "editor" or not isinstance(prompt_id, int):
-            return None
-        artifact_type = self._library_prompt_action_artifact_type()
-        if artifact_type is None:
-            return None
-        version = self._library_prompt_version
-        version_token = str(version) if isinstance(version, int) else "none"
-        return f"library-prompt:{prompt_id}:{version_token}:{artifact_type}"
+        """Return the current opaque confirmation token, if any."""
+        return self._library_prompt_delete_pending_fingerprint
+
+    def _clear_library_prompt_delete_pending(self) -> None:
+        """Discard confirmation-only authority without touching a receipt."""
+        self._library_prompt_delete_pending_fingerprint = None
+        self._library_prompt_delete_pending_targets = None
+        self._library_prompt_delete_pending_entries = None
+        self._library_prompt_delete_pending_selection_generation = None
+        self._library_prompt_delete_pending_editor_prompt_id = None
 
     def _settle_library_prompt_delete(self, decision: PromptDeleteDecision) -> None:
         """Delete only a once-settled confirmation for the same live editor."""
         if self._library_prompts_mutation_in_flight:
             return
-        pending = getattr(self, "_library_prompt_delete_pending_fingerprint", None)
+        pending = self._library_prompt_delete_pending_fingerprint
         if decision.fingerprint != pending or pending is None:
             return
-        self._library_prompt_delete_pending_fingerprint = None
-        if not decision.confirmed:
-            self._refocus_library_prompt_delete_action()
-            return
-        if pending != self._library_prompt_delete_fingerprint():
-            self._update_library_prompt_status_static(
-                "Delete confirmation is no longer current."
-            )
-            self._refocus_library_prompt_delete_action()
-            return
-        prompt_id = self._selected_prompt_id
-        if not isinstance(prompt_id, int):
-            return
-        version = self._library_prompt_version
-        fields = self._read_library_prompt_editor_fields()
-        artifact_type = self._library_prompt_action_artifact_type()
-        if (
-            not isinstance(version, int)
-            or isinstance(version, bool)
-            or fields is None
-            or artifact_type is None
-        ):
-            self._update_library_prompt_status_static(
-                "Delete confirmation is no longer current."
-            )
-            return
-        receipt = LibraryPromptDeleteReceipt(
-            prompt_id=prompt_id,
-            title=fields[0],
-            artifact_type=artifact_type,
-            expected_version=version + 1,
+        targets = self._library_prompt_delete_pending_targets
+        entries = self._library_prompt_delete_pending_entries
+        selection_generation = (
+            self._library_prompt_delete_pending_selection_generation
         )
-        self._library_prompt_delete_receipt = None
+        editor_prompt_id = self._library_prompt_delete_pending_editor_prompt_id
+        self._clear_library_prompt_delete_pending()
+        if not decision.confirmed:
+            if editor_prompt_id is not None:
+                self._refocus_library_prompt_delete_action()
+            return
+        if not targets or not entries:
+            return
+        if selection_generation is not None:
+            if (
+                self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS
+                or self._library_prompts_view != "list"
+                or not self._library_prompt_select_mode
+                or selection_generation != self._library_prompt_selection.generation
+                or entries != self._library_prompt_selection.canonical_entries
+            ):
+                return
+        elif (
+            editor_prompt_id is None
+            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS
+            or self._library_prompts_view != "editor"
+            or self._selected_prompt_id != editor_prompt_id
+            or self._library_prompt_version != targets[0].expected_version
+        ):
+            return
+        mutation_token = int(pending)
         self._library_prompts_mutation_in_flight = True
         self._library_prompt_delete_inflight_fingerprint = pending
         self.run_worker(
-            self._delete_library_prompt(
-                prompt_id,
-                receipt=receipt,
-                delete_fingerprint=pending,
+            self._delete_library_prompts(
+                targets,
+                selection_generation=selection_generation,
+                editor_prompt_id=editor_prompt_id,
+                mutation_token=mutation_token,
             ),
             exclusive=True,
             group="library_prompt_mutation",
         )
+
+    async def _delete_library_prompts(
+        self,
+        targets: tuple[PromptBatchTarget, ...],
+        *,
+        selection_generation: int | None,
+        editor_prompt_id: int | None,
+        mutation_token: int,
+    ) -> None:
+        """Atomically delete one editor target or the selected batch."""
+        selected_batch = selection_generation is not None
+        try:
+            service = getattr(self.app_instance, "prompt_scope_service", None)
+            delete_prompts = getattr(service, "delete_prompts", None)
+            if not callable(delete_prompts):
+                if selected_batch:
+                    self._notify_library_prompt_delete_failure(
+                        "Could not delete the selected items. Nothing was deleted."
+                    )
+                else:
+                    self._update_library_prompt_status_static(
+                        "Could not delete this prompt. Nothing was deleted."
+                    )
+                return
+            try:
+                result = await self._run_library_service_call(
+                    delete_prompts,
+                    mode="local",
+                    targets=targets,
+                    isolate_in_worker=True,
+                )
+            except PromptConflictError:
+                if selected_batch:
+                    self._notify_library_prompt_delete_failure(
+                        "Selection changed; nothing was deleted. Clear all and "
+                        "select the items again."
+                    )
+                else:
+                    self._update_library_prompt_status_static(
+                        "This prompt changed elsewhere — refresh and try again."
+                    )
+                return
+            except Exception:
+                if selected_batch:
+                    self._notify_library_prompt_delete_failure(
+                        "Could not delete the selected items. Nothing was deleted."
+                    )
+                else:
+                    self._update_library_prompt_status_static(
+                        "Could not delete this prompt. Nothing was deleted."
+                    )
+                return
+
+            expected_ids = tuple(target.local_id for target in targets)
+            if (
+                type(result) is not PromptBatchDeleteResult
+                or tuple(entry.local_id for entry in result.entries) != expected_ids
+                or tuple(entry.tombstone_version for entry in result.entries)
+                != tuple(target.expected_version + 1 for target in targets)
+            ):
+                if selected_batch:
+                    self._notify_library_prompt_delete_failure(
+                        "Could not delete the selected items. Nothing was deleted."
+                    )
+                else:
+                    self._update_library_prompt_status_static(
+                        "Could not delete this prompt. Nothing was deleted."
+                    )
+                return
+
+            if not self._library_prompt_mutation_is_current(
+                mutation_token,
+                selection_generation=selection_generation,
+                editor_prompt_id=editor_prompt_id,
+            ):
+                return
+            self._library_prompt_delete_receipt = result
+            self._local_source_counts["prompts"] = max(
+                0, self._local_source_counts.get("prompts", 0) - len(targets)
+            )
+            if selected_batch:
+                self._clear_library_prompt_selection(announce=False)
+            else:
+                self._reset_library_prompt_editor_state()
+            self._request_library_prompts_browse(
+                dataclasses.replace(
+                    self._library_prompt_browse_controller.scope,
+                    page=1,
+                ),
+                focus_identity=None,
+            )
+            self._refresh_local_source_snapshot()
+        finally:
+            token = str(mutation_token)
+            if self._library_prompt_delete_inflight_fingerprint == token:
+                self._library_prompt_delete_inflight_fingerprint = None
+                self._library_prompts_mutation_in_flight = False
+                if self.is_mounted and self._library_prompts_view == "list":
+                    self.refresh(recompose=True)
+                    self.call_after_refresh(
+                        self._restore_library_prompts_focus,
+                        "library-prompts-select",
+                    )
+
+    def _library_prompt_mutation_is_current(
+        self,
+        mutation_token: int,
+        *,
+        selection_generation: int | None,
+        editor_prompt_id: int | None,
+    ) -> bool:
+        """Fail closed when an admitted mutation no longer owns its route."""
+        if self._library_prompt_delete_inflight_fingerprint != str(mutation_token):
+            return False
+        if not self._library_prompts_mutation_in_flight:
+            return False
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS:
+            return False
+        if selection_generation is not None:
+            return (
+                self._library_prompts_view == "list"
+                and self._library_prompt_select_mode
+                and self._library_prompt_selection.generation
+                == selection_generation
+            )
+        return (
+            self._library_prompts_view == "editor"
+            and self._selected_prompt_id == editor_prompt_id
+        )
+
+    def _notify_library_prompt_delete_failure(self, message: str) -> None:
+        """Show bounded aggregate failure copy without sensitive detail."""
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
 
     def _refocus_library_prompt_delete_action(self) -> None:
         """Restore focus after a dismissed delete confirmation when possible."""
@@ -19802,101 +20069,6 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-prompt-delete", Button).focus()
         except (NoMatches, QueryError):
             pass
-
-    async def _delete_library_prompt(
-        self,
-        prompt_id: int,
-        *,
-        receipt: LibraryPromptDeleteReceipt,
-        delete_fingerprint: str | None = None,
-    ) -> None:
-        """Delete the selected Library prompt, then return to the list view.
-
-        Calls ``delete_prompt`` through the offloaded service seam. On
-        success, reruns the full local-source snapshot (the same seam the
-        notes delete flow uses) so the list view and the rail's Prompts
-        count both reflect the deletion, then resets the editor state and
-        returns to the list view.
-
-        Args:
-            prompt_id: The Library prompt id to delete.
-        """
-        try:
-            service = getattr(self.app_instance, "prompt_scope_service", None)
-            delete_prompt = getattr(service, "delete_prompt", None)
-            if not callable(delete_prompt):
-                self._update_library_prompt_status_static(
-                    "Prompt deletion is unavailable."
-                )
-                return
-            try:
-                deleted = await self._run_library_service_call(
-                    delete_prompt,
-                    mode="local",
-                    prompt_identifier=prompt_id,
-                    expected_version=receipt.expected_version - 1,
-                    isolate_in_worker=True,
-                )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"Failed to delete Library prompt {prompt_id!r}."
-                )
-                if (
-                    prompt_id != self._selected_prompt_id
-                    or self._library_prompts_view != "editor"
-                ):
-                    return
-                self._update_library_prompt_status_static(
-                    "Could not delete this prompt."
-                )
-                return
-
-            # Discard a stale result: the user has since switched to a different
-            # prompt (or left the editor) while this delete was in flight.
-            if (
-                prompt_id != self._selected_prompt_id
-                or self._library_prompts_view != "editor"
-            ):
-                return
-
-            if not deleted:
-                # Targeted status update only (no recompose) -- same discipline
-                # as `_save_library_prompt`'s outcome branches: the fields are
-                # unchanged, so remounting them here would spuriously re-dirty
-                # the (armed, still-open) editor via Textual's mount-time
-                # `Changed` event for a non-empty initial value.
-                self._update_library_prompt_status_static(
-                    "This prompt changed elsewhere — refresh and try again."
-                )
-                return
-
-            self._library_prompt_delete_receipt = receipt
-            self._local_source_counts["prompts"] = max(
-                0, self._local_source_counts.get("prompts", 0) - 1
-            )
-            self._reset_library_prompt_editor_state()
-            self._request_library_prompts_browse(
-                dataclasses.replace(
-                    self._library_prompt_browse_controller.scope,
-                    query="",
-                    page=1,
-                ),
-                focus_identity=None,
-            )
-            # Reuses the same full local-source reload the notes delete flow
-            # uses (already its own exclusive worker via @work) so the list
-            # view and the rail's Prompts count both drop the deleted prompt --
-            # fire-and-forget, not awaited (see `_save_library_prompt`'s
-            # matching comment for why).
-            self._refresh_local_source_snapshot()
-        finally:
-            if (
-                delete_fingerprint is not None
-                and self._library_prompt_delete_inflight_fingerprint
-                == delete_fingerprint
-            ):
-                self._library_prompt_delete_inflight_fingerprint = None
-            self._library_prompts_mutation_in_flight = False
 
     @on(Button.Pressed, "#library-prompts-delete-undo")
     def handle_library_prompt_delete_undo(self, event: Button.Pressed) -> None:
@@ -19914,9 +20086,14 @@ class LibraryScreen(BaseAppScreen):
         receipt = self._library_prompt_delete_receipt
         if receipt is None:
             return
+        if type(receipt) is not PromptBatchDeleteResult:
+            return
+        self._library_prompt_mutation_generation += 1
+        mutation_token = self._library_prompt_mutation_generation
         self._library_prompts_mutation_in_flight = True
+        self._library_prompt_delete_inflight_fingerprint = str(mutation_token)
         self.run_worker(
-            self._undo_library_prompt_delete(receipt),
+            self._undo_library_prompt_delete(receipt, mutation_token),
             exclusive=True,
             group="library_prompt_mutation",
         )
@@ -19941,67 +20118,66 @@ class LibraryScreen(BaseAppScreen):
         self.call_after_refresh(self._restore_library_prompts_focus, None)
 
     async def _undo_library_prompt_delete(
-        self, receipt: LibraryPromptDeleteReceipt
+        self, receipt: PromptBatchDeleteResult, mutation_token: int
     ) -> None:
-        """Conditionally resurrect one tombstone through the scope service.
-
-        Args:
-            receipt: Immutable artifact identity and tombstone version to restore.
-
-        Returns:
-            None. Success or failure is reflected in Library state and feedback.
-        """
+        """Atomically restore the complete typed deletion receipt."""
         restored = False
         try:
             service = getattr(self.app_instance, "prompt_scope_service", None)
-            restore_prompt = getattr(service, "restore_deleted_prompt", None)
-            if not callable(restore_prompt):
-                raise ValueError("Prompt restore is unavailable.")
+            restore_prompts = getattr(service, "restore_deleted_prompts", None)
+            if not callable(restore_prompts):
+                raise TypeError("missing batch restore capability")
             result = await self._run_library_service_call(
-                restore_prompt,
+                restore_prompts,
                 mode="local",
-                prompt_identifier=receipt.prompt_id,
-                expected_version=receipt.expected_version,
+                targets=receipt.targets,
                 isolate_in_worker=True,
             )
-            restored_id = result.get("local_id") if isinstance(result, Mapping) else None
-            if not isinstance(restored_id, int) or isinstance(restored_id, bool):
-                restored_id = result.get("id") if isinstance(result, Mapping) else None
-            if restored_id != receipt.prompt_id:
-                raise ValueError("Prompt restore returned a different artifact.")
-            if self._library_prompt_delete_receipt == receipt:
+            expected_ids = tuple(target.local_id for target in receipt.targets)
+            if (
+                type(result) is not PromptBatchRestoreResult
+                or tuple(entry.local_id for entry in result.entries) != expected_ids
+                or tuple(entry.restored_version for entry in result.entries)
+                != tuple(target.expected_version + 1 for target in receipt.targets)
+            ):
+                raise TypeError("invalid batch restore result")
+            if (
+                self._library_prompt_delete_inflight_fingerprint
+                != str(mutation_token)
+                or not self._library_prompts_mutation_in_flight
+            ):
+                return
+            if self._library_prompt_delete_receipt is receipt:
                 self._library_prompt_delete_receipt = None
             self._local_source_counts["prompts"] = (
-                self._local_source_counts.get("prompts", 0) + 1
+                self._local_source_counts.get("prompts", 0) + len(receipt.entries)
             )
             restored = True
             self._request_library_prompts_browse(
                 dataclasses.replace(
                     self._library_prompt_browse_controller.scope,
-                    query="",
                     page=1,
                 ),
-                focus_identity=f"library-prompt-row-{receipt.prompt_id}",
+                focus_identity=f"library-prompt-row-{receipt.entries[0].local_id}",
             )
             self._refresh_local_source_snapshot()
         except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to restore Library prompt {receipt.prompt_id!r}."
-            )
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify(
-                    "Could not restore this prompt; the receipt is still available.",
+                    "Could not restore selected items; the receipt is still available.",
                     severity="warning",
                 )
         finally:
-            self._library_prompts_mutation_in_flight = False
-            if not restored and self.is_mounted:
-                self.refresh(recompose=True)
-                self.call_after_refresh(
-                    self._restore_library_prompts_focus,
-                    "library-prompts-delete-undo",
-                )
+            if self._library_prompt_delete_inflight_fingerprint == str(mutation_token):
+                self._library_prompt_delete_inflight_fingerprint = None
+                self._library_prompts_mutation_in_flight = False
+                if self.is_mounted:
+                    self.refresh(recompose=True)
+                    self.call_after_refresh(
+                        self._restore_library_prompts_focus,
+                        None if restored else "library-prompts-delete-undo",
+                    )
 
     @on(Button.Pressed, "#library-prompt-open-existing")
     def handle_library_prompt_open_existing(self, event: Button.Pressed) -> None:
@@ -23528,6 +23704,8 @@ class LibraryScreen(BaseAppScreen):
                 ``Export…`` action.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         await self._open_library_export_canvas(ExportScope(kind="prompts"))
 
     @on(Button.Pressed, "#library-prompts-export-selected")
@@ -23536,6 +23714,8 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Open existing Export with the basket's canonical Prompt IDs."""
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         entries = self._library_prompt_selection.canonical_entries
         if not entries:
             return
@@ -26840,6 +27020,8 @@ class LibraryScreen(BaseAppScreen):
                 resolvable provenance (``LibraryRagResultRow.can_open``).
             record_id: The item's id within its source type.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         if not record_id or source_type not in (
             "media",
             "notes",

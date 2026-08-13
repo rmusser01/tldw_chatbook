@@ -37,7 +37,11 @@ from textual.app import App
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
-from tldw_chatbook.DB.Prompts_DB import ConflictError, DatabaseError, PromptsDatabase
+from tldw_chatbook.DB.Prompts_DB import (
+    ConflictError,
+    DatabaseError,
+    PromptsDatabase,
+)
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.Chatbooks.local_chatbook_service import LocalChatbookService
 from tldw_chatbook.Library.library_export_scope import ExportScope
@@ -78,6 +82,8 @@ from tldw_chatbook.Prompt_Management.prompt_markdown_export import (
 )
 from tldw_chatbook.Prompt_Management.prompt_batch_models import (
     PromptBatchDeleteResult,
+    PromptBatchRestoreResult,
+    PromptBatchTarget,
     PromptDeleteReceiptEntry,
 )
 from tldw_chatbook.Prompt_Management.prompt_restore_errors import (
@@ -3670,6 +3676,616 @@ async def _wait_for_prompt_status(screen, pilot, *, attempts=150) -> str:
     return status_text
 
 
+async def _select_prompt_search_results(screen, pilot, searches: tuple[str, ...]):
+    """Select one exact real-SQLite result per search without refreshing captures."""
+    for query in searches:
+        scope = PromptBrowseScope(query=query)
+        screen._request_library_prompts_browse(scope)
+        await _wait_for_prompt_browse_scope(screen, pilot, scope)
+        rows = screen.query(".library-prompt-row")
+        assert len(rows) == 1
+        rows.first().press()
+        await pilot.pause()
+
+
+async def _wait_for_prompt_mutation_settlement(screen, pilot) -> None:
+    for _ in range(250):
+        if not screen._library_prompts_mutation_in_flight:
+            await pilot.pause()
+            return
+        await pilot.pause(0.02)
+    raise AssertionError("Prompt mutation did not settle")
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_bulk_delete_mixed_batch_is_atomic_and_opaque(tmp_path):
+    """Selected Prompt/Recipe rows use one typed call and one durable receipt."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    fixtures = (
+        ("[bold]Literal 名[/bold]", "prompt", "bulk-alpha", ["alpha", "shared"]),
+        ("Recipe Ω [/bold]", "recipe", "bulk-beta", ["beta", "shared"]),
+        ("Third literal", "prompt", "bulk-gamma", ["gamma"]),
+        ("Fourth literal", "recipe", "bulk-delta", ["delta"]),
+        ("Fifth literal", "prompt", "bulk-epsilon", ["epsilon"]),
+    )
+    ids = []
+    for name, artifact_type, token, keywords in fixtures:
+        local_id, _uuid, _message = db.add_prompt(
+            name=name,
+            author="Batch",
+            details=token,
+            user_prompt=token,
+            keywords=keywords,
+            artifact_type=artifact_type,
+        )
+        ids.append(local_id)
+    collection_id = ScopeLocalPromptService(db).create_prompt_collection(
+        {"name": "Bulk collection", "prompt_ids": ids}
+    )["collection_id"]
+
+    calls: list[dict[str, Any]] = []
+    results: list[PromptBatchDeleteResult] = []
+    original_delete = service.delete_prompts
+
+    async def recording_delete(**kwargs: Any) -> PromptBatchDeleteResult:
+        calls.append(kwargs)
+        result = await original_delete(**kwargs)
+        results.append(result)
+        return result
+
+    service.delete_prompts = recording_delete
+    service.delete_prompt = AsyncMock(side_effect=AssertionError("legacy delete used"))
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-delete-selected")
+        await _select_prompt_search_results(
+            screen,
+            pilot,
+            tuple(fixture[2] for fixture in fixtures),
+        )
+        captured = screen._library_prompt_selection
+        canonical = captured.canonical_entries
+
+        screen.query_one("#library-prompts-delete-selected", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, PromptDeleteConfirmationModal)
+        request = modal.request
+        assert str(modal.query_one("#prompt-delete-title", Static).renderable) == (
+            "Delete 5 items?"
+        )
+        assert str(modal.query_one("#prompt-delete-copy", Static).renderable) == (
+            "This will discard 3 Prompts and 2 Recipes. "
+            "You can Undo from the Prompts list after deletion."
+        )
+        preview = str(modal.query_one("#prompt-delete-preview", Static).renderable)
+        assert preview.splitlines() == [
+            canonical[0].title,
+            canonical[1].title,
+            canonical[2].title,
+            "and 2 more",
+        ]
+        assert "Trash" not in str(modal.query_one("#prompt-delete-copy").renderable)
+        assert request.fingerprint == str(screen._library_prompt_mutation_generation)
+        assert request.fingerprint.isdecimal()
+        assert ":" not in request.fingerprint
+        assert screen._library_prompt_delete_pending_targets == tuple(
+            PromptBatchTarget(entry.local_id, entry.expected_version)
+            for entry in canonical
+        )
+        assert screen._library_prompt_delete_pending_entries == canonical
+
+        modal.query_one("#prompt-delete-confirm", Button).press()
+        await _wait_for_prompt_mutation_settlement(screen, pilot)
+        screen._settle_library_prompt_delete(
+            PromptDeleteDecision(True, request.fingerprint)
+        )
+        await pilot.pause()
+
+        expected_targets = tuple(
+            PromptBatchTarget(entry.local_id, entry.expected_version)
+            for entry in canonical
+        )
+        assert calls == [{"mode": "local", "targets": expected_targets}]
+        assert service.delete_prompt.await_count == 0
+        assert screen._library_prompt_delete_receipt is results[0]
+        assert screen._library_prompt_select_mode is False
+        assert screen._library_prompt_selection.entries == ()
+        assert all(db.fetch_prompt_details(local_id) is None for local_id in ids)
+        assert db.search_prompts("bulk")[0] == []
+        assert all(db.fetch_keywords_for_prompt(local_id) == [] for local_id in ids)
+        assert db.browse_prompts(collection_id=collection_id)[3] == 0
+        assert (
+            db.get_connection()
+            .execute(
+                "SELECT COUNT(*) FROM LocalPromptCollectionItems WHERE collection_id = ?",
+                (collection_id,),
+            )
+            .fetchone()[0]
+            == 5
+        )
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-prompts-delete-receipt-copy"
+        )
+        assert str(receipt.renderable) == "✓ deleted · 5 items"
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_bulk_delete_stale_batch_preserves_selection_and_receipt(
+    tmp_path,
+):
+    """One stale selected version rolls back all rows and keeps the old Undo."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    first_id, _uuid, _message = db.add_prompt(
+        name="Stale selected", author="A", details="stale-one", user_prompt="one"
+    )
+    second_id, _uuid, _message = db.add_prompt(
+        name="Still current", author="B", details="stale-two", user_prompt="two"
+    )
+    prior_id, _uuid, _message = db.add_prompt(
+        name="Prior receipt", author="C", details="prior", user_prompt="prior"
+    )
+    prior_receipt = db.soft_delete_prompts((PromptBatchTarget(prior_id, 1),))
+    calls: list[tuple[PromptBatchTarget, ...]] = []
+    original_delete = service.delete_prompts
+
+    async def recording_delete(**kwargs: Any) -> PromptBatchDeleteResult:
+        calls.append(kwargs["targets"])
+        return await original_delete(**kwargs)
+
+    service.delete_prompts = recording_delete
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        screen._library_prompt_delete_receipt = prior_receipt
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-delete-selected")
+        await _select_prompt_search_results(screen, pilot, ("stale-one", "stale-two"))
+        captured = screen._library_prompt_selection
+        db.update_prompt_by_id(first_id, {"details": "changed"}, expected_version=1)
+        screen.app_instance.notify = host.notify
+        host._notifications.clear()
+
+        screen.query_one("#library-prompts-delete-selected", Button).press()
+        await pilot.pause()
+        host.screen.query_one("#prompt-delete-confirm", Button).press()
+        await _wait_for_prompt_mutation_settlement(screen, pilot)
+
+        assert len(calls) == 1
+        assert screen._library_prompt_selection == captured
+        assert screen._library_prompt_select_mode is True
+        assert screen._library_prompt_delete_receipt is prior_receipt
+        assert db.fetch_prompt_details(first_id)["deleted"] == 0
+        assert db.fetch_prompt_details(second_id)["deleted"] == 0
+        assert [notice.message for notice in host._notifications] == [
+            "Selection changed; nothing was deleted. Clear all and select the items again."
+        ]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_bulk_delete_changed_generation_rejects_late_decision(
+    tmp_path,
+):
+    """A modal decision cannot mutate after the live basket generation changes."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    first_id, _uuid, _message = db.add_prompt(
+        name="Generation one", author="A", details="generation-one"
+    )
+    second_id, _uuid, _message = db.add_prompt(
+        name="Generation two", author="B", details="generation-two"
+    )
+    service.delete_prompts = AsyncMock(side_effect=AssertionError("stale decision ran"))
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-delete-selected")
+        await _select_prompt_search_results(screen, pilot, ("generation-one",))
+        screen.query_one("#library-prompts-delete-selected", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, PromptDeleteConfirmationModal)
+
+        screen._library_prompt_selection = screen._library_prompt_selection.toggle(
+            PromptSelectionEntry(second_id, 1, "Generation two", "prompt")
+        )
+        modal.dismiss(PromptDeleteDecision(True, modal.request.fingerprint))
+        await pilot.pause()
+
+        service.delete_prompts.assert_not_awaited()
+        assert db.fetch_prompt_details(first_id) is not None
+        assert db.fetch_prompt_details(second_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_editor_delete_uses_shared_batch_family_and_typed_receipt(
+    tmp_path,
+):
+    """Editor delete is a one-target use of the exact selected batch family."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Editor batch", author="A", details="editor", user_prompt="body"
+    )
+    calls: list[dict[str, Any]] = []
+    results: list[PromptBatchDeleteResult] = []
+    original_delete = service.delete_prompts
+
+    async def recording_delete(**kwargs: Any) -> PromptBatchDeleteResult:
+        calls.append(kwargs)
+        result = await original_delete(**kwargs)
+        results.append(result)
+        return result
+
+    service.delete_prompts = recording_delete
+    service.delete_prompt = AsyncMock(side_effect=AssertionError("legacy delete used"))
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, PromptDeleteConfirmationModal)
+        assert modal.request.items == (modal.request.items[0],)
+        assert modal.request.items[0].name == "Editor batch"
+        assert modal.request.fingerprint == str(screen._library_prompt_mutation_generation)
+
+        modal.query_one("#prompt-delete-confirm", Button).press()
+        await _wait_for_prompt_mutation_settlement(screen, pilot)
+
+        assert calls == [
+            {
+                "mode": "local",
+                "targets": (PromptBatchTarget(prompt_id, 1),),
+            }
+        ]
+        assert service.delete_prompt.await_count == 0
+        assert screen._library_prompt_delete_receipt is results[0]
+        assert screen._library_prompts_view == "list"
+        assert db.fetch_prompt_details(prompt_id) is None
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-prompts-delete-receipt-copy"
+        )
+        assert str(receipt.renderable) == "✓ deleted · Prompt · Editor batch"
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_editor_delete_bad_result_preserves_fields_and_prior_receipt(
+    tmp_path,
+):
+    """An adversarial non-DTO result cannot reset the editor or old recovery."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Keep editor", author="Original", details="editor", user_prompt="body"
+    )
+    prior_id, _uuid, _message = db.add_prompt(
+        name="Old recovery", author="Old", details="old", user_prompt="old"
+    )
+    prior_receipt = db.soft_delete_prompts((PromptBatchTarget(prior_id, 1),))
+    service.delete_prompts = AsyncMock(return_value=True)
+    service.delete_prompt = AsyncMock(side_effect=AssertionError("legacy delete used"))
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen._library_prompt_delete_receipt = prior_receipt
+        screen.query_one("#library-prompt-author", Input).value = "Unsaved author"
+        await pilot.pause()
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        host.screen.query_one("#prompt-delete-confirm", Button).press()
+        await _wait_for_prompt_mutation_settlement(screen, pilot)
+
+        assert screen._library_prompts_view == "editor"
+        assert screen._selected_prompt_id == prompt_id
+        assert screen.query_one("#library-prompt-author", Input).value == (
+            "Unsaved author"
+        )
+        assert screen._library_prompt_delete_receipt is prior_receipt
+        assert db.fetch_prompt_details(prompt_id) is not None
+        assert screen._library_prompt_status == (
+            "Could not delete this prompt. Nothing was deleted."
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_batch_undo_restores_mixed_receipt_atomically(tmp_path):
+    """One typed restore recovers every deleted Prompt/Recipe surface."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Undo Prompt",
+        author="A",
+        details="undo-shared-body",
+        keywords=["undo alpha", "shared"],
+    )
+    recipe_id, _uuid, _message = db.add_prompt(
+        name="Undo Recipe",
+        author="B",
+        details="undo-shared-body",
+        keywords=["undo beta", "shared"],
+        artifact_type="recipe",
+    )
+    collection_id = ScopeLocalPromptService(db).create_prompt_collection(
+        {"name": "Undo collection", "prompt_ids": [prompt_id, recipe_id]}
+    )["collection_id"]
+    receipt = db.soft_delete_prompts(
+        (PromptBatchTarget(prompt_id, 1), PromptBatchTarget(recipe_id, 1))
+    )
+    calls: list[dict[str, Any]] = []
+    results: list[PromptBatchRestoreResult] = []
+    original_restore = service.restore_deleted_prompts
+
+    async def recording_restore(**kwargs: Any) -> PromptBatchRestoreResult:
+        calls.append(kwargs)
+        result = await original_restore(**kwargs)
+        results.append(result)
+        return result
+
+    service.restore_deleted_prompts = recording_restore
+    service.restore_deleted_prompt = AsyncMock(
+        side_effect=AssertionError("legacy restore used")
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        screen._library_prompt_delete_receipt = receipt
+        screen.refresh(recompose=True)
+        undo = await _wait_for_selector(
+            screen, pilot, "#library-prompts-delete-undo"
+        )
+        undo.press()
+        await _wait_for_prompt_mutation_settlement(screen, pilot)
+
+        assert calls == [{"mode": "local", "targets": receipt.targets}]
+        assert service.restore_deleted_prompt.await_count == 0
+        assert tuple(entry.local_id for entry in results[0].entries) == (
+            prompt_id,
+            recipe_id,
+        )
+        assert screen._library_prompt_delete_receipt is None
+        assert db.fetch_prompt_details(prompt_id)["version"] == 3
+        assert db.fetch_prompt_details(recipe_id)["version"] == 3
+        assert {
+            row["id"] for row in db.search_prompts('"undo-shared-body"')[0]
+        } == {
+            prompt_id,
+            recipe_id,
+        }
+        assert db.fetch_keywords_for_prompt(prompt_id) == ["shared", "undo alpha"]
+        assert db.fetch_keywords_for_prompt(recipe_id) == ["shared", "undo beta"]
+        assert db.browse_prompts(collection_id=collection_id)[3] == 2
+        assert (
+            db.get_connection()
+            .execute(
+                "SELECT COUNT(*) FROM LocalPromptCollectionItems WHERE collection_id = ?",
+                (collection_id,),
+            )
+            .fetchone()[0]
+            == 2
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_batch_undo_conflict_restores_none_and_keeps_receipt(
+    tmp_path,
+):
+    """One conflicting tombstone rolls back the complete real SQLite restore."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    first_id, _uuid, _message = db.add_prompt(
+        name="Undo stale one", author="A", details="first"
+    )
+    second_id, _uuid, _message = db.add_prompt(
+        name="Undo stale two", author="B", details="second"
+    )
+    receipt = db.soft_delete_prompts(
+        (PromptBatchTarget(first_id, 1), PromptBatchTarget(second_id, 1))
+    )
+    db.get_connection().execute(
+        "UPDATE Prompts SET version = version + 1 WHERE id = ?", (first_id,)
+    )
+    db.get_connection().commit()
+    calls: list[tuple[PromptBatchTarget, ...]] = []
+    original_restore = service.restore_deleted_prompts
+
+    async def recording_restore(**kwargs: Any) -> PromptBatchRestoreResult:
+        calls.append(kwargs["targets"])
+        return await original_restore(**kwargs)
+
+    service.restore_deleted_prompts = recording_restore
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        screen._library_prompt_delete_receipt = receipt
+        screen.refresh(recompose=True)
+        await _wait_for_selector(screen, pilot, "#library-prompts-delete-undo")
+        screen.app_instance.notify = host.notify
+        host._notifications.clear()
+        screen.query_one("#library-prompts-delete-undo", Button).press()
+        await _wait_for_prompt_mutation_settlement(screen, pilot)
+
+        assert calls == [receipt.targets]
+        assert screen._library_prompt_delete_receipt is receipt
+        assert db.fetch_prompt_details(first_id, include_deleted=True)["deleted"] == 1
+        assert db.fetch_prompt_details(second_id, include_deleted=True)["deleted"] == 1
+        assert [notice.message for notice in host._notifications] == [
+            "Could not restore selected items; the receipt is still available."
+        ]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_batch_undo_late_success_preserves_new_receipt(tmp_path):
+    """A late success clears only the identical receipt that admitted it."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    old_id, _uuid, _message = db.add_prompt(
+        name="Old undo", author="A", details="old"
+    )
+    new_id, _uuid, _message = db.add_prompt(
+        name="New undo", author="B", details="new"
+    )
+    old_receipt = db.soft_delete_prompts((PromptBatchTarget(old_id, 1),))
+    new_receipt = db.soft_delete_prompts((PromptBatchTarget(new_id, 1),))
+    started = threading.Event()
+    release = threading.Event()
+    original_restore = service.restore_deleted_prompts
+
+    async def held_restore(**kwargs: Any) -> PromptBatchRestoreResult:
+        started.set()
+        await asyncio.to_thread(release.wait)
+        return await original_restore(**kwargs)
+
+    service.restore_deleted_prompts = held_restore
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        screen._library_prompt_delete_receipt = old_receipt
+        screen.refresh(recompose=True)
+        await _wait_for_selector(screen, pilot, "#library-prompts-delete-undo")
+        screen.query_one("#library-prompts-delete-undo", Button).press()
+        for _ in range(100):
+            if started.is_set():
+                break
+            await pilot.pause(0.02)
+        assert started.is_set()
+
+        screen._library_prompt_delete_receipt = new_receipt
+        release.set()
+        await _wait_for_prompt_mutation_settlement(screen, pilot)
+
+        assert db.fetch_prompt_details(old_id)["deleted"] == 0
+        assert screen._library_prompt_delete_receipt is new_receipt
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_mutation_route_vetoes_before_every_flush_or_transition(
+    tmp_path, monkeypatch
+):
+    """An admitted delete keeps its basket/receipt owner and blocks every route."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Held route", author="A", details="held-route"
+    )
+    prior_id, _uuid, _message = db.add_prompt(
+        name="Held prior", author="B", details="held-prior"
+    )
+    prior_receipt = db.soft_delete_prompts((PromptBatchTarget(prior_id, 1),))
+    started = threading.Event()
+    release = threading.Event()
+    original_delete = service.delete_prompts
+
+    async def held_delete(**kwargs: Any) -> PromptBatchDeleteResult:
+        started.set()
+        await asyncio.to_thread(release.wait)
+        return await original_delete(**kwargs)
+
+    service.delete_prompts = held_delete
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        screen._library_prompt_delete_receipt = prior_receipt
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-delete-selected")
+        await _select_prompt_search_results(screen, pilot, ("held-route",))
+        captured_selection = screen._library_prompt_selection
+        captured_route = screen._library_selected_row_id
+        captured_scope = screen._library_prompt_browse_controller.scope
+        screen.query_one("#library-prompts-delete-selected", Button).press()
+        await pilot.pause()
+        host.screen.query_one("#prompt-delete-confirm", Button).press()
+        for _ in range(100):
+            if started.is_set():
+                break
+            await pilot.pause(0.02)
+        assert started.is_set()
+        assert screen._library_prompts_mutation_in_flight is True
+        assert screen._library_prompt_selection == captured_selection
+        assert screen._library_prompt_delete_receipt is prior_receipt
+
+        file_flush = AsyncMock(side_effect=AssertionError("file flush awaited"))
+        note_flush = AsyncMock(side_effect=AssertionError("note flush awaited"))
+        prompt_flush = AsyncMock(side_effect=AssertionError("prompt flush awaited"))
+        skill_flush = AsyncMock(side_effect=AssertionError("skill flush awaited"))
+        monkeypatch.setattr(screen, "_flush_active_file_notes", file_flush)
+        monkeypatch.setattr(screen, "_flush_library_note_save", note_flush)
+        monkeypatch.setattr(screen, "_flush_library_prompt_save", prompt_flush)
+        monkeypatch.setattr(screen, "_flush_library_skill_save", skill_flush)
+
+        assert await screen.flush_pending_work() is False
+        assert screen.acquire_navigation_transition() is False
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        screen.apply_navigation_context({"mode": "media"})
+        await screen._open_library_item_by_id("media", "44")
+        await screen._open_library_export_canvas(ExportScope(kind="prompts"))
+        screen._enter_library_prompt_create_editor()
+
+        assert screen._library_selected_row_id == captured_route
+        assert screen._library_prompts_view == "list"
+        assert screen._library_prompt_selection == captured_selection
+        assert screen._library_prompt_delete_receipt is prior_receipt
+        assert screen._library_prompt_browse_controller.scope == captured_scope
+        assert screen._library_export_scope.kind != "prompts"
+        file_flush.assert_not_awaited()
+        note_flush.assert_not_awaited()
+        prompt_flush.assert_not_awaited()
+        skill_flush.assert_not_awaited()
+
+        release.set()
+        await _wait_for_prompt_mutation_settlement(screen, pilot)
+
+
 @pytest.mark.asyncio
 async def test_library_prompt_history_count_is_index_only_and_first_page_is_lazy(
     tmp_path,
@@ -6184,34 +6800,7 @@ async def test_library_prompt_delete_rejects_a_stale_modal_result(tmp_path):
         assert host.screen is screen
         assert db.fetch_prompt_details(first_id) is not None
         assert db.fetch_prompt_details(second_id) is not None
-        assert (
-            screen._library_prompt_status == "Delete confirmation is no longer current."
-        )
-
-
-def test_library_prompt_delete_ignores_duplicate_modal_settlement() -> None:
-    """Only the first matching confirmation can schedule the delete worker."""
-    screen = SimpleNamespace(
-        _library_prompt_delete_pending_fingerprint="library-prompt:9:2:prompt",
-        _library_prompts_view="editor",
-        _selected_prompt_id=9,
-        _library_prompt_version=2,
-        _library_prompt_block_state=SimpleNamespace(artifact_type="prompt"),
-        _library_prompt_delete_fingerprint=lambda: "library-prompt:9:2:prompt",
-        _library_prompts_mutation_in_flight=False,
-        _library_prompt_delete_receipt=None,
-        _read_library_prompt_editor_fields=lambda: ("Draft", "", "", "", "", ""),
-        _library_prompt_action_artifact_type=lambda: "prompt",
-        run_worker=Mock(),
-        _delete_library_prompt=Mock(),
-        _update_library_prompt_status_static=Mock(),
-    )
-    decision = PromptDeleteDecision(True, "library-prompt:9:2:prompt")
-
-    LibraryScreen._settle_library_prompt_delete(screen, decision)
-    LibraryScreen._settle_library_prompt_delete(screen, decision)
-
-    screen.run_worker.assert_called_once()
+        assert screen._library_prompt_status == ""
 
 
 def test_library_prompt_undo_interlock_rejects_a_concurrent_delete_settlement() -> None:
@@ -8154,7 +8743,8 @@ async def test_library_prompt_delete_uses_compatibility_recipe_type(
         assert isinstance(modal, PromptDeleteConfirmationModal)
         assert modal.request.items[0].artifact_type == "recipe"
         assert modal.request.fingerprint is not None
-        assert modal.request.fingerprint.endswith(":recipe")
+        assert modal.request.fingerprint.isdecimal()
+        assert ":" not in modal.request.fingerprint
 
 
 @pytest.mark.asyncio
@@ -8166,16 +8756,16 @@ async def test_library_prompt_delete_allows_only_one_in_flight_service_call(tmp_
     )
     started = threading.Event()
     release = threading.Event()
-    calls: list[int] = []
+    calls: list[tuple[PromptBatchTarget, ...]] = []
+    original_delete = service.delete_prompts
 
-    async def delayed_delete(*, mode, prompt_identifier, expected_version):
-        assert expected_version == 1
-        calls.append(prompt_identifier)
+    async def delayed_delete(*, mode, targets):
+        calls.append(targets)
         started.set()
         await asyncio.to_thread(release.wait)
-        return True
+        return await original_delete(mode=mode, targets=targets)
 
-    service.delete_prompt = delayed_delete
+    service.delete_prompts = delayed_delete
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     app.prompt_scope_service = service
@@ -8198,7 +8788,7 @@ async def test_library_prompt_delete_allows_only_one_in_flight_service_call(tmp_
         screen.query_one("#library-prompt-delete", Button).press()
         await pilot.pause()
         assert host.screen is screen
-        assert calls == [prompt_id]
+        assert calls == [(PromptBatchTarget(prompt_id, 1),)]
         release.set()
         for _ in range(100):
             if screen._library_prompts_view == "list":
