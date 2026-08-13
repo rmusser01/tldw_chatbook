@@ -340,6 +340,7 @@ def plan_compaction(
             mandatory=without_old.mandatory,
             compactable=without_old.compactable,
             active_request=without_old.active_request,
+            active_continuation_groups=without_old.active_continuation_groups,
             tools=without_old.tools,
         )
         remaining = prepare_main(remaining_semantic)
@@ -349,6 +350,7 @@ def plan_compaction(
             mandatory=remaining_semantic.mandatory,
             compactable=remaining_semantic.compactable,
             active_request=remaining_semantic.active_request,
+            active_continuation_groups=remaining_semantic.active_continuation_groups,
             tools=remaining_semantic.tools,
         )
         empty_memory = prepare_main(empty_memory_semantic)
@@ -505,6 +507,9 @@ class ConsoleCompactionService:
                 mandatory=plan.remaining_semantic.mandatory,
                 compactable=plan.remaining_semantic.compactable,
                 active_request=plan.remaining_semantic.active_request,
+                active_continuation_groups=(
+                    plan.remaining_semantic.active_continuation_groups
+                ),
                 tools=plan.remaining_semantic.tools,
             )
             after = prepare_main(after_semantic)

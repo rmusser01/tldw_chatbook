@@ -497,7 +497,8 @@ def bound_history_for_send(
             # asking `bound_messages_to_window` to re-guess a position
             # (`pin_first_user`'s forward scan) -- see that parameter's
             # docstring in console_history_budget.py.
-            pin_row_index=None if continuation_groups else task_index,
+            pin_row_index=task_index if not continuation_groups else None,
+            mandatory_row_index=task_index if continuation_groups else None,
             # Live-verified follow-up, same day: without a floor, a tight
             # enough window can keep only the in-flight round, so the agent
             # can no longer see the handful of steps it just took and

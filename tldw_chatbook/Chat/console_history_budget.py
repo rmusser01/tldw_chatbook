@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationConflictError,
     ContinuationOwnerGroup,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
@@ -61,11 +62,6 @@ def provider_continuation_owner_groups(
     target: ContinuationRestoreTarget,
 ) -> tuple[ContinuationOwnerGroup, ...]:
     """Return validated canonical private groups for one active history path."""
-    if target.provider not in {"moonshot", "zai", "deepseek"}:
-        for message in messages:
-            if isinstance(message, ProviderContinuationSidecar):
-                validate_continuation_restore(message.checkpoint, target)
-        return ()
     groups: list[ContinuationOwnerGroup] = []
     for message in messages:
         if isinstance(message, ProviderContinuationSidecar):
@@ -83,7 +79,15 @@ def provider_continuation_owner_groups(
             visible = message
         if not isinstance(checkpoint, ProviderContinuationCheckpoint):
             continue
-        validate_continuation_restore(checkpoint, target)
+        if checkpoint.state != "complete":
+            validate_continuation_restore(checkpoint, target)
+            raise ContinuationConflictError(
+                "Active continuation requires explicit recovery."
+            )
+        try:
+            validate_continuation_restore(checkpoint, target)
+        except ContinuationConflictError:
+            continue
         groups.append(continuation_owner_group(visible, checkpoint))
     return tuple(groups)
 
@@ -269,6 +273,7 @@ def bound_messages_to_window(
     is_turn_boundary: Callable[[dict[str, Any]], bool] | None = None,
     pin_first_user: bool = False,
     pin_row_index: int | None = None,
+    mandatory_row_index: int | None = None,
     min_recent_turns: int = 0,
 ) -> BoundResult:
     """Drop oldest whole turns until the payload fits the model window.
@@ -327,6 +332,9 @@ def bound_messages_to_window(
             position. Out-of-range or ``None`` (every Console call site)
             is a no-op. Composes with ``pin_first_user``: the pinned
             prefix extends through whichever of the two reaches further.
+        mandatory_row_index: Exact row whose grouped unit cannot be evicted,
+            without pinning unrelated older rows before it. Used only by
+            continuation-aware run-log eviction to preserve the task row.
         min_recent_turns: Minimum number of most-recent turns guaranteed to
             survive, COUNTING the current turn as one of them (so ``0`` and
             ``1`` are equivalent to the original contract, where the current
@@ -411,12 +419,36 @@ def bound_messages_to_window(
     current_turn = rest[last_user:]
     kept_turns = _group_turns(rest[:last_user], is_boundary=boundary)
 
-    def assemble(drop: int) -> list[dict[str, Any]]:
-        return (
-            system_prefix
-            + [m for turn in kept_turns[drop:] for m in turn]
-            + current_turn
+    mandatory_turn = next(
+        (
+            index
+            for index, turn in enumerate(kept_turns)
+            if mandatory_row_index is not None
+            and 0 <= mandatory_row_index < len(messages)
+            and any(row is messages[mandatory_row_index] for row in turn)
+        ),
+        None,
+    )
+    protected_recent = set(
+        range(
+            max(0, len(kept_turns) - max(0, min_recent_turns - 1)),
+            len(kept_turns),
         )
+    )
+    droppable = [
+        index
+        for index in range(len(kept_turns))
+        if index != mandatory_turn and index not in protected_recent
+    ]
+
+    def assemble(drop: int) -> list[dict[str, Any]]:
+        removed = set(droppable[:drop])
+        return system_prefix + [
+            message
+            for index, turn in enumerate(kept_turns)
+            if index not in removed
+            for message in turn
+        ] + current_turn
 
     # Drop oldest whole turns until the payload fits. The token count is
     # monotonically non-increasing as more turns drop (each turn contributes
@@ -433,7 +465,7 @@ def bound_messages_to_window(
     # - 1)` of them. At the default 0 (every Console call site), this is
     # `max(0, len(kept_turns) - max(0, -1))` = `len(kept_turns)`, identical
     # to the original unbounded search.
-    max_drop = max(0, len(kept_turns) - max(0, min_recent_turns - 1))
+    max_drop = len(droppable)
     lo, hi = 0, max_drop
     best = hi  # if nothing fits within the floor, drop the most the floor allows
     while lo <= hi:
@@ -444,5 +476,5 @@ def bound_messages_to_window(
         else:
             lo = mid + 1
 
-    dropped = sum(len(turn) for turn in kept_turns[:best])
+    dropped = sum(len(kept_turns[index]) for index in droppable[:best])
     return BoundResult(assemble(best), dropped, best)

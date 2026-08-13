@@ -3710,6 +3710,48 @@ async def test_controller_bridge_agent_service_bound_private_history_on_real_sen
 
 
 @pytest.mark.asyncio
+async def test_provider_switch_ignores_unrelated_completed_continuation_history():
+    class OpenAIGateway(ContinuationHistoryGateway):
+        async def resolve_for_send(self, selection):
+            return ConsoleProviderResolution(
+                provider="openai",
+                base_url="https://api.openai.com/v1",
+                model="gpt-4.1",
+                ready=True,
+                readiness_key="openai",
+                execution_key="openai",
+                max_tokens=10,
+            )
+
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="old")
+    owner = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="old answer"
+    )
+    store._message_or_raise(owner.id).provider_continuation = (
+        _controller_history_checkpoint("PROVIDER-SWITCH-PRIVATE-CANARY ")
+    )
+    gateway = OpenAIGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    result = await controller.submit_draft("current")
+
+    assert result.accepted
+    assert gateway.prepared is not None
+    assert any(
+        row.get("content") == "old answer"
+        for row in gateway.prepared.messages_payload
+    )
+    assert gateway.prepare_kwargs["continuation_sidecar"] == ()
+    assert "PROVIDER-SWITCH-PRIVATE-CANARY" not in repr(gateway.prepared)
+
+
+@pytest.mark.asyncio
 async def test_submit_with_one_shot_prefill_appends_trailing_assistant_and_seeds():
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()

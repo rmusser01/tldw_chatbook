@@ -83,6 +83,7 @@ from tldw_chatbook.Chat.console_history_budget import (
     ProviderContinuationSidecar,
     bound_messages_to_window,
     count_console_messages_tokens,
+    provider_continuation_owner_groups,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
@@ -115,8 +116,8 @@ from tldw_chatbook.Chat.console_context_repository import (
     ConsoleMemoryRecord,
 )
 from tldw_chatbook.Chat.console_prepared_request import (
+    CONTINUATION_OWNER_KEY,
     PreparedConsoleRequest,
-    build_console_request,
     tagged_memory_message,
     tagged_visual_memory_message,
 )
@@ -305,6 +306,20 @@ CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
 # before the payload leaves the controller for a provider/agent, so no
 # provider ever sees it.
 NATIVE_MESSAGE_ID_KEY = "_native_message_id"
+
+
+def _flatten_preflight_messages(
+    semantic: PreparedConsoleRequest,
+) -> list[dict[str, Any]]:
+    """Return visible rows while preserving private owner association."""
+    flattened: list[dict[str, Any]] = []
+    for message in semantic.flattened_messages():
+        row = dict(message)
+        owner_id = row.pop(CONTINUATION_OWNER_KEY, None)
+        if type(owner_id) is str:
+            row[NATIVE_MESSAGE_ID_KEY] = owner_id
+        flattened.append(row)
+    return flattened
 
 
 def _continuation_restore_target_for_resolution(
@@ -8125,6 +8140,9 @@ class ConsoleChatController:
             global_overrides=global_overrides,
             conversation_overrides=overrides,
         ).compaction_representation
+        continuation_sidecar, continuation_target = (
+            self._provider_continuation_history_for_resolution(session_id, resolution)
+        )
         _messages, blocked_result = await self._apply_conversation_memory_preflight(
             session_id=session_id,
             resolution=resolution,
@@ -8135,6 +8153,8 @@ class ConsoleChatController:
             agent_tools_enabled=False,
             force_compaction=True,
             manual_action=True,
+            continuation_sidecar=continuation_sidecar,
+            continuation_target=continuation_target,
         )
         if blocked_result is not None:
             return False, blocked_result.visible_copy
@@ -8220,6 +8240,8 @@ class ConsoleChatController:
         agent_tools_enabled: bool,
         force_compaction: bool = False,
         manual_action: bool = False,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_target: ContinuationRestoreTarget | None = None,
     ) -> tuple[list[dict[str, Any]], ConsoleSubmitResult | None]:
         """Revalidate memory and optionally run one automatic summary call."""
 
@@ -8281,16 +8303,26 @@ class ConsoleChatController:
                     tools = list(preview())
                 except Exception:
                     tools = []
-        semantic = build_console_request(
-            retained_messages,
-            memory=memory_rows,
-            tools=tools,
-        )
         prepared_before = prepare(
             resolution,
-            semantic,
+            retained_messages,
+            tools=tools,
             apply_safety_window=False,
+            continuation_target=continuation_target,
+            continuation_sidecar=continuation_sidecar,
+            continuation_owner_key=(
+                NATIVE_MESSAGE_ID_KEY if continuation_sidecar else None
+            ),
         )
+        semantic = prepared_before.semantic
+        if memory_rows:
+            semantic = replace(semantic, memory=memory_rows)
+            prepared_before = prepare(
+                resolution,
+                semantic,
+                apply_safety_window=False,
+                continuation_target=continuation_target,
+            )
         capacity = prepared_before.capacity
         mandatory_tokens = (
             prepared_before.accounting.non_compactable_tokens
@@ -8317,6 +8349,7 @@ class ConsoleChatController:
                 resolution,
                 request,
                 apply_safety_window=False,
+                continuation_target=continuation_target,
             )
 
         units = compactable_units_after(
@@ -8369,7 +8402,7 @@ class ConsoleChatController:
             ),
         ).info("console_context_policy_decision")
         if decision in {CompactionDecision.OFF, CompactionDecision.BELOW_TRIGGER}:
-            return [dict(row) for row in semantic.flattened_messages()], None
+            return _flatten_preflight_messages(semantic), None
         if decision is CompactionDecision.ASK:
             result = blocked(
                 (
@@ -8390,12 +8423,12 @@ class ConsoleChatController:
             # an admission failure.  Block only when the immutable prepared
             # request proves that the effective input ceiling is exceeded.
             if not prepared_before.known_overflow:
-                return [dict(row) for row in semantic.flattened_messages()], None
+                return _flatten_preflight_messages(semantic), None
             if (
                 resolved.policy.failure_behavior
                 is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
             ):
-                return [dict(row) for row in semantic.flattened_messages()], None
+                return _flatten_preflight_messages(semantic), None
             if decision is CompactionDecision.NON_COMPACTABLE:
                 limiting_reason = (
                     "No older complete conversation turns are available to compact."
@@ -8470,9 +8503,7 @@ class ConsoleChatController:
                     page_count=visual_plan.plan.artifact.page_count,
                     renderer_version=visual_plan.plan.artifact.renderer_version,
                 ).info("console_visual_compaction_prepared")
-                return [
-                    dict(row) for row in visual_plan.plan.semantic.flattened_messages()
-                ], None
+                return _flatten_preflight_messages(visual_plan.plan.semantic), None
             effective_representation = ContextCompactionRepresentation.TEXT_SUMMARY
             if visual_fallback_reason is None:
                 visual_fallback_reason = (
@@ -8519,7 +8550,7 @@ class ConsoleChatController:
                 resolved.policy.failure_behavior
                 is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
             ):
-                return [dict(row) for row in semantic.flattened_messages()], None
+                return _flatten_preflight_messages(semantic), None
             result = blocked(
                 (
                     "Conversation compaction could not reach the configured "
@@ -8588,6 +8619,9 @@ class ConsoleChatController:
                             mandatory=planned.plan.remaining_semantic.mandatory,
                             compactable=planned.plan.remaining_semantic.compactable,
                             active_request=planned.plan.remaining_semantic.active_request,
+                            active_continuation_groups=(
+                                planned.plan.remaining_semantic.active_continuation_groups
+                            ),
                             tools=planned.plan.remaining_semantic.tools,
                         )
                         hybrid_prepared = prepare_main(hybrid_semantic)
@@ -8619,14 +8653,17 @@ class ConsoleChatController:
                 mandatory=planned.plan.remaining_semantic.mandatory,
                 compactable=planned.plan.remaining_semantic.compactable,
                 active_request=planned.plan.remaining_semantic.active_request,
+                active_continuation_groups=(
+                    planned.plan.remaining_semantic.active_continuation_groups
+                ),
                 tools=planned.plan.remaining_semantic.tools,
             )
-            return [dict(row) for row in after.flattened_messages()], None
+            return _flatten_preflight_messages(after), None
         if (
             resolved.policy.failure_behavior
             is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
         ):
-            return [dict(row) for row in semantic.flattened_messages()], None
+            return _flatten_preflight_messages(semantic), None
         result = blocked(
             (
                 "Conversation compaction did not complete; the provider request "
@@ -8695,16 +8732,9 @@ class ConsoleChatController:
             turn_context = self.resolve_turn_execution_context(owner_id)
         elif turn_context.session_id != owner_id:
             raise ValueError("Console turn context does not own the assistant row.")
-        continuation_sidecar = self._provider_continuation_sidecar_for_session(owner_id)
-        continuation_target = (
-            _continuation_restore_target_for_resolution(resolution)
-            if continuation_sidecar
-            else None
+        continuation_sidecar, continuation_target = (
+            self._provider_continuation_history_for_resolution(owner_id, resolution)
         )
-        if continuation_sidecar and continuation_target is None:
-            raise ValueError(
-                "Provider continuation history requires a pinned provider resolution."
-            )
         # A character session always takes the plain-provider
         # path, even with the global agent runtime enabled and a bridge
         # present. Keyed on the message's OWNING session (looked up here,
@@ -8796,6 +8826,8 @@ class ConsoleChatController:
                     and not prefill
                     and not force_plain
                 ),
+                continuation_sidecar=continuation_sidecar,
+                continuation_target=continuation_target,
             )
             if context_block is not None:
                 return context_block
@@ -10747,6 +10779,27 @@ class ConsoleChatController:
             and isinstance(
                 message.provider_continuation, ProviderContinuationCheckpoint
             )
+        )
+
+    def _provider_continuation_history_for_resolution(
+        self, session_id: str, resolution: Any
+    ) -> tuple[
+        tuple[ProviderContinuationSidecar, ...], ContinuationRestoreTarget | None
+    ]:
+        """Select only complete private groups matching this frozen send."""
+        sidecar = self._provider_continuation_sidecar_for_session(session_id)
+        if not sidecar:
+            return (), None
+        target = _continuation_restore_target_for_resolution(resolution)
+        if target is None:
+            return (), None
+        owner_ids = {
+            group.owner_message_id
+            for group in provider_continuation_owner_groups(sidecar, target=target)
+        }
+        return (
+            tuple(item for item in sidecar if item.owner_message_id in owner_ids),
+            target,
         )
 
     def _provider_messages_through_message(

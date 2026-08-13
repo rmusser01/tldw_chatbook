@@ -1327,3 +1327,48 @@ def test_agent_service_run_turn_budgets_private_sidecar_on_real_send(
     assert all("_owner" not in row for row in sent)
     assert "PRIVATE-RUN-LOG-CANARY" not in repr(sent)
     assert source[1]["_owner"] == "a1"
+
+
+def test_agent_service_continuation_eviction_never_drops_task_row(
+    db, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv(_EVICT_ENV_VAR, "true")
+    monkeypatch.setenv(_MIN_RECENT_ROUNDS_ENV_VAR, "1")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(budget_module, "get_model_token_limit", lambda *a, **k: 650)
+    checkpoint = _completed_continuation_group("a1").checkpoint
+    chat = ScriptedChat(_fence_replies(3))
+    service = AgentService(db=db, registry=_make_registry(3), chat_call=chat)
+    task = "CURRENT TASK MUST SURVIVE"
+
+    _, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[
+            {"role": "user", "content": "old"},
+            {"role": "assistant", "content": "old answer", "_owner": "a1"},
+            {"role": "user", "content": task},
+        ],
+        config=dataclasses.replace(
+            _run_config(native_tools=False), model="deepseek-v4-flash"
+        ),
+        api_endpoint="deepseek",
+        continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+        continuation_target=ContinuationRestoreTarget(
+            "deepseek",
+            "deepseek-v4-flash",
+            "responses",
+            "https://api.deepseek.com/v1",
+        ),
+        continuation_owner_key="_owner",
+    )
+
+    assert outcome.final_text == "done."
+    assert len(chat.calls) == 4
+    for call in chat.calls:
+        sent = call["messages_payload"]
+        assert any(row.get("content") == task for row in sent), repr(sent)
+        assert all("_owner" not in row for row in sent)
+        assert "PRIVATE-RUN-LOG-CANARY" not in repr(sent)
+    final_payload = chat.calls[-1]["messages_payload"]
+    assert not any(row.get("content") == "old answer" for row in final_payload)
+    assert any("MARK3_" in str(row.get("content", "")) for row in final_payload)

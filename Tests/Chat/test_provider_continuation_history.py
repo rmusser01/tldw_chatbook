@@ -8,6 +8,7 @@ import dataclasses
 import pytest
 
 from tldw_chatbook.Chat.console_history_budget import (
+    ProviderContinuationSidecar,
     count_provider_continuation_tokens,
     provider_continuation_owner_groups,
 )
@@ -109,11 +110,47 @@ def test_grouping_validates_restore_and_preserves_active_owner_order() -> None:
         ("model", "different-model"),
         ("api_base_url", "https://api.deepseek.com/v2"),
     ):
-        with pytest.raises(ContinuationConflictError, match="restore target mismatch"):
+        assert (
             provider_continuation_owner_groups(
                 messages,
                 target=dataclasses.replace(_target(), **{field: value}),
             )
+            == ()
+        )
+
+
+def test_active_mismatched_owner_still_fails_closed() -> None:
+    active = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "active",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": [],
+                    "calls": [
+                        {
+                            "call_id": "call_active",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "pending",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(ContinuationConflictError, match="restore target mismatch"):
+        provider_continuation_owner_groups(
+            (ProviderContinuationSidecar("a1", active),),
+            target=dataclasses.replace(_target(), provider="moonshot"),
+        )
 
 
 def test_unrelated_provider_receives_no_private_owner_group() -> None:

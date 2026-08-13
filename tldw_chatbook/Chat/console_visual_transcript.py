@@ -265,6 +265,7 @@ def plan_visual_compaction(
             mandatory=without_old.mandatory,
             compactable=without_old.compactable,
             active_request=without_old.active_request,
+            active_continuation_groups=without_old.active_continuation_groups,
             tools=without_old.tools,
         )
         after = prepare_main(after_semantic)
