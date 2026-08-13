@@ -707,7 +707,11 @@ def test_an_invalid_construction_warns_once_and_behaves_as_and():
 
     assert first == ('"notes" "about" "the" "vendor"', None)
     assert second[1] is None
-    matching = [m for m in warnings if "or_of_ands_probably" in m]
+    # EVENT-ONLY contract (dev TASK-15103 Batch C, rebased in 2026-08-13):
+    # resolver diagnostics are redacted — the warning is a fixed event and
+    # never echoes the user-controlled value. Assert the event + the count,
+    # not the value.
+    matching = [m for m in warnings if "Unknown fts_match_construction" in m]
     assert len(matching) == 1, (
         f"an invalid construction must warn exactly once per service: {matching}"
     )
@@ -743,7 +747,10 @@ def test_a_non_str_construction_warns_once_per_distinct_bad_value():
 
     assert first == FTS_MATCH_CONSTRUCTION_AND
     assert second == FTS_MATCH_CONSTRUCTION_AND
-    matching = [m for m in warnings if "keyword leg is falling back" in m]
+    # EVENT-ONLY contract (dev TASK-15103 Batch C): the fixed event, no
+    # value echo — dedup is still per distinct surrogate key, so the count
+    # is what discriminates.
+    matching = [m for m in warnings if "Unknown fts_match_construction" in m]
     assert len(matching) == 1, (
         f"a repeated non-str bad value must warn exactly once: {matching}"
     )
