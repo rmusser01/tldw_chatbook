@@ -327,6 +327,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 )
 from .Notes.Notes_Library import NotesInteropService
 from .Notes.file_notes_git_service import build_file_notes_session_owner
+from .Notes.note_folder_repository import LocalNoteFolderRepository
 from .Notes.notes_scope_service import NotesScopeService
 from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
 from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
@@ -4752,6 +4753,29 @@ def _build_generated_video_store():
     return store
 
 
+def _build_notes_scope_service(
+    *,
+    chachanotes_db: Any,
+    local_notes_service: Any,
+    server_service: Any,
+    policy_enforcer: Any,
+    sync_scope_service: Any,
+) -> NotesScopeService:
+    """Compose the Notes facade with one repository over the shared local DB."""
+    folder_repository = (
+        LocalNoteFolderRepository(chachanotes_db)
+        if chachanotes_db is not None
+        else None
+    )
+    return NotesScopeService(
+        local_notes_service=local_notes_service,
+        server_service=server_service,
+        policy_enforcer=policy_enforcer,
+        sync_scope_service=sync_scope_service,
+        folder_repository=folder_repository,
+    )
+
+
 class TldwCli(
     # TextSelectionCrashGuard sits before App so its on_event wrapper is the
     # last line of defense against Textual 8.x's text-selection MouseDown
@@ -5249,7 +5273,8 @@ class TldwCli(
                 policy_enforcer=self.service_policy_enforcer,
             )
         )
-        self.notes_scope_service = NotesScopeService(
+        self.notes_scope_service = _build_notes_scope_service(
+            chachanotes_db=self.chachanotes_db,
             local_notes_service=self.notes_service,
             server_service=self.server_notes_workspace_service,
             policy_enforcer=self.service_policy_enforcer,

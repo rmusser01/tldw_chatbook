@@ -4,11 +4,23 @@ Scope-aware routing for local notes, server notes, and workspace notes.
 
 from __future__ import annotations
 
+import asyncio
 from enum import Enum
-from typing import Any, Mapping, Optional, Sequence
+from functools import partial
+from typing import Any, Mapping, NoReturn, Optional, Sequence
 
 from loguru import logger
 
+from tldw_chatbook.Notes.note_folder_models import (
+    FolderCapabilityError,
+    FolderCapabilityName,
+    FolderMutationResult,
+    NoteFolder,
+    NoteFolderCapability,
+    NoteFolderMembership,
+    NoteFolderPage,
+    RestoredManagedMembershipReview,
+)
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 
 
@@ -43,6 +55,30 @@ _WORKSPACE_GRAPH_UNSUPPORTED_CAPABILITY = {
     "affected_action_ids": list(_SERVER_GRAPH_ACTION_IDS),
 }
 
+_NOTE_FOLDER_OPERATIONS: tuple[FolderCapabilityName, ...] = (
+    "list",
+    "create",
+    "rename",
+    "move",
+    "delete",
+    "restore",
+    "membership",
+)
+
+_NOTE_FOLDER_CAPABILITY_MESSAGES = {
+    "local_store_missing": (
+        "Local Database Note folders are unavailable because the local note store "
+        "is not initialized."
+    ),
+    "server_contract_missing": (
+        "This server does not provide the Database Note folder contract. Upgrade "
+        "the server before using folder operations."
+    ),
+    "scope_not_supported": (
+        "Database Note folder operations are not supported for this note scope."
+    ),
+}
+
 
 class NotesScopeService:
     """Route screen-facing note actions to the correct backing service."""
@@ -54,12 +90,14 @@ class NotesScopeService:
         policy_enforcer: Any = None,
         sync_scope_service: Any = None,
         sync_v2_notes_producer: Any = None,
+        folder_repository: Any = None,
     ):
         self.local_notes_service = local_notes_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
         self.sync_scope_service = sync_scope_service
         self.sync_v2_notes_producer = sync_v2_notes_producer
+        self.folder_repository = folder_repository
 
     def _normalize_scope(self, scope: ScopeType | str) -> ScopeType:
         if isinstance(scope, ScopeType):
@@ -115,6 +153,291 @@ class NotesScopeService:
         if normalized_scope == ScopeType.WORKSPACE:
             return [dict(_WORKSPACE_GRAPH_UNSUPPORTED_CAPABILITY)]
         return []
+
+    def note_folder_capabilities(
+        self, *, scope: ScopeType | str
+    ) -> list[NoteFolderCapability]:
+        """Return folder-operation availability for one note scope."""
+        normalized_scope = self._normalize_folder_scope(scope)
+        if (
+            normalized_scope == ScopeType.LOCAL_NOTE
+            and self.folder_repository is not None
+        ):
+            return [
+                NoteFolderCapability(operation=operation, supported=True)
+                for operation in _NOTE_FOLDER_OPERATIONS
+            ]
+        if normalized_scope == ScopeType.LOCAL_NOTE:
+            reason_code = "local_store_missing"
+        elif normalized_scope == ScopeType.SERVER_NOTE:
+            reason_code = "server_contract_missing"
+        else:
+            reason_code = "scope_not_supported"
+        return [
+            NoteFolderCapability(
+                operation=operation,
+                supported=False,
+                reason_code=reason_code,
+                user_message=_NOTE_FOLDER_CAPABILITY_MESSAGES[reason_code],
+            )
+            for operation in _NOTE_FOLDER_OPERATIONS
+        ]
+
+    def _normalize_folder_scope(self, scope: ScopeType | str) -> ScopeType | None:
+        try:
+            return self._normalize_scope(scope)
+        except ValueError:
+            return None
+
+    async def list_note_folder_children(
+        self,
+        *,
+        scope: ScopeType | str,
+        parent_id: str | None,
+        limit: int,
+        offset: int,
+        user_id: Optional[str] = None,
+    ) -> NoteFolderPage:
+        """List a bounded page of direct local folder children."""
+        repository = self._folder_repository_for_action(
+            scope=scope,
+            user_id=user_id,
+            action="list",
+            operation="list",
+        )
+        return await self._run_folder_repository(
+            repository.list_children,
+            parent_id=parent_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    def _folder_repository_for_action(
+        self,
+        *,
+        scope: ScopeType | str,
+        user_id: Optional[str],
+        action: str,
+        operation: FolderCapabilityName,
+    ) -> Any:
+        normalized_scope = self._normalize_folder_scope(scope)
+        if normalized_scope != ScopeType.LOCAL_NOTE:
+            self._raise_folder_capability_error(
+                scope=scope,
+                operation=operation,
+            )
+        self._require_user_id(user_id)
+        self._enforce_policy(self._note_action_id(normalized_scope, action))
+        if self.folder_repository is None:
+            self._raise_folder_capability_error(
+                scope=normalized_scope,
+                operation=operation,
+            )
+        return self.folder_repository
+
+    @staticmethod
+    async def _run_folder_repository(method: Any, *args: Any, **kwargs: Any) -> Any:
+        """Run one synchronous local folder repository operation off-loop."""
+        return await asyncio.to_thread(partial(method, *args, **kwargs))
+
+    def _raise_folder_capability_error(
+        self,
+        *,
+        scope: ScopeType | str,
+        operation: FolderCapabilityName,
+    ) -> NoReturn:
+        capability = next(
+            item
+            for item in self.note_folder_capabilities(scope=scope)
+            if item.operation == operation
+        )
+        raise FolderCapabilityError(
+            reason_code=capability.reason_code,
+            user_message=capability.user_message,
+        )
+
+    async def load_note_folder_tree_batch(
+        self,
+        *,
+        scope: ScopeType | str,
+        expanded_folder_ids: Sequence[str],
+        note_limit: int,
+        user_id: Optional[str] = None,
+    ) -> NoteFolderPage:
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.load_tree_batch,
+            expanded_folder_ids=expanded_folder_ids,
+            note_limit=note_limit,
+        )
+
+    async def create_note_folder(
+        self,
+        *,
+        scope: ScopeType | str,
+        name: str,
+        parent_id: str | None,
+        user_id: Optional[str] = None,
+    ) -> NoteFolder:
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="create", operation="create"
+        )
+        return await self._run_folder_repository(
+            repository.create_folder,
+            name=name,
+            parent_id=parent_id,
+        )
+
+    async def rename_note_folder(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        name: str,
+        expected_version: int,
+        user_id: Optional[str] = None,
+    ) -> FolderMutationResult:
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="update", operation="rename"
+        )
+        return await self._run_folder_repository(
+            repository.rename_folder,
+            folder_id,
+            name=name,
+            expected_version=expected_version,
+        )
+
+    async def move_note_folder(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        parent_id: str | None,
+        expected_version: int,
+        user_id: Optional[str] = None,
+    ) -> FolderMutationResult:
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="update", operation="move"
+        )
+        return await self._run_folder_repository(
+            repository.move_folder,
+            folder_id,
+            parent_id=parent_id,
+            expected_version=expected_version,
+        )
+
+    async def delete_note_folder(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        expected_version: int,
+        user_id: Optional[str] = None,
+    ) -> FolderMutationResult:
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="delete", operation="delete"
+        )
+        return await self._run_folder_repository(
+            repository.soft_delete_folder,
+            folder_id,
+            expected_version=expected_version,
+        )
+
+    async def restore_note_folder(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        expected_version: int,
+        user_id: Optional[str] = None,
+    ) -> FolderMutationResult:
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="update", operation="restore"
+        )
+        return await self._run_folder_repository(
+            repository.restore_folder,
+            folder_id,
+            expected_version=expected_version,
+        )
+
+    async def attach_note_to_folder(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        note_id: str,
+        user_id: Optional[str] = None,
+    ) -> NoteFolderMembership:
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="update", operation="membership"
+        )
+        return await self._run_folder_repository(
+            repository.attach_manual,
+            folder_id=folder_id,
+            note_id=note_id,
+        )
+
+    async def detach_note_from_folder(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        note_id: str,
+        expected_version: int,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="update", operation="membership"
+        )
+        return await self._run_folder_repository(
+            repository.detach_manual,
+            folder_id=folder_id,
+            note_id=note_id,
+            expected_version=expected_version,
+        )
+
+    async def convert_note_folder_owner_to_manual(
+        self,
+        *,
+        scope: ScopeType | str,
+        owner_id: str,
+        user_id: Optional[str] = None,
+    ) -> int:
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="update", operation="membership"
+        )
+        return await self._run_folder_repository(
+            repository.convert_owner_to_manual,
+            owner_id=owner_id,
+        )
+
+    async def remove_note_folder_owner_memberships(
+        self,
+        *,
+        scope: ScopeType | str,
+        owner_id: str,
+        user_id: Optional[str] = None,
+    ) -> int:
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="update", operation="membership"
+        )
+        return await self._run_folder_repository(
+            repository.remove_owner_memberships,
+            owner_id=owner_id,
+        )
+
+    async def list_note_folder_restore_reviews(
+        self,
+        *,
+        scope: ScopeType | str,
+        user_id: Optional[str] = None,
+    ) -> tuple[RestoredManagedMembershipReview, ...]:
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="membership"
+        )
+        return await self._run_folder_repository(repository.list_restore_reviews)
 
     def record_sync_mirror_report(
         self,
