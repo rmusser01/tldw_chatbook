@@ -2483,7 +2483,13 @@ class ConsoleProviderGateway:
                 kwargs["provider_continuations"] = [
                     group.checkpoint for group in request.continuation_groups
                 ]
-        elif resolution.execution_key in {"anthropic", "mistral", "mistralai"}:
+        elif resolution.execution_key in {
+            "anthropic",
+            "custom-openai-api",
+            "custom-openai-api-2",
+            "mistral",
+            "mistralai",
+        }:
             kwargs["api_base_url"] = resolution.base_url or None
         elif (
             resolution.execution_key == "openai" and request.response_format is not None
@@ -2555,11 +2561,17 @@ class ConsoleProviderGateway:
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
-        elif resolution.execution_key in {"anthropic", "mistral", "mistralai"}:
+        elif resolution.execution_key in {
+            "anthropic",
+            "custom-openai-api",
+            "custom-openai-api-2",
+            "mistral",
+            "mistralai",
+        }:
             # These adapters otherwise consult process-global config after
             # Console has resolved a provider-scoped endpoint and credential.
             # Pinning the resolved base keeps that pair intact, including the
-            # distinct mistral and mistralai config owners.
+            # custom aliases and distinct mistral config owners.
             kwargs["api_base_url"] = resolution.base_url or None
         return {key: value for key, value in kwargs.items() if value is not None}
 

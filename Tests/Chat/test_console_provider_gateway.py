@@ -3970,6 +3970,38 @@ def test_all_primary_mistral_kwargs_paths_forward_resolved_base(provider) -> Non
     )
 
 
+@pytest.mark.parametrize(
+    ("provider", "execution_key"),
+    [
+        ("Custom OpenAI API", "custom-openai-api"),
+        ("custom_openai_api_2", "custom-openai-api-2"),
+    ],
+)
+def test_all_primary_custom_kwargs_paths_forward_resolved_chat_url(
+    provider: str,
+    execution_key: str,
+) -> None:
+    chat_url = f"https://{execution_key}.example.test/proxy/v1/chat/completions"
+    resolution = ConsoleProviderResolution(
+        provider=provider,
+        base_url=chat_url,
+        model="custom-model",
+        ready=True,
+        execution_key=execution_key,
+        api_key="custom-test-credential",
+        streaming=False,
+    )
+    messages = [{"role": "user", "content": "hi"}]
+    gateway = ConsoleProviderGateway()
+    prepared = gateway.prepare_chat_request(resolution, messages)
+
+    assert gateway._chat_api_kwargs(resolution, messages)["api_base_url"] == chat_url
+    assert (
+        gateway._chat_api_kwargs_from_prepared(resolution, prepared)["api_base_url"]
+        == chat_url
+    )
+
+
 def test_chat_api_kwargs_omits_api_base_url_for_unpinned_provider() -> None:
     """Providers without an established pin keep their existing kwargs."""
     resolution = ConsoleProviderResolution(
@@ -4204,6 +4236,18 @@ class _FakeMistralPostResponse:
         }
 
 
+class _CapturedCustomSession:
+    def __init__(self, calls: list[tuple[str, str]]) -> None:
+        self._calls = calls
+
+    def mount(self, *_args, **_kwargs) -> None:
+        return None
+
+    def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+        self._calls.append((url, (headers or {}).get("Authorization", "")))
+        return _FakeMistralPostResponse()
+
+
 @pytest.mark.asyncio
 async def test_console_send_keeps_each_mistral_credential_on_its_own_endpoint(
     monkeypatch,
@@ -4267,6 +4311,103 @@ async def test_console_send_keeps_each_mistral_credential_on_its_own_endpoint(
             "Bearer catalog-mistral-test-key",
         ),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_present", [True, False])
+@pytest.mark.parametrize(
+    ("provider", "owner", "configured_endpoint", "expected_chat_url"),
+    [
+        (
+            "Custom OpenAI API",
+            "custom",
+            "https://owner-custom.example.test/proxy",
+            "https://owner-custom.example.test/proxy/v1/chat/completions",
+        ),
+        (
+            "custom_openai_api_2",
+            "custom_2",
+            "https://owner-custom-2.example.test/proxy/v1/chat/completions",
+            "https://owner-custom-2.example.test/proxy/v1/chat/completions",
+        ),
+    ],
+)
+async def test_console_send_keeps_custom_endpoint_and_credential_paired(
+    monkeypatch,
+    legacy_present: bool,
+    provider: str,
+    owner: str,
+    configured_endpoint: str,
+    expected_chat_url: str,
+) -> None:
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local
+
+    class RuntimeConfigSnapshotStub:
+        def __init__(self, values) -> None:
+            self.values = values
+
+    owner_credential = f"{owner}-owner-credential"
+    config = {
+        "api_settings": {
+            owner: {
+                "api_key": owner_credential,
+                "api_url": configured_endpoint,
+                "model": f"{owner}-model",
+            }
+        }
+    }
+    legacy_endpoint = "https://legacy-fallback.example.test/v1/chat/completions"
+    legacy_values = (
+        {
+            "api_settings": {
+                "custom": {
+                    "api_key": "legacy-credential",
+                    "api_url": legacy_endpoint,
+                    "model": "legacy-model",
+                }
+            },
+            "custom_openai_api_2": {
+                "api_key": "legacy-credential",
+                "api_ip": legacy_endpoint,
+                "model": "legacy-model",
+            },
+        }
+        if legacy_present
+        else {}
+    )
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        LLM_API_Calls_Local.requests,
+        "Session",
+        lambda: _CapturedCustomSession(calls),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls_Local,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshotStub(legacy_values),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls_Local,
+        "load_settings",
+        lambda: legacy_values,
+    )
+    gateway = ConsoleProviderGateway(config_provider=lambda: config, environ={})
+
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider, streaming=False)
+    )
+    assert resolution.ready is True
+    assert resolution.base_url == expected_chat_url
+    assert [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "hello"}],
+        )
+    ] == ["ok"]
+
+    assert calls == [(expected_chat_url, f"Bearer {owner_credential}")]
+    assert legacy_endpoint not in {url for url, _credential in calls}
 
 
 @pytest.mark.asyncio
