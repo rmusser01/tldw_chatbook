@@ -6,6 +6,8 @@
 
 **Architecture:** `LibraryScreen` remains the canonical owner of query, match index, and mode. A focused search-controls widget and a focused lazy content-body widget own in-place presentation updates, while `LibraryMediaViewer` provides the narrow screen-facing coordination API. The legacy `MediaViewerPanel` keeps its existing search semantics but applies non-empty typing through a generation-guarded 250 ms timer and performs one Markdown update per applied search.
 
+Task 1 verification also repairs the Windows test-network boundary under ADR-058. The process-wide guard wraps the captured real `socket.socketpair()` with a same-thread dynamic exemption so Python's Windows Proactor bootstrap can create its internal wakeup channel without permitting ordinary or concurrent-thread application egress.
+
 **Tech Stack:** Python 3.11+, Textual 8.x, Rich `Text`, pytest, pytest-asyncio, Ruff.
 
 ## Global Constraints
@@ -20,9 +22,13 @@
 - A legacy search callback must be invalidated by newer input, clear, media replacement, clear-display, and unmount.
 - The legacy display path performs one `Markdown.update(content)` and never the empty-string cache-busting update.
 - Do not add dependencies, persistence, workers, or changes to Markdown source-line geometry.
-- ADR required: no.
-- ADR path: N/A.
-- ADR reason: the work applies existing widget ownership and Textual timer patterns without changing persistence, security, dependencies, services, or cross-module contracts.
+- Keep the test network guard installed at import time and default-deny for protected address families.
+- A socketpair exemption must be current-thread-only, nested, restored in `finally`, and must never mutate `_allowed` or `_INET_FAMILIES`.
+- Ordinary same-thread and concurrent-thread `AF_INET`/`AF_INET6` egress remains blocked and recorded.
+- Literal async pytest commands must work on Windows without the TASK-15100 guarded-family mutation workaround.
+- ADR required: yes.
+- ADR path: `backlog/decisions/058-thread-scoped-test-socketpair-exemption.md`.
+- ADR reason: the review-expanded scope changes the repository-wide test network security boundary and its runtime interception contract.
 
 ## File Structure
 
@@ -33,6 +39,9 @@
 - Modify `Tests/UI/test_library_shell.py`: product-path regressions for Enter submission, screen/viewer/Markdown identity, focus, highlighting, scrolling, mode reuse, and latency evidence.
 - Modify `tldw_chatbook/Widgets/Media/media_viewer_panel.py`: guarded legacy debounce lifecycle and single-update rendering.
 - Create `Tests/UI/test_media_viewer_content_search_debounce.py`: mounted timer and Markdown update-count regressions.
+- Modify `Tests/network_guard.py`: wrap the captured real socketpair with a nested thread-local dynamic exemption while preserving default denial everywhere else.
+- Modify `Tests/test_network_guard.py`: prove real Windows socketpair operation, cross-thread isolation, exceptional restoration, idempotence, and ordinary denial.
+- Modify `backlog/docs/lessons-testing-evidence.md`: replace the temporary TASK-15100 workaround guidance with the verified ADR-058 resolution and literal command evidence.
 - Modify `backlog/tasks/task-15458 - Library-media-viewer---in-place-match-navigation-instead-of-full-document-re-parse.md`: status, implementation plan, evidence, completed criteria, and implementation notes.
 
 ---
@@ -43,6 +52,9 @@
 
 - Create: `tldw_chatbook/Widgets/Library/library_media_content.py`
 - Create: `Tests/Library/test_library_media_content.py`
+- Modify: `Tests/network_guard.py`
+- Modify: `Tests/test_network_guard.py`
+- Modify: `backlog/docs/lessons-testing-evidence.md`
 
 **Interfaces:**
 
@@ -50,6 +62,7 @@
 - Produces: `LibraryMediaContentSearchControls(is_markdown: bool, query: str, matches: tuple[int, ...], match_index: int, **kwargs)`.
 - Produces: `sync_query_state(*, is_markdown: bool, query: str, matches: tuple[int, ...], match_index: int) -> None`.
 - Produces: `sync_match_index(*, matches: tuple[int, ...], match_index: int) -> None`.
+- Produces: a private guarded `socket.socketpair` wrapper whose exemption is limited to the current thread's dynamic call extent.
 
 - [ ] **Step 1: Write mounted failing tests for structural and in-place update paths**
 
@@ -196,6 +209,108 @@ Run the focused test command from Step 2. Then temporarily replace the `sync_mat
 ```powershell
 git add tldw_chatbook/Widgets/Library/library_media_content.py Tests/Library/test_library_media_content.py
 git commit -m "feat(library): add scoped media search controls"
+```
+
+- [ ] **Step 6: Add failing status and Windows network-guard regressions**
+
+In `Tests/Library/test_library_media_content.py`, directly cover both status branches omitted by the first implementation review:
+
+```python
+def test_status_text_reports_no_matches() -> None:
+    controls = LibraryMediaContentSearchControls(
+        is_markdown=True,
+        query="missing",
+        matches=(),
+        match_index=0,
+    )
+    assert controls._status_text() == "No matches"
+
+
+def test_status_text_wraps_match_index_before_formatting() -> None:
+    controls = LibraryMediaContentSearchControls(
+        is_markdown=True,
+        query="budget",
+        matches=(2, 8),
+        match_index=3,
+    )
+    assert controls._status_text() == "Match 2 of 2 matches"
+```
+
+In `Tests/test_network_guard.py`, add a Windows-only real socketpair test that exchanges one byte, closes both sockets in `finally`, and asserts `network_guard.blocked_attempts() == ()`:
+
+```python
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows TCP fallback only")
+def test_windows_socketpair_bootstrap_is_allowed_without_guard_mutation() -> None:
+    families_before = network_guard._INET_FAMILIES
+    left, right = socket.socketpair()
+    try:
+        left.sendall(b"x")
+        assert right.recv(1) == b"x"
+    finally:
+        left.close()
+        right.close()
+    assert network_guard._INET_FAMILIES is families_before
+    assert network_guard.blocked_attempts() == ()
+```
+
+Add a cross-thread test that monkeypatches `network_guard._real_socketpair` with a function that sets an `entered` event and waits on a `release` event. Start `socket.socketpair()` in one thread; while that thread is inside the wrapper, attempt a direct `AF_INET` `socket.connect()` from the test thread and assert `BlockedNetworkAccess` plus a drained record. Release and join the worker in `finally`, asserting it terminated.
+
+Add a failure-restoration test that monkeypatches `_real_socketpair` to raise `RuntimeError("socketpair failed")`, asserts `socket.socketpair()` propagates that error, then asserts a direct `AF_INET` `socket.connect()` is blocked and recorded. Add an idempotence assertion that repeated `network_guard.install()` leaves `socket.socketpair is network_guard._guarded_socketpair`.
+
+- [ ] **Step 7: Run literal commands and verify the pre-fix failures**
+
+Run without changing `network_guard._INET_FAMILIES`:
+
+```powershell
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/test_network_guard.py -q
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/Library/test_library_media_content.py -q
+```
+
+Expected before implementation: the Windows real-socketpair test and literal async component tests fail when `_fallback_socketpair()` reaches the guarded loopback connect. The status tests expose any missing `No matches` or modulo formatting behavior.
+
+- [ ] **Step 8: Implement the minimal thread-scoped socketpair exemption**
+
+In `Tests/network_guard.py`, import `threading`, capture `_real_socketpair = socket.socketpair` beside the other captured functions, and create `_socketpair_state = threading.local()`. Add:
+
+```python
+def _inside_socketpair() -> bool:
+    return getattr(_socketpair_state, "depth", 0) > 0
+
+
+def _guarded_socketpair(*args: Any, **kwargs: Any):  # noqa: ANN401
+    previous_depth = getattr(_socketpair_state, "depth", 0)
+    _socketpair_state.depth = previous_depth + 1
+    try:
+        return _real_socketpair(*args, **kwargs)
+    finally:
+        _socketpair_state.depth = previous_depth
+```
+
+Change `_should_block` to deny only when neither the existing explicit global opt-in nor the current thread's socketpair extent permits the operation:
+
+```python
+return not _allowed and not _inside_socketpair() and family in _INET_FAMILIES
+```
+
+Apply the same `_inside_socketpair()` condition to `_guarded_create_connection`, because a future standard-library socketpair implementation may use that captured public helper rather than `socket.connect` directly. In `install()`, assign `socket.socketpair = _guarded_socketpair` during the same idempotent patch operation. Do not change `_allowed`, `_INET_FAMILIES`, `_deny`, or the recording contract.
+
+- [ ] **Step 9: Run guard and component tests, then mutation-check isolation**
+
+Run both literal commands from Step 7. Then temporarily replace the thread-local state with one process-global depth; confirm the cross-thread test fails because the direct connection is permitted. Restore `threading.local()` and rerun both commands green.
+
+Run the existing synchronous denial tests together with the async component test and confirm protected families remain unchanged before and after the process:
+
+```powershell
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/test_network_guard.py Tests/Library/test_library_media_content.py -q
+```
+
+- [ ] **Step 10: Record the resolved Windows incident and commit Task 1 review fixes**
+
+Update the TASK-15100 Windows follow-up in `backlog/docs/lessons-testing-evidence.md` with the ADR-058 resolution: the real socketpair is wrapped with a nested current-thread exemption; ordinary and concurrent-thread egress remain denied; the literal async pytest command now passes without mutating protected families. Preserve the original incident as evidence rather than deleting it.
+
+```powershell
+git add Tests/network_guard.py Tests/test_network_guard.py Tests/Library/test_library_media_content.py backlog/docs/lessons-testing-evidence.md
+git commit -m "fix(testing): allow guarded Windows socketpair bootstrap"
 ```
 
 ---
@@ -613,6 +728,7 @@ git commit -m "perf(media): debounce legacy content search"
 
 ```powershell
 & 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/Library/test_library_media_content.py Tests/UI/test_media_viewer_content_search_debounce.py -v
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/test_network_guard.py -q
 & 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/UI/test_library_shell.py -k 'media_content_search or media_viewer_raw_toggle or media_viewer_defaults_markdown or media_viewer_inplace' -v -s
 & 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/UI/test_media_window_v2_parity.py Tests/UI/test_media_handoffs.py -q
 ```
@@ -622,7 +738,7 @@ Expected: all focused tests pass; the output includes the after-change median la
 - [ ] **Step 2: Run static analysis and the broader regression suite**
 
 ```powershell
-& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m ruff check tldw_chatbook/Widgets/Library/library_media_content.py tldw_chatbook/Widgets/Library/library_media_viewer.py tldw_chatbook/UI/Screens/library_screen.py tldw_chatbook/Widgets/Media/media_viewer_panel.py Tests/Library/test_library_media_content.py Tests/UI/test_library_shell.py Tests/UI/test_media_viewer_content_search_debounce.py
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m ruff check tldw_chatbook/Widgets/Library/library_media_content.py tldw_chatbook/Widgets/Library/library_media_viewer.py tldw_chatbook/UI/Screens/library_screen.py tldw_chatbook/Widgets/Media/media_viewer_panel.py Tests/network_guard.py Tests/test_network_guard.py Tests/Library/test_library_media_content.py Tests/UI/test_library_shell.py Tests/UI/test_media_viewer_content_search_debounce.py
 & 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest -q
 git diff --check origin/dev...HEAD
 ```
@@ -637,7 +753,7 @@ Record terminal size, media fixture size, actions, visible results, and any limi
 
 - [ ] **Step 4: Complete the Backlog task source of truth**
 
-Directly edit the five-digit task file, as required by `backlog/docs/lessons-backlog-hygiene.md`, because Backlog CLI 1.44.0 corrupts five-digit IDs. Check all three acceptance criteria, add measured before/after latency and parse/identity counts, list exact verification commands, and add:
+Directly edit the five-digit task file, as required by `backlog/docs/lessons-backlog-hygiene.md`, because Backlog CLI 1.44.0 corrupts five-digit IDs. Check all four acceptance criteria, add measured before/after latency and parse/identity counts, list exact verification commands, and add:
 
 ```markdown
 ## Implementation Notes
@@ -645,7 +761,8 @@ Directly edit the five-digit task file, as required by `backlog/docs/lessons-bac
 - Extracted scoped Library search controls and a lazy persistent content body so match navigation updates status/highlighting/scroll state without remounting the screen or reparsing Markdown.
 - Preserved Enter-to-search, Rendered-by-default Markdown behavior, Raw highlighting, wraparound navigation, and focus continuity.
 - Debounced legacy content search at 250 ms with monotonic lifecycle invalidation and one Markdown update per applied query.
-- ADR required: no; the implementation follows existing Textual widget ownership and timer boundaries.
+- Repaired Windows async-test bootstrap under ADR-058 with a nested current-thread socketpair exemption; literal pytest commands pass while ordinary and concurrent-thread egress remain denied and recorded.
+- ADR required: yes; followed `backlog/decisions/058-thread-scoped-test-socketpair-exemption.md` for the review-expanded test security boundary.
 ```
 
 Add a lessons entry only if implementation or UAT exposes a reproducible trap that generalizes beyond this task; do not add one merely to fill the checklist.
