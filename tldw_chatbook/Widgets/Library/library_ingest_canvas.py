@@ -1066,6 +1066,16 @@ class LibraryIngestCanvas(VerticalScroll):
         # noise rather than a user edit -- see ``_handle_option_value_changed``.
         self._reported_option_values: dict[tuple[str, str], Any] = {}
 
+    def sync_state(self, state: LibraryIngestCanvasState) -> None:
+        """Rebuild only the mounted ingest canvas from a complete snapshot.
+
+        Args:
+            state: Complete ingest form and submission state to render.
+        """
+        self.state = state
+        self._reported_option_values.clear()
+        self.refresh(recompose=True)
+
     def _compose_type_group(
         self,
         group: str,

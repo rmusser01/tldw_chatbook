@@ -44,6 +44,15 @@ class LibrarySearchRagPanel(VerticalScroll):
         super().__init__(**kwargs)
         self.state = state
 
+    def sync_state(self, state: LibraryRagPanelState) -> None:
+        """Rebuild only this mounted Search/RAG panel from ``state``.
+
+        Args:
+            state: Complete Search/RAG controls and results state to render.
+        """
+        self.state = state
+        self.refresh(recompose=True)
+
     def compose(self) -> ComposeResult:
         # task-2859 item 7: drop the "Library " prefix (this canvas already
         # lives inside the Library destination) and match the rail row's

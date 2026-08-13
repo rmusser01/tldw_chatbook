@@ -170,10 +170,88 @@ class LibraryPromptsListCanvas(Vertical):
         self.styles.min_width = 40
 
     def compose(self) -> ComposeResult:
+        if self.mode == "loading":
+            yield Static(
+                "Loading prompt…",
+                id="library-prompt-loading",
+                classes="destination-purpose",
+                markup=False,
+            )
+            return
         if self.mode == "editor":
             yield from self._compose_editor()
             return
         yield from self._compose_list()
+
+    def sync_state(
+        self,
+        *,
+        state: PromptsListState | None,
+        sort_mode: str,
+        filter_value: str,
+        browse_result: PromptBrowseResult | None,
+        mode: str,
+        editor_state: PromptEditorState | None,
+        conflict: bool,
+        status: str,
+        show_open_existing: bool,
+        import_open: bool,
+        import_path: str,
+        import_status: str,
+        dirty: bool,
+        can_update_original: bool,
+        include_starter_content: bool,
+        history_state: PromptHistoryState | None,
+        history_current_compatible: bool,
+        collection_label: str,
+        membership_state: PromptMembershipState | None,
+        sort_choices_visible: bool,
+    ) -> None:
+        """Apply a complete prompt snapshot within the mounted canvas.
+
+        Args:
+            state: Prompt list snapshot, or ``None`` outside list mode.
+            sort_mode: Active prompt sort identifier.
+            filter_value: Current prompt filter text.
+            browse_result: Paginated prompt browse result.
+            mode: Canvas surface to render.
+            editor_state: Prompt editor snapshot.
+            conflict: Whether the open prompt has an edit conflict.
+            status: Current prompt editor status copy.
+            show_open_existing: Whether to offer opening an existing prompt.
+            import_open: Whether the prompt import form is expanded.
+            import_path: Current prompt import path.
+            import_status: Current prompt import outcome copy.
+            dirty: Whether the prompt editor has unsaved changes.
+            can_update_original: Whether save may update the original prompt.
+            include_starter_content: Whether create mode uses starter content.
+            history_state: Prompt version-history snapshot.
+            history_current_compatible: Whether history matches the open prompt.
+            collection_label: Collection membership label for the prompt.
+            membership_state: Prompt collection-membership snapshot.
+            sort_choices_visible: Whether the sort chooser is expanded.
+        """
+        self.state = state
+        self.sort_mode = sort_mode
+        self.filter_value = filter_value
+        self.browse_result = browse_result
+        self.mode = mode
+        self.editor_state = editor_state
+        self.conflict = conflict
+        self.status = status
+        self.show_open_existing = show_open_existing
+        self.import_open = import_open
+        self.import_path = import_path
+        self.import_status = import_status
+        self.dirty = dirty
+        self.can_update_original = can_update_original
+        self.include_starter_content = include_starter_content
+        self.history_state = history_state
+        self.history_current_compatible = history_current_compatible
+        self.collection_label = collection_label
+        self.membership_state = membership_state
+        self.sort_choices_visible = sort_choices_visible
+        self.refresh(recompose=True)
 
     def _compose_list(self) -> ComposeResult:
         state = self.state

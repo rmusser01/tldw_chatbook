@@ -81,15 +81,18 @@ class LibraryNotesCanvas(Vertical):
             ``"title"``), used to label the sort control.
         filter_value: Current notes filter text, prefilled into the filter
             ``Input``.
-        mode: ``"list"`` renders the notes list; ``"editor"`` renders the
-            in-canvas note editor for ``presentation_state``; ``"create"`` renders
-            the Blank note / template picker reached from the rail's
-            Create > New note row; ``"sync"`` renders the in-canvas notes
-            sync panel for ``sync_state``.
+        mode: ``"list"`` renders the notes list; ``"loading"`` renders the
+            editor loading/retry receipt; ``"editor"`` renders the in-canvas
+            note editor for ``presentation_state``; ``"create"`` renders the
+            Blank note / template picker reached from the rail's Create > New
+            note row; ``"sync"`` renders the in-canvas notes sync panel for
+            ``sync_panel_state``.
         presentation_state: Canonical snapshot plus presentation-only state.
             Required when ``mode == "editor"``.
-        sync_state: The sync panel's display state. Required when
-            ``mode == "sync"``.
+        sync_panel_state: The sync panel's display state. Required when
+            ``mode == "sync"``. This deliberately does not use the name
+            ``sync_state`` because that name belongs to the mounted canvas's
+            targeted update hook.
         title_placeholder_only: When ``True`` (editor mode only), the title
             ``Input`` renders empty with an "Untitled" placeholder instead
             of a literal editable "Untitled" value -- LIB-14's fix for a
@@ -117,11 +120,13 @@ class LibraryNotesCanvas(Vertical):
         filter_value: str = "",
         mode: str = "list",
         presentation_state: LibraryNotePresentationState | None = None,
-        sync_state: LibraryNotesSyncState | None = None,
+        sync_panel_state: LibraryNotesSyncState | None = None,
         title_placeholder_only: bool = False,
         compact: bool = False,
         create_running: bool = False,
         create_status: str = "",
+        load_state: str = "loading",
+        load_message: str = "",
         **kwargs: Any,
     ) -> None:
         """Initialize one list, editor, create, or sync canvas.
@@ -130,14 +135,17 @@ class LibraryNotesCanvas(Vertical):
             list_state: List-mode rows, counts, selection, and empty-state copy.
             sort_mode: Active list sort key.
             filter_value: Text prefilled into the list filter.
-            mode: Canvas surface to compose: list, editor, create, or sync.
+            mode: Canvas surface to compose: list, loading, editor, create,
+                or sync.
             presentation_state: Canonical editor snapshot and UI-only flags.
-            sync_state: Display state for the sync surface.
+            sync_panel_state: Display state for the sync surface.
             title_placeholder_only: Render an empty title with an Untitled
                 placeholder for a pristine newly-created note.
             compact: Whether 60-column-safe controls and labels are active.
             create_running: Whether note creation is in progress.
             create_status: Visible creation completion or recovery status.
+            load_state: Editor-load state (``"loading"`` or ``"failed"``).
+            load_message: Recovery copy shown after an editor-load failure.
             **kwargs: Additional keyword arguments forwarded to ``Vertical``.
         """
         super().__init__(**kwargs)
@@ -146,16 +154,21 @@ class LibraryNotesCanvas(Vertical):
         self.filter_value = filter_value
         self.mode = mode
         self.presentation_state = presentation_state
-        self.sync_state = sync_state
+        self.sync_panel_state = sync_panel_state
         self.title_placeholder_only = title_placeholder_only
         self.compact = compact
         self.create_running = create_running
         self.create_status = create_status
+        self.load_state = load_state
+        self.load_message = load_message
         self.styles.width = "1fr"
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
 
     def compose(self) -> ComposeResult:
+        if self.mode == "loading":
+            yield from self._compose_loading()
+            return
         if self.mode == "editor":
             yield from self._compose_editor()
             return
@@ -166,6 +179,95 @@ class LibraryNotesCanvas(Vertical):
             yield from self._compose_sync()
             return
         yield from self._compose_list()
+
+    def sync_state(
+        self,
+        *,
+        list_state: LibraryNotesListState | None,
+        sort_mode: str,
+        filter_value: str,
+        mode: str,
+        presentation_state: LibraryNotePresentationState | None,
+        sync_panel_state: LibraryNotesSyncState | None,
+        title_placeholder_only: bool,
+        compact: bool,
+        create_running: bool,
+        create_status: str,
+        load_state: str,
+        load_message: str,
+    ) -> None:
+        """Apply a complete screen-owned snapshot within this canvas only.
+
+        The method intentionally replaces every compose input before asking
+        Textual to rebuild this widget's children. Keeping the update complete
+        prevents list/editor/sync conditionals from retaining values from the
+        previous surface while the Library shell, rail, and footer retain
+        identity.
+
+        Args:
+            list_state: Notes list snapshot, or ``None`` outside list mode.
+            sort_mode: Active Notes sort identifier.
+            filter_value: Current Notes filter text.
+            mode: Canvas surface to render.
+            presentation_state: Note editor/create presentation snapshot.
+            sync_panel_state: Notes folder-sync panel snapshot.
+            title_placeholder_only: Whether the title is placeholder-only.
+            compact: Whether compact editor controls are enabled.
+            create_running: Whether note creation is in progress.
+            create_status: Current note-creation status copy.
+            load_state: Current note-loading state identifier.
+            load_message: Current note-loading status or error copy.
+        """
+        previous_mode = self.mode
+        self.list_state = list_state
+        self.sort_mode = sort_mode
+        self.filter_value = filter_value
+        self.mode = mode
+        self.presentation_state = presentation_state
+        self.sync_panel_state = sync_panel_state
+        self.title_placeholder_only = title_placeholder_only
+        self.compact = compact
+        self.create_running = create_running
+        self.create_status = create_status
+        self.load_state = load_state
+        self.load_message = load_message
+        if previous_mode != mode:
+            self.remove_class(f"library-notes-mode-{previous_mode}")
+            self.add_class(f"library-notes-mode-{mode}")
+        self.refresh(recompose=True)
+
+    def _compose_loading(self) -> ComposeResult:
+        """Render the existing note-loading/retry surface inside the canvas."""
+        with Vertical(id="library-note-load-state"):
+            with Horizontal(id="library-note-load-heading"):
+                yield Button(
+                    "‹ Notes",
+                    id="library-note-back",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Static(
+                    "Edit note",
+                    id="library-note-loading-title",
+                    markup=False,
+                )
+            load_copy = (
+                self.load_message if self.load_state == "failed" else "Loading note…"
+            )
+            yield Static(
+                load_copy,
+                id="library-note-loading",
+                classes="destination-purpose",
+                markup=False,
+            )
+            with Vertical(id="library-note-loading-viewport"):
+                if self.load_state == "failed":
+                    yield Button(
+                        "Retry",
+                        id="library-note-load-retry",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
 
     def _compose_list(self) -> ComposeResult:
         list_state = self.list_state
@@ -719,7 +821,7 @@ class LibraryNotesCanvas(Vertical):
                     export_base, button.disabled
                 )
             return
-        if self.mode != "sync" or self.sync_state is None:
+        if self.mode != "sync" or self.sync_panel_state is None:
             return
         for value in ("bidirectional", "disk_to_db", "db_to_disk"):
             label = (
@@ -727,7 +829,7 @@ class LibraryNotesCanvas(Vertical):
                 if compact
                 else sync_direction_label(value)
             )
-            prefix = "✓ " if value == self.sync_state.direction else ""
+            prefix = "✓ " if value == self.sync_panel_state.direction else ""
             choices = self.query(f"#library-notes-sync-direction-{value}")
             if choices:
                 choices.first(Button).label = f"{prefix}{label}"
@@ -737,11 +839,11 @@ class LibraryNotesCanvas(Vertical):
                 if compact
                 else sync_conflict_label(value)
             )
-            prefix = "✓ " if value == self.sync_state.conflict else ""
+            prefix = "✓ " if value == self.sync_panel_state.conflict else ""
             choices = self.query(f"#library-notes-sync-conflict-{value}")
             if choices:
                 choices.first(Button).label = f"{prefix}{label}"
-        auto_label = auto_sync_label(self.sync_state.auto_sync)
+        auto_label = auto_sync_label(self.sync_panel_state.auto_sync)
         if compact:
             auto_label = auto_label.replace("auto-sync: every ", "Auto ", 1)
         auto = self.query("#library-notes-sync-auto")
@@ -1005,7 +1107,7 @@ class LibraryNotesCanvas(Vertical):
         Auto-sync stays a direct toggle button. All mutable controls are
         disabled while a sync run is active.
         """
-        sync_state = self.sync_state
+        sync_state = self.sync_panel_state
         if sync_state is None:
             return
         with Horizontal(id="library-notes-sync-heading"):

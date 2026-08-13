@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Static
 
-from Tests.textual_test_utils import widget_pilot
+from Tests.textual_test_utils import widget_pilot  # noqa: F401
 from tldw_chatbook.Library.library_notes_state import LibraryNotesListState
 from tldw_chatbook.Library.library_notes_sync_state import LibraryNotesSyncState
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
@@ -38,7 +38,7 @@ def _sync_state() -> LibraryNotesSyncState:
 # concepts never related anywhere -- one placement sentence per surface.
 
 
-async def test_database_mode_list_carries_a_placement_sentence(widget_pilot):
+async def test_database_mode_list_carries_a_placement_sentence(widget_pilot):  # noqa: F811
     async with await widget_pilot(
         LibraryNotesCanvas,
         list_state=_list_state(),
@@ -53,11 +53,11 @@ async def test_database_mode_list_carries_a_placement_sentence(widget_pilot):
         assert "Sync" in text
 
 
-async def test_sync_mode_placement_sentence_names_files_mode(widget_pilot):
+async def test_sync_mode_placement_sentence_names_files_mode(widget_pilot):  # noqa: F811
     async with await widget_pilot(
         LibraryNotesCanvas,
         mode="sync",
-        sync_state=_sync_state(),
+        sync_panel_state=_sync_state(),
     ) as pilot:
         await pilot.pause()
         purpose = pilot.app.query_one(
