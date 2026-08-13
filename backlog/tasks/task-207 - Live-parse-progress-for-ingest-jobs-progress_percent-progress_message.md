@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-12 17:34'
-updated_date: '2026-08-13 14:07'
+updated_date: '2026-08-13 14:41'
 labels:
   - follow-up
   - ingest
@@ -58,6 +58,7 @@ Detailed plan: `Docs/superpowers/plans/2026-08-12-task-207-live-ingest-progress.
 
 ## Implementation Notes
 
+- Qodo follow-up on PR #1589 addressed all three posted findings without changing scope or ADR authority. Fractional measured progress is now floored so only an exact `100.0` renders `100%`; partial-construction and detached queue cleanup errors now include the failing operation and safe queue type; and the public event/sink/emitter/formatter APIs now document their arguments and return contracts in Google style. RED evidence reproduced premature `100%` plus both generic cleanup logs; focused GREEN evidence was **12 formatter tests** and **2 cleanup-log tests**. Broader affected verification was **239 passed, 1 environment-only symlink test deselected** plus **7 runner cleanup/drain tests passed**; scoped Ruff, compile, AST docstring-contract, and diff checks passed. The deselected test requires Windows symlink privilege and otherwise fails in fixture setup with WinError 1314 before product code.
 - Final-review fix wave: the parent drain now reconstructs every deserialized queue item with `make_parse_progress_event` under an exception guard immediately after the post-`get` stop fence. Only the reconstructed `ParseProgressEvent` reaches the latest-per-job coalescer. A hostile item whose `job_id` access raises no longer terminates the daemon drain, and the later valid event is still marshaled. The pre-marshal stop fence and the existing UI-thread reconstruction/authority checks remain unchanged as defense in depth.
 - Tightened transcription truthfulness per the user's explicit decision: audio/video adapters ignore callback argument 1 because providers use synthetic stage weights such as 10/20/80. They expose a percentage only by recomputing a finite bounded ratio from `current_time`/`total_time`, `chunk`/`total_chunks`, or `current`/`total`; booleans, non-numeric/non-finite values, invalid bounds, non-mappings, and hostile mappings produce text-only progress. Provider/private metadata is consumed only for that allowlisted calculation and never crosses the public callback.
 - Strict TDD evidence was recorded independently. Finding 1 RED: the new drain-level hostile-then-valid test failed because `ParseProgressCoalescer.accept()` dereferenced the hostile `job_id` and the thread died; GREEN: the regression passed and the focused drain set was **3 passed**. Finding 2 RED: audio/video tests exposed synthetic 10/20 and misleading 91 values instead of `None`/25/37.5, and the 19-case pure-helper table failed because the helper was absent; GREEN: adapter plus boundary cases were **21 passed**. A subsequent hostile-mapping callback-isolation mutation was separately RED then GREEN.

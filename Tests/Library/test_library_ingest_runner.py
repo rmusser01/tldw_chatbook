@@ -3274,6 +3274,87 @@ def test_create_pool_progress_resources_close_queue_when_pool_raises(
     assert progress_queue.cancelled_join is True
 
 
+def test_partial_pool_construction_cleanup_logs_operation_and_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed queue cleanup must identify its operation and resource type."""
+    from loguru import logger
+
+    class _FailingConstructionQueue:
+        def close(self) -> None:
+            raise RuntimeError("close failed")
+
+        def cancel_join_thread(self) -> None:
+            raise RuntimeError("cancel failed")
+
+    progress_queue = _FailingConstructionQueue()
+
+    class _Context:
+        def Queue(self, maxsize: int) -> _FailingConstructionQueue:
+            assert maxsize == INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE
+            return progress_queue
+
+        def Pool(self, **_kwargs: Any) -> Any:
+            raise RuntimeError("pool construction failed")
+
+    messages: list[str] = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]),
+        level="ERROR",
+    )
+    monkeypatch.setattr(multiprocessing, "get_context", lambda _name: _Context())
+    try:
+        with pytest.raises(RuntimeError, match="pool construction failed"):
+            LibraryIngestQueueMixin._create_ingest_parse_pool(_bare_ingest_mixin())
+    finally:
+        logger.remove(sink_id)
+
+    assert messages == [
+        "Error cleaning up a partially constructed Library ingest progress queue "
+        "(operation=close, queue_type=_FailingConstructionQueue).",
+        "Error cleaning up a partially constructed Library ingest progress queue "
+        "(operation=cancel_join_thread, queue_type=_FailingConstructionQueue).",
+    ]
+
+
+def test_detached_progress_queue_cleanup_logs_operation_and_resource() -> None:
+    """Detached cleanup failures must retain actionable queue context."""
+    from loguru import logger
+
+    class _FailingDetachedQueue:
+        def close(self) -> None:
+            raise RuntimeError("close failed")
+
+        def cancel_join_thread(self) -> None:
+            raise RuntimeError("cancel failed")
+
+    messages: list[str] = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]),
+        level="ERROR",
+    )
+    try:
+        teardown = LibraryIngestQueueMixin._shutdown_ingest_workers_off_thread(
+            None,
+            None,
+            None,
+            None,
+            _FailingDetachedQueue(),
+            None,
+        )
+        teardown.join(timeout=5.0)
+        assert not teardown.is_alive()
+    finally:
+        logger.remove(sink_id)
+
+    assert messages == [
+        "Error cleaning up the Library ingest progress queue "
+        "(operation=close, queue_type=_FailingDetachedQueue).",
+        "Error cleaning up the Library ingest progress queue "
+        "(operation=cancel_join_thread, queue_type=_FailingDetachedQueue).",
+    ]
+
+
 @pytest.mark.asyncio
 @pytest.mark.allow_network
 async def test_pool_submission_binds_generation_and_job_and_applies_transient_progress(

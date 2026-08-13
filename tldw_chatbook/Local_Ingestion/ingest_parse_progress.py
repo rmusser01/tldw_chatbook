@@ -84,7 +84,19 @@ def make_parse_progress_event(
     message: str,
     percent: float | None = None,
 ) -> ParseProgressEvent | None:
-    """Create an IPC-safe event or reject data outside the public contract."""
+    """Create an IPC-safe event within the public progress contract.
+
+    Args:
+        generation: Owning parse-pool generation.
+        job_id: Ingest job identifier.
+        phase: Controlled progress phase.
+        message: Human-readable progress detail.
+        percent: Optional measured percentage from zero through one hundred.
+
+    Returns:
+        A normalized progress event, or ``None`` when identity or phase data
+        falls outside the public contract.
+    """
     if (
         isinstance(generation, bool)
         or not isinstance(generation, int)
@@ -113,7 +125,15 @@ def make_parse_progress_event(
 
 
 def install_parse_progress_sink(progress_queue: Any | None) -> None:
-    """Install the worker-local non-blocking progress sink."""
+    """Install the worker-local non-blocking progress sink.
+
+    Args:
+        progress_queue: Queue-like sink supporting ``put_nowait``, or ``None``
+            to disable worker progress emission.
+
+    Returns:
+        None.
+    """
     global _progress_queue
     _progress_queue = progress_queue
 
@@ -125,7 +145,18 @@ def emit_parse_progress(
     message: str,
     percent: float | None = None,
 ) -> None:
-    """Best-effort emit one validated progress snapshot without blocking."""
+    """Best-effort emit one validated progress snapshot without blocking.
+
+    Args:
+        generation: Owning parse-pool generation.
+        job_id: Ingest job identifier.
+        phase: Controlled progress phase.
+        message: Human-readable progress detail.
+        percent: Optional measured percentage from zero through one hundred.
+
+    Returns:
+        None. Invalid events and unavailable or saturated sinks are ignored.
+    """
     event = make_parse_progress_event(generation, job_id, phase, message, percent)
     if event is None or _progress_queue is None:
         return

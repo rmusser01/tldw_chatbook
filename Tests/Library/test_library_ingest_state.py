@@ -1102,6 +1102,18 @@ def test_format_ingest_progress_line_omits_invalid_percentages(percent) -> None:
     ) == "Extracting"
 
 
+def test_format_ingest_progress_line_does_not_round_incomplete_work_to_100() -> None:
+    """A fractional measurement below 100 must not look complete."""
+    assert format_ingest_progress_line(
+        {"phase": "extracting", "percent": 99.5},
+        state=IngestJobState.PARSING,
+    ) == "99% · Extracting"
+    assert format_ingest_progress_line(
+        {"phase": "extracting", "percent": 100.0},
+        state=IngestJobState.PARSING,
+    ) == "100% · Extracting"
+
+
 def test_format_ingest_progress_line_normalizes_and_bounds_message() -> None:
     """An unbounded server message would flood the queue detail line."""
     message = "Extracting\n" + ("x" * 200)

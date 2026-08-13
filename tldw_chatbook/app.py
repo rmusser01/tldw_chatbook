@@ -2502,7 +2502,10 @@ class LibraryIngestQueueMixin:
                         except Exception:
                             logger.opt(exception=True).error(
                                 "Error cleaning up a partially constructed "
-                                "Library ingest progress queue."
+                                "Library ingest progress queue "
+                                "(operation={}, queue_type={}).",
+                                method_name,
+                                type(progress_queue).__name__,
                             )
                 raise
             return _IngestParsePoolResources(pool, progress_queue)
@@ -4215,7 +4218,10 @@ class LibraryIngestQueueMixin:
                         close()
                     except Exception:
                         logger.opt(exception=True).error(
-                            "Error closing the Library ingest progress queue."
+                            "Error cleaning up the Library ingest progress queue "
+                            "(operation={}, queue_type={}).",
+                            "close",
+                            type(progress_queue).__name__,
                         )
                 cancel_join = getattr(progress_queue, "cancel_join_thread", None)
                 if cancel_join is not None:
@@ -4223,7 +4229,10 @@ class LibraryIngestQueueMixin:
                         cancel_join()
                     except Exception:
                         logger.opt(exception=True).error(
-                            "Error cancelling the Library ingest progress queue join."
+                            "Error cleaning up the Library ingest progress queue "
+                            "(operation={}, queue_type={}).",
+                            "cancel_join_thread",
+                            type(progress_queue).__name__,
                         )
             if progress_thread is not None:
                 try:

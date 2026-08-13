@@ -1564,6 +1564,14 @@ def format_ingest_progress_line(
     A percentage is shown only when telemetry supplies a finite value within
     its documented bounds. The lifecycle state belongs to the primary queue
     row, so this detail line never repeats it.
+
+    Args:
+        progress: Optional structured progress payload.
+        state: Current ingest lifecycle state used for the quiet fallback.
+
+    Returns:
+        A bounded single-line progress description. Fractional percentages
+        are floored so incomplete work never renders as complete.
     """
     payload = progress or {}
     message = payload.get("message")
@@ -1583,7 +1591,7 @@ def format_ingest_progress_line(
         and 0 <= percent <= 100
         and math.isfinite(percent)
     ):
-        return f"{round(percent)}% · {text}"
+        return f"{math.floor(percent)}% · {text}"
     return text
 
 
