@@ -52,7 +52,24 @@ a partition of sub-legs, not of rows.
   primary rank-1 row, another returns many FALLBACK rows, and the
   primary row must lead the merged output. (An all-primary many-vs-one
   case must NOT change — the rank-fair semantics between primaries is
-  correct and kept; pin that too so the fix cannot overreach.)
+  correct and kept; pin that too so the fix cannot overreach. The AC#2
+  scenario's many-rows sub-leg must therefore be a FALLBACK sub-leg —
+  that is the defect's shape, and the only shape the fix touches.)
+- **Tier 2 only ever FILLS, never displaces** (review addition): the
+  merge truncates to top_k after concatenation, so fallback rows appear
+  only in slots tier 1 left empty. State it as a property at the merge
+  site and pin it (tier 1 holding ≥ top_k rows ⇒ zero tier-2 rows in
+  the output).
+- Cross-tier dedup is STRUCTURALLY VACUOUS — sub-legs are disjoint by
+  source_type (each sub-leg emits one source_type; `_fusion_doc_key`
+  keys on it), so a doc cannot appear in both tiers. One comment at the
+  merge site; no cross-tier `seen` machinery (a reviewer asking "what
+  about duplicates across the two interleave calls" gets the answer in
+  place).
+- Fallback independence is already pinned per sub-leg
+  (`test_*_falls_back_independently` for notes/conversations/media +
+  the prompts pin) — the all-or-nothing-per-sub-leg fact the tiering
+  rests on is existing verified behavior, not a new assumption.
 - `pipeline_builder_simple.py:370`'s twin call: plan-phase verification
   item — establish whether its fts_lists can ever carry mixed forms (if
   its legs never run fallback constructions, it needs only a comment
@@ -61,10 +78,23 @@ a partition of sub-legs, not of rows.
 
 ## The re-run: the 15400 rule, verbatim, under the fixed merge
 
-The 15400 sweep's four construction rows PLUS a fifth pre-registered row:
-**`prefix`** (per-token `"tok"*`; AC#5 promotes or rejects its 3-rescue
-lead on hybrid-level evidence — it widens as PRIMARY rows, so tiering
-does not protect against it and the matrix must show what it displaces).
+The 15400 sweep's four construction rows PLUS TWO pre-registered new
+rows (review addition — the second closes the obvious combination
+question before anyone asks it):
+- **`prefix`** (per-token `"tok"*`; AC#5 promotes or rejects its
+  3-rescue lead on hybrid-level evidence — it widens as PRIMARY rows,
+  so tiering does not protect against it and the matrix must show what
+  it displaces).
+- **`and_then_prefix`** (AND primary; per-token prefix fallback on zero
+  rows — the seam already composes this shape). It gets BOTH
+  protections: every current AND hit preserved by construction AND its
+  widening rows confined to tier 2 by the new merge. Expected census
+  ~23-24 (20 + prefix's 3 rescues, minus overlap) vs `and_then_or`'s
+  29 — it matters exactly when `and_then_or` STILL fails under the new
+  merge and this is the qualifying middle candidate. The table decides.
+The negative-composition counter extends to count ANY non-primary form
+in hybrid top-10 on negatives (or-form AND prefix-form — the 15400
+rename made the stamp vocabulary extensible for exactly this).
 
 The decision rule is 15400's, unchanged and re-applied mechanically:
 - Hard constraints: (a) `kw-plant-maintenance-record` keeps its hybrid
@@ -85,6 +115,16 @@ The decision rule is 15400's, unchanged and re-applied mechanically:
 - Staleness discriminator, census-vs-fusion caution, and the
   SHIPPED_CONTROL_CENSUS=20 control-row semantics all carry over from
   the 15400 machinery unchanged; the control row still runs `and`.
+
+## Pre-registered intermediate gate (review addition)
+
+Part A (the merge fix) is BEHAVIOR-NEUTRAL at the shipped default — no
+fallback exists under `and_stopword_trim`, so before any Part-B decision:
+- the full gated run must read 105/105 at (+0.000), and
+- the control census must still read 20/53
+on the fixed merge. Either moving is a refutation of the byte-identity
+claim and a STOP, not something to reconcile away. Only a Part-B default
+flip may move cells, and only per its own sweep row.
 
 ## AC#4 — the zero-headroom question, answered honestly
 
@@ -136,8 +176,12 @@ headroom table beside the scoped 5/7-at-rank-9 note it already carries.
   scratch profile + teardown; the 15400 live-check hole (RAG Answer
   4-min first query) is a known hazard — budget for it and report
   honestly if it recurs.
-- Worktree venv discipline: assert `tldw_chatbook.__file__` resolves in
-  the worktree before ANY measurement (the path-hook trap).
+- Worktree venv discipline: this is a FRESH worktree with NO local venv
+  — build one first (`uv venv .venv && VIRTUAL_ENV=.venv uv pip install
+  -e ".[dev,embeddings_rag]"`, the 15400 recipe), then assert
+  `tldw_chatbook.__file__` resolves in the worktree before ANY
+  measurement (the path-hook trap). The re-stamp still runs in the
+  MAIN venv (committed-fingerprint match) with PYTHONPATH forced here.
 
 ## Plan-phase verification items
 
