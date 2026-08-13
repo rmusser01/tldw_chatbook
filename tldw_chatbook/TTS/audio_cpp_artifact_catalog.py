@@ -390,7 +390,23 @@ def audio_cpp_artifact_identity_matches_recipe(
     revision: str,
     variant: str,
 ) -> bool:
-    """Match scalar recipe facts to one exact pinned artifact package."""
+    """Match scalar recipe facts to one exact pinned artifact package.
+
+    Args:
+        recipe_id: Exact reviewed recipe identifier.
+        recipe_revision: Exact reviewed recipe revision.
+        package_variant: Exact reviewed package variant.
+        recipe_artifact_ids: Artifact IDs assigned to the recipe.
+        recipe_precision: Precision declared by the recipe.
+        artifact_id: Persisted managed artifact identifier.
+        revision: Persisted managed artifact revision.
+        variant: Persisted managed artifact variant.
+
+    Returns:
+        ``True`` only when every scalar matches one package in the checked-in
+        pinned manifest. Returns ``False`` when the manifest cannot be loaded
+        or validated, or when any identity or mapping fact does not match.
+    """
 
     try:
         manifest = _cached_audio_cpp_artifact_source_manifest()
