@@ -236,6 +236,38 @@ async def _press_until_focus(
     raise AssertionError(f"{key} did not reach {target.id}; visited={visited}")
 
 
+async def _settle_pilot_until(
+    pilot: Any,
+    predicate: Any,
+    *,
+    message: str,
+) -> None:
+    """Pump bounded Pilot cycles until deferred Textual work reaches a condition."""
+
+    for _ in range(20):
+        await pilot.pause()
+        if predicate():
+            return
+    raise AssertionError(message)
+
+
+@pytest.mark.asyncio
+async def test_pilot_settle_waits_for_deferred_refresh_cycles() -> None:
+    class DelayedPilot:
+        cycles = 0
+
+        async def pause(self) -> None:
+            self.cycles += 1
+
+    pilot = DelayedPilot()
+    await _settle_pilot_until(
+        pilot,
+        lambda: pilot.cycles == 3,
+        message="deferred Textual work did not settle",
+    )
+    assert pilot.cycles == 3
+
+
 @pytest.mark.asyncio
 async def test_source_matrix_and_legacy_compatibility(
     monkeypatch: pytest.MonkeyPatch,
@@ -710,7 +742,11 @@ async def test_claim_authority_survives_screen_recompose_and_not_window_selectio
             skip_deferred_finish,
         )
         screen.refresh(recompose=True)
-        await asyncio.wait_for(deferred_skipped.wait(), timeout=3)
+        await _settle_pilot_until(
+            pilot,
+            deferred_skipped.is_set,
+            message="screen recompose did not reach deferred mount",
+        )
         replacement = screen.query_one(LLMManagementWindow)
         assert replacement is not window
         replacement.active_view = "llama-cpp"
@@ -984,10 +1020,16 @@ async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
         mode.value = "external"
         await pilot.pause()
         external_region = window.query_one("#llamacpp-gguf-external-region")
-        external_region.query_one(".gguf-source-copy", Static).scroll_visible(
-            animate=False
+        copy = external_region.query_one(".gguf-source-copy", Static)
+        copy.scroll_visible(animate=False)
+        await _settle_pilot_until(
+            pilot,
+            lambda: all(
+                token in app.export_screenshot(simplify=True)
+                for token in ("Outside", "Chatbook", "This", "used")
+            ),
+            message="external GGUF copy did not reach the compositor",
         )
-        await pilot.pause()
         text = _rendered_text(window)
         svg = app.export_screenshot(simplify=True)
         assert EXTERNAL_AUTHORITY in text
@@ -1055,7 +1097,15 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
 
         mode.scroll_visible(animate=False)
         mode.focus()
-        await pilot.pause()
+        await _settle_pilot_until(
+            pilot,
+            lambda: (
+                mode in app.screen._compositor.visible_widgets
+                and mode.region.y >= view.content_region.y
+                and mode.region.bottom <= view.content_region.bottom
+            ),
+            message=f"{provider} source mode did not settle inside its view",
+        )
         _assert_painted_inside(app, mode, view)
         await pilot.press("enter")
         await pilot.pause()
@@ -1159,6 +1209,15 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         assert refresh.has_focus
         traversed = await _press_until_focus(pilot, start)
         assert traversed[-1] == start.id
+        await _settle_pilot_until(
+            pilot,
+            lambda: (
+                start in app.screen._compositor.visible_widgets
+                and start.region.y >= view.content_region.y
+                and start.region.bottom <= view.content_region.bottom
+            ),
+            message=f"{provider} Start did not settle inside its view",
+        )
         _assert_painted_inside(app, start, view)
 
         gated_workers: list[tuple[Any, dict[str, Any]]] = []
