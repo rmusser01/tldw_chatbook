@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 from textual import on, work
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import Screen
@@ -239,6 +239,7 @@ class InstalledView(Widget):
         self._import_selecting = False
         self._import_active = False
         self._import_worker_generation: int | None = None
+        self._import_thread_entered: threading.Event | None = None
         self._import_cancelable = False
         self._import_cancel_event: threading.Event | None = None
         self._import_progress: LocalGGUFImportProgress | None = None
@@ -687,6 +688,7 @@ class InstalledView(Widget):
 
     def _begin_import(self, source: Path, *, generation: int | None = None) -> None:
         """Start one cancellable local import from retained transient state."""
+        app = self.app
         if self._non_import_lifecycle_pending():
             if generation == self._import_generation and self._import_selecting:
                 self._release_import_selection()
@@ -717,6 +719,7 @@ class InstalledView(Widget):
             self._set_import_lane_owned(True)
         self._pending_import_path = source
         self._import_cancel_event = threading.Event()
+        self._import_thread_entered = threading.Event()
         self._import_active = True
         self._import_worker_generation = generation
         self._import_cancelable = True
@@ -724,7 +727,13 @@ class InstalledView(Widget):
         self._import_status = "Importing GGUF…"
         self._import_retry_available = False
         self.refresh(recompose=True)
-        self._import_local_gguf(generation, source, self._import_cancel_event)
+        self._import_local_gguf(
+            generation,
+            source,
+            self._import_cancel_event,
+            self._import_thread_entered,
+            app,
+        )
 
     @work(
         thread=True,
@@ -738,10 +747,14 @@ class InstalledView(Widget):
         generation: int,
         source: Path,
         cancel_event: threading.Event,
+        thread_entered: threading.Event,
+        app: App,
     ) -> None:
         """Import and activate one exact managed reference off the UI loop."""
-        app = self.app
+        thread_entered.set()
         try:
+            if cancel_event.is_set():
+                return
             try:
                 service = self._service_for_worker()
                 result = service.import_local_gguf(
@@ -843,6 +856,7 @@ class InstalledView(Widget):
         if generation != self._import_worker_generation or self.is_attached:
             return
         self._import_worker_generation = None
+        self._import_thread_entered = None
         self._import_active = False
         self._import_cancelable = False
         self._set_import_lane_owned(False)
@@ -857,6 +871,7 @@ class InstalledView(Widget):
             return
         self._import_active = False
         self._import_worker_generation = None
+        self._import_thread_entered = None
         self._import_cancelable = False
         self._import_progress = None
         self._pending_import_path = None
@@ -879,6 +894,7 @@ class InstalledView(Widget):
             return
         self._import_active = False
         self._import_worker_generation = None
+        self._import_thread_entered = None
         self._import_cancelable = False
         self._import_progress = None
         self._pending_import_path = None
@@ -893,6 +909,7 @@ class InstalledView(Widget):
             return
         self._import_active = False
         self._import_worker_generation = None
+        self._import_thread_entered = None
         self._import_cancelable = False
         self._import_progress = None
         self._import_status = message
@@ -942,9 +959,19 @@ class InstalledView(Widget):
         """Cancel and invalidate import callbacks before detaching."""
         if self._import_cancel_event is not None:
             self._import_cancel_event.set()
+        queued_import = (
+            self._import_active
+            and self._import_thread_entered is not None
+            and not self._import_thread_entered.is_set()
+        )
         self._import_selecting = False
         self._pending_import_path = None
         self._import_generation += 1
+        if queued_import:
+            self._import_active = False
+            self._import_worker_generation = None
+            self._import_thread_entered = None
+            self._import_cancelable = False
         if not self._import_active:
             self._set_import_lane_owned(False)
 

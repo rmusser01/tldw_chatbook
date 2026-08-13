@@ -4193,3 +4193,48 @@ async def test_active_import_unmount_keeps_host_owned_until_worker_stops(tmp_pat
         await pilot.pause()
         screen._run_curated_preflight.assert_called_once_with()
         assert str(source) not in str(screen.notify.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_queued_import_unmount_releases_host_before_thread_body(
+    tmp_path,
+    monkeypatch,
+):
+    """Cancellation before executor entry releases ownership without mutation."""
+    import asyncio
+
+    from textual.worker import Worker
+
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"gguf")
+    service = _Task6HostImportService(tmp_path)
+    app = _app()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, _window, installed = await _task6_mounted_host(app, pilot)
+        installed._service_factory = lambda: service
+        installed._service = None
+        screen._run_curated_preflight = MagicMock(return_value=MagicMock())
+        worker_queued = asyncio.Event()
+        release_executor = asyncio.Event()
+        original_run_threaded = Worker._run_threaded
+
+        async def hold_before_executor(worker):
+            worker_queued.set()
+            await release_executor.wait()
+            return await original_run_threaded(worker)
+
+        monkeypatch.setattr(Worker, "_run_threaded", hold_before_executor)
+        installed._begin_import(source)
+        assert await _wait_for(worker_queued.is_set, pilot)
+        assert screen._local_gguf_import_active is True
+
+        await installed.remove()
+        await pilot.pause()
+
+        assert screen._local_gguf_import_active is False
+        assert service.entered.is_set() is False
+        assert service.activation_calls == 0
+        screen.post_message(_task6_install_request("curated"))
+        await pilot.pause()
+        screen._run_curated_preflight.assert_called_once_with()
