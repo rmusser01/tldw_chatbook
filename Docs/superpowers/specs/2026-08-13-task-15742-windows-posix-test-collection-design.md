@@ -14,9 +14,12 @@ Use narrow test-side capability gates.
 
 - Keep the media playback module cross-platform. Mark only the tests that
   assert real `SIGSTOP`/`SIGCONT` delivery as requiring both constants, and
-  avoid evaluating absent constants during collection. Add a platform-neutral
-  regression for the documented no-signal behavior so Windows semantics remain
-  covered rather than silently disappearing.
+  parameterize portable signal names rather than evaluating absent constants
+  during collection. Resolve the expected signal only inside a supported test.
+  Add a platform-neutral regression for the documented no-signal behavior by
+  replacing the player's imported signal seam with a private stub; do not
+  delete attributes from Python's process-global `signal` module. The test must
+  prove pause/resume clock state still updates while `os.kill` is never called.
 - Treat the profile-reference materialization module as a POSIX contract suite.
   Skip the module with an explicit reason when `fcntl` is unavailable. The
   existing simulated non-POSIX test continues to exercise the product's
@@ -37,13 +40,17 @@ Use narrow test-side capability gates.
 
 ## Verification
 
-- First retain the current Windows collection errors as RED evidence.
-- Verify both modules collect on Windows after the gates.
+- Retain the current Windows collection errors as the genuine RED evidence:
+  media parameter construction raises `AttributeError`, and TTS import raises
+  `ModuleNotFoundError`. The no-signal media regression is additional
+  characterization coverage, not a fabricated product RED.
+- Verify both modules with `pytest --collect-only` on Windows after the gates.
 - Run both focused modules; expect media behavior tests to pass and the TTS
   POSIX module to report one clear module skip on Windows.
 - Run static checks and `git diff --check`.
-- Re-run repository-wide pytest far enough to prove collection advances beyond
-  the former `SIGSTOP` and `fcntl` errors. Any later unrelated failures are
+- Re-run repository-wide `pytest --collect-only` to prove global collection
+  advances beyond the former `SIGSTOP` and `fcntl` errors, then start the full
+  suite with the repository-local temp root. Any later unrelated failures are
   reported separately rather than attributed to this task.
 
 ## ADR disposition
