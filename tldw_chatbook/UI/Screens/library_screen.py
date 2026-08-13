@@ -456,6 +456,17 @@ _LIBRARY_PROMPT_IMPORT_PARSERS = {
     ".txt": parse_txt_prompts_from_content,
 }
 _LIBRARY_PROMPTS_IMPORT_WORKER_GROUP = "library-prompts-import"
+_LIBRARY_PROMPT_WRITE_WORKER_GROUPS = frozenset(
+    {
+        "library_prompt_save",
+        "library_prompt_history_restore",
+        "library_prompt_memberships_apply",
+        _LIBRARY_PROMPTS_IMPORT_WORKER_GROUP,
+    }
+)
+_LIBRARY_PROMPT_WRITE_IN_PROGRESS_COPY = (
+    "Prompt changes are still in progress. Try again when they finish."
+)
 LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library later."
 LIBRARY_SERVICE_UNAVAILABLE_COPY = (
     "Library source services are unavailable in this runtime."
@@ -19950,6 +19961,16 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_delete_pending_selection_generation = None
         self._library_prompt_delete_pending_editor_prompt_id = None
 
+    def _library_prompt_write_worker_is_active(self) -> bool:
+        """Return whether an admitted Prompt writer has not settled yet."""
+        return any(
+            worker.group in _LIBRARY_PROMPT_WRITE_WORKER_GROUPS
+            and not worker.is_finished
+            and not worker.is_cancelled
+            for manager in (self.workers, self.app_instance.workers)
+            for worker in manager
+        )
+
     def _settle_library_prompt_delete(self, decision: PromptDeleteDecision) -> None:
         """Delete only a once-settled confirmation for the same live editor."""
         if self._library_prompts_mutation_in_flight:
@@ -19986,6 +20007,24 @@ class LibraryScreen(BaseAppScreen):
             or self._selected_prompt_id != editor_prompt_id
             or self._library_prompt_version != targets[0].expected_version
         ):
+            return
+        # The inventory check and mutation-flag acquisition stay in this one
+        # synchronous UI turn, so a new writer cannot enter between them.
+        if self._library_prompt_write_worker_is_active():
+            self._notify_library_prompt_delete_failure(
+                _LIBRARY_PROMPT_WRITE_IN_PROGRESS_COPY
+            )
+            if selection_generation is not None:
+                self.refresh(recompose=True)
+                self.call_after_refresh(
+                    self._restore_library_prompts_focus,
+                    "library-prompts-delete-selected",
+                )
+            else:
+                self._update_library_prompt_status_static(
+                    _LIBRARY_PROMPT_WRITE_IN_PROGRESS_COPY
+                )
+                self._refocus_library_prompt_delete_action()
             return
         mutation_token = int(pending)
         focus_identity = (
@@ -20278,6 +20317,16 @@ class LibraryScreen(BaseAppScreen):
         if receipt is None:
             return
         if type(receipt) is not PromptBatchDeleteResult:
+            return
+        if self._library_prompt_write_worker_is_active():
+            self._notify_library_prompt_delete_failure(
+                _LIBRARY_PROMPT_WRITE_IN_PROGRESS_COPY
+            )
+            self.refresh(recompose=True)
+            self.call_after_refresh(
+                self._restore_library_prompts_focus,
+                "library-prompts-delete-undo",
+            )
             return
         self._library_prompt_mutation_generation += 1
         mutation_token = self._library_prompt_mutation_generation

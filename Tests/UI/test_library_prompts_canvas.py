@@ -4656,6 +4656,224 @@ async def test_library_prompt_mutation_vetoes_every_import_seam(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_library_prompt_conflict_overwrite_blocks_delete_admission(tmp_path):
+    """A pre-admitted overwrite must settle before delete can own the row."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Held overwrite", author="Original", details="before"
+    )
+    prior_id, _uuid, _message = db.add_prompt(
+        name="Prior overwrite receipt", author="Prior", details="prior"
+    )
+    prior_receipt = db.soft_delete_prompts((PromptBatchTarget(prior_id, 1),))
+    save_started = threading.Event()
+    save_release = threading.Event()
+    delete_calls: list[tuple[PromptBatchTarget, ...]] = []
+    original_save = service.save_prompt
+    original_delete = service.delete_prompts
+
+    async def held_save(**kwargs: Any):
+        save_started.set()
+        await asyncio.to_thread(save_release.wait)
+        return await original_save(**kwargs)
+
+    async def recording_delete(**kwargs: Any) -> PromptBatchDeleteResult:
+        delete_calls.append(kwargs["targets"])
+        return await original_delete(**kwargs)
+
+    service.save_prompt = held_save
+    service.delete_prompts = recording_delete
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.app_instance.notify = host.notify
+        host._notifications.clear()
+        screen._library_prompt_delete_receipt = prior_receipt
+        screen._enter_library_prompt_conflict(
+            name="Held overwrite",
+            author="Settled author",
+            details="settled overwrite",
+            system_prompt="",
+            user_prompt="",
+            keywords_text="",
+        )
+        await pilot.pause()
+        screen.run_worker(
+            screen._resolve_library_prompt_conflict(overwrite=True),
+            exclusive=True,
+            group="library_prompt_save",
+        )
+        for _ in range(100):
+            if save_started.is_set():
+                break
+            await pilot.pause(0.02)
+        assert save_started.is_set()
+
+        try:
+            screen.handle_library_prompt_delete(Button.Pressed(Button()))
+            await pilot.pause()
+            host.screen.query_one("#prompt-delete-confirm", Button).press()
+            await pilot.pause(0.2)
+            admitted_delete_calls = list(delete_calls)
+            admitted_mutation = screen._library_prompts_mutation_in_flight
+            admitted_view = screen._library_prompts_view
+            admitted_prompt_id = screen._selected_prompt_id
+            admitted_receipt = screen._library_prompt_delete_receipt
+            admitted_status = screen._library_prompt_status
+            admitted_notifications = [
+                notice.message for notice in host._notifications
+            ]
+        finally:
+            save_release.set()
+
+        for _ in range(150):
+            active = [
+                worker
+                for worker in screen.workers
+                if worker.group == "library_prompt_save" and not worker.is_finished
+            ]
+            if not active:
+                break
+            await pilot.pause(0.02)
+
+        assert admitted_delete_calls == []
+        assert admitted_mutation is False
+        assert admitted_view == "editor"
+        assert admitted_prompt_id == prompt_id
+        assert admitted_receipt is prior_receipt
+        assert admitted_status == (
+            "Prompt changes are still in progress. Try again when they finish."
+        )
+        assert admitted_notifications == [
+            "Prompt changes are still in progress. Try again when they finish."
+        ]
+        persisted = db.fetch_prompt_details(prompt_id)
+        assert persisted is not None
+        assert persisted["deleted"] == 0
+        assert persisted["author"] == "Settled author"
+        assert persisted["details"] == "settled overwrite"
+        assert screen._library_prompt_delete_receipt is prior_receipt
+        assert screen._library_prompt_dirty is False
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_import_blocks_undo_until_import_settles(tmp_path):
+    """An app-owned import and receipt Undo cannot write SQLite together."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    deleted_id, _uuid, _message = db.add_prompt(
+        name="Import undo receipt", author="Receipt", details="deleted"
+    )
+    receipt = db.soft_delete_prompts((PromptBatchTarget(deleted_id, 1),))
+    import_path = tmp_path / "held-import.md"
+    import_path.write_text(
+        render_prompt_markdown(
+            {
+                "name": "Settled imported Prompt",
+                "author": "Importer",
+                "details": "imported honestly",
+                "system_prompt": "",
+                "user_prompt": "Imported body",
+                "keywords": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    import_started = threading.Event()
+    import_release = threading.Event()
+    restore_calls: list[tuple[PromptBatchTarget, ...]] = []
+    original_save = service.save_prompt
+    original_restore = service.restore_deleted_prompts
+
+    async def held_import_save(**kwargs: Any):
+        import_started.set()
+        await asyncio.to_thread(import_release.wait)
+        return await original_save(**kwargs)
+
+    async def recording_restore(**kwargs: Any) -> PromptBatchRestoreResult:
+        restore_calls.append(kwargs["targets"])
+        return await original_restore(**kwargs)
+
+    service.save_prompt = held_import_save
+    service.restore_deleted_prompts = recording_restore
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        host.prompt_scope_service = service
+        screen.app_instance = host
+        await _open_prompts_list(screen, pilot)
+        screen._library_prompt_delete_receipt = receipt
+        screen._library_prompts_import_open = True
+        screen._library_prompts_import_path = str(import_path)
+        screen.refresh(recompose=True)
+        undo = await _wait_for_selector(
+            screen, pilot, "#library-prompts-delete-undo"
+        )
+        worker = screen._start_library_prompts_import()
+        assert worker is not None
+        for _ in range(100):
+            if import_started.is_set():
+                break
+            await pilot.pause(0.02)
+        assert import_started.is_set()
+
+        try:
+            undo.press()
+            await pilot.pause(0.2)
+            admitted_restore_calls = list(restore_calls)
+            admitted_mutation = screen._library_prompts_mutation_in_flight
+            admitted_receipt = screen._library_prompt_delete_receipt
+            admitted_deleted = db.fetch_prompt_details(
+                deleted_id, include_deleted=True
+            )["deleted"]
+            statuses = screen.query("#library-prompts-mutation-status")
+            admitted_status = (
+                str(statuses.first().renderable) if statuses else ""
+            )
+        finally:
+            import_release.set()
+
+        for _ in range(150):
+            if worker.is_finished:
+                break
+            await pilot.pause(0.02)
+        assert worker.is_finished
+        assert admitted_restore_calls == []
+        assert admitted_mutation is False
+        assert admitted_receipt is receipt
+        assert admitted_deleted == 1
+        assert admitted_status == (
+            "Prompt changes are still in progress. Try again when they finish."
+        )
+        imported = db.fetch_prompt_details("Settled imported Prompt")
+        assert imported is not None
+        assert imported["deleted"] == 0
+        assert screen._library_prompt_delete_receipt is receipt
+        assert screen._library_prompts_import_status == (
+            "1 imported · 0 skipped (duplicate name)"
+        )
+
+        retry_undo = await _wait_for_selector(
+            screen, pilot, "#library-prompts-delete-undo"
+        )
+        retry_undo.press()
+        await _wait_for_prompt_mutation_settlement(screen, pilot)
+        assert restore_calls == [receipt.targets]
+        assert screen._library_prompt_delete_receipt is None
+        assert db.fetch_prompt_details(deleted_id)["deleted"] == 0
+
+
+@pytest.mark.asyncio
 async def test_library_prompt_history_count_is_index_only_and_first_page_is_lazy(
     tmp_path,
 ):
