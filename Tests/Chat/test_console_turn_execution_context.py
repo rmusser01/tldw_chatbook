@@ -572,6 +572,12 @@ def test_screen_selection_builder_targets_session_without_switching_view():
         settings=_settings("anthropic", "model-b", "system-b"),
     )
     fake_screen = SimpleNamespace(
+        # Real ChatScreen carries this as a CLASS-attribute default (None =
+        # no derivation pass open); the derivation path reads it
+        # unconditionally, and a SimpleNamespace double has no class default
+        # to fall back on. Went red on dev when the memo landed without this
+        # double being taught about it -- the stale-double class again.
+        _console_derivation_memo=None,
         _provider_readiness_app_config=lambda: {
             "api_settings": {
                 "openai": {"model": "configured-a"},
@@ -596,6 +602,15 @@ def test_screen_selection_builder_targets_session_without_switching_view():
             )
         ),
         _normalize_llamacpp_base_url=lambda value: value,
+    )
+    # task-15452 split the builder into a memo wrapper plus
+    # `_build_console_provider_selection_uncached`; the wrapper under test
+    # delegates to the latter through `self`, so the double borrows the real
+    # uncached half exactly as the memo-less path binds it in production.
+    fake_screen._build_console_provider_selection_uncached = (
+        lambda session_id=None: ChatScreen._build_console_provider_selection_uncached(
+            fake_screen, session_id
+        )
     )
 
     selection = ChatScreen._build_console_provider_selection(

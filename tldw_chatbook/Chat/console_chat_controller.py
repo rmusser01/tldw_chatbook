@@ -2742,10 +2742,17 @@ class ConsoleChatController:
 
     def update_provider_selection(self, selection: ConsoleProviderSelection) -> None:
         """Sync controller provider settings from a Console selection."""
+        # task-15511: the clear-below compares EFFECTIVE selections, so the
+        # model term is what would actually run -- `explicit or configured`
+        # (the exact resolution `_build_console_turn_execution_context` and
+        # the send path use). `configured_model` alone is DERIVED state: it
+        # resolves late (e.g. once a provider key exists) and can flip on a
+        # routine resync with nothing user-visible changing. Comparing it
+        # separately made that churn look like a settings change and wiped a
+        # COMPLETED run state seconds after the run finished.
         previous_selection = (
             self.provider,
-            self.model,
-            self.configured_model,
+            self.model or self.configured_model,
             self.base_url,
             self.temperature,
             self.top_p,
@@ -2784,8 +2791,7 @@ class ConsoleChatController:
         self.system_prompt = selection.system_prompt
         current_selection = (
             self.provider,
-            self.model,
-            self.configured_model,
+            self.model or self.configured_model,
             self.base_url,
             self.temperature,
             self.top_p,
