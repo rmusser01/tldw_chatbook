@@ -1433,6 +1433,217 @@ async def test_mounted_unchanged_backtrack_preserves_model_and_discovery_request
 
 
 @pytest.mark.asyncio
+async def test_first_provider_transition_reuses_completed_exact_typed_discovery():
+    from unittest.mock import AsyncMock
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {"custom": {"api_url": "https://first.example.test/v1"}}
+    }
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(
+        return_value=_typed_model_discovery_result("custom", "first-live-model")
+    )
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+
+        for _ in range(20):
+            if provider_step._selected_discovery_state == "complete":
+                break
+            await pilot.pause(0.05)
+        assert provider_step._selected_discovery_state == "complete"
+        selected_key = provider_step._selected_discovery_key
+
+        await container._advance()
+        for _ in range(20):
+            radios = list(
+                container.steps[model_index]
+                .query_one("#setup-model-choice", RadioSet)
+                .query(RadioButton)
+            )
+            if any(
+                getattr(button, "_model_id", "") == "first-live-model"
+                for button in radios
+            ):
+                break
+            await pilot.pause(0.05)
+
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        assert model_step._shown_for_discovery_key == selected_key
+        assert any(
+            getattr(button, "_model_id", "") == "first-live-model"
+            for button in model_step.query_one("#setup-model-choice", RadioSet).query(
+                RadioButton
+            )
+        ), tuple(
+            getattr(button, "_model_id", str(button.label))
+            for button in model_step.query_one("#setup-model-choice", RadioSet).query(
+                RadioButton
+            )
+        )
+        assert scope_service.discover_models.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_slow_exact_discovery_crosses_provider_to_model_without_restart():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def discover_models(**_kwargs):
+        started.set()
+        await release.wait()
+        return _typed_model_discovery_result("custom", "slow-live-model")
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {"custom": {"api_url": "https://slow.example.test/v1"}}
+    }
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(side_effect=discover_models)
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        await asyncio.wait_for(started.wait(), timeout=2)
+
+        await container._advance()
+        assert container.current_step == model_index
+        release.set()
+        for _ in range(30):
+            model_step = container.steps[model_index]
+            radios = list(
+                model_step.query_one("#setup-model-choice", RadioSet).query(RadioButton)
+            )
+            if any(
+                getattr(button, "_model_id", "") == "slow-live-model"
+                for button in radios
+            ):
+                break
+            await pilot.pause(0.05)
+
+        assert any(
+            getattr(button, "_model_id", "") == "slow-live-model"
+            for button in container.steps[model_index]
+            .query_one("#setup-model-choice", RadioSet)
+            .query(RadioButton)
+        )
+        assert scope_service.discover_models.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_unchanged_provider_model_backtrack_keeps_live_radio_and_one_writer():
+    from unittest.mock import AsyncMock
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {"custom": {"api_url": "https://stable.example.test/v1"}}
+    }
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(
+        return_value=_typed_model_discovery_result("custom", "stable-radio-model")
+    )
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        writes = []
+
+        async def commit_config(
+            settings,
+            *,
+            delete_keys=None,
+            after_write=None,
+            provider_setup_mutation=None,
+        ):
+            if provider_setup_mutation is not None:
+                writes.append(settings["chat_defaults"]["model"])
+                container._mirror_into_app_config(settings, delete_keys)
+            return True
+
+        container.commit_config = commit_config
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        voice_index = container._step_index_for_id(STEP_VOICE)
+        assert provider_index is not None and model_index is not None
+        assert voice_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        await container._advance()
+
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        for _ in range(20):
+            radios = list(
+                model_step.query_one("#setup-model-choice", RadioSet).query(RadioButton)
+            )
+            target = next(
+                (
+                    button
+                    for button in radios
+                    if getattr(button, "_model_id", "") == "stable-radio-model"
+                ),
+                None,
+            )
+            if target is not None:
+                break
+            await pilot.pause(0.05)
+        assert target is not None
+        target.value = True
+        await pilot.pause()
+        await container._advance()
+        assert container.current_step == voice_index
+        assert writes == ["stable-radio-model"]
+
+        container.show_step(provider_index)
+        await container._advance()
+        await pilot.pause(0.1)
+
+        radio_set = model_step.query_one("#setup-model-choice", RadioSet)
+        pressed = radio_set.pressed_button
+        assert pressed is not None
+        assert pressed in radio_set.query(RadioButton)
+        assert pressed.value is True
+        assert getattr(pressed, "_model_id", "") == "stable-radio-model"
+        assert model_step._effective_model_id() == "stable-radio-model"
+
+        await container._advance()
+        assert container.current_step == voice_index
+        assert writes == ["stable-radio-model"]
+        assert scope_service.discover_models.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_model_step_late_render_is_fenced_by_exact_discovery_key():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock

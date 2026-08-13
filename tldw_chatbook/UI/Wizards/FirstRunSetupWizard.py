@@ -654,6 +654,9 @@ class ProviderStep(SetupStep):
         )
         self._selected_discovery_generation = 0
         self._selected_discovery_state = "idle"
+        self._selected_discovery_credential_decision: tuple[str, str | int] | None = (
+            None
+        )
         self._selected_provider_models: dict[
             wizard_state.FirstRunModelDiscoveryKey, tuple[str, ...]
         ] = {}
@@ -838,7 +841,15 @@ class ProviderStep(SetupStep):
         if not self._discovery_visible:
             return
         self._discovery_visible = False
-        self._cancel_discovery_workers()
+        if self._can_handoff_selected_discovery():
+            if self._local_discovery_state == "in_progress":
+                self._local_discovery_state = "cancelled"
+            self._local_discovery_generation += 1
+            self._cancel_worker_groups(
+                "setup-provider-local-discovery", "setup-provider-probe"
+            )
+        else:
+            self._cancel_discovery_workers()
 
     def on_unmount(self) -> None:
         self._discovery_visible = False
@@ -959,6 +970,17 @@ class ProviderStep(SetupStep):
             source, value, self._credential_revision if revision is None else revision
         )
 
+    def _credential_decision(self) -> tuple[str, str | int]:
+        credential = self._credential_draft(revision=self._credential_revision)
+        return (
+            credential.source,
+            (
+                wizard_state._credential_value_for_boundary(credential)
+                if credential.source == "environment"
+                else self._credential_decision_generation
+            ),
+        )
+
     def _effective_provider_draft(
         self, *, revision: int | None = None
     ) -> wizard_state.FirstRunProviderDraft | None:
@@ -1037,6 +1059,7 @@ class ProviderStep(SetupStep):
             "setup-provider-probe",
         )
         self._selected_discovery_key = discovery_key
+        self._selected_discovery_credential_decision = self._credential_decision()
         self._selected_discovery_generation = generation
         self._selected_discovery_state = "in_progress"
         self._selected_provider_models.clear()
@@ -1061,6 +1084,9 @@ class ProviderStep(SetupStep):
         generation: int,
     ) -> bool:
         current_key = self._model_discovery_key(self._effective_provider_draft())
+        staged_key = self._model_discovery_key(
+            getattr(self.wizard, "staged_provider_draft", None)
+        )
         return (
             generation == self.probe_generation
             and generation == self._selected_discovery_generation
@@ -1068,8 +1094,16 @@ class ProviderStep(SetupStep):
             and discovery_key == current_key
             and discovery_key.provider_key == self.selected_provider_key
             and self.is_mounted
-            and self.is_active
+            and (self.is_active or discovery_key == staged_key)
         )
+
+    def _can_handoff_selected_discovery(self) -> bool:
+        if self._selected_discovery_state not in {"in_progress", "complete"}:
+            return False
+        staged_key = self._model_discovery_key(
+            getattr(self.wizard, "staged_provider_draft", None)
+        )
+        return staged_key is not None and staged_key == self._selected_discovery_key
 
     async def _discover_selected_provider(
         self,
@@ -1176,7 +1210,9 @@ class ProviderStep(SetupStep):
                 done.set()
 
     async def _models_from_selected_discovery(
-        self, provider_key: str
+        self,
+        provider_key: str,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = None,
     ) -> tuple[str, ...] | None:
         """Return this generation's models without starting another request."""
 
@@ -1186,7 +1222,10 @@ class ProviderStep(SetupStep):
         provider_draft = getattr(self.wizard, "staged_provider_draft", None)
         if type(provider_draft) is not wizard_state.FirstRunProviderDraft:
             provider_draft = self._effective_provider_draft()
-        discovery_key = self._model_discovery_key(provider_draft)
+        staged_discovery_key = self._model_discovery_key(provider_draft)
+        if discovery_key is not None and discovery_key != staged_discovery_key:
+            return None
+        discovery_key = staged_discovery_key
         if discovery_key is None:
             return None
         if discovery_key in self._selected_provider_models:
@@ -1497,7 +1536,6 @@ class ProviderStep(SetupStep):
         self.provider_value_for_chat_defaults = self._display_value_for(
             self.selected_provider_key
         )
-        current_credential = self._credential_draft(revision=self._credential_revision)
         previous_draft = getattr(self.wizard, "staged_provider_draft", None)
         previous_credential = (
             previous_draft.credential
@@ -1505,21 +1543,24 @@ class ProviderStep(SetupStep):
             and previous_draft.provider == self.selected_provider_key
             else None
         )
-        credential_decision: tuple[str, str | int] = (
-            current_credential.source,
-            (
-                wizard_state._credential_value_for_boundary(current_credential)
-                if current_credential.source == "environment"
-                else self._credential_decision_generation
-            ),
+        credential_decision = self._credential_decision()
+        selection_draft = self._effective_provider_draft(
+            revision=self._credential_revision
         )
-        credential_unchanged = (
-            previous_credential is not None
-            and self._last_credential_decision == credential_decision
+        selection_key = self._model_discovery_key(selection_draft)
+        selection_unchanged = (
+            selection_key is not None
+            and selection_key == self._selected_discovery_key
+            and credential_decision == self._selected_discovery_credential_decision
+        )
+        credential_unchanged = previous_credential is not None and (
+            self._last_credential_decision == credential_decision
         )
         revision = (
-            previous_credential.revision
-            if credential_unchanged
+            self._credential_revision
+            if selection_unchanged
+            else previous_credential.revision
+            if credential_unchanged and previous_credential is not None
             else max(
                 self._credential_revision,
                 previous_credential.revision if previous_credential is not None else 0,
@@ -1587,12 +1628,16 @@ class ModelStep(SetupStep):
         self._selection_discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = (
             None
         )
+        self._rendered_discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = (
+            None
+        )
         self.selected_model_id: str = ""
         # Bug-5: tracks whether selected_model_id's current value came from
         # the free-text custom Input (as opposed to the RadioSet) -- lets
         # clearing that Input fall back to any active radio selection
         # instead of leaving a stale custom value in place.
         self._model_id_from_custom_input: bool = False
+        self._model_load_generation = 0
 
     def compose_step(self) -> ComposeResult:
         with Vertical(classes="setup-model"):
@@ -1615,7 +1660,14 @@ class ModelStep(SetupStep):
 
     def _current_provider(self) -> tuple[str, str]:
         data = (self.wizard.wizard_data or {}).get(wizard_state.STEP_PROVIDER, {})
-        return str(data.get("provider_key", "")), str(data.get("provider_value", ""))
+        provider_key = str(data.get("provider_key", ""))
+        provider_value = str(data.get("provider_value", ""))
+        if provider_key:
+            return provider_key, provider_value
+        staged = getattr(self.wizard, "staged_provider_draft", None)
+        if type(staged) is wizard_state.FirstRunProviderDraft:
+            return staged.provider, staged.provider
+        return "", ""
 
     def _current_discovery_key(
         self,
@@ -1630,6 +1682,8 @@ class ModelStep(SetupStep):
 
     def on_show(self) -> None:
         super().on_show()
+        self._model_load_generation += 1
+        load_generation = self._model_load_generation
         provider_key, provider_value = self._current_provider()
         discovery_key = self._current_discovery_key()
         exact_key_changed = (
@@ -1681,18 +1735,25 @@ class ModelStep(SetupStep):
             )
         except Exception:
             pass
-        if provider_key:
+        live_radios = tuple(self.query("#setup-model-choice RadioButton"))
+        rendered_is_current = (
+            discovery_key is not None
+            and discovery_key == self._rendered_discovery_key
+            and any(getattr(button, "_model_id", "") for button in live_radios)
+        )
+        if provider_key and not rendered_is_current:
             self.run_worker(
                 partial(
                     self._load_models,
                     provider_key,
                     provider_value,
                     discovery_key,
+                    load_generation,
                 ),
                 exclusive=True,
                 group="setup-model-load",
             )
-        else:
+        elif not provider_key:
             # F-F fix: with no provider chosen yet there is nothing to
             # discover against, so the old code simply skipped this branch
             # and left the initial "(loading models…)" RadioButton in place
@@ -1705,6 +1766,7 @@ class ModelStep(SetupStep):
                     [],
                     no_provider=True,
                     discovery_key=discovery_key,
+                    load_generation=load_generation,
                 ),
                 exclusive=True,
                 group="setup-model-load",
@@ -1715,6 +1777,7 @@ class ModelStep(SetupStep):
         provider_key: str,
         provider_value: str,
         discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = None,
+        load_generation: int | None = None,
     ) -> None:
         import asyncio
 
@@ -1724,7 +1787,7 @@ class ModelStep(SetupStep):
         if isinstance(owner, ProviderStep):
             try:
                 selected_models = await asyncio.wait_for(
-                    owner._models_from_selected_discovery(provider_key),
+                    owner._models_from_selected_discovery(provider_key, discovery_key),
                     timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
                 )
             except Exception:
@@ -1771,7 +1834,11 @@ class ModelStep(SetupStep):
             models = wizard_state.curated_models_for_provider(
                 get_cli_providers_and_models(), provider_value
             )
-        await self._render_models(models[:20], discovery_key=discovery_key)
+        await self._render_models(
+            models[:20],
+            discovery_key=discovery_key,
+            load_generation=load_generation,
+        )
 
     async def _render_models(
         self,
@@ -1779,8 +1846,14 @@ class ModelStep(SetupStep):
         *,
         no_provider: bool = False,
         discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = None,
+        load_generation: int | None = None,
     ) -> None:
-        if discovery_key is not None and discovery_key != self._current_discovery_key():
+        if (
+            load_generation is not None
+            and load_generation != self._model_load_generation
+        ):
+            return
+        if discovery_key != self._current_discovery_key():
             return
         try:
             radio_set = self.query_one("#setup-model-choice", RadioSet)
@@ -1793,7 +1866,12 @@ class ModelStep(SetupStep):
         # can try to mount fresh "setup-model-option-N" ids while the stale
         # ones are still present, raising DuplicateIds.
         await radio_set.remove_children()
-        if discovery_key is not None and discovery_key != self._current_discovery_key():
+        if (
+            load_generation is not None
+            and load_generation != self._model_load_generation
+        ):
+            return
+        if discovery_key != self._current_discovery_key():
             return
         if models:
             # TASK-1503: the first entry (curated-default / top discovery hit)
@@ -1810,6 +1888,17 @@ class ModelStep(SetupStep):
             await radio_set.mount_all(
                 _button(index, model_id) for index, model_id in enumerate(models)
             )
+            selected = (
+                self.selected_model_id
+                if not self._model_id_from_custom_input
+                and self._selection_discovery_key == discovery_key
+                else ""
+            )
+            if selected:
+                for button in radio_set.query(RadioButton):
+                    if getattr(button, "_model_id", "") == selected:
+                        button.value = True
+                        break
         elif no_provider:
             await radio_set.mount(
                 SetupRadioButton(
@@ -1822,6 +1911,7 @@ class ModelStep(SetupStep):
             await radio_set.mount(
                 SetupRadioButton("(no models found — enter one below)", disabled=True)
             )
+        self._rendered_discovery_key = discovery_key
 
     @on(RadioSet.Changed, "#setup-model-choice")
     def _on_model_chosen(self, event: RadioSet.Changed) -> None:
@@ -5171,12 +5261,39 @@ class SetupWizardContainer(WizardContainer):
             return False
         if self._provider_commit_write_started:
             return False
+        if self._provider_drafts_match(self._staged_provider_draft, provider_draft):
+            return True
         self._provider_stage_generation += 1
         self._provider_commit_generation += 1
         self._staged_provider_draft = provider_draft
         self._provider_setup_committed = False
         self._committed_provider_model = ""
         return True
+
+    @staticmethod
+    def _provider_drafts_match(
+        left: wizard_state.FirstRunProviderDraft | None,
+        right: wizard_state.FirstRunProviderDraft,
+    ) -> bool:
+        """Compare exact transient drafts without retaining a secret-derived key."""
+
+        import hmac
+
+        if type(left) is not wizard_state.FirstRunProviderDraft:
+            return False
+        if left.provider != right.provider or left.endpoint != right.endpoint:
+            return False
+        left_credential = left.credential
+        right_credential = right.credential
+        if (
+            left_credential.source != right_credential.source
+            or left_credential.revision != right_credential.revision
+        ):
+            return False
+        return hmac.compare_digest(
+            wizard_state._credential_value_for_boundary(left_credential),
+            wizard_state._credential_value_for_boundary(right_credential),
+        )
 
     async def commit_staged_provider_setup(self, model_id: str) -> bool:
         """Persist the staged connection and model through one atomic mutation."""

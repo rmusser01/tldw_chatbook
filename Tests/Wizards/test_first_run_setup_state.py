@@ -1247,6 +1247,44 @@ class TestFirstRunProviderContracts:
         assert mutation.semantic_identity.credential_source == "stored"
 
     @pytest.mark.parametrize(
+        "placeholder", ("<API_KEY_HERE>", "YOUR_KEY", "your_key", "your-api-key")
+    )
+    def test_none_source_prefers_valid_custom_environment_over_placeholder_inline(
+        self, placeholder
+    ):
+        mutation = setup_state.build_first_run_provider_commit(
+            _first_run_provider_draft(source="none", value="", revision=8),
+            "custom-model",
+            {
+                "api_settings": {
+                    "custom": {
+                        "api_url": "https://example.test/v1/chat/completions",
+                        "api_key": placeholder,
+                        "api_key_env_var": "PRIVATE_CUSTOM_KEY",
+                    }
+                }
+            },
+        )
+
+        provider_values = mutation.section_values["api_settings.custom"]
+        assert provider_values["api_key_env_var"] == "PRIVATE_CUSTOM_KEY"
+        assert "api_key" in mutation.delete_keys["api_settings.custom"]
+        assert mutation.semantic_identity.credential_source == "environment"
+
+    @pytest.mark.parametrize(
+        "placeholder", ("<API_KEY_HERE>", "YOUR_KEY", "your_key", "your-api-key")
+    )
+    def test_replace_rejects_every_canonical_placeholder(self, placeholder):
+        with pytest.raises(ValueError, match="Credential value is invalid"):
+            setup_state.build_first_run_provider_commit(
+                _first_run_provider_draft(
+                    source="draft", value=placeholder, revision=9
+                ),
+                "custom-model",
+                {},
+            )
+
+    @pytest.mark.parametrize(
         ("model_id", "app_config"),
         [
             ("", {}),
@@ -1428,6 +1466,28 @@ class TestSecretPresence:
         assert presence.env_var_set is True
         assert presence.env_var_declared is True
         assert presence.configured is True
+
+    @pytest.mark.parametrize(
+        "placeholder", ("", "<API_KEY_HERE>", "YOUR_KEY", "your_key", "your-api-key")
+    )
+    def test_canonical_placeholders_never_count_as_inline_or_environment(
+        self, placeholder
+    ):
+        cfg = {
+            "api_settings": {
+                "custom": {
+                    "api_key": placeholder,
+                    "api_key_env_var": "PRIVATE_CUSTOM_KEY",
+                }
+            }
+        }
+        presence = read_provider_secret_presence(
+            cfg, {"PRIVATE_CUSTOM_KEY": placeholder}, provider_key="custom"
+        )
+
+        assert presence.inline_configured is False
+        assert presence.env_var_set is False
+        assert presence.configured is False
 
     def test_unset_declared_env_var_remains_owned_configuration(self):
         cfg = {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}}

@@ -15,6 +15,7 @@ from ..config import (
     DEFAULT_CONFIG_FROM_TOML,
     ConfigMutationResult,
     apply_settings_mutation_to_cli_config,
+    is_valid_provider_api_key,
 )
 from .provider_endpoint_contract import (
     canonical_connection_identity,
@@ -1094,8 +1095,14 @@ def _safe_model(value: object) -> str | None:
 
 
 def _validate_credential_value(value: str) -> None:
-    if len(value) > _MAX_SECRET_CHARS or any(
-        unicode_category(character) in _UNSAFE_TEXT_CATEGORIES for character in value
+    stripped = value.strip()
+    if (
+        (stripped and not is_valid_provider_api_key(stripped))
+        or len(value) > _MAX_SECRET_CHARS
+        or any(
+            unicode_category(character) in _UNSAFE_TEXT_CATEGORIES
+            for character in value
+        )
     ):
         raise ValueError("Credential value is invalid.")
 

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import ModelDiscoveryCache
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import DiscoveredModel
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_merge import (
@@ -81,6 +85,93 @@ def test_cache_list_returns_immutable_snapshot():
     assert isinstance(listed, tuple)
     cache.clear("OpenAI")
     assert [m.model_id for m in listed] == ["gpt-4.1"]
+
+
+def test_cache_bounds_many_endpoint_snapshots_and_keeps_recently_used():
+    cache = ModelDiscoveryCache(max_snapshots=32, max_models=64)
+    for index in range(1000):
+        cache.replace(
+            "Custom",
+            f"endpoint-{index}",
+            (model(f"model-{index}", endpoint_fingerprint=f"endpoint-{index}"),),
+        )
+        if index == 990:
+            assert cache.has_snapshot("Custom", "endpoint-990")
+
+    assert cache.snapshot_count <= 32
+    assert cache.model_count <= 64
+    assert cache.has_snapshot("Custom", "endpoint-990")
+    assert not cache.has_snapshot("Custom", "endpoint-0")
+
+
+def test_cache_model_budget_evicts_whole_snapshots_without_partial_values():
+    cache = ModelDiscoveryCache(max_snapshots=10, max_models=3)
+    cache.replace("Custom", "one", tuple(model(f"one-{i}") for i in range(2)))
+    cache.replace("Custom", "two", tuple(model(f"two-{i}") for i in range(2)))
+
+    assert cache.list("Custom", "one") == ()
+    assert [item.model_id for item in cache.list("Custom", "two")] == [
+        "two-0",
+        "two-1",
+    ]
+    assert cache.model_count == 2
+
+
+def test_cache_concurrent_replace_list_and_clear_remain_bounded():
+    cache = ModelDiscoveryCache(max_snapshots=20, max_models=40)
+
+    def mutate(index: int) -> None:
+        endpoint = f"endpoint-{index}"
+        cache.replace(
+            "Custom",
+            endpoint,
+            (model(f"model-{index}", endpoint_fingerprint=endpoint),),
+        )
+        cache.list("Custom", endpoint)
+        if index % 17 == 0:
+            cache.clear("Unused")
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        tuple(executor.map(mutate, range(1000)))
+
+    assert cache.snapshot_count <= 20
+    assert cache.model_count <= 40
+
+
+@pytest.mark.parametrize(
+    ("provider", "endpoint"),
+    (("x" * 129, "endpoint"), ("Custom", "x" * 513), (object(), "endpoint")),
+)
+def test_cache_rejects_unbounded_or_non_string_snapshot_identity(provider, endpoint):
+    cache = ModelDiscoveryCache()
+
+    with pytest.raises((TypeError, ValueError), match="identity"):
+        cache.replace(provider, endpoint, ())
+
+    assert cache.snapshot_count == 0
+
+
+def test_cache_rejects_non_model_values_without_partial_snapshot():
+    cache = ModelDiscoveryCache()
+
+    with pytest.raises(TypeError, match="model snapshot"):
+        cache.replace("Custom", "endpoint", (model("valid"), object()))
+
+    assert not cache.has_snapshot("Custom", "endpoint")
+
+
+def test_cache_rejects_snapshot_over_model_budget_without_replacing_current():
+    cache = ModelDiscoveryCache(max_models=2)
+    cache.replace("Custom", "endpoint", (model("current"),))
+
+    with pytest.raises(ValueError, match="bounds"):
+        cache.replace(
+            "Custom",
+            "endpoint",
+            tuple(model(f"too-many-{index}") for index in range(3)),
+        )
+
+    assert [item.model_id for item in cache.list("Custom", "endpoint")] == ["current"]
 
 
 def test_merge_preserves_saved_order_then_adds_discovered_models():

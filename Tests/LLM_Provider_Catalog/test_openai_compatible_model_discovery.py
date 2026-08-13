@@ -947,6 +947,38 @@ async def test_discovery_streams_and_rejects_oversized_body_before_json_decode()
     assert stream.closed is True
 
 
+@pytest.mark.parametrize("content_encoding", ("gzip", "deflate", "br"))
+@pytest.mark.asyncio
+async def test_discovery_rejects_encoded_body_at_raw_network_boundary(
+    content_encoding: str,
+):
+    stream = _ObservedStream((b"compressed-expansion-bomb",))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["accept-encoding"] == "identity"
+        return httpx.Response(
+            200,
+            headers={"content-encoding": content_encoding},
+            stream=stream,
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await discover_openai_compatible_models(
+            provider="Custom",
+            provider_list_key="Custom",
+            endpoint="https://api.example.test/v1",
+            api_key=None,
+            client=client,
+        )
+
+    assert result.status == "error"
+    assert result.models == ()
+    assert result.error is not None
+    assert result.error.kind == "invalid_response"
+    assert "compressed" in result.error.message.casefold()
+    assert stream.closed is True
+
+
 @pytest.mark.asyncio
 async def test_discovery_cancellation_closes_streamed_response():
     gate = asyncio.Event()

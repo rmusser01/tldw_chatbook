@@ -74,8 +74,15 @@ def connect_error_is_refused(error: BaseException) -> bool:
     return False
 
 
+class UnsupportedModelResponseEncoding(ValueError):
+    """The peer ignored identity encoding for a bounded models response."""
+
+
 async def read_bounded_model_response(response: httpx.Response) -> bytes | None:
-    """Read a streamed response up to the shared decoded-byte limit."""
+    """Read raw streamed bytes without allowing transparent decompression."""
+    content_encoding = response.headers.get("content-encoding", "identity")
+    if content_encoding.strip().casefold() not in {"", "identity"}:
+        raise UnsupportedModelResponseEncoding
     content_length = response.headers.get("content-length")
     if content_length is not None:
         try:
@@ -85,7 +92,10 @@ async def read_bounded_model_response(response: httpx.Response) -> bytes | None:
             pass
 
     body = bytearray()
-    async for chunk in response.aiter_bytes():
+    if response.is_stream_consumed:
+        buffered = response.content
+        return buffered if len(buffered) <= MODEL_PROBE_RESPONSE_MAX_BYTES else None
+    async for chunk in response.aiter_raw():
         if len(body) + len(chunk) > MODEL_PROBE_RESPONSE_MAX_BYTES:
             return None
         body.extend(chunk)
@@ -398,6 +408,7 @@ async def _get_models_payload(
         async with http_client.stream(
             "GET",
             url,
+            headers={"Accept-Encoding": "identity"},
             timeout=timeout,
             follow_redirects=False,
         ) as response:
@@ -407,6 +418,8 @@ async def _get_models_payload(
                     f"No models endpoint at {display} (HTTP {response.status_code}).",
                 )
             body = await read_bounded_model_response(response)
+    except UnsupportedModelResponseEncoding:
+        return None, "Compressed models responses are not supported."
     except httpx.TimeoutException:
         return None, f"Timed out contacting {display}."
     except httpx.HTTPError:

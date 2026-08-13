@@ -437,7 +437,7 @@ def coerce_wizard_flag(raw: Any) -> bool:
 
 
 def _is_real_secret(value: Any) -> bool:
-    """A non-empty string that is not a <PLACEHOLDER> template value."""
+    """A non-empty string that is not a generic template placeholder."""
     if not isinstance(value, str) or not value.strip():
         return False
     stripped = value.strip()
@@ -445,6 +445,13 @@ def _is_real_secret(value: Any) -> bool:
         stripped.startswith(_PLACEHOLDER_MARKERS[0])
         and stripped.endswith(_PLACEHOLDER_MARKERS[1])
     )
+
+
+def _is_real_provider_api_key(value: Any) -> bool:
+    """Return the shared canonical provider-credential validity decision."""
+    from tldw_chatbook.config import is_valid_provider_api_key
+
+    return is_valid_provider_api_key(value)
 
 
 def any_provider_configured(
@@ -480,13 +487,13 @@ def any_provider_configured(
     for settings in api_settings.values():
         if not isinstance(settings, Mapping):
             continue
-        if _is_real_secret(settings.get("api_key")):
+        if _is_real_provider_api_key(settings.get("api_key")):
             return True
         env_var = settings.get("api_key_env_var")
         if (
             isinstance(env_var, str)
             and env_var.strip()
-            and environ.get(env_var.strip())
+            and _is_real_provider_api_key(environ.get(env_var.strip()))
         ):
             return True
     return False
@@ -1027,7 +1034,9 @@ def stored_plaintext_key_present(app_config: Mapping[str, object]) -> bool:
     if not isinstance(api_settings, Mapping):
         return False
     for settings in api_settings.values():
-        if isinstance(settings, Mapping) and _is_real_secret(settings.get("api_key")):
+        if isinstance(settings, Mapping) and _is_real_provider_api_key(
+            settings.get("api_key")
+        ):
             return True
     return False
 
@@ -1392,8 +1401,8 @@ def read_provider_secret_presence(
         if env_var_declared
         else default_api_key_env_var(provider_key)
     )
-    env_var_set = bool(env_var and environ.get(env_var))
-    inline = _is_real_secret(settings.get("api_key"))
+    env_var_set = bool(env_var and _is_real_provider_api_key(environ.get(env_var)))
+    inline = _is_real_provider_api_key(settings.get("api_key"))
     return SecretPresence(
         configured=inline or env_var_set,
         inline_configured=inline,

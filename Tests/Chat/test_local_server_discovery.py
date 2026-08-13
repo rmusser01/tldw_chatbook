@@ -483,6 +483,51 @@ async def test_local_probe_rejects_oversized_chunked_body_and_closes_response() 
     assert stream.closed is True
 
 
+@pytest.mark.parametrize("content_encoding", ("gzip", "deflate", "br"))
+@pytest.mark.asyncio
+async def test_local_probe_rejects_encoded_body_before_decompression(
+    content_encoding: str,
+) -> None:
+    stream = _TrackingAsyncStream(b"compressed-expansion-bomb")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["accept-encoding"] == "identity"
+        return httpx.Response(
+            200,
+            headers={"content-encoding": content_encoding, "content-length": "24"},
+            stream=stream,
+        )
+
+    async with _client(handler) as client:
+        result = await probe_models_endpoint(
+            "http://127.0.0.1:9099",
+            http_client=client,
+        )
+
+    assert result.ok is False
+    assert result.detail == "Compressed models responses are not supported."
+    assert stream.iterated_chunks == 0
+    assert stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_local_probe_bounds_one_raw_chunk_despite_misleading_length() -> None:
+    stream = _TrackingAsyncStream(b"x" * (_EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES + 1))
+
+    async with _client(
+        lambda request: httpx.Response(
+            200, headers={"content-length": "1"}, stream=stream
+        )
+    ) as client:
+        result = await probe_models_endpoint(
+            "http://127.0.0.1:9099", http_client=client
+        )
+
+    assert result.ok is False
+    assert result.detail == "Models response is too large."
+    assert stream.closed is True
+
+
 @pytest.mark.asyncio
 async def test_probe_connect_error_reports_honest_copy() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:

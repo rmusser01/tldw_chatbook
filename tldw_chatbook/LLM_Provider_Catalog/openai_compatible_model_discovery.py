@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
     MODEL_ID_MAX_CHARS,
     MODEL_IDS_MAX_COUNT,
     MODEL_PROBE_RESPONSE_MAX_BYTES,
+    UnsupportedModelResponseEncoding,
     read_bounded_model_response,
 )
 from tldw_chatbook.LLM_Calls.qwencloud_url import (
@@ -656,7 +657,10 @@ async def discover_openai_compatible_models(
             ),
         )
 
-    headers = build_discovery_auth_headers(provider, api_key) or None
+    headers = {
+        **build_discovery_auth_headers(provider, api_key),
+        "Accept-Encoding": "identity",
+    }
     paginate = _normalized_provider_identity(provider) == _ANTHROPIC_PROVIDER_KEY
 
     async def _request_payloads(
@@ -677,6 +681,18 @@ async def discover_openai_compatible_models(
                 ) as response:
                     response.raise_for_status()
                     body = await read_bounded_model_response(response)
+            except UnsupportedModelResponseEncoding:
+                return None, ModelDiscoveryResult(
+                    provider=provider,
+                    provider_list_key=provider_list_key,
+                    endpoint_fingerprint=endpoint_fingerprint,
+                    status="error",
+                    error=_discovery_error(
+                        "invalid_response",
+                        "Compressed models responses are not supported.",
+                        "Use an endpoint that honors identity encoding.",
+                    ),
+                )
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in {401, 403}:
                     return None, ModelDiscoveryResult(
