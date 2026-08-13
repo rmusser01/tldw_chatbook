@@ -17,7 +17,7 @@ import threading
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Callable, Literal, Protocol, cast
+from typing import Any, Callable, Literal, Protocol, cast
 
 from loguru import logger
 
@@ -2816,15 +2816,24 @@ class AgentService:
             # Nested inline sub-agent runs unwind LIFO (`use_run_id`
             # resets in its own `finally`), and a threaded child simply
             # sets its own value on its own thread.
+            continuation_kwargs: dict[str, Any] = {}
+            if restore_provider_continuation is not None:
+                continuation_kwargs["restore_provider_continuation"] = (
+                    restore_provider_continuation
+                )
+            if restore_provider_target is not None:
+                continuation_kwargs["restore_provider_target"] = (
+                    restore_provider_target
+                )
+            if resume_provider_continuation:
+                continuation_kwargs["resume_provider_continuation"] = True
             with use_run_id(run_id):
                 outcome = run_agent_loop(
                     config,
                     messages,
                     active,
                     deps,
-                    restore_provider_continuation=restore_provider_continuation,
-                    restore_provider_target=restore_provider_target,
-                    resume_provider_continuation=resume_provider_continuation,
+                    **continuation_kwargs,
                 )
         except Exception as exc:  # noqa: BLE001 — a run never raises out
             from tldw_chatbook.Chat.provider_failures import describe_stream_failure

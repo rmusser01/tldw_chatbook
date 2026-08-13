@@ -517,7 +517,12 @@ def _emit_record(deps: "LoopDeps", record_type: str, **payload) -> int | None:
 
 
 def _truncate_tool_result(
-    content: str, max_chars: int, tool_name: str, record_number: int | None = None
+    content: str,
+    max_chars: int,
+    tool_name: str,
+    record_number: int | None = None,
+    *,
+    total_limit: bool = False,
 ) -> str:
     """Bound one tool result before it enters history.
 
@@ -542,11 +547,14 @@ def _truncate_tool_result(
             fabricates a bare record number) is read via ``getattr(...,
             "truncated", False)`` and always treated as "not capped", so
             this stays backward compatible.
+        total_limit: Include the truncation trailer inside ``max_chars``.
+            The default preserves the legacy contract where ``max_chars``
+            limits the retained result prefix and the trailer is appended.
 
     Returns:
-        ``content`` unchanged when under the cap or when unlimited;
-        otherwise the first ``max_chars`` characters plus a trailer stating
-        the original length and how to retrieve the remainder.
+        ``content`` unchanged when under the cap or when unlimited. Otherwise,
+        the legacy default returns the first ``max_chars`` characters plus a
+        trailer; ``total_limit=True`` bounds the complete returned string.
     """
     if max_chars <= 0 or len(content) <= max_chars:
         return content
@@ -589,6 +597,8 @@ def _truncate_tool_result(
         f"\n\n[truncated: {tool_name} returned {len(content)} characters."
         f"{recovery}]"
     )
+    if not total_limit:
+        return content[:max_chars] + full_trailer
     trailer = next(
         (
             value
@@ -1118,6 +1128,7 @@ def run_agent_loop(
                     verdict,
                     continuation_cap,
                     call.name,
+                    total_limit=True,
                 )
                 if not transition_call(call, "failed", ContinuationResult(content)):
                     return continuation_error()
@@ -1411,6 +1422,7 @@ def run_agent_loop(
                     content,
                     continuation_cap,
                     call.name,
+                    total_limit=True,
                 )
                 target_state = (
                     "completed"
