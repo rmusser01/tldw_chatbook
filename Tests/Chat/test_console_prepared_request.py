@@ -6,6 +6,7 @@ import pytest
 
 from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError
 from tldw_chatbook.Chat.console_prepared_request import (
+    CONTINUATION_OWNER_KEY,
     MEMORY_CLOSE_TAG,
     MEMORY_OPEN_TAG,
     PreparedConsoleRequest,
@@ -14,6 +15,10 @@ from tldw_chatbook.Chat.console_prepared_request import (
     resolve_request_capacity,
     tagged_memory_message,
     thaw_json,
+)
+from tldw_chatbook.Chat.provider_continuation import (
+    continuation_owner_group,
+    parse_provider_continuation_json,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
@@ -616,3 +621,115 @@ async def test_gateway_resolves_separate_context_input_and_output_capabilities(
     assert prepared.capacity.effective_response_tokens == 1_000
     assert prepared.capacity.effective_input_ceiling_tokens == 15_000
     await gateway.aclose()
+
+
+def _private_group(owner_id: str, *, call_id: str, active: bool = False):
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "active" if active else "complete",
+            "rounds": [
+                {
+                    "assistant_content": "" if active else "answer",
+                    "reasoning_blocks": ["PRIVATE-PREPARED-CANARY " * 10],
+                    "calls": [
+                        {
+                            "call_id": call_id,
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "pending" if active else "completed",
+                            **({} if active else {"result": "done"}),
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    return continuation_owner_group(
+        {"id": owner_id, "role": "assistant", "content": ""}, checkpoint
+    )
+
+
+def test_prepared_request_counts_and_evicts_private_groups_with_owner_units() -> None:
+    groups = (
+        _private_group("a1", call_id="call_1"),
+        _private_group("a2", call_id="call_2"),
+    )
+    semantic = build_console_request(
+        [
+            {"role": "user", "content": "old"},
+            {
+                "role": "assistant",
+                "content": "answer",
+                CONTINUATION_OWNER_KEY: "a1",
+            },
+            {"role": "user", "content": "new"},
+            {
+                "role": "assistant",
+                "content": "answer",
+                CONTINUATION_OWNER_KEY: "a2",
+            },
+            {"role": "user", "content": "current"},
+        ],
+        continuation_groups=groups,
+    )
+    selected = prepare_provider_request(
+        semantic.without_oldest_units(1),
+        wire_style="distinct_roles",
+        model="m",
+        capacity=_capacity(None),
+        count_fn=_word_count,
+    )
+    exact = prepare_provider_request(
+        semantic,
+        wire_style="distinct_roles",
+        model="m",
+        capacity=_capacity(selected.accounting.total_input_tokens),
+        count_fn=_word_count,
+    )
+    one_under = prepare_provider_request(
+        semantic,
+        wire_style="distinct_roles",
+        model="m",
+        capacity=_capacity(selected.accounting.total_input_tokens - 1),
+        count_fn=_word_count,
+    )
+
+    assert exact.dropped_units == 1
+    assert [group.owner_message_id for group in exact.continuation_groups] == ["a2"]
+    assert one_under.dropped_units == 2
+    assert one_under.continuation_groups == ()
+    assert all(CONTINUATION_OWNER_KEY not in row for row in exact.messages_payload)
+    assert "PRIVATE-PREPARED-CANARY" not in repr(exact)
+
+
+def test_active_private_group_is_mandatory_and_fails_closed_when_over_budget() -> None:
+    group = _private_group("a1", call_id="call_1", active=True)
+    semantic = build_console_request(
+        [
+            {"role": "user", "content": "current"},
+            {
+                "role": "assistant",
+                "content": "",
+                CONTINUATION_OWNER_KEY: "a1",
+            },
+        ],
+        continuation_groups=(group,),
+    )
+
+    prepared = prepare_provider_request(
+        semantic,
+        wire_style="distinct_roles",
+        model="m",
+        capacity=_capacity(1),
+        count_fn=_word_count,
+    )
+
+    assert prepared.known_overflow is True
+    assert prepared.dropped_units == 0
+    assert prepared.continuation_groups == (group,)

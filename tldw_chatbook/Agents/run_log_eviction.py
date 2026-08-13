@@ -56,7 +56,10 @@ from loguru import logger
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
     bound_messages_to_window,
+    count_console_messages_tokens,
+    count_provider_continuation_tokens,
 )
+from tldw_chatbook.Chat.provider_continuation import ContinuationOwnerGroup
 from .agent_models import FENCE_TOOL_RESULT_PREFIX, SEARCH_RUN_LOG_TOOL_NAME
 
 #: `[agents]` config key (see `run_log._setting`'s env-var/TOML/default
@@ -356,6 +359,7 @@ def bound_history_for_send(
     window: int | None = None,
     count_fn: Callable[[list[dict[str, Any]], str], int] | None = None,
     min_recent_rounds: int = DEFAULT_MIN_RECENT_ROUNDS,
+    continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
 ) -> list[dict[str, Any]]:
     """Bound one turn's SEND payload to the model window, run-log-aware.
 
@@ -401,6 +405,9 @@ def bound_history_for_send(
             (``agent_service._make_call_model``, via ``run_log._setting``)
             -- this function trusts it as-is, same as every other
             already-resolved parameter here.
+        continuation_groups: Validated canonical private state attached to
+            visible assistant owner IDs in ``payload``. Private tokens affect
+            selection, but private content is never added to the run log.
 
     Returns:
         ``payload`` unchanged (same object) when ``enabled`` is ``False``,
@@ -418,6 +425,39 @@ def bound_history_for_send(
         return payload
     try:
         boundary = _make_round_boundary(native=native)
+        owner_ids = {
+            message.get("id") for message in payload if type(message.get("id")) is str
+        }
+        if any(
+            group.owner_message_id not in owner_ids for group in continuation_groups
+        ):
+            logger.warning(
+                "run-log eviction: continuation owner missing from payload; "
+                "sending full history rather than detach private state"
+            )
+            return payload
+        private_tokens = {
+            group.owner_message_id: count_provider_continuation_tokens(
+                group,
+                model=model,
+                count_fn=count_fn,
+            )
+            for group in continuation_groups
+        }
+
+        def count_with_private(rows: list[dict[str, Any]], selected_model: str) -> int:
+            visible = (
+                count_fn(rows, selected_model)
+                if count_fn is not None
+                else count_console_messages_tokens(rows, selected_model)
+            )
+            retained_ids = {row.get("id") for row in rows if type(row.get("id")) is str}
+            return visible + sum(
+                token_count
+                for owner_id, token_count in private_tokens.items()
+                if owner_id in retained_ids
+            )
+
         # task-1272 Phase 3 review finding A: locate the task by CONTENT
         # (the last real user row -- see `_task_row_index`'s own
         # docstring), not by assuming it is the first row after the
@@ -438,7 +478,7 @@ def bound_history_for_send(
             provider=provider,
             response_reservation=response_reservation,
             window=window,
-            count_fn=count_fn,
+            count_fn=count_with_private if continuation_groups else count_fn,
             is_turn_boundary=boundary,
             # Live-verified 2026-07-28, hardened by finding A above:
             # without this, the task instruction sits in the middle of
@@ -472,7 +512,12 @@ def bound_history_for_send(
         )
         return result
     except Exception:  # noqa: BLE001 -- eviction must never abort a run
-        logger.opt(exception=True).warning(
-            "run-log eviction failed for this turn; sending full history"
-        )
+        if continuation_groups:
+            logger.warning(
+                "run-log eviction failed for continuation history; sending full history"
+            )
+        else:
+            logger.opt(exception=True).warning(
+                "run-log eviction failed for this turn; sending full history"
+            )
         return payload

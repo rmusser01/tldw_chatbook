@@ -8,8 +8,17 @@ limit / count_tokens_messages), which tasks 320/321 sharpen later.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Callable
+
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationOwnerGroup,
+    ContinuationRestoreTarget,
+    ProviderContinuationCheckpoint,
+    continuation_owner_group,
+    validate_continuation_restore,
+)
 
 from tldw_chatbook.Utils.token_counter import (
     count_tokens_messages,
@@ -19,6 +28,26 @@ from tldw_chatbook.Utils.token_counter import (
 DEFAULT_RESPONSE_RESERVATION = 1024
 DEFAULT_PER_IMAGE_TOKENS = 1024
 _MIN_SAFETY_MARGIN = 512
+
+
+def provider_continuation_owner_groups(
+    messages: Sequence[Mapping[str, Any]],
+    *,
+    target: ContinuationRestoreTarget,
+) -> tuple[ContinuationOwnerGroup, ...]:
+    """Return validated canonical private groups for one active history path."""
+    if target.provider not in {"moonshot", "zai", "deepseek"}:
+        return ()
+    groups: list[ContinuationOwnerGroup] = []
+    for message in messages:
+        if message.get("deleted") is True:
+            continue
+        checkpoint = message.get("provider_continuation")
+        if not isinstance(checkpoint, ProviderContinuationCheckpoint):
+            continue
+        validate_continuation_restore(checkpoint, target)
+        groups.append(continuation_owner_group(message, checkpoint))
+    return tuple(groups)
 
 
 @dataclass(frozen=True)
@@ -109,6 +138,43 @@ def count_console_messages_tokens(
             }
         flattened.append(entry)
     return count_tokens_messages(flattened, model) + per_image_tokens * image_count
+
+
+def count_provider_continuation_tokens(
+    group: ContinuationOwnerGroup,
+    *,
+    model: str,
+    count_fn: Callable[[list[dict[str, Any]], str], int] | None = None,
+) -> int:
+    """Count canonical private rounds without creating provider wire rows."""
+    counter = count_fn or count_console_messages_tokens
+    accounting_rows: list[dict[str, Any]] = []
+    for round_ in group.rounds:
+        calls = [
+            {
+                "call_id": call.call_id,
+                "name": call.name,
+                "arguments": call.arguments,
+                "state": call.state,
+                **({"result": call.result.value} if call.result is not None else {}),
+            }
+            for call in round_.calls
+        ]
+        accounting_rows.append(
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "assistant_content": round_.assistant_content,
+                        "reasoning_blocks": round_.reasoning_blocks,
+                        "calls": calls,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+            }
+        )
+    return counter(accounting_rows, model)
 
 
 def _group_turns(

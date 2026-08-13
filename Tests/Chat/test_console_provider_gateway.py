@@ -41,6 +41,101 @@ from tldw_chatbook.Chat.console_provider_support import (
 )
 from tldw_chatbook.Chat import console_provider_gateway as gateway_module
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationConflictError,
+    ContinuationRestoreTarget,
+    parse_provider_continuation_json,
+)
+
+
+def test_gateway_prepare_budgets_private_owner_group_on_real_production_path() -> None:
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "old answer",
+                    "reasoning_blocks": ["GATEWAY-PRIVATE-CANARY " * 30],
+                    "calls": [
+                        {
+                            "call_id": "call_1",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    messages = [
+        {"id": "u1", "role": "user", "content": "old"},
+        {
+            "id": "a1",
+            "role": "assistant",
+            "content": "old answer",
+            "provider_continuation": checkpoint,
+        },
+        {"id": "u2", "role": "user", "content": "current"},
+    ]
+    gateway = ConsoleProviderGateway(environ={})
+    resolution = ConsoleProviderResolution(
+        provider="deepseek",
+        base_url="https://api.deepseek.com/v1",
+        model="deepseek-v4-flash",
+        ready=True,
+        execution_key="deepseek",
+        max_tokens=10,
+    )
+    target = ContinuationRestoreTarget(
+        provider="deepseek",
+        protocol="responses",
+        model="deepseek-v4-flash",
+        api_base_url="https://api.deepseek.com/v1",
+    )
+
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        messages,
+        context_window_override_tokens=600,
+        continuation_target=target,
+    )
+    ordinary = gateway.prepare_chat_request(
+        resolution,
+        [
+            {"role": "user", "content": "old"},
+            {"role": "assistant", "content": "old answer"},
+            {"role": "user", "content": "current"},
+        ],
+        context_window_override_tokens=600,
+    )
+
+    assert prepared.dropped_units == 1
+    assert ordinary.dropped_units == 0
+    assert [row["content"] for row in prepared.messages_payload] == ["current"]
+    assert all("provider_continuation" not in row for row in prepared.messages_payload)
+    assert "GATEWAY-PRIVATE-CANARY" not in repr(prepared)
+    assert messages[1]["provider_continuation"] is checkpoint
+
+    with pytest.raises(ContinuationConflictError, match="restore target mismatch"):
+        gateway.prepare_chat_request(
+            resolution,
+            messages,
+            continuation_target=dataclasses.replace(target, model="wrong-model"),
+        )
+    with pytest.raises(ContinuationConflictError, match="restore target mismatch"):
+        gateway.prepare_chat_request(
+            dataclasses.replace(resolution, provider="moonshot"),
+            messages,
+            continuation_target=target,
+        )
 
 
 def test_normalize_llamacpp_base_url_strips_known_suffixes_to_root() -> None:
