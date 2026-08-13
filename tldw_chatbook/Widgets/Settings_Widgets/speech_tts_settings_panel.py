@@ -2055,6 +2055,24 @@ class SpeechTTSSettingsPanel(Vertical):
                 )
             if self.configure_provider == "audio_cpp":
                 configured_audio_choices = self._audio_cpp_choices()
+                guided_binary_source = (
+                    str(
+                        self.state.providers["audio_cpp"].get(
+                            "guided_binary_source", "manual"
+                        )
+                    )
+                    .replace("_", " ")
+                    .title()
+                )
+                yield Static(
+                    f"Guided binary selection source: {guided_binary_source}.",
+                    id=self._field_dom_id(
+                        "audio_cpp",
+                        "guided_binary_source",
+                    ),
+                    classes="settings-detail-row",
+                    markup=False,
+                )
                 yield Static(
                     self._audio_cpp_observation_copy(configured_audio_choices),
                     id="settings-speech-audio-cpp-observation-provenance",
@@ -2406,19 +2424,6 @@ class SpeechTTSSettingsPanel(Vertical):
                                 "Look for audiocpp_server on PATH and update only "
                                 "this unsaved Guided draft."
                             ),
-                        )
-                        yield Static(
-                            "Selection source: "
-                            + str(
-                                self.state.providers[provider_id].get(
-                                    "guided_binary_source", "manual"
-                                )
-                            )
-                            .replace("_", " ")
-                            .title(),
-                            id=self._field_dom_id(provider_id, "guided_binary_source"),
-                            classes="settings-detail-row",
-                            markup=False,
                         )
                         yield Button(
                             "Add local package…",
@@ -4059,7 +4064,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 self.query_one(
                     "#settings-speech-audio_cpp-guided-binary-source",
                     Static,
-                ).update("Selection source: Manual")
+                ).update("Guided binary selection source: Manual.")
             except QueryError:
                 pass
 
@@ -4421,7 +4426,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 self.query_one(
                     "#settings-speech-audio_cpp-guided-binary-source",
                     Static,
-                ).update("Selection source: Path")
+                ).update("Guided binary selection source: Path.")
             except QueryError:
                 pass
         self._set_result(

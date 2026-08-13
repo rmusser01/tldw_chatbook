@@ -3222,6 +3222,61 @@ async def test_details_and_scope_start_collapsed_on_every_mount() -> None:
 
 
 @pytest.mark.asyncio
+async def test_managed_guided_selection_provenance_stays_in_collapsed_details() -> None:
+    state = _audio_cpp_state()
+    state.providers["audio_cpp"].update(
+        {
+            "mode": "managed",
+            "managed_setup_source": "guided",
+            "guided_binary_source": "path",
+        }
+    )
+    app = _StyledPanelHarness(configure_provider="audio_cpp", state=state)
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        details = panel.query_one("#settings-speech-details", Collapsible)
+        guided_fields = panel.query_one("#settings-speech-audio-cpp-guided-fields")
+
+        assert guided_fields.display is True
+        assert details.collapsed is True
+        provenance = details.query_one(
+            "#settings-speech-audio_cpp-guided-binary-source",
+            Static,
+        )
+        assert provenance.is_on_screen is False
+        visible_copy = " ".join(
+            str(widget.render())
+            for widget in panel.query(Static)
+            if widget.display and widget.is_on_screen
+        ).casefold()
+        assert "task: set up audio.cpp" in visible_copy
+        assert "current status:" in visible_copy
+        assert "selection source" not in visible_copy
+
+        details.collapsed = False
+        await pilot.pause()
+        assert provenance.is_on_screen is True
+        assert (
+            "guided binary selection source: path"
+            in str(provenance.render()).casefold()
+        )
+
+        await panel.recompose()
+        await pilot.pause()
+
+        remounted_details = panel.query_one("#settings-speech-details", Collapsible)
+        assert remounted_details.collapsed is True
+        assert (
+            remounted_details.query_one(
+                "#settings-speech-audio_cpp-guided-binary-source",
+                Static,
+            ).is_on_screen
+            is False
+        )
+
+
+@pytest.mark.asyncio
 async def test_speech_shortcuts_defer_to_focused_text_entry_and_resume_after_blur() -> (
     None
 ):
