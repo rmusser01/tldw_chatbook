@@ -807,6 +807,7 @@ class ConsoleChatStore:
             restored_nodes,
             active_leaf_persisted_id=active_leaf_persisted_id,
         )
+        self._reconcile_restored_provider_continuations(session.id)
         self._hydrate_generation_metadata_from_persistence(session.id)
         self._bump_payload_revision(session.id)
         return session
@@ -870,6 +871,40 @@ class ConsoleChatStore:
                 version if type(version) is int else None
             )
         return nodes
+
+    def _reconcile_restored_provider_continuations(self, session_id: str) -> None:
+        """Project retained unbridged continuation intents during normal restore."""
+        if (
+            self.sync_v2_server_profile_id is None
+            or self.sync_v2_chat_producer is None
+        ):
+            return
+        for message in self._nodes_by_session.get(session_id, {}).values():
+            checkpoint = message.provider_continuation
+            message_id = message.persisted_message_id
+            message_version = message.provider_continuation_message_version
+            if (
+                not isinstance(checkpoint, ProviderContinuationCheckpoint)
+                or message_id is None
+                or type(message_version) is not int
+            ):
+                continue
+            private_json = dump_provider_continuation_json(checkpoint)
+            if private_json is None:
+                continue
+            result = self.ensure_provider_continuation_durable(
+                message_id=message_id,
+                message_version=message_version,
+                payload_hash=canonical_payload_hash(
+                    {
+                        "content": message.content,
+                        "provider_continuation_json": private_json,
+                        "role": message.role.value,
+                    }
+                ),
+            )
+            if not result.ready:
+                message.provider_continuation_warning = result.reason
 
     def _hydrate_generation_metadata_from_persistence(self, session_id: str) -> None:
         """Batch-fetch and apply generation-metadata sidecar rows on resume.

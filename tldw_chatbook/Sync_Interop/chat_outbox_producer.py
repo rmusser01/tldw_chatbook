@@ -37,6 +37,7 @@ class ChatSyncDeleteIntentRecord:
     message_id: str
     message_version: int
     payload_hash: str
+    base_payload_hash: str
 
 
 class ChatSyncIntentSource(Protocol):
@@ -172,6 +173,7 @@ class ChatSyncV2OutboxProducer:
         envelope = self._builder(profile).build_chat_message_delete(
             conversation_id=source_record.conversation_id,
             message_id=source_record.message_id,
+            base_version=source_record.base_payload_hash,
             entity_version=source_record.message_version,
         )
         if envelope.payload_hash != source_record.payload_hash:

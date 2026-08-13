@@ -12882,6 +12882,11 @@ UPDATE db_schema_version
         payload_hash: str,
     ) -> "ChatSyncDeleteIntentRecord | None":
         """Return one exact committed message tombstone intent."""
+        from tldw_chatbook.Chat.provider_continuation import (
+            ContinuationValidationError,
+            dump_provider_continuation_json,
+            parse_provider_continuation_json,
+        )
         from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
             ChatSyncDeleteIntentRecord,
         )
@@ -12903,7 +12908,8 @@ UPDATE db_schema_version
             rows = conn.execute(
                 """
                 SELECT m.id, m.conversation_id, m.deleted, m.version,
-                       m.last_modified, m.client_id,
+                       m.last_modified, m.client_id, m.role, m.content,
+                       m.provider_continuation_json,
                        intent.operation, intent.payload
                   FROM messages AS m
                   JOIN sync_log AS intent
@@ -12939,13 +12945,29 @@ UPDATE db_schema_version
                 {"deleted": True}
             ) != payload_hash:
                 return None
+            role = row["role"]
+            content = row["content"]
+            if type(role) is not str or type(content) is not str:
+                return None
+            private_json = row["provider_continuation_json"]
+            if private_json is not None:
+                if role != "assistant" or type(private_json) is not str:
+                    return None
+                checkpoint = parse_provider_continuation_json(private_json)
+                private_json = dump_provider_continuation_json(checkpoint)
+                if private_json != row["provider_continuation_json"]:
+                    return None
+            base_payload = {"content": content, "role": role}
+            if private_json is not None:
+                base_payload["provider_continuation_json"] = private_json
             return ChatSyncDeleteIntentRecord(
                 conversation_id=row["conversation_id"],
                 message_id=row["id"],
                 message_version=message_version,
                 payload_hash=payload_hash,
+                base_payload_hash=canonical_payload_hash(base_payload),
             )
-        except (json.JSONDecodeError, sqlite3.Error):
+        except (ContinuationValidationError, json.JSONDecodeError, sqlite3.Error):
             return None
 
     def get_sync_log_entries(

@@ -563,6 +563,7 @@ class AgentService:
         expand_provider_continuation: (
             Callable[[ProviderContinuationCheckpoint], list[dict]] | None
         ) = None,
+        prepare_provider_continuation_request: bool = False,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -712,6 +713,9 @@ class AgentService:
         self._child_model_scope = child_model_scope or contextlib.nullcontext
         self.persist_provider_continuation = persist_provider_continuation
         self.expand_provider_continuation = expand_provider_continuation
+        self.prepare_provider_continuation_request = bool(
+            prepare_provider_continuation_request
+        )
         # Per-TURN fleet state, all owned by the primary run's thread (a
         # child never spawns -- contain_child_budget zeroes max_subagents,
         # PR3a-1 Task 5's replacement for clamp_child_budget), so no lock
@@ -790,6 +794,9 @@ class AgentService:
             # see `bound_history_for_send`'s docstring. A no-op (returns
             # `raw_payload` unchanged) whenever `evict_enabled` is False.
             raw_payload = [{"role": "system", "content": system_content}] + messages
+            gateway_prepares_continuation = bool(
+                continuation_groups and self.prepare_provider_continuation_request
+            )
             payload = bound_history_for_send(
                 raw_payload,
                 model=config.model,
@@ -797,10 +804,15 @@ class AgentService:
                 native=native,
                 enabled=evict_enabled,
                 min_recent_rounds=min_recent_rounds,
-                continuation_groups=continuation_groups,
+                continuation_groups=(
+                    () if gateway_prepares_continuation else continuation_groups
+                ),
                 continuation_owner_key=continuation_owner_key or "id",
             )
-            if continuation_owner_key is not None:
+            if (
+                continuation_owner_key is not None
+                and not gateway_prepares_continuation
+            ):
                 payload = [
                     {
                         key: value

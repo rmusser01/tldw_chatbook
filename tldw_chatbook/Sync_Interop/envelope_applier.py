@@ -117,6 +117,11 @@ class _ContinuationValidatingChatStore:
         reader = getattr(self.store, "get_chat_message_hash", None)
         return reader(stable_key) if callable(reader) else None
 
+    def delete_chat_message(self, stable_key: str, payload_hash: str) -> None:
+        deleter = getattr(self.store, "delete_chat_message", None)
+        if callable(deleter):
+            deleter(stable_key, payload_hash)
+
     def append_chat_message(
         self,
         stable_key: str,

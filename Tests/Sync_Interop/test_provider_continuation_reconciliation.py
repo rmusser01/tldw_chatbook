@@ -11,8 +11,33 @@ from tldw_chatbook.Chat.provider_continuation import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProducer
 from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
+from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.tldw_api import SyncV2Envelope
+
+
+class _RemoteChatStore:
+    def __init__(self) -> None:
+        self.hashes: dict[str, str] = {}
+        self.messages: dict[str, dict] = {}
+        self.conflicts: list[dict] = []
+
+    def get_chat_message_hash(self, stable_key: str) -> str | None:
+        return self.hashes.get(stable_key)
+
+    def append_chat_message(
+        self, stable_key: str, payload: dict, payload_hash: str
+    ) -> None:
+        self.messages[stable_key] = payload
+        self.hashes[stable_key] = payload_hash
+
+    def delete_chat_message(self, stable_key: str, payload_hash: str) -> None:
+        self.messages.pop(stable_key, None)
+        self.hashes[stable_key] = payload_hash
+
+    def record_conflict(self, conflict: dict) -> None:
+        self.conflicts.append(conflict)
 
 
 def test_barrier_accepts_committed_local_intent_when_portable_sync_is_absent(
@@ -376,6 +401,66 @@ def test_committed_delete_projects_exact_sync_v2_tombstone(tmp_path) -> None:
         assert envelope["payload_clear"] == {"deleted": True}
         assert envelope["payload_ciphertext"] is None
         assert result["receipt"]["source_version"] == 2
+    finally:
+        db.close_connection()
+
+
+def test_produced_delete_applies_as_idempotent_remote_tombstone(tmp_path) -> None:
+    db, message_id, first_hash = _source_message(tmp_path)
+    try:
+        dataset_key = generate_dataset_key()
+        repo = _configured_repo(tmp_path / "delete-roundtrip-sync-state.db")
+        producer = ChatSyncV2OutboxProducer(
+            state_repository=repo,
+            dataset_keys={"dataset-1": dataset_key},
+            source=db,
+        )
+        scope = {
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": "workspace-1",
+        }
+        upsert = producer.reconcile_chat_message_intent(
+            **scope,
+            message_id=message_id,
+            message_version=1,
+            payload_hash=first_hash,
+        )
+        tombstone_hash = canonical_payload_hash({"deleted": True})
+        db.soft_delete_message_subtree(message_id, expected_version=1)
+        deleted = producer.reconcile_chat_message_delete_intent(
+            **scope,
+            message_id=message_id,
+            message_version=2,
+            payload_hash=tombstone_hash,
+        )
+
+        remote = _RemoteChatStore()
+        applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=remote)
+        upsert_envelope = SyncV2Envelope.model_validate(
+            upsert["outbox_entry"]["envelope"]
+        )
+        delete_envelope = SyncV2Envelope.model_validate(
+            deleted["outbox_entry"]["envelope"]
+        )
+        stable_key = upsert_envelope.stable_key
+        assert stable_key is not None
+
+        assert applier.apply(upsert_envelope) == {"status": "applied"}
+        assert "provider_continuation_json" in remote.messages[stable_key]
+        assert delete_envelope.base_version == first_hash
+        assert applier.apply(delete_envelope) == {"status": "applied"}
+        assert stable_key not in remote.messages
+        assert remote.hashes[stable_key] == tombstone_hash
+        assert applier.apply(delete_envelope) == {"status": "noop"}
+
+        stale_remote = _RemoteChatStore()
+        stale_remote.hashes[stable_key] = "sha256:" + "f" * 64
+        stale_applier = SyncEnvelopeApplier(
+            dataset_key=dataset_key, local_store=stale_remote
+        )
+        assert stale_applier.apply(delete_envelope)["status"] == "conflict"
+        assert stale_remote.hashes[stable_key] == "sha256:" + "f" * 64
     finally:
         db.close_connection()
 

@@ -1287,6 +1287,9 @@ class _StreamingModelAdapter:
         should_cancel,
         loop,
         provider_stream_signals: ConsoleProviderStreamSignals | None = None,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_target: ContinuationRestoreTarget | None = None,
+        continuation_owner_key: str | None = None,
     ):
         self._store = store
         self._gateway = provider_gateway
@@ -1295,6 +1298,9 @@ class _StreamingModelAdapter:
         self._should_cancel = should_cancel
         self._loop = loop
         self._provider_stream_signals = provider_stream_signals
+        self._continuation_sidecar = tuple(continuation_sidecar)
+        self._continuation_target = continuation_target
+        self._continuation_owner_key = continuation_owner_key
         # PR3a-1 Task 1: per-THREAD lifeline override. A fleet child runs on
         # its own thread and enters `child_lifeline()` there before its run
         # begins, which parks that child's private loop here; every
@@ -1430,11 +1436,23 @@ class _StreamingModelAdapter:
             # is always None. The real gateway and any fake built against
             # this task's own `tools=None` contract see identical behavior
             # either way, since the callee-side default is also None.
+            dispatch_messages = messages_payload
             stream_kwargs = {"tools": tools} if tools is not None else {}
+            prepare_request = getattr(self._gateway, "prepare_chat_request", None)
+            if self._continuation_sidecar and callable(prepare_request):
+                dispatch_messages = prepare_request(
+                    self._resolution,
+                    messages_payload,
+                    tools=tools,
+                    continuation_target=self._continuation_target,
+                    continuation_sidecar=self._continuation_sidecar,
+                    continuation_owner_key=self._continuation_owner_key,
+                )
+                stream_kwargs.pop("tools", None)
             if gateway_signals is not None:
                 stream_kwargs["signals"] = gateway_signals
             async for chunk in self._gateway.stream_chat(
-                self._resolution, messages_payload, **stream_kwargs
+                self._resolution, dispatch_messages, **stream_kwargs
             ):
                 if isinstance(chunk, ProviderToolCalls):
                     # Plan-B contract: structured deltas never hit the
@@ -2736,6 +2754,9 @@ class ConsoleAgentBridge:
             should_cancel=should_cancel,
             loop=turn_lifeline.loop,
             provider_stream_signals=provider_stream_signals,
+            continuation_sidecar=continuation_sidecar,
+            continuation_target=continuation_target,
+            continuation_owner_key=continuation_owner_key,
         )
 
         # PR3a-1 Task 6b (audit F1): this turn's own key into
@@ -2979,6 +3000,10 @@ class ConsoleAgentBridge:
                 self._store.persist_provider_continuation_event
             ),
             expand_provider_continuation=expand_provider_continuation,
+            prepare_provider_continuation_request=bool(
+                continuation_sidecar
+                and callable(getattr(self._gateway, "prepare_chat_request", None))
+            ),
             # PR3a-1 Task 1: every fleet child gets its own model-call
             # lifeline, entered on the child's own thread and torn down
             # when the CHILD finishes -- never when this turn does.

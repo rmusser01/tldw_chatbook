@@ -264,7 +264,15 @@ def _crash_snapshot(tmp_path: Path, boundary: CrashBoundary) -> _CrashSnapshot:
 
     restarted_db = CharactersRAGDB(database_path, f"restart-{boundary}")
     row = restarted_db.get_message_by_id(owner.id)
-    restored_store = ConsoleChatStore(persistence=ChatPersistenceService(restarted_db))
+    restarted_repository: SyncStateRepository | None = None
+    if boundary in _SYNC_BOUNDARIES:
+        restarted_repository, _restarted_producer, restored_store = _portable_stack(
+            restarted_db, sync_path
+        )
+    else:
+        restored_store = ConsoleChatStore(
+            persistence=ChatPersistenceService(restarted_db)
+        )
     restored_session = restored_store.restore_persisted_session(
         title="Crash matrix",
         workspace_id=None,
@@ -281,16 +289,7 @@ def _crash_snapshot(tmp_path: Path, boundary: CrashBoundary) -> _CrashSnapshot:
         restored_call_state = checkpoint.rounds[-1].calls[-1].state
 
     outbox_after_reconciliation = outbox_before_restart
-    if boundary in _SYNC_BOUNDARIES and row is not None:
-        restarted_repository, restarted_producer, _ = _portable_stack(
-            restarted_db, sync_path
-        )
-        restarted_producer.reconcile_chat_message_intent(
-            **_SCOPE,
-            message_id=owner.id,
-            message_version=row["version"],
-            payload_hash=_payload_hash(row),
-        )
+    if restarted_repository is not None and row is not None:
         outbox_after_reconciliation = _continuation_receipt_count(
             restarted_repository, owner.id
         )
