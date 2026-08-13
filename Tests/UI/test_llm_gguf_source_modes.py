@@ -325,6 +325,36 @@ async def test_source_matrix_and_legacy_compatibility(
 
 
 @pytest.mark.asyncio
+async def test_external_mode_requires_a_path_before_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _app, pilot, context, _screen, window, _service = await _mount_models(monkeypatch)
+    try:
+        model_path = window.query_one("#llamacpp-model-path", Input)
+        start = window.query_one("#llamacpp-start-server-button", Button)
+        status = window.query_one("#llamacpp-gguf-source-status", Static)
+
+        assert window.gguf_source_snapshot("llamacpp").mode is GGUFSourceMode.EXTERNAL
+        assert start.disabled
+        assert str(status.render()) == "Choose an external GGUF file to enable Start."
+
+        model_path.value = "/outside/model.gguf"
+        await pilot.pause()
+        assert not start.disabled
+        assert window.gguf_source_snapshot("llamacpp") == GGUFSourceSelection(
+            GGUFSourceMode.EXTERNAL,
+            external_path=Path("/outside/model.gguf"),
+        )
+
+        model_path.value = ""
+        await pilot.pause()
+        assert start.disabled
+        assert str(status.render()) == "Choose an external GGUF file to enable Start."
+    finally:
+        await _close_context(context)
+
+
+@pytest.mark.asyncio
 async def test_switching_modes_preserves_inactive_exact_selections(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -803,6 +833,8 @@ async def test_status_updates_preserve_stop_identity_and_restore_focus_on_death(
 ) -> None:
     app, pilot, context, _screen, window, _service = await _mount_models(monkeypatch)
     try:
+        window.query_one("#llamacpp-model-path", Input).value = "/outside/model.gguf"
+        await pilot.pause()
         claim = reserve_server_launch(app, "llamacpp", authority="External GGUF")
         assert claim is not None
         window._sync_process_controls("llamacpp")

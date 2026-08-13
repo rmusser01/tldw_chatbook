@@ -1567,6 +1567,11 @@ class LLMManagementWindow(Container):
                 "Selected managed GGUF is unavailable. "
                 "Choose another managed model or refresh."
             )
+        if (
+            self._gguf_sources[provider].mode is GGUFSourceMode.EXTERNAL
+            and self._gguf_sources[provider].external_path is None
+        ):
+            return "Choose an external GGUF file to enable Start."
         return f"Selected authority: {self._gguf_sources[provider].authority}"
 
     def _select_source_mode(self, provider: str, mode: GGUFSourceMode) -> None:
@@ -1642,6 +1647,7 @@ class LLMManagementWindow(Container):
                 external_path=external_path,
             )
             self._render_gguf_source(provider)
+            self._sync_process_controls(provider)
             return
 
     def _ensure_managed_gguf_inventory(self) -> None:
@@ -1800,11 +1806,20 @@ class LLMManagementWindow(Container):
         try:
             start = self.query_one(f"#{start_id}", Button)
             stop = self.query_one(f"#{stop_id}", Button)
-            source_ready = not (
-                provider in self.GGUF_PROVIDERS
-                and self._gguf_sources[provider].mode is GGUFSourceMode.MANAGED
-                and not self._managed_gguf_ready(provider)
-            )
+            source_ready = True
+            if provider in self.GGUF_PROVIDERS:
+                selection = self._gguf_sources[provider]
+                source_ready = (
+                    selection.mode is GGUFSourceMode.EMBEDDED
+                    or (
+                        selection.mode is GGUFSourceMode.MANAGED
+                        and self._managed_gguf_ready(provider)
+                    )
+                    or (
+                        selection.mode is GGUFSourceMode.EXTERNAL
+                        and selection.external_path is not None
+                    )
+                )
             start.disabled = active or not source_ready
             stop.disabled = not active
             if provider in self.GGUF_PROVIDERS:

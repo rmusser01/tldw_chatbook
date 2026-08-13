@@ -112,7 +112,19 @@ def initial_gguf_selection(
     provider: str,
     existing_model_path: str,
 ) -> GGUFSourceSelection:
-    """Map legacy model-path state without filesystem or store access."""
+    """Map legacy model-path state without filesystem or store access.
+
+    Args:
+        provider: Local GGUF runtime provider name.
+        existing_model_path: Previously configured external model path, if any.
+
+    Returns:
+        A transient source selection preserving the legacy path in place.
+
+    Raises:
+        ValueError: If ``provider`` is not a supported GGUF runtime.
+        TypeError: If ``existing_model_path`` is not a string.
+    """
     if provider not in {"llamacpp", "llamafile"}:
         raise ValueError("unsupported GGUF source provider")
     if type(existing_model_path) is not str:
@@ -200,7 +212,19 @@ def acquire_managed_gguf(
     service: ModelArtifactService,
     reference: ArtifactRef,
 ) -> tuple[Path, LeasedArtifactHandle]:
-    """Acquire an exact managed root and resolve its sole declared GGUF payload."""
+    """Acquire an exact managed root and resolve its sole declared GGUF payload.
+
+    Args:
+        service: Artifact service that owns the managed model.
+        reference: Exact root artifact reference to acquire.
+
+    Returns:
+        The declared GGUF path and its open artifact lease.
+
+    Raises:
+        TypeError: If ``reference`` is not an exact ``ArtifactRef``.
+        GGUFSourceError: If the artifact cannot be safely acquired or resolved.
+    """
     if type(reference) is not ArtifactRef:
         raise TypeError("reference must be an ArtifactRef")
 

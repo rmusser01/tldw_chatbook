@@ -24,7 +24,13 @@ logger = logging.getLogger(__name__)
 
 @dataclass(eq=False)
 class ServerLaunchClaim:
-    """An identity-bearing reservation for one provider launch generation."""
+    """An identity-bearing reservation for one provider launch generation.
+
+    Attributes:
+        provider: Local runtime provider reserved by this claim.
+        authority: Path-free label for the selected model source.
+        cancel_event: Signal set when the reserved launch is cancelled.
+    """
 
     provider: str
     authority: str | None = None
@@ -86,6 +92,18 @@ def attach_server_claim_resource(
 
     ``resource`` must expose a callable ``close``. When this returns ``False``,
     ownership remains with the caller.
+
+    Args:
+        app: Application that owns server lifecycle state.
+        provider: Local runtime provider reserved by ``claim``.
+        claim: Exact launch claim that should take ownership.
+        resource: Closable resource to retain for the launch lifetime.
+
+    Returns:
+        ``True`` when ownership transfers to the claim; otherwise ``False``.
+
+    Raises:
+        ValueError: If ``provider`` is not a supported local runtime.
     """
 
     _validate_provider(provider)
