@@ -9557,7 +9557,7 @@ class TldwCli(
                 self.post_message(ModelCatalogRefreshed(providers=refreshed))
             message = format_refresh_notification(report)
             if message:
-                has_failure = any(
+                has_failure = report.disk_write_failed or any(
                     outcome.status == "failed" or outcome.write_failed
                     for outcome in report.outcomes
                 )

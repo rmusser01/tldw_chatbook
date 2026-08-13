@@ -199,6 +199,36 @@ async def test_refresh_notifies_with_warning_severity_on_write_failure(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_refresh_notifies_with_warning_severity_on_disk_write_failure(
+    monkeypatch,
+):
+    endpoint_canary = "https://user:disk-secret@example.test/v1?token=disk-secret"
+    exception_canary = f"ValueError({endpoint_canary})"
+    report = RefreshReport(
+        outcomes=(
+            ProviderRefreshOutcome(
+                provider_list_key="OpenAI",
+                status="refreshed",
+                new_model_ids=(endpoint_canary,),
+                error_kind=exception_canary,
+            ),
+        ),
+        disk_write_failed=True,
+    )
+    app, _service = _stub(monkeypatch, report=report)
+
+    await TldwCli._refresh_model_catalogs(app)
+
+    expected = format_refresh_notification(report)
+    assert expected is not None
+    assert len(expected) < 500
+    assert endpoint_canary not in expected
+    assert exception_canary not in expected
+    assert "disk-secret" not in expected
+    assert app.notifications == [(expected, "Model catalog", "warning")]
+
+
+@pytest.mark.asyncio
 async def test_refresh_posts_model_catalog_refreshed_for_refreshed_and_baseline(
     monkeypatch,
 ):

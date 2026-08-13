@@ -210,6 +210,58 @@ def test_interleaved_invalid_entries_do_not_reduce_valid_entry_quota(tmp_path):
     assert not cache.has_snapshot("Custom", "fp-over-cap")
 
 
+def test_duplicate_prefix_uses_one_quota_slot_and_first_valid_snapshot_wins(tmp_path):
+    entries = {
+        f"duplicate-{index}": _disk_entry(
+            "Custom", "duplicate-fp", [f"duplicate-model-{index}"]
+        )
+        for index in range(_EXPECTED_MAX_ENTRIES)
+    }
+    entries["later-unique"] = _disk_entry("Custom", "later-fp", ["later-model"])
+    (tmp_path / "model_catalog_cache.json").write_text(
+        json.dumps({"version": 1, "entries": entries}), encoding="utf-8"
+    )
+    cache = ModelDiscoveryCache()
+
+    _store(tmp_path).load_into(cache)
+
+    assert cache.snapshot_count == 2
+    assert [item.model_id for item in cache.list("Custom", "duplicate-fp")] == [
+        "duplicate-model-0"
+    ]
+    assert [item.model_id for item in cache.list("Custom", "later-fp")] == [
+        "later-model"
+    ]
+
+
+def test_interleaved_duplicates_do_not_starve_exact_unique_quota(tmp_path):
+    entries = {}
+    for index in range(_EXPECTED_MAX_ENTRIES):
+        entries[f"unique-{index}"] = _disk_entry(
+            "Custom", f"fp-{index}", [f"model-{index}"]
+        )
+        entries[f"duplicate-{index}"] = _disk_entry(
+            "Custom", f"fp-{index}", [f"replacement-{index}"]
+        )
+    entries["unique-over-cap"] = _disk_entry(
+        "Custom", "fp-over-cap", ["model-over-cap"]
+    )
+    (tmp_path / "model_catalog_cache.json").write_text(
+        json.dumps({"version": 1, "entries": entries}), encoding="utf-8"
+    )
+    cache = ModelDiscoveryCache(max_snapshots=_EXPECTED_MAX_ENTRIES + 1)
+
+    _store(tmp_path).load_into(cache)
+
+    assert cache.snapshot_count == _EXPECTED_MAX_ENTRIES
+    assert [item.model_id for item in cache.list("Custom", "fp-0")] == ["model-0"]
+    assert [
+        item.model_id
+        for item in cache.list("Custom", f"fp-{_EXPECTED_MAX_ENTRIES - 1}")
+    ] == [f"model-{_EXPECTED_MAX_ENTRIES - 1}"]
+    assert not cache.has_snapshot("Custom", "fp-over-cap")
+
+
 def test_raw_entry_ceiling_rejects_pathological_payload(tmp_path):
     entries = {f"invalid-{index}": {} for index in range(_EXPECTED_MAX_RAW_ENTRIES + 1)}
     (tmp_path / "model_catalog_cache.json").write_text(

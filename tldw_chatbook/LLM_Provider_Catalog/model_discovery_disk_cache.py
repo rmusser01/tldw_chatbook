@@ -324,6 +324,11 @@ class ModelCatalogDiskStore:
                 continue
             provider_list_key, endpoint_fingerprint, fetched, model_ids = decoded
             key = (provider_list_key, endpoint_fingerprint)
+            # A disk file may alias one logical snapshot under many outer keys.
+            # Keep the first valid snapshot and do not spend quota on duplicates.
+            if key in loaded_model_ids:
+                rejected += 1
+                continue
             candidate_model_ids = dict(loaded_model_ids)
             candidate_fetched_at = dict(loaded_fetched_at)
             candidate_model_ids[key] = model_ids
