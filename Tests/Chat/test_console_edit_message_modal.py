@@ -59,10 +59,10 @@ def _static_plain_text(widget: Static) -> str:
 
 def _cropped_compositor_region(
     app: App, widget: Button
-) -> tuple[list[list[Segment]], str]:
-    """Return exact compositor segments and text cropped to ``widget.region``."""
+) -> tuple[tuple[Segment, ...], ...]:
+    """Return exact compositor segments cropped to ``widget.region``."""
     render_strips = list(app.screen._compositor.render_strips())
-    cropped_rows: list[list[Segment]] = []
+    cropped_rows: list[tuple[Segment, ...]] = []
     for y in range(widget.region.y, widget.region.bottom):
         row: list[Segment] = []
         cursor = 0
@@ -75,9 +75,13 @@ def _cropped_compositor_region(
                 cropped, _ = remainder.split_cells(overlap_end - overlap_start)
                 row.append(cropped)
             cursor = next_cursor
-        cropped_rows.append(row)
-    text = "\n".join("".join(segment.text for segment in row) for row in cropped_rows)
-    return cropped_rows, text
+        cropped_rows.append(tuple(row))
+    return tuple(cropped_rows)
+
+
+def _joined_segment_text(rows: tuple[tuple[Segment, ...], ...]) -> str:
+    """Join text only from already-cropped compositor segments."""
+    return "\n".join("".join(segment.text for segment in row) for row in rows)
 
 
 _REAL_BUNDLE_ACTIONS = [
@@ -210,7 +214,8 @@ async def test_real_bundle_action_painted_label(
         await pilot.pause()
 
         button = modal.query_one(selector, Button)
-        cropped_rows, painted_text = _cropped_compositor_region(app, button)
+        cropped_rows = _cropped_compositor_region(app, button)
+        painted_text = _joined_segment_text(cropped_rows)
         compositor = app.screen._compositor
 
         assert (
