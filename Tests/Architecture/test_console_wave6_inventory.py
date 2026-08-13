@@ -22,7 +22,11 @@ DESCRIPTOR_LINE_BUDGET = 64
 
 @dataclass(frozen=True)
 class Wave6Group:
-    """One reviewed ownership family and its implementation-base evidence."""
+    """Describe one reviewed Wave 6 ownership family.
+
+    The record locks the implementation-base definitions, their destination,
+    and the conservative residue retained on ``ChatScreen``.
+    """
 
     target_path: str
     target_class: str
@@ -491,7 +495,10 @@ def _resolved_default_signature(
             candidates.append((node.lineno, node.value))
     if not candidates:
         return _default_signature(value)
-    line, initializer = max(candidates)
+    line, initializer = max(
+        candidates,
+        key=lambda item: (item[0], item[1].col_offset),
+    )
     return _resolved_default_signature(initializer, method, line)
 
 
@@ -580,7 +587,10 @@ def _first_assignment_value(method: ast.AST, attribute: str) -> ast.AST:
         ):
             assignments.append((node.lineno, node.value))
     assert assignments, f"{attribute} has no controller default"
-    return min(assignments)[1]
+    return min(
+        assignments,
+        key=lambda item: (item[0], item[1].col_offset),
+    )[1]
 
 
 def _screen_read_lines(method: ast.AST, attribute: str) -> list[int]:
@@ -774,7 +784,11 @@ def _assert_descriptor_contract(
 
 @pytest.mark.unit
 def test_wave6_inventory_matches_the_implementation_base() -> None:
-    """Lock every reviewed definition, its source span, and its migration owner."""
+    """Lock every reviewed definition to its implementation-base evidence.
+
+    Each definition retains an exact source span and one migration owner while
+    the current tree moves through the extraction phases.
+    """
     base_source = _source_at_revision(IMPLEMENTATION_BASE, _SCREEN_PATH)
     base_class = _class_node_from_source(base_source, "ChatScreen", _SCREEN_PATH)
     base_methods = _methods_from_class(base_class)
@@ -856,7 +870,11 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
 
 @pytest.mark.unit
 def test_wave6_projection_clears_both_ratchet_overages() -> None:
-    """The conservative reviewed projection must retain real implementation margin."""
+    """Require the reviewed projection to clear both ratchet overages.
+
+    The conservative line and method estimates must retain implementation
+    margin after all documented residue is included.
+    """
     raw_lines = sum(group.raw_lines for group in WAVE6_GROUPS.values())
     residue_lines = sum(group.residue_lines for group in WAVE6_GROUPS.values())
     removed_methods = sum(group.removed_methods for group in WAVE6_GROUPS.values())
@@ -871,7 +889,11 @@ def test_wave6_projection_clears_both_ratchet_overages() -> None:
 
 @pytest.mark.unit
 def test_wave6_compatibility_inventory_is_complete_and_phase_safe() -> None:
-    """Lock baseline assignments now and the descriptor contract once it lands."""
+    """Lock compatibility assignments across every extraction phase.
+
+    Baseline assignments remain authoritative until an entire family moves;
+    afterward, descriptors must preserve the reviewed controller contract.
+    """
     base_source = _source_at_revision(IMPLEMENTATION_BASE, _SCREEN_PATH)
     base_class = _class_node_from_source(base_source, "ChatScreen", _SCREEN_PATH)
     base_methods = _methods_from_class(base_class)
@@ -932,7 +954,10 @@ def test_wave6_compatibility_inventory_is_complete_and_phase_safe() -> None:
 
 @pytest.mark.unit
 def test_descriptor_contract_oracle_is_non_vacuous() -> None:
-    """The phase-safe oracle itself rejects pre-wiring and shadow-state regressions."""
+    """Prove the phase-safe descriptor oracle rejects known regressions.
+
+    Pre-wiring access and screen-local shadow state must both fail the oracle.
+    """
 
     class ReferenceDescriptor:
         def __get__(self, instance: object, owner: type | None = None) -> object:
@@ -974,7 +999,11 @@ def test_descriptor_contract_oracle_is_non_vacuous() -> None:
 
 @pytest.mark.unit
 def test_wave6_structural_oracles_are_non_vacuous() -> None:
-    """The DOM, reachability, and physical-delegate guards reject regressions."""
+    """Prove the structural oracles reject representative regressions.
+
+    The fixture exercises DOM access, delegate reachability, physical span,
+    initialization order, and controller-default failures.
+    """
     sample = ast.parse(
         """
 class Sample:
@@ -1018,3 +1047,35 @@ class Sample:
             del DELEGATE_BINDINGS["delegate"]
         else:
             DELEGATE_BINDINGS["delegate"] = original_binding
+
+
+@pytest.mark.unit
+def test_assignment_oracles_order_same_line_ast_nodes_without_comparing_them() -> None:
+    """Select assignments by source position when several share one line.
+
+    Bare tuple ordering falls through from equal line numbers to comparing
+    ``ast.AST`` objects, which raises ``TypeError``.
+    """
+    sample = ast.parse(
+        "class Sample:\n"
+        "    def initialize(self):\n"
+        "        value = {}; value = set()\n"
+        "        self.state = value; self.state = tuple()\n"
+    ).body[0]
+    assert isinstance(sample, ast.ClassDef)
+    method = _methods_from_class(sample)["initialize"]
+    state_assignments = [
+        node
+        for node in ast.walk(method)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Attribute) and target.attr == "state"
+            for target in node.targets
+        )
+    ]
+
+    assert _resolved_default_signature(
+        ast.Name(id="value"), method, state_assignments[0].lineno
+    ) == ("set",)
+    first = _first_assignment_value(method, "state")
+    assert isinstance(first, ast.Name) and first.id == "value"
