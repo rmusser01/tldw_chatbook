@@ -53,6 +53,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     PromptHistoryState,
     PromptHistoryRestoreOutcome,
     PromptListRow,
+    PromptSelectionBasket,
     PromptSelectionEntry,
     PromptsListState,
     apply_prompt_history_count,
@@ -2096,6 +2097,8 @@ def test_build_library_prompts_state_reads_browse_result_not_sampled_source():
             )
         },
         _library_prompt_browse_controller=SimpleNamespace(result=result),
+        _library_prompt_selection=PromptSelectionBasket(),
+        _library_prompt_select_mode=False,
     )
 
     state = LibraryScreen._build_library_prompts_state(fake)
@@ -2109,6 +2112,8 @@ def test_build_library_prompts_state_uses_loading_result_without_source_lookup()
     fake = SimpleNamespace(
         _local_source_records={"prompts": (500, ({"id": 999},))},
         _library_prompt_browse_controller=SimpleNamespace(result=loading),
+        _library_prompt_selection=PromptSelectionBasket(),
+        _library_prompt_select_mode=False,
     )
 
     state = LibraryScreen._build_library_prompts_state(fake)
@@ -10607,6 +10612,7 @@ def test_library_prompt_insert_console_refuses_while_dirty():
     stage = Mock()
     read_fields = Mock()
     screen = SimpleNamespace(
+        _library_prompts_mutation_in_flight=False,
         _library_prompts_view="editor",
         _library_prompt_dirty=True,
         app_instance=SimpleNamespace(
@@ -10637,6 +10643,7 @@ def _library_prompt_target() -> ConsolePromptTargetProjection:
 
 
 class _LibraryPromptHandlerHarness(SimpleNamespace):
+    _library_prompts_mutation_in_flight = False
     _stage_library_prompt_for_console = LibraryScreen._stage_library_prompt_for_console
 
 
@@ -10644,6 +10651,7 @@ def test_library_block_editor_apply_preserves_both_selected_lanes():
     state = _structured_editor_state()
     apply_working_copy = Mock()
     screen = SimpleNamespace(
+        _library_prompts_mutation_in_flight=False,
         _library_prompt_block_state=None,
         _apply_library_prompt_working_copy=apply_working_copy,
     )
