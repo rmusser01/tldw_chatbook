@@ -25,6 +25,7 @@ from tldw_chatbook.app import LibraryIngestQueueMixin, _IngestParsePoolResources
 from Tests.Library.test_library_ingest_runner import _FakeIngestParsePool
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
@@ -7857,6 +7858,52 @@ async def test_library_open_source_context_defers_before_mount_and_opens_once(
 
         opener.assert_awaited_once_with("conversations", "c-2")
         assert screen._pending_library_source_open is None
+
+
+@pytest.mark.asyncio
+async def test_library_conversation_id_context_opens_off_page_conversation() -> None:
+    """Persona's legacy conversation-id route must resolve beyond page 1."""
+    app = _build_test_app()
+    conversations = _conversation_records(25)
+    _seed_conversations(app, conversations)
+    target = conversations[-1]
+
+    class ConversationLookup:
+        is_memory_db = True
+
+        @staticmethod
+        def get_conversation_by_id(conversation_id, *, include_deleted=False):
+            assert include_deleted is False
+            if conversation_id == target["conversation_id"]:
+                return target
+            return None
+
+    app.chachanotes_db = ConversationLookup()
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context(
+        {
+            LIBRARY_NAV_CONTEXT_MODE: "conversations",
+            LIBRARY_NAV_CONTEXT_CONVERSATION_ID: target["conversation_id"],
+        }
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._selected_conversation_id == target["conversation_id"],
+            message="Conversation-id context fell back to the first page row.",
+        )
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+        assert screen._conversation_record_id(
+            screen._conversation_records()[0], 0
+        ) == target["conversation_id"]
+        assert "Conversation 025" in str(
+            screen.query_one("#library-conversation-preview-lines").renderable
+        )
 
 
 @pytest.mark.asyncio

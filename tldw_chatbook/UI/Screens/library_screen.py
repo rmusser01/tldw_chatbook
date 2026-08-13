@@ -6314,6 +6314,7 @@ class LibraryScreen(BaseAppScreen):
         raw_open_source_id = context.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID)
         open_source_type = ""
         open_source_id = ""
+        should_open_pending_source = False
         if type(raw_open_source_type) is str and type(raw_open_source_id) is str:
             validated_source_type = self._safe_text(
                 raw_open_source_type,
@@ -6335,6 +6336,7 @@ class LibraryScreen(BaseAppScreen):
                     open_source_type,
                     open_source_id,
                 )
+                should_open_pending_source = True
         requested_mode = self._safe_text(
             context.get(LIBRARY_NAV_CONTEXT_MODE),
             max_length=64,
@@ -6362,6 +6364,15 @@ class LibraryScreen(BaseAppScreen):
         if conversation_id:
             self._selected_conversation_id = conversation_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
+            if not should_open_pending_source:
+                # Persona still emits the legacy conversation_id context.
+                # A paged snapshot may not contain that id, so resolve it
+                # through the same point-lookup opener used by Search/RAG.
+                self._pending_library_source_open = (
+                    "conversations",
+                    conversation_id,
+                )
+                should_open_pending_source = True
         if requested_mode == "notes" and not note_id:
             # "notes" is a canvas row, not a nav-context table entry (see
             # target_mode above), so it needs its own selection here --
@@ -6421,7 +6432,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_note_pending_blank_gc_id = None
             self._library_note_session_blank_id = None
             self._library_note_title_user_edited = False
-        if open_source_type and open_source_id and self.is_mounted:
+        if should_open_pending_source and self.is_mounted:
             self.run_worker(
                 self._open_pending_library_source(),
                 exclusive=True,
