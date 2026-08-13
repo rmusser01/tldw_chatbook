@@ -182,6 +182,8 @@ from ...Library.library_prompts_state import (
     PromptEditorState,
     PromptHistoryRestoreRequest,
     PromptHistoryState,
+    PromptSelectionBasket,
+    PromptSelectionEntry,
     build_prompt_editor_state,
     build_prompt_browse_list_state,
     classify_prompt_save_error,
@@ -2884,6 +2886,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_operation_counter: int = 0
         self._library_notes_operation: LibraryNotesOperationState | None = None
         self._library_prompts_debounce_timer: Timer | None = None
+        self._library_prompt_select_mode = False
+        self._library_prompt_selection = PromptSelectionBasket()
         self._selected_prompt_id: int | None = None
         self._library_prompts_view: str = "list"
         # task-14902: True while the prompts sort chooser's direct-pick
@@ -5432,6 +5436,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_autosave_timer = None
         self._invalidate_library_prompts_browse()
         self._library_prompt_collections_controller.invalidate()
+        self._clear_library_prompt_selection(announce=False)
         self._cancel_library_notes_auto_sync_timer()
         self._invalidate_library_external_submission()
         super().on_unmount()
@@ -8907,7 +8912,46 @@ class LibraryScreen(BaseAppScreen):
         return build_prompt_browse_list_state(
             self._library_prompt_browse_controller.result,
             now=datetime.now(timezone.utc),
+            selection=self._library_prompt_selection,
+            select_mode=self._library_prompt_select_mode,
         )
+
+    def _sync_library_prompt_selection(self, focus_identity: str | None) -> None:
+        """Recompose only the Prompt canvas from the screen-owned basket."""
+        if not self._library_list_canvas_showing_list():
+            return
+        try:
+            canvas = self.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+        except (NoMatches, QueryError):
+            return
+        focused = getattr(self, "focused", None)
+        filter_cursor = (
+            focused.cursor_position
+            if focus_identity == "library-prompts-filter" and isinstance(focused, Input)
+            else None
+        )
+        canvas.state = self._build_library_prompts_state()
+        canvas.refresh(recompose=True)
+        canvas.call_after_refresh(
+            self._restore_library_prompts_focus,
+            focus_identity,
+            filter_cursor,
+        )
+
+    def _clear_library_prompt_selection(self, *, announce: bool) -> None:
+        """End Prompt selection and optionally announce the bounded count."""
+        count = len(self._library_prompt_selection.entries)
+        changed = self._library_prompt_select_mode or count > 0
+        if not changed:
+            return
+        self._library_prompt_select_mode = False
+        self._library_prompt_selection = PromptSelectionBasket()
+        if self.is_running:
+            self._sync_library_prompt_selection(None)
+        if announce and count:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(f"Selection discarded · {count} prompts")
 
     def _sync_library_prompt_memberships(self, state) -> None:
         """Patch only membership controls; preserve editor inputs and undo state."""
@@ -8975,6 +9019,10 @@ class LibraryScreen(BaseAppScreen):
             "library-prompts-sort",
             "library-prompts-import",
             "library-prompts-export",
+            "library-prompts-select-page",
+            "library-prompts-clear-selection",
+            "library-prompts-selection-done",
+            "library-prompts-export-selected",
             "library-prompts-retry",
             "library-prompts-page-previous",
             "library-prompts-page-next",
@@ -8982,7 +9030,11 @@ class LibraryScreen(BaseAppScreen):
             return focused_id
         return None
 
-    def _restore_library_prompts_focus(self, focus_identity: str | None) -> None:
+    def _restore_library_prompts_focus(
+        self,
+        focus_identity: str | None,
+        filter_cursor: int | None = None,
+    ) -> None:
         """Restore a surviving Prompt control, else the stable sort control."""
         if not self._library_list_canvas_showing_list():
             return
@@ -8993,9 +9045,21 @@ class LibraryScreen(BaseAppScreen):
                 target = None
             if target is not None and not getattr(target, "disabled", False):
                 target.focus()
+                if filter_cursor is not None and isinstance(target, Input):
+                    target.call_after_refresh(
+                        setattr,
+                        target,
+                        "cursor_position",
+                        min(filter_cursor, len(target.value)),
+                    )
                 return
         try:
-            self.query_one("#library-prompts-sort", Button).focus()
+            fallback_id = (
+                "#library-prompts-selection-done"
+                if self._library_prompt_select_mode
+                else "#library-prompts-sort"
+            )
+            self.query_one(fallback_id, Button).focus()
         except (NoMatches, QueryError):
             pass
 
@@ -12696,6 +12760,8 @@ class LibraryScreen(BaseAppScreen):
         if not await self._flush_library_skill_save():
             self._notify_skill_dirty_veto()
             return
+        if row_id != LIBRARY_ROW_BROWSE_PROMPTS:
+            self._clear_library_prompt_selection(announce=True)
         if row_id == LIBRARY_ROW_CREATE_NOTE:
             # Create Note is a database-only Notes route. File Notes owns a
             # retained workspace, so normalize the source only after its
@@ -14018,6 +14084,73 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(
                 self._focus_library_control, "#library-prompts-sort"
             )
+
+    @on(Button.Pressed, "#library-prompts-select")
+    def handle_library_prompts_select(self, event: Button.Pressed) -> None:
+        """Enter Prompt selection mode without changing the settled page."""
+        event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
+        state = self._build_library_prompts_state()
+        if (
+            self._library_prompt_browse_controller.result.status != "ready"
+            or not state.rows
+        ):
+            return
+        self._library_prompt_select_mode = True
+        self._sync_library_prompt_selection(None)
+
+    @on(Button.Pressed, "#library-prompts-select-page")
+    def handle_library_prompts_select_page(self, event: Button.Pressed) -> None:
+        """Add every valid row from the currently settled Prompt page."""
+        event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
+        result = self._library_prompt_browse_controller.result
+        if not self._library_prompt_select_mode or result.status != "ready":
+            return
+        state = self._build_library_prompts_state()
+        try:
+            page = tuple(
+                PromptSelectionEntry(
+                    row.prompt_id,
+                    row.version,
+                    row.name,
+                    row.artifact_type,
+                )
+                for row in state.rows
+            )
+        except (TypeError, ValueError):
+            return
+        if not page:
+            return
+        selection = self._library_prompt_selection.select_page(page)
+        if selection is self._library_prompt_selection:
+            return
+        focus_identity = self._library_prompts_focus_identity()
+        self._library_prompt_selection = selection
+        self._sync_library_prompt_selection(focus_identity)
+
+    @on(Button.Pressed, "#library-prompts-clear-selection")
+    def handle_library_prompts_clear_selection(self, event: Button.Pressed) -> None:
+        """Clear the basket silently while remaining in selection mode."""
+        event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
+        selection = self._library_prompt_selection.clear()
+        if selection is self._library_prompt_selection:
+            return
+        focus_identity = self._library_prompts_focus_identity()
+        self._library_prompt_selection = selection
+        self._sync_library_prompt_selection(focus_identity)
+
+    @on(Button.Pressed, "#library-prompts-selection-done")
+    def handle_library_prompts_selection_done(self, event: Button.Pressed) -> None:
+        """Discard the basket and return to ordinary Prompt browsing."""
+        event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
+        self._clear_library_prompt_selection(announce=True)
 
     @on(Button.Pressed, ".library-prompts-sort-choice")
     def handle_library_prompts_sort_choice(self, event: Button.Pressed) -> None:
@@ -17296,25 +17429,48 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_prompts_mutation_in_flight:
             return
+        prompt_id = getattr(event.button, "prompt_id", None)
+        if self._library_prompt_select_mode:
+            result = self._library_prompt_browse_controller.result
+            if result.status != "ready":
+                return
+            state = self._build_library_prompts_state()
+            if not any(row.prompt_id == prompt_id for row in state.rows):
+                return
+            try:
+                entry = PromptSelectionEntry(
+                    prompt_id,
+                    getattr(event.button, "prompt_version", None),
+                    getattr(event.button, "prompt_name", None),
+                    getattr(event.button, "artifact_type", None),
+                )
+            except (TypeError, ValueError):
+                return
+            focus_identity = self._library_prompts_focus_identity()
+            self._library_prompt_selection = self._library_prompt_selection.toggle(
+                entry
+            )
+            self._sync_library_prompt_selection(focus_identity)
+            return
+        if type(prompt_id) is not int or prompt_id < 1:
+            return
         if not await self._flush_library_prompt_save():
             return
+        self._clear_library_prompt_selection(announce=True)
         self._invalidate_library_prompts_browse()
-        prompt_id = getattr(event.button, "prompt_id", None)
         self._reset_library_prompt_editor_state()
-        if isinstance(prompt_id, int):
-            self._selected_prompt_id = prompt_id
+        self._selected_prompt_id = prompt_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
         self._library_prompts_view = "editor"
-        if isinstance(prompt_id, int):
-            # Exclusive in its own group so rapidly switching rows cancels
-            # the previous in-flight detail fetch instead of letting a
-            # slower older fetch finish and overwrite the newer selection's
-            # editor.
-            self.run_worker(
-                self._refresh_library_prompt_detail(prompt_id),
-                exclusive=True,
-                group="library_prompt_detail",
-            )
+        # Exclusive in its own group so rapidly switching rows cancels
+        # the previous in-flight detail fetch instead of letting a
+        # slower older fetch finish and overwrite the newer selection's
+        # editor.
+        self.run_worker(
+            self._refresh_library_prompt_detail(prompt_id),
+            exclusive=True,
+            group="library_prompt_detail",
+        )
         _sync_library_canvas(self, "prompts")
 
     async def _refresh_library_prompt_detail(
@@ -17752,6 +17908,7 @@ class LibraryScreen(BaseAppScreen):
         uses while ``_refresh_library_prompt_detail`` is in flight; there is
         nothing to fetch here.
         """
+        self._clear_library_prompt_selection(announce=True)
         self._selected_prompt_id = None
         self._library_prompts_view = "editor"
         self._library_prompt_detail = {}
@@ -23241,6 +23398,22 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         await self._open_library_export_canvas(ExportScope(kind="prompts"))
 
+    @on(Button.Pressed, "#library-prompts-export-selected")
+    async def handle_library_prompts_export_selected(
+        self, event: Button.Pressed
+    ) -> None:
+        """Open existing Export with the basket's canonical Prompt IDs."""
+        event.stop()
+        entries = self._library_prompt_selection.canonical_entries
+        if not entries:
+            return
+        await self._open_library_export_canvas(
+            ExportScope(
+                kind="prompts",
+                ids=tuple(str(entry.local_id) for entry in entries),
+            )
+        )
+
     @on(Button.Pressed, "#library-media-export")
     async def handle_library_media_export(self, event: Button.Pressed) -> None:
         """Open the export canvas scoped to the media list's current type filter.
@@ -26546,11 +26719,14 @@ class LibraryScreen(BaseAppScreen):
         if source_type == "prompt":
             if not await self._flush_library_prompt_save():
                 return
-            self._invalidate_library_prompts_browse()
             try:
                 parsed_prompt_id = int(record_id)
             except (TypeError, ValueError):
                 return
+            if parsed_prompt_id < 1:
+                return
+            self._clear_library_prompt_selection(announce=True)
+            self._invalidate_library_prompts_browse()
             # Mirrors handle_library_prompt_row's full state-set exactly so
             # the recomposed canvas lands on a clean editor, never a stale
             # one carried over from a previously opened prompt.
@@ -26570,6 +26746,7 @@ class LibraryScreen(BaseAppScreen):
             note_flush = await self._flush_library_note_save()
             if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
                 return
+            self._clear_library_prompt_selection(announce=True)
             # Mirrors handle_library_media_row's full state-set EXACTLY so
             # the recomposed canvas lands on a clean viewer, never a stale
             # one carried over from a previously opened item.
@@ -26597,6 +26774,7 @@ class LibraryScreen(BaseAppScreen):
             note_flush = await self._flush_library_note_save()
             if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
                 return
+            self._clear_library_prompt_selection(announce=True)
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
             self._begin_library_note_load(record_id)
             self.refresh(recompose=True)

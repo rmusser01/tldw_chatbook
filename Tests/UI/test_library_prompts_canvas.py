@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import zipfile
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -37,6 +38,8 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
 from tldw_chatbook.DB.Prompts_DB import ConflictError, DatabaseError, PromptsDatabase
+from tldw_chatbook.Chatbooks.chatbook_models import ContentType
+from tldw_chatbook.Chatbooks.local_chatbook_service import LocalChatbookService
 from tldw_chatbook.Library.library_export_scope import ExportScope
 from tldw_chatbook.Library.library_prompts_state import (
     LibraryPromptDeleteReceipt,
@@ -46,6 +49,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     PromptHistoryState,
     PromptHistoryRestoreOutcome,
     PromptListRow,
+    PromptSelectionEntry,
     PromptsListState,
     apply_prompt_history_count,
     apply_prompt_history_page,
@@ -62,6 +66,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     prepare_prompt_artifact_save,
 )
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_CREATE_PROMPT,
 )
@@ -2136,6 +2141,12 @@ class _FakePromptScopeServiceWithList:
             or query.casefold()
             in f"{prompt.get('name', '')} {prompt.get('details', '')}".casefold()
         ]
+        if collection_id is not None:
+            matching = [
+                prompt
+                for prompt in matching
+                if collection_id in prompt.get("collection_ids", ())
+            ]
         matching.sort(
             key=(
                 (lambda prompt: str(prompt.get("name") or "").casefold())
@@ -2159,6 +2170,7 @@ class _FakePromptScopeServiceWithList:
                 "keywords": prompt.get("keywords") or [],
                 "last_modified": prompt.get("last_modified"),
                 "version": prompt["version"],
+                "artifact_type": prompt.get("artifact_type", "prompt"),
             }
             for prompt in matching[start : start + page_size]
         ]
@@ -2170,6 +2182,345 @@ class _FakePromptScopeServiceWithList:
             "page": current_page,
             "per_page": page_size,
         }
+
+
+async def _wait_for_prompt_browse_scope(
+    screen: LibraryScreen,
+    pilot,
+    scope: PromptBrowseScope,
+) -> None:
+    """Wait for the exact mounted Prompt browse projection to settle."""
+    for _ in range(200):
+        result = screen._library_prompt_browse_controller.result
+        if result.scope == scope and result.status not in {"loading", "error"}:
+            await pilot.pause()
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(
+        "Prompt browse never settled: "
+        f"wanted={scope!r}, got={screen._library_prompt_browse_controller.result!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_prompt_selection_persists_across_search_page_sort_and_collection(
+    tmp_path,
+):
+    """The mounted screen owns one cross-browse basket and immutable row capture."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    service = _FakePromptScopeServiceWithList(
+        [
+            {
+                "id": 31,
+                "name": "[bold]Alpha 规划[/bold]",
+                "details": "first literal search",
+                "last_modified": "2026-08-04T00:00:00+00:00",
+                "version": 7,
+                "artifact_type": "prompt",
+                "collection_ids": (8,),
+            },
+            {
+                "id": 4,
+                "name": "Beta [/bold] 🧪",
+                "details": "second literal search",
+                "last_modified": "2026-08-03T00:00:00+00:00",
+                "version": 3,
+                "artifact_type": "recipe",
+                "collection_ids": (8,),
+            },
+            {
+                "id": 22,
+                "name": "Gamma",
+                "details": "page two",
+                "last_modified": "2026-08-02T00:00:00+00:00",
+                "version": 5,
+                "artifact_type": "prompt",
+                "collection_ids": (9,),
+            },
+        ]
+    )
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts").press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-row-31")
+
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-select-page")
+        first = screen.query_one("#library-prompt-row-31", Button)
+        first.focus()
+        first.press()
+        await pilot.pause()
+        focused_first = screen.query_one("#library-prompt-row-31", Button)
+        assert screen.focused is focused_first
+
+        search_scope = PromptBrowseScope(query="second literal")
+        screen._request_library_prompts_browse(search_scope)
+        await _wait_for_prompt_browse_scope(screen, pilot, search_scope)
+        second = await _wait_for_selector(screen, pilot, "#library-prompt-row-4")
+        prompt_filter = screen.query_one("#library-prompts-filter", Input)
+        prompt_filter.focus()
+        await pilot.pause()
+        prompt_filter.cursor_position = 3
+        second.press()
+        await pilot.pause()
+        restored_filter = screen.query_one("#library-prompts-filter", Input)
+        assert screen.focused is restored_filter
+        assert restored_filter.cursor_position == 3
+
+        page_scope = PromptBrowseScope(page=3, page_size=1)
+        screen._request_library_prompts_browse(page_scope)
+        await _wait_for_prompt_browse_scope(screen, pilot, page_scope)
+        screen.query_one("#library-prompts-select-page", Button).press()
+        await pilot.pause()
+
+        sort_scope = PromptBrowseScope(sort_by="name", sort_order="asc")
+        screen._request_library_prompts_browse(sort_scope)
+        await _wait_for_prompt_browse_scope(screen, pilot, sort_scope)
+        service._prompts[0] = {
+            **service._prompts[0],
+            "name": "Changed after capture",
+            "version": 99,
+            "artifact_type": "recipe",
+        }
+        collection_scope = PromptBrowseScope(
+            collection_id=8,
+            sort_by="name",
+            sort_order="asc",
+        )
+        screen._request_library_prompts_browse(collection_scope)
+        await _wait_for_prompt_browse_scope(screen, pilot, collection_scope)
+        screen.query_one("#library-prompts-select-page", Button).press()
+        await pilot.pause()
+
+        assert screen._library_prompt_select_mode is True
+        assert screen._library_prompt_selection.canonical_entries == (
+            PromptSelectionEntry(4, 3, "Beta [/bold] 🧪", "recipe"),
+            PromptSelectionEntry(22, 5, "Gamma", "prompt"),
+            PromptSelectionEntry(31, 7, "[bold]Alpha 规划[/bold]", "prompt"),
+        )
+        summary = screen.query_one("#library-prompts-selection-summary", Static)
+        assert str(summary.renderable) == "3 selected · 2 on this page"
+        assert all(
+            screen.query_one(
+                f"#library-prompt-row-{prompt_id}", Button
+            ).label.plain.startswith("☑ ")
+            for prompt_id in (4, 31)
+        )
+        captured_scope = screen._library_prompt_browse_controller.scope
+        captured_selection = screen._library_prompt_selection
+        screen.query_one("#library-prompts-export-selected", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-export-header")
+        await screen.action_library_export_back()
+        await _wait_for_prompt_browse_scope(screen, pilot, captured_scope)
+        assert screen._library_prompt_browse_controller.scope == captured_scope
+        assert screen._library_prompt_selection == captured_selection
+        assert screen._library_prompt_select_mode is True
+
+
+@pytest.mark.asyncio
+async def test_prompts_export_selected_uses_canonical_ids_and_preserves_selection(
+    tmp_path,
+):
+    """Selected export is canonical, late-bound to active SQLite, and persistent."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    low_id, _low_uuid, _ = db.add_prompt(
+        name="Low", author=None, details=None, system_prompt="captured content"
+    )
+    high_id, _high_uuid, _ = db.add_prompt(
+        name="High", author=None, details=None, system_prompt="high content"
+    )
+    assert low_id is not None and high_id is not None
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.prompts_db = db
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-export-selected")
+        screen.query_one(f"#library-prompt-row-{high_id}", Button).press()
+        screen.query_one(f"#library-prompt-row-{low_id}", Button).press()
+        await pilot.pause()
+        captured = screen._library_prompt_selection
+
+        screen.query_one("#library-prompts-export-selected", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-export-header")
+
+        selected_scope = ExportScope(kind="prompts", ids=(str(low_id), str(high_id)))
+        assert screen._library_export_scope == selected_scope
+        assert screen._library_prompt_selection == captured
+        assert screen._library_prompt_select_mode is True
+
+        await screen.action_library_export_back()
+        await _wait_for_selector(screen, pilot, f"#library-prompt-row-{low_id}")
+        assert screen._library_prompt_selection == captured
+        assert screen._library_prompt_select_mode is True
+
+        db.update_prompt_by_id(
+            low_id,
+            {"system_prompt": "edited after selection"},
+            expected_version=1,
+        )
+        selected_service = LocalChatbookService(
+            {"Prompts": str(tmp_path / "prompts.db")},
+            registry_path=tmp_path / "selected-chatbooks.json",
+        )
+        selected_path = tmp_path / "selected-prompts.zip"
+        payload = LibraryScreen._build_library_export_payload(
+            name="Selected Prompts",
+            description="",
+            selections={ContentType.PROMPT: list(selected_scope.ids)},
+            destination=str(selected_path),
+            media_quality="thumbnail",
+        )
+        outcome = await asyncio.to_thread(
+            LibraryScreen._run_library_export_via_service,
+            selected_service,
+            payload,
+            name="Selected Prompts",
+            description="",
+        )
+        assert outcome["success"] is True, outcome["message"]
+        with zipfile.ZipFile(selected_path, "r") as archive:
+            prompt_payloads = [
+                json.loads(archive.read(name))
+                for name in archive.namelist()
+                if name.startswith("content/prompts/prompt_") and name.endswith(".json")
+            ]
+        exported_low = next(item for item in prompt_payloads if item["name"] == "Low")
+        assert exported_low["system_prompt"] == "edited after selection"
+        assert screen._library_prompt_selection == captured
+        assert screen._library_prompt_select_mode is True
+
+        assert db.soft_delete_prompt(high_id, expected_version=1) is True
+        missing_path = tmp_path / "selected-prompts-missing.zip"
+        missing_payload = LibraryScreen._build_library_export_payload(
+            name="Missing Selected Prompt",
+            description="",
+            selections={ContentType.PROMPT: list(selected_scope.ids)},
+            destination=str(missing_path),
+            media_quality="thumbnail",
+        )
+        missing_outcome = await asyncio.to_thread(
+            LibraryScreen._run_library_export_via_service,
+            selected_service,
+            missing_payload,
+            name="Missing Selected Prompt",
+            description="",
+        )
+        assert missing_outcome["success"] is False
+        assert not missing_path.exists()
+        assert not missing_path.with_name(missing_path.name + ".partial").exists()
+        assert screen._library_prompt_selection == captured
+        assert screen._library_prompt_select_mode is True
+
+
+@pytest.mark.asyncio
+async def test_prompt_selection_clear_boundaries_and_invalid_row_fail_closed(tmp_path):
+    """Only admitted navigation discards; Clear and teardown stay silent."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = _FakePromptScopeServiceWithList(
+        [
+            {
+                "id": 17,
+                "name": "[bold]Literal 名[/bold]",
+                "last_modified": "2026-08-04T00:00:00+00:00",
+                "version": 6,
+                "artifact_type": "prompt",
+            }
+        ]
+    )
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-selection-done")
+
+        row = screen.query_one("#library-prompt-row-17", Button)
+        row.prompt_version = None
+        row.press()
+        await pilot.pause()
+        assert screen._library_prompt_selection.entries == ()
+        assert screen._library_prompts_view == "list"
+
+        row.prompt_version = 6
+        row.press()
+        await pilot.pause()
+        app.notify.reset_mock()
+        screen.query_one("#library-prompts-clear-selection", Button).press()
+        await pilot.pause()
+        assert screen._library_prompt_select_mode is True
+        assert screen._library_prompt_selection.entries == ()
+        app.notify.assert_not_called()
+
+        screen.query_one("#library-prompt-row-17", Button).press()
+        await pilot.pause()
+        screen.query_one("#library-prompts-selection-done", Button).press()
+        await pilot.pause()
+        assert screen._library_prompt_select_mode is False
+        assert screen._library_prompt_selection.entries == ()
+        app.notify.assert_called_once_with("Selection discarded · 1 prompts")
+
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-selection-done")
+        screen.query_one("#library-prompt-row-17", Button).press()
+        await pilot.pause()
+        captured = screen._library_prompt_selection
+        screen._library_prompt_dirty = True
+        app.notify.reset_mock()
+        await screen._select_library_rail_row_after_source_admission(
+            LIBRARY_ROW_BROWSE_NOTES
+        )
+        assert screen._library_prompt_selection == captured
+        assert screen._library_prompt_select_mode is True
+        app.notify.assert_not_called()
+
+        screen._library_prompt_dirty = False
+        await screen._select_library_rail_row_after_source_admission(
+            LIBRARY_ROW_BROWSE_NOTES
+        )
+        await _wait_for_selector(screen, pilot, "#library-notes-canvas")
+        assert screen._library_prompt_selection.entries == ()
+        assert screen._library_prompt_select_mode is False
+        app.notify.assert_called_once_with("Selection discarded · 1 prompts")
+
+        await screen._select_library_rail_row_after_source_admission(
+            LIBRARY_ROW_BROWSE_PROMPTS
+        )
+        await _wait_for_selector(screen, pilot, "#library-prompt-row-17")
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-selection-done")
+        screen.query_one("#library-prompt-row-17", Button).press()
+        await pilot.pause()
+        captured = screen._library_prompt_selection
+        app.notify.reset_mock()
+        screen.query_one("#library-row-create-prompt", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-name")
+        assert screen._library_prompt_selection.entries == ()
+        assert screen._library_prompt_select_mode is False
+        app.notify.assert_called_once_with("Selection discarded · 1 prompts")
+
+        screen._library_prompt_select_mode = True
+        screen._library_prompt_selection = captured
+        app.notify.reset_mock()
+
+    assert screen._library_prompt_select_mode is False
+    assert screen._library_prompt_selection.entries == ()
+    app.notify.assert_not_called()
 
 
 @pytest.mark.asyncio

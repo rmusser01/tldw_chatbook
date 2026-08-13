@@ -40,7 +40,6 @@ from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
-    LibraryIngestJobRegistry,
 )
 from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestFormState,
@@ -51,6 +50,10 @@ from tldw_chatbook.Library.library_rag_state import (
     LibraryRagPanelState,
 )
 from tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity
+from tldw_chatbook.Library.library_prompts_state import (
+    PromptSelectionBasket,
+    PromptSelectionEntry,
+)
 from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
     results_heading_text,
 )
@@ -122,6 +125,25 @@ def _open_source_test_app() -> SimpleNamespace:
     """Return the smallest mutable app seam needed by open-source tests."""
 
     return SimpleNamespace(app_config={})
+
+
+def test_library_prompt_selection_is_ephemeral_save_state() -> None:
+    """Cross-search Prompt selection never enters Library restore state."""
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_prompt_select_mode = True
+    screen._library_prompt_selection = PromptSelectionBasket(
+        (PromptSelectionEntry(7, 4, "Literal [name] 🌐", "prompt"),),
+        generation=1,
+    )
+
+    saved = screen.save_state()
+    restored = LibraryScreen(app)
+    restored.restore_state(saved)
+
+    assert not any("prompt_selection" in key for key in saved)
+    assert restored._library_prompt_select_mode is False
+    assert restored._library_prompt_selection == PromptSelectionBasket()
 
 
 # --- D1: capped, markup-escaped carries-forward line (pure logic) ----------
