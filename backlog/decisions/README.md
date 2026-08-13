@@ -61,6 +61,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-062](062-hosted-chat-completions-provider-boundary.md) | Superseded by ADR-063 | Original hosted Chat wire decision with ephemeral-only reasoning continuation. |
 | [ADR-063](063-hosted-provider-wire-and-durable-tool-continuation.md) | Accepted | Keep hosted Chat wire mechanics neutral and persist private provider continuation with message-owned sync, conflict, export, and model-specific replay semantics. |
 | [ADR-064](064-deepseek-dual-api-provider-boundary.md) | Accepted | Treat DeepSeek Chat Completions and Responses as two strict modes of one provider with stateless explicit history and durable reasoning/tool continuation. |
+| [ADR-065](065-active-ingest-source-admission-and-override.md) | Accepted | Refuse same-backend active-source ingest duplicates by default, with lexical identity, atomic folder admission, and an inline one-shot override. |
 
 ## Historical Decision Material
 
