@@ -1,3 +1,4 @@
+import json
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime
 
@@ -1411,6 +1412,41 @@ def test_persisted_reply_speech_missing_version_is_nonmutating():
     assert persistence.speech_updates == []
 
 
+def test_persisted_reply_speech_noop_reconciles_external_durable_change(tmp_path):
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    db = CharactersRAGDB(tmp_path / "speech-stale-noop.db", "speech-test")
+    try:
+        service = ChatPersistenceService(db)
+        conversation_id = service.create_conversation(conversation_title="Saved")
+        store = ConsoleChatStore(persistence=service)
+        session = store.restore_persisted_session(
+            title="Saved",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=[],
+        )
+        assert session.speech_preferences == ConsoleSpeechPreferences()
+
+        assert service.update_conversation_speech_preferences(
+            conversation_id=conversation_id,
+            preferences=ConsoleSpeechPreferences(auto_speak=True),
+            expected_version=1,
+        )
+
+        updated, persisted = store.set_auto_speak(session.id, False)
+
+        assert updated is session
+        assert persisted is True
+        assert session.speech_preferences == ConsoleSpeechPreferences()
+        assert service.get_conversation_speech_preferences(
+            conversation_id
+        ) == ConsoleSpeechPreferences()
+        assert db.get_conversation_by_id(conversation_id)["version"] == 3
+    finally:
+        db.close_connection()
+
+
 def test_first_persist_includes_staged_reply_speech_preferences():
     from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 
@@ -1478,23 +1514,120 @@ def test_real_persistence_round_trips_roleplay_and_reply_speech_metadata(tmp_pat
         db.close_connection()
 
 
-def test_initial_reply_speech_failure_leaves_no_conversation_row(tmp_path):
+def test_initial_reply_speech_is_inserted_at_version_one_with_sibling_metadata(
+    tmp_path,
+):
     from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 
-    db = CharactersRAGDB(tmp_path / "speech-create-failure.db", "speech-test")
+    db = CharactersRAGDB(tmp_path / "speech-create-metadata.db", "speech-test")
+    try:
+        service = ChatPersistenceService(db)
+        roleplay = {
+            "version": 1,
+            "user_name_override": "Rowan",
+        }
+
+        conversation_id = service.create_conversation(
+            conversation_title="Speech setup",
+            metadata={
+                "console_roleplay_context": roleplay,
+                "other": {"keep": True},
+            },
+            speech_preferences=ConsoleSpeechPreferences(auto_speak=True),
+        )
+
+        record = db.get_conversation_by_id(conversation_id)
+        metadata = json.loads(record["metadata"])
+        assert record["version"] == 1
+        assert metadata["console_roleplay_context"] == roleplay
+        assert metadata["other"] == {"keep": True}
+        assert metadata["console_speech"]["auto_speak"] is True
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("caller_owned_transaction", [False, True])
+def test_initial_future_speech_metadata_failure_never_creates_a_row(
+    tmp_path,
+    caller_owned_transaction,
+):
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    db = CharactersRAGDB(
+        tmp_path / f"speech-create-failure-{caller_owned_transaction}.db",
+        "speech-test",
+    )
     try:
         service = ChatPersistenceService(db)
         before = db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
-        service.update_conversation_speech_preferences = lambda **_kwargs: False
+        connection = db.get_connection()
+        if caller_owned_transaction:
+            connection.execute("BEGIN")
 
-        with pytest.raises(RuntimeError, match="initial Console speech"):
+        with pytest.raises(ValueError, match="version 2"):
             service.create_conversation(
                 conversation_title="Failed speech setup",
+                metadata={
+                    "console_speech": {
+                        "auto_speak": True,
+                        "paused": False,
+                        "consent_destination": None,
+                        "consent_version": 2,
+                    }
+                },
                 speech_preferences=ConsoleSpeechPreferences(auto_speak=True),
             )
 
+        if caller_owned_transaction:
+            connection.commit()
         after = db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
         assert after == before
+    finally:
+        db.close_connection()
+
+
+def test_future_speech_metadata_blocks_store_mutation_without_state_change(tmp_path):
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    db = CharactersRAGDB(tmp_path / "speech-future-version.db", "speech-test")
+    try:
+        service = ChatPersistenceService(db)
+        conversation_id = service.create_conversation(conversation_title="Future")
+        future_metadata = {
+            "console_speech": {
+                "auto_speak": True,
+                "paused": False,
+                "consent_destination": None,
+                "consent_version": 2,
+                "future_flag": "keep",
+            }
+        }
+        assert db.update_conversation(
+            conversation_id,
+            {"metadata": json.dumps(future_metadata, sort_keys=True)},
+            expected_version=1,
+        )
+        before_record = db.get_conversation_by_id(conversation_id)
+        store = ConsoleChatStore(persistence=service)
+        session = store.restore_persisted_session(
+            title="Future",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=[],
+        )
+        before_preferences = session.speech_preferences
+
+        updated, persisted = store.set_auto_speak(session.id, True)
+
+        after_record = db.get_conversation_by_id(conversation_id)
+        assert updated is session
+        assert persisted is False
+        assert session.speech_preferences is before_preferences
+        assert after_record["version"] == before_record["version"]
+        assert json.loads(after_record["metadata"]) == future_metadata
+        assert service.get_conversation_speech_preferences(
+            conversation_id
+        ) == ConsoleSpeechPreferences()
     finally:
         db.close_connection()
 

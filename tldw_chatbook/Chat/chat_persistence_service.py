@@ -189,6 +189,7 @@ class ChatPersistenceService:
         workspace_id: Optional[str] = None,
         conversation_title: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        metadata: Mapping[str, object] | str | None = None,
         speech_preferences: ConsoleSpeechPreferences | None = None,
     ) -> str:
         """Create a conversation and link it to a workspace when requested.
@@ -216,6 +217,7 @@ class ChatPersistenceService:
             conversation_title: Explicit title, which takes precedence when
                 truthy; otherwise the character or assistant-derived title is used.
             system_prompt: Initial system prompt persisted with the conversation.
+            metadata: Optional initial conversation metadata object or JSON object.
             speech_preferences: Optional staged Console reply-speech preferences
                 to include in the conversation metadata before returning.
 
@@ -257,20 +259,25 @@ class ChatPersistenceService:
         }
         if assistant_authority_id is not _ASSISTANT_AUTHORITY_UNSET:
             conversation_data["assistant_authority_id"] = assistant_authority_id
-        with self.db.transaction():
-            conversation_id = self.db.add_conversation(conversation_data)
-            if (
-                speech_preferences is not None
-                and speech_preferences != ConsoleSpeechPreferences()
-            ):
-                if not self.update_conversation_speech_preferences(
-                    conversation_id=conversation_id,
-                    preferences=speech_preferences,
-                    expected_version=1,
-                ):
-                    raise RuntimeError(
-                        "Failed to persist initial Console speech preferences."
-                    )
+        initial_metadata: Mapping[str, object] | str | None = metadata
+        if (
+            speech_preferences is not None
+            and speech_preferences != ConsoleSpeechPreferences()
+        ):
+            initial_metadata = merge_console_speech_preferences(
+                initial_metadata,
+                speech_preferences,
+            )
+        if isinstance(initial_metadata, Mapping):
+            conversation_data["metadata"] = json.dumps(
+                dict(initial_metadata),
+                sort_keys=True,
+            )
+        elif type(initial_metadata) is str:
+            conversation_data["metadata"] = initial_metadata
+        elif initial_metadata is not None:
+            raise TypeError("metadata must be a mapping, JSON string, or None.")
+        conversation_id = self.db.add_conversation(conversation_data)
         if safe_workspace_id is not None:
             try:
                 self._link_workspace_conversation(

@@ -1497,9 +1497,9 @@ class ConsoleChatStore:
         preferences: ConsoleSpeechPreferences,
     ) -> tuple[ConsoleChatSession, bool]:
         """Apply speech state after its versioned durable write succeeds."""
-        if preferences == session.speech_preferences:
-            return session, True
         if session.persisted_conversation_id is None:
+            if preferences == session.speech_preferences:
+                return session, True
             session.speech_preferences = preferences
             session.updated_at = _utc_now_iso()
             return session, True

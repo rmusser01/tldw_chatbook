@@ -92,6 +92,42 @@ def test_valid_preferences_parse_from_json_metadata():
     )
 
 
+def test_mapping_owned_metadata_with_extra_key_fails_closed():
+    speech = _speech_module()
+    metadata = {
+        "console_speech": {
+            "auto_speak": True,
+            "paused": False,
+            "consent_destination": DESTINATION,
+            "consent_version": 1,
+            "future_flag": True,
+        }
+    }
+
+    assert speech.parse_console_speech_preferences(metadata) == (
+        speech.ConsoleSpeechPreferences()
+    )
+
+
+def test_json_owned_metadata_with_extra_key_fails_closed():
+    speech = _speech_module()
+    metadata = json.dumps(
+        {
+            "console_speech": {
+                "auto_speak": True,
+                "paused": False,
+                "consent_destination": DESTINATION,
+                "consent_version": 1,
+                "future_flag": True,
+            }
+        }
+    )
+
+    assert speech.parse_console_speech_preferences(metadata) == (
+        speech.ConsoleSpeechPreferences()
+    )
+
+
 def test_speech_preferences_merge_preserves_roleplay_and_unrelated_metadata():
     speech = _speech_module()
     metadata = {
@@ -115,6 +151,60 @@ def test_speech_preferences_merge_preserves_roleplay_and_unrelated_metadata():
         "consent_destination": DESTINATION,
         "consent_version": 1,
     }
+
+
+def test_merge_rejects_future_mapping_payload_without_mutating_it():
+    speech = _speech_module()
+    metadata = {
+        "console_speech": {
+            "auto_speak": True,
+            "paused": False,
+            "consent_destination": DESTINATION,
+            "consent_version": 2,
+            "future_flag": "keep",
+        },
+        "other": {"keep": True},
+    }
+    original = json.loads(json.dumps(metadata))
+
+    with pytest.raises(
+        speech.ConsoleSpeechPreferencesVersionError,
+        match="version 2",
+    ):
+        speech.merge_console_speech_preferences(
+            metadata,
+            speech.ConsoleSpeechPreferences(auto_speak=False),
+        )
+
+    assert metadata == original
+
+
+def test_merge_rejects_future_json_payload_without_replacing_it():
+    speech = _speech_module()
+    metadata = json.dumps(
+        {
+            "console_speech": {
+                "auto_speak": True,
+                "paused": False,
+                "consent_destination": DESTINATION,
+                "consent_version": 2,
+            },
+            "other": {"keep": True},
+        },
+        sort_keys=True,
+    )
+    original = metadata
+
+    with pytest.raises(
+        speech.ConsoleSpeechPreferencesVersionError,
+        match="version 2",
+    ):
+        speech.merge_console_speech_preferences(
+            metadata,
+            speech.ConsoleSpeechPreferences(auto_speak=False),
+        )
+
+    assert metadata == original
 
 
 @pytest.mark.parametrize(

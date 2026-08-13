@@ -11,6 +11,16 @@ from typing import Any
 CONSOLE_SPEECH_METADATA_KEY = "console_speech"
 CONSOLE_SPEECH_CONSENT_VERSION = 1
 _DESTINATION_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_OWNED_KEYS = {
+    "auto_speak",
+    "paused",
+    "consent_destination",
+    "consent_version",
+}
+
+
+class ConsoleSpeechPreferencesVersionError(ValueError):
+    """Durable speech preferences belong to a newer application version."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,13 +53,7 @@ def parse_console_speech_preferences(metadata: object) -> ConsoleSpeechPreferenc
     owned = outer.get(CONSOLE_SPEECH_METADATA_KEY)
     if not isinstance(owned, Mapping):
         return ConsoleSpeechPreferences()
-    required = {
-        "auto_speak",
-        "paused",
-        "consent_destination",
-        "consent_version",
-    }
-    if not required.issubset(owned):
+    if set(owned) != _OWNED_KEYS:
         return ConsoleSpeechPreferences()
     try:
         return ConsoleSpeechPreferences(
@@ -69,6 +73,18 @@ def merge_console_speech_preferences(
     """Replace only the Console speech key while preserving metadata siblings."""
     if not isinstance(preferences, ConsoleSpeechPreferences):
         raise TypeError("preferences must be ConsoleSpeechPreferences.")
+    merged = _metadata_object(metadata)
+    owned = merged.get(CONSOLE_SPEECH_METADATA_KEY)
+    existing_version = (
+        owned.get("consent_version") if isinstance(owned, Mapping) else None
+    )
+    if type(existing_version) is int and existing_version > (
+        CONSOLE_SPEECH_CONSENT_VERSION
+    ):
+        raise ConsoleSpeechPreferencesVersionError(
+            "Cannot overwrite Console speech preferences at version "
+            f"{existing_version}."
+        )
     # Reconstruct to reject objects forged by bypassing the frozen dataclass API.
     validated = ConsoleSpeechPreferences(
         auto_speak=preferences.auto_speak,
@@ -76,7 +92,6 @@ def merge_console_speech_preferences(
         consent_destination=preferences.consent_destination,
         consent_version=preferences.consent_version,
     )
-    merged = _metadata_object(metadata)
     merged[CONSOLE_SPEECH_METADATA_KEY] = {
         "auto_speak": validated.auto_speak,
         "paused": validated.paused,
