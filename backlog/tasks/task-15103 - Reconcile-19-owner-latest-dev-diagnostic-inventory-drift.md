@@ -23,7 +23,7 @@ Latest-dev stop-gate revalidation on exact `origin/dev` `82b595049d97836482c118c
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Unsafe private values or exception details in the recorded delta are repaired without changing unrelated production behavior
-- [x] #2 The persistent-diagnostic inventory is regenerated with only reviewed owner changes and unchanged six-file sink topology
+- [x] #2 The persistent-diagnostic inventory is regenerated with only reviewed owner changes; the recorded incident preserves its six-file sink topology and any final-rebase topology delta is explicitly pinned and reviewed
 - [x] #3 The focused architecture checker and regression coverage pass without constructing a test application
 - [x] #4 Every generated-versus-stored delta on the final integration base is reviewed under ADR-029, including the recorded 19-owner incident and later rebase drift
 <!-- AC:END -->
@@ -112,17 +112,19 @@ conflict-markered historical blob). It now reads the immutable
 `recorded_base` tree, which matches the stale baseline on all 19 owner rows.
 
 **Final integration rebase (2026-08-13):** rebased PR #1544 onto `origin/dev`
-`bed39af6b004e4db86218fad01d2ea515b332135`, reviewed all 40 resulting
-owner-row deltas, and repaired unsafe integration diagnostics across 22
-production files. Raw config values, survivor/tool identifiers, stack traces,
-exception capture/text, message/profile/note ids, paths, and dynamic setting
-values were replaced with fixed events plus only reviewed type/count metadata.
-The regenerated manifest now records 489 owners, 1,198 TASK-492 calls, 6,940
-TASK-494 calls, and the same six byte-equal sink-topology rows. The complete
-diagnostic suite passed 60 tests; full Architecture passed 88 tests with only
-the separately tracked Console size ratchet remaining at the unchanged current-
-dev baseline of 22,338/17,727. Qodo's valid feedback was addressed by adding
-the missing public-test docstring and batching/deduplicating provenance Git
-checks; the event-only logging-context suggestion remains intentionally
-rejected under ADR-029.
+`1c4d25fc53224efee8bc698d6a5a514c72eed483`, reviewed all 61 resulting
+owner-row deltas, and pinned their outcomes in
+`Docs/security/task-15103-final-integration-review.json`: 28 metadata repairs,
+27 safe/no-edit rows, and 6 removed owners. Raw config values,
+survivor/tool/artifact identifiers, stack traces, exception capture/text,
+message/profile/note ids, paths, and dynamic setting values were replaced with
+fixed events plus only reviewed type/count metadata. The regenerated manifest
+records 489 owners, 1,198 TASK-492 calls, and 6,940 TASK-494 calls. Its one
+sink-topology delta is the reviewed removal of the redundant buffered Loguru
+bridge already prohibited by TASK-15422; the final-integration ledger pins the
+exact base/reviewed topology hashes and removed sink. The focused ledger test
+also mutation-proves that a safe/no-edit row cannot disappear. Qodo's valid
+feedback was addressed by adding the missing public-test docstring and
+batching/deduplicating provenance Git checks; the event-only logging-context
+suggestion remains intentionally rejected under ADR-029.
 <!-- SECTION:NOTES:END -->

@@ -38,9 +38,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     },
     "tldw_chatbook/Agents/run_log_eviction.py": {
         "continuation owner missing from payload": (),
-        "run-log eviction failed for continuation history": (
-            "type(exc).__name__",
-        ),
+        "run-log eviction failed for continuation history": ("type(exc).__name__",),
     },
     "tldw_chatbook/Agents/session_todo_store.py": {
         "Session todo change callback failed": (),
@@ -85,9 +83,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "LibraryIngestJobRegistry progress listener raised": (),
     },
     "tldw_chatbook/Notes/file_notes_service.py": {
-        "Could not remove a File Notes export temporary": (
-            "type(error).__name__",
-        ),
+        "Could not remove a File Notes export temporary": ("type(error).__name__",),
     },
     "tldw_chatbook/Local_Ingestion/audio_processing.py": {
         "Time-range trim could not be converted": (),
@@ -135,9 +131,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "External Parakeet verification rejected the selected source": (
             "type(exc).__name__",
         ),
-        "External Parakeet verification failed unexpectedly": (
-            "type(exc).__name__",
-        ),
+        "External Parakeet verification failed unexpectedly": ("type(exc).__name__",),
         "External Parakeet source save failed": ("type(exc).__name__",),
         "Managed VAD preflight failed": ("type(exc).__name__",),
         "Managed VAD installation failed": ("type(exc).__name__",),
@@ -145,9 +139,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "External Parakeet managed copy failed": ("type(exc).__name__",),
         "Curated model preflight failed": ("type(exc).__name__",),
         "Curated model installation failed": ("type(exc).__name__",),
-        "Activated Parakeet source preference update failed": (
-            "type(exc).__name__",
-        ),
+        "Activated Parakeet source preference update failed": ("type(exc).__name__",),
         "Remote model preflight failed": (
             "type(exc).__name__",
             "isinstance(exc, TransferError) and getattr(exc, 'retryable', False)",
@@ -241,9 +233,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Library post-recompose callback failed": (),
     },
     "tldw_chatbook/Widgets/enhanced_file_picker.py": {
-        "Failed to persist file-picker recent/last-dir state": (
-            "type(e).__name__",
-        ),
+        "Failed to persist file-picker recent/last-dir state": ("type(e).__name__",),
     },
     "tldw_chatbook/Widgets/settings_agents_panel.py": {
         "could not open agent runs database": ("type(exc).__name__",),
@@ -617,6 +607,9 @@ def test_inventory_counts_chained_logger_diagnostic_calls() -> None:
 
 
 TASK_15103_REVIEW_PATH = REPO_ROOT / "Docs/security/task-15103-diagnostic-review.json"
+TASK_15103_FINAL_INTEGRATION_PATH = (
+    REPO_ROOT / "Docs/security/task-15103-final-integration-review.json"
+)
 TASK_15103_RECORDED_BASE = "6d72f15f8332b6469a5d644d409b80914634a8dd"
 TASK_15103_PLANNING_BASE = "82b595049d97836482c118cfeb4d31df537a86a1"
 TASK_15103_OWNER_STARTING = {
@@ -1949,6 +1942,135 @@ def _task_15103_checkpoint_aggregate(owners: list[dict[str, Any]]) -> dict[str, 
             json.dumps(content, separators=(",", ":")).encode("utf-8")
         ).hexdigest(),
     }
+
+
+def _task_15103_git_blob(revision: str, path: str) -> bytes:
+    result = subprocess.run(
+        ["git", "show", f"{revision}:{path}"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"missing pinned Git blob {revision}:{path}"
+    return result.stdout
+
+
+def _task_15103_canonical_sha256(value: Any) -> str:
+    encoded = json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _task_15103_validate_final_integration_review(review: Any) -> None:
+    record = _task_15103_exact_keys(
+        review,
+        {
+            "schema_version",
+            "task",
+            "final_base",
+            "reviewed_head",
+            "base_manifest_sha256",
+            "reviewed_manifest_sha256",
+            "persistent_sink_topology",
+            "outcomes",
+        },
+        location="final_integration_review",
+    )
+    assert record["schema_version"] == 1
+    assert record["task"] == "TASK-15103"
+    base = record["final_base"]
+    head = record["reviewed_head"]
+    assert _task_15103_is_hex(base, 40)
+    assert _task_15103_is_hex(head, 40)
+    ancestry = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base, head],
+        cwd=REPO_ROOT,
+        check=False,
+    )
+    assert ancestry.returncode == 0, "reviewed_head must descend from final_base"
+
+    manifest_path = "Docs/security/production-diagnostic-inventory.json"
+    base_blob = _task_15103_git_blob(base, manifest_path)
+    reviewed_blob = _task_15103_git_blob(head, manifest_path)
+    assert hashlib.sha256(base_blob).hexdigest() == record["base_manifest_sha256"]
+    assert (
+        hashlib.sha256(reviewed_blob).hexdigest() == record["reviewed_manifest_sha256"]
+    )
+    base_manifest = json.loads(base_blob)
+    reviewed_manifest = json.loads(reviewed_blob)
+    base_owners = {owner["path"]: owner for owner in base_manifest["owners"]}
+    reviewed_owners = {owner["path"]: owner for owner in reviewed_manifest["owners"]}
+    changed_paths = {
+        path
+        for path in base_owners.keys() | reviewed_owners.keys()
+        if base_owners.get(path) != reviewed_owners.get(path)
+    }
+
+    outcomes = _task_15103_exact_keys(
+        record["outcomes"],
+        {"metadata_repair", "safe_no_edit", "owner_removed"},
+        location="final_integration_review.outcomes",
+    )
+    reviewed_paths: set[str] = set()
+    for disposition, paths in outcomes.items():
+        assert isinstance(paths, list) and paths == sorted(paths)
+        assert all(isinstance(path, str) and path for path in paths)
+        assert not reviewed_paths.intersection(paths), (
+            "final integration outcome paths must be unique"
+        )
+        reviewed_paths.update(paths)
+        if disposition == "owner_removed":
+            assert all(
+                path in base_owners and path not in reviewed_owners for path in paths
+            )
+        else:
+            assert all(path in reviewed_owners for path in paths)
+    assert reviewed_paths == changed_paths, (
+        "final integration outcomes must cover the exact manifest owner delta"
+    )
+
+    topology = _task_15103_exact_keys(
+        record["persistent_sink_topology"],
+        {"base_sha256", "reviewed_sha256", "added", "removed"},
+        location="final_integration_review.persistent_sink_topology",
+    )
+    base_topology = base_manifest["persistent_sink_topology"]
+    reviewed_topology = reviewed_manifest["persistent_sink_topology"]
+    assert _task_15103_canonical_sha256(base_topology) == topology["base_sha256"]
+    assert (
+        _task_15103_canonical_sha256(reviewed_topology) == topology["reviewed_sha256"]
+    )
+
+    def flatten(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {"path": owner["path"], "sink": sink}
+            for owner in items
+            for sink in owner["sinks"]
+        ]
+
+    base_sinks = flatten(base_topology)
+    reviewed_sinks = flatten(reviewed_topology)
+    assert topology["removed"] == [
+        sink for sink in base_sinks if sink not in reviewed_sinks
+    ]
+    assert topology["added"] == [
+        sink for sink in reviewed_sinks if sink not in base_sinks
+    ]
+
+
+def test_task_15103_final_integration_review_is_exact() -> None:
+    """Pin every reviewed final-base owner and sink-topology outcome."""
+    review = json.loads(TASK_15103_FINAL_INTEGRATION_PATH.read_text(encoding="utf-8"))
+
+    _task_15103_validate_final_integration_review(review)
+
+
+def test_task_15103_final_integration_review_rejects_missing_safe_row() -> None:
+    """Prove safe/no-edit outcomes cannot silently disappear from the ledger."""
+    review = json.loads(TASK_15103_FINAL_INTEGRATION_PATH.read_text(encoding="utf-8"))
+    review["outcomes"]["safe_no_edit"].pop()
+
+    with pytest.raises(AssertionError, match="exact manifest owner delta"):
+        _task_15103_validate_final_integration_review(review)
 
 
 def test_task_15103_reviewed_final_state_is_ledger_exact() -> None:

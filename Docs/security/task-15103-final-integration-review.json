@@ -1,0 +1,93 @@
+{
+  "base_manifest_sha256": "2aa2bb05b6008d655e3eb2e3a98799713b979a168eab5960c000da174e34a863",
+  "final_base": "1c4d25fc53224efee8bc698d6a5a514c72eed483",
+  "outcomes": {
+    "metadata_repair": [
+      "tldw_chatbook/Agents/agent_service.py",
+      "tldw_chatbook/Agents/local_tool_provider.py",
+      "tldw_chatbook/Agents/run_log_eviction.py",
+      "tldw_chatbook/Agents/session_todo_store.py",
+      "tldw_chatbook/Chat/console_agent_bridge.py",
+      "tldw_chatbook/Chat/console_chat_controller.py",
+      "tldw_chatbook/Chat/console_chat_store.py",
+      "tldw_chatbook/DB/ChaChaNotes_DB.py",
+      "tldw_chatbook/Library/library_ingest_jobs.py",
+      "tldw_chatbook/Notes/file_notes_service.py",
+      "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+      "tldw_chatbook/UI/Console_Modules/session.py",
+      "tldw_chatbook/UI/Dictation_Window_Improved.py",
+      "tldw_chatbook/UI/Navigation/base_app_screen.py",
+      "tldw_chatbook/UI/STTS_Window.py",
+      "tldw_chatbook/UI/Screens/chat_screen.py",
+      "tldw_chatbook/UI/Screens/library_screen.py",
+      "tldw_chatbook/UI/Screens/llm_screen.py",
+      "tldw_chatbook/UI/Screens/model_installed_view.py",
+      "tldw_chatbook/UI/Screens/personas_screen.py",
+      "tldw_chatbook/UI/Screens/settings_screen.py",
+      "tldw_chatbook/UI/Screens/video_player_screen.py",
+      "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py",
+      "tldw_chatbook/Video_Generation/video_store.py",
+      "tldw_chatbook/Widgets/Console/console_video_preview.py",
+      "tldw_chatbook/Widgets/Library/library_canvas_sync.py",
+      "tldw_chatbook/Widgets/enhanced_file_picker.py",
+      "tldw_chatbook/app.py"
+    ],
+    "owner_removed": [
+      "tldw_chatbook/DB/Mindmap_DB.py",
+      "tldw_chatbook/DB/Sync_Client.py",
+      "tldw_chatbook/DB/Writing_DB.py",
+      "tldw_chatbook/DB/search_history_db.py",
+      "tldw_chatbook/Notes/auto_sync_manager.py",
+      "tldw_chatbook/Widgets/prompt_selector.py"
+    ],
+    "safe_no_edit": [
+      "tldw_chatbook/Character_Chat/Character_Chat_Lib.py",
+      "tldw_chatbook/Chat/Chat_Functions.py",
+      "tldw_chatbook/Chat/console_context_compaction.py",
+      "tldw_chatbook/Chat/console_image_edit_operations.py",
+      "tldw_chatbook/Chat/console_provider_gateway.py",
+      "tldw_chatbook/DB/Client_Media_DB_v2.py",
+      "tldw_chatbook/DB/RAG_Indexing_DB.py",
+      "tldw_chatbook/Event_Handlers/note_ingest_events.py",
+      "tldw_chatbook/Image_Generation/adapters/comfyui_image_adapter.py",
+      "tldw_chatbook/Image_Generation/listing.py",
+      "tldw_chatbook/LLM_Calls/qwencloud.py",
+      "tldw_chatbook/Library/library_rag_state.py",
+      "tldw_chatbook/MCP/client.py",
+      "tldw_chatbook/MCP/local_server_tools.py",
+      "tldw_chatbook/MCP/prompts.py",
+      "tldw_chatbook/MCP/server.py",
+      "tldw_chatbook/Media/server_media_reading_service.py",
+      "tldw_chatbook/Media_Playback/frame_source.py",
+      "tldw_chatbook/Notes/sync_service.py",
+      "tldw_chatbook/RAG_Search/fusion.py",
+      "tldw_chatbook/RAG_Search/ingestion_indexing.py",
+      "tldw_chatbook/RAG_Search/simplified/search_service.py",
+      "tldw_chatbook/UI/Screens/evals_screen.py",
+      "tldw_chatbook/UI/Screens/watchlists_collections_screen.py",
+      "tldw_chatbook/Utils/text_selection_crash_guard.py",
+      "tldw_chatbook/Widgets/Console/console_transcript.py",
+      "tldw_chatbook/Widgets/Media/media_viewer_panel.py"
+    ]
+  },
+  "persistent_sink_topology": {
+    "added": [],
+    "base_sha256": "b200fed24eb91b60f65ddef2da0934eb386a117396802bc96f6b63dac5c35ffa",
+    "removed": [
+      {
+        "path": "tldw_chatbook/app.py",
+        "sink": {
+          "digest": "004b99881aa5dff2",
+          "kind": "loguru_sink",
+          "method": "add",
+          "scope": "TldwCli._setup_buffered_logging"
+        }
+      }
+    ],
+    "reviewed_sha256": "66b68d780378aaa8b231125a358a505a3cbb8b7bd43c776a84e1ce620939eee2"
+  },
+  "reviewed_head": "ec8903c67c557334a5a7bdd9838a6dc137747928",
+  "reviewed_manifest_sha256": "4c60ada03a68e26d7b34ad0efe50b84136491d1f73d0c82d26b666cdd1f4cdd9",
+  "schema_version": 1,
+  "task": "TASK-15103"
+}
