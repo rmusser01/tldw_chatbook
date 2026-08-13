@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import threading
 from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any
@@ -54,6 +55,7 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSPlaybackLifecycle,
     TTSProgressEvent,
 )
+from tldw_chatbook.Event_Handlers.TTS_Events import tts_events as tts_events_module
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS.adapter_types import (
@@ -1651,6 +1653,69 @@ async def test_artifact_owner_metadata_tracks_replacement_discard_and_cleanup(
     assert new_artifact.exists() is False
     assert handler._audio_files == {}
     assert handler._audio_file_owners == {}
+
+
+@pytest.mark.asyncio
+async def test_shutdown_late_delete_releases_artifact_and_exact_owner(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    artifact = tmp_path / "late-shutdown.wav"
+    artifact.write_bytes(b"private audio")
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="shutdown-message",
+        request_id=1,
+        validator=lambda: True,
+        callback=lambda _state: None,
+    )
+    handler = TTSEventHandler()
+    await handler._cache_audio_file(
+        lifecycle.message_id,
+        artifact,
+        lifecycle,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    log_messages: list[str] = []
+
+    def delayed_delete(candidate) -> bool:
+        assert candidate == artifact
+        entered.set()
+        assert release.wait(timeout=2.0)
+        artifact.unlink()
+        return True
+
+    async def release_after_timeout() -> None:
+        while not entered.is_set():
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.03)
+        release.set()
+
+    monkeypatch.setattr(tts_events_module, "secure_delete_file", delayed_delete)
+    monkeypatch.setattr(
+        tts_events_module,
+        "_TTS_SECURE_DELETE_TIMEOUT_SECONDS",
+        0.01,
+    )
+    sink_id = tts_events_module.logger.add(
+        log_messages.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    release_task = asyncio.create_task(release_after_timeout())
+    try:
+        await handler.cleanup_tts_resources()
+        await release_task
+    finally:
+        release.set()
+        tts_events_module.logger.remove(sink_id)
+
+    assert artifact.exists() is False
+    assert handler._audio_files == {}
+    assert handler._audio_file_owners == {}
+    rendered_logs = "\n".join(log_messages)
+    assert "Late TTS artifact cleanup could not be scheduled" not in rendered_logs
+    assert "TypeError" not in rendered_logs
 
 
 @pytest.mark.asyncio

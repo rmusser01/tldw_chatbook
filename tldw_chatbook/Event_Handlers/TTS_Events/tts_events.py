@@ -3894,23 +3894,34 @@ class TTSEventHandler:
 
         # Snapshot owned files without dropping failed-deletion bookkeeping.
         async with self._audio_files_lock:
-            files_to_clean = list(self._audio_files.items())
+            files_to_clean = [
+                (
+                    message_id,
+                    audio_file,
+                    self._audio_file_owners.get(
+                        message_id,
+                        _ANY_ARTIFACT_OWNER,
+                    ),
+                )
+                for message_id, audio_file in self._audio_files.items()
+            ]
             retries_to_clean = list(self._artifact_cleanup_retry)
             self._last_played = None
 
-        for message_id, audio_file in files_to_clean:
+        for message_id, audio_file, artifact_owner in files_to_clean:
             if await self._try_secure_delete_tts_artifact(
                 audio_file,
                 on_late_success=partial(
                     self._schedule_audio_file_release_if_current,
                     message_id,
                     audio_file,
+                    artifact_owner,
                 ),
             ):
                 await self._release_audio_file_if_current(
                     message_id,
                     audio_file,
-                    _ANY_ARTIFACT_OWNER,
+                    artifact_owner,
                 )
                 logger.debug(f"Cleaned up audio file for message {message_id}")
 
