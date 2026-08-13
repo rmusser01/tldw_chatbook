@@ -187,7 +187,7 @@ class LocalGGUFInspection:
 class OpenedLocalGGUF:
     """One no-follow local GGUF handle with an admitted source identity."""
 
-    path: Path
+    path: Path = field(repr=False)
     handle: BinaryIO
     descriptor: int
     identity: GGUFSourceIdentity
@@ -196,7 +196,12 @@ class OpenedLocalGGUF:
         """Fail if the open node or selected name changed after admission."""
         try:
             opened = _source_identity(os.fstat(self.descriptor))
-            named = _source_identity(_checked_regular_source_info(self.path))
+            named = _source_identity(
+                _checked_regular_source_info(
+                    self.path,
+                    unavailable_message="Selected local GGUF identity could not be verified",
+                )
+            )
         except OSError:
             raise GGUFPathError(
                 "Selected local GGUF identity could not be verified"
@@ -613,12 +618,16 @@ def _read_only_no_follow_flags() -> int:
     )
 
 
-def _checked_regular_source_info(path: Path) -> os.stat_result:
+def _checked_regular_source_info(
+    path: Path,
+    *,
+    unavailable_message: str = "Selected local GGUF is unavailable",
+) -> os.stat_result:
     """Return one named local regular-file result or raise a path-safe error."""
     try:
         info = os.lstat(path)
     except OSError:
-        raise GGUFPathError("Selected local GGUF is unavailable") from None
+        raise GGUFPathError(unavailable_message) from None
     identity = _source_identity(info)
     reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
     if (

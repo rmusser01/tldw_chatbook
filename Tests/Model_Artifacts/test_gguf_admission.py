@@ -1063,6 +1063,37 @@ def test_open_local_gguf_recheck_detects_same_path_replacement(tmp_path: Path):
             opened.recheck()
 
 
+def test_open_local_gguf_result_redacts_selected_path(tmp_path: Path):
+    source = tmp_path / "private-model.gguf"
+    source.write_bytes(make_gguf(architecture="llama"))
+
+    with gguf.open_local_gguf(source) as opened:
+        assert str(source) not in repr(opened)
+
+
+def test_open_local_gguf_recheck_maps_post_open_lstat_failure_to_identity_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = tmp_path / "private-model.gguf"
+    source.write_bytes(make_gguf(architecture="llama"))
+    real_lstat = gguf.os.lstat
+    calls = 0
+
+    def fail_during_recheck(path: str | Path) -> os.stat_result:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise OSError("name vanished")
+        return real_lstat(path)
+
+    monkeypatch.setattr(gguf.os, "lstat", fail_during_recheck)
+
+    with gguf.open_local_gguf(source) as opened:
+        with pytest.raises(gguf.GGUFPathError, match="identity could not be verified"):
+            opened.recheck()
+
+
 def test_open_local_gguf_preserves_caller_oserror(tmp_path: Path):
     source = tmp_path / "model.gguf"
     source.write_bytes(make_gguf(architecture="llama"))
