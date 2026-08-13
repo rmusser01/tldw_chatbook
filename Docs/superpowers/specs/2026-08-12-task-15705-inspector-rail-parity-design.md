@@ -52,10 +52,15 @@ The existing `ConsoleRailHandle` and `DestinationRailHandle` boundaries stay
 unchanged. `ConsoleRailHandle` adds an Inspector-specific class when its side
 is `right`; the new class carries the full-height panel geometry so the shared
 `.console-rail-handle-right` behavior used by Lab and Personas is unchanged.
-The Console Inspector button uses flexible remaining height instead of a fixed
-three-row height so an optional badge keeps its natural row at the bottom
-without overlap. The Console compose call uses the normal solid frame instead
-of the quiet frame, matching the existing Context handle's frame.
+`ConsoleRailHandle.compose()` provides the matching Console-only Python
+override for the right-side button because the base widget's fixed inline
+styles outrank TCSS: it sets the button to `1fr` height with a zero minimum and
+no fixed maximum, and sizes it to the bordered handle's content width rather
+than the base widget's 11-column outer width. This keeps an optional badge's
+natural row at the bottom without overlap or horizontal overflow while the
+handle itself remains 11 columns wide. The Console compose call uses the
+normal solid frame instead of the quiet frame, matching the existing Context
+handle's frame.
 
 No ids, messages, state builders, persistence keys, rail widths, responsive
 thresholds, labels, tooltips, or badge abbreviations change. The open Inspector
@@ -77,6 +82,8 @@ and prove:
 - deterministic unbadged and `3 approvals` states both render correctly;
 - the badge's visible `3 appr` text does not overlap the button and its bottom
   and right edges stay within the handle content bounds.
+- the button's left and right edges stay within `handle.content_region`,
+  proving the new solid border does not cause horizontal overflow.
 
 Update the existing Console decomposition assertion from a quiet/no-border
 Inspector handle to a solid/all-edge frame. Add a non-Console right-handle
