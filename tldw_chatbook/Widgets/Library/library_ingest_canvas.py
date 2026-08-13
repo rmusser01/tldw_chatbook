@@ -773,6 +773,8 @@ def _summarise_option(field: Any, value: Any) -> str:
         return f"{field.label}: {'on' if value else 'off'}"
     if field.type == "select":
         return f"{field.label}: {select_option_label(field, value)}"
+    if field.type == "textarea":
+        return f"{field.label}: {'set' if str(value).strip() else 'empty'}"
     return f"{field.label}: {value}"
 
 

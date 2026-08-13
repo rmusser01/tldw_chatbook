@@ -21107,10 +21107,10 @@ class LibraryScreen(BaseAppScreen):
                 form.chunk_size = str(event.value)
         cap = get_capabilities(event.group)
         field = next((f for f in cap.fields if f.name == event.name), None)
-        if field is not None and field.type not in ("text", "number"):
+        if field is not None and field.type not in ("text", "number", "textarea"):
             _sync_library_canvas(self, "ingest")
         elif field is not None:
-            # (task-2130) Text/number edits deliberately skip the recompose
+            # (task-2130) Text/number/textarea edits deliberately skip the recompose
             # (cursor survival), which used to leave the panel-header receipt
             # asserting the OLD value and the only invalid signal a
             # focus-only border. Update the receipt, the inline message, and

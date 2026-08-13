@@ -49,6 +49,7 @@ from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
     LibraryIngestCanvas,
+    _summarise_option,
 )
 
 
@@ -619,6 +620,24 @@ async def test_server_import_behavior_adds_keep_original_file_and_fits_compact_w
         ):
             assert pilot.app.query_one(widget_id).region.right <= 80
         assert keep_original.disabled is False
+
+
+def test_populated_multiline_prompt_has_bounded_collapsed_title() -> None:
+    """Prompt bodies must not leak into a collapsed option-panel receipt."""
+    from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+
+    custom_prompt = next(
+        field
+        for field in get_capabilities("generic").fields
+        if field.name == "custom_prompt"
+    )
+
+    summary = _summarise_option(
+        custom_prompt,
+        "Summarize each claim in detail.\n" * 20,
+    )
+
+    assert summary == "Custom prompt: set"
 
 
 @pytest.mark.asyncio
@@ -1455,6 +1474,87 @@ async def test_idle_external_fence_preserves_focused_form_input(
         assert screen.app.focused is title
         assert title.cursor_position == 5
         refresh.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_library_screen_multiline_prompt_typing_preserves_widget_and_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Textarea edits must use the in-place branch rather than remounting the form."""
+    monkeypatch.setattr(
+        library_screen_module, "get_cli_setting", lambda *_args, **_kwargs: None
+    )
+    app = _build_test_app()
+    app._resolve_ingest_backend = lambda: "local"
+    _seed_conversations(app, ())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    screen._library_ingest_form.analyze = True
+    screen._library_ingest_form.expanded_type_groups.add("generic")
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#opt-generic-custom_prompt")
+
+        prompt = screen.query_one("#opt-generic-custom_prompt", TextArea)
+        prompt.focus()
+        await pilot.press("a", "b", "enter", "c")
+        await pilot.pause()
+
+        assert prompt.text == "ab\nc"
+        assert screen.query_one("#opt-generic-custom_prompt", TextArea) is prompt
+        assert screen.app.focused is prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+@pytest.mark.parametrize("size", [LIBRARY_TEST_SIZE, (120, 48)])
+async def test_library_screen_ingest_layout_contains_metadata_and_start_for_local_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    size: tuple[int, int],
+) -> None:
+    """Normal and compact Library screens contain the local prompt form chrome."""
+    monkeypatch.setattr(
+        library_screen_module, "get_cli_setting", lambda *_args, **_kwargs: None
+    )
+    app = _build_test_app()
+    app._resolve_ingest_backend = lambda: "local"
+    _seed_conversations(app, ())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    screen._library_ingest_form.path = "/tmp/notes.txt"
+    screen._library_ingest_form.analyze = True
+    screen._library_ingest_form.expanded_type_groups.add("generic")
+    screen._library_ingest_form.type_options = {
+        "generic": {"custom_prompt": "Keep headings.\nPreserve citations."}
+    }
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#opt-generic-custom_prompt")
+        screen._sync_library_ingest_rail_for_width(size[0])
+        await pilot.pause()
+
+        canvas = screen.query_one("#library-ingest-canvas", LibraryIngestCanvas)
+        metadata = screen.query_one("#library-ingest-metadata-row")
+        start = screen.query_one("#library-ingest-start", Button)
+        prompt = screen.query_one("#opt-generic-custom_prompt", TextArea)
+
+        assert prompt.text == "Keep headings.\nPreserve citations."
+        assert len(screen.query("#opt-generic-keep_original_file")) == 0
+        assert metadata.region.x >= canvas.region.x
+        assert metadata.region.right <= canvas.region.right
+        assert metadata.region.y >= canvas.region.y
+        assert metadata.region.height > 0
+        assert start.region.x >= canvas.region.x
+        assert start.region.right <= canvas.region.right
+        assert start.region.y >= canvas.region.y
+        assert start.region.bottom <= canvas.region.bottom
 
 
 def test_external_override_defers_submit_until_preparation_finishes() -> None:

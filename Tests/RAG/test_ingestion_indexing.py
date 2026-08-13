@@ -387,10 +387,12 @@ class TestPerIngestIndexingSuppression:
             media_db,
             generate_embeddings=False,
         )
-        enabled_id, _, _ = _add_media(
+        enabled_id, _, _ = persist_parsed_media(
+            _parsed_media_payload(
+                content="embeddings enabled source", url="file:///enabled.txt"
+            ),
             media_db,
-            content="embeddings enabled source",
-            url="file:///enabled.txt",
+            generate_embeddings=True,
         )
 
         assert disabled_id is not None

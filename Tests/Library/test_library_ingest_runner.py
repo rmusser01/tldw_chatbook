@@ -452,6 +452,43 @@ async def test_writer_passes_claimed_generate_embeddings_snapshot_to_persistence
     assert done.media_id == 777
     assert persist.call_args.kwargs["generate_embeddings"] is False
 
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_writer_missing_generic_snapshot_uses_capability_defaults(
+    tmp_path: Path,
+) -> None:
+    """Writer fallbacks must delegate to the capability schema, not literals."""
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "defaults.txt", "Persist this source.")
+    app = _IngestRunnerHarness(db)
+
+    def schema_default(name: str, fallback: object = None) -> object:
+        return {
+            "overwrite_existing": True,
+            "generate_embeddings": False,
+        }.get(name, fallback)
+
+    with (
+        patch.object(_app_module, "generic_option_default", side_effect=schema_default),
+        patch.object(
+            _app_module,
+            "persist_parsed_media",
+            return_value=(778, "media-778", "saved"),
+        ) as persist,
+    ):
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(source_path=str(source))
+            done = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.DONE
+            )
+            await _wait_for_runner_idle(app, pilot)
+
+    assert done.media_id == 778
+    assert persist.call_args.kwargs["overwrite_existing"] is True
+    assert persist.call_args.kwargs["generate_embeddings"] is False
+
+
 @pytest.mark.asyncio
 async def test_submitting_a_directory_queues_one_job_per_file(
     tmp_path: Path,

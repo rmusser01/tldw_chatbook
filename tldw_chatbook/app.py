@@ -4603,14 +4603,20 @@ class LibraryIngestQueueMixin:
                 try:
                     generic_options = (job.ingest_options or {}).get("generic", {})
                     overwrite_existing = bool(
-                        generic_options.get("overwrite_existing", False)
+                        generic_options.get(
+                            "overwrite_existing",
+                            generic_option_default("overwrite_existing", False),
+                        )
                         if isinstance(generic_options, dict)
-                        else False
+                        else generic_option_default("overwrite_existing", False)
                     )
                     generate_embeddings = bool(
-                        generic_options.get("generate_embeddings", True)
+                        generic_options.get(
+                            "generate_embeddings",
+                            generic_option_default("generate_embeddings", True),
+                        )
                         if isinstance(generic_options, dict)
-                        else True
+                        else generic_option_default("generate_embeddings", True)
                     )
                     media_id, _media_uuid, _message = persist_parsed_media(
                         payload,
