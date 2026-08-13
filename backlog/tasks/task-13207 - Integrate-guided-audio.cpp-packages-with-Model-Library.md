@@ -1,7 +1,7 @@
 ---
 id: TASK-13207
 title: Integrate guided audio.cpp packages with Model Library
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-09 17:39'
 labels:
@@ -17,6 +17,7 @@ references:
   - backlog/decisions/051-private-tts-clone-reference-assets.md
 documentation:
   - Docs/superpowers/specs/2026-08-09-audio-cpp-guided-model-setup-design.md
+  - Docs/superpowers/specs/2026-08-13-audio-cpp-model-library-integration-design.md
 priority: high
 ---
 
@@ -35,4 +36,5 @@ Connect reviewed audio.cpp model artifacts to the existing Model Library and pro
 - [ ] #5 Removal requires an explicit resolution for every blocking dependency, never silently retargets a configuration/profile/character, never deletes a reference asset as a side effect, and does not disrupt an immutable live child snapshot.
 - [ ] #6 Interrupted install/remove, checksum failure, missing files, shared ownership, and source disappearance produce truthful recoverable state with no partial authority transfer or orphaned registry entry.
 - [ ] #7 Hermetic store/UI/dependency tests and a clean-profile UAT cover install → exact-root return → guided Save → sample generation plus blocked and approved removal, with no network or large artifact requirement in normal CI.
+- [ ] #8 The pinned 21-family, 67-package inventory is fully classified through generic recipe/catalog data: every variant is reviewed as downloadable, local-only, or explicitly unsupported, with no family-specific installer path or silent accounting gap.
 <!-- AC:END -->
