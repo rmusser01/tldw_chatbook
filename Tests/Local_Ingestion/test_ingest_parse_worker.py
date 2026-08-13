@@ -33,6 +33,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Local_Ingestion import Document_Processing_Lib as document_processing
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
     classify_parse_failure,
+    initialize_ingest_parse_worker,
     run_parse_job,
 )
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
@@ -721,6 +722,45 @@ def test_run_parse_job_ok_for_txt(tmp_path: Path) -> None:
     pickle.dumps(result)
 
 
+def test_run_parse_job_emits_bound_progress_without_changing_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import ingest_parse_worker
+
+    events = []
+    monkeypatch.setattr(
+        ingest_parse_worker,
+        "emit_parse_progress",
+        lambda *args: events.append(args),
+    )
+    source = tmp_path / "note.txt"
+    source.write_text("hello", encoding="utf-8")
+
+    result = run_parse_job(str(source), {}, (3, "ingest-job-9"))
+
+    assert result["ok"] is True
+    assert result["payload"]["content"] == "hello"
+    assert events[0][:3] == (3, "ingest-job-9", "inspecting")
+    assert any(event[2] == "processing" for event in events)
+
+
+def test_progress_callback_exception_never_fails_parse(tmp_path: Path) -> None:
+    source = tmp_path / "note.txt"
+    source.write_text("hello", encoding="utf-8")
+
+    def fail_telemetry(*_args) -> None:
+        raise RuntimeError("telemetry failed")
+
+    payload = parse_local_file_for_ingest(
+        str(source),
+        {},
+        progress_callback=fail_telemetry,
+    )
+
+    assert payload["content"] == "hello"
+
+
 def test_run_parse_job_missing_file_is_permanent(tmp_path: Path) -> None:
     missing = tmp_path / "does-not-exist.txt"
 
@@ -825,7 +865,14 @@ def test_ingest_parse_worker_import_excludes_local_file_ingestion(
             m for m in sys.modules
             if any(m == f"tldw_chatbook.Local_Ingestion.{g}" or m.split(".")[0] == g for g in guards)
         })
-        print(json.dumps({"loaded": loaded}))
+        local_ingestion_modules = sorted(
+            module for module in sys.modules
+            if module.startswith("tldw_chatbook.Local_Ingestion.")
+        )
+        print(json.dumps({
+            "loaded": loaded,
+            "local_ingestion_modules": local_ingestion_modules,
+        }))
         """,
     )
 
@@ -834,6 +881,10 @@ def test_ingest_parse_worker_import_excludes_local_file_ingestion(
     assert payload["loaded"] == [], (
         f"importing ingest_parse_worker pulled in unexpected modules: {payload['loaded']}"
     )
+    assert payload["local_ingestion_modules"] == [
+        "tldw_chatbook.Local_Ingestion.ingest_parse_progress",
+        "tldw_chatbook.Local_Ingestion.ingest_parse_worker",
+    ]
 
 
 # --- Real spawn-Pool integration ----------------------------------------------
@@ -848,17 +899,31 @@ def test_run_parse_job_through_real_spawn_pool(tmp_path: Path) -> None:
     source.write_text("Parsed inside a real spawned worker process.", encoding="utf-8")
 
     ctx = multiprocessing.get_context("spawn")
-    with ctx.Pool(1) as pool:
-        async_result = pool.apply_async(
-            run_parse_job, (str(source), {"title": "Pool note"})
-        )
-        result = async_result.get(timeout=120)
+    progress_queue = ctx.Queue()
+    try:
+        with ctx.Pool(
+            1,
+            initializer=initialize_ingest_parse_worker,
+            initargs=(progress_queue,),
+        ) as pool:
+            async_result = pool.apply_async(
+                run_parse_job,
+                (str(source), {"title": "Pool note"}, (1, "ingest-job-1")),
+            )
+            result = async_result.get(timeout=120)
+            event = progress_queue.get(timeout=120)
+    finally:
+        progress_queue.close()
+        progress_queue.join_thread()
 
     assert result["ok"] is True
     assert result["payload"]["title"] == "Pool note"
     assert (
         result["payload"]["content"] == "Parsed inside a real spawned worker process."
     )
+    assert event.generation == 1
+    assert event.job_id == "ingest-job-1"
+    assert event.phase == "inspecting"
 
 
 # --- empty-extraction guard (task-677) --------------------------------------

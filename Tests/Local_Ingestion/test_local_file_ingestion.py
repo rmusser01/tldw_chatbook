@@ -155,6 +155,8 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     source.write_bytes(b"ID3\x00" + b"\x00" * 64)
 
     calls: list[Dict[str, Any]] = []
+    progress_events: list[tuple[str, str, float | None]] = []
+    provider_data = {"private": object()}
 
     class _StubAudioProcessor:
         def __init__(self, media_db=None):
@@ -162,6 +164,11 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
 
         def process_audio_files(self, **kwargs):
             calls.append(kwargs)
+            kwargs["transcription_progress_callback"](
+                37.0,
+                "Transcribing segment 3 of 8",
+                provider_data,
+            )
             return {
                 "results": [
                     {
@@ -192,6 +199,9 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
             "timestamps": False,
             "diarization": True,
         },
+        progress_callback=lambda phase, message, percent=None: progress_events.append(
+            (phase, message, percent)
+        ),
     )
 
     assert len(calls) == 1
@@ -205,6 +215,12 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     assert call["transcription_batch_route_resolved"] is True
     assert call["timestamp_option"] is False
     assert call["diarize"] is True
+    assert (
+        "transcribing",
+        "Transcribing segment 3 of 8",
+        37.0,
+    ) in progress_events
+    assert all(provider_data not in event for event in progress_events)
 
 
 def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> None:
@@ -212,6 +228,8 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     source.write_bytes(b"\x00\x00\x00\x20ftypisom" + b"\x00" * 64)
 
     calls: list[Dict[str, Any]] = []
+    progress_events: list[tuple[str, str, float | None]] = []
+    provider_data = {"private": object()}
 
     class _StubVideoProcessor:
         def __init__(self, media_db=None):
@@ -219,6 +237,11 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
 
         def process_videos(self, **kwargs):
             calls.append(kwargs)
+            kwargs["transcription_progress_callback"](
+                37.0,
+                "Transcribing segment 3 of 8",
+                provider_data,
+            )
             return {
                 "results": [
                     {
@@ -250,6 +273,9 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
             "timestamps": True,
             "diarization": False,
         },
+        progress_callback=lambda phase, message, percent=None: progress_events.append(
+            (phase, message, percent)
+        ),
     )
 
     assert len(calls) == 1
@@ -264,6 +290,12 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     assert call["transcription_batch_route_resolved"] is True
     assert call["timestamp_option"] is True
     assert call["diarize"] is False
+    assert (
+        "transcribing",
+        "Transcribing segment 3 of 8",
+        37.0,
+    ) in progress_events
+    assert all(provider_data not in event for event in progress_events)
 
 
 def test_ebook_options_are_routed_to_process_ebook(tmp_path: Path, monkeypatch) -> None:
