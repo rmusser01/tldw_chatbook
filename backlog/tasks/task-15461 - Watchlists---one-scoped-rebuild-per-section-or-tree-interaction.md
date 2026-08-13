@@ -150,11 +150,59 @@ rebuilt at all. One test in the artifacts suite drove
 `handle_briefing_selected` directly to prove synchronous clearing; it now
 drives the selection, which is the synchronous route the clearing moved to.
 
+**Review round (post-approval).** Two Importants and four minors, all closed:
+
+* **Focus.** A tab click focuses the tab `Button`, the swap rebuilds the header
+  it lives in, and Textual's `Screen._reset_focus` re-homed focus onto a LEFT
+  RAIL tree node -- so the next `z` collapsed AND persisted the rail. Measured
+  A/B (pre-task it was focus-`None` and `z` was refused).
+  `_restore_focus_after_swap` puts focus back on the rebuilt
+  `#wl-tab-<section>`, which restores the refusal by the honest route
+  (`_focus_in_centre_header`). Gated on `_swap_will_destroy_focus` so a
+  section change driven from elsewhere never steals focus. Two tests.
+* **Stale comments.** Eleven sites still asserted `region_layout` "is
+  `recompose=True`" -- several load-bearing for the factory/seeding rationale.
+  All corrected to the real trigger (a region is rebuilt when its own form
+  changes, or on a section switch for ITEMS), keeping the historical note
+  where it explains why the state is mirrored at all.
+* **Minors.** The pane-build test now seeds a real alert rule (the assertion
+  could not discriminate on an empty fixture -- and with a row it immediately
+  exposed a residual, below); `_reseed_active_section_pane` has an in-suite
+  pin that reconstructs the mid-swap landing window deterministically and
+  reds when the reseed is neutered; the task-627 mouse-capture note is on
+  `_swap_active_section`.
+
+**Residuals** (for the controller to file):
+
+1. **Cold Read tab wall-clock.** 75 -> 110 ms best-of-two despite halving the
+   DOM work; it is the only tab that re-mounts the CONTENT region, and the
+   scoped path does that as a discrete remove/mount pair rather than inside
+   one batched recompose. Textual's `batch()` is the obvious next move.
+2. **Two artifacts tests flickered once** (`test_the_kill_switch_on_leaves_
+   the_cadence_picker_unchanged`, `test_keep_button_disabled_without_a_
+   complete_selection_or_chachanotes`) in an intermediate run, before the
+   `call_next` fix, and have passed in every run since including three
+   full-directory runs. Probably the same wait-window issue; flagged rather
+   than asserted.
+3. **Artifacts pane recomposes wholesale on a briefing selection** (1, down
+   from 2). Because it recomposes, the briefings `DataTable` is destroyed and
+   loses focus, so a SECOND arrow key does nothing until the user re-focuses
+   the table. Measured on the pre-task code too -- pre-existing, not caused
+   here, but a real defect worth its own task.
+4. **`_build_detail_pane`'s pre-mount seeding costs one pane recompose** per
+   region build (`[] != [row]` on a freshly constructed pane). Pre-existing
+   and unchanged by this task; invisible on an empty fixture, which is why it
+   surfaced only once the review asked for a seeded row. Removing it means
+   seeding with `set_reactive`, which is not safe blind: `RunsPane`'s seeding
+   ORDER is load-bearing (`selected_run` clears the detail, so the detail must
+   be set after it).
+
 **Files.** `tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py`,
 `.../artifacts_pane.py`, `.../content_pane.py`,
 `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`;
-`Tests/Watchlists/test_watchlists_scoped_rebuilds.py` (new, 14 tests, 10 of
-them red against the pre-task code), `Tests/Watchlists/
+`.../sources_pane.py`, `.../rules_pane.py`;
+`Tests/Watchlists/test_watchlists_scoped_rebuilds.py` (new, 17 tests, 12 of
+them red against the mechanism they pin), `Tests/Watchlists/
 test_watchlists_artifacts_pane.py`, `Tests/UI/test_watchlists_content_pane.py`,
 `Tests/UI/test_watchlists_destination_shell.py`,
 `Tests/UI/test_watchlists_run_detail.py`,

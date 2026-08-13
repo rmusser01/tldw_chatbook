@@ -106,7 +106,7 @@ class WatchlistsWorkbench(Horizontal):
         collapsed_suffixes: Mapping[Region, str] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Build the workbench, seeding `region_layout` without triggering a recompose.
+        """Build the workbench, seeding `region_layout` without a region sync.
 
         Args:
             layout: Initial collapse/solo state.
@@ -522,14 +522,15 @@ class WatchlistsWorkbench(Horizontal):
         Task 7: a region's content can go stale without `region_layout`
         itself changing (the tree scope moving under the rail, a background
         load landing), so nothing would otherwise call its factory again.
-        Setting `region_layout` (`recompose=True`) would work too, but at
-        the cost of tearing down and remounting *every* region, including
-        ones whose whole design point is staying the same instance across
-        an unrelated change -- the Inspector is pushed new
-        `scope`/`selected_entity` values in place for exactly that reason
-        (see `WatchlistsCollectionsScreen.watch_selected_scope`), and a
-        full recompose would silently replace it with a fresh instance
-        instead, breaking any caller holding a reference to the old one.
+        Pushing a new `region_layout` would not work at all: since task-15461
+        that only swaps regions whose COLLAPSE state moved, so a layout equal
+        to the current one is a no-op and one that differs changes what the
+        user is looking at. (Before task-15461 it worked for the wrong
+        reason -- it recomposed every region -- at the cost of replacing
+        widgets whose whole design point is staying the same instance across
+        an unrelated change: the Inspector is pushed new
+        `scope`/`selected_entity` values in place for exactly that reason,
+        see `WatchlistsCollectionsScreen.watch_selected_scope`.)
 
         A no-op when `region` is collapsed (nothing mounted to replace) or
         was not given a content factory (nothing to refresh either).
@@ -579,15 +580,15 @@ class WatchlistsWorkbench(Horizontal):
         """Rebuild the header in place from a fresh call to its factory.
 
         The header's twin of `refresh_region_content` above (task-1344 fix
-        wave, Qodo correctness): `region_layout` is `recompose=True`, so
-        picking up a header-only change (the tree scope moving -- see
-        `WatchlistsCollectionsScreen.watch_tree_scope`) by pushing a new
-        layout would tear down and remount every region, including the
-        Inspector, which `watch_tree_scope` deliberately avoids (see its
-        own docstring). The header is the only surface that carries the
-        tab strip and the snapshot's scoped markers (since task-2513, on
-        every tab), so a header-only refresh path is the one that keeps
-        that readout current between recomposes.
+        wave, Qodo correctness), and reached the same way: nothing else calls
+        the `header` factory again, so a header-only change (the tree scope
+        moving -- see `WatchlistsCollectionsScreen.watch_tree_scope`) has no
+        other route onto the screen. Pushing a new `region_layout` is not one
+        either: since task-15461 that touches only the regions whose collapse
+        state moved, and never the header. The header is the only surface
+        carrying the tab strip and the snapshot's scoped markers (since
+        task-2513, on every tab), so this is what keeps that readout current
+        between rebuilds.
 
         A no-op when this workbench was built with no `header` factory:
         nothing to refresh, and no `#wl-centre-status` to query for either.

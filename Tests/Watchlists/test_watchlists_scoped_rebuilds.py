@@ -27,7 +27,8 @@ from typing import Any
 
 import pytest
 from textual.widget import Widget
-from textual.widgets import Button
+from textual.css.query import NoMatches
+from textual.widgets import Button, DataTable
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import DestinationHarness
@@ -39,6 +40,7 @@ from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import ArtifactsPane
 from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RulesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
     TreeScope,
     TreeScopeChanged,
@@ -97,6 +99,19 @@ class _RebuildCounter:
 
     def report(self) -> str:
         return f"recomposes={dict(self.recomposes)} mounts={dict(self.mounts)}"
+
+
+async def _seed_alert_rule(app, name: str = "Rule One") -> None:
+    """One alert rule, through the real service.
+
+    Review minor (1): without a rule, `RulesPane.rules` is `[]` both before
+    and after the loader lands, so "the loader's push found nothing to
+    change" would hold for a pane that was never seeded at all. A row makes
+    the assertion able to tell those two apart.
+    """
+    await app.local_watchlists_service.create_alert_rule(
+        name=name, condition_type="no_items"
+    )
 
 
 def _seed(app, *, items: int = 2, briefings: int = 0) -> int:
@@ -230,16 +245,39 @@ async def test_a_section_switch_leaves_both_rails_standing():
 
 
 async def test_a_section_switch_builds_the_sections_pane_exactly_once():
-    """One scoped rebuild, not two.
+    """One scoped region build per switch, and no duplicate pane rebuild.
 
     The old path was a whole-screen recompose that built the new pane from
-    whatever rows the screen happened to be holding, followed by the
-    section's own loader landing a frame later and recomposing that same
-    fresh pane a second time. The pane is now mounted with the data (see
-    `_reseed_active_section_pane`), so the loader's push is a no-op.
+    whatever rows the screen happened to be holding, followed by the section's
+    own loader landing a frame later and recomposing that same fresh pane a
+    second time.
+
+    What is left, stated exactly. Review minor (1) added the seeded alert rule
+    below, and it earned its place immediately: with a real row in play the
+    pane still rebuilds ONCE per switch, and root-causing that turned out to
+    be worth doing.
+
+    * The **region** is built exactly once per switch -- that is `builds`.
+    * The **pane** rebuilds at most once, and the one is not a data-arrival
+      duplicate: `_build_detail_pane` seeds `rules_pane.rules` on a
+      freshly-constructed pane whose class default is `[]`, so Textual queues
+      a recompose (`[] != [row]`) that fires just after the pane mounts.
+      Traced to `_build_detail_pane` directly, and it is pre-existing and
+      unchanged by this task -- the whole-screen recompose called the same
+      factory and paid the same cost. It is invisible on an empty fixture,
+      which is exactly why it went unnoticed until a row was seeded.
+      (Removing it means seeding the panes with `set_reactive`, which is not
+      safe to do blind: `RunsPane`'s seeding order is load-bearing -- setting
+      `selected_run` clears the detail, so the detail must be set after it.
+      Recorded as a residual, deliberately not attempted here.)
+
+    The claim this test therefore pins is the one AC#1 makes: **one scoped
+    region build, and no SECOND rebuild from the loader landing** -- verified
+    on a warm revisit, where the rows are already on screen state.
     """
     app = _build_test_app()
     watchlist_id = _seed(app)
+    await _seed_alert_rule(app)
     async with _open(app, watchlist_id) as (screen, pilot, host):
         # Patched on the WORKBENCH's factory map, not on the screen: the map
         # captured the bound method at construction time, so rebinding the
@@ -265,9 +303,99 @@ async def test_a_section_switch_builds_the_sections_pane_exactly_once():
         assert builds == ["rules"], (
             f"the section's pane must be built exactly once: {builds}"
         )
-        assert counted.recomposes["RulesPane#watchlists-rules-pane"] == 0, (
-            "the freshly mounted pane must already carry the section's rows, "
-            f"so the loader's push finds nothing to change: {counted.report()}"
+        rules_pane = screen.query_one("#watchlists-rules-pane", RulesPane)
+        assert len(rules_pane.rules) == 1, (
+            "the fixture's rule has to reach the pane, or the recompose count "
+            f"below cannot discriminate: {rules_pane.rules}"
+        )
+        assert counted.recomposes["RulesPane#watchlists-rules-pane"] <= 1, (
+            f"never a second full rebuild of the pane: {counted.report()}"
+        )
+
+        # Warm revisit: the rows are already on screen state, so the pane is
+        # built carrying them and the loader's push must change nothing. This
+        # is the half that used to cost a second full rebuild every time.
+        builds.clear()
+        screen.active_section = "sources"
+        await _settle(pilot, host)
+        with _RebuildCounter() as warm:
+            screen.active_section = "rules"
+            await _settle(pilot, host)
+
+        assert builds == ["sources", "rules"], builds
+        assert warm.recomposes["RulesPane#watchlists-rules-pane"] <= 1, (
+            "a warm revisit must cost at most the pre-mount seeding rebuild "
+            f"named in this test's docstring: {warm.report()}"
+        )
+        assert warm.recomposes["WatchlistsCollectionsScreen#-"] == 0, warm.report()
+        assert (
+            screen.query_one("#rules-table", DataTable).row_count == 1
+        ), "and the row still has to be on screen"
+
+
+async def test_a_section_switch_shows_rows_that_land_while_the_swap_runs():
+    """The window `_reseed_active_section_pane` closes.
+
+    `watch_active_section` dispatches the section's loader and the swap in the
+    same breath, and `refresh_region_content` calls the region factory BEFORE
+    its remove/mount awaits (so a raising factory leaves the screen intact).
+    A loader landing in that gap writes rows to `self._loaded_*` and then
+    fails to find its pane -- built, not yet mounted -- and nothing is left to
+    correct it. Textual's own `Widget.recompose` never had the gap: it removes
+    children first and calls `compose()` afterwards.
+
+    Neutering `_reseed_active_section_pane` to a no-op reds this test: the
+    Alert-rules table stays empty over a `_loaded_rules` holding the row.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
+        WatchlistsWorkbench,
+    )
+
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id, section="sources") as (screen, pilot, host):
+        assert not screen.query("#watchlists-rules-pane")
+
+        # Reconstruct the window rather than race for it, the same way
+        # `test_run_detail_lands_when_the_push_happens_in_the_mount_window`
+        # reconstructs the mount window. The loader's two observable effects
+        # are "mirror the rows onto the screen" and "push them into the pane";
+        # replaying them from inside the factory call puts them exactly where
+        # the real gap is -- after the factory has read screen state, before
+        # its replacement is mounted, so the push finds nothing.
+        row = {
+            "id": "r1",
+            "name": "Rule One",
+            "condition_type": "no_items",
+            "severity": "warning",
+            "enabled": True,
+        }
+        # No real loader may run: it would land AFTER the mount and repair the
+        # pane itself, which is not what this test is about.
+        screen._load_active_section_data = lambda: None
+
+        workbench = screen.query_one(WatchlistsWorkbench)
+        real_build = workbench._content[Region.ITEMS]
+
+        def _build_then_land():
+            built = real_build()
+            screen._loaded_rules = [row]
+            try:  # the loader's push, from inside the gap
+                screen.query_one("#watchlists-rules-pane", RulesPane).rules = [row]
+            except NoMatches:
+                pass
+            return built
+
+        workbench._content[Region.ITEMS] = _build_then_land
+
+        screen.active_section = "rules"
+        await _settle(pilot, host)
+
+        assert screen._loaded_rules == [row], "precondition: the rows did land"
+        table = screen.query_one("#rules-table", DataTable)
+        assert table.row_count == 1, (
+            "rows that landed while the swap was mid-flight must reach the "
+            "pane the swap mounted, not be stranded in `_loaded_rules`"
         )
 
 
@@ -318,6 +446,80 @@ async def test_a_section_switch_moves_the_tab_strip_and_the_backend_control():
         )
         assert not screen.query("#watchlists-backend-label"), (
             "and the local-only explanation must go away with it"
+        )
+
+
+async def test_clicking_a_tab_leaves_focus_on_that_tab_so_z_stays_refused():
+    """A tab click must not hand the left rail to the next keypress.
+
+    Review finding (Important 1), measured A/B. A tab click focuses the tab
+    `Button`, which lives in the centre header -- and the swap rebuilds that
+    header, so the focused widget is removed from under the user. Textual's
+    `Screen._reset_focus` then picks the first focusable replacement it finds,
+    which on this screen is a LEFT RAIL tree node; `on_descendant_focus` reads
+    that and sets `focused_region = LEFT_RAIL`, so the very next `z` collapsed
+    the rail AND persisted the collapse to config. Pre-task, the whole-screen
+    recompose left focus at `None` and `z` was refused.
+
+    Re-focusing the rebuilt tab restores the refusal by the honest route:
+    focus is inside `#wl-centre-status`, so `_focus_in_centre_header` is set,
+    which is what `action_toggle_region` already consults. (`focused_region`
+    may still read LEFT_RAIL from the instant Textual re-homed focus -- that
+    stale value is precisely what `_focus_in_centre_header` exists to
+    neutralise, per task-1344.)
+    """
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await pilot.click("#wl-tab-sources")
+        await _settle(pilot, host)
+
+        assert screen.active_section == "sources", "precondition: the tab switched"
+        focused = screen.focused
+        assert focused is not None and focused.id == "wl-tab-sources", (
+            f"focus must stay on the tab the user clicked, not be re-homed by "
+            f"Textual: {focused!r}"
+        )
+        assert screen._focus_in_centre_header is True, (
+            "focus in the centre header is what makes z/Z refuse"
+        )
+
+        before = screen.region_layout
+        await pilot.press("z")
+        await _settle(pilot, host)
+
+        assert screen.region_layout == before, (
+            "z straight after a tab click must change nothing at all"
+        )
+        assert Region.LEFT_RAIL not in screen.region_layout.collapsed, (
+            "and above all it must not collapse -- and persist -- the rail the "
+            "user never aimed at"
+        )
+        assert screen.query("#wl-region-left_rail"), "the rail is still expanded"
+
+
+async def test_a_section_switch_driven_from_elsewhere_does_not_steal_focus():
+    """The other half of the focus rule: only re-home focus the swap destroyed.
+
+    A section change can come from a deep link or `EditRuleRequested` while
+    the user is working somewhere the swap does not touch. Moving them to the
+    tab strip then would be its own defect, so the restore is gated on
+    `_swap_will_destroy_focus`.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        tree_node = screen.query_one("#wl-tree", WatchlistTree).query(Button).first()
+        tree_node.focus()
+        await _settle(pilot, host)
+        assert screen.focused is tree_node, "precondition: focus is in the rail"
+
+        screen.active_section = "runs"
+        await _settle(pilot, host)
+
+        assert screen.focused is tree_node, (
+            "a section switch that did not unmount the focused widget must "
+            f"leave focus alone: {screen.focused!r}"
         )
 
 
