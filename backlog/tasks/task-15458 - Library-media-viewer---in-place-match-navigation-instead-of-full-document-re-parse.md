@@ -23,6 +23,7 @@ Fix direction: keep the Markdown widget mounted and move match-highlight and scr
 - [ ] #1 Match navigation does not re-parse the document or remount the screen (evidence)
 - [ ] #2 Search-while-typing performs at most one deferred re-render per debounce window and never the double update(\"\")/update(content) parse
 - [ ] #3 Match highlighting and scroll behavior preserved (tests); click latency before/after on a long document recorded
+- [ ] #4 Literal async pytest commands run on Windows without mutating the guarded network families, while ordinary same-thread and concurrent-thread application egress remains blocked and recorded
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -35,8 +36,10 @@ Fix direction: keep the Markdown widget mounted and move match-highlight and scr
 
 Detailed plan: `Docs/superpowers/plans/2026-08-12-library-media-viewer-inplace.md`
 
-ADR required: no
+ADR required: yes
 
-ADR path: N/A
+ADR path: `backlog/decisions/058-thread-scoped-test-socketpair-exemption.md`
 
-Reason: this applies existing Textual widget ownership and timer patterns without changing persistence, security, dependencies, services, or cross-module contracts.
+Reason: the media-viewer changes apply existing Textual ownership patterns, but
+the review-expanded verification scope changes the repository-wide test network
+security boundary and its runtime interception contract.

@@ -280,8 +280,10 @@ the current interaction and copy.
 
 ## ADR Check
 
-ADR required: no  
-ADR path: N/A  
-Reason: this applies the existing Library screen/canvas/widget ownership model
-and Textual timer patterns. It changes neither persistent state nor service,
-security, dependency, or cross-module architecture boundaries.
+ADR required: yes
+ADR path: `backlog/decisions/058-thread-scoped-test-socketpair-exemption.md`
+Reason: the media-viewer design itself applies the existing Library
+screen/canvas/widget ownership model and Textual timer patterns. Task 1 review
+expanded the verification scope to repair the repository-wide Windows test
+network security boundary, which is governed by ADR-058 and the companion
+socketpair design.
