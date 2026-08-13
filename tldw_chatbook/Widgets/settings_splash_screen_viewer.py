@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from loguru import logger
-from textual import on
+from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
@@ -233,15 +233,31 @@ class SettingsSplashScreenViewer(Vertical):
         status.update(message)
 
     def _save_config_value(self, key: str, value: Any) -> bool:
+        """Apply one splash_screen setting and persist it off the event loop.
+
+        task-15470: six Checkbox/Select/Input handlers below all funnel
+        through this one method, and it used to call
+        ``save_setting_to_cli_config`` -- a full config.toml read+atomic-
+        rewrite+cache-reload -- synchronously on the event loop, once per
+        click/submit. The in-memory ``_config`` update and
+        ``SplashConfigChanged`` message (both pure, no I/O) still happen
+        immediately here; only the disk write is deferred to a worker.
+        """
+        self._config[key] = value
+        self.post_message(self.SplashConfigChanged("splash_screen", key, value))
+        self._persist_splash_config_value(key, value)
+        return True
+
+    @work(thread=True)
+    def _persist_splash_config_value(self, key: str, value: Any) -> None:
+        """Write one ``[splash_screen]`` config value on a worker thread."""
         try:
             save_setting_to_cli_config("splash_screen", key, value)
-            self._config[key] = value
-            self.post_message(self.SplashConfigChanged("splash_screen", key, value))
-            return True
         except Exception as exc:
             logger.error("Failed to save splash_screen.{}: {}", key, exc)
-            self._update_status(f"Error saving {key}: {exc}")
-            return False
+            self.call_from_thread(
+                self._update_status, f"Error saving {key}: {exc}"
+            )
 
     def _float_or_default(self, raw: str, default: float) -> float:
         raw = raw.strip()

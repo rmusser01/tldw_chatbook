@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from loguru import logger
 from rich.console import RenderableType
 from rich.table import Table
-from textual import events, on
+from textual import events, on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -1134,8 +1134,17 @@ class EnhancedFileDialog(BaseFileDialog):
             pass
         return None
 
+    @work(thread=True)
     def _save_last_directory(self, path: Path):
-        """Save the last used directory for this context"""
+        """Save the last used directory for this context.
+
+        task-15470: this fired a stat call (``is_dir()``) plus a full
+        config.toml read+atomic-rewrite+cache-reload straight on the event
+        loop, once per navigation/selection (``_add_to_recent``'s three call
+        sites). Dispatched as a worker off the loop; `EnhancedFileDialog` is
+        a `ModalScreen`, so `self.app`/`run_worker` are always available
+        while it is open.
+        """
         try:
             dir_path = path if path.is_dir() else path.parent
             save_setting_to_cli_config("filepicker", f"last_dir_{self.context}", str(dir_path))

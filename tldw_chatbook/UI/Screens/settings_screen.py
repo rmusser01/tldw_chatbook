@@ -3616,9 +3616,7 @@ class SettingsScreen(BaseAppScreen):
             The new (post-toggle) enabled value.
         """
         next_value = not self._remote_images_enabled()
-        save_settings_to_cli_config(
-            {"chat.images": {"render_remote_images": next_value}}
-        )
+        self._persist_remote_images_toggle(next_value)
         app_config = getattr(self.app_instance, "app_config", None)
         if isinstance(app_config, dict):
             raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
@@ -3632,6 +3630,21 @@ class SettingsScreen(BaseAppScreen):
             ):
                 chat_section["images"]["render_remote_images"] = next_value
         return next_value
+
+    @work(thread=True)
+    def _persist_remote_images_toggle(self, next_value: bool) -> None:
+        """Write the render_remote_images preference off the event loop.
+
+        task-15470: this was a synchronous ``save_settings_to_cli_config``
+        call straight in a Button.Pressed handler -- a full config.toml
+        read+atomic-rewrite+cache-reload per click. The in-memory
+        ``app_config`` update in ``_toggle_remote_images`` (which the
+        transcript gate reads live) stays synchronous; only the disk write
+        moves to a worker.
+        """
+        save_settings_to_cli_config(
+            {"chat.images": {"render_remote_images": next_value}}
+        )
 
     def _paste_collapse_threshold_value(self) -> int | str:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -9433,6 +9446,22 @@ class SettingsScreen(BaseAppScreen):
             load_settings()
         ):
             return
+        self._persist_model_catalog_section_values(section_values)
+
+    @work(thread=True)
+    def _persist_model_catalog_section_values(
+        self, section_values: dict[str, dict[str, object]]
+    ) -> None:
+        """Write ``[model_catalog]`` off the event loop.
+
+        task-15470: ``#settings-model-catalog-stale-hours`` is bound to
+        ``Input.Changed`` -- this used to call ``save_settings_to_cli_
+        config`` (a full config.toml read+atomic-rewrite+cache-reload)
+        synchronously on the event loop once per keystroke that parses as a
+        valid, changed value (every digit of a multi-digit number). The
+        no-op guard above (cheap: reads the cached settings, no I/O) stays
+        synchronous; only the actual write is deferred.
+        """
         save_settings_to_cli_config(section_values)
 
     def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
