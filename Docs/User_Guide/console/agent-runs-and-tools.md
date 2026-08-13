@@ -115,6 +115,10 @@ looking. Unlike the other markers it is **durable** — it survives leaving
 Console and even an app restart — and it normally arrives together with
 an auto-wake of that conversation's supervisor; see
 [When a background sub-agent finishes — auto-wake](#when-a-background-sub-agent-finishes--auto-wake).
+A completion that lands while you're on another screen also stages a deep
+link: the next time Console opens, it switches you straight to that
+conversation's session if it is still open — and when it isn't, the `◈`
+marker stays the durable pointer to what finished.
 
 - A background run that hits a tool approval **parks**: its tab gets a `◆`
   badge and you get exactly one toast — "Agent in <tab> (<workspace>) needs
