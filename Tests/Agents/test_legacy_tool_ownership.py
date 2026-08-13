@@ -23,6 +23,7 @@ from tldw_chatbook.Agents.tool_catalog import (
 
 LEGACY_NAMES = frozenset({"rag_search", "web_search", "search_notes", "code_audit"})
 REPO_ROOT = Path(__file__).resolve().parents[2]
+_SUBPROCESS_TIMEOUT_SECONDS = 120
 FORBIDDEN_AUDIT_EVENT_NAMES = frozenset(
     {
         "socket.bind",
@@ -60,6 +61,12 @@ def _catalog_names(provider: ToolProvider) -> set[str]:
 def test_legacy_names_are_absent_and_replacements_have_current_owners(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Pin legacy-name absence and authoritative replacement catalogs.
+
+    Args:
+        monkeypatch: Pytest fixture used to disable optional local tools.
+        tmp_path: Isolated workspace root for the local provider.
+    """
     monkeypatch.setattr(config, "get_cli_setting", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(
         local_tool_provider, "get_cli_setting", lambda *_args, **_kwargs: False
@@ -79,6 +86,11 @@ def test_legacy_names_are_absent_and_replacements_have_current_owners(
 def test_legacy_compatibility_classes_resolve_in_a_fresh_process(
     tmp_path: Path,
 ) -> None:
+    """Resolve compatibility imports without external I/O in a fresh process.
+
+    Args:
+        tmp_path: Isolated home and configuration root for the child process.
+    """
     home = tmp_path / "home"
     home.mkdir()
     env = {
@@ -121,6 +133,7 @@ if os.environ.get("TLDW_TEST_FORCE_FORBIDDEN_AUDIT_EVENT") == "1":
             pass
 if forbidden_events:
     raise RuntimeError("forbidden I/O attempted: " + ", ".join(forbidden_events))
+print("compatibility-import-preamble")
 print(json.dumps(
     {{cls.__name__: [cls.__module__, cls.__name__] for cls in classes}},
     separators=(",", ":"),
@@ -135,11 +148,13 @@ print(json.dumps(
         text=True,
         capture_output=True,
         check=False,
-        timeout=120,
+        timeout=_SUBPROCESS_TIMEOUT_SECONDS,
     )
 
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {
+    stdout_lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert stdout_lines
+    assert json.loads(stdout_lines[-1]) == {
         "RAGSearchTool": [
             "tldw_chatbook.Tools.rag_search_tool",
             "RAGSearchTool",
@@ -162,7 +177,7 @@ print(json.dumps(
         text=True,
         capture_output=True,
         check=False,
-        timeout=120,
+        timeout=_SUBPROCESS_TIMEOUT_SECONDS,
     )
     assert probe.returncode != 0
     assert not probe.stdout
