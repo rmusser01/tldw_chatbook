@@ -3292,6 +3292,8 @@ class ChatScreen(BaseAppScreen):
         self._task_resume_state = TaskResumeState()
         self._console_composer_collapsed = False
         self._console_composer_layout_revision = 0
+        self._console_status_chips_collapsed = False
+        self._console_status_chips_layout_revision = 0
         self._state_dirty = False
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
@@ -8381,6 +8383,51 @@ class ChatScreen(BaseAppScreen):
             collapsed,
             reading_state,
         )
+
+    def _set_console_status_chips_collapsed(self, collapsed: bool) -> None:
+        """Synchronize screen-owned collapse state with the mounted status row."""
+        if self._console_setup_modal_blocking():
+            return
+        collapsed = bool(collapsed)
+        if self._console_status_chips_collapsed == collapsed:
+            return
+        try:
+            status_chips = self.query_one(
+                "#console-status-chips", ConsoleStatusChips
+            )
+        except QueryError:
+            return
+        self._console_status_chips_collapsed = collapsed
+        self._console_status_chips_layout_revision += 1
+        revision = self._console_status_chips_layout_revision
+        status_chips.set_collapsed(collapsed)
+        status_chips.refresh(layout=True)
+        self.call_after_refresh(
+            self._finish_console_status_chips_layout_change,
+            revision,
+            collapsed,
+        )
+
+    def _finish_console_status_chips_layout_change(
+        self,
+        revision: int,
+        expected_collapsed: bool,
+    ) -> None:
+        """Focus the inverse control after the latest status-row transition."""
+        if (
+            revision != self._console_status_chips_layout_revision
+            or expected_collapsed != self._console_status_chips_collapsed
+        ):
+            return
+        target_id = (
+            "console-status-expand"
+            if expected_collapsed
+            else "console-status-collapse"
+        )
+        try:
+            self.query_one(f"#{target_id}", Button).focus()
+        except QueryError:
+            return
 
     def _finish_console_composer_layout_change(
         self,
@@ -14297,6 +14344,7 @@ class ChatScreen(BaseAppScreen):
             yield ConsoleStatusChips(
                 control_state,
                 scope_state=retrieval_scope_state,
+                collapsed=self._console_status_chips_collapsed,
                 # F1 (final review): compose the chip correctly on the very
                 # first render instead of relying on a post-mount sync call
                 # that some code paths (screen recreation via
@@ -19498,6 +19546,18 @@ class ChatScreen(BaseAppScreen):
         """Expand the Console composer and restore draft focus."""
         event.stop()
         self._set_console_composer_collapsed(False)
+
+    @on(Button.Pressed, "#console-status-collapse")
+    def handle_console_status_collapse(self, event: Button.Pressed) -> None:
+        """Collapse the Console status row."""
+        event.stop()
+        self._set_console_status_chips_collapsed(True)
+
+    @on(Button.Pressed, "#console-status-expand")
+    def handle_console_status_expand(self, event: Button.Pressed) -> None:
+        """Expand the Console status row."""
+        event.stop()
+        self._set_console_status_chips_collapsed(False)
 
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
         """Route the Console stop action through native run control."""

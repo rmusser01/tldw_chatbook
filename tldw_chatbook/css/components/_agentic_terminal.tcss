@@ -2846,17 +2846,65 @@ with stray left-edge border fragments), and padding 0 1 so the full
     min-width: 0;
     height: 1;
     min-height: 1;
+    max-height: 1;
     layout: horizontal;
     border: none;
     padding: 0 1;
 }
 
-/* TASK-2154.5 (LY-03): chip overflow scrolls horizontally (focus auto-scroll
-   for keyboard, Shift+wheel / trackpad swipe for mouse) instead of silently
-   clipping later chips. The scrollbar itself is hidden because the strip is
-   a single row tall -- same contract as #console-native-tab-strip. */
-#console-status-chips {
+/* TASK-15704: both mounted presentations stay one row high. The fixed restore
+   control leads; the copy or scroll viewport consumes only the remaining
+   width, so neither can push past the strip at narrow terminal sizes. */
+#console-status-expanded,
+#console-status-collapsed {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+/* TASK-2154.5 (LY-03): expanded chip overflow scrolls horizontally (focus
+   auto-scroll for keyboard, Shift+wheel / trackpad swipe for mouse) instead
+   of silently clipping later chips. The scrollbar itself is hidden because
+   the inner viewport is a single row -- same contract as the native tab
+   strip. */
+#console-status-chip-scroll {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    layout: horizontal;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border: none;
+    padding: 0;
     scrollbar-size-horizontal: 0;
+}
+
+#console-status-collapse,
+#console-status-expand {
+    width: 9;
+    min-width: 9;
+    max-width: 9;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    border: none;
+    padding: 0;
+}
+
+#console-status-collapsed-copy {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 .console-control-chip {
