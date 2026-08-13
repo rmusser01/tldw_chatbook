@@ -592,8 +592,8 @@ async def test_voice_auth_and_preset_changes_cancel_inflight_sample(
         await asyncio.wait_for(cancelled.wait(), timeout=1)
         await pilot.pause()
 
-        assert button.disabled is False
-        assert "Needs test" in str(
+        assert button.disabled is True
+        assert "API key required" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -756,6 +756,268 @@ async def test_reselecting_current_voice_preset_preserves_user_edits() -> None:
         await pilot.pause()
 
         assert model.value == "user-edited-pocket-model"
+
+
+@pytest.mark.asyncio
+async def test_official_voice_without_key_is_actionable_and_cannot_test_or_save(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    sample_calls = 0
+
+    async def unexpected_sample(*_args, **_kwargs):
+        nonlocal sample_calls
+        sample_calls += 1
+        raise AssertionError("sample request must remain blocked")
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Wizards.first_run_voice_step_state.run_voice_sample",
+        unexpected_sample,
+    )
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-voice-preset-official", RadioButton).value = True
+        await pilot.pause()
+
+        status = str(step.query_one("#setup-voice-status", Static).renderable)
+        assert "API key required" in status
+        assert len(status) <= 120
+        assert step.query_one("#setup-voice-add-key", Button).display is True
+        assert step.query_one("#setup-voice-test", Button).disabled is True
+
+        step.query_one("#setup-voice-test", Button).press()
+        await pilot.pause()
+        assert sample_calls == 0
+
+        ok, error = await step.commit()
+        assert ok is False
+        assert "Add an API key in Settings" in error
+        assert sample_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_official_voice_refreshes_after_configured_environment_key_added(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("VOICE_OPENAI_KEY", raising=False)
+    app_config = {"api_settings": {"openai": {"api_key_env_var": "VOICE_OPENAI_KEY"}}}
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(
+            app_instance=MagicMock(app_config=app_config), wizard_data={}
+        ),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-voice-preset-official", RadioButton).value = True
+        await pilot.pause()
+        assert step.query_one("#setup-voice-test", Button).disabled is True
+
+        monkeypatch.setenv("VOICE_OPENAI_KEY", "sk-added-outside-draft")
+        step.on_show()
+        await pilot.pause()
+
+        assert step.query_one("#setup-voice-test", Button).disabled is False
+        assert step.query_one("#setup-voice-add-key", Button).display is False
+        assert "Needs test" in str(
+            step.query_one("#setup-voice-status", Static).renderable
+        )
+        assert "sk-added-outside-draft" not in repr(step.get_step_data())
+
+
+@pytest.mark.parametrize(
+    "app_config",
+    [
+        {"openai_api": {"api_key": "sk-saved"}},
+        {"API": {"openai_api_key": "sk-saved"}},
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "API": {"openai_api_key": "sk-saved"}
+            }
+        },
+    ],
+)
+@pytest.mark.asyncio
+async def test_official_voice_recognizes_existing_settings_credential_locations(
+    monkeypatch,
+    app_config,
+) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(
+            app_instance=MagicMock(app_config=app_config), wizard_data={}
+        ),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-voice-preset-official", RadioButton).value = True
+        await pilot.pause()
+
+        assert step.query_one("#setup-voice-test", Button).disabled is False
+        assert step.query_one("#setup-voice-add-key", Button).display is False
+        assert "sk-saved" not in repr(step.get_step_data())
+
+
+@pytest.mark.asyncio
+async def test_missing_key_action_checkpoints_voice_and_routes_to_tts_settings(
+    monkeypatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {"first_run": {"setup_completed": False}}
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        voice_index = container._step_index_for_id(STEP_VOICE)
+        assert voice_index is not None
+        container.show_step(voice_index)
+        step = container.steps[voice_index]
+        assert isinstance(step, VoiceSetupStep)
+        step.query_one("#setup-voice-preset-official", RadioButton).value = True
+        await pilot.pause()
+        persist = AsyncMock(return_value=True)
+        container.persist_current_checkpoint = persist
+
+        step.query_one("#setup-voice-add-key", Button).press()
+        await pilot.pause(0.2)
+
+        persist.assert_awaited_once()
+        assert container.wizard_data[STEP_VOICE]["endpoint"] == (
+            "https://api.openai.com/v1/audio/speech"
+        )
+        assert "api_key" not in container.wizard_data[STEP_VOICE]
+        assert app.wizard_result == {
+            "completed": False,
+            "exit_route": "settings",
+            "exit_context": {"category": "speech-tts"},
+        }
+
+
+@pytest.mark.asyncio
+async def test_missing_key_action_without_callback_stays_bounded_and_does_not_crash(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-voice-preset-official", RadioButton).value = True
+        await pilot.pause()
+        step.query_one("#setup-voice-add-key", Button).press()
+        await pilot.pause()
+
+        status = str(step.query_one("#setup-voice-status", Static).renderable)
+        assert "Settings" in status
+        assert len(status) <= 120
+
+
+@pytest.mark.asyncio
+async def test_voice_playback_failure_cleans_new_file_and_keeps_verification(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
+
+    async def sample(*_args, **_kwargs):
+        return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
+
+    class FailingPlayer:
+        def play(self, _path):
+            raise RuntimeError("player detail")
+
+    monkeypatch.setattr(voice_state, "run_voice_sample", sample)
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+    app.audio_player = FailingPlayer()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-voice-test", Button).press()
+        await pilot.pause(0.1)
+
+        status = str(step.query_one("#setup-voice-status", Static).renderable)
+        assert step._verified_draft is not None
+        assert status == "Verified, playback failed. Retry playback/test."
+        assert len(status) <= 80
+        assert list(tmp_path.glob("chatbook-voice-sample-*")) == []
+        assert step._sample_audio_path is None
+
+
+@pytest.mark.asyncio
+async def test_voice_playback_cancellation_cleans_new_file(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
+
+    playback_started = asyncio.Event()
+
+    async def sample(*_args, **_kwargs):
+        return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
+
+    class BlockingPlayer:
+        async def play(self, _path):
+            playback_started.set()
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(voice_state, "run_voice_sample", sample)
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+    app.audio_player = BlockingPlayer()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-voice-test", Button).press()
+        await asyncio.wait_for(playback_started.wait(), timeout=1)
+        app.workers.cancel_group(step, "setup-voice-sample")
+        await pilot.pause(0.1)
+
+        assert list(tmp_path.glob("chatbook-voice-sample-*")) == []
+        assert step._sample_audio_path is None
+        assert step._verified_draft is not None
+        status = str(step.query_one("#setup-voice-status", Static).renderable)
+        assert status == "Verified, playback failed. Retry playback/test."
 
 
 @pytest.mark.asyncio

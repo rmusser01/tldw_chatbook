@@ -2074,6 +2074,12 @@ class VoiceSetupStep(SetupStep):
                 id="setup-voice-status",
                 classes="setup-subtitle",
             )
+            add_key = Button(
+                "Add API key in Settings",
+                id="setup-voice-add-key",
+            )
+            add_key.display = False
+            yield add_key
             yield Checkbox(
                 "Use as default",
                 id="setup-voice-default",
@@ -2222,11 +2228,39 @@ class VoiceSetupStep(SetupStep):
                 ).configuration_valid
             except (TypeError, ValueError):
                 valid = False
-            self.query_one("#setup-voice-test", Button).disabled = (
-                self._test_in_progress_generation is not None or not valid
+                draft = None
+            missing_key = (
+                draft is not None
+                and draft.authentication_mode == "api_key"
+                and self._existing_openai_credential() is None
             )
+            self.query_one("#setup-voice-add-key", Button).display = missing_key
+            self.query_one("#setup-voice-test", Button).disabled = (
+                self._test_in_progress_generation is not None
+                or not valid
+                or missing_key
+            )
+            status = self.query_one("#setup-voice-status", Static)
+            status_text = str(status.renderable)
+            if missing_key and self._test_in_progress_generation is None:
+                self._verified_draft = None
+                status.update(
+                    "API key required. Add an API key in Settings to test or save."
+                )
+            elif (
+                not missing_key
+                and status_text.startswith("API key required")
+                and self._test_in_progress_generation is None
+            ):
+                status.update(
+                    "Needs test. You can save this configuration while offline."
+                )
         except Exception:
             return
+
+    def on_show(self) -> None:
+        super().on_show()
+        self._refresh_sample_state()
 
     def _cancel_active_sample(self) -> None:
         if self._test_in_progress_generation is None:
@@ -2277,18 +2311,66 @@ class VoiceSetupStep(SetupStep):
             exit_on_error=False,
         )
 
+    @on(Button.Pressed, "#setup-voice-add-key")
+    def _on_add_api_key(self) -> None:
+        callback = getattr(self.wizard, "open_voice_api_key_settings", None)
+        if not callable(callback):
+            self.query_one("#setup-voice-status", Static).update(
+                "Open Settings, then Speech & TTS, to add the OpenAI API key."
+            )
+            return
+        try:
+            route = callback(self)
+        except Exception:
+            self.query_one("#setup-voice-status", Static).update(
+                "Could not open Settings. Use Speech & TTS to add the API key."
+            )
+            return
+        if not asyncio.iscoroutine(route):
+            self.query_one("#setup-voice-status", Static).update(
+                "Could not open Settings. Use Speech & TTS to add the API key."
+            )
+            return
+        self.run_worker(
+            route,
+            exclusive=True,
+            group="setup-voice-api-key-settings",
+            exit_on_error=False,
+        )
+
     def _existing_openai_credential(self) -> str | None:
         if self._selected_authentication() != "api_key":
             return None
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         if isinstance(app_config, Mapping):
-            api_settings = app_config.get("api_settings")
+            persisted = app_config.get("COMPREHENSIVE_CONFIG_RAW")
+            source = persisted if isinstance(persisted, Mapping) else app_config
+            locations = (
+                ("api_settings", "openai", "api_key"),
+                ("openai_api", "api_key"),
+                ("API", "openai_api_key"),
+            )
+            for location in locations:
+                current: object = source
+                for part in location:
+                    if not isinstance(current, Mapping):
+                        current = None
+                        break
+                    current = current.get(part)
+                if isinstance(current, str) and current:
+                    return current
+            api_settings = source.get("api_settings")
             if isinstance(api_settings, Mapping):
                 openai = api_settings.get("openai")
                 if isinstance(openai, Mapping):
-                    value = openai.get("api_key")
-                    if isinstance(value, str) and value:
-                        return value
+                    environment_name = openai.get("api_key_env_var")
+                    if isinstance(environment_name, str) and environment_name:
+                        environment_value = os.environ.get(environment_name)
+                        if environment_value:
+                            return environment_value
+            projected = app_config.get("OPENAI_API_KEY")
+            if isinstance(projected, str) and projected:
+                return projected
         value = os.environ.get("OPENAI_API_KEY")
         return value if value else None
 
@@ -2324,21 +2406,33 @@ class VoiceSetupStep(SetupStep):
             if self._sample_identity(current) != self._sample_identity(draft):
                 return
             self._verified_draft = draft
+            try:
+                played = await self._play_sample(result)
+            except asyncio.CancelledError:
+                if generation == self._test_generation:
+                    self.query_one("#setup-voice-status", Static).update(
+                        "Verified, playback failed. Retry playback/test."
+                    )
+                raise
+            if generation != self._test_generation:
+                return
             self.query_one("#setup-voice-status", Static).update(
                 "Verified. The sample is ready to hear."
+                if played
+                else "Verified, playback failed. Retry playback/test."
             )
-            await self._play_sample(result)
         finally:
             if self._test_in_progress_generation == generation:
                 self._test_in_progress_generation = None
                 self._refresh_sample_state()
 
-    async def _play_sample(self, result: voice_state.VoiceSampleResult) -> None:
+    async def _play_sample(self, result: voice_state.VoiceSampleResult) -> bool:
         audio_player = getattr(self.app, "audio_player", None)
         play = getattr(audio_player, "play", None)
         if not callable(play):
-            return
+            return False
         suffix = "." + result.response_format
+        sample_path: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(
                 prefix="chatbook-voice-sample-",
@@ -2348,14 +2442,22 @@ class VoiceSetupStep(SetupStep):
                 handle.write(result.body)
                 sample_path = Path(handle.name)
             prior_path = self._sample_audio_path
-            self._sample_audio_path = sample_path
             played = play(sample_path)
             if asyncio.iscoroutine(played):
                 await played
             if prior_path is not None:
                 prior_path.unlink(missing_ok=True)
+            self._sample_audio_path = sample_path
+            return True
+        except asyncio.CancelledError:
+            if sample_path is not None:
+                sample_path.unlink(missing_ok=True)
+            raise
         except Exception:
+            if sample_path is not None:
+                sample_path.unlink(missing_ok=True)
             logger.debug("Voice sample playback failed (category=playback)")
+            return False
 
     async def commit(self) -> tuple[bool, str]:
         try:
@@ -2365,6 +2467,11 @@ class VoiceSetupStep(SetupStep):
         validation = voice_state.validate_voice_setup_draft(draft)
         if not validation.configuration_valid:
             return False, validation.errors[0] if validation.errors else "Review the Voice setup fields."
+        if (
+            draft.authentication_mode == "api_key"
+            and self._existing_openai_credential() is None
+        ):
+            return False, "Add an API key in Settings before saving this voice."
         request_id = self._next_save_request_id
         self._next_save_request_id += 1
         self._save_request_id = request_id
@@ -6341,6 +6448,35 @@ class SetupWizardContainer(WizardContainer):
         if step.config is None:
             return False
         return await self.persist_setup_checkpoint(step.config.id)
+
+    async def open_voice_api_key_settings(self, step: VoiceSetupStep) -> bool:
+        """Checkpoint the current Voice draft, then route to Speech & TTS."""
+
+        try:
+            current = self.steps[self.current_step]
+        except IndexError:
+            return False
+        if (
+            self._finalized
+            or current is not step
+            or step.config is None
+            or step.config.id != wizard_state.STEP_VOICE
+        ):
+            return False
+        self.wizard_data[wizard_state.STEP_VOICE] = step.get_step_data()
+        if not await self.persist_current_checkpoint():
+            step.query_one("#setup-voice-status", Static).update(
+                "Setup progress could not be saved. Retry opening Settings."
+            )
+            return False
+        self._dismiss_screen(
+            {
+                "completed": False,
+                "exit_route": "settings",
+                "exit_context": {"category": "speech-tts"},
+            }
+        )
+        return True
 
     # -- persistence (the only write path for steps) -----------------------
     async def commit_config(

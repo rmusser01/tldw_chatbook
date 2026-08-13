@@ -212,6 +212,24 @@ def normalize_openai_authentication_mode(
     return mode
 
 
+def is_loopback_openai_compatible_endpoint(
+    endpoint: OpenAICompatibleEndpoint,
+) -> bool:
+    """Return whether a normalized endpoint targets localhost or a loopback IP."""
+
+    if type(endpoint) is not OpenAICompatibleEndpoint:
+        return False
+    hostname = urlsplit(endpoint.origin).hostname
+    if hostname is None:
+        return False
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
 def openai_destination_fingerprint(
     provider_id: object,
     endpoint: OpenAICompatibleEndpoint,

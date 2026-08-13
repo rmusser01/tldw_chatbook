@@ -16,6 +16,7 @@ from tldw_chatbook.UI.Wizards.first_run_voice_step_state import (
     VoiceSetupDraft,
     apply_voice_preset,
     build_voice_setup_save_event,
+    run_voice_sample,
     validate_voice_sample_text,
     validate_voice_setup_draft,
 )
@@ -140,6 +141,66 @@ def test_voice_authentication_rejects_values_outside_explicit_control() -> None:
 
     assert validation.configuration_valid is False
     assert any("authentication" in error.casefold() for error in validation.errors)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://localhost:8765/v1/audio/speech",
+        "http://127.42.0.9:8765/v1/audio/speech",
+        "http://[::1]:8765/v1/audio/speech",
+        "https://speech.example.test/v1/audio/speech",
+    ],
+)
+def test_keyed_voice_transport_allows_https_and_normalized_loopback_http(
+    endpoint: str,
+) -> None:
+    validation = validate_voice_setup_draft(
+        _pocket_draft(endpoint=endpoint, authentication_mode="api_key")
+    )
+
+    assert validation.configuration_valid is True
+    assert validation.normalized_endpoint is not None
+
+
+def test_keyed_voice_transport_rejects_remote_plain_http_for_save() -> None:
+    draft = _pocket_draft(
+        endpoint="http://speech.example.test/v1/audio/speech",
+        authentication_mode="api_key",
+    )
+    validation = validate_voice_setup_draft(draft)
+
+    assert validation.configuration_valid is False
+    assert validation.errors == (
+        "API key authentication requires HTTPS or a loopback HTTP endpoint.",
+    )
+    with pytest.raises(ValueError, match="configuration is invalid"):
+        build_voice_setup_save_event(draft)
+
+
+@pytest.mark.asyncio
+async def test_keyed_remote_http_sample_fails_before_request_or_header(
+    monkeypatch,
+) -> None:
+    requests: list[object] = []
+
+    def unexpected_client(*args, **kwargs):
+        requests.append((args, kwargs))
+        raise AssertionError("HTTP client must not be created")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Wizards.first_run_voice_step_state.httpx.AsyncClient",
+        unexpected_client,
+    )
+    draft = _pocket_draft(
+        endpoint="http://speech.example.test/v1/audio/speech",
+        authentication_mode="api_key",
+    )
+
+    with pytest.raises(ValueError, match="configuration is invalid"):
+        await run_voice_sample(draft, credential="must-not-be-sent")
+
+    assert requests == []
 
 
 def test_save_event_is_opt_in_and_carries_only_exact_default_axes() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 from typing import Literal
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -12,6 +13,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
 )
 from tldw_chatbook.TTS.openai_compatible_config import (
+    is_loopback_openai_compatible_endpoint,
     normalize_openai_authentication_mode,
     normalize_openai_compatible_endpoint,
 )
@@ -127,6 +129,14 @@ def validate_voice_setup_draft(draft: VoiceSetupDraft) -> VoiceSetupValidation:
             draft.authentication_mode,
             endpoint=endpoint,
         )
+        if (
+            draft.authentication_mode == "api_key"
+            and urlsplit(endpoint.origin).scheme == "http"
+            and not is_loopback_openai_compatible_endpoint(endpoint)
+        ):
+            errors.append(
+                "API key authentication requires HTTPS or a loopback HTTP endpoint."
+            )
         normalized_endpoint = endpoint.speech_url
     except ValueError:
         errors.append(
