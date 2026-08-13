@@ -6,9 +6,11 @@ import sqlite3
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
+from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 
 
 EXPECTED_FOLDER_TABLES = {"note_folders", "note_folder_memberships"}
+MANAGED_OWNER_INDEX = "idx_note_folder_memberships_managed_owner"
 
 
 def _schema_version(db: CharactersRAGDB) -> int:
@@ -55,6 +57,32 @@ def test_fresh_database_has_v36_folder_schema(tmp_path: Path) -> None:
     try:
         assert _schema_version(db) == 36
         assert EXPECTED_FOLDER_TABLES <= _table_names(db)
+    finally:
+        db.close_connection()
+
+
+def test_managed_owner_operations_use_the_owner_lookup_index(tmp_path: Path) -> None:
+    db = CharactersRAGDB(tmp_path / "owner-index.db", client_id="owner-index")
+    try:
+        connection = db.get_connection()
+        index_names = {
+            str(row["name"])
+            for row in connection.execute(
+                "PRAGMA index_list('note_folder_memberships')"
+            ).fetchall()
+        }
+        plan = connection.execute(
+            "EXPLAIN QUERY PLAN "
+            "SELECT id, folder_id, note_id, version "
+            "FROM note_folder_memberships "
+            "WHERE ownership = 'managed' AND owner_id = ? AND deleted = 0 "
+            "ORDER BY folder_id, note_id, id",
+            ("root-a",),
+        ).fetchall()
+        details = " ".join(str(row["detail"]) for row in plan)
+
+        assert MANAGED_OWNER_INDEX in index_names
+        assert MANAGED_OWNER_INDEX in details
     finally:
         db.close_connection()
 
@@ -248,3 +276,81 @@ def test_v35_to_v36_failure_rolls_back_schema_and_version(
 
     assert version == 35
     assert not (EXPECTED_FOLDER_TABLES & tables)
+
+
+def test_chachanotes_backup_preserves_owned_folders_and_supports_restore_review(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.UI.Tools_Settings_Window import SETTINGS_DATABASES
+
+    source_path = tmp_path / "source.db"
+    backup_path = tmp_path / "backup.db"
+    source = CharactersRAGDB(source_path, client_id="backup-source")
+    repository = LocalNoteFolderRepository(source)
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_id = source.add_note("Preserved", "Exact content")
+    assert note_id is not None
+    manual = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+    managed = repository.reconcile_managed(
+        owner_id="restored-root", desired=((folder.folder_id, note_id),)
+    )[0]
+    removable = repository.reconcile_managed(
+        owner_id="remove-root", desired=((folder.folder_id, note_id),)
+    )[0]
+    note_before = tuple(
+        source.get_connection()
+        .execute(
+            "SELECT id, title, content, deleted, version FROM notes WHERE id = ?",
+            (note_id,),
+        )
+        .fetchone()
+    )
+    with sqlite3.connect(backup_path) as destination:
+        source.get_connection().backup(destination)
+    source.close_connection()
+
+    restored_db = CharactersRAGDB(backup_path, client_id="backup-restored")
+    restored = LocalNoteFolderRepository(restored_db)
+    try:
+        assert restored.get_folder(folder.folder_id) == folder
+        restored_memberships = restored.list_memberships(
+            note_ids=(note_id,), include_inactive=True
+        )
+        assert {item.membership_id for item in restored_memberships} == {
+            manual.membership_id,
+            managed.membership_id,
+            removable.membership_id,
+        }
+
+        assert restored.mark_unknown_owners_inactive(active_owner_ids=()) == 2
+        assert restored.list_memberships(note_ids=(note_id,)) == (manual,)
+        review_owners = [review.owner_id for review in restored.list_restore_reviews()]
+        assert review_owners == ["remove-root", "restored-root"]
+        assert {
+            item.membership_id
+            for item in restored.list_memberships(
+                note_ids=(note_id,), include_inactive=True
+            )
+        } == {manual.membership_id, managed.membership_id, removable.membership_id}
+
+        assert restored.remove_owner_memberships(owner_id="remove-root") == 1
+        assert restored.convert_owner_to_manual(owner_id="restored-root") == 1
+        final_memberships = restored.list_memberships(
+            note_ids=(note_id,), include_inactive=True
+        )
+        assert final_memberships == (manual,)
+        note_after = tuple(
+            restored_db.get_connection()
+            .execute(
+                "SELECT id, title, content, deleted, version FROM notes WHERE id = ?",
+                (note_id,),
+            )
+            .fetchone()
+        )
+        assert note_after == note_before
+    finally:
+        restored_db.close_connection()
+
+    database_names = {name for name, _display, _stem in SETTINGS_DATABASES}
+    assert "chachanotes" in database_names
+    assert not any("sync" in name or "folder" in name for name in database_names)

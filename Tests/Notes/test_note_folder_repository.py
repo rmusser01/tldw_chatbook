@@ -9,7 +9,7 @@ import uuid
 
 import pytest
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 import tldw_chatbook.Notes.note_folder_repository as folder_repository_module
 from tldw_chatbook.Notes.note_folder_models import (
     FolderCollisionError,
@@ -18,7 +18,9 @@ from tldw_chatbook.Notes.note_folder_models import (
 )
 from tldw_chatbook.Notes.note_folder_repository import (
     LocalNoteFolderRepository,
+    _raise_membership_integrity_error,
     _raise_mutation_operational_error,
+    _raise_wrapped_repository_error,
 )
 
 
@@ -79,6 +81,25 @@ def _folder_rows(
     return tuple(tuple(row) for row in rows)
 
 
+def _membership_rows(
+    repository: LocalNoteFolderRepository,
+) -> tuple[tuple[object, ...], ...]:
+    rows = repository.db.get_connection().execute(
+        "SELECT id, folder_id, note_id, ownership, owner_id, owner_active, "
+        "version, deleted, modified_at FROM note_folder_memberships ORDER BY id"
+    ).fetchall()
+    return tuple(tuple(row) for row in rows)
+
+
+def _note_row(repository: LocalNoteFolderRepository, note_id: str) -> tuple[object, ...]:
+    row = repository.db.get_connection().execute(
+        "SELECT id, title, content, deleted, version FROM notes WHERE id = ?",
+        (note_id,),
+    ).fetchone()
+    assert row is not None
+    return tuple(row)
+
+
 def test_create_and_list_nested_folders(repository: LocalNoteFolderRepository) -> None:
     work = repository.create_folder(name="Work", parent_id=None)
     plans = repository.create_folder(name="Plans", parent_id=work.folder_id)
@@ -112,6 +133,35 @@ def test_create_does_not_misclassify_other_unique_failures(
         repository.create_folder(name="Different", parent_id=None)
 
     assert not isinstance(caught.value, FolderCollisionError)
+
+
+def test_commit_time_database_contention_is_a_stable_conflict(tmp_path) -> None:
+    path = tmp_path / "commit-contention.db"
+    db = CharactersRAGDB(path, client_id="commit-contention")
+    repository = LocalNoteFolderRepository(db)
+    connection = db.get_connection()
+    assert connection.execute("PRAGMA journal_mode = DELETE").fetchone()[0] == "delete"
+    connection.execute("PRAGMA busy_timeout = 1")
+    reader = sqlite3.connect(path)
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM note_folders").fetchone()
+
+        with pytest.raises(FolderConflictError, match="Folder changed during mutation"):
+            repository.create_folder(name="Blocked", parent_id=None)
+    finally:
+        reader.rollback()
+        reader.close()
+        db.close_connection()
+
+    reopened = CharactersRAGDB(path, client_id="contention-check")
+    try:
+        count = reopened.get_connection().execute(
+            "SELECT COUNT(*) FROM note_folders WHERE name = ?", ("Blocked",)
+        ).fetchone()[0]
+        assert count == 0
+    finally:
+        reopened.close_connection()
 
 
 def test_create_rejects_missing_or_deleted_parent(
@@ -193,7 +243,7 @@ def test_load_tree_batch_rejects_invalid_note_limit(
         repository.load_tree_batch(expanded_folder_ids=(), note_limit=note_limit)
 
 
-@pytest.mark.parametrize("read_method", ["list", "tree"])
+@pytest.mark.parametrize("read_method", ["list", "tree", "memberships"])
 def test_multi_statement_reads_use_one_owned_snapshot(
     repository: LocalNoteFolderRepository, read_method: str
 ) -> None:
@@ -204,8 +254,12 @@ def test_multi_statement_reads_use_one_owned_snapshot(
 
     if read_method == "list":
         repository.list_children(parent_id=None, limit=50, offset=0)
-    else:
+    elif read_method == "tree":
         repository.load_tree_batch(expanded_folder_ids=(), note_limit=50)
+    else:
+        repository.list_memberships(
+            note_ids=tuple(f"note-{index:04d}" for index in range(801))
+        )
 
     connection.set_trace_callback(None)
     transaction_statements = [
@@ -224,6 +278,9 @@ def test_multi_statement_reads_do_not_finish_a_caller_owned_transaction(
 
     repository.list_children(parent_id=None, limit=50, offset=0)
     repository.load_tree_batch(expanded_folder_ids=(), note_limit=50)
+    repository.list_memberships(
+        note_ids=tuple(f"note-{index:04d}" for index in range(801))
+    )
 
     assert connection.in_transaction
     connection.rollback()
@@ -866,3 +923,507 @@ def test_mutation_database_contention_is_a_stable_typed_conflict(
         _raise_mutation_operational_error(error)
 
     assert str(caught.value) == "Folder changed during mutation."
+
+
+def test_wrapped_non_contention_database_error_is_preserved() -> None:
+    wrapped = CharactersRAGDBError("non-contention failure")
+    wrapped.__cause__ = sqlite3.OperationalError("disk I/O error")
+    wrapped.__cause__.sqlite_errorcode = sqlite3.SQLITE_IOERR
+
+    with pytest.raises(CharactersRAGDBError) as caught:
+        _raise_wrapped_repository_error(wrapped)
+
+    assert caught.value is wrapped
+
+
+def test_managed_reconcile_never_removes_manual_membership(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    assert note_id is not None
+    manual = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+
+    repository.reconcile_managed(
+        owner_id="root-a", desired=((folder.folder_id, note_id),)
+    )
+    repository.reconcile_managed(owner_id="root-a", desired=())
+
+    active = repository.list_memberships(
+        note_ids=(note_id,), include_inactive=True
+    )
+    assert active == (manual,)
+    assert _note_row(repository, note_id)[3:] == (0, 1)
+
+
+def test_removing_one_managed_owner_leaves_other_owner_and_note(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    assert note_id is not None
+    repository.reconcile_managed(
+        owner_id="root-a", desired=((folder.folder_id, note_id),)
+    )
+    repository.reconcile_managed(
+        owner_id="root-b", desired=((folder.folder_id, note_id),)
+    )
+    note_before = _note_row(repository, note_id)
+
+    assert repository.remove_owner_memberships(owner_id="root-a") == 1
+    remaining = repository.list_memberships(
+        note_ids=(note_id,), include_inactive=True
+    )
+
+    assert [(item.ownership, item.owner_id) for item in remaining] == [
+        ("managed", "root-b")
+    ]
+    assert _note_row(repository, note_id) == note_before
+    assert repository.remove_owner_memberships(owner_id="root-a") == 0
+
+
+def test_attach_manual_is_idempotent_and_revives_only_latest_history(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    assert note_id is not None
+    now = "2026-08-12T12:00:00.000Z"
+    with repository.db.transaction() as cursor:
+        for membership_id in ("manual-a", "manual-b"):
+            cursor.execute(
+                """
+                INSERT INTO note_folder_memberships(
+                    id, folder_id, note_id, ownership, owner_id, owner_active,
+                    version, deleted, created_at, modified_at
+                ) VALUES (?, ?, ?, 'manual', '', 1, 4, 1, ?, ?)
+                """,
+                (membership_id, folder.folder_id, note_id, now, now),
+            )
+
+    revived = repository.attach_manual(
+        folder_id=folder.folder_id, note_id=note_id
+    )
+    repeated = repository.attach_manual(
+        folder_id=folder.folder_id, note_id=note_id
+    )
+
+    assert revived.membership_id == "manual-b"
+    assert revived.version == 5
+    assert repeated == revived
+    rows = repository.db.get_connection().execute(
+        "SELECT id, version, deleted FROM note_folder_memberships ORDER BY id"
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("manual-a", 4, 1),
+        ("manual-b", 5, 0),
+    ]
+
+
+def test_attach_manual_retries_a_generated_membership_id_collision(
+    repository: LocalNoteFolderRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first_folder = repository.create_folder(name="First", parent_id=None)
+    second_folder = repository.create_folder(name="Second", parent_id=None)
+    first_note = repository.db.add_note("First", "Body")
+    second_note = repository.db.add_note("Second", "Body")
+    assert first_note is not None and second_note is not None
+    existing = repository.attach_manual(
+        folder_id=first_folder.folder_id, note_id=first_note
+    )
+    replacement_id = uuid.uuid4()
+    generated_ids = iter(
+        (uuid.uuid4(), uuid.UUID(existing.membership_id), replacement_id)
+    )
+    monkeypatch.setattr(
+        folder_repository_module.uuid, "uuid4", lambda: next(generated_ids)
+    )
+
+    attached = repository.attach_manual(
+        folder_id=second_folder.folder_id, note_id=second_note
+    )
+
+    assert attached.membership_id == str(replacement_id)
+    assert set(
+        repository.list_memberships(note_ids=(first_note, second_note))
+    ) == {existing, attached}
+
+
+def test_membership_unique_classifier_distinguishes_owner_and_primary_key(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    first_note = repository.db.add_note("First", "Body")
+    second_note = repository.db.add_note("Second", "Body")
+    assert first_note is not None and second_note is not None
+    existing = repository.attach_manual(folder_id=folder.folder_id, note_id=first_note)
+    connection = repository.db.get_connection()
+    now = _timestamp()
+
+    with pytest.raises(sqlite3.IntegrityError) as owner_collision:
+        connection.execute(
+            """
+            INSERT INTO note_folder_memberships(
+                id, folder_id, note_id, ownership, owner_id,
+                created_at, modified_at
+            ) VALUES (?, ?, ?, 'manual', '', ?, ?)
+            """,
+            (str(uuid.uuid4()), folder.folder_id, first_note, now, now),
+        )
+    connection.rollback()
+    with pytest.raises(FolderConflictError, match="Membership changed"):
+        _raise_membership_integrity_error(owner_collision.value)
+
+    with pytest.raises(sqlite3.IntegrityError) as id_collision:
+        connection.execute(
+            """
+            INSERT INTO note_folder_memberships(
+                id, folder_id, note_id, ownership, owner_id,
+                created_at, modified_at
+            ) VALUES (?, ?, ?, 'manual', '', ?, ?)
+            """,
+            (existing.membership_id, folder.folder_id, second_note, now, now),
+        )
+    connection.rollback()
+    with pytest.raises(FolderValidationError, match="stored constraints"):
+        _raise_membership_integrity_error(id_collision.value)
+
+
+def test_detach_manual_succeeds_conflicts_when_stale_and_is_false_when_absent(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    assert note_id is not None
+    membership = repository.attach_manual(
+        folder_id=folder.folder_id, note_id=note_id
+    )
+
+    with pytest.raises(FolderConflictError):
+        repository.detach_manual(
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            expected_version=membership.version + 1,
+        )
+    assert repository.list_memberships(note_ids=(note_id,)) == (membership,)
+
+    assert repository.detach_manual(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        expected_version=membership.version,
+    )
+    assert repository.detach_manual(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        expected_version=membership.version + 1,
+    ) is False
+
+
+@pytest.mark.parametrize("invalid_kind", ["folder", "note"])
+def test_reconcile_validates_all_desired_rows_before_writing(
+    repository: LocalNoteFolderRepository, invalid_kind: str
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    assert note_id is not None
+    repository.reconcile_managed(
+        owner_id="root-a", desired=((folder.folder_id, note_id),)
+    )
+    before = _membership_rows(repository)
+    desired = (
+        (
+            "missing-folder" if invalid_kind == "folder" else folder.folder_id,
+            "missing-note" if invalid_kind == "note" else note_id,
+        ),
+    )
+
+    with pytest.raises(FolderValidationError):
+        repository.reconcile_managed(owner_id="root-a", desired=desired)
+
+    assert _membership_rows(repository) == before
+
+
+def test_reconcile_is_idempotent_owner_scoped_and_revives_deleted_rows(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    assert note_id is not None
+    manual = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+    other = repository.reconcile_managed(
+        owner_id="root-b", desired=((folder.folder_id, note_id),)
+    )[0]
+    first = repository.reconcile_managed(
+        owner_id="root-a", desired=((folder.folder_id, note_id),)
+    )[0]
+    rows_after_first = _membership_rows(repository)
+
+    assert repository.reconcile_managed(
+        owner_id="root-a", desired=((folder.folder_id, note_id),)
+    ) == (first,)
+    assert _membership_rows(repository) == rows_after_first
+
+    repository.reconcile_managed(owner_id="root-a", desired=())
+    repository.db.get_connection().execute(
+        "UPDATE note_folder_memberships SET owner_active = 0 WHERE id = ?",
+        (first.membership_id,),
+    )
+    repository.db.get_connection().commit()
+    revived = repository.reconcile_managed(
+        owner_id="root-a", desired=((folder.folder_id, note_id),)
+    )[0]
+
+    assert revived.membership_id == first.membership_id
+    assert revived.version == first.version + 2
+    assert revived.owner_active
+    all_active = repository.list_memberships(
+        note_ids=(note_id,), include_inactive=True
+    )
+    assert {item.membership_id for item in all_active} == {
+        manual.membership_id,
+        other.membership_id,
+        revived.membership_id,
+    }
+
+
+def test_convert_owner_to_manual_reuses_active_and_revives_deleted_manual_rows(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    first_folder = repository.create_folder(name="First", parent_id=None)
+    second_folder = repository.create_folder(name="Second", parent_id=None)
+    first_note = repository.db.add_note("First", "Body")
+    second_note = repository.db.add_note("Second", "Body")
+    assert first_note is not None and second_note is not None
+    active_manual = repository.attach_manual(
+        folder_id=first_folder.folder_id, note_id=first_note
+    )
+    deleted_manual = repository.attach_manual(
+        folder_id=second_folder.folder_id, note_id=second_note
+    )
+    assert repository.detach_manual(
+        folder_id=second_folder.folder_id,
+        note_id=second_note,
+        expected_version=deleted_manual.version,
+    )
+    repository.reconcile_managed(
+        owner_id="root-a",
+        desired=(
+            (first_folder.folder_id, first_note),
+            (second_folder.folder_id, second_note),
+        ),
+    )
+    other = repository.reconcile_managed(
+        owner_id="root-b", desired=((first_folder.folder_id, first_note),)
+    )[0]
+    notes_before = (_note_row(repository, first_note), _note_row(repository, second_note))
+
+    assert repository.convert_owner_to_manual(owner_id="root-a") == 2
+    assert repository.convert_owner_to_manual(owner_id="root-a") == 0
+
+    memberships = repository.list_memberships(
+        note_ids=(first_note, second_note), include_inactive=True
+    )
+    manual_rows = [item for item in memberships if item.ownership == "manual"]
+    assert {item.membership_id for item in manual_rows} == {
+        active_manual.membership_id,
+        deleted_manual.membership_id,
+    }
+    assert next(
+        item for item in manual_rows if item.membership_id == active_manual.membership_id
+    ).version == active_manual.version
+    assert next(
+        item for item in manual_rows if item.membership_id == deleted_manual.membership_id
+    ).version == deleted_manual.version + 2
+    assert [item for item in memberships if item.ownership == "managed"] == [other]
+    assert (_note_row(repository, first_note), _note_row(repository, second_note)) == notes_before
+
+
+def test_unknown_owner_convergence_and_restore_reviews_are_deterministic(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    alpha = repository.create_folder(name="Alpha", parent_id=None)
+    beta = repository.create_folder(name="Beta", parent_id=None)
+    first_note = repository.db.add_note("First", "Body")
+    second_note = repository.db.add_note("Second", "Body")
+    assert first_note is not None and second_note is not None
+    root_a = repository.reconcile_managed(
+        owner_id="root-a",
+        desired=((alpha.folder_id, first_note), (beta.folder_id, first_note)),
+    )
+    root_b = repository.reconcile_managed(
+        owner_id="root-b", desired=((beta.folder_id, second_note),)
+    )[0]
+
+    assert repository.mark_unknown_owners_inactive(
+        active_owner_ids=("root-b", "root-b")
+    ) == 2
+    assert repository.mark_unknown_owners_inactive(active_owner_ids=("root-b",)) == 0
+    assert repository.list_memberships(note_ids=(first_note, second_note)) == (root_b,)
+    assert {
+        item.membership_id
+        for item in repository.list_memberships(
+            note_ids=(first_note, second_note), include_inactive=True
+        )
+    } == {root_a[0].membership_id, root_a[1].membership_id, root_b.membership_id}
+
+    reviews = repository.list_restore_reviews()
+    assert len(reviews) == 1
+    assert reviews[0].owner_id == "root-a"
+    assert reviews[0].membership_ids == tuple(
+        sorted(item.membership_id for item in root_a)
+    )
+    assert (reviews[0].note_count, reviews[0].folder_count) == (1, 2)
+
+    assert repository.mark_unknown_owners_inactive(
+        active_owner_ids=("root-a", "root-b")
+    ) == 2
+    assert repository.list_restore_reviews() == ()
+
+
+def test_reconcile_rolls_back_to_owned_savepoint_when_later_update_fails(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_ids = [repository.db.add_note(title, "Body") for title in ("A", "B")]
+    assert all(note_id is not None for note_id in note_ids)
+    repository.reconcile_managed(
+        owner_id="root-a",
+        desired=tuple((folder.folder_id, str(note_id)) for note_id in note_ids),
+    )
+    fail_note_id = max(str(note_id) for note_id in note_ids)
+    connection = repository.db.get_connection()
+    connection.execute(
+        f"""
+        CREATE TRIGGER fail_later_membership_update
+        BEFORE UPDATE ON note_folder_memberships
+        WHEN OLD.note_id = '{fail_note_id}'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced later membership failure');
+        END
+        """
+    )
+    connection.commit()
+    before = _membership_rows(repository)
+
+    with repository.db.transaction():
+        with pytest.raises(FolderValidationError):
+            repository.reconcile_managed(owner_id="root-a", desired=())
+
+    assert _membership_rows(repository) == before
+
+
+@pytest.mark.parametrize(
+    ("method", "kwargs"),
+    [
+        ("attach_manual", {"folder_id": "", "note_id": "note"}),
+        ("attach_manual", {"folder_id": "folder", "note_id": ""}),
+        ("list_memberships", {"note_ids": "note"}),
+        ("reconcile_managed", {"owner_id": "", "desired": ()}),
+        ("reconcile_managed", {"owner_id": "root", "desired": ("bad",)}),
+        ("convert_owner_to_manual", {"owner_id": " "}),
+        ("remove_owner_memberships", {"owner_id": ""}),
+        ("mark_unknown_owners_inactive", {"active_owner_ids": "root"}),
+    ],
+)
+def test_membership_methods_reject_invalid_inputs(
+    repository: LocalNoteFolderRepository, method: str, kwargs: dict[str, object]
+) -> None:
+    with pytest.raises(FolderValidationError):
+        getattr(repository, method)(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("note_count", "expected_next_offset"), [(0, None), (2, None), (3, 2)]
+)
+def test_load_tree_batch_pages_zero_exact_limit_and_limit_plus_one_notes(
+    repository: LocalNoteFolderRepository,
+    note_count: int,
+    expected_next_offset: int | None,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    now = _timestamp()
+    with repository.db.transaction() as cursor:
+        for index in range(note_count):
+            note_id = f"note-{index:03d}"
+            cursor.execute(
+                "INSERT INTO notes(id, title, content, client_id) VALUES (?, ?, '', ?)",
+                (note_id, f"Note {index:03d}", "paging-test"),
+            )
+            cursor.execute(
+                """
+                INSERT INTO note_folder_memberships(
+                    id, folder_id, note_id, ownership, owner_id,
+                    created_at, modified_at
+                ) VALUES (?, ?, ?, 'manual', '', ?, ?)
+                """,
+                (f"membership-{index:03d}", folder.folder_id, note_id, now, now),
+            )
+
+    page = repository.load_tree_batch(
+        expanded_folder_ids=(folder.folder_id,), note_limit=2
+    )
+
+    assert len(page.notes) == min(note_count, 2)
+    assert page.total_notes == note_count
+    assert page.next_offset == expected_next_offset
+
+
+@pytest.mark.parametrize("placement_count", [10, 500])
+def test_load_tree_batch_query_count_is_constant_for_placements(
+    repository: LocalNoteFolderRepository, placement_count: int
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    now = _timestamp()
+    with repository.db.transaction() as cursor:
+        for index in range(placement_count):
+            note_id = f"note-{index:04d}"
+            cursor.execute(
+                "INSERT INTO notes(id, title, content, client_id) VALUES (?, ?, '', ?)",
+                (note_id, f"Note {index:04d}", "query-shape-test"),
+            )
+            cursor.execute(
+                """
+                INSERT INTO note_folder_memberships(
+                    id, folder_id, note_id, ownership, owner_id,
+                    created_at, modified_at
+                ) VALUES (?, ?, ?, 'manual', '', ?, ?)
+                """,
+                (f"membership-{index:04d}", folder.folder_id, note_id, now, now),
+            )
+    statements: list[str] = []
+    connection = repository.db.get_connection()
+    connection.set_trace_callback(statements.append)
+
+    page = repository.load_tree_batch(
+        expanded_folder_ids=(folder.folder_id,), note_limit=1000
+    )
+
+    connection.set_trace_callback(None)
+    selects = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith("SELECT")
+    ]
+    assert len(page.notes) == placement_count
+    assert len(selects) == 3
+    assert len(selects) <= 4
+
+
+def test_list_memberships_chunks_large_unique_id_sets_without_per_note_queries(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    note_ids = tuple(f"note-{index:04d}" for index in range(801))
+    statements: list[str] = []
+    connection = repository.db.get_connection()
+    connection.set_trace_callback(statements.append)
+
+    assert repository.list_memberships(note_ids=reversed(note_ids)) == ()
+
+    connection.set_trace_callback(None)
+    selects = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith("SELECT")
+    ]
+    assert len(selects) == 3
+    assert all("note_id IN" in statement for statement in selects)

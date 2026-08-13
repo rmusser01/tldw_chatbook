@@ -8,7 +8,7 @@ import sqlite3
 from typing import Iterable, Iterator, NoReturn, Sequence
 import uuid
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
     FolderCollisionError,
     FolderConflictError,
@@ -17,6 +17,7 @@ from tldw_chatbook.Notes.note_folder_models import (
     NoteFolder,
     NoteFolderMembership,
     NoteFolderPage,
+    RestoredManagedMembershipReview,
     join_normalized_folder_path,
     normalize_folder_name,
 )
@@ -30,6 +31,11 @@ _NOTE_COLUMNS = (
     "id, title, content, created_at, last_modified, deleted, client_id, version"
 )
 _COLLISION_PREFLIGHT_CHUNK_SIZE = 400
+_MEMBERSHIP_QUERY_CHUNK_SIZE = 400
+_MEMBERSHIP_ID_INSERT_ATTEMPTS = 3
+_MEMBERSHIP_COLUMNS = (
+    "id, folder_id, note_id, ownership, owner_id, owner_active, version"
+)
 
 
 class LocalNoteFolderRepository:
@@ -112,6 +118,10 @@ class LocalNoteFolderRepository:
                     "An active folder already uses the normalized path."
                 ) from exc
             raise FolderValidationError("Folder could not be created.") from exc
+        except sqlite3.OperationalError as exc:
+            _raise_mutation_operational_error(exc)
+        except CharactersRAGDBError as exc:
+            _raise_wrapped_repository_error(exc)
 
     def get_folder(
         self, folder_id: str, *, include_deleted: bool = False
@@ -241,6 +251,346 @@ class LocalNoteFolderRepository:
             next_offset=note_limit if total_notes > len(notes) else None,
         )
 
+    def attach_manual(
+        self, *, folder_id: str, note_id: str
+    ) -> NoteFolderMembership:
+        """Attach one user-owned placement, reviving its latest history."""
+        _validate_folder_id(folder_id, field="folder_id")
+        _validate_folder_id(note_id, field="note_id")
+        try:
+            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+                _require_active_membership_targets(
+                    cursor, folder_ids=(folder_id,), note_ids=(note_id,)
+                )
+                row = _ensure_manual_membership(
+                    cursor,
+                    folder_id=folder_id,
+                    note_id=note_id,
+                    now=_utc_timestamp(),
+                )
+                return _membership_from_row(row)
+        except sqlite3.IntegrityError as exc:
+            _raise_membership_integrity_error(exc)
+        except sqlite3.OperationalError as exc:
+            _raise_mutation_operational_error(exc)
+        except CharactersRAGDBError as exc:
+            _raise_wrapped_repository_error(exc)
+
+    def detach_manual(
+        self, *, folder_id: str, note_id: str, expected_version: int
+    ) -> bool:
+        """Soft-delete one exact active manual placement optimistically."""
+        _validate_folder_id(folder_id, field="folder_id")
+        _validate_folder_id(note_id, field="note_id")
+        _validate_expected_version(expected_version)
+        try:
+            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+                row = cursor.execute(
+                    "SELECT id, version FROM note_folder_memberships "
+                    "WHERE folder_id = ? AND note_id = ? AND ownership = 'manual' "
+                    "AND owner_id = '' AND deleted = 0",
+                    (folder_id, note_id),
+                ).fetchone()
+                if row is None:
+                    return False
+                if int(row["version"]) != expected_version:
+                    raise FolderConflictError(
+                        "Membership version does not match expected_version."
+                    )
+                cursor.execute(
+                    "UPDATE note_folder_memberships SET deleted = 1, "
+                    "version = version + 1, modified_at = ? "
+                    "WHERE id = ? AND version = ? AND deleted = 0 "
+                    "AND ownership = 'manual' AND owner_id = ''",
+                    (_utc_timestamp(), row["id"], expected_version),
+                )
+                _require_one_membership_update(cursor)
+                return True
+        except sqlite3.IntegrityError as exc:
+            _raise_membership_integrity_error(exc)
+        except sqlite3.OperationalError as exc:
+            _raise_mutation_operational_error(exc)
+        except CharactersRAGDBError as exc:
+            _raise_wrapped_repository_error(exc)
+
+    def list_memberships(
+        self, *, note_ids: Iterable[str], include_inactive: bool = False
+    ) -> tuple[NoteFolderMembership, ...]:
+        """Return active placements for a bounded, normalized note-ID set."""
+        normalized_note_ids = _normalize_ids(note_ids, field="note_ids")
+        if not isinstance(include_inactive, bool):
+            raise FolderValidationError("include_inactive must be a boolean.")
+        if not normalized_note_ids:
+            return ()
+        rows: list[sqlite3.Row] = []
+        with self.db.transaction() as cursor:
+            for chunk in _chunks(normalized_note_ids, _MEMBERSHIP_QUERY_CHUNK_SIZE):
+                placeholders = _placeholders(len(chunk))
+                inactive_clause = (
+                    ""
+                    if include_inactive
+                    else " AND (ownership = 'manual' OR owner_active = 1)"
+                )
+                rows.extend(
+                    cursor.execute(
+                        f"SELECT {_MEMBERSHIP_COLUMNS} FROM note_folder_memberships "
+                        f"WHERE deleted = 0 AND note_id IN ({placeholders})"
+                        f"{inactive_clause}",
+                        chunk,
+                    ).fetchall()
+                )
+        rows.sort(
+            key=lambda row: (
+                str(row["note_id"]),
+                str(row["folder_id"]),
+                str(row["ownership"]),
+                str(row["owner_id"]),
+                str(row["id"]),
+            )
+        )
+        return tuple(_membership_from_row(row) for row in rows)
+
+    def reconcile_managed(
+        self, *, owner_id: str, desired: Iterable[tuple[str, str]]
+    ) -> tuple[NoteFolderMembership, ...]:
+        """Converge only one sync owner's managed placements."""
+        _validate_owner_id(owner_id)
+        desired_pairs = _normalize_desired_memberships(desired)
+        desired_set = set(desired_pairs)
+        try:
+            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+                _require_active_membership_targets(
+                    cursor,
+                    folder_ids=tuple(pair[0] for pair in desired_pairs),
+                    note_ids=tuple(pair[1] for pair in desired_pairs),
+                )
+                rows = cursor.execute(
+                    "SELECT id, folder_id, note_id, ownership, owner_id, "
+                    "owner_active, version, deleted, modified_at "
+                    "FROM note_folder_memberships WHERE ownership = 'managed' "
+                    "AND owner_id = ? "
+                    "ORDER BY folder_id, note_id, modified_at DESC, id DESC",
+                    (owner_id,),
+                ).fetchall()
+                active_by_pair: dict[tuple[str, str], sqlite3.Row] = {}
+                deleted_by_pair: dict[tuple[str, str], sqlite3.Row] = {}
+                for row in rows:
+                    pair = (str(row["folder_id"]), str(row["note_id"]))
+                    if bool(row["deleted"]):
+                        deleted_by_pair.setdefault(pair, row)
+                    else:
+                        active_by_pair[pair] = row
+
+                now = _utc_timestamp()
+                for pair in sorted(set(active_by_pair) - desired_set):
+                    row = active_by_pair[pair]
+                    cursor.execute(
+                        "UPDATE note_folder_memberships SET deleted = 1, "
+                        "version = version + 1, modified_at = ? "
+                        "WHERE id = ? AND version = ? AND deleted = 0 "
+                        "AND ownership = 'managed' AND owner_id = ?",
+                        (now, row["id"], row["version"], owner_id),
+                    )
+                    _require_one_membership_update(cursor)
+
+                for folder_id, note_id in desired_pairs:
+                    pair = (folder_id, note_id)
+                    active = active_by_pair.get(pair)
+                    if active is not None:
+                        if not bool(active["owner_active"]):
+                            cursor.execute(
+                                "UPDATE note_folder_memberships SET owner_active = 1, "
+                                "version = version + 1, modified_at = ? "
+                                "WHERE id = ? AND version = ? AND deleted = 0 "
+                                "AND ownership = 'managed' AND owner_id = ? "
+                                "AND owner_active = 0",
+                                (now, active["id"], active["version"], owner_id),
+                            )
+                            _require_one_membership_update(cursor)
+                        continue
+                    deleted = deleted_by_pair.get(pair)
+                    if deleted is not None:
+                        cursor.execute(
+                            "UPDATE note_folder_memberships SET deleted = 0, "
+                            "owner_active = 1, version = version + 1, modified_at = ? "
+                            "WHERE id = ? AND version = ? AND deleted = 1 "
+                            "AND ownership = 'managed' AND owner_id = ?",
+                            (now, deleted["id"], deleted["version"], owner_id),
+                        )
+                        _require_one_membership_update(cursor)
+                    else:
+                        _insert_membership(
+                            cursor,
+                            folder_id=folder_id,
+                            note_id=note_id,
+                            ownership="managed",
+                            owner_id=owner_id,
+                            now=now,
+                        )
+
+                result_rows = cursor.execute(
+                    f"SELECT {_MEMBERSHIP_COLUMNS} FROM note_folder_memberships "
+                    "WHERE ownership = 'managed' AND owner_id = ? "
+                    "AND deleted = 0 AND owner_active = 1 "
+                    "ORDER BY note_id, folder_id, ownership, owner_id, id",
+                    (owner_id,),
+                ).fetchall()
+                return tuple(
+                    _membership_from_row(row)
+                    for row in result_rows
+                    if (str(row["folder_id"]), str(row["note_id"])) in desired_set
+                )
+        except sqlite3.IntegrityError as exc:
+            _raise_membership_integrity_error(exc)
+        except sqlite3.OperationalError as exc:
+            _raise_mutation_operational_error(exc)
+        except CharactersRAGDBError as exc:
+            _raise_wrapped_repository_error(exc)
+
+    def convert_owner_to_manual(self, *, owner_id: str) -> int:
+        """Convert one owner's active managed placements to manual placements."""
+        _validate_owner_id(owner_id)
+        try:
+            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+                managed_rows = cursor.execute(
+                    "SELECT id, folder_id, note_id, version "
+                    "FROM note_folder_memberships WHERE ownership = 'managed' "
+                    "AND owner_id = ? AND deleted = 0 "
+                    "ORDER BY folder_id, note_id, id",
+                    (owner_id,),
+                ).fetchall()
+                if not managed_rows:
+                    return 0
+                now = _utc_timestamp()
+                for row in managed_rows:
+                    _ensure_manual_membership(
+                        cursor,
+                        folder_id=str(row["folder_id"]),
+                        note_id=str(row["note_id"]),
+                        now=now,
+                    )
+                for row in managed_rows:
+                    cursor.execute(
+                        "UPDATE note_folder_memberships SET deleted = 1, "
+                        "version = version + 1, modified_at = ? "
+                        "WHERE id = ? AND version = ? AND deleted = 0 "
+                        "AND ownership = 'managed' AND owner_id = ?",
+                        (now, row["id"], row["version"], owner_id),
+                    )
+                    _require_one_membership_update(cursor)
+                return len(managed_rows)
+        except sqlite3.IntegrityError as exc:
+            _raise_membership_integrity_error(exc)
+        except sqlite3.OperationalError as exc:
+            _raise_mutation_operational_error(exc)
+        except CharactersRAGDBError as exc:
+            _raise_wrapped_repository_error(exc)
+
+    def remove_owner_memberships(self, *, owner_id: str) -> int:
+        """Soft-delete only one owner's active managed placements."""
+        _validate_owner_id(owner_id)
+        try:
+            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+                rows = cursor.execute(
+                    "SELECT id, version FROM note_folder_memberships "
+                    "WHERE ownership = 'managed' AND owner_id = ? AND deleted = 0 "
+                    "ORDER BY id",
+                    (owner_id,),
+                ).fetchall()
+                if not rows:
+                    return 0
+                now = _utc_timestamp()
+                for row in rows:
+                    cursor.execute(
+                        "UPDATE note_folder_memberships SET deleted = 1, "
+                        "version = version + 1, modified_at = ? "
+                        "WHERE id = ? AND version = ? AND deleted = 0 "
+                        "AND ownership = 'managed' AND owner_id = ?",
+                        (now, row["id"], row["version"], owner_id),
+                    )
+                    _require_one_membership_update(cursor)
+                return len(rows)
+        except sqlite3.IntegrityError as exc:
+            _raise_membership_integrity_error(exc)
+        except sqlite3.OperationalError as exc:
+            _raise_mutation_operational_error(exc)
+        except CharactersRAGDBError as exc:
+            _raise_wrapped_repository_error(exc)
+
+    def mark_unknown_owners_inactive(
+        self, *, active_owner_ids: Iterable[str]
+    ) -> int:
+        """Converge restored managed-owner flags against the known owner set."""
+        known_owners = set(_normalize_owner_ids(active_owner_ids))
+        try:
+            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+                rows = cursor.execute(
+                    "SELECT id, owner_id, owner_active, version "
+                    "FROM note_folder_memberships WHERE ownership = 'managed' "
+                    "AND deleted = 0 ORDER BY owner_id, id"
+                ).fetchall()
+                changes: list[tuple[sqlite3.Row, bool]] = []
+                for row in rows:
+                    owner_active = str(row["owner_id"]) in known_owners
+                    if bool(row["owner_active"]) != owner_active:
+                        changes.append((row, owner_active))
+                if not changes:
+                    return 0
+                now = _utc_timestamp()
+                for row, owner_active in changes:
+                    cursor.execute(
+                        "UPDATE note_folder_memberships SET owner_active = ?, "
+                        "version = version + 1, modified_at = ? "
+                        "WHERE id = ? AND version = ? AND deleted = 0 "
+                        "AND ownership = 'managed' AND owner_id = ? "
+                        "AND owner_active = ?",
+                        (
+                            int(owner_active),
+                            now,
+                            row["id"],
+                            row["version"],
+                            row["owner_id"],
+                            row["owner_active"],
+                        ),
+                    )
+                    _require_one_membership_update(cursor)
+                return len(changes)
+        except sqlite3.IntegrityError as exc:
+            _raise_membership_integrity_error(exc)
+        except sqlite3.OperationalError as exc:
+            _raise_mutation_operational_error(exc)
+        except CharactersRAGDBError as exc:
+            _raise_wrapped_repository_error(exc)
+
+    def list_restore_reviews(
+        self,
+    ) -> tuple[RestoredManagedMembershipReview, ...]:
+        """Group inactive active managed placements by restored owner."""
+        rows = self.db.get_connection().execute(
+            "SELECT id, owner_id, note_id, folder_id "
+            "FROM note_folder_memberships WHERE ownership = 'managed' "
+            "AND deleted = 0 AND owner_active = 0 "
+            "ORDER BY owner_id, id"
+        ).fetchall()
+        grouped: dict[str, dict[str, set[str]]] = {}
+        for row in rows:
+            owner = str(row["owner_id"])
+            group = grouped.setdefault(
+                owner, {"memberships": set(), "notes": set(), "folders": set()}
+            )
+            group["memberships"].add(str(row["id"]))
+            group["notes"].add(str(row["note_id"]))
+            group["folders"].add(str(row["folder_id"]))
+        return tuple(
+            RestoredManagedMembershipReview(
+                owner_id=owner,
+                membership_ids=tuple(sorted(group["memberships"])),
+                note_count=len(group["notes"]),
+                folder_count=len(group["folders"]),
+            )
+            for owner, group in sorted(grouped.items())
+        )
+
     def rename_folder(
         self, folder_id: str, *, name: str, expected_version: int
     ) -> FolderMutationResult:
@@ -307,6 +657,8 @@ class LocalNoteFolderRepository:
             _raise_mutation_integrity_error(exc)
         except sqlite3.OperationalError as exc:
             _raise_mutation_operational_error(exc)
+        except CharactersRAGDBError as exc:
+            _raise_wrapped_repository_error(exc)
 
     def move_folder(
         self,
@@ -382,6 +734,8 @@ class LocalNoteFolderRepository:
             _raise_mutation_integrity_error(exc)
         except sqlite3.OperationalError as exc:
             _raise_mutation_operational_error(exc)
+        except CharactersRAGDBError as exc:
+            _raise_wrapped_repository_error(exc)
 
     def soft_delete_folder(
         self, folder_id: str, *, expected_version: int
@@ -412,6 +766,8 @@ class LocalNoteFolderRepository:
             _raise_mutation_integrity_error(exc)
         except sqlite3.OperationalError as exc:
             _raise_mutation_operational_error(exc)
+        except CharactersRAGDBError as exc:
+            _raise_wrapped_repository_error(exc)
 
     def restore_folder(
         self, folder_id: str, *, expected_version: int
@@ -516,6 +872,8 @@ class LocalNoteFolderRepository:
             _raise_mutation_integrity_error(exc)
         except sqlite3.OperationalError as exc:
             _raise_mutation_operational_error(exc)
+        except CharactersRAGDBError as exc:
+            _raise_wrapped_repository_error(exc)
 
 
 def _utc_timestamp() -> str:
@@ -767,6 +1125,134 @@ def _require_one_folder_update(cursor: sqlite3.Cursor) -> None:
         raise FolderConflictError("Folder changed during mutation.")
 
 
+def _require_one_membership_update(cursor: sqlite3.Cursor) -> None:
+    """Reject a membership update whose optimistic snapshot became stale."""
+    if cursor.rowcount != 1:
+        raise FolderConflictError("Membership changed during mutation.")
+
+
+def _insert_membership(
+    cursor: sqlite3.Cursor,
+    *,
+    folder_id: str,
+    note_id: str,
+    ownership: str,
+    owner_id: str,
+    now: str,
+) -> sqlite3.Row:
+    membership_id = ""
+    for attempt in range(_MEMBERSHIP_ID_INSERT_ATTEMPTS):
+        membership_id = str(uuid.uuid4())
+        try:
+            cursor.execute(
+                "INSERT INTO note_folder_memberships("
+                "id, folder_id, note_id, ownership, owner_id, owner_active, "
+                "version, deleted, created_at, modified_at"
+                ") VALUES (?, ?, ?, ?, ?, 1, 1, 0, ?, ?)",
+                (membership_id, folder_id, note_id, ownership, owner_id, now, now),
+            )
+            break
+        except sqlite3.IntegrityError as exc:
+            if not _is_membership_id_collision(exc):
+                raise
+            if attempt == _MEMBERSHIP_ID_INSERT_ATTEMPTS - 1:
+                raise FolderValidationError(
+                    "Membership ID allocation failed."
+                ) from exc
+    row = cursor.execute(
+        f"SELECT {_MEMBERSHIP_COLUMNS} FROM note_folder_memberships WHERE id = ?",
+        (membership_id,),
+    ).fetchone()
+    if row is None:  # pragma: no cover - SQLite guarantees the inserted row
+        raise FolderValidationError("Created membership could not be read.")
+    return row
+
+
+def _ensure_manual_membership(
+    cursor: sqlite3.Cursor, *, folder_id: str, note_id: str, now: str
+) -> sqlite3.Row:
+    active = cursor.execute(
+        f"SELECT {_MEMBERSHIP_COLUMNS} FROM note_folder_memberships "
+        "WHERE folder_id = ? AND note_id = ? AND ownership = 'manual' "
+        "AND owner_id = '' AND deleted = 0",
+        (folder_id, note_id),
+    ).fetchone()
+    if active is not None:
+        return active
+    deleted = cursor.execute(
+        "SELECT id, version FROM note_folder_memberships "
+        "WHERE folder_id = ? AND note_id = ? AND ownership = 'manual' "
+        "AND owner_id = '' AND deleted = 1 "
+        "ORDER BY modified_at DESC, id DESC LIMIT 1",
+        (folder_id, note_id),
+    ).fetchone()
+    if deleted is None:
+        return _insert_membership(
+            cursor,
+            folder_id=folder_id,
+            note_id=note_id,
+            ownership="manual",
+            owner_id="",
+            now=now,
+        )
+    cursor.execute(
+        "UPDATE note_folder_memberships SET deleted = 0, owner_active = 1, "
+        "version = version + 1, modified_at = ? "
+        "WHERE id = ? AND version = ? AND deleted = 1 "
+        "AND ownership = 'manual' AND owner_id = ''",
+        (now, deleted["id"], deleted["version"]),
+    )
+    _require_one_membership_update(cursor)
+    row = cursor.execute(
+        f"SELECT {_MEMBERSHIP_COLUMNS} FROM note_folder_memberships WHERE id = ?",
+        (deleted["id"],),
+    ).fetchone()
+    if row is None:  # pragma: no cover - the optimistic update preserves the row
+        raise FolderValidationError("Revived membership could not be read.")
+    return row
+
+
+def _require_active_membership_targets(
+    cursor: sqlite3.Cursor,
+    *,
+    folder_ids: Sequence[str],
+    note_ids: Sequence[str],
+) -> None:
+    _require_active_ids(
+        cursor,
+        table="note_folders",
+        ids=tuple(sorted(set(folder_ids))),
+        field="folder",
+    )
+    _require_active_ids(
+        cursor,
+        table="notes",
+        ids=tuple(sorted(set(note_ids))),
+        field="note",
+    )
+
+
+def _require_active_ids(
+    cursor: sqlite3.Cursor,
+    *,
+    table: str,
+    ids: Sequence[str],
+    field: str,
+) -> None:
+    found: set[str] = set()
+    for chunk in _chunks(ids, _MEMBERSHIP_QUERY_CHUNK_SIZE):
+        placeholders = _placeholders(len(chunk))
+        rows = cursor.execute(
+            f"SELECT id FROM {table} WHERE deleted = 0 AND id IN ({placeholders})",
+            chunk,
+        ).fetchall()
+        found.update(str(row["id"]) for row in rows)
+    if len(found) != len(ids):
+        raise FolderValidationError(
+            f"Every desired {field} must exist and be active."
+        )
+
+
 def _raise_mutation_integrity_error(exc: sqlite3.IntegrityError) -> NoReturn:
     if getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_CONSTRAINT_UNIQUE:
         raise FolderCollisionError(
@@ -775,12 +1261,67 @@ def _raise_mutation_integrity_error(exc: sqlite3.IntegrityError) -> NoReturn:
     raise FolderValidationError("Folder mutation violated stored constraints.") from exc
 
 
+def _raise_membership_integrity_error(exc: sqlite3.IntegrityError) -> NoReturn:
+    if _is_active_membership_owner_collision(exc):
+        raise FolderConflictError("Membership changed during mutation.") from exc
+    raise FolderValidationError(
+        "Membership mutation violated stored constraints."
+    ) from exc
+
+
+def _is_membership_id_collision(exc: sqlite3.IntegrityError) -> bool:
+    return (
+        getattr(exc, "sqlite_errorcode", None)
+        == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY
+        and "note_folder_memberships.id" in str(exc)
+    )
+
+
+def _is_active_membership_owner_collision(exc: sqlite3.IntegrityError) -> bool:
+    if getattr(exc, "sqlite_errorcode", None) != sqlite3.SQLITE_CONSTRAINT_UNIQUE:
+        return False
+    message = str(exc)
+    return all(
+        column in message
+        for column in (
+            "note_folder_memberships.folder_id",
+            "note_folder_memberships.note_id",
+            "note_folder_memberships.ownership",
+            "note_folder_memberships.owner_id",
+        )
+    )
+
+
 def _raise_mutation_operational_error(exc: sqlite3.OperationalError) -> NoReturn:
     """Translate SQLite writer/snapshot contention into a stable domain conflict."""
+    if _is_sqlite_contention(exc):
+        raise FolderConflictError("Folder changed during mutation.") from exc
+    raise exc
+
+
+def _is_sqlite_contention(exc: sqlite3.OperationalError) -> bool:
     error_code = getattr(exc, "sqlite_errorcode", None)
     primary_code = error_code & 0xFF if isinstance(error_code, int) else None
-    if primary_code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
-        raise FolderConflictError("Folder changed during mutation.") from exc
+    return primary_code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+
+
+def _raise_wrapped_repository_error(exc: CharactersRAGDBError) -> NoReturn:
+    """Translate wrapped commit contention while preserving other DB failures."""
+    pending: list[BaseException] = [exc]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, sqlite3.OperationalError) and _is_sqlite_contention(
+            current
+        ):
+            raise FolderConflictError("Folder changed during mutation.") from current
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
     raise exc
 
 
@@ -887,6 +1428,72 @@ def _normalize_folder_ids(folder_ids: Iterable[str]) -> tuple[str, ...]:
     for folder_id in values:
         _validate_folder_id(folder_id, field="expanded folder ID")
     return tuple(sorted(set(values)))
+
+
+def _normalize_ids(values: Iterable[str], *, field: str) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes)):
+        raise FolderValidationError(f"{field} must be a collection of IDs.")
+    try:
+        normalized = tuple(values)
+    except TypeError as exc:
+        raise FolderValidationError(f"{field} must be a collection of IDs.") from exc
+    for value in normalized:
+        _validate_folder_id(value, field=f"{field} item")
+    return tuple(sorted(set(normalized)))
+
+
+def _validate_owner_id(owner_id: object) -> None:
+    if not isinstance(owner_id, str) or not owner_id.strip():
+        raise FolderValidationError("owner_id must be a non-empty string.")
+
+
+def _normalize_owner_ids(owner_ids: Iterable[str]) -> tuple[str, ...]:
+    if isinstance(owner_ids, (str, bytes)):
+        raise FolderValidationError("active_owner_ids must be a collection of IDs.")
+    try:
+        values = tuple(owner_ids)
+    except TypeError as exc:
+        raise FolderValidationError(
+            "active_owner_ids must be a collection of IDs."
+        ) from exc
+    for owner_id in values:
+        _validate_owner_id(owner_id)
+    return tuple(sorted(set(values)))
+
+
+def _normalize_desired_memberships(
+    desired: Iterable[tuple[str, str]],
+) -> tuple[tuple[str, str], ...]:
+    if isinstance(desired, (str, bytes)):
+        raise FolderValidationError("desired must be a collection of ID pairs.")
+    try:
+        values = tuple(desired)
+    except TypeError as exc:
+        raise FolderValidationError(
+            "desired must be a collection of ID pairs."
+        ) from exc
+    normalized: set[tuple[str, str]] = set()
+    for value in values:
+        if isinstance(value, (str, bytes)):
+            raise FolderValidationError("Each desired placement must be an ID pair.")
+        try:
+            pair = tuple(value)
+        except TypeError as exc:
+            raise FolderValidationError(
+                "Each desired placement must be an ID pair."
+            ) from exc
+        if len(pair) != 2:
+            raise FolderValidationError("Each desired placement must be an ID pair.")
+        folder_id, note_id = pair
+        _validate_folder_id(folder_id, field="desired folder ID")
+        _validate_folder_id(note_id, field="desired note ID")
+        normalized.add((folder_id, note_id))
+    return tuple(sorted(normalized))
+
+
+def _chunks(values: Sequence[str], size: int) -> Iterator[tuple[str, ...]]:
+    for start in range(0, len(values), size):
+        yield tuple(values[start : start + size])
 
 
 def _placeholders(count: int) -> str:

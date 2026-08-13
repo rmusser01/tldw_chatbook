@@ -44,6 +44,10 @@ CREATE INDEX idx_note_folder_memberships_active_note
 CREATE INDEX idx_note_folder_memberships_restore_review
   ON note_folder_memberships(owner_active, owner_id)
   WHERE deleted = 0 AND ownership = 'managed';
+CREATE INDEX idx_note_folder_memberships_managed_owner
+  ON note_folder_memberships(
+    owner_id, deleted, folder_id, note_id, owner_active
+  ) WHERE ownership = 'managed';
 
 UPDATE db_schema_version SET version = 36
  WHERE schema_name = 'rag_char_chat_schema' AND version = 35;
