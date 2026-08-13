@@ -22,9 +22,9 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 
 - **Prompts list** — the default view: an exact "Prompts (N)" header, the
   "Filter prompts… (Enter)" field, a local collection selector, a toolbar
-  ("sort: Newest" / "sort: Name", "Import…", and "Export…"), and one row per
-  prompt showing its name, artifact/source/lane summary, and description and age
-  when present.
+  ("sort: Newest" / "sort: Name", "Select", "Import…", and "Export…"), and
+  one row per prompt showing its name, artifact/source/lane summary, and
+  description and age when present.
   Lists longer than one 50-row page have **Previous** and **Next** controls
   plus an exact "Page … · showing … of …" line.
 - **Import row** — appears inline under the toolbar when you press
@@ -45,6 +45,7 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 | Filter prompts… (Enter) | Filters local prompt names and descriptions after a short pause; **Enter** applies the pending text immediately without sending a second request |
 | collection: All prompts | Opens the local-only collection manager; choose **All prompts** or one collection |
 | sort: Newest / sort: Name | Press to open a one-row strip of Newest / Name (✓ on the active one) in place of the toolbar; pick one directly (changing sort returns to page 1), or press Escape to cancel |
+| Select | Enters selection mode so Prompt and Recipe rows can be checked across searches and pages |
 | Previous / Next | Requests the adjacent exact 50-row page without changing search, collection, or sort |
 | Import… | Opens the inline Import row (below) |
 | Export… | Opens the local **Export bundle (.zip)** canvas scoped to every active Prompt and Recipe; this is separate from the editor's one-item Markdown export |
@@ -60,6 +61,40 @@ error line and **Retry** repeat the same request. Empty outcomes remain distinct
   the selected collection is valid but empty.
 - **No prompts match "…". Clear the search or try different words.** — the
   current search has no matches, whether browsing all prompts or a collection.
+
+### Selecting Prompts and Recipes
+
+Press **Select** to enter selection mode. Each Prompt or Recipe row becomes a
+literal unchecked/checked row; press it to add or remove that item. The summary
+reports both the complete basket and the current settled page, for example
+`7 selected · 2 on this page`.
+
+- **Select page** adds every valid row on the currently settled page without
+  replacing items selected elsewhere.
+- **Clear all** empties the complete basket, including items hidden by another
+  search, page, sort, or collection.
+- **Done** leaves selection mode and discards the complete basket.
+- **Export selected** opens the existing local Chatbook export canvas for
+  exactly the selected active Prompt and Recipe IDs.
+- **Delete selected** confirms and soft-deletes the complete selected set as
+  one atomic operation.
+
+The basket persists while you search, page, change sort or collection, and
+while you visit and return from the Export canvas. It clears when you press
+**Done** or **Clear all**, after a successful selected delete, when you enter an
+editor or create a Prompt, when you switch to another Library source, or when
+you leave Library. Selection is session-only and is not restored after an app
+restart.
+
+Delete checks the captured version of every selected item before changing any
+of them. If one item is missing, changed, invalid, or cannot be deleted, nothing
+in the batch is deleted and the basket remains available. A successful single
+or selected delete leaves one in-place **Undo** / **Dismiss** receipt. Undo
+restores the whole receipt atomically; if restore fails, nothing is partially
+restored and the receipt remains available.
+
+Bulk tagging is not part of selection mode. Use Prompt collections for the
+current organization workflow.
 
 ### Local Prompt collections
 
@@ -101,14 +136,18 @@ folder."
 
 ### Bulk export with Chatbooks
 
-From the Prompts list, press **Export…** to open the existing **Export bundle
-(.zip)** canvas with the scope line `Prompts · N items`. The count is a fresh,
-uncapped query over all active local Prompts and Recipes, not just the visible
-50-row page or current search/collection filter. Choose a destination, then
-press **Export bundle (.zip)**. Progress, Cancel, Retry, overwrite disclosure,
-and the session's **Last export: …** receipt behave exactly like the Library's
-other bundle exports. In server mode this action is refused because Chatbook
-export packages local databases only.
+From the normal Prompts list, press **Export…** to open the existing **Export
+bundle (.zip)** canvas with the scope line `Prompts · N items`. The count is a
+fresh, uncapped query over all active local Prompts and Recipes, not just the
+visible 50-row page or current search/collection filter. In selection mode,
+**Export selected** opens the same canvas for exactly the basket's active IDs,
+including selections hidden by the current page or filter. Returning from the
+canvas preserves the basket after success, cancellation, or failure.
+
+Choose a destination, then press **Export bundle (.zip)**. Progress, Cancel,
+Retry, overwrite disclosure, and the session's **Last export: …** receipt behave
+exactly like the Library's other bundle exports. In server mode this action is
+refused because Chatbook export packages local databases only.
 
 The `Everything` scope includes Prompts alongside media, conversations, and
 notes. Each new Chatbook Prompt record preserves the current portable artifact:
@@ -227,7 +266,7 @@ and selected retained row unchanged so you can correct the issue or retry.
 | Export… | Saves a representable Prompt or Recipe as a Markdown file ("Export Prompt as Markdown" dialog). Compatibility or legacy Recipes that would lose their type fail closed and require **Convert and save as a new Prompt** first. |
 | Copy Markdown | Copies the exact live Markdown working copy, including unsaved create, duplicate, conversion, and block edits: System/User text plus applicable structured Prompt/Recipe metadata. Success follows a clipboard write; unavailable or failed clipboard support shows a warning or error. Compatibility or legacy Recipes that would flatten to Prompt-looking Markdown require **Convert and save as a new Prompt** first. |
 | Duplicate prompt | Opens a new unsaved copy named "<name> (copy)" with all fields prefilled. Compatibility or legacy Recipes that cannot retain Recipe identity require **Convert and save as a new Prompt** first. |
-| Delete | Opens a confirmation before discarding the saved Prompt or Recipe; the copy states the deletion cannot be undone from Library, and if the editor is dirty it also warns that the unsaved working copy will be discarded |
+| Delete | Opens a confirmation before soft-deleting the saved Prompt or Recipe; success leaves an in-place Undo/Dismiss receipt, and a dirty editor is warned that its unsaved working copy will be discarded |
 
 For a Prompt, **Use in Console** works differently from the notes and media
 actions: instead of staging a source for retrieval, it appends selected User
