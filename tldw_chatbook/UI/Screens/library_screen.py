@@ -16798,13 +16798,13 @@ class LibraryScreen(BaseAppScreen):
 
     def _apply_library_prompts_import_status(self, text: str) -> None:
         """Set and patch the Import row's one-line outcome in place."""
+        self._library_prompts_import_status = text
         if (
             not self.is_mounted
             or self.app.screen is not self
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS
         ):
             return
-        self._library_prompts_import_status = text
         try:
             self.query_one("#library-prompts-import-status", Static).update(text)
         except (NoMatches, QueryError):

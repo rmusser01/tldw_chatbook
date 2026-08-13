@@ -83,7 +83,11 @@ class LibraryExportCanvas(VerticalScroll):
         self.styles.min_width = 40
 
     def sync_state(self, state: LibraryExportFormState) -> None:
-        """Rebuild only the mounted export canvas from a complete snapshot."""
+        """Rebuild only the mounted export canvas from a complete snapshot.
+
+        Args:
+            state: Complete export form state to render.
+        """
         self.state = state
         self.refresh(recompose=True)
 

@@ -45,7 +45,11 @@ class LibrarySearchRagPanel(VerticalScroll):
         self.state = state
 
     def sync_state(self, state: LibraryRagPanelState) -> None:
-        """Rebuild only this mounted Search/RAG panel from ``state``."""
+        """Rebuild only this mounted Search/RAG panel from ``state``.
+
+        Args:
+            state: Complete Search/RAG controls and results state to render.
+        """
         self.state = state
         self.refresh(recompose=True)
 

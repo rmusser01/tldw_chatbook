@@ -717,7 +717,31 @@ class LibrarySkillsListCanvas(VerticalScroll):
         import_review_name: str,
         sort_choices_visible: bool,
     ) -> None:
-        """Apply a complete skills snapshot within the mounted canvas."""
+        """Apply a complete skills snapshot within the mounted canvas.
+
+        Args:
+            state: Skills list snapshot, or ``None`` outside list mode.
+            sort_mode: Active skill sort identifier.
+            filter_value: Current skill filter text.
+            mode: Canvas surface to render.
+            trust_posture: Trust state for the selected skill.
+            confirming_reset: Whether reset confirmation is armed.
+            editor_state: Skill editor snapshot.
+            warnings: Current skill validation warning copy.
+            status: Current skill editor status copy.
+            conflict: Whether the selected skill has an edit conflict.
+            active_review: Active trust-review data, if any.
+            is_create: Whether the editor is creating a skill.
+            dirty: Whether the skill editor has unsaved changes.
+            confirming_delete: Whether delete confirmation is armed.
+            scroll_to_actions: Whether to reveal the editor action row.
+            skill_path: Filesystem path for the selected skill.
+            import_open: Whether the skill import form is expanded.
+            import_path: Current skill import path.
+            import_status: Current skill import outcome copy.
+            import_review_name: Skill awaiting post-import trust review.
+            sort_choices_visible: Whether the sort chooser is expanded.
+        """
         self.state = state
         self.sort_mode = sort_mode
         self.filter_value = filter_value

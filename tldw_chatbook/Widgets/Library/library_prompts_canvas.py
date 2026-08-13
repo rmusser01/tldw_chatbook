@@ -207,7 +207,30 @@ class LibraryPromptsListCanvas(Vertical):
         membership_state: PromptMembershipState | None,
         sort_choices_visible: bool,
     ) -> None:
-        """Apply a complete prompt snapshot within the mounted canvas."""
+        """Apply a complete prompt snapshot within the mounted canvas.
+
+        Args:
+            state: Prompt list snapshot, or ``None`` outside list mode.
+            sort_mode: Active prompt sort identifier.
+            filter_value: Current prompt filter text.
+            browse_result: Paginated prompt browse result.
+            mode: Canvas surface to render.
+            editor_state: Prompt editor snapshot.
+            conflict: Whether the open prompt has an edit conflict.
+            status: Current prompt editor status copy.
+            show_open_existing: Whether to offer opening an existing prompt.
+            import_open: Whether the prompt import form is expanded.
+            import_path: Current prompt import path.
+            import_status: Current prompt import outcome copy.
+            dirty: Whether the prompt editor has unsaved changes.
+            can_update_original: Whether save may update the original prompt.
+            include_starter_content: Whether create mode uses starter content.
+            history_state: Prompt version-history snapshot.
+            history_current_compatible: Whether history matches the open prompt.
+            collection_label: Collection membership label for the prompt.
+            membership_state: Prompt collection-membership snapshot.
+            sort_choices_visible: Whether the sort chooser is expanded.
+        """
         self.state = state
         self.sort_mode = sort_mode
         self.filter_value = filter_value

@@ -203,6 +203,20 @@ class LibraryNotesCanvas(Vertical):
         prevents list/editor/sync conditionals from retaining values from the
         previous surface while the Library shell, rail, and footer retain
         identity.
+
+        Args:
+            list_state: Notes list snapshot, or ``None`` outside list mode.
+            sort_mode: Active Notes sort identifier.
+            filter_value: Current Notes filter text.
+            mode: Canvas surface to render.
+            presentation_state: Note editor/create presentation snapshot.
+            sync_panel_state: Notes folder-sync panel snapshot.
+            title_placeholder_only: Whether the title is placeholder-only.
+            compact: Whether compact editor controls are enabled.
+            create_running: Whether note creation is in progress.
+            create_status: Current note-creation status copy.
+            load_state: Current note-loading state identifier.
+            load_message: Current note-loading status or error copy.
         """
         previous_mode = self.mode
         self.list_state = list_state

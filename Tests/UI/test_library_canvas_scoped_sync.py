@@ -388,6 +388,12 @@ def test_import_status_lines_patch_the_mounted_static_without_recompose() -> Non
         LibraryScreen._apply_library_prompts_import_status(
             prompt_screen, "2 imported"
         )
+        prompt_screen._library_selected_row_id = (
+            library_screen_module.LIBRARY_ROW_BROWSE_NOTES
+        )
+        LibraryScreen._apply_library_prompts_import_status(
+            prompt_screen, "Imported after navigation"
+        )
         LibraryScreen._apply_library_skills_import_status(skill_screen, "Imported")
         skill_screen._library_selected_row_id = (
             library_screen_module.LIBRARY_ROW_BROWSE_NOTES
@@ -398,6 +404,7 @@ def test_import_status_lines_patch_the_mounted_static_without_recompose() -> Non
 
     prompt_line.update.assert_called_once_with("2 imported")
     skill_line.update.assert_called_once_with("Imported")
+    assert prompt_screen._library_prompts_import_status == "Imported after navigation"
     assert skill_screen._library_skills_import_status == "Imported after navigation"
 
 
