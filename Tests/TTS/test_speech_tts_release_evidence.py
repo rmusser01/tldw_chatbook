@@ -130,7 +130,8 @@ def test_clone_reference_guides_document_privacy_downgrade_and_scope_truth() -> 
         "TASK-13208",
         "retained v2 pre-migration backup",
         "loss of post-migration profile changes",
-        "does not yet enable clone generation",
+        "explicit clone transfer",
+        "warning-gated",
         "voice-bundle portability",
     ):
         assert required.casefold() in normalized

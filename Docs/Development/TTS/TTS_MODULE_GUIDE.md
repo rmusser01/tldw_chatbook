@@ -196,13 +196,16 @@ journaled, non-cancellable complete-or-restore protocol after replacement. To
 downgrade to a version-3-capable build, close Chatbook completely, restore the
 stable pre-v4 sibling as the configured database, and only then start the older
 build. This loses every post-migration change and all v4 provenance.
+For a version-2-capable build, restore the retained v2 pre-migration backup
+instead; that downgrade causes loss of post-migration profile changes.
 
 Ordinary portability remains sanitized: reference-free profiles retain exact
 wire version 1; reference-bearing profiles use exact wire version 2 with only
 `{"reference":{"status":"omitted"}}` added. The v2 decoder returns a bounded
 skip/no-mutation result. Explicit clone transfer uses a separate warning-gated
-bundle containing only `manifest.json`, `profile.json`, canonical
-`reference.wav`, and canonical `reference.txt`. The deterministic writer uses
+voice-bundle portability path containing only `manifest.json`, `profile.json`,
+canonical `reference.wav`, and canonical `reference.txt`. The deterministic
+writer uses
 fixed metadata; the hostile reader validates archive layout before bounded
 streaming decompression and never invokes general extraction.
 
