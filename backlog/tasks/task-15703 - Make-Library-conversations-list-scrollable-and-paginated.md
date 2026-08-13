@@ -32,3 +32,21 @@ Design: `Docs/superpowers/specs/2026-08-12-library-conversations-pagination-desi
 - [ ] #4 Paging and filtering keep the last successful page visible while loading, reject stale responses, and present a recoverable error without misreporting an empty library
 - [ ] #5 Automated state, service-call, and Textual Pilot tests cover scrolling, first/middle/last pages, full-dataset filtering, empty results, and failures
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+
+ADR path: N/A
+
+Reason: the change consumes the existing paginated conversation-service contract and only changes bounded Library view state and presentation.
+
+1. Extend the pure conversation canvas state with page/range/navigation/loading/error fields and remove its client-side cap/filter behavior.
+2. Render the page rows inside Textual's native VerticalScroll and add fixed Previous/Next controls with focused Pilot coverage.
+3. Add screen-owned page records and service-backed page/filter workers using query, limit=20, offset, and a stale-response generation guard.
+4. Preserve the last successful page during loading/errors and isolate it from broad Library source snapshot refreshes.
+5. Update the user guide, run focused and broader Library verification plus isolated live TUI checks, then record evidence before closing the task.
+
+Detailed plan: `Docs/superpowers/plans/2026-08-12-library-conversations-pagination.md`
+<!-- SECTION:PLAN:END -->
