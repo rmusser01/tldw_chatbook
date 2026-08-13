@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widget import Widget
@@ -68,11 +68,21 @@ class LocalGGUFImportConsentModal(ModalScreen[bool]):
 
     LocalGGUFImportConsentModal .local-gguf-import-modal {
         width: 76;
-        height: auto;
+        height: 90%;
         max-height: 90%;
         border: tall $accent;
         background: $surface;
         padding: 1 2;
+    }
+
+    LocalGGUFImportConsentModal .local-gguf-import-facts {
+        height: 1fr;
+        overflow-x: hidden;
+    }
+
+    LocalGGUFImportConsentModal .local-gguf-import-facts Static {
+        height: auto;
+        text-wrap: wrap;
     }
 
     LocalGGUFImportConsentModal .model-install-actions {
@@ -98,17 +108,18 @@ class LocalGGUFImportConsentModal(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         """Compose the local-copy consent facts and decision controls."""
         with Vertical(classes="local-gguf-import-modal"):
-            yield Static(self.source.name, markup=False)
-            yield Static(str(self.source), markup=False)
-            yield Static(format_mib(self.size_bytes), markup=False)
-            yield Static(
-                "Chatbook will create a managed copy. The original stays in place.",
-                markup=False,
-            )
-            yield Static(
-                "License and runtime compatibility are not verified.",
-                markup=False,
-            )
+            with VerticalScroll(classes="local-gguf-import-facts"):
+                yield Static(self.source.name, markup=False)
+                yield Static(str(self.source), markup=False)
+                yield Static(format_mib(self.size_bytes), markup=False)
+                yield Static(
+                    "Chatbook will create a managed copy. The original stays in place.",
+                    markup=False,
+                )
+                yield Static(
+                    "License and runtime compatibility are not verified.",
+                    markup=False,
+                )
             with Horizontal(classes="model-install-actions"):
                 yield Button("Cancel", id="local-gguf-import-cancel", variant="default")
                 yield Button(
