@@ -34,9 +34,19 @@ _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
 
 
 def _rule_body(css: str, selector: str) -> str:
-    match = re.search(rf"{re.escape(selector)}\s*\{{(?P<body>[^{{}}]*)\}}", css)
+    selector_pattern = r"\s*,\s*".join(
+        re.escape(part.strip()) for part in selector.split(",")
+    )
+    match = re.search(rf"{selector_pattern}\s*\{{(?P<body>[^{{}}]*)\}}", css)
     assert match is not None, f"Missing CSS rule for {selector}"
     return match.group("body")
+
+
+def test_rule_body_tolerates_equivalent_selector_whitespace() -> None:
+    """Match selector lists independently of their whitespace formatting."""
+    css = "#first,\n    #second { width: 1; }"
+
+    assert "width: 1;" in _rule_body(css, "#first, #second")
 
 
 def _assert_declarations(body: str, *declarations: str) -> None:
@@ -81,7 +91,9 @@ def _is_effectively_displayed(widget) -> bool:
     return True
 
 
-class _StatusRowApp(App):
+class StatusRowApp(App):
+    """Mount the status row in isolation for focused layout tests."""
+
     CSS_PATH = str(_BUNDLED_STYLESHEET)
 
     def __init__(self, *, collapsed: bool = False) -> None:
@@ -89,6 +101,7 @@ class _StatusRowApp(App):
         self._collapsed = collapsed
 
     def compose(self) -> ComposeResult:
+        """Compose the isolated status row."""
         yield ConsoleStatusChips(
             _state(),
             collapsed=self._collapsed,
@@ -148,7 +161,12 @@ def _assert_full_static_copy_fits(copy: Static, expected_copy: str) -> None:
 async def test_collapsed_status_row_stays_one_line_and_left_anchored(
     size: tuple[int, int],
 ) -> None:
-    app = _StatusRowApp(collapsed=True)
+    """Keep the collapsed restore control visible at the left edge.
+
+    Args:
+        size: Terminal dimensions used for the mounted layout check.
+    """
+    app = StatusRowApp(collapsed=True)
     async with app.run_test(size=size) as pilot:
         await pilot.pause()
         strip = app.query_one("#console-status-chips", ConsoleStatusChips)
@@ -173,7 +191,12 @@ async def test_collapsed_status_row_stays_one_line_and_left_anchored(
 async def test_expanded_status_row_keeps_toggle_left_and_scroller_in_viewport(
     size: tuple[int, int],
 ) -> None:
-    app = _StatusRowApp()
+    """Keep the expanded toggle left of its in-viewport chip scroller.
+
+    Args:
+        size: Terminal dimensions used for the mounted layout check.
+    """
+    app = StatusRowApp()
     async with app.run_test(size=size) as pilot:
         await pilot.pause()
         strip = app.query_one("#console-status-chips", ConsoleStatusChips)
@@ -194,6 +217,7 @@ async def test_expanded_status_row_keeps_toggle_left_and_scroller_in_viewport(
 
 
 def test_status_row_stylesheet_contract_is_in_source_and_bundle() -> None:
+    """Keep source and bundled status-row geometry contracts equivalent."""
     for stylesheet in (_AGENTIC_SOURCE, _BUNDLED_STYLESHEET):
         css = stylesheet.read_text(encoding="utf-8")
 
@@ -211,7 +235,7 @@ def test_status_row_stylesheet_contract_is_in_source_and_bundle() -> None:
         )
 
         presentations = _rule_body(
-            css, "#console-status-expanded,\n#console-status-collapsed"
+            css, "#console-status-expanded, #console-status-collapsed"
         )
         _assert_declarations(
             presentations,
@@ -240,9 +264,7 @@ def test_status_row_stylesheet_contract_is_in_source_and_bundle() -> None:
             "scrollbar-size-horizontal: 0;",
         )
 
-        toggles = _rule_body(
-            css, "#console-status-collapse,\n#console-status-expand"
-        )
+        toggles = _rule_body(css, "#console-status-collapse, #console-status-expand")
         _assert_declarations(
             toggles,
             "width: 9;",
@@ -267,12 +289,13 @@ def test_status_row_stylesheet_contract_is_in_source_and_bundle() -> None:
             "text-overflow: ellipsis;",
         )
 
-        assert "#console-status-chips {\n    scrollbar-size-horizontal: 0;" not in css
+        assert "scrollbar-size-horizontal" not in host
 
 
 @pytest.mark.asyncio
 async def test_widget_toggles_mounted_presentations_without_replacing_chips() -> None:
-    app = _StatusRowApp()
+    """Swap mounted presentations without replacing status-chip instances."""
+    app = StatusRowApp()
     async with app.run_test(size=(180, 8)) as pilot:
         await pilot.pause()
         strip = app.query_one("#console-status-chips", ConsoleStatusChips)
@@ -302,7 +325,8 @@ async def test_widget_toggles_mounted_presentations_without_replacing_chips() ->
 
 @pytest.mark.asyncio
 async def test_widget_constructor_honors_initial_collapsed_state() -> None:
-    app = _StatusRowApp(collapsed=True)
+    """Honor an initially collapsed presentation at widget construction."""
+    app = StatusRowApp(collapsed=True)
     async with app.run_test(size=(180, 8)) as pilot:
         await pilot.pause()
         strip = app.query_one("#console-status-chips", ConsoleStatusChips)
@@ -316,7 +340,8 @@ async def test_widget_constructor_honors_initial_collapsed_state() -> None:
 
 @pytest.mark.asyncio
 async def test_widget_preserves_conditional_chip_updates_while_collapsed() -> None:
-    app = _StatusRowApp()
+    """Preserve hidden chip updates until the expanded row is restored."""
+    app = StatusRowApp()
     async with app.run_test(size=(200, 8)) as pilot:
         await pilot.pause()
         strip = app.query_one("#console-status-chips", ConsoleStatusChips)
@@ -372,7 +397,8 @@ async def test_widget_preserves_conditional_chip_updates_while_collapsed() -> No
 
 @pytest.mark.asyncio
 async def test_widget_status_toggle_buttons_are_focusable_and_described() -> None:
-    app = _StatusRowApp()
+    """Expose focusable status toggles with descriptive tooltips."""
+    app = StatusRowApp()
     async with app.run_test(size=(180, 8)) as pilot:
         await pilot.pause()
         collapse = app.query_one("#console-status-collapse", Button)
@@ -386,6 +412,7 @@ async def test_widget_status_toggle_buttons_are_focusable_and_described() -> Non
 
 @pytest.mark.asyncio
 async def test_screen_fresh_status_row_starts_expanded() -> None:
+    """Start each new Console screen with the status row expanded."""
     host, _ = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -403,6 +430,7 @@ async def test_screen_fresh_status_row_starts_expanded() -> None:
 
 @pytest.mark.asyncio
 async def test_screen_status_collapse_updates_state_and_focuses_expand() -> None:
+    """Collapse through screen state and focus the inverse expand control."""
     host, _ = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -420,6 +448,7 @@ async def test_screen_status_collapse_updates_state_and_focuses_expand() -> None
 
 @pytest.mark.asyncio
 async def test_screen_status_expand_updates_state_and_focuses_collapse() -> None:
+    """Expand through screen state and focus the inverse collapse control."""
     host, _ = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -439,6 +468,7 @@ async def test_screen_status_expand_updates_state_and_focuses_collapse() -> None
 
 @pytest.mark.asyncio
 async def test_screen_status_collapse_state_resets_on_new_screen() -> None:
+    """Reset screen-local status collapse state on Console recreation."""
     host, app = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
