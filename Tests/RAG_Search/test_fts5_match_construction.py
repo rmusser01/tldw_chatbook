@@ -60,6 +60,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
 from loguru import logger
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -206,7 +207,7 @@ OR_ONLY_QUERY = "how does the wombat template work"  # "template"/"work" absent
 # --- expression shape -------------------------------------------------------
 
 
-def test_the_shipped_default_is_the_sweeps_winner(tmp_path):
+def test_the_shipped_default_is_the_sweeps_winner(tmp_path: Path) -> None:
     """DISCLOSED ORACLE FLIP (2026-08-11, TASK-15400 Task 4, sweep row
     `and_trim`): the default was `"and"` and is now `"and_stopword_trim"`.
 
@@ -217,6 +218,12 @@ def test_the_shipped_default_is_the_sweeps_winner(tmp_path):
     zero extra FTS queries. This assertion is the flip: a default reverted
     to `"and"` reds it (and reds the gated prompt pin in
     `Tests/RAG_Eval/test_fixture_authoring_probe.py`).
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; unused by this
+            pin (the service under test uses the in-memory vector store
+            and no on-disk databases), kept for parity with the sibling
+            construction pins in this file.
     """
     service = _make_service()
     assert (
@@ -232,7 +239,9 @@ def test_the_shipped_default_is_the_sweeps_winner(tmp_path):
     )
 
 
-def test_and_construction_is_byte_identical_to_the_shipped_escaper(tmp_path):
+def test_and_construction_is_byte_identical_to_the_shipped_escaper(
+    tmp_path: Path,
+) -> None:
     """`and` still produces exactly the pre-arc MATCH expression.
 
     DISCLOSED (2026-08-11): this used to be measured at the DEFAULT
@@ -241,6 +250,12 @@ def test_and_construction_is_byte_identical_to_the_shipped_escaper(tmp_path):
     `_resolved_fts_match_construction` degrades an unknown value to, and
     what `and_stopword_trim` itself falls back to when trimming empties the
     query, so the byte-identity is a live path, not a historical one.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; unused by this
+            pin (the service under test uses the in-memory vector store
+            and no on-disk databases), kept for parity with the sibling
+            construction pins in this file.
     """
     service = _make_service(construction=FTS_MATCH_CONSTRUCTION_AND)
 
@@ -418,6 +433,49 @@ def test_an_invalid_construction_warns_once_and_behaves_as_and():
     )
 
 
+def test_a_non_str_construction_degrades_instead_of_crashing():
+    """Qodo PR-1574: `SearchConfig` is built from an untyped dict
+    (`SearchConfig(**search_data)` in config.py, reachable from
+    user-editable profile JSON), so `fts_match_construction` can arrive as
+    a list or dict rather than a string. Both are unhashable, and the
+    warn-once dedup set's membership check (`construction not in
+    self._warned_fts_constructions`) and `.add()` raised TypeError on
+    them -- crashing hybrid AND keyword search instead of degrading to
+    the conservative full AND. Neither shape should raise.
+    """
+    for bad_value in ([], {}):
+        service = _make_service(construction=bad_value)
+        assert (
+            service._resolved_fts_match_construction() == FTS_MATCH_CONSTRUCTION_AND
+        ), bad_value
+
+
+def test_a_non_str_construction_warns_once_per_distinct_bad_value():
+    """The dedup set now keys non-str values on a hashable surrogate
+    (`f"{type(construction).__name__}:{construction!r}"`), so repeating the
+    SAME bad shape stays silent on the second call, and a DIFFERENT bad
+    shape -- a distinct surrogate key -- warns again."""
+    service = _make_service(construction=[])
+
+    with _captured_warnings() as warnings:
+        first = service._resolved_fts_match_construction()
+        second = service._resolved_fts_match_construction()
+
+    assert first == FTS_MATCH_CONSTRUCTION_AND
+    assert second == FTS_MATCH_CONSTRUCTION_AND
+    matching = [m for m in warnings if "keyword leg is falling back" in m]
+    assert len(matching) == 1, (
+        f"a repeated non-str bad value must warn exactly once: {matching}"
+    )
+
+    # A DIFFERENT bad shape -- {} instead of [] -- is a distinct surrogate
+    # key, so it gets its own one-shot warning rather than staying silent.
+    service.config.search.fts_match_construction = {}
+    with _captured_warnings() as more_warnings:
+        service._resolved_fts_match_construction()
+    assert len(more_warnings) == 1, more_warnings
+
+
 # --- the fallback loop: zero rows only, once, per sub-leg -------------------
 
 
@@ -434,9 +492,18 @@ def _prompts_fts_spy(monkeypatch):
     return calls
 
 
-def test_a_matching_and_never_runs_the_fallback(tmp_path, monkeypatch):
+def test_a_matching_and_never_runs_the_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`kw-plant-maintenance-record`'s protection, mechanically: a non-empty
-    AND result is returned as-is and the OR form is never executed."""
+    AND result is returned as-is and the OR form is never executed.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            prompts database.
+        monkeypatch: pytest's monkeypatch fixture; installs the
+            `_prompts_fts` call-counting spy.
+    """
     db_path, _ids = _seed_prompts(tmp_path, PROMPT_ROWS)
     service = _make_service(construction="and_then_or", prompts_db_path=db_path)
     calls = _prompts_fts_spy(monkeypatch)
@@ -454,10 +521,17 @@ def test_a_matching_and_never_runs_the_fallback(tmp_path, monkeypatch):
 
 
 def test_a_zero_row_and_falls_back_to_the_or_form_exactly_once(
-    tmp_path, monkeypatch
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The rescue: a natural-language query that finds nothing under AND
-    reaches the prompt through the content-token OR -- one extra query."""
+    reaches the prompt through the content-token OR -- one extra query.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            prompts database.
+        monkeypatch: pytest's monkeypatch fixture; installs the
+            `_prompts_fts` call-counting spy.
+    """
     db_path, _ids = _seed_prompts(tmp_path, PROMPT_ROWS)
     service = _make_service(construction="and_then_or", prompts_db_path=db_path)
     calls = _prompts_fts_spy(monkeypatch)
@@ -476,9 +550,16 @@ def test_a_zero_row_and_falls_back_to_the_or_form_exactly_once(
 
 
 def test_the_shipped_and_construction_never_runs_a_second_query(
-    tmp_path, monkeypatch
-):
-    """Default behaviour is byte-identical, including the query COUNT."""
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default behaviour is byte-identical, including the query COUNT.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            prompts database.
+        monkeypatch: pytest's monkeypatch fixture; installs the
+            `_prompts_fts` call-counting spy.
+    """
     db_path, _ids = _seed_prompts(tmp_path, PROMPT_ROWS)
     service = _make_service(prompts_db_path=db_path)
     calls = _prompts_fts_spy(monkeypatch)
@@ -493,10 +574,15 @@ def test_the_shipped_and_construction_never_runs_a_second_query(
     assert len(calls) == 1, f"the shipped construction has no fallback: {calls}"
 
 
-def test_the_or_construction_stamps_its_rows_as_the_or_form(tmp_path):
+def test_the_or_construction_stamps_its_rows_as_the_or_form(tmp_path: Path) -> None:
     """The stamp names the FORM, not the position: under `or` the OR
     expression IS the primary, and calling those rows `and` would make Task
-    2's negative-composition counter read zero for the widest candidate."""
+    2's negative-composition counter read zero for the widest candidate.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            prompts database.
+    """
     db_path, _ids = _seed_prompts(tmp_path, PROMPT_ROWS)
     service = _make_service(construction="or", prompts_db_path=db_path)
 
@@ -510,8 +596,17 @@ def test_the_or_construction_stamps_its_rows_as_the_or_form(tmp_path):
     assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR]
 
 
-def test_notes_sub_leg_falls_back_independently(tmp_path, monkeypatch):
-    """The loop wraps every sub-leg's SQL helper, not just the prompts one."""
+def test_notes_sub_leg_falls_back_independently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The loop wraps every sub-leg's SQL helper, not just the prompts one.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            notes database.
+        monkeypatch: pytest's monkeypatch fixture; installs the
+            `_chacha_notes_fts` call-counting spy.
+    """
     db_path = _seed_notes(
         tmp_path,
         [("Saltmarsh hide", "The hide overlooks the wombat burrow at dusk.")],
@@ -538,11 +633,19 @@ def test_notes_sub_leg_falls_back_independently(tmp_path, monkeypatch):
     assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR]
 
 
-def test_conversations_sub_leg_falls_back_independently(tmp_path, monkeypatch):
+def test_conversations_sub_leg_falls_back_independently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The conversations helper is the one that issues TWO MATCH statements
     off a single expression (the conversation ranking, then the matched
     message lines). Both must run on whichever expression actually matched,
     or the row comes back with an empty document.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            conversation database.
+        monkeypatch: pytest's monkeypatch fixture; installs the
+            `_chacha_conversations_fts` call-counting spy.
     """
     db_path, conv_id = _seed_conversation(
         tmp_path,
@@ -581,8 +684,17 @@ def test_conversations_sub_leg_falls_back_independently(tmp_path, monkeypatch):
     assert "wombat burrow" in results[0].document.lower(), results[0].document
 
 
-def test_media_sub_leg_falls_back_independently(tmp_path, monkeypatch):
-    """Same loop over the media sub-leg's pooled FTS5 execution."""
+def test_media_sub_leg_falls_back_independently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same loop over the media sub-leg's pooled FTS5 execution.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            media database.
+        monkeypatch: pytest's monkeypatch fixture; installs the
+            `_perform_fts5_search` call-counting spy.
+    """
     db_path = _seed_media(
         tmp_path,
         [("Burrow survey", "Notes on the wombat burrow entrance survey.")],
@@ -611,12 +723,18 @@ def test_media_sub_leg_falls_back_independently(tmp_path, monkeypatch):
     assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR]
 
 
-def test_sub_legs_interleave_and_and_fallback_rows_in_one_query(tmp_path):
+def test_sub_legs_interleave_and_and_fallback_rows_in_one_query(
+    tmp_path: Path,
+) -> None:
     """The spec's deliberate mixed mode: one query, two provenances.
 
     Media matches every token (AND); the prompt only matches through the OR
     fallback. Both rows come back, each stamped with the form that found it
     -- which is what keeps Task 5's mechanism prose table-derived.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            media and prompts databases.
     """
     media_path = _seed_media(
         tmp_path,
@@ -642,10 +760,17 @@ def test_sub_legs_interleave_and_and_fallback_rows_in_one_query(tmp_path):
 
 
 def test_a_query_with_no_searchable_tokens_still_touches_no_database(
-    tmp_path, monkeypatch
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The early exit reads the CONSTRUCTION's primary expression, so the
-    `or` construction's all-stopword emptiness short-circuits too."""
+    `or` construction's all-stopword emptiness short-circuits too.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            prompts database.
+        monkeypatch: pytest's monkeypatch fixture; installs the
+            `_prompts_fts` call-counting spy.
+    """
     db_path, _ids = _seed_prompts(tmp_path, PROMPT_ROWS)
     service = _make_service(construction="or", prompts_db_path=db_path)
     calls = _prompts_fts_spy(monkeypatch)
@@ -661,9 +786,16 @@ def test_a_query_with_no_searchable_tokens_still_touches_no_database(
 
 
 def test_a_failing_fallback_degrades_the_sub_leg_like_the_primary(
-    tmp_path, monkeypatch
-):
-    """No new failure modes: the fallback inherits the degrade path."""
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No new failure modes: the fallback inherits the degrade path.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            prompts database.
+        monkeypatch: pytest's monkeypatch fixture; installs a `_prompts_fts`
+            spy that raises on the OR-fallback expression.
+    """
     db_path, _ids = _seed_prompts(tmp_path, PROMPT_ROWS)
     service = _make_service(construction="and_then_or", prompts_db_path=db_path)
 
@@ -758,9 +890,16 @@ def test_the_keyword_search_type_keys_the_construction_too():
     ) != legacy
 
 
-def test_the_search_path_passes_the_construction_into_the_cache_key(tmp_path):
+def test_the_search_path_passes_the_construction_into_the_cache_key(
+    tmp_path: Path,
+) -> None:
     """End to end: two searches identical except for the construction must
-    not share a cached entry."""
+    not share a cached entry.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            prompts database.
+    """
     db_path, _ids = _seed_prompts(tmp_path, PROMPT_ROWS)
     cfg = RAGConfig()
     cfg.embedding.model = "mock"

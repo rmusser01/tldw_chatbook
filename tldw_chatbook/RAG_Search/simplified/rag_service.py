@@ -3419,8 +3419,20 @@ class RAGService:
         if construction in FTS_MATCH_CONSTRUCTIONS:
             return construction
 
-        if construction not in self._warned_fts_constructions:
-            self._warned_fts_constructions.add(construction)
+        # `SearchConfig` is built from an untyped dict (`SearchConfig(**search_data)`
+        # in config.py, reachable from user-editable profile JSON), so `construction`
+        # can be a list/dict here -- unhashable, which would raise TypeError on the
+        # set membership/add below and crash hybrid AND keyword search instead of
+        # degrading to "and". Route non-str values through a hashable surrogate key
+        # for the warn-once set; a str value keeps using itself, unchanged.
+        dedup_key = (
+            construction
+            if isinstance(construction, str)
+            else f"{type(construction).__name__}:{construction!r}"
+        )
+
+        if dedup_key not in self._warned_fts_constructions:
+            self._warned_fts_constructions.add(dedup_key)
             logger.warning(
                 "Unknown fts_match_construction {!r}; the keyword leg is "
                 "falling back to the {!r} construction (the conservative "
