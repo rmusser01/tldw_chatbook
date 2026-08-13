@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from textual.widgets import Button, Input, Select, Static
+from textual.widgets._select import SelectOverlay
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.gguf_source_modes import (
@@ -135,6 +136,103 @@ def _assert_painted_inside(app: Any, widget: Any, view: Any) -> None:
         assert widget.region.right <= bounds.right
         assert widget.region.y >= bounds.y
         assert widget.region.bottom <= bounds.bottom
+
+
+def _assert_overlay_painted_on_screen(app: Any, overlay: SelectOverlay) -> None:
+    """Assert an expanded Select overlay is compositor-painted inside the screen."""
+
+    assert overlay in app.screen._compositor.visible_widgets
+    assert overlay.is_on_screen
+    assert overlay.region.width > 0 and overlay.region.height > 0
+    bounds = app.screen.content_region
+    assert overlay.region.x >= bounds.x
+    assert overlay.region.right <= bounds.right
+    assert overlay.region.y >= bounds.y
+    assert overlay.region.bottom <= bounds.bottom
+    strips = app.screen._compositor.render_strips()
+    painted_rows = set()
+    for y in range(overlay.region.y, overlay.region.bottom):
+        for x in range(overlay.region.x, overlay.region.right):
+            try:
+                owner, _region = app.screen.get_widget_at(x, y)
+            except Exception:
+                continue
+            if owner is not overlay and overlay not in owner.ancestors:
+                continue
+            if any(
+                segment.text and segment.text[0].isalnum()
+                for segment in strips[y].crop(x, x + 1)
+            ):
+                painted_rows.add(y)
+    assert len(painted_rows) >= overlay.option_count
+
+
+def _relative_luminance(rgb: tuple[int, int, int]) -> float:
+    channels = tuple(
+        value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+        for value in (channel / 255 for channel in rgb)
+    )
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _contrast_ratio(foreground: tuple[int, int, int], background: tuple[int, int, int]) -> float:
+    lighter, darker = sorted(
+        (_relative_luminance(foreground), _relative_luminance(background)),
+        reverse=True,
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _painted_text_contrast(
+    app: Any,
+    widget: Any,
+) -> tuple[float, frozenset[tuple[tuple[int, int, int], tuple[int, int, int]]]]:
+    """Measure final compositor colors for alphanumeric glyphs owned by a control."""
+
+    strips = app.screen._compositor.render_strips()
+    painted: list[
+        tuple[tuple[int, int, int], tuple[int, int, int]]
+    ] = []
+    for y in range(widget.region.y, widget.region.bottom):
+        for x in range(widget.region.x, widget.region.right):
+            try:
+                owner, _region = app.screen.get_widget_at(x, y)
+            except Exception:
+                continue
+            if owner is not widget and widget not in owner.ancestors:
+                continue
+            cell = strips[y].crop(x, x + 1)
+            for segment in cell:
+                if not segment.text or not segment.text[0].isalnum():
+                    continue
+                style = segment.style
+                if style is None or style.color is None or style.bgcolor is None:
+                    continue
+                foreground = tuple(style.color.get_truecolor())
+                background = tuple(style.bgcolor.get_truecolor())
+                painted.append((foreground, background))
+    assert painted, f"no compositor-painted text colors for {widget.id}"
+    return min(_contrast_ratio(*colors) for colors in painted), frozenset(painted)
+
+
+async def _press_until_focus(
+    pilot: Any,
+    target: Any,
+    *,
+    key: str = "tab",
+    limit: int = 80,
+) -> tuple[str | None, ...]:
+    """Traverse real keyboard focus until target, returning every visited id."""
+
+    visited: list[str | None] = []
+    for _ in range(limit):
+        await pilot.press(key)
+        await pilot.pause()
+        focused = pilot.app.focused
+        visited.append(focused.id if focused is not None else None)
+        if target.has_focus:
+            return tuple(visited)
+    raise AssertionError(f"{key} did not reach {target.id}; visited={visited}")
 
 
 @pytest.mark.asyncio
@@ -723,6 +821,106 @@ async def test_physical_stop_cancels_only_current_claim(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ("textual-dark", "high_contrast_yellow_black"))
+async def test_disabled_gguf_controls_keep_live_compositor_contrast(
+    monkeypatch: pytest.MonkeyPatch,
+    theme: str,
+) -> None:
+    choices = (
+        ManagedGGUFChoice(
+            REF_A,
+            "Managed readability model · Q4_K_M · 4.0 GiB · Managed",
+        ),
+    )
+    app, pilot, context, _screen, window, _service = await _mount_models(
+        monkeypatch,
+        size=(80, 24),
+        choices=choices,
+    )
+    try:
+        app.theme = theme
+        await pilot.pause()
+        for provider, view_name in (
+            ("llamacpp", "llama-cpp"),
+            ("llamafile", "llamafile"),
+        ):
+            window.active_view = view_name
+            await pilot.pause()
+            stop = window.query_one(f"#{provider}-stop-server-button", Button)
+            stop.scroll_visible(animate=False)
+            await pilot.pause()
+            idle_stop_ratio, idle_stop_colors = _painted_text_contrast(app, stop)
+            assert idle_stop_ratio >= 3.0, (theme, provider, stop.id, idle_stop_ratio)
+
+            for source_mode in ("external", "managed"):
+                mode = window.query_one(f"#{provider}-gguf-source-mode", Select)
+                mode.value = source_mode
+                if source_mode == "external":
+                    window.query_one(f"#{provider}-model-path", Input).value = (
+                        "/outside/readable-model.gguf"
+                    )
+                    active_source_controls = (
+                        window.query_one(f"#{provider}-model-path", Input),
+                        window.query_one(f"#{provider}-browse-model-button", Button),
+                    )
+                else:
+                    active_source_controls = (
+                        window.query_one(f"#{provider}-gguf-managed-select", Select),
+                        window.query_one(f"#{provider}-gguf-refresh-button", Button),
+                    )
+                controls = (
+                    mode,
+                    *active_source_controls,
+                    window.query_one(f"#{provider}-start-server-button", Button),
+                )
+                await pilot.pause()
+                enabled_colors = {}
+                for control in controls:
+                    control.scroll_visible(animate=False)
+                    await pilot.pause()
+                    _ratio, enabled_colors[control.id] = _painted_text_contrast(
+                        app, control
+                    )
+
+                claim = reserve_server_launch(
+                    app,
+                    provider,
+                    authority=f"{source_mode.title()} GGUF",
+                )
+                assert claim is not None
+                window._sync_process_controls(provider)
+                await pilot.pause()
+                status = str(
+                    window.query_one(f"#{provider}-gguf-source-status", Static).render()
+                )
+                assert "Pending authority:" in status
+                for control in controls:
+                    assert control.disabled, control.id
+                    control.scroll_visible(animate=False)
+                    await pilot.pause()
+                    ratio, disabled_colors = _painted_text_contrast(app, control)
+                    assert ratio >= 3.0, (theme, provider, control.id, ratio)
+                    assert disabled_colors != enabled_colors[control.id], (
+                        theme,
+                        provider,
+                        control.id,
+                    )
+
+                stop.scroll_visible(animate=False)
+                await pilot.pause()
+                running_stop_ratio, running_stop_colors = _painted_text_contrast(
+                    app, stop
+                )
+                assert running_stop_ratio >= 3.0
+                assert running_stop_colors != idle_stop_colors
+                assert release_server_claim(app, provider, claim)
+                window._sync_process_controls(provider)
+                await pilot.pause()
+    finally:
+        await _close_context(context)
+
+
+@pytest.mark.asyncio
 async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -804,6 +1002,7 @@ async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
 )
 async def test_supported_width_keyboard_reaches_each_provider_source_and_actions(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     provider: str,
     view_name: str,
 ) -> None:
@@ -826,15 +1025,26 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         assert window.active_view == view_name
         view = window.query_one(f"#llm-view-{view_name}")
         mode = window.query_one(f"#{provider}-gguf-source-mode", Select)
+        managed = window.query_one(f"#{provider}-gguf-managed-select", Select)
         refresh = window.query_one(f"#{provider}-gguf-refresh-button", Button)
         start = window.query_one(f"#{provider}-start-server-button", Button)
         stop = window.query_one(f"#{provider}-stop-server-button", Button)
+        executable = tmp_path / f"{provider}-server"
+        executable.touch()
+        window.query_one(f"#{provider}-exec-path", Input).value = str(executable)
 
         mode.scroll_visible(animate=False)
         mode.focus()
         await pilot.pause()
+        _assert_painted_inside(app, mode, view)
         await pilot.press("enter")
         await pilot.pause()
+        overlay = mode.query_one(SelectOverlay)
+        assert mode.expanded and overlay.has_focus
+        _assert_overlay_painted_on_screen(app, overlay)
+        overlay_svg = app.export_screenshot(simplify=True)
+        assert "Managed" in overlay_svg and "GGUF" in overlay_svg
+        assert "External" in overlay_svg
         if provider == "llamacpp":
             await pilot.press("up")
         else:
@@ -846,46 +1056,133 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
 
         await pilot.press("tab")
         await pilot.pause()
-        managed = window.query_one(f"#{provider}-gguf-managed-select", Select)
         assert managed.has_focus
         assert not managed.expanded
-        for widget in (mode, managed, refresh, start):
-            widget.scroll_visible(animate=False)
-            await pilot.pause()
-            _assert_painted_inside(app, widget, view)
-        managed.scroll_visible(animate=False)
-        await pilot.pause()
         _assert_painted_inside(app, managed, view)
+        await pilot.press("enter")
+        await pilot.pause()
+        managed_overlay = managed.query_one(SelectOverlay)
+        assert managed.expanded and managed_overlay.has_focus
+        _assert_overlay_painted_on_screen(app, managed_overlay)
+        assert "LongInvent" in app.export_screenshot(simplify=True)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert managed.has_focus and not managed.expanded
+        await pilot.press("tab")
+        await pilot.pause()
+        assert refresh.has_focus
+        _assert_painted_inside(app, refresh, view)
         managed_svg = app.export_screenshot(simplify=True)
         assert "LongInvent" in managed_svg
         assert "oryMarker-" in managed_svg
         assert "Refresh" in managed_svg
 
-        claim = reserve_server_launch(app, provider, authority="Managed GGUF")
-        assert claim is not None
-        window._sync_process_controls(provider)
-        stop.scroll_visible(animate=False)
+        await pilot.press("shift+tab")
         await pilot.pause()
-        assert stop.has_focus
-        _assert_painted_inside(app, stop, view)
-        assert "Stop" in app.export_screenshot(simplify=True)
+        assert managed.has_focus
+        await pilot.press("tab")
+        await pilot.pause()
+        assert refresh.has_focus
+        generation = window._managed_gguf_inventory_generation
+        await pilot.press("enter")
+        for _ in range(10):
+            await pilot.pause()
+            if window._managed_gguf_inventory_generation > generation:
+                break
+        assert window._managed_gguf_inventory_generation == generation + 1
 
-        assert release_server_claim(app, provider, claim)
-        window._sync_process_controls(provider)
-        mode.value = "external"
+        await pilot.press("shift+tab", "shift+tab")
+        await pilot.pause()
+        assert mode.has_focus
+        await pilot.press("enter", "down", "enter")
+        await pilot.pause()
+        assert mode.value == "external"
+        await pilot.press("tab")
+        await pilot.pause()
+        external_path = window.query_one(f"#{provider}-model-path", Input)
+        assert external_path.has_focus
+        await pilot.press("tab")
         await pilot.pause()
         browse = window.query_one(f"#{provider}-browse-model-button", Button)
+        assert browse.has_focus
+        _assert_painted_inside(app, browse, view)
+        pushed_screens: list[tuple[Any, Any]] = []
+
+        async def capture_push_screen(screen: Any, callback: Any = None) -> None:
+            pushed_screens.append((screen, callback))
+
+        monkeypatch.setattr(app, "push_screen", capture_push_screen)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(pushed_screens) == 1
+        assert pushed_screens[0][1] is not None
         copy = window.query_one(f"#{provider}-gguf-external-region").query_one(
             ".gguf-source-copy", Static
         )
-        for widget in (browse, copy):
-            widget.scroll_visible(animate=False)
-            await pilot.pause()
-            _assert_painted_inside(app, widget, view)
+        copy.scroll_visible(animate=False)
+        await pilot.pause()
+        _assert_painted_inside(app, copy, view)
         external_svg = app.export_screenshot(simplify=True)
         assert all(
             token in external_svg
             for token in ("Browse", "Outside", "Chatbook", "This", "used")
         )
+
+        await pilot.press("shift+tab", "shift+tab")
+        await pilot.pause()
+        assert mode.has_focus
+        await pilot.press("enter", "up", "enter")
+        await pilot.pause()
+        assert mode.value == "managed"
+        await pilot.press("tab", "tab")
+        await pilot.pause()
+        assert refresh.has_focus
+        traversed = await _press_until_focus(pilot, start)
+        assert traversed[-1] == start.id
+        _assert_painted_inside(app, start, view)
+
+        gated_workers: list[tuple[Any, dict[str, Any]]] = []
+
+        def hold_worker(worker: Any, **kwargs: Any) -> SimpleNamespace:
+            gated_workers.append((worker, kwargs))
+            return SimpleNamespace()
+
+        monkeypatch.setattr(app, "run_worker", hold_worker)
+        stale = ServerLaunchClaim(provider, authority="stale")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        claim = current_server_claim(app, provider)
+        assert claim is not None and claim is not stale
+        assert len(gated_workers) == 1
+        assert claim in gated_workers[0][0].args
+        assert start.disabled and not stop.disabled
+        assert stop.has_focus
+        _assert_painted_inside(app, stop, view)
+        stop_identity = stop
+        stop_svg = app.export_screenshot(simplify=True)
+        assert "Stop" in stop_svg
+        status = window.query_one(f"#{provider}-gguf-source-status", Static)
+        status.scroll_visible(animate=False)
+        await pilot.pause()
+        _assert_painted_inside(app, status, view)
+        assert "Pending" in app.export_screenshot(simplify=True)
+
+        window._handle_server_process_state_change(provider)
+        window._handle_server_process_state_change(provider)
+        await pilot.pause()
+        assert window.query_one(f"#{provider}-stop-server-button", Button) is stop_identity
+        assert stop_identity.has_focus
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert claim.cancel_event.is_set()
+        assert not stale.cancel_event.is_set()
+        assert current_server_claim(app, provider) is claim
+
+        assert release_server_claim(app, provider, claim)
+        window._handle_server_process_state_change(provider)
+        await pilot.pause()
+        assert start.has_focus and not start.disabled
     finally:
         await _close_context(context)

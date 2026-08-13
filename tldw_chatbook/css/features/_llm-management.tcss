@@ -88,6 +88,45 @@
     margin-left: 0;
 }
 
+/* Textual dims disabled focusable controls (and Button text) below readable
+ * contrast. Keep this override local to the two GGUF runtime forms; their
+ * status line explains why launch controls are unavailable. */
+#llm-view-llama-cpp Button:disabled,
+#llm-view-llama-cpp Input:disabled,
+#llm-view-llama-cpp Select:disabled,
+#llm-view-llamafile Button:disabled,
+#llm-view-llamafile Input:disabled,
+#llm-view-llamafile Select:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    color: $text;
+    background: $surface-darken-1;
+}
+
+#llm-view-llama-cpp Button:disabled,
+#llm-view-llama-cpp Input:disabled,
+#llm-view-llamafile Button:disabled,
+#llm-view-llamafile Input:disabled {
+    border: dashed $foreground;
+}
+
+#llm-view-llama-cpp Select:disabled > SelectCurrent,
+#llm-view-llama-cpp Select:disabled > SelectCurrent Static#label,
+#llm-view-llama-cpp Select:disabled > SelectCurrent .arrow,
+#llm-view-llamafile Select:disabled > SelectCurrent,
+#llm-view-llamafile Select:disabled > SelectCurrent Static#label,
+#llm-view-llamafile Select:disabled > SelectCurrent .arrow {
+    opacity: 100%;
+    text-opacity: 100%;
+    color: $text;
+    background: $surface-darken-1;
+}
+
+#llm-view-llama-cpp Select:disabled > SelectCurrent,
+#llm-view-llamafile Select:disabled > SelectCurrent {
+    border: dashed $foreground !important;
+}
+
 #llm_management-window { /* Matches TAB_LLM ("llm_management") */
     layout: horizontal;
 }
