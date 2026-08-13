@@ -1928,7 +1928,7 @@ async def test_custom_provider_credentials_are_optional_and_secret_safe():
 
 
 @pytest.mark.asyncio
-async def test_cloud_provider_keeps_optional_auth_title_while_expanded():
+async def test_cloud_provider_marks_authentication_required_and_expanded():
     step = _provider_step()
     app = _StepHost(step)
 
@@ -1938,8 +1938,518 @@ async def test_cloud_provider_keeps_optional_auth_title_while_expanded():
         await pilot.pause()
 
         auth = step.query_one("#setup-provider-auth-toggle", Collapsible)
-        assert str(auth.title) == "Authentication (optional)"
+        assert str(auth.title) == "Authentication"
         assert not auth.collapsed
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected_title", "expected_collapsed"),
+    [
+        ("openai", "Authentication", False),
+        ("anthropic", "Authentication", False),
+        ("custom", "Authentication (optional)", True),
+        ("custom-openai-api", "Authentication (optional)", True),
+        ("llama_cpp", "Authentication (optional)", True),
+        ("local_llamacpp", "Authentication (optional)", True),
+        ("ollama", "Authentication (optional)", True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_auth_requiredness_follows_shared_provider_catalog(
+    provider: str,
+    expected_title: str,
+    expected_collapsed: bool,
+):
+    step = _provider_step()
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider(provider)
+        await pilot.pause()
+
+        auth = step.query_one("#setup-provider-auth-toggle", Collapsible)
+        assert str(auth.title) == expected_title
+        assert auth.collapsed is expected_collapsed
+
+
+@pytest.mark.asyncio
+async def test_missing_required_cloud_key_blocks_test_and_continue_with_recovery():
+    from unittest.mock import AsyncMock
+
+    probe = AsyncMock(return_value=_reachable_endpoint_outcome("model-a"))
+    step = _provider_step(probe=probe, environ={})
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        await pilot.pause()
+
+        test_button = step.query_one("#setup-provider-test", Button)
+        key_status = str(
+            step.query_one("#setup-provider-key-status", Static).renderable
+        )
+        assert test_button.disabled
+        assert "API key" in key_status
+        assert "OPENAI_API_KEY" in key_status
+
+        step._on_test_pressed(Button.Pressed(test_button))
+        await pilot.pause()
+        probe.assert_not_awaited()
+        ok, error = await step.commit()
+        assert not ok
+        assert "API key" in error
+
+
+@pytest.mark.parametrize(
+    (
+        "provider",
+        "app_config",
+        "environ",
+        "replacement",
+        "expected_source",
+        "expected_value",
+        "probe_expected",
+    ),
+    [
+        (
+            "openai",
+            {"api_settings": {"openai": {"api_key": "stored-secret"}}},
+            {},
+            None,
+            "stored",
+            "stored-secret",
+            True,
+        ),
+        (
+            "openai",
+            {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}},
+            {"OPENAI_API_KEY": "environment-secret"},
+            None,
+            "environment",
+            "environment-secret",
+            True,
+        ),
+        ("custom", {"api_settings": {"custom": {}}}, {}, None, "none", None, True),
+        (
+            "openai",
+            {"api_settings": {"openai": {"api_key": "YOUR_KEY"}}},
+            {},
+            None,
+            "none",
+            None,
+            False,
+        ),
+        (
+            "openai",
+            {"api_settings": {"openai": {"api_key": "old-secret"}}},
+            {},
+            "rotated-secret",
+            "draft",
+            "rotated-secret",
+            True,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_probe_resolves_exact_credential_only_at_request_boundary(
+    provider,
+    app_config,
+    environ,
+    replacement,
+    expected_source,
+    expected_value,
+    probe_expected,
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    probe = AsyncMock(return_value=_reachable_endpoint_outcome("model-a"))
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config=app_config),
+        note_key_entered=MagicMock(),
+        stage_provider_setup=MagicMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, probe=probe, environ=environ)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider(provider)
+        if provider == "custom":
+            step.query_one(
+                "#setup-provider-endpoint", Input
+            ).value = "https://custom.example.test/v1"
+        if replacement is not None:
+            step._on_replace()
+            step.query_one("#setup-provider-api-key", Input).value = replacement
+        await pilot.pause()
+
+        test_button = step.query_one("#setup-provider-test", Button)
+        step._on_test_pressed(Button.Pressed(test_button))
+        await pilot.pause(0.1)
+
+        if not probe_expected:
+            probe.assert_not_awaited()
+            return
+        assert probe.await_args.kwargs["credential_source"] == expected_source
+        assert probe.await_args.kwargs["credential_value"] == expected_value
+        identity = step._provider_current_draft_identity()
+        assert identity is not None
+        assert identity.credential_source == expected_source
+        for rendered in (
+            repr(identity),
+            repr(step._provider_evidence_store()),
+            app.export_screenshot(),
+        ):
+            assert expected_value is None or expected_value not in rendered
+
+
+@pytest.mark.parametrize("edit_action", ["type", "keep", "replace", "clear", "env"])
+@pytest.mark.asyncio
+async def test_every_credential_semantic_edit_cancels_mounted_probe(
+    edit_action: str,
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_probe(*_args, **_kwargs):
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            await release.wait()
+        return _reachable_endpoint_outcome("stale-model")
+
+    app_config = {"api_settings": {"custom": {"api_key": "stored-secret"}}}
+    environ = {"CUSTOM_API_KEY": "environment-secret"}
+    if edit_action == "env":
+        app_config = {"api_settings": {"custom": {"api_key_env_var": "CUSTOM_API_KEY"}}}
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config=app_config),
+        note_key_entered=MagicMock(),
+        stage_provider_setup=MagicMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, probe=delayed_probe, environ=environ)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("custom")
+        step.query_one(
+            "#setup-provider-endpoint", Input
+        ).value = "https://custom.example.test/v1"
+        if edit_action == "type":
+            step._on_replace()
+            step.query_one("#setup-provider-api-key", Input).value = "key-a"
+        step._on_test_pressed(
+            Button.Pressed(step.query_one("#setup-provider-test", Button))
+        )
+        await asyncio.wait_for(started.wait(), timeout=2)
+
+        if edit_action == "type":
+            step.query_one("#setup-provider-api-key", Input).value = "key-b"
+        elif edit_action == "keep":
+            step._on_keep()
+        elif edit_action == "replace":
+            step._on_replace()
+        elif edit_action == "clear":
+            step._on_clear()
+        else:
+            step._on_replace()
+            step.query_one("#setup-provider-api-key", Input).value = "draft-secret"
+
+        await asyncio.wait_for(cancelled.wait(), timeout=2)
+        status = str(step.query_one("#setup-provider-probe-status", Static).renderable)
+        assert "Testing" not in status
+        release.set()
+        await pilot.pause(0.1)
+        assert "stale-model" not in str(
+            step.query_one("#setup-provider-probe-status", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_late_key_a_cancellation_cannot_clear_newer_key_b_evidence():
+    import asyncio
+
+    old_started = asyncio.Event()
+    old_cancelled = asyncio.Event()
+    release_old = asyncio.Event()
+    calls = 0
+
+    async def probe(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            old_started.set()
+            try:
+                await release_old.wait()
+            except asyncio.CancelledError:
+                old_cancelled.set()
+                await release_old.wait()
+            return _reachable_endpoint_outcome("old-only")
+        return _reachable_endpoint_outcome("new-a", "new-b")
+
+    step = _provider_step(probe=probe)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("custom")
+        step.query_one(
+            "#setup-provider-endpoint", Input
+        ).value = "https://custom.example.test/v1"
+        key_input = step.query_one("#setup-provider-api-key", Input)
+        key_input.value = "key-a"
+        step._on_test_pressed(
+            Button.Pressed(step.query_one("#setup-provider-test", Button))
+        )
+        await asyncio.wait_for(old_started.wait(), timeout=2)
+
+        key_input.value = "key-b"
+        await asyncio.wait_for(old_cancelled.wait(), timeout=2)
+        await pilot.pause()
+        step._on_test_pressed(
+            Button.Pressed(step.query_one("#setup-provider-test", Button))
+        )
+        await pilot.pause(0.1)
+        identity = step._provider_current_draft_identity()
+        assert identity is not None
+        evidence = step._provider_evidence_store().evidence_for(identity)
+        assert evidence is not None
+        assert evidence.model_ids == ("new-a", "new-b")
+
+        release_old.set()
+        await pilot.pause(0.1)
+        evidence = step._provider_evidence_store().evidence_for(identity)
+        assert evidence is not None
+        assert evidence.model_ids == ("new-a", "new-b")
+
+
+@pytest.mark.parametrize(
+    ("state", "category", "model_ids"),
+    [
+        ("reachable", None, ("model-a",)),
+        pytest.param(
+            "model_listing_unavailable",
+            "http_status",
+            (),
+            id="model-listing-unavailable",
+        ),
+        pytest.param("unreachable", "connection_refused", (), id="connection-refused"),
+    ],
+)
+def test_settings_probe_outcomes_convert_to_exact_provider_probe_results(
+    state,
+    category,
+    model_ids,
+):
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+
+    outcome = SettingsEndpointProbeOutcome(
+        state=state,
+        summary="ignored arbitrary detail",
+        category=category,
+        model_ids=model_ids,
+    )
+    result = ProviderStep._provider_probe_result_from_outcome(outcome)
+    assert type(result) is ProviderProbeResult
+    assert result.endpoint == state
+    assert result.category == category
+    assert result.model_ids == model_ids
+
+
+def test_probe_conversion_rejects_duck_type_without_property_access():
+    class HostileDuck:
+        touched = False
+
+        @property
+        def state(self):
+            self.touched = True
+            raise AssertionError("duck property accessed")
+
+    outcome = HostileDuck()
+    with pytest.raises(ValueError, match="outcome"):
+        ProviderStep._provider_probe_result_from_outcome(outcome)
+    assert not outcome.touched
+
+
+@pytest.mark.asyncio
+async def test_probe_settles_exact_evidence_and_endpoint_edit_invalidates_it():
+    from unittest.mock import AsyncMock
+
+    probe = AsyncMock(return_value=_reachable_endpoint_outcome("model-a", "model-b"))
+    step = _provider_step(probe=probe)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("custom")
+        endpoint = step.query_one("#setup-provider-endpoint", Input)
+        endpoint.value = "https://gateway.example.test/v1"
+        await pilot.pause()
+        step._on_test_pressed(
+            Button.Pressed(step.query_one("#setup-provider-test", Button))
+        )
+        await pilot.pause(0.1)
+
+        identity = step._provider_current_draft_identity()
+        assert identity is not None
+        evidence = step._provider_evidence_store().evidence_for(identity)
+        assert evidence is not None
+        assert evidence.endpoint == "reachable"
+        assert evidence.model_ids == ("model-a", "model-b")
+
+        endpoint.value = "https://changed.example.test/v1"
+        await pilot.pause()
+        assert step._provider_evidence_store().evidence_for(identity) is None
+        assert (
+            "test again"
+            in str(
+                step.query_one("#setup-provider-probe-status", Static).renderable
+            ).lower()
+        )
+
+
+@pytest.mark.asyncio
+async def test_successful_atomic_save_rebases_exact_probe_evidence_without_secret():
+    from tldw_chatbook.Chat.provider_setup_persistence import (
+        ProviderSetupDraft,
+        build_provider_setup_mutation,
+    )
+
+    secret = "save-boundary-secret"
+    step = _provider_step(probe=MagicMock())
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("custom")
+        step.query_one(
+            "#setup-provider-endpoint", Input
+        ).value = "https://save.example.test/v1"
+        step.query_one("#setup-provider-api-key", Input).value = secret
+        await pilot.pause()
+
+        tested = step._provider_current_draft_identity()
+        assert tested is not None
+        token = step._provider_evidence_store().begin(tested)
+        from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
+
+        assert step._provider_evidence_store().settle(
+            token, ProviderProbeResult("reachable", ("model-a",))
+        )
+        step._last_tested_provider_identity = tested
+        mutation = build_provider_setup_mutation(
+            ProviderSetupDraft(
+                provider="custom",
+                model="model-a",
+                endpoint="https://save.example.test/v1",
+                credential_source="draft",
+                credential_revision=tested.credential_revision,
+                draft_generation=tested.draft_generation,
+                credential_value=secret,
+            ),
+            {},
+        )
+        save = step._begin_provider_evidence_save(mutation)
+        step._finish_provider_evidence_save(
+            save, ConfigMutationResult(True, True, None)
+        )
+
+        saved = step._last_tested_provider_identity
+        assert saved is not None
+        assert saved.credential_source == "stored"
+        assert step._provider_evidence_store().evidence_for(saved) is not None
+        assert secret not in repr(saved)
+        assert secret not in repr(step._provider_evidence_store())
+
+
+def test_model_semantic_edit_notifies_provider_evidence_owner_once():
+    from types import SimpleNamespace
+
+    provider = _provider_step()
+    provider._model_semantics_changed = MagicMock()
+    model = ModelStep(
+        wizard=SimpleNamespace(_first_run_provider_discovery_owner=provider),
+        config=WizardStepConfig(id=STEP_MODEL, title="Model", step_number=3),
+    )
+
+    model.set_selected_model("model-a")
+    model.set_selected_model("model-a")
+
+    provider._model_semantics_changed.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_provider_switch_restores_each_provider_owned_draft_without_leakage():
+    from copy import copy
+    from unittest.mock import AsyncMock
+
+    custom_server = DiscoveredLocalServer("custom", "https://custom-detect.test/v1")
+    llama_server = DiscoveredLocalServer("llama_cpp", "http://127.0.0.1:8181")
+    step = _provider_step(local_discover=AsyncMock(return_value=()))
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("custom")
+        step.query_one(
+            "#setup-provider-endpoint", Input
+        ).value = "https://custom-draft.test/v1"
+        step.query_one("#setup-provider-api-key", Input).value = "custom-secret"
+        step._detected_servers = (custom_server,)
+        step._render_detection_results((custom_server,))
+
+        step.select_provider("llama_cpp")
+        step.query_one(
+            "#setup-provider-endpoint", Input
+        ).value = "http://127.0.0.1:8282"
+        step.query_one("#setup-provider-api-key", Input).value = "llama-secret"
+        step._detected_servers = (llama_server,)
+        step._render_detection_results((llama_server,))
+
+        step.select_provider("custom")
+        await pilot.pause()
+        assert step.query_one("#setup-provider-endpoint", Input).value == (
+            "https://custom-draft.test/v1"
+        )
+        assert step.query_one("#setup-provider-api-key", Input).value == (
+            "custom-secret"
+        )
+        custom_results = step.query_one("#setup-provider-detection-results", OptionList)
+        assert "custom-detect.test" in " ".join(
+            str(custom_results.get_option_at_index(index).prompt)
+            for index in range(custom_results.option_count)
+        )
+        assert "127.0.0.1:8181" not in app.export_screenshot()
+
+        step.select_provider("llama_cpp")
+        await pilot.pause()
+        assert step.query_one("#setup-provider-endpoint", Input).value == (
+            "http://127.0.0.1:8282"
+        )
+        assert step.query_one("#setup-provider-api-key", Input).value == (
+            "llama-secret"
+        )
+        assert "custom-secret" not in repr(step._provider_drafts)
+        assert "llama-secret" not in repr(step._provider_drafts)
+        assert "custom-draft.test" not in repr(step._provider_drafts)
+        assert "127.0.0.1:8282" not in repr(step._provider_drafts)
+        with pytest.raises(TypeError):
+            copy(next(iter(step._provider_drafts.values())))
+
+    assert not step._provider_drafts
 
 
 @pytest.mark.asyncio
@@ -2113,6 +2623,7 @@ async def test_connection_test_receives_exact_current_provider_draft_only_at_bou
         typed_endpoint = "  https://gateway.example.test/proxy/v1/chat/completions  "
         step.query_one("#setup-provider-endpoint", Input).value = typed_endpoint
         step.query_one("#setup-provider-api-key", Input).value = secret
+        await pilot.pause()
         step.query_one("#setup-provider-test", Button).press()
         await pilot.pause(0.1)
 
@@ -2146,11 +2657,12 @@ async def test_connection_test_exception_is_bounded_and_secret_safe():
             "#setup-provider-endpoint", Input
         ).value = "https://gateway.example.test/v1"
         step.query_one("#setup-provider-api-key", Input).value = secret
+        await pilot.pause()
         step.query_one("#setup-provider-test", Button).press()
         await pilot.pause(0.1)
 
         rendered = "\n".join(str(widget.renderable) for widget in step.query(Static))
-        assert "Probe errored" in rendered
+        assert "connection error" in rendered.lower()
         assert secret not in rendered
 
 
@@ -2207,6 +2719,7 @@ async def test_zero_detection_results_render_disabled_bounded_status():
 
 @pytest.mark.asyncio
 async def test_detection_never_renders_hostile_provider_or_endpoint_strings():
+    from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     provider_secret = "hostile-provider-secret"
@@ -2230,10 +2743,14 @@ async def test_detection_never_renders_hostile_provider_or_endpoint_strings():
         candidate = next(
             results.get_option_at_index(index)
             for index in range(results.option_count)
-            if getattr(results.get_option_at_index(index), "server", None) is not None
+            if "invalid endpoint" in str(results.get_option_at_index(index).prompt)
         )
-        assert not candidate.disabled
+        assert candidate.disabled
+        assert getattr(candidate, "server", None) is None
         assert "invalid endpoint" in str(candidate.prompt)
+        before = step.query_one("#setup-provider-endpoint", Input).value
+        step._on_detected_endpoint_selected(SimpleNamespace(option=candidate))
+        assert step.query_one("#setup-provider-endpoint", Input).value == before
 
 
 @pytest.mark.parametrize(
@@ -2307,11 +2824,12 @@ async def test_default_probe_client_construction_failure_is_bounded(monkeypatch)
             "#setup-provider-endpoint", Input
         ).value = "https://gateway.example.test/v1"
         step.query_one("#setup-provider-api-key", Input).value = "draft-key"
+        await pilot.pause()
         step.query_one("#setup-provider-test", Button).press()
         await pilot.pause(0.1)
 
         status = str(step.query_one("#setup-provider-probe-status", Static).renderable)
-        assert "unreachable: connection error" in status
+        assert "connection error" in status.lower()
         assert secret not in status
 
 
@@ -2818,7 +3336,7 @@ async def test_provider_switch_clears_adopted_llama_endpoint_before_custom_commi
 
 
 @pytest.mark.asyncio
-async def test_provider_step_stages_unset_declared_environment_source():
+async def test_provider_step_blocks_unset_declared_environment_source():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -2840,24 +3358,23 @@ async def test_provider_step_stages_unset_declared_environment_source():
         step.select_provider("openai")
         ok, error = await step.commit()
 
-        assert ok, error
-        draft = _staged_provider_draft(wizard)
-        assert draft.credential.source == "environment"
-        assert not hasattr(draft.credential, "value")
+        assert not ok
+        assert "PRIVATE_OPENAI_KEY" in error
+        wizard.stage_provider_setup.assert_not_called()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("inline_key", "environment", "expected_source"),
+    ("inline_key", "environment", "expected_source", "expected_ready"),
     [
-        ("inline-secret", {}, "none"),
-        ("inline-secret", {"PRIVATE_OPENAI_KEY": "environment-secret"}, "none"),
-        (None, {}, "environment"),
-        (None, {"PRIVATE_OPENAI_KEY": "environment-secret"}, "environment"),
+        ("inline-secret", {}, "none", True),
+        ("inline-secret", {"PRIVATE_OPENAI_KEY": "environment-secret"}, "none", True),
+        (None, {}, None, False),
+        (None, {"PRIVATE_OPENAI_KEY": "environment-secret"}, "environment", True),
     ],
 )
 async def test_provider_credential_precedence_matches_first_chat_readiness(
-    inline_key, environment, expected_source
+    inline_key, environment, expected_source, expected_ready
 ):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -2882,7 +3399,11 @@ async def test_provider_credential_precedence_matches_first_chat_readiness(
         step.select_provider("openai")
         ok, error = await step.commit()
 
-        assert ok, error
+        assert ok is expected_ready, error
+        if not expected_ready:
+            assert "PRIVATE_OPENAI_KEY" in error
+            wizard.stage_provider_setup.assert_not_called()
+            return
         draft = _staged_provider_draft(wizard)
         assert draft.credential.source == expected_source
         assert "inline-secret" not in repr(draft)
@@ -3021,7 +3542,6 @@ async def test_provider_repeated_on_show_while_visible_does_not_duplicate_scan()
 @pytest.mark.asyncio
 async def test_provider_explicit_test_cancels_selected_discovery_before_probe():
     import asyncio
-    from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     discovery_started = asyncio.Event()
@@ -3035,10 +3555,12 @@ async def test_provider_explicit_test_cancels_selected_discovery_before_probe():
             discovery_cancelled.set()
             return ("late-private-value",)
 
-    probe = AsyncMock(
-        return_value=SimpleNamespace(reachable=True, summary="Provider is reachable.")
+    probe = AsyncMock(return_value=_reachable_endpoint_outcome("model-a"))
+    step = _provider_step(
+        discover=AsyncMock(side_effect=discover),
+        probe=probe,
+        environ={"OPENAI_API_KEY": "test-secret"},
     )
-    step = _provider_step(discover=AsyncMock(side_effect=discover), probe=probe)
     step.wizard.app_instance.app_config = _provider_endpoint_config("openai")
     app = _StepHost(step)
 
@@ -3095,13 +3617,10 @@ async def test_provider_initial_mount_only_runs_provider_neutral_local_discovery
 
 @pytest.mark.asyncio
 async def test_provider_explicit_test_feedback_is_preserved():
-    from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    probe = AsyncMock(
-        return_value=SimpleNamespace(reachable=True, summary="Provider is reachable.")
-    )
-    step = _provider_step(probe=probe)
+    probe = AsyncMock(return_value=_reachable_endpoint_outcome("model-a"))
+    step = _provider_step(probe=probe, environ={"OPENAI_API_KEY": "test-secret"})
     app = _StepHost(step)
 
     async with app.run_test(size=(120, 40)) as pilot:
@@ -3115,7 +3634,7 @@ async def test_provider_explicit_test_feedback_is_preserved():
         assert probe.await_args.kwargs["provider"] == "openai"
         status = str(step.query_one("#setup-provider-probe-status", Static).renderable)
         assert status.startswith("✓ ")
-        assert "reachable" in status.casefold()
+        assert "reached" in status.casefold()
 
 
 @pytest.mark.asyncio
@@ -3256,7 +3775,7 @@ async def test_provider_step_commit_recovers_user_driven_highlight():
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
-    step = _provider_step(wizard=wizard)
+    step = _provider_step(wizard=wizard, environ={"ANTHROPIC_API_KEY": "test-secret"})
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -3305,7 +3824,7 @@ async def test_provider_step_untouched_mount_does_not_select_or_commit():
 
 @pytest.mark.asyncio
 async def test_provider_space_only_selects_initial_provider_and_stages():
-    step = _provider_step()
+    step = _provider_step(environ={"OPENAI_API_KEY": "test-secret"})
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -3348,7 +3867,7 @@ async def test_provider_home_on_initial_row_selects_and_stages_openai():
 
 @pytest.mark.asyncio
 async def test_provider_page_up_initial_row_preserves_openai_and_stages():
-    step = _provider_step()
+    step = _provider_step(environ={"OPENAI_API_KEY": "test-secret"})
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -3579,8 +4098,8 @@ async def test_provider_step_keep_preserves_existing_key_without_note():
 
 
 @pytest.mark.asyncio
-async def test_provider_step_clear_persists_empty_key_without_note():
-    """Clear remains distinct from Keep in the staged credential decision."""
+async def test_provider_step_clear_blocks_required_provider_without_replacement():
+    """Clear remains distinct from Keep and cannot stage an unusable cloud draft."""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -3602,21 +4121,15 @@ async def test_provider_step_clear_persists_empty_key_without_note():
         key_input = step.query_one("#setup-provider-api-key", Input)
         assert key_input.value == ""
         ok, error = await step.commit()
-        assert ok, error
-        draft = _staged_provider_draft(wizard)
-        assert draft.provider == "openai"
-        assert draft.credential.source == "draft"
-        assert not hasattr(draft.credential, "value")
+        assert not ok
+        assert "API key" in error
+        wizard.stage_provider_setup.assert_not_called()
         wizard.note_key_entered.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_provider_step_switching_provider_clears_key_input():
-    """Bug-1: a key typed for provider A must not commit under provider B.
-    select_provider() previously left the shared key Input's value alone
-    when the provider selection changed, so a key typed under one provider
-    silently carried over and would commit under whichever provider was
-    selected next."""
+async def test_provider_step_switching_provider_isolates_and_restores_key_input():
+    """Provider-owned credentials never leak and restore only for their owner."""
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
 
@@ -3637,11 +4150,14 @@ async def test_provider_step_switching_provider_clears_key_input():
         assert key_input.value == ""
 
         ok, error = await step.commit()
-        assert ok, error
-        draft = _staged_provider_draft(wizard)
-        assert draft.provider == "anthropic"
-        assert draft.credential.source == "none"
-        assert not hasattr(draft.credential, "value")
+        assert not ok
+        assert "API key" in error
+        wizard.stage_provider_setup.assert_not_called()
+
+        step.select_provider("openai")
+        assert step.query_one("#setup-provider-api-key", Input).value == (
+            "sk-under-openai"
+        )
 
 
 @pytest.mark.asyncio
@@ -6135,6 +6651,7 @@ async def test_key_hints_footer_and_test_button_probe():
         await pilot.pause()
         step.select_provider("openai")
         step.query_one("#setup-provider-api-key", Input).value = "wizard-test-key-x"
+        await pilot.pause()
         step.query_one("#setup-provider-test", Button).press()
         await pilot.pause(0.3)
         assert probe.await_count >= 1

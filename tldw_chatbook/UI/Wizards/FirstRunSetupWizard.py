@@ -12,6 +12,7 @@ import math
 import os
 import tempfile
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -561,6 +562,42 @@ class ProviderEndpointCandidateList(OptionList):
     BINDINGS = [Binding("space", "select", "Select", show=False)]
 
 
+@dataclass(slots=True)
+class _ProviderConnectionUiDraft:
+    """Memory-only, provider-owned controls that never render credential values."""
+
+    endpoint: str = ""
+    api_key: str = ""
+    clear_requested: bool = False
+    key_input_visible: bool = True
+    auth_collapsed: bool = True
+    detected_servers: tuple[object, ...] = ()
+    detected_server: object | None = None
+    credential_revision: int = 0
+
+    def __repr__(self) -> str:
+        return (
+            "_ProviderConnectionUiDraft("
+            f"endpoint_present={bool(self.endpoint)!r}, "
+            f"credential_present={bool(self.api_key)!r}, "
+            f"clear_requested={self.clear_requested!r}, "
+            f"key_input_visible={self.key_input_visible!r}, "
+            f"auth_collapsed={self.auth_collapsed!r}, "
+            f"detected_count={len(self.detected_servers)!r}, "
+            f"credential_revision={self.credential_revision!r})"
+        )
+
+    def __copy__(self) -> object:
+        raise TypeError("Provider credentials are memory-only.")
+
+    def __deepcopy__(self, memo: object) -> object:
+        del memo
+        raise TypeError("Provider credentials are memory-only.")
+
+    def clear_secret(self) -> None:
+        self.api_key = ""
+
+
 def _provider_group_option_id(title: str) -> str:
     """Return the deterministic option ID for a provider group heading."""
     return "group-" + "-".join(title.casefold().split())
@@ -695,6 +732,8 @@ def _legacy_model_ids(values: object) -> tuple[str, ...]:
 class ProviderStep(SetupStep):
     """Choose a provider, supply credentials, verify without blocking."""
 
+    _MAX_PROVIDER_DRAFTS = 64
+
     def __init__(
         self,
         wizard: Optional["SetupWizardContainer"] = None,
@@ -742,9 +781,21 @@ class ProviderStep(SetupStep):
         self._last_credential_decision: tuple[str, str | int] | None = None
         self._detected_endpoint_provider_key = ""
         self._detected_servers: tuple[object, ...] = ()
+        self._local_discovery_provider_key = ""
         self._provider_choice_interacted = False
         self._updating_connection_controls = False
         self._pending_programmatic_endpoint_changes: list[tuple[str, str]] = []
+        self._provider_drafts: OrderedDict[str, _ProviderConnectionUiDraft] = (
+            OrderedDict()
+        )
+        self._provider_draft_generation = 0
+        from tldw_chatbook.Chat.provider_test_evidence import (
+            ProviderTestEvidenceStore,
+        )
+
+        self._provider_test_evidence = ProviderTestEvidenceStore()
+        self._active_probe_token: object | None = None
+        self._last_tested_provider_identity: object | None = None
         if wizard is not None:
             setattr(wizard, "_first_run_provider_discovery_owner", self)
 
@@ -946,11 +997,17 @@ class ProviderStep(SetupStep):
     def on_unmount(self) -> None:
         self._discovery_visible = False
         self._cancel_discovery_workers()
+        self._provider_test_evidence.invalidate()
+        self._active_probe_token = None
+        for draft in self._provider_drafts.values():
+            draft.clear_secret()
+        self._provider_drafts.clear()
 
     def _cancel_discovery_workers(self) -> None:
         """Invalidate and cancel setup-owned network work without publishing."""
 
         selected_was_in_progress = self._selected_discovery_state == "in_progress"
+        self._cancel_active_probe()
         self._obsolete_provider_generation(
             "setup-provider-discovery",
             "setup-provider-probe",
@@ -988,16 +1045,18 @@ class ProviderStep(SetupStep):
     def _start_discovery(self, *, user_requested: bool = False) -> None:
         self._local_discovery_generation += 1
         generation = self._local_discovery_generation
+        provider_key = self.selected_provider_key
+        self._local_discovery_provider_key = provider_key
         self._local_discovery_state = "in_progress"
         if user_requested:
             self._render_detection_results((), status="Searching local endpoints…")
         self.run_worker(
-            partial(self._discover_servers, generation),
+            partial(self._discover_servers, generation, provider_key),
             exclusive=True,
             group="setup-provider-local-discovery",
         )
 
-    async def _discover_servers(self, generation: int) -> None:
+    async def _discover_servers(self, generation: int, provider_key: str) -> None:
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         state = "complete"
         try:
@@ -1011,7 +1070,11 @@ class ProviderStep(SetupStep):
                 type(exc).__name__,
             )
             servers = ()
-        if generation != self._local_discovery_generation:
+        if (
+            generation != self._local_discovery_generation
+            or provider_key != self._local_discovery_provider_key
+            or provider_key != self.selected_provider_key
+        ):
             return
         self._local_discovery_state = state
         if not self.is_mounted or not self.is_active:
@@ -1027,6 +1090,7 @@ class ProviderStep(SetupStep):
                 else "No local endpoints found."
             )
             self._render_detection_results((), status=status)
+        self._capture_provider_ui_draft(provider_key)
 
     def _render_detection_results(
         self,
@@ -1062,16 +1126,18 @@ class ProviderStep(SetupStep):
             resolution = resolve_provider_endpoint(provider_key, server.base_url)
             if resolution.persisted_endpoint is None:
                 label = f"Candidate {index + 1}: invalid endpoint"
+                selectable_server = None
             else:
                 label = (
                     f"{provider_display_name(provider_key)} · "
                     f"{resolution.persisted_display}"
                 )
+                selectable_server = server
             options.append(
                 ProviderEndpointCandidateOption(
                     Text(label),
                     option_id=f"detected-endpoint-{index}",
-                    server=server,
+                    server=selectable_server,
                 )
             )
         results = self.query_one(
@@ -1080,6 +1146,7 @@ class ProviderStep(SetupStep):
         results.clear_options()
         results.add_options(options)
         results.remove_class("hidden")
+        self._capture_provider_ui_draft()
 
     def _apply_discovered_server(self, server: Any) -> None:
         from tldw_chatbook.Chat.provider_endpoint_contract import (
@@ -1103,6 +1170,7 @@ class ProviderStep(SetupStep):
             use_button.add_class("hidden")
             return
         self.detected_server = server
+        self.detected_base_url = server.base_url
         banner.update(f"Found a local endpoint: {resolution.persisted_display}.")
         banner.remove_class("hidden")
         use_button.remove_class("hidden")
@@ -1114,6 +1182,252 @@ class ProviderStep(SetupStep):
         )
 
         return resolve_console_provider_identity(provider_key).readiness_key
+
+    def _provider_evidence_store(self):
+        """Return the exact shared evidence owner used by this mounted step."""
+
+        return self._provider_test_evidence
+
+    def _provider_ui_draft(self, provider_key: str) -> _ProviderConnectionUiDraft:
+        draft = self._provider_drafts.get(provider_key)
+        if draft is not None:
+            self._provider_drafts.move_to_end(provider_key)
+            return draft
+        draft = _ProviderConnectionUiDraft()
+        self._provider_drafts[provider_key] = draft
+        while len(self._provider_drafts) > self._MAX_PROVIDER_DRAFTS:
+            _, evicted = self._provider_drafts.popitem(last=False)
+            evicted.clear_secret()
+        return draft
+
+    def _capture_provider_ui_draft(self, provider_key: str | None = None) -> None:
+        """Capture only the active provider's controls before replacing them."""
+
+        owner = provider_key or self.selected_provider_key
+        if not owner or not self.is_mounted:
+            return
+        draft = self._provider_ui_draft(owner)
+        try:
+            draft.endpoint = self.query_one("#setup-provider-endpoint", Input).value
+            key_input = self.query_one("#setup-provider-api-key", Input)
+            draft.api_key = key_input.value
+            draft.key_input_visible = bool(key_input.display)
+            draft.auth_collapsed = self.query_one(
+                "#setup-provider-auth-toggle", Collapsible
+            ).collapsed
+        except Exception:
+            return
+        draft.clear_requested = self._clear_requested
+        draft.detected_servers = self._detected_servers
+        draft.detected_server = getattr(self, "detected_server", None)
+        draft.credential_revision = self._credential_revision
+
+    def _provider_requires_api_key(self, provider_key: str) -> bool:
+        from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        return get_provider_readiness(
+            provider_key, app_config, environ=self._environ
+        ).requires_api_key
+
+    def _credential_at_request_boundary(self) -> tuple[str, str | None, object]:
+        """Resolve a credential once, immediately before a live request."""
+
+        from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+        from tldw_chatbook.config import is_valid_provider_api_key
+
+        provider_key = self.selected_provider_key
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        key_input = self.query_one("#setup-provider-api-key", Input)
+        typed = key_input.value.strip() if key_input.display else ""
+        base_readiness = get_provider_readiness(
+            provider_key, app_config, environ=self._environ
+        )
+        if typed:
+            if is_valid_provider_api_key(typed):
+                return "draft", typed, base_readiness
+            return "none", None, base_readiness
+        if self._clear_requested:
+            return "none", None, base_readiness
+        if base_readiness.ready and base_readiness.api_key is not None:
+            source = (
+                "environment"
+                if str(base_readiness.api_key_source).startswith("env:")
+                else "stored"
+            )
+            return source, base_readiness.api_key, base_readiness
+        return "none", None, base_readiness
+
+    def _current_provider_readiness(self):
+        """Return shared readiness after applying the current transient decision."""
+
+        from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+        provider_key = self.selected_provider_key
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        source, value, base = self._credential_at_request_boundary()
+        if source in {"stored", "environment"}:
+            return base
+        api_settings = app_config.get("api_settings", {})
+        staged_api_settings = (
+            dict(api_settings) if isinstance(api_settings, Mapping) else {}
+        )
+        settings = dict(self._provider_settings(provider_key))
+        settings.pop("api_key", None)
+        typed_value = self.query_one("#setup-provider-api-key", Input).value.strip()
+        if self._clear_requested or (typed_value and source == "none"):
+            settings.pop("api_key_env_var", None)
+        if source == "draft" and value is not None:
+            settings["api_key"] = value
+        staged_api_settings[provider_key] = settings
+        staged_config = dict(app_config)
+        staged_config["api_settings"] = staged_api_settings
+        return get_provider_readiness(
+            provider_key, staged_config, environ=self._environ
+        )
+
+    def _probe_target(self) -> str:
+        provider_key = self.selected_provider_key
+        try:
+            connection = self.query_one("#setup-provider-connection", Vertical)
+            endpoint = self.query_one("#setup-provider-endpoint", Input).value
+            if connection.display and endpoint.strip():
+                return endpoint
+        except Exception:
+            pass
+        return self._cloud_probe_base_url(provider_key)
+
+    def _provider_current_draft_identity(self):
+        """Build a secret-free identity for the exact controls now on screen."""
+
+        from tldw_chatbook.Chat.provider_endpoint_contract import (
+            canonical_connection_identity,
+        )
+        from tldw_chatbook.Chat.provider_test_evidence import ProviderDraftIdentity
+
+        provider_key = self.selected_provider_key
+        target = self._probe_target()
+        connection_identity = canonical_connection_identity(provider_key, target)
+        if connection_identity is None:
+            return None
+        credential_source, _, _ = self._credential_at_request_boundary()
+        return ProviderDraftIdentity(
+            provider_key=provider_key,
+            connection_identity=connection_identity,
+            credential_source=credential_source,
+            credential_revision=self._credential_revision,
+            draft_generation=self._provider_draft_generation,
+        )
+
+    def _cancel_active_probe(self) -> bool:
+        token = self._active_probe_token
+        if token is None:
+            return False
+        cancelled = self._provider_test_evidence.cancel_probe(token)
+        if cancelled and self._active_probe_token is token:
+            self._active_probe_token = None
+        return cancelled
+
+    def _invalidate_provider_test(self, *, changed: bool = True) -> None:
+        """Invalidate exact evidence and only clear status owned by that probe."""
+
+        self._provider_draft_generation += 1
+        cancelled = self._cancel_active_probe()
+        invalidated = self._provider_test_evidence.invalidate()
+        self._obsolete_provider_generation(
+            "setup-provider-discovery", "setup-provider-probe"
+        )
+        if (cancelled or invalidated or changed) and self.is_mounted:
+            self.query_one("#setup-provider-probe-status", Static).update(
+                "Provider settings changed since test; test again." if changed else ""
+            )
+
+    def _credential_semantics_changed(self) -> None:
+        self._credential_decision_generation += 1
+        self._credential_revision += 1
+        self._invalidate_provider_test()
+        self._capture_provider_ui_draft()
+        self._refresh_auth_readiness()
+
+    def _model_semantics_changed(self) -> None:
+        """Invalidate provider evidence when the selected model changes."""
+
+        self._invalidate_provider_test()
+
+    def _begin_provider_evidence_save(self, mutation: object):
+        """Lease settled evidence for an equivalent atomic provider save."""
+
+        from tldw_chatbook.Chat.provider_setup_persistence import ProviderSetupMutation
+        from tldw_chatbook.Chat.provider_test_evidence import (
+            ProviderDraftIdentity,
+        )
+
+        tested = self._last_tested_provider_identity
+        if (
+            type(mutation) is not ProviderSetupMutation
+            or type(tested) is not ProviderDraftIdentity
+            or mutation.semantic_identity is None
+        ):
+            return None
+        lease = self._provider_test_evidence.begin_save(tested)
+        if lease is None:
+            return None
+        semantic = mutation.semantic_identity
+        saved = ProviderDraftIdentity(
+            provider_key=semantic.provider_key,
+            connection_identity=semantic.connection_identity,
+            credential_source=semantic.credential_source,
+            credential_revision=semantic.credential_revision,
+            draft_generation=max(semantic.draft_generation, tested.draft_generation),
+        )
+        return tested, saved, lease
+
+    def _finish_provider_evidence_save(
+        self, save: object, result: object | None
+    ) -> None:
+        from tldw_chatbook.config import ConfigMutationResult
+
+        if type(save) is not tuple or len(save) != 3:
+            return
+        tested, saved, lease = save
+        if type(result) is not ConfigMutationResult or not result.fully_applied:
+            self._provider_test_evidence.cancel_save(lease)
+            return
+        if self._provider_test_evidence.rebase_after_save(
+            tested, saved, result, lease=lease
+        ):
+            self._last_tested_provider_identity = saved
+
+    def _refresh_auth_readiness(self) -> None:
+        if not self.selected_provider_key or not self.is_mounted:
+            return
+        readiness = self._current_provider_readiness()
+        auth = self.query_one("#setup-provider-auth-toggle", Collapsible)
+        auth.title = (
+            "Authentication"
+            if readiness.requires_api_key
+            else "Authentication (optional)"
+        )
+        test_button = self.query_one("#setup-provider-test", Button)
+        test_button.disabled = not readiness.ready
+        status = self.query_one("#setup-provider-key-status", Static)
+        if not readiness.ready:
+            recovery = readiness.recovery or "Add a provider credential."
+            status.update(f"API key required. {recovery}")
+            return
+        if self._clear_requested:
+            status.update("The stored key will be removed when you continue.")
+            return
+        credential_source, _, _ = self._credential_at_request_boundary()
+        if credential_source == "stored":
+            status.update("An API key is already configured for this provider.")
+        elif credential_source == "environment":
+            env_var = readiness.env_var or "the configured environment variable"
+            status.update(f"Found {env_var} in your environment; nothing to store.")
+        elif credential_source == "draft":
+            status.update("A replacement API key is ready for this provider.")
+        else:
+            status.update("")
 
     def _credential_draft(
         self, *, revision: int | None = None
@@ -1331,6 +1645,8 @@ class ProviderStep(SetupStep):
         discovery_key: wizard_state.FirstRunModelDiscoveryKey,
         generation: int,
     ) -> bool:
+        if not self.is_mounted:
+            return False
         current_key = self._model_discovery_key(self._effective_provider_draft())
         staged_key = self._model_discovery_key(
             getattr(self.wizard, "staged_provider_draft", None)
@@ -1341,7 +1657,6 @@ class ProviderStep(SetupStep):
             and discovery_key == self._selected_discovery_key
             and discovery_key == current_key
             and discovery_key.provider_key == self.selected_provider_key
-            and self.is_mounted
             and (self.is_active or discovery_key == staged_key)
         )
 
@@ -1504,12 +1819,10 @@ class ProviderStep(SetupStep):
             if hasattr(self, attribute):
                 delattr(self, attribute)
         self._detected_endpoint_provider_key = ""
-        self._obsolete_provider_generation(
-            "setup-provider-discovery", "setup-provider-probe"
-        )
+        self._invalidate_provider_test()
         self._selected_discovery_key = None
         self._selected_provider_models.clear()
-        self.query_one("#setup-provider-probe-status", Static).update("")
+        self._capture_provider_ui_draft()
 
     @on(Button.Pressed, "#setup-provider-detect")
     def _on_detect_pressed(self, event: Button.Pressed) -> None:
@@ -1642,17 +1955,30 @@ class ProviderStep(SetupStep):
         )
 
         provider_key = self._canonical_provider_key(provider_key)
-        provider_changed = provider_key != self.selected_provider_key
+        previous_provider = self.selected_provider_key
+        provider_changed = provider_key != previous_provider
+        had_saved_draft = provider_key in self._provider_drafts
         if provider_changed:
+            self._capture_provider_ui_draft(previous_provider)
+            self._invalidate_provider_test(changed=False)
             self._local_discovery_generation += 1
+            self._local_discovery_provider_key = ""
             self._cancel_worker_groups("setup-provider-local-discovery")
             self._clear_detected_provider_state()
         self.selected_provider_key = provider_key
-        self._clear_requested = False
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         presence = read_provider_secret_presence(
             app_config, self._environ, provider_key=provider_key
         )
+        ui_draft = self._provider_ui_draft(provider_key)
+        if not had_saved_draft:
+            ui_draft.endpoint = self._initial_endpoint_for(provider_key)
+            ui_draft.key_input_visible = not (
+                presence.inline_configured or presence.env_var_set
+            )
+            ui_draft.auth_collapsed = not self._provider_requires_api_key(provider_key)
+        self._clear_requested = ui_draft.clear_requested
+        self._credential_revision = ui_draft.credential_revision
         status = self.query_one("#setup-provider-key-status", Static)
         actions = self.query_one("#setup-provider-key-actions", Horizontal)
         key_input = self.query_one("#setup-provider-api-key", Input)
@@ -1661,52 +1987,52 @@ class ProviderStep(SetupStep):
         if provider_changed:
             self._updating_connection_controls = True
             try:
-                key_input.value = ""
+                key_input.value = ui_draft.api_key
+                key_input.display = ui_draft.key_input_visible
                 endpoint_visible = self._provider_exposes_endpoint(provider_key)
                 connection.display = endpoint_visible
                 connection.set_class(not endpoint_visible, "hidden")
                 endpoint_input = self.query_one("#setup-provider-endpoint", Input)
-                if endpoint_visible:
-                    initial_endpoint = self._initial_endpoint_for(provider_key)
-                    if endpoint_input.value != initial_endpoint:
-                        self._pending_programmatic_endpoint_changes.append(
-                            (provider_key, initial_endpoint)
-                        )
-                        endpoint_input.value = initial_endpoint
-                else:
-                    if endpoint_input.value:
-                        self._pending_programmatic_endpoint_changes.append(
-                            (provider_key, "")
-                        )
-                        endpoint_input.value = ""
+                restored_endpoint = ui_draft.endpoint if endpoint_visible else ""
+                if endpoint_input.value != restored_endpoint:
+                    self._pending_programmatic_endpoint_changes.append(
+                        (provider_key, restored_endpoint)
+                    )
+                    endpoint_input.value = restored_endpoint
                 auth.display = True
                 auth.remove_class("hidden")
-                optional_auth = provider_key in {
-                    "custom",
-                    "custom_2",
-                    "llama_cpp",
-                    "local_llamacpp",
-                }
-                auth.title = "Authentication (optional)"
-                auth.collapsed = optional_auth
+                optional_auth = not self._provider_requires_api_key(provider_key)
+                auth.title = (
+                    "Authentication (optional)" if optional_auth else "Authentication"
+                )
+                auth.collapsed = ui_draft.auth_collapsed
             finally:
                 self._updating_connection_controls = False
             self._refresh_endpoint_resolution()
-        if presence.inline_configured:
+        if ui_draft.clear_requested:
+            status.update("The stored key will be removed when you continue.")
+            actions.remove_class("hidden")
+        elif ui_draft.api_key:
+            status.update("A replacement API key is ready for this provider.")
+            actions.remove_class("hidden")
+        elif presence.inline_configured:
             status.update("An API key is already configured for this provider.")
-            key_input.display = False
             actions.remove_class("hidden")
         elif presence.env_var_set:
             status.update(
                 f"Found {presence.env_var} in your environment ✓ — nothing to store."
             )
-            key_input.display = False
             actions.add_class("hidden")
         else:
             status.update("")
-            key_input.display = True
             actions.add_class("hidden")
         self.query_one("#setup-provider-probe-status", Static).update("")
+        self._detected_servers = ui_draft.detected_servers
+        if ui_draft.detected_servers:
+            self._render_detection_results(ui_draft.detected_servers)
+        if ui_draft.detected_server is not None:
+            self._apply_discovered_server(ui_draft.detected_server)
+        self._refresh_auth_readiness()
         if provider_changed:
             self._begin_selected_provider_discovery(self._effective_provider_draft())
 
@@ -1763,14 +2089,17 @@ class ProviderStep(SetupStep):
         """
         self._clear_requested = False
         self.query_one("#setup-provider-api-key", Input).display = True
+        self._credential_semantics_changed()
 
     @on(Button.Pressed, "#setup-provider-key-keep")
     def _on_keep(self) -> None:
         """Abandon any in-progress Replace/Clear; the stored secret is untouched."""
         self._clear_requested = False
         key_input = self.query_one("#setup-provider-api-key", Input)
-        key_input.value = ""
+        with key_input.prevent(Input.Changed):
+            key_input.value = ""
         key_input.display = False
+        self._credential_semantics_changed()
 
     @on(Button.Pressed, "#setup-provider-key-clear")
     def _on_clear(self) -> None:
@@ -1782,70 +2111,65 @@ class ProviderStep(SetupStep):
         check would otherwise treat "" exactly like "nothing to write").
         """
         self._clear_requested = True
-        self._credential_decision_generation += 1
         key_input = self.query_one("#setup-provider-api-key", Input)
-        key_input.value = ""
+        with key_input.prevent(Input.Changed):
+            key_input.value = ""
         key_input.display = True
         self.query_one("#setup-provider-key-status", Static).update(
             "The stored key will be removed when you continue."
         )
+        self._credential_semantics_changed()
 
     @on(Input.Changed, "#setup-provider-api-key")
     def _on_key_changed(self, event: Input.Changed) -> None:
         del event
-        self._credential_decision_generation += 1
+        if self._updating_connection_controls:
+            return
+        self._clear_requested = False
+        self._credential_semantics_changed()
 
     @on(Input.Submitted, "#setup-provider-api-key")
     def _on_key_submitted(self, event: Input.Submitted) -> None:
         """Live-but-never-blocking verification: probe on Enter in the key field."""
         if event.value.strip():
-            self._launch_probe(api_key=event.value.strip())
+            self._launch_probe()
 
     @on(Button.Pressed, "#setup-provider-test")
     def _on_test_pressed(self, event: Button.Pressed) -> None:
         """TASK-1506: same probe as Enter-in-field, behind a visible control."""
         event.stop()
-        typed = self.query_one("#setup-provider-api-key", Input).value.strip()
-        self._launch_probe(api_key=typed or None)
+        self._launch_probe()
 
     def _launch_probe(self, *, api_key: str | None = None) -> None:
+        del api_key
         generation = self._obsolete_provider_generation(
             "setup-provider-discovery",
             "setup-provider-probe",
         )
         provider_key = self.selected_provider_key
-        provider_draft = self._effective_provider_draft()
-        typed_endpoint = ""
-        if provider_draft is not None:
-            connection = self.query_one("#setup-provider-connection", Vertical)
-            if connection.display:
-                typed_endpoint = self.query_one("#setup-provider-endpoint", Input).value
-        target = (
-            typed_endpoint
-            if typed_endpoint.strip()
-            else self._cloud_probe_base_url(provider_key)
-        )
-        if not target:
-            self.apply_probe_result(
-                generation,
-                provider_key=provider_key,
-                reachable=False,
-                summary="Enter a valid endpoint before testing.",
+        readiness = self._current_provider_readiness()
+        if not readiness.ready:
+            self.query_one("#setup-provider-probe-status", Static).update(
+                readiness.recovery or "An API key is required before testing."
             )
             return
-        credential = self._credential_draft()
-        credential_source = credential.source
-        credential_value = api_key
-        if credential_value is None:
-            boundary_value = wizard_state._credential_value_for_boundary(credential)
-            if credential_source == "draft":
-                credential_value = boundary_value or None
-            elif credential_source == "environment":
-                credential_value = self._environ.get(boundary_value) or None
+        target = self._probe_target()
+        identity = self._provider_current_draft_identity()
+        if not target or identity is None:
+            self.query_one("#setup-provider-probe-status", Static).update(
+                "Enter a valid endpoint before testing."
+            )
+            return
+        credential_source, credential_value, _ = self._credential_at_request_boundary()
+        token = self._provider_test_evidence.begin(identity)
+        self._active_probe_token = token
         self.query_one("#setup-provider-probe-status", Static).update("Testing…")
         self.run_worker(
-            self._run_probe(
+            partial(
+                self._run_probe,
                 generation,
+                token,
+                identity,
                 provider_key=provider_key,
                 endpoint=target,
                 credential_source=credential_source,
@@ -1858,12 +2182,18 @@ class ProviderStep(SetupStep):
     async def _run_probe(
         self,
         generation: int,
+        token: object,
+        identity: object,
         *,
         provider_key: str,
         endpoint: str,
         credential_source: str,
         credential_value: str | None,
     ) -> None:
+        from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+            SettingsEndpointProbeOutcome,
+        )
+
         try:
             outcome = await self._probe(
                 endpoint,
@@ -1871,23 +2201,87 @@ class ProviderStep(SetupStep):
                 credential_source=credential_source,
                 credential_value=credential_value,
             )
-            self.apply_probe_result(
-                generation,
-                provider_key=provider_key,
-                reachable=outcome.reachable,
-                summary=outcome.summary,
-            )
+            result = self._provider_probe_result_from_outcome(outcome)
+        except asyncio.CancelledError:
+            if self._provider_test_evidence.cancel_probe(token):
+                if self._active_probe_token is token:
+                    self._active_probe_token = None
+                if generation == self.probe_generation and self.is_mounted:
+                    self.query_one("#setup-provider-probe-status", Static).update("")
+            raise
         except Exception as exc:
             logger.debug(
                 "Wizard provider probe failed (error_type={})",
                 type(exc).__name__,
             )
-            self.apply_probe_result(
-                generation,
-                provider_key=provider_key,
-                reachable=False,
+            outcome = SettingsEndpointProbeOutcome(
+                state="unreachable",
+                category="connection_error",
                 summary="Probe errored.",
             )
+            result = self._provider_probe_result_from_outcome(outcome)
+        settled = self._provider_test_evidence.settle(token, result)
+        if not settled:
+            return
+        if self._active_probe_token is token:
+            self._active_probe_token = None
+        self._last_tested_provider_identity = identity
+        if (
+            generation == self.probe_generation
+            and provider_key == self.selected_provider_key
+            and self.is_mounted
+        ):
+            self._render_provider_evidence(identity)
+
+    @staticmethod
+    def _provider_probe_result_from_outcome(outcome: object):
+        """Convert only the exact shared Settings outcome to exact evidence."""
+
+        from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
+        from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+            SettingsEndpointProbeOutcome,
+        )
+
+        if type(outcome) is not SettingsEndpointProbeOutcome:
+            raise ValueError("Provider probe outcome is invalid.")
+        state = str(outcome.state)
+        if state == "reachable":
+            return ProviderProbeResult("reachable", outcome.model_ids)
+        if state == "model_listing_unavailable":
+            return ProviderProbeResult(
+                "model_listing_unavailable", (), outcome.category
+            )
+        if state == "unreachable":
+            return ProviderProbeResult("unreachable", (), outcome.category)
+        raise ValueError("Provider probe outcome is invalid.")
+
+    def _render_provider_evidence(self, identity: object) -> None:
+        from tldw_chatbook.Chat.provider_test_evidence import (
+            ProviderDraftIdentity,
+            ProviderReadinessSnapshot,
+            provider_readiness_verdict,
+        )
+
+        if type(identity) is not ProviderDraftIdentity:
+            return
+        evidence = self._provider_test_evidence.evidence_for(identity)
+        if evidence is None:
+            return
+        snapshot = ProviderReadinessSnapshot(
+            configuration="configured",
+            endpoint=evidence.endpoint,
+            model="unconfirmed",
+            category=evidence.category,
+        )
+        verdict = provider_readiness_verdict(snapshot)
+        prefix = (
+            "✓ "
+            if evidence.endpoint == "reachable"
+            else ("✗ " if evidence.endpoint == "unreachable" else "")
+        )
+        self.query_one("#setup-provider-probe-status", Static).update(
+            f"{prefix}{verdict.detail}"
+        )
 
     @staticmethod
     def _cloud_probe_base_url(provider_key: str) -> str:
@@ -1914,10 +2308,15 @@ class ProviderStep(SetupStep):
             provider_key is not None and provider_key != self.selected_provider_key
         ):
             return
+        del summary
         prefix = "✓ " if reachable else "✗ "
-        suffix = "" if reachable else "  Couldn't verify — you can save anyway."
+        detail = (
+            "Model listing reached."
+            if reachable
+            else "The model listing endpoint could not be reached."
+        )
         self.query_one("#setup-provider-probe-status", Static).update(
-            f"{prefix}{summary}{suffix}"
+            f"{prefix}{detail}"
         )
 
     async def commit(self) -> tuple[bool, str]:
@@ -1925,6 +2324,10 @@ class ProviderStep(SetupStep):
         if not provider_key:
             return True, ""  # legitimately nothing pressed -- skip is correct
         self.selected_provider_key = provider_key
+        readiness = self._current_provider_readiness()
+        if not readiness.ready:
+            recovery = readiness.recovery or "Add a provider credential."
+            return False, f"API key required. {recovery}"
         key_input = self.query_one("#setup-provider-api-key", Input)
         typed_key = bool(
             key_input.display and key_input.value and key_input.value.strip()
@@ -2360,6 +2763,7 @@ class ModelStep(SetupStep):
         back to whatever radio button is currently pressed (or "" if none),
         rather than just blanking unconditionally.
         """
+        previous_model = self.selected_model_id
         value = event.value.strip()
         if value:
             self._clear_model_radio_selection()
@@ -2378,13 +2782,23 @@ class ModelStep(SetupStep):
             self._selection_discovery_key = (
                 self._current_discovery_key() if self.selected_model_id else None
             )
+        if self.selected_model_id != previous_model:
+            self._notify_provider_model_changed()
 
     def set_selected_model(self, model_id: str) -> None:
+        changed = model_id != self.selected_model_id
         self.selected_model_id = model_id
         self._model_id_from_custom_input = False
         self._selection_discovery_key = (
             self._current_discovery_key() if model_id else None
         )
+        if changed:
+            self._notify_provider_model_changed()
+
+    def _notify_provider_model_changed(self) -> None:
+        owner = getattr(self.wizard, "_first_run_provider_discovery_owner", None)
+        if isinstance(owner, ProviderStep):
+            owner._model_semantics_changed()
 
     def _live_pressed_radio(self) -> Optional[RadioButton]:
         """F1 fix: read ``#setup-model-choice``'s ``pressed_button``, but only
@@ -7031,14 +7445,29 @@ class SetupWizardContainer(WizardContainer):
             ):
                 logger.error("Wizard provider commit rejected (category=validation)")
                 return False
-            result = await asyncio.get_running_loop().run_in_executor(
-                None,
-                persist_provider_setup,
-                provider_setup_mutation,
+            owner = getattr(self, "_first_run_provider_discovery_owner", None)
+            evidence_save = (
+                owner._begin_provider_evidence_save(provider_setup_mutation)
+                if isinstance(owner, ProviderStep)
+                else None
             )
+            try:
+                result = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    persist_provider_setup,
+                    provider_setup_mutation,
+                )
+            except BaseException:
+                if isinstance(owner, ProviderStep):
+                    owner._finish_provider_evidence_save(evidence_save, None)
+                raise
             if result.fully_applied:
                 self._mirror_into_app_config(section_values, requested_deletes)
+                if isinstance(owner, ProviderStep):
+                    owner._finish_provider_evidence_save(evidence_save, result)
                 return True
+            if isinstance(owner, ProviderStep):
+                owner._finish_provider_evidence_save(evidence_save, None)
             return False
 
         from tldw_chatbook.config import save_settings_to_cli_config
