@@ -69,7 +69,10 @@ from tldw_chatbook.TTS.profile_types import (
     TTSGenerationProfile,
     TTSProfileDraft,
 )
-from tldw_chatbook.TTS.TTS_Generation import TTSService
+from tldw_chatbook.TTS.TTS_Generation import (
+    AudioCppGuidedDependencySnapshot,
+    TTSService,
+)
 
 from Tests.TTS_Events.test_spoken_feedback_streaming import _RecordingSink
 
@@ -290,6 +293,24 @@ class _CloneCapturingAdapter(_CapturingAdapter):
 
     def preflight_clone_source(self) -> None:
         return
+
+    def preflight_clone_dependency(
+        self,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> None:
+        assert requirement == TTSCloneRecipeRequirement(
+            recipe_id="pocket_tts",
+            recipe_revision=1,
+            model_id="clone-model",
+        )
+
+    def preflight_clone_request_dependency(
+        self,
+        request: TTSRequest,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> None:
+        assert request.model_id == requirement.model_id
+        self.preflight_clone_dependency(requirement)
 
     def admit_clone_capability(
         self,
@@ -1020,15 +1041,16 @@ async def test_assigned_clone_profile_stays_passive_until_console_speak(
         options={},
     )
     generation = repository.generation
+    requirement = TTSCloneRecipeRequirement(
+        recipe_id="pocket_tts",
+        recipe_revision=1,
+        model_id="clone-model",
+    )
     created = await repository.create_profile_with_reference(
         draft,
         profile_id,
         _canonical_clone_reference(),
-        TTSCloneRecipeRequirement(
-            recipe_id="audio-cpp-0.5.1.pocket_tts.pocket_tts",
-            recipe_revision=1,
-            model_id="clone-model",
-        ),
+        requirement,
         expected_generation=generation,
     )
     await repository.set_assignment(
@@ -1040,6 +1062,24 @@ async def test_assigned_clone_profile_stays_passive_until_console_speak(
         expected_profile=created.value,
     )
     profile_service = TTSProfileService(repository, service)
+
+    async def exact_dependency(
+        current: TTSCloneRecipeRequirement,
+    ) -> AudioCppGuidedDependencySnapshot:
+        assert current == requirement
+        return AudioCppGuidedDependencySnapshot(
+            state="exact",
+            provider_configuration_revision=registry.configuration_revision(
+                "audio_cpp"
+            ),
+            saved_generation=1,
+            applied_generation=1,
+            pending_configuration=False,
+            saved_requirement=current,
+            applied_requirement=current,
+        )
+
+    service.audio_cpp_guided_dependency_snapshot = exact_dependency  # type: ignore[method-assign]
 
     # Profile-library and Roleplay assignment reads are deliberately passive.
     page = await profile_service.list_profiles(offset=0)
