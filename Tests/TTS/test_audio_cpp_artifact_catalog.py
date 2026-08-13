@@ -55,7 +55,7 @@ def _write_manifest(tmp_path: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
-def test_checked_in_manifest_is_exact_pinned_empty_header_and_network_free(
+def test_checked_in_manifest_is_exact_pinned_reviewed_catalog_and_network_free(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
@@ -70,17 +70,233 @@ def test_checked_in_manifest_is_exact_pinned_empty_header_and_network_free(
 
     assert catalog.repository == REPOSITORY
     assert catalog.commit == COMMIT
-    assert catalog.packages == ()
+    assert len(catalog.packages) == 45
+    assert "supertonic_3_q8_0" not in {
+        package.package_variant for package in catalog.packages
+    }
     manifest_path = (
         Path(__file__).parents[2]
         / "tldw_chatbook"
         / "TTS"
         / "audio_cpp_artifact_manifest.json"
     )
-    assert json.loads(manifest_path.read_text(encoding="utf-8")) == {
-        "repository": REPOSITORY,
-        "commit": COMMIT,
-        "packages": [],
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert raw["repository"] == catalog.repository
+    assert raw["commit"] == catalog.commit
+    assert len(raw["packages"]) == len(catalog.packages)
+    assert raw["packages"] == sorted(
+        raw["packages"],
+        key=lambda package: (
+            package["recipe_id"],
+            package["recipe_revision"],
+            package["package_variant"],
+        ),
+    )
+
+
+def _reviewed_entries():
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        audio_cpp_curated_entries,
+        load_audio_cpp_artifact_source_manifest,
+    )
+
+    manifest = load_audio_cpp_artifact_source_manifest()
+    assert manifest.packages, "the reviewed pinned package list is still empty"
+    return manifest, audio_cpp_curated_entries()
+
+
+def test_audio_cpp_curated_entries_are_exact_recipe_joins() -> None:
+    from urllib.parse import quote
+
+    from tldw_chatbook.Model_Artifacts.service import (
+        ArtifactFormat,
+        ArtifactRef,
+        ArtifactRole,
+        ProvenanceClass,
+    )
+    from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+
+    manifest, entries = _reviewed_entries()
+    packages = {package.key: package for package in manifest.packages}
+    recipes = {
+        recipe.model_library_artifact_ids[0]: recipe
+        for recipe in AUDIO_CPP_RECIPE_REGISTRY.recipes
+        if recipe.model_library_artifact_ids
+    }
+
+    assert len(entries) == len(packages) == 45
+    for descriptor, sources in entries:
+        recipe = recipes[descriptor.reference.artifact_id]
+        package = packages[
+            (recipe.recipe_id, recipe.recipe_revision, recipe.package_variant)
+        ]
+        expected_urls = {
+            file.managed_path: (
+                f"https://huggingface.co/{manifest.repository}/resolve/"
+                f"{manifest.commit}/{quote(file.source_path, safe='/')}"
+            )
+            for file in package.files
+        }
+        expected_paths = {signal.relative_path for signal in recipe.required_files}
+
+        assert recipe.model_library_artifact_ids == (package.artifact_id,)
+        assert descriptor.reference == ArtifactRef(
+            package.artifact_id,
+            manifest.commit,
+            recipe.precision,
+        )
+        assert descriptor.role is ArtifactRole.ROOT
+        assert descriptor.format is ArtifactFormat.GGUF
+        assert descriptor.consumer == "audio_cpp"
+        assert descriptor.model_family == recipe.family
+        assert descriptor.model_id == recipe.default_public_model_id
+        assert descriptor.precision == recipe.precision
+        assert descriptor.runtime_name == "audio.cpp"
+        assert descriptor.runtime_version_constraint == (
+            f"{recipe.audio_cpp_release}@{recipe.audio_cpp_commit}"
+        )
+        assert descriptor.supported_os == tuple(
+            dict.fromkeys(item.system for item in recipe.backend_evidence)
+        )
+        assert descriptor.supported_architectures == tuple(
+            dict.fromkeys(item.architecture for item in recipe.backend_evidence)
+        )
+        assert tuple(
+            (
+                item.system,
+                item.architecture,
+                item.backend.value,
+                item.state.value,
+                item.evidence_reference,
+            )
+            for item in recipe.backend_evidence
+        ) == tuple(
+            (
+                system,
+                architecture,
+                "cpu",
+                "expected",
+                "backlog/decisions/050-audio-cpp-generated-model-setup-ownership.md"
+                "#decision",
+            )
+            for system, architecture in (
+                ("darwin", "arm64"),
+                ("darwin", "x86_64"),
+                ("linux", "aarch64"),
+                ("linux", "x86_64"),
+                ("windows", "x86_64"),
+            )
+        )
+        assert descriptor.provenance == (
+            ProvenanceClass.CHATBOOK_CURATED,
+            ProvenanceClass.INTEGRITY_VERIFIED,
+        )
+        assert {file.path for file in descriptor.files} == expected_paths
+        assert set(sources) == {file.path for file in descriptor.files}
+        assert sources == expected_urls
+        assert descriptor.source_url == next(iter(expected_urls.values()))
+        assert descriptor.expected_installed_bytes == sum(
+            file.size_bytes for file in descriptor.files
+        )
+        assert descriptor.license_id == package.license_id
+        assert descriptor.license_id != "other"
+        assert (
+            descriptor.license_url
+            == package.license_url
+            == (
+                f"https://huggingface.co/{manifest.repository}/blob/"
+                f"{manifest.commit}/README.md"
+            )
+        )
+        assert descriptor.usage_notice == package.usage_notice
+        assert descriptor.dependencies == ()
+        assert set(recipe.capabilities) <= {"tts", "clone", "design"}
+        assert not any(
+            token in descriptor.model_family
+            for token in ("asr", "diar", "music", "separation")
+        )
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ["unknown_recipe", "unknown_revision", "duplicate_artifact_owner"],
+)
+def test_audio_cpp_join_rejects_manifest_recipe_drift(drift: str) -> None:
+    from dataclasses import replace
+
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        audio_cpp_curated_entries,
+        load_audio_cpp_artifact_source_manifest,
+    )
+    from tldw_chatbook.TTS.audio_cpp_recipes import (
+        AUDIO_CPP_RECIPE_REGISTRY,
+        AudioCppRecipeRegistry,
+    )
+
+    manifest = load_audio_cpp_artifact_source_manifest()
+    assert manifest.packages, "the reviewed pinned package list is still empty"
+    joined_recipe_id = manifest.packages[0].recipe_id
+    recipes = list(AUDIO_CPP_RECIPE_REGISTRY.recipes)
+    if drift == "unknown_recipe":
+        recipes = [recipe for recipe in recipes if recipe.recipe_id != joined_recipe_id]
+    elif drift == "unknown_revision":
+        recipes = [
+            replace(recipe, recipe_revision=recipe.recipe_revision + 1)
+            if recipe.recipe_id == joined_recipe_id
+            else recipe
+            for recipe in recipes
+        ]
+    else:
+        joined_artifact_id = manifest.packages[0].artifact_id
+        local_only = next(
+            recipe for recipe in recipes if not recipe.model_library_artifact_ids
+        )
+        recipes = [
+            replace(recipe, model_library_artifact_ids=(joined_artifact_id,))
+            if recipe.recipe_id == local_only.recipe_id
+            else recipe
+            for recipe in recipes
+        ]
+
+    with pytest.raises(ValueError, match="manifest recipe"):
+        audio_cpp_curated_entries(AudioCppRecipeRegistry(tuple(recipes)))
+
+
+def test_audio_cpp_release_rows_have_exactly_one_cross_axis_outcome() -> None:
+    from tldw_chatbook.TTS.audio_cpp_recipes import (
+        AUDIO_CPP_RELEASE_ACCOUNTING,
+        AUDIO_CPP_RECIPE_REGISTRY,
+        AudioCppRecipeSupportState,
+    )
+
+    manifest, entries = _reviewed_entries()
+    admitted_variants = {package.package_variant for package in manifest.packages}
+    assert admitted_variants == {
+        recipe.package_variant
+        for recipe in AUDIO_CPP_RECIPE_REGISTRY.recipes
+        if recipe.model_library_artifact_ids
+    }
+    assert len(entries) == len(admitted_variants)
+
+    outcomes: dict[str, str] = {}
+    for row in AUDIO_CPP_RELEASE_ACCOUNTING:
+        assert row.package_variant not in outcomes
+        if row.state is AudioCppRecipeSupportState.EXPLICITLY_UNSUPPORTED:
+            outcome = "explicitly_unsupported"
+        elif row.package_variant in admitted_variants:
+            outcome = "downloadable"
+        else:
+            outcome = "local_only"
+        outcomes[row.package_variant] = outcome
+
+    assert len(outcomes) == 67
+    assert list(outcomes.values()).count("downloadable") == 45
+    assert list(outcomes.values()).count("local_only") == 8
+    assert list(outcomes.values()).count("explicitly_unsupported") == 14
+    assert set(outcomes.values()) == {
+        "downloadable",
+        "local_only",
+        "explicitly_unsupported",
     }
 
 
@@ -735,8 +951,14 @@ def test_refresh_rejects_boolean_top_level_lfs_size(tmp_path: Path) -> None:
         refresh_manifest_bytes(manifest_path, COMMIT, urlopen=recorded_urlopen)
 
 
-def test_refresh_command_runs_directly_without_network_for_empty_manifest() -> None:
+def test_refresh_command_runs_directly_without_network_for_empty_manifest(
+    tmp_path: Path,
+) -> None:
     repository_root = Path(__file__).parents[2]
+    manifest_path = _write_manifest(
+        tmp_path,
+        {"repository": REPOSITORY, "commit": COMMIT, "packages": []},
+    )
     result = subprocess.run(
         [
             sys.executable,
@@ -745,7 +967,7 @@ def test_refresh_command_runs_directly_without_network_for_empty_manifest() -> N
             "--commit",
             COMMIT,
             "--manifest",
-            "tldw_chatbook/TTS/audio_cpp_artifact_manifest.json",
+            str(manifest_path),
         ],
         cwd=repository_root,
         check=False,

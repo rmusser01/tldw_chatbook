@@ -88,6 +88,16 @@ EXPECTED_RELEASE_FAMILY_COUNTS = {
     "vietneu_tts": 1,
 }
 EXPECTED_APPROVED_COUNT = 53
+EXPECTED_LOCAL_ONLY_VARIANTS = {
+    "glm_tts_q8_0",
+    "index_tts2_safetensors",
+    "omnivoice_safetensors",
+    "outetts_1_0_1b_q8_0",
+    "pocket_tts_english_safetensors",
+    "supertonic_3_safetensors",
+    "supertonic_3_q8_0",
+    "voxcpm2_safetensors",
+}
 QWEN_BASE_SAFETENSORS_FILES = (
     "config.json",
     "generation_config.json",
@@ -1249,3 +1259,34 @@ def test_user_facing_verified_claims_exclude_expected_or_untested_tuples() -> No
     assert claims[0].recipe_id == recipe.recipe_id
     assert claims[0].backend == verified_tuple.backend
     assert claims[0].evidence_reference == verified_tuple.evidence_reference
+
+
+def test_only_audited_downloadable_recipes_name_exact_artifact_ids() -> None:
+    api = _api()
+    recipes = api["AUDIO_CPP_RECIPE_REGISTRY"].recipes
+
+    assert len(recipes) == EXPECTED_APPROVED_COUNT
+    for recipe in recipes:
+        expected = (
+            ()
+            if recipe.package_variant in EXPECTED_LOCAL_ONLY_VARIANTS
+            else (f"audio-cpp-{recipe.package_variant.replace('_', '-')}",)
+        )
+        assert recipe.model_library_artifact_ids == expected
+
+
+def test_new_approved_recipe_defaults_to_local_only_until_artifact_audit() -> None:
+    import tldw_chatbook.TTS.audio_cpp_recipes as recipes
+
+    recipe = recipes._recipe(
+        family="future_tts",
+        package_variant="future_tts_q8_0",
+        display_name="Future TTS Q8_0",
+        package_format=recipes.AudioCppFileKind.GGUF,
+        precision="q8_0",
+        capabilities=("tts",),
+        required_files=(recipes._gguf_file("future-tts-q8_0.gguf"),),
+        model_relative_path="future-tts-q8_0.gguf",
+    )
+
+    assert recipe.model_library_artifact_ids == ()

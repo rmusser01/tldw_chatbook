@@ -112,5 +112,11 @@ def curated_registry() -> CuratedRegistry:
             parakeet_vad_descriptor(),
             sources=source_map[vad_reference],
         )
+        from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+            audio_cpp_curated_entries,
+        )
+
+        for descriptor, sources in audio_cpp_curated_entries():
+            registry.register(descriptor, sources=sources)
         _REGISTRY = registry
     return _REGISTRY

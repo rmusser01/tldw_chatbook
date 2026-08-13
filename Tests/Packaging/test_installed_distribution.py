@@ -1159,7 +1159,7 @@ urllib.request.urlopen = fail_network
 manifest = load_audio_cpp_artifact_source_manifest()
 assert manifest.repository == {AUDIO_CPP_ARTIFACT_REPOSITORY!r}
 assert manifest.commit == {AUDIO_CPP_ARTIFACT_COMMIT!r}
-assert manifest.packages == ()
+assert len(manifest.packages) == 45
 print("installed-audio-cpp-manifest-ok")
 """
 

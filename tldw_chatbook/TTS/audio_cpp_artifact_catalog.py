@@ -7,9 +7,16 @@ import ipaddress
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import unicodedata
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Model_Artifacts.service import ArtifactDescriptor
+    from tldw_chatbook.TTS.audio_cpp_recipes import (
+        AudioCppPackageRecipe,
+        AudioCppRecipeRegistry,
+    )
 
 
 AUDIO_CPP_ARTIFACT_REPOSITORY = "audio-cpp/audio.cpp-gguf"
@@ -364,3 +371,130 @@ def load_audio_cpp_artifact_source_manifest(
         raw,
         expected_commit=expected_commit,
     )
+
+
+def _pinned_source_url(manifest: AudioCppArtifactSourceManifest, path: str) -> str:
+    return (
+        f"https://huggingface.co/{manifest.repository}/resolve/"
+        f"{manifest.commit}/{quote(path, safe='/')}"
+    )
+
+
+def _manifest_recipe(
+    package: AudioCppArtifactPackage,
+    registry: AudioCppRecipeRegistry,
+) -> AudioCppPackageRecipe:
+    matches = tuple(
+        recipe for recipe in registry.recipes if recipe.recipe_id == package.recipe_id
+    )
+    if len(matches) != 1:
+        raise ValueError("audio.cpp manifest recipe is unknown or duplicated")
+    recipe = matches[0]
+    artifact_owners = tuple(
+        candidate
+        for candidate in registry.recipes
+        if package.artifact_id in candidate.model_library_artifact_ids
+    )
+    if (
+        artifact_owners != (recipe,)
+        or recipe.recipe_revision != package.recipe_revision
+        or recipe.package_variant != package.package_variant
+        or recipe.model_library_artifact_ids != (package.artifact_id,)
+    ):
+        raise ValueError("audio.cpp manifest recipe facts do not match")
+    return recipe
+
+
+def _curated_entry(
+    manifest: AudioCppArtifactSourceManifest,
+    package: AudioCppArtifactPackage,
+    recipe: AudioCppPackageRecipe,
+) -> tuple[ArtifactDescriptor, dict[str, str]]:
+    from tldw_chatbook.Model_Artifacts.service import (
+        ArtifactDescriptor,
+        ArtifactFile,
+        ArtifactFormat,
+        ArtifactRef,
+        ArtifactRole,
+        ProvenanceClass,
+    )
+    from tldw_chatbook.TTS.audio_cpp_recipes import AudioCppFileKind
+
+    required = {signal.relative_path: signal for signal in recipe.required_files}
+    files_by_path = {file.managed_path: file for file in package.files}
+    if files_by_path.keys() != required.keys() or any(
+        files_by_path[path].size_bytes < signal.minimum_size_bytes
+        for path, signal in required.items()
+    ):
+        raise ValueError("audio.cpp manifest recipe file closure does not match")
+    if recipe.package_format is not AudioCppFileKind.GGUF:
+        raise ValueError("audio.cpp manifest recipe format is unsupported")
+    if not {"tts", "clone"}.intersection(recipe.capabilities):
+        raise ValueError("audio.cpp manifest recipe is not a speech package")
+
+    files = tuple(
+        ArtifactFile(file.managed_path, file.size_bytes, file.sha256)
+        for file in sorted(package.files, key=lambda item: item.managed_path)
+    )
+    sources = {
+        file.managed_path: _pinned_source_url(manifest, file.source_path)
+        for file in sorted(package.files, key=lambda item: item.managed_path)
+    }
+    return (
+        ArtifactDescriptor(
+            reference=ArtifactRef(
+                package.artifact_id,
+                manifest.commit,
+                recipe.precision,
+            ),
+            model_id=recipe.default_public_model_id,
+            role=ArtifactRole.ROOT,
+            format=ArtifactFormat.GGUF,
+            consumer="audio_cpp",
+            model_family=recipe.family,
+            upstream_repository=manifest.repository,
+            upstream_revision=manifest.commit,
+            source_url=next(iter(sources.values())),
+            precision=recipe.precision,
+            expected_installed_bytes=sum(file.size_bytes for file in files),
+            license_id=package.license_id,
+            license_url=package.license_url,
+            usage_notice=package.usage_notice,
+            runtime_name="audio.cpp",
+            runtime_version_constraint=(
+                f"{recipe.audio_cpp_release}@{recipe.audio_cpp_commit}"
+            ),
+            supported_os=tuple(
+                dict.fromkeys(item.system for item in recipe.backend_evidence)
+            ),
+            supported_architectures=tuple(
+                dict.fromkeys(item.architecture for item in recipe.backend_evidence)
+            ),
+            provenance=(
+                ProvenanceClass.CHATBOOK_CURATED,
+                ProvenanceClass.INTEGRITY_VERIFIED,
+            ),
+            files=files,
+        ),
+        sources,
+    )
+
+
+def audio_cpp_curated_entries(
+    registry: AudioCppRecipeRegistry | None = None,
+) -> tuple[tuple[ArtifactDescriptor, dict[str, str]], ...]:
+    """Join reviewed pinned sources to their exact approved recipes."""
+
+    if registry is None:
+        from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+
+        registry = AUDIO_CPP_RECIPE_REGISTRY
+    manifest = load_audio_cpp_artifact_source_manifest()
+    entries = tuple(
+        _curated_entry(manifest, package, _manifest_recipe(package, registry))
+        for package in manifest.packages
+    )
+    references = [descriptor.reference for descriptor, _sources in entries]
+    if len(references) != len(set(references)):
+        raise ValueError("audio.cpp manifest produces duplicate artifact references")
+    return entries

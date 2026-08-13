@@ -36,6 +36,55 @@ _PINNED_MODEL_SPEC_BASE = (
 _RECIPE_EVIDENCE_REFERENCE = (
     "Docs/superpowers/specs/2026-08-09-audio-cpp-guided-model-setup-design.md"
 )
+_MODEL_LIBRARY_ADMITTED_VARIANTS = frozenset(
+    {
+        "dramabox_q8_0",
+        "fish_audio_s2_pro_bf16",
+        "fish_audio_s2_pro_q8_0",
+        "higgs_audio_tts_4b_bf16",
+        "higgs_audio_tts_4b_q8_0",
+        "index_tts2_f16",
+        "index_tts2_orig",
+        "index_tts2_q8_0",
+        "inflect_micro_v2_orig",
+        "irodori_tts_500m_v3_f16",
+        "irodori_tts_500m_v3_q8_0",
+        "irodori_tts_600m_v3_voicedesign_f16",
+        "irodori_tts_600m_v3_voicedesign_q8_0",
+        "irodori_tts_v4_small_f16",
+        "irodori_tts_v4_small_q8_0",
+        "moss_tts_local_v1_5_bf16",
+        "moss_tts_local_v1_5_q8_0",
+        "moss_tts_nano_100m_bf16",
+        "moss_tts_nano_100m_q8_0",
+        "omnivoice_bf16",
+        "omnivoice_f16",
+        "omnivoice_q8_0",
+        "pocket_tts_english_bf16",
+        "pocket_tts_english_q8_0",
+        "pocket_tts_german_bf16",
+        "pocket_tts_german_q8_0",
+        "pocket_tts_italian_bf16",
+        "pocket_tts_italian_q8_0",
+        "pocket_tts_portuguese_bf16",
+        "pocket_tts_portuguese_q8_0",
+        "pocket_tts_spanish_bf16",
+        "pocket_tts_spanish_q8_0",
+        "qwen3_tts_1_7b_base_bf16",
+        "qwen3_tts_1_7b_base_orig",
+        "qwen3_tts_1_7b_base_q8_0",
+        "supertonic_3_f16",
+        "supertonic_3_orig",
+        "vevo2_f16",
+        "vevo2_orig",
+        "vevo2_q8_0",
+        "vibevoice_1_5b_bf16",
+        "vibevoice_1_5b_q8_0",
+        "voxcpm2_bf16",
+        "voxcpm2_orig",
+        "voxcpm2_q8_0",
+    }
+)
 
 
 class AudioCppFileKind(StrEnum):
@@ -859,6 +908,11 @@ def _recipe(
         support_state=AudioCppRecipeSupportState.APPROVED,
         evidence_reference=_RECIPE_EVIDENCE_REFERENCE,
         source_links=(f"{_PINNED_MODEL_SPEC_BASE}/{family}.json",),
+        model_library_artifact_ids=(
+            (f"audio-cpp-{package_variant.replace('_', '-')}",)
+            if package_variant in _MODEL_LIBRARY_ADMITTED_VARIANTS
+            else ()
+        ),
     )
 
 

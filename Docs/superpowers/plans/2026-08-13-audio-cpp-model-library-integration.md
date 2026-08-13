@@ -192,7 +192,9 @@ git commit -m "feat(tts): close audio cpp recipe accounting"
 
 **Files:**
 - Modify: `tldw_chatbook/TTS/audio_cpp_artifact_catalog.py`
+- Modify: `tldw_chatbook/TTS/audio_cpp_recipes.py` (admitted artifact IDs only)
 - Modify: `tldw_chatbook/Model_Artifacts/curated_registry.py:18-91`
+- Modify: `Tests/TTS/test_audio_cpp_recipes.py` (admitted artifact IDs only)
 - Modify: `Tests/Model_Artifacts/test_curated_registry.py`
 - Modify: `Tests/TTS/test_audio_cpp_artifact_catalog.py`
 
