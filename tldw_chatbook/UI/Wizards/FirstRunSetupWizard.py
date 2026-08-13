@@ -1523,15 +1523,15 @@ class ProviderStep(SetupStep):
         stage_provider = getattr(self.wizard, "stage_provider_setup", None)
         if provider_draft is not None and callable(stage_provider):
             stage_provider(provider_draft)
-        if self.is_mounted and provider_draft is not None:
-            self._begin_selected_provider_discovery(
-                provider_draft, sync_live_credential=False
-            )
         invalidate_handoff = getattr(
             self.wizard, "invalidate_provider_model_handoff", None
         )
         if callable(invalidate_handoff):
             invalidate_handoff()
+        if self.is_mounted and provider_draft is not None:
+            self._begin_selected_provider_discovery(
+                provider_draft, sync_live_credential=False
+            )
         return True
 
     def _remember_current_credential(self) -> None:
@@ -1985,7 +1985,16 @@ class ProviderStep(SetupStep):
             self._selected_provider_outcomes.clear()
             self.wizard._first_run_selected_provider_models = {}
             self.wizard._first_run_selected_provider_outcomes = {}
+            self.wizard._first_run_provider_config_preconditions = {}
             return
+        capture_precondition = getattr(
+            self.wizard, "capture_provider_config_precondition", None
+        )
+        config_precondition = (
+            capture_precondition(discovery_key)
+            if callable(capture_precondition)
+            else None
+        )
         generation = self._obsolete_provider_generation(
             "setup-provider-discovery",
             "setup-provider-probe",
@@ -1998,6 +2007,11 @@ class ProviderStep(SetupStep):
         self._selected_provider_outcomes.clear()
         self.wizard._first_run_selected_provider_models = {}
         self.wizard._first_run_selected_provider_outcomes = {}
+        self.wizard._first_run_provider_config_preconditions = (
+            {discovery_key: config_precondition}
+            if config_precondition is not None
+            else {}
+        )
         self._selected_discovery_done = asyncio.Event()
         self.query_one("#setup-provider-probe-status", Static).update(
             "Checking the selected provider…"
@@ -2866,6 +2880,7 @@ class ModelStep(SetupStep):
         self._rendered_discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = (
             None
         )
+        self._selection_config_precondition: object | None = None
         self.selected_model_id: str = ""
         # Bug-5: tracks whether selected_model_id's current value came from
         # the free-text custom Input (as opposed to the RadioSet) -- lets
@@ -2886,6 +2901,7 @@ class ModelStep(SetupStep):
         self._shown_for_discovery_key = None
         self._selection_discovery_key = None
         self._rendered_discovery_key = None
+        self._selection_config_precondition = None
         self.selected_model_id = ""
         self._model_id_from_custom_input = False
         if not self.is_mounted:
@@ -2992,6 +3008,11 @@ class ModelStep(SetupStep):
             self._shown_for_provider = provider_key
             self._shown_for_discovery_key = discovery_key
             self._selection_discovery_key = discovery_key if prefill_model_id else None
+            self._selection_config_precondition = (
+                self._config_precondition_for_discovery(discovery_key)
+                if prefill_model_id
+                else None
+            )
             try:
                 self.query_one("#setup-model-custom", Input).value = prefill_model_id
             except Exception:
@@ -3444,6 +3465,9 @@ class ModelStep(SetupStep):
             self.selected_model_id = value
             self._model_id_from_custom_input = True
             self._selection_discovery_key = self._current_discovery_key()
+            self._selection_config_precondition = (
+                self._capture_current_config_precondition()
+            )
         elif self._model_id_from_custom_input:
             self._model_id_from_custom_input = False
             pressed = self._live_pressed_radio()
@@ -3455,6 +3479,13 @@ class ModelStep(SetupStep):
             )
             self._selection_discovery_key = (
                 self._current_discovery_key() if self.selected_model_id else None
+            )
+            self._selection_config_precondition = (
+                self._config_precondition_for_discovery(
+                    self._selection_discovery_key
+                )
+                if self.selected_model_id
+                else None
             )
         if self.selected_model_id != previous_model:
             self._notify_provider_model_changed()
@@ -3473,6 +3504,11 @@ class ModelStep(SetupStep):
             discovery_key
             if model_id and discovery_key == current_key
             else current_key if model_id else None
+        )
+        self._selection_config_precondition = (
+            self._config_precondition_for_discovery(self._selection_discovery_key)
+            if model_id
+            else None
         )
         if changed:
             self._notify_provider_model_changed(
@@ -3497,6 +3533,24 @@ class ModelStep(SetupStep):
                 model_id=model_id,
                 discovery_key=discovery_key,
             )
+
+    def _config_precondition_for_discovery(
+        self,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey | None,
+    ) -> object | None:
+        preconditions = getattr(
+            self.wizard, "_first_run_provider_config_preconditions", {}
+        )
+        if discovery_key is None or not isinstance(preconditions, Mapping):
+            return None
+        return preconditions.get(discovery_key)
+
+    def _capture_current_config_precondition(self) -> object | None:
+        discovery_key = self._current_discovery_key()
+        capture = getattr(self.wizard, "capture_provider_config_precondition", None)
+        if discovery_key is None or not callable(capture):
+            return None
+        return capture(discovery_key)
 
     def _live_pressed_radio(self) -> Optional[RadioButton]:
         """F1 fix: read ``#setup-model-choice``'s ``pressed_button``, but only
@@ -3571,11 +3625,28 @@ class ModelStep(SetupStep):
         provenance: Literal["discovered", "manual"] = (
             "manual" if self._model_id_from_custom_input else "discovered"
         )
-        ok = await commit_staged(
-            model_id,
-            discovery_key=selection_key,
-            model_provenance=provenance,
-        )
+        if (
+            callable(
+                getattr(self.wizard, "capture_provider_config_precondition", None)
+            )
+            and self._selection_config_precondition is None
+        ):
+            return (
+                False,
+                (
+                    "Connection settings changed. Refresh models or re-enter the "
+                    "model ID."
+                ),
+            )
+        commit_kwargs = {
+            "discovery_key": selection_key,
+            "model_provenance": provenance,
+        }
+        if self._selection_config_precondition is not None:
+            commit_kwargs["config_precondition"] = (
+                self._selection_config_precondition
+            )
+        ok = await commit_staged(model_id, **commit_kwargs)
         if ok:
             self.selected_model_id = model_id
             self._selection_discovery_key = self._current_discovery_key()
@@ -6714,6 +6785,7 @@ class SetupWizardContainer(WizardContainer):
             str,
             wizard_state.FirstRunModelDiscoveryKey,
             Literal["discovered", "manual"],
+            object,
         ] | None = None
         from tldw_chatbook.Chat.provider_setup_persistence import (
             ProviderSetupWriteGuard,
@@ -6729,6 +6801,9 @@ class SetupWizardContainer(WizardContainer):
             wizard_state.FirstRunModelDiscoveryKey, tuple[str, ...]
         ] = {}
         self._first_run_selected_provider_outcomes: dict[
+            wizard_state.FirstRunModelDiscoveryKey, object
+        ] = {}
+        self._first_run_provider_config_preconditions: dict[
             wizard_state.FirstRunModelDiscoveryKey, object
         ] = {}
         self._provider_dismiss_warning_seconds = max(
@@ -6799,6 +6874,7 @@ class SetupWizardContainer(WizardContainer):
         self.invalidate_provider_write_expectation()
         self._first_run_selected_provider_models = {}
         self._first_run_selected_provider_outcomes = {}
+        self._first_run_provider_config_preconditions = {}
         self.wizard_data.pop(wizard_state.STEP_MODEL, None)
         model_index = self._step_index_for_id(wizard_state.STEP_MODEL)
         if model_index is None:
@@ -6819,10 +6895,28 @@ class SetupWizardContainer(WizardContainer):
     ) -> None:
         """Fence old model state and start discovery for the current draft."""
 
-        self._first_run_selected_provider_models = {}
-        self._first_run_selected_provider_outcomes = {}
-        self.wizard_data.pop(wizard_state.STEP_MODEL, None)
         current_key = owner._model_discovery_key(provider_draft)
+        current_models = self._first_run_selected_provider_models.get(current_key)
+        current_outcome = self._first_run_selected_provider_outcomes.get(current_key)
+        current_precondition = self._first_run_provider_config_preconditions.get(
+            current_key
+        )
+        self._first_run_selected_provider_models = (
+            {current_key: current_models}
+            if current_key is not None and current_models is not None
+            else {}
+        )
+        self._first_run_selected_provider_outcomes = (
+            {current_key: current_outcome}
+            if current_key is not None and current_outcome is not None
+            else {}
+        )
+        self._first_run_provider_config_preconditions = (
+            {current_key: current_precondition}
+            if current_key is not None and current_precondition is not None
+            else {}
+        )
+        self.wizard_data.pop(wizard_state.STEP_MODEL, None)
         if (
             owner.is_mounted
             and current_key is not None
@@ -6866,6 +6960,7 @@ class SetupWizardContainer(WizardContainer):
         self._committed_provider_model = ""
         self._first_run_selected_provider_models = {}
         self._first_run_selected_provider_outcomes = {}
+        self._first_run_provider_config_preconditions = {}
         owner = getattr(self, "_first_run_provider_discovery_owner", None)
         if isinstance(owner, ProviderStep):
             if not self._provider_ui_detached:
@@ -6922,6 +7017,27 @@ class SetupWizardContainer(WizardContainer):
         return True
 
     @staticmethod
+    def capture_provider_config_precondition(
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey,
+    ) -> object | None:
+        """Capture authoritative provider config for discovery or manual input."""
+
+        if type(discovery_key) is not wizard_state.FirstRunModelDiscoveryKey:
+            return None
+        try:
+            from tldw_chatbook.Chat.provider_setup_persistence import (
+                capture_provider_setup_precondition,
+            )
+            from tldw_chatbook.config import get_atomic_config_snapshot
+
+            return capture_provider_setup_precondition(
+                get_atomic_config_snapshot(),
+                provider=discovery_key.provider_key,
+            )
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
     def _provider_drafts_match(
         left: wizard_state.FirstRunProviderDraft | None,
         right: wizard_state.FirstRunProviderDraft,
@@ -6956,6 +7072,7 @@ class SetupWizardContainer(WizardContainer):
         *,
         discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = None,
         model_provenance: Literal["discovered", "manual"] = "manual",
+        config_precondition: object | None = None,
     ) -> bool:
         """Persist the staged connection and model through one atomic mutation."""
 
@@ -6967,6 +7084,13 @@ class SetupWizardContainer(WizardContainer):
             return False
         if model_provenance not in {"discovered", "manual"}:
             return False
+        if config_precondition is not None:
+            from tldw_chatbook.Chat.provider_setup_persistence import (
+                ProviderSetupConfigPrecondition,
+            )
+
+            if type(config_precondition) is not ProviderSetupConfigPrecondition:
+                return False
         normalized_model = model_id.strip()
         owner = getattr(self, "_first_run_provider_discovery_owner", None)
         changed_draft: wizard_state.FirstRunProviderDraft | None = None
@@ -7014,6 +7138,7 @@ class SetupWizardContainer(WizardContainer):
                     normalized_model,
                     expected_key,
                     model_provenance,
+                    config_precondition,
                 )
                 active_task = self._provider_commit_task
                 if (
@@ -7033,6 +7158,7 @@ class SetupWizardContainer(WizardContainer):
                             normalized_model,
                             expected_key,
                             model_provenance,
+                            config_precondition,
                             self._provider_stage_generation,
                             lease,
                         )
@@ -7060,6 +7186,7 @@ class SetupWizardContainer(WizardContainer):
         model_id: str,
         discovery_key: wizard_state.FirstRunModelDiscoveryKey,
         model_provenance: Literal["discovered", "manual"],
+        config_precondition: object | None,
         stage_generation: int,
         lease: int,
     ) -> bool:
@@ -7119,6 +7246,7 @@ class SetupWizardContainer(WizardContainer):
                             discovery_key=discovery_key,
                             model_id=model_id,
                             model_provenance=model_provenance,
+                            config_precondition=config_precondition,
                         )
                     except (TypeError, ValueError):
                         logger.warning(
@@ -7179,11 +7307,14 @@ class SetupWizardContainer(WizardContainer):
         discovery_key: wizard_state.FirstRunModelDiscoveryKey,
         model_id: str,
         model_provenance: Literal["discovered", "manual"],
+        config_precondition: object | None,
     ) -> None:
         """Bind a secret-free CAS token to the issued atomic setup mutation."""
 
         from tldw_chatbook.Chat.provider_setup_persistence import (
+            ProviderSetupConfigPrecondition,
             ProviderSetupWriteIdentity,
+            bind_provider_setup_precondition,
             bind_provider_setup_write_expectation,
             capture_expected_provider_setup_state,
         )
@@ -7197,10 +7328,16 @@ class SetupWizardContainer(WizardContainer):
             model_provenance=model_provenance,
         )
         expectation = self._provider_write_guard.arm(expected_identity)
-        expected_state = capture_expected_provider_setup_state(
-            config_snapshot,
-            identity=expected_identity,
-        )
+        if type(config_precondition) is ProviderSetupConfigPrecondition:
+            expected_state = bind_provider_setup_precondition(
+                config_precondition,
+                identity=expected_identity,
+            )
+        else:
+            expected_state = capture_expected_provider_setup_state(
+                config_snapshot,
+                identity=expected_identity,
+            )
 
         bind_provider_setup_write_expectation(
             mutation,

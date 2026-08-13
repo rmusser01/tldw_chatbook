@@ -403,6 +403,96 @@ class _ProviderCredentialObservation:
         return f"_ProviderCredentialObservation(source={self.source!r})"
 
 
+class ProviderSetupConfigPrecondition:
+    """Immutable secret-free provider state captured before model selection."""
+
+    __slots__ = (
+        "__credential_observation",
+        "config_generation",
+        "configured_connection_identity",
+        "configured_model_state",
+        "configured_routing_state",
+        "provider_key",
+    )
+
+    def __init__(
+        self,
+        *,
+        config_generation: int,
+        provider_key: str,
+        configured_connection_identity: tuple[str, str] | None,
+        configured_routing_state: tuple[tuple[str, str], ...],
+        configured_model_state: tuple[str | None, str | None, str | None],
+        credential_observation: _ProviderCredentialObservation,
+    ) -> None:
+        if type(config_generation) is not int or config_generation < 0:
+            raise ValueError("Provider setup expected generation is invalid.")
+        canonical_key = canonical_provider_key(provider_key)
+        if canonical_key != provider_key:
+            raise ValueError("Provider setup expected provider is invalid.")
+        if not (
+            configured_connection_identity is None
+            or (
+                type(configured_connection_identity) is tuple
+                and len(configured_connection_identity) == 2
+                and all(type(item) is str for item in configured_connection_identity)
+            )
+        ):
+            raise ValueError("Provider setup expected route is invalid.")
+        if (
+            type(configured_routing_state) is not tuple
+            or any(
+                type(item) is not tuple
+                or len(item) != 2
+                or any(type(value) is not str for value in item)
+                for item in configured_routing_state
+            )
+            or type(configured_model_state) is not tuple
+            or len(configured_model_state) != 3
+            or any(
+                item is not None and type(item) is not str
+                for item in configured_model_state
+            )
+            or type(credential_observation) is not _ProviderCredentialObservation
+        ):
+            raise ValueError("Provider setup expected state is invalid.")
+        object.__setattr__(self, "config_generation", config_generation)
+        object.__setattr__(self, "provider_key", canonical_key)
+        object.__setattr__(
+            self,
+            "configured_connection_identity",
+            configured_connection_identity,
+        )
+        object.__setattr__(self, "configured_routing_state", configured_routing_state)
+        object.__setattr__(self, "configured_model_state", configured_model_state)
+        object.__setattr__(
+            self,
+            "_ProviderSetupConfigPrecondition__credential_observation",
+            credential_observation,
+        )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        del name, value
+        raise AttributeError("Provider setup config precondition is immutable.")
+
+    def __repr__(self) -> str:
+        return (
+            "ProviderSetupConfigPrecondition("
+            f"config_generation={self.config_generation!r}, "
+            f"provider_key={self.provider_key!r}, "
+            "configured_connection_identity="
+            f"{self.configured_connection_identity!r}, "
+            f"configured_routing_state={self.configured_routing_state!r}, "
+            f"configured_model_state={self.configured_model_state!r})"
+        )
+
+    def _credential(self) -> _ProviderCredentialObservation:
+        return object.__getattribute__(
+            self,
+            "_ProviderSetupConfigPrecondition__credential_observation",
+        )
+
+
 class ExpectedProviderSetupState:
     """Immutable secret-free CAS state captured from authoritative config."""
 
@@ -517,17 +607,57 @@ def capture_expected_provider_setup_state(
         raise ValueError("Provider setup config snapshot is invalid.")
     if type(identity) is not ProviderSetupWriteIdentity:
         raise ValueError("Provider setup write identity is invalid.")
+    precondition = capture_provider_setup_precondition(
+        snapshot,
+        provider=identity.provider_key,
+    )
+    return bind_provider_setup_precondition(precondition, identity=identity)
+
+
+def capture_provider_setup_precondition(
+    snapshot: AtomicConfigSnapshot,
+    *,
+    provider: str,
+) -> ProviderSetupConfigPrecondition:
+    """Capture one provider's relevant locked config before model selection."""
+
+    if type(snapshot) is not AtomicConfigSnapshot:
+        raise ValueError("Provider setup config snapshot is invalid.")
+    provider_key = canonical_provider_key(provider)
     route, routing, models, credential = _provider_setup_observations(
         snapshot.values,
-        identity.provider_key,
+        provider_key,
     )
-    return ExpectedProviderSetupState(
+    return ProviderSetupConfigPrecondition(
         config_generation=snapshot.generation,
-        identity=identity,
+        provider_key=provider_key,
         configured_connection_identity=route,
         configured_routing_state=routing,
         configured_model_state=models,
         credential_observation=credential,
+    )
+
+
+def bind_provider_setup_precondition(
+    precondition: ProviderSetupConfigPrecondition,
+    *,
+    identity: ProviderSetupWriteIdentity,
+) -> ExpectedProviderSetupState:
+    """Bind model provenance to an earlier authoritative config observation."""
+
+    if type(precondition) is not ProviderSetupConfigPrecondition:
+        raise ValueError("Provider setup config precondition is invalid.")
+    if type(identity) is not ProviderSetupWriteIdentity:
+        raise ValueError("Provider setup write identity is invalid.")
+    if precondition.provider_key != identity.provider_key:
+        raise ValueError("Provider setup expected provider changed.")
+    return ExpectedProviderSetupState(
+        config_generation=precondition.config_generation,
+        identity=identity,
+        configured_connection_identity=precondition.configured_connection_identity,
+        configured_routing_state=precondition.configured_routing_state,
+        configured_model_state=precondition.configured_model_state,
+        credential_observation=precondition._credential(),
     )
 
 

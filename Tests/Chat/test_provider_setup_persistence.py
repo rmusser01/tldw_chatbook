@@ -55,6 +55,107 @@ def _bind_atomic_expectation(
     return guard, expected_state
 
 
+def test_provider_setup_precondition_rebinds_original_locked_state():
+    original = config_module.AtomicConfigSnapshot(
+        7,
+        {
+            "api_settings": {
+                "moonshot": {
+                    "api_region": "china",
+                    "api_base_url": "https://api.moonshot.cn/v1",
+                }
+            }
+        },
+    )
+    changed = config_module.AtomicConfigSnapshot(
+        8,
+        {
+            "api_settings": {
+                "moonshot": {
+                    "api_region": "global",
+                    "api_base_url": "https://api.moonshot.ai/v1",
+                }
+            }
+        },
+    )
+    identity = persistence_module.ProviderSetupWriteIdentity(
+        provider_key="moonshot",
+        connection_identity=persistence_module.canonical_connection_identity(
+            "moonshot", "https://api.moonshot.cn/v1"
+        ),
+        credential_source="none",
+        credential_revision=0,
+        model_id="moonshot-cn-model",
+        model_provenance="discovered",
+    )
+
+    precondition = persistence_module.capture_provider_setup_precondition(
+        original,
+        provider="moonshot",
+    )
+    expected = persistence_module.bind_provider_setup_precondition(
+        precondition,
+        identity=identity,
+    )
+
+    assert expected._matches_snapshot(original) is True
+    assert expected._matches_snapshot(changed) is False
+
+
+def test_provider_setup_precondition_allows_unrelated_locked_change():
+    original = config_module.AtomicConfigSnapshot(
+        3,
+        {
+            "api_settings": {"custom": {"api_url": "https://a.example/v1"}},
+            "general": {"users_name": "Before"},
+        },
+    )
+    unrelated = config_module.AtomicConfigSnapshot(
+        4,
+        {
+            "api_settings": {"custom": {"api_url": "https://a.example/v1"}},
+            "general": {"users_name": "After"},
+        },
+    )
+    identity = persistence_module.ProviderSetupWriteIdentity(
+        provider_key="custom",
+        connection_identity=persistence_module.canonical_connection_identity(
+            "custom", "https://a.example/v1"
+        ),
+        credential_source="none",
+        credential_revision=0,
+        model_id="manual-model",
+        model_provenance="manual",
+    )
+
+    precondition = persistence_module.capture_provider_setup_precondition(
+        original,
+        provider="custom",
+    )
+    expected = persistence_module.bind_provider_setup_precondition(
+        precondition,
+        identity=identity,
+    )
+
+    assert expected._matches_snapshot(unrelated) is True
+
+
+def test_provider_setup_precondition_repr_never_exposes_credential():
+    canary = "selection-precondition-secret-canary"
+    snapshot = config_module.AtomicConfigSnapshot(
+        2,
+        {"api_settings": {"custom": {"api_key": canary}}},
+    )
+
+    precondition = persistence_module.capture_provider_setup_precondition(
+        snapshot,
+        provider="custom",
+    )
+
+    assert canary not in repr(precondition)
+    assert not hasattr(precondition, "__dict__")
+
+
 def _build_bound_first_run_mutation(
     *,
     snapshot,

@@ -2828,6 +2828,20 @@ async def test_credential_rotation_after_provider_handoff_invalidates_before_sav
             assert target is not None
             target.value = True
             await pilot.pause()
+            assert model_step._selection_discovery_key == (
+                provider_step._selected_discovery_key
+            )
+            assert model_step._selection_discovery_key == (
+                provider_step._model_discovery_key(
+                    provider_step._effective_provider_draft()
+                )
+            )
+            assert model_step._selection_config_precondition is (
+                container._first_run_provider_config_preconditions[
+                    model_step._selection_discovery_key
+                ]
+            )
+            assert provider_step._sync_live_credential_revision() is False
             await container._advance()
             expected_model = "rotation-model-b"
 
@@ -4945,6 +4959,310 @@ async def test_mounted_model_save_rejects_settings_changed_discovery_identity(
             assert len(writes) == 1
             assert container.provider_setup_committed
             assert container.committed_provider_model == "identity-a-model"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_key", "initial_settings", "changed_values"),
+    [
+        (
+            "moonshot",
+            {
+                "api_region": "china",
+                "api_base_url": "https://api.moonshot.cn/v1",
+                "api_key": "selection-time-key-a",
+            },
+            {
+                "api_region": "global",
+                "api_base_url": "https://api.moonshot.ai/v1",
+            },
+        ),
+        (
+            "huggingface",
+            {
+                "use_router_url_format": "true",
+                "api_base_url": "https://router.huggingface.co/v1",
+                "api_key": "selection-time-key-a",
+            },
+            {
+                "use_router_url_format": "false",
+                "api_base_url": "https://api-inference.huggingface.co/v1",
+            },
+        ),
+        (
+            "custom",
+            {
+                "api_url": "https://selection-a.example/v1/chat/completions",
+                "api_key": "selection-time-key-a",
+            },
+            {"api_url": "https://selection-b.example/v1/chat/completions"},
+        ),
+        (
+            "custom",
+            {
+                "api_url": "https://selection-key.example/v1/chat/completions",
+                "api_key": "selection-time-key-a",
+            },
+            {"api_key": "selection-time-key-b"},
+        ),
+    ],
+    ids=["moonshot-region", "huggingface-router", "custom-endpoint", "stored-key"],
+)
+async def test_mounted_selection_precondition_rejects_completed_config_write_before_save(
+    provider_key: str,
+    initial_settings: dict[str, str],
+    changed_values: dict[str, str],
+):
+    """A completed config write cannot rebase an already-selected model."""
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook import config as config_module
+
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {f"api_settings.{provider_key}": initial_settings}
+    ).fully_applied
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {provider_key: dict(initial_settings)}
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(
+            return_value=_typed_model_discovery_result(
+                provider_key, "selection-a-model"
+            )
+        )
+    )
+
+    async with _HostApp(wizard).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider(provider_key)
+        await container._advance()
+
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        target = None
+        for _ in range(30):
+            target = next(
+                (
+                    button
+                    for button in model_step.query(RadioButton)
+                    if getattr(button, "_model_id", "") == "selection-a-model"
+                ),
+                None,
+            )
+            if target is not None:
+                break
+            await pilot.pause(0.05)
+        assert target is not None
+        target.value = True
+        await pilot.pause()
+        selected_key = model_step._selection_discovery_key
+        assert selected_key is not None
+
+        assert config_module.apply_settings_mutation_to_cli_config(
+            {f"api_settings.{provider_key}": changed_values}
+        ).fully_applied
+        assert model_step._current_discovery_key() == selected_key
+        await container._advance()
+
+        authoritative = config_module.get_atomic_config_snapshot().values
+        current_settings = authoritative["api_settings"][provider_key]
+        assert all(
+            current_settings[key] == value for key, value in changed_values.items()
+        )
+        assert authoritative["chat_defaults"]["model"] != "selection-a-model"
+        assert container.current_step == model_index
+        assert not container.provider_setup_committed
+        assert model_step.selected_model_id == ""
+        assert model_step._selection_discovery_key is None
+        error = str(model_step.query_one(".setup-step-error", Static).renderable)
+        assert "connection settings changed" in error.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change_kind", ["unchanged", "unrelated"])
+async def test_mounted_selection_precondition_allows_current_relevant_config(
+    change_kind: str,
+):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook import config as config_module
+
+    initial_settings = {
+        "api_url": "https://selection-current.example/v1/chat/completions",
+        "api_key": "selection-current-key",
+    }
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {"api_settings.custom": initial_settings}
+    ).fully_applied
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {"custom": dict(initial_settings)}
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(
+            return_value=_typed_model_discovery_result(
+                "custom", "selection-current-model"
+            )
+        )
+    )
+
+    async with _HostApp(wizard).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        await container._advance()
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        for _ in range(30):
+            target = next(
+                (
+                    button
+                    for button in model_step.query(RadioButton)
+                    if getattr(button, "_model_id", "")
+                    == "selection-current-model"
+                ),
+                None,
+            )
+            if target is not None:
+                break
+            await pilot.pause(0.05)
+        assert target is not None
+        target.value = True
+        await pilot.pause()
+
+        if change_kind == "unrelated":
+            assert config_module.apply_settings_mutation_to_cli_config(
+                {"general": {"users_name": "selection-unrelated-change"}}
+            ).fully_applied
+        await container._advance()
+
+        authoritative = config_module.get_atomic_config_snapshot().values
+        assert container.provider_setup_committed
+        assert authoritative["chat_defaults"]["model"] == "selection-current-model"
+        if change_kind == "unrelated":
+            assert authoritative["general"]["users_name"] == (
+                "selection-unrelated-change"
+            )
+
+
+@pytest.mark.asyncio
+async def test_mounted_manual_reconfirmation_binds_current_authoritative_precondition():
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook import config as config_module
+
+    endpoint_a = "https://manual-selection-a.example/v1/chat/completions"
+    endpoint_b = "https://manual-selection-b.example/v1/chat/completions"
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {
+            "api_settings.custom": {
+                "api_url": endpoint_a,
+                "api_key": "manual-selection-key-a",
+            }
+        }
+    ).fully_applied
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "custom": {
+                "api_url": endpoint_a,
+                "api_key": "manual-selection-key-a",
+            }
+        }
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(
+            return_value=_typed_model_discovery_result(
+                "custom", "manual-selection-a-model"
+            )
+        )
+    )
+
+    async with _HostApp(wizard).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        await container._advance()
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        for _ in range(30):
+            target = next(
+                (
+                    button
+                    for button in model_step.query(RadioButton)
+                    if getattr(button, "_model_id", "")
+                    == "manual-selection-a-model"
+                ),
+                None,
+            )
+            if target is not None:
+                break
+            await pilot.pause(0.05)
+        assert target is not None
+        target.value = True
+        await pilot.pause()
+
+        assert config_module.apply_settings_mutation_to_cli_config(
+            {
+                "api_settings.custom": {
+                    "api_url": endpoint_b,
+                    "api_key": "manual-selection-key-b",
+                }
+            }
+        ).fully_applied
+        await container._advance()
+        assert container.current_step == model_index
+        assert not container.provider_setup_committed
+
+        wizard.app_instance.app_config["api_settings"]["custom"].update(
+            {
+                "api_url": endpoint_b,
+                "api_key": "manual-selection-key-b",
+            }
+        )
+        container.show_step(provider_index)
+        endpoint_input = provider_step.query_one("#setup-provider-endpoint", Input)
+        endpoint_input.value = endpoint_b
+        await pilot.pause()
+        await container._advance()
+        assert container.current_step == model_index
+        manual = model_step.query_one("#setup-model-custom", Input)
+        manual.value = "manual-selection-b-model"
+        await pilot.pause()
+        await container._advance()
+
+        authoritative = config_module.get_atomic_config_snapshot().values
+        assert container.provider_setup_committed
+        assert authoritative["api_settings"]["custom"]["api_url"] == endpoint_b
+        assert authoritative["api_settings"]["custom"]["api_key"] == (
+            "manual-selection-key-b"
+        )
+        assert authoritative["chat_defaults"]["model"] == (
+            "manual-selection-b-model"
+        )
 
 
 @pytest.mark.asyncio
