@@ -8,6 +8,8 @@ this module renders them and owns persistence via one exclusive worker.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import math
 import os
 import tempfile
@@ -754,7 +756,11 @@ class ProviderStep(SetupStep):
         self._discover = discover
         self._local_discover = local_discover or discover_local_servers
         self._probe = probe or _probe_first_run_provider_connection
-        self._environ = dict(environ) if environ is not None else dict(os.environ)
+        # Environment credentials may rotate while this long-running screen is
+        # open, so retain the live mapping and resolve it only at request time.
+        self._environ = environ if environ is not None else os.environ
+        self._credential_observation_key = os.urandom(32)
+        self._credential_observations: dict[str, tuple[str, bytes]] = {}
         self.probe_generation = 0
         self._discovery_visible = False
         self._local_discovery_generation = 0
@@ -965,10 +971,12 @@ class ProviderStep(SetupStep):
             return
         self._discovery_visible = True
         if self.selected_provider_key:
+            credential_rotated = self._sync_live_credential_revision()
             provider_draft = self._effective_provider_draft()
             discovery_key = self._model_discovery_key(provider_draft)
             if (
-                discovery_key != self._selected_discovery_key
+                credential_rotated
+                or discovery_key != self._selected_discovery_key
                 or self._selected_discovery_state
                 in {
                     "idle",
@@ -995,10 +1003,26 @@ class ProviderStep(SetupStep):
             self._cancel_discovery_workers()
 
     def on_unmount(self) -> None:
+        self.clear_sensitive_state()
+
+    def clear_sensitive_state(self) -> None:
+        """Drop every provider-owned secret and fence background publication."""
+
         self._discovery_visible = False
         self._cancel_discovery_workers()
         self._provider_test_evidence.invalidate()
         self._active_probe_token = None
+        self._last_tested_provider_identity = None
+        self._selected_discovery_credential_decision = None
+        self._selected_provider_models.clear()
+        self._credential_observations.clear()
+        self._credential_observation_key = b""
+        try:
+            key_input = self.query_one("#setup-provider-api-key", Input)
+            with key_input.prevent(Input.Changed):
+                key_input.value = ""
+        except Exception:
+            pass
         for draft in self._provider_drafts.values():
             draft.clear_secret()
         self._provider_drafts.clear()
@@ -1274,6 +1298,50 @@ class ProviderStep(SetupStep):
             return source, base_readiness.api_key, base_readiness
         return "none", None, base_readiness
 
+    def _sync_live_credential_revision(self) -> bool:
+        """Invalidate exact evidence when a request-boundary credential rotates."""
+
+        provider_key = self.selected_provider_key
+        if not provider_key or not self._credential_observation_key:
+            return False
+        source, value, _ = self._credential_at_request_boundary()
+        previous = self._credential_observations.get(provider_key)
+        if source != "environment" and previous is None:
+            return False
+        digest = hmac.new(
+            self._credential_observation_key,
+            f"{source}\0{value or ''}".encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        observation = (source, digest)
+        self._credential_observations[provider_key] = observation
+        if previous is None or (
+            previous[0] == source and hmac.compare_digest(previous[1], digest)
+        ):
+            return False
+        self._credential_decision_generation += 1
+        self._credential_revision += 1
+        self._invalidate_provider_test()
+        self._capture_provider_ui_draft()
+        return True
+
+    def _remember_current_environment_credential(self) -> None:
+        """Rebase rotation tracking after an explicit UI credential decision."""
+
+        provider_key = self.selected_provider_key
+        if not provider_key or not self._credential_observation_key:
+            return
+        source, value, _ = self._credential_at_request_boundary()
+        if source != "environment":
+            self._credential_observations.pop(provider_key, None)
+            return
+        digest = hmac.new(
+            self._credential_observation_key,
+            f"{source}\0{value or ''}".encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        self._credential_observations[provider_key] = (source, digest)
+
     def _current_provider_readiness(self):
         """Return shared readiness after applying the current transient decision."""
 
@@ -1361,6 +1429,7 @@ class ProviderStep(SetupStep):
     def _credential_semantics_changed(self) -> None:
         self._credential_decision_generation += 1
         self._credential_revision += 1
+        self._remember_current_environment_credential()
         self._invalidate_provider_test()
         self._capture_provider_ui_draft()
         self._refresh_auth_readiness()
@@ -1376,12 +1445,25 @@ class ProviderStep(SetupStep):
         from tldw_chatbook.Chat.provider_test_evidence import ProviderDraftIdentity
 
         tested = self._last_tested_provider_identity
+        current_credential_source, _, _ = self._credential_at_request_boundary()
+        credential_source_matches = (
+            type(discovery_key) is wizard_state.FirstRunModelDiscoveryKey
+            and type(tested) is ProviderDraftIdentity
+            and (
+                discovery_key.credential_source == tested.credential_source
+                or (
+                    discovery_key.credential_source == "none"
+                    and tested.credential_source == "stored"
+                    and current_credential_source == "stored"
+                )
+            )
+        )
         if (
             type(discovery_key) is wizard_state.FirstRunModelDiscoveryKey
             and type(tested) is ProviderDraftIdentity
             and discovery_key.provider_key == tested.provider_key
             and discovery_key.connection_identity == tested.connection_identity
-            and discovery_key.credential_source == tested.credential_source
+            and credential_source_matches
             and discovery_key.credential_revision == tested.credential_revision
         ):
             evidence = self._provider_test_evidence.evidence_for(tested)
@@ -1448,7 +1530,13 @@ class ProviderStep(SetupStep):
             else "Authentication (optional)"
         )
         test_button = self.query_one("#setup-provider-test", Button)
-        test_button.disabled = not readiness.ready
+        target = self._probe_target()
+        identity = self._provider_current_draft_identity() if target else None
+        connection_editable = self.query_one(
+            "#setup-provider-connection", Vertical
+        ).display
+        test_available = connection_editable or bool(target and identity is not None)
+        test_button.disabled = not readiness.ready or not test_available
         status = self.query_one("#setup-provider-key-status", Static)
         if not readiness.ready:
             recovery = readiness.recovery or "Add a provider credential."
@@ -1458,15 +1546,26 @@ class ProviderStep(SetupStep):
             status.update("The stored key will be removed when you continue.")
             return
         credential_source, _, _ = self._credential_at_request_boundary()
+        unavailable = (
+            " Connection testing is unavailable for this provider."
+            if not test_available
+            else ""
+        )
         if credential_source == "stored":
-            status.update("An API key is already configured for this provider.")
+            status.update(
+                f"An API key is already configured for this provider.{unavailable}"
+            )
         elif credential_source == "environment":
             env_var = readiness.env_var or "the configured environment variable"
-            status.update(f"Found {env_var} in your environment; nothing to store.")
+            status.update(
+                f"Found {env_var} in your environment; nothing to store.{unavailable}"
+            )
         elif credential_source == "draft":
-            status.update("A replacement API key is ready for this provider.")
+            status.update(
+                f"A replacement API key is ready for this provider.{unavailable}"
+            )
         else:
-            status.update("")
+            status.update(unavailable.strip())
 
     def _credential_draft(
         self, *, revision: int | None = None
@@ -1605,19 +1704,29 @@ class ProviderStep(SetupStep):
         except (TypeError, ValueError):
             return None
 
-    @staticmethod
     def _model_discovery_key(
+        self,
         provider_draft: wizard_state.FirstRunProviderDraft | None,
     ) -> wizard_state.FirstRunModelDiscoveryKey | None:
         if provider_draft is None:
             return None
         try:
-            return wizard_state.build_first_run_model_discovery_key(provider_draft)
+            exact_draft = provider_draft
+            if not exact_draft.endpoint:
+                target = self._cloud_probe_base_url(exact_draft.provider)
+                if not target:
+                    return None
+                exact_draft = wizard_state.FirstRunProviderDraft(
+                    exact_draft.provider,
+                    target,
+                    exact_draft.credential,
+                )
+            return wizard_state.build_first_run_model_discovery_key(exact_draft)
         except ValueError:
             return None
 
-    @staticmethod
     def _discovery_staged_settings(
+        self,
         provider_draft: wizard_state.FirstRunProviderDraft,
         discovery_key: wizard_state.FirstRunModelDiscoveryKey,
     ) -> dict[str, dict[str, dict[str, str]]]:
@@ -1625,9 +1734,10 @@ class ProviderStep(SetupStep):
 
         from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
 
-        settings = {
-            provider_endpoint_key(discovery_key.provider_key): provider_draft.endpoint
-        }
+        endpoint = provider_draft.endpoint or self._cloud_probe_base_url(
+            discovery_key.provider_key
+        )
+        settings = {provider_endpoint_key(discovery_key.provider_key): endpoint}
         credential = provider_draft.credential
         credential_value = wizard_state._credential_value_for_boundary(credential)
         if credential.source == "draft" and credential_value:
@@ -1641,7 +1751,10 @@ class ProviderStep(SetupStep):
     ) -> None:
         """Start one selected-provider probe/catalog request generation."""
 
-        if isinstance(provider_draft, str):
+        credential_rotated = self._sync_live_credential_revision()
+        if credential_rotated:
+            provider_draft = self._effective_provider_draft()
+        elif isinstance(provider_draft, str):
             canonical_key = self._canonical_provider_key(provider_draft)
             if canonical_key != self.selected_provider_key:
                 return
@@ -1862,6 +1975,7 @@ class ProviderStep(SetupStep):
         self._selected_discovery_key = None
         self._selected_provider_models.clear()
         self._capture_provider_ui_draft()
+        self._refresh_auth_readiness()
 
     @on(Button.Pressed, "#setup-provider-detect")
     def _on_detect_pressed(self, event: Button.Pressed) -> None:
@@ -2190,6 +2304,7 @@ class ProviderStep(SetupStep):
 
     def _launch_probe(self, *, api_key: str | None = None) -> None:
         del api_key
+        self._sync_live_credential_revision()
         generation = self._obsolete_provider_generation(
             "setup-provider-discovery",
             "setup-provider-probe",
@@ -2341,6 +2456,7 @@ class ProviderStep(SetupStep):
             "groq": "https://api.groq.com/openai",
             "deepseek": "https://api.deepseek.com",
             "mistral": "https://api.mistral.ai",
+            "mistralai": "https://api.mistral.ai",
         }.get(provider_key, "")
 
     def apply_probe_result(
@@ -2602,7 +2718,15 @@ class ModelStep(SetupStep):
         models: list[str] = []
         discover = self._discover_models
         owner = getattr(self.wizard, "_first_run_provider_discovery_owner", None)
-        if isinstance(owner, ProviderStep):
+        handed_off = getattr(self.wizard, "_first_run_selected_provider_models", {})
+        if isinstance(handed_off, Mapping) and discovery_key in handed_off:
+            models = list(handed_off[discovery_key])
+            discover = None
+        elif (
+            isinstance(owner, ProviderStep)
+            and owner.is_mounted
+            and owner.app is self.app
+        ):
             try:
                 selected_models = await asyncio.wait_for(
                     owner._models_from_selected_discovery(provider_key, discovery_key),
@@ -2615,6 +2739,8 @@ class ModelStep(SetupStep):
             # ProviderStep owns setup network work for this selection. If the
             # user advances before it finishes, use curated fallback rather
             # than issuing the same provider catalog request from ModelStep.
+            discover = None
+        elif isinstance(owner, ProviderStep):
             discover = None
         if discover is None:
             service = (
@@ -6078,6 +6204,28 @@ class SetupWizardContainer(WizardContainer):
 
         return self._committed_provider_model
 
+    def clear_provider_setup_sensitive_state(self) -> None:
+        """Cancel provider work and release every raw credential reference."""
+
+        self._provider_stage_generation += 1
+        self._provider_commit_generation += 1
+        task = self._provider_commit_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._provider_commit_task = None
+        self._provider_commit_identity = None
+        self._provider_commit_write_started = False
+        self._staged_provider_draft = None
+        self._provider_setup_committed = False
+        self._committed_provider_model = ""
+        self._first_run_selected_provider_models = {}
+        owner = getattr(self, "_first_run_provider_discovery_owner", None)
+        if isinstance(owner, ProviderStep):
+            owner.clear_sensitive_state()
+
+    def on_unmount(self) -> None:
+        self.clear_provider_setup_sensitive_state()
+
     def finish_later_message(self) -> str:
         """Describe provider persistence accurately for the current step."""
 
@@ -7624,6 +7772,7 @@ class SetupWizardContainer(WizardContainer):
         if self._finalized:
             return
         self._finalized = True
+        self.clear_provider_setup_sensitive_state()
         screen = self.screen
         if isinstance(screen, FirstRunSetupWizard):
             screen.dismiss(result)
@@ -7799,6 +7948,7 @@ class FirstRunSetupWizard(WizardScreen):
                 severity="error",
             )
             return
+        container.clear_provider_setup_sensitive_state()
         self.dismiss(None)
 
     def _clear_resume_attempt_after_target_mount(

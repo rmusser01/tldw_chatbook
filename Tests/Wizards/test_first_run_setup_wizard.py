@@ -2110,6 +2110,71 @@ async def test_probe_resolves_exact_credential_only_at_request_boundary(
             assert expected_value is None or expected_value not in rendered
 
 
+@pytest.mark.parametrize(
+    ("provider", "test_supported"),
+    [
+        ("anthropic", False),
+        ("cohere", False),
+        ("deepseek", True),
+        ("google", False),
+        ("groq", True),
+        ("huggingface", False),
+        ("mistral", True),
+        ("mistralai", True),
+        ("moonshot", False),
+        ("openai", True),
+        ("openrouter", True),
+        ("qwencloud", True),
+        ("zai", False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_cloud_provider_test_is_enabled_only_with_compatible_probe_target(
+    provider: str,
+    test_supported: bool,
+):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        resolve_provider_endpoint,
+    )
+    from tldw_chatbook.Chat.provider_readiness import default_api_key_env_var
+
+    env_var = default_api_key_env_var(provider)
+    assert env_var is not None
+    step = _provider_step(
+        environ={env_var: f"{provider}-matrix-secret"},
+        discover=AsyncMock(return_value=()),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider(provider)
+        await pilot.pause()
+
+        assert step.query_one("#setup-provider-auth-toggle", Collapsible).title == (
+            "Authentication"
+        )
+        test_button = step.query_one("#setup-provider-test", Button)
+        target = step._probe_target()
+        if test_supported:
+            assert not test_button.disabled
+            assert target
+            resolution = resolve_provider_endpoint(provider, target)
+            assert resolution.models_url is not None
+            assert not resolution.errors
+        else:
+            assert test_button.disabled
+            assert not target
+            assert (
+                "connection testing is unavailable"
+                in str(
+                    step.query_one("#setup-provider-key-status", Static).renderable
+                ).lower()
+            )
+
+
 @pytest.mark.parametrize("edit_action", ["type", "keep", "replace", "clear", "env"])
 @pytest.mark.asyncio
 async def test_every_credential_semantic_edit_cancels_mounted_probe(
@@ -2426,6 +2491,109 @@ async def test_mounted_test_continue_returned_model_save_rebases_exact_evidence(
             assert secret not in rendered
 
 
+@pytest.mark.asyncio
+async def test_mounted_stored_key_test_continue_returned_model_save_preserves_evidence(
+    monkeypatch,
+):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    secret = "preexisting-inline-boundary-secret"
+    probe = AsyncMock(return_value=_reachable_endpoint_outcome("stored-key-model"))
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(
+        return_value=_typed_model_discovery_result("custom", "stored-key-model")
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "custom": {
+                "api_url": "https://stored.example.test/v1/chat/completions",
+                "api_key": secret,
+            }
+        }
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.provider_setup_persistence.persist_provider_setup",
+        lambda _mutation: ConfigMutationResult(True, True, None),
+    )
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step._probe = probe
+        provider_step.select_provider("custom")
+        await pilot.pause()
+
+        provider_step.query_one("#setup-provider-test", Button).press()
+        await pilot.pause(0.1)
+        tested = provider_step._provider_current_draft_identity()
+        assert tested is not None
+        assert tested.credential_source == "stored"
+        assert provider_step._provider_evidence_store().evidence_for(tested) is not None
+        assert probe.await_args.kwargs["credential_value"] == secret
+
+        await container._advance()
+        assert container.current_step == model_index
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        target = None
+        for _ in range(20):
+            target = next(
+                (
+                    button
+                    for button in model_step.query(RadioButton)
+                    if getattr(button, "_model_id", "") == "stored-key-model"
+                ),
+                None,
+            )
+            if target is not None:
+                break
+            await pilot.pause(0.05)
+        assert target is not None
+        target.value = True
+        await pilot.pause()
+        assert provider_step._provider_evidence_store().evidence_for(tested) is not None
+
+        await container._advance()
+        assert container.provider_setup_committed
+        saved = provider_step._last_tested_provider_identity
+        assert saved is not None
+        assert saved.credential_source == "stored"
+        saved_evidence = provider_step._provider_evidence_store().evidence_for(saved)
+        assert saved_evidence is not None
+        verdict = get_provider_readiness(
+            "custom", wizard.app_instance.app_config, environ={}
+        ).verdict(
+            selected_model="stored-key-model",
+            evidence=saved_evidence,
+            current_identity=saved,
+        )
+        assert verdict.verified
+        for rendered in (
+            repr(container.staged_provider_draft),
+            repr(tested),
+            repr(saved),
+            repr(saved_evidence),
+            app.export_screenshot(),
+        ):
+            assert secret not in rendered
+
+
 @pytest.mark.parametrize("save_outcome", ["noop", "partial", "conflict", "cancelled"])
 @pytest.mark.asyncio
 async def test_mounted_incomplete_save_never_rebases_tested_draft_evidence(
@@ -2519,6 +2687,71 @@ async def test_mounted_incomplete_save_never_rebases_tested_draft_evidence(
         assert provider_step._last_tested_provider_identity == tested
         assert provider_step._provider_evidence_store().evidence_for(tested) is not None
         assert "incomplete-save-secret" not in app.export_screenshot()
+
+
+@pytest.mark.parametrize("dismissal", ["container", "finish_later"])
+@pytest.mark.asyncio
+async def test_mounted_dismissal_clears_all_staged_provider_secrets_and_tasks(
+    monkeypatch,
+    dismissal: str,
+):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    secret = f"{dismissal}-staged-provider-secret"
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {}
+    wizard.app_instance.llm_provider_catalog_scope_service = None
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        lambda *_args, **_kwargs: True,
+    )
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        assert provider_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        provider_step.query_one(
+            "#setup-provider-endpoint", Input
+        ).value = "https://dismiss.example.test/v1"
+        key_input = provider_step.query_one("#setup-provider-api-key", Input)
+        key_input.value = secret
+        await pilot.pause()
+        await container._advance()
+        assert container.staged_provider_draft is not None
+
+        blocker = asyncio.Event()
+        commit_task = asyncio.create_task(blocker.wait())
+        container._provider_commit_task = commit_task
+        container._provider_commit_identity = (container._provider_stage_generation, "")
+        if dismissal == "finish_later":
+            container.persist_current_checkpoint = AsyncMock(return_value=True)
+            await wizard._finish_later()
+        else:
+            container._dismiss_screen(None)
+        await pilot.pause()
+
+        assert app.wizard_result is None
+        assert container.staged_provider_draft is None
+        assert container._provider_commit_task is None
+        assert container._provider_commit_identity is None
+        assert commit_task.cancelled()
+        assert provider_step._provider_drafts == {}
+        assert key_input.value == ""
+        assert getattr(container, "_first_run_selected_provider_models", {}) == {}
+        for rendered in (
+            repr(container.__dict__),
+            repr(provider_step.__dict__),
+            app.export_screenshot(),
+        ):
+            assert secret not in rendered
 
 
 @pytest.mark.asyncio
@@ -3386,6 +3619,12 @@ async def test_provider_discovery_generation_discards_late_prior_provider():
     wizard.wizard_data = {
         "provider": {"provider_key": "ollama", "provider_value": "ollama"}
     }
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        build_first_run_model_discovery_key,
+    )
+
+    assert wizard._first_run_selected_provider_models == {identity: ("ollama-scope",)}
+    assert build_first_run_model_discovery_key(wizard.staged_provider_draft) == identity
     model_step = ModelStep(
         wizard=wizard,
         config=WizardStepConfig(id="model", title="Model", step_number=3),
@@ -3584,6 +3823,110 @@ async def test_provider_discovery_uses_exact_draft_settings_and_secret_free_key(
         assert identity.credential_source == "environment"
         assert models == ("exact-model",)
         assert "CUSTOM_API_KEY" not in repr(identity)
+
+
+@pytest.mark.asyncio
+async def test_open_wizard_uses_rotated_environment_key_for_next_test(monkeypatch):
+    import os
+    from unittest.mock import AsyncMock
+
+    first_secret = "open-wizard-env-secret-a"
+    rotated_secret = "open-wizard-env-secret-b"
+    monkeypatch.setenv("OPENAI_API_KEY", first_secret)
+    probe = AsyncMock(return_value=_reachable_endpoint_outcome("env-model"))
+    step = _provider_step(
+        probe=probe,
+        environ=os.environ,
+        discover=AsyncMock(return_value=()),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        await pilot.pause()
+        step.query_one("#setup-provider-test", Button).press()
+        await pilot.pause(0.1)
+        first_identity = step._last_tested_provider_identity
+        assert first_identity is not None
+        assert probe.await_args.kwargs["credential_value"] == first_secret
+
+        monkeypatch.setenv("OPENAI_API_KEY", rotated_secret)
+        step.query_one("#setup-provider-test", Button).press()
+        await pilot.pause(0.1)
+
+        assert probe.await_count == 2
+        assert probe.await_args.kwargs["credential_value"] == rotated_secret
+        rotated_identity = step._last_tested_provider_identity
+        assert rotated_identity is not None
+        assert rotated_identity.credential_source == "environment"
+        assert rotated_identity.credential_revision > first_identity.credential_revision
+        assert step._provider_evidence_store().evidence_for(first_identity) is None
+        for rendered in (
+            repr(first_identity),
+            repr(rotated_identity),
+            repr(step._provider_evidence_store()),
+            app.export_screenshot(),
+        ):
+            assert first_secret not in rendered
+            assert rotated_secret not in rendered
+
+
+@pytest.mark.asyncio
+async def test_open_wizard_restarts_discovery_for_rotated_environment_key(monkeypatch):
+    import os
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    first_secret = "discovery-env-secret-a"
+    rotated_secret = "discovery-env-secret-b"
+    monkeypatch.setenv("OPENAI_API_KEY", first_secret)
+    seen_keys: list[str | None] = []
+
+    async def discover_models(*, provider, staged_settings, **_kwargs):
+        seen_keys.append(
+            get_provider_readiness(
+                provider, staged_settings, environ=os.environ
+            ).api_key
+        )
+        return _typed_model_discovery_result("openai", f"model-{len(seen_keys)}")
+
+    scope_service = MagicMock(discover_models=AsyncMock(side_effect=discover_models))
+    wizard = MagicMock()
+    wizard.app_instance = MagicMock(
+        app_config={}, llm_provider_catalog_scope_service=scope_service
+    )
+    wizard.stage_provider_setup = MagicMock(return_value=True)
+    wizard.rerun = False
+    step = _provider_step(
+        wizard=wizard,
+        environ=os.environ,
+        discover=AsyncMock(return_value=()),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        await pilot.pause(0.1)
+        first_key = step._selected_discovery_key
+        assert first_key is not None
+        assert seen_keys == [first_secret]
+
+        step.on_hide()
+        monkeypatch.setenv("OPENAI_API_KEY", rotated_secret)
+        step.on_show()
+        await pilot.pause(0.1)
+
+        rotated_key = step._selected_discovery_key
+        assert rotated_key is not None
+        assert rotated_key.credential_revision > first_key.credential_revision
+        assert seen_keys == [first_secret, rotated_secret]
+        assert first_key not in step._selected_provider_models
+        assert step._selected_provider_models == {rotated_key: ("model-2",)}
+        assert first_secret not in repr(step._selected_provider_models)
+        assert rotated_secret not in repr(step._selected_provider_models)
 
 
 @pytest.mark.asyncio
