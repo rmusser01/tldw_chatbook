@@ -5307,6 +5307,233 @@ async def test_mounted_builtin_settings_change_fences_prior_discovery_identity()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "identity_change",
+    ["moonshot_region", "huggingface_router", "custom_endpoint", "credential"],
+)
+async def test_mounted_executor_entry_rejects_stale_provider_identity(
+    monkeypatch,
+    identity_change: str,
+):
+    """The atomic writer rejects identity changes made after UI prechecks."""
+    import asyncio
+    import threading
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Chat import provider_setup_persistence as persistence_module
+
+    if identity_change == "moonshot_region":
+        provider_key = "moonshot"
+        provider_settings = {
+            "api_region": "china",
+            "api_key": "writer-entry-saved-canary",
+        }
+    elif identity_change == "huggingface_router":
+        provider_key = "huggingface"
+        provider_settings = {
+            "use_router_url_format": "true",
+            "api_key": "writer-entry-saved-canary",
+        }
+    else:
+        provider_key = "custom"
+        provider_settings = {
+            "api_url": "https://writer-a.example/v1/chat/completions",
+            "api_key": "writer-entry-saved-canary",
+        }
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {provider_key: provider_settings}
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(
+            return_value=_typed_model_discovery_result(provider_key, "writer-model")
+        )
+    )
+    writes = []
+
+    def writer(*_args, mutation_precondition=None, **_kwargs):
+        assert callable(mutation_precondition)
+        if not mutation_precondition():
+            return ConfigMutationResult(
+                False,
+                False,
+                None,
+                conflict=True,
+                conflict_reason="identity_changed",
+            )
+        writes.append(True)
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        writer,
+    )
+    real_persist = persistence_module.persist_provider_setup
+    writer_entered = threading.Event()
+    release_writer = threading.Event()
+
+    def paused_persist(mutation):
+        writer_entered.set()
+        assert release_writer.wait(timeout=3)
+        return real_persist(mutation)
+
+    monkeypatch.setattr(
+        persistence_module,
+        "persist_provider_setup",
+        paused_persist,
+    )
+
+    async with _HostApp(wizard).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider(provider_key)
+        await container._advance()
+
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        rows = []
+        for _ in range(20):
+            rows = [
+                button
+                for button in model_step.query(RadioButton)
+                if getattr(button, "_model_id", "") == "writer-model"
+            ]
+            if rows:
+                break
+            await pilot.pause(0.05)
+        assert rows
+        rows[0].value = True
+        await pilot.pause()
+
+        save = asyncio.create_task(container._advance())
+        assert await asyncio.to_thread(writer_entered.wait, 2)
+        if identity_change == "moonshot_region":
+            provider_settings["api_region"] = "global"
+        elif identity_change == "huggingface_router":
+            provider_settings["use_router_url_format"] = "false"
+        elif identity_change == "custom_endpoint":
+            provider_step.query_one("#setup-provider-endpoint", Input).value = (
+                "https://writer-b.example/v1/chat/completions"
+            )
+            await pilot.pause()
+        else:
+            provider_step.query_one("#setup-provider-api-key", Input).value = (
+                "writer-entry-replacement-canary"
+            )
+            await pilot.pause()
+        release_writer.set()
+        await asyncio.wait_for(save, timeout=3)
+
+        assert writes == []
+        assert container.current_step == model_index
+        assert not container.provider_setup_committed
+        assert model_step.selected_model_id == ""
+        assert model_step._selection_discovery_key is None
+        error = str(model_step.query_one(".setup-step-error", Static).renderable)
+        assert "connection settings changed" in error.lower()
+        rendered = pilot.app.export_screenshot()
+        assert "writer-entry-saved-canary" not in rendered
+        assert "writer-entry-replacement-canary" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_mounted_executor_entry_unchanged_identity_writes_once(monkeypatch):
+    import asyncio
+    import threading
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Chat import provider_setup_persistence as persistence_module
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "moonshot": {
+                "api_region": "china",
+                "api_key": "writer-entry-unchanged-canary",
+            }
+        }
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(
+            return_value=_typed_model_discovery_result("moonshot", "writer-model")
+        )
+    )
+    writes = []
+
+    def writer(section_values, *, delete_keys=None, mutation_precondition=None):
+        assert callable(mutation_precondition)
+        assert mutation_precondition()
+        writes.append((section_values, delete_keys))
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        writer,
+    )
+    real_persist = persistence_module.persist_provider_setup
+    writer_entered = threading.Event()
+    release_writer = threading.Event()
+
+    def paused_persist(mutation):
+        writer_entered.set()
+        assert release_writer.wait(timeout=3)
+        return real_persist(mutation)
+
+    monkeypatch.setattr(
+        persistence_module,
+        "persist_provider_setup",
+        paused_persist,
+    )
+
+    async with _HostApp(wizard).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("moonshot")
+        await container._advance()
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        rows = []
+        for _ in range(20):
+            rows = [
+                button
+                for button in model_step.query(RadioButton)
+                if getattr(button, "_model_id", "") == "writer-model"
+            ]
+            if rows:
+                break
+            await pilot.pause(0.05)
+        assert rows
+        rows[0].value = True
+        await pilot.pause()
+
+        save = asyncio.create_task(container._advance())
+        assert await asyncio.to_thread(writer_entered.wait, 2)
+        release_writer.set()
+        await asyncio.wait_for(save, timeout=3)
+
+        assert len(writes) == 1
+        assert container.provider_setup_committed
+        assert container.committed_provider_model == "writer-model"
+
+
+@pytest.mark.asyncio
 async def test_open_wizard_uses_rotated_environment_key_for_next_test(monkeypatch):
     import os
     from unittest.mock import AsyncMock
@@ -6624,6 +6851,37 @@ async def test_model_step_commit_hands_model_to_staged_provider_commit():
         wizard.commit_staged_provider_setup.assert_awaited_once_with(
             "gpt-5.6-terra",
             discovery_key=step._current_discovery_key(),
+            model_provenance="discovered",
+        )
+        wizard.commit_config.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_model_step_commit_marks_typed_model_as_manual_provenance():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "OpenAI"}
+        },
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard)
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-model-custom", Input).value = "manual-model"
+        await pilot.pause()
+
+        ok, error = await step.commit()
+
+        assert ok, error
+        wizard.commit_staged_provider_setup.assert_awaited_once_with(
+            "manual-model",
+            discovery_key=step._current_discovery_key(),
+            model_provenance="manual",
         )
         wizard.commit_config.assert_not_called()
 
@@ -6762,6 +7020,7 @@ async def test_model_step_commit_reads_pressed_radio_without_changed_event():
         wizard.commit_staged_provider_setup.assert_awaited_once_with(
             "radio-model-a",
             discovery_key=step._current_discovery_key(),
+            model_provenance="discovered",
         )
         wizard.commit_config.assert_not_called()
 

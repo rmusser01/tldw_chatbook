@@ -21,6 +21,7 @@ import portalocker
 from typing import (
     Any,
     Collection,
+    Callable,
     Dict,
     List,
     Literal,
@@ -5011,6 +5012,7 @@ class ConfigMutationResult:
     caches_reloaded: bool
     failure_phase: Literal["before_replace", "cache_reload"] | None
     conflict: bool = False
+    conflict_reason: Literal["identity_changed"] | None = None
 
     @property
     def fully_applied(self) -> bool:
@@ -5241,11 +5243,14 @@ def apply_settings_mutation_to_cli_config(
     section_values: Mapping[str, Mapping[Any, Any]],
     *,
     delete_keys: Mapping[str, Collection[str]] | None = None,
+    mutation_precondition: Callable[[], bool] | None = None,
 ) -> ConfigMutationResult:
     """Atomically apply exact config sets/deletes, then refresh caches."""
     global _CONFIG_CACHE, _SETTINGS_CACHE, settings
     requested_deletes = {} if delete_keys is None else delete_keys
     try:
+        if mutation_precondition is not None and not callable(mutation_precondition):
+            raise TypeError("Configuration mutation precondition must be callable")
         config_path = _get_effective_config_path()
     except Exception as error:
         logger.error(
@@ -5296,6 +5301,26 @@ def apply_settings_mutation_to_cli_config(
                 type(error).__name__,
             )
             return ConfigMutationResult(False, False, "before_replace")
+
+        if mutation_precondition is not None:
+            try:
+                is_current = mutation_precondition()
+            except Exception as error:
+                logger.error(
+                    "Configuration mutation failed "
+                    "(phase=precondition, config_path={}, error_type={}).",
+                    config_path,
+                    type(error).__name__,
+                )
+                return ConfigMutationResult(False, False, "before_replace")
+            if is_current is not True:
+                return ConfigMutationResult(
+                    False,
+                    False,
+                    None,
+                    conflict=True,
+                    conflict_reason="identity_changed",
+                )
 
         deleted_any = _delete_config_keys(config_data, requested_deletes)
         for section, values in section_values.items():

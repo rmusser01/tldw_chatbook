@@ -871,6 +871,32 @@ def test_generic_mutation_cannot_bypass_revisioned_section_owner(
     assert config_path.read_bytes() == original
 
 
+def test_settings_mutation_precondition_rejects_inside_atomic_writer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, {"global": {"keep": True}})
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    original = config_path.read_bytes()
+    checks = []
+
+    result = config_module.apply_settings_mutation_to_cli_config(
+        {"global": {"stale": True}},
+        mutation_precondition=lambda: checks.append("checked") or False,
+    )
+
+    assert result == config_module.ConfigMutationResult(
+        False,
+        False,
+        None,
+        conflict=True,
+        conflict_reason="identity_changed",
+    )
+    assert checks == ["checked"]
+    assert config_path.read_bytes() == original
+
+
 @pytest.mark.parametrize("serialized", [False, True])
 def test_whole_config_replacement_preserves_revisioned_owned_section(
     tmp_path: Path,

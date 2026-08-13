@@ -1,4 +1,5 @@
 from dataclasses import fields, replace
+import threading
 from types import MappingProxyType
 
 import pytest
@@ -1110,6 +1111,208 @@ def test_persist_provider_setup_delegates_once_and_preserves_typed_result(monkey
 
     assert persist_provider_setup(mutation) is expected
     assert calls == [(mutation.section_values, mutation.delete_keys)]
+
+
+def _write_identity(
+    *,
+    endpoint: str = "http://127.0.0.1:8080",
+    credential_revision: int = 0,
+    model: str = "qwen",
+    provenance: str = "discovered",
+):
+    return persistence_module.ProviderSetupWriteIdentity(
+        provider_key="llama_cpp",
+        connection_identity=("llama_cpp", endpoint),
+        credential_source="none",
+        credential_revision=credential_revision,
+        model_id=model,
+        model_provenance=provenance,
+    )
+
+
+@pytest.mark.parametrize(
+    "changed_identity",
+    [
+        _write_identity(endpoint="http://127.0.0.1:8081"),
+        _write_identity(credential_revision=1),
+        replace(_write_identity(), credential_source="stored"),
+        _write_identity(model="other-model"),
+        _write_identity(provenance="manual"),
+    ],
+    ids=["endpoint", "credential-revision", "auth-source", "model", "provenance"],
+)
+def test_guarded_provider_setup_rejects_changed_identity_before_atomic_writer(
+    monkeypatch,
+    changed_identity,
+):
+    writes = []
+
+    def writer(*_args, mutation_precondition=None, **_kwargs):
+        assert callable(mutation_precondition)
+        if not mutation_precondition():
+            return ConfigMutationResult(
+                False,
+                False,
+                None,
+                conflict=True,
+                conflict_reason="identity_changed",
+            )
+        writes.append(True)
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        writer,
+    )
+    mutation = build_provider_setup_mutation(_draft(), {})
+    guard = persistence_module.ProviderSetupWriteGuard()
+    expected = guard.arm(_write_identity())
+    persistence_module.bind_provider_setup_write_expectation(
+        mutation,
+        guard=guard,
+        expectation=expected,
+        current_identity=lambda: changed_identity,
+    )
+
+    result = persist_provider_setup(mutation)
+
+    assert result == ConfigMutationResult(
+        False,
+        False,
+        None,
+        conflict=True,
+        conflict_reason="identity_changed",
+    )
+    assert writes == []
+
+
+def test_guarded_provider_setup_rejects_invalidated_generation(monkeypatch):
+    writes = []
+
+    def writer(*_args, mutation_precondition=None, **_kwargs):
+        assert callable(mutation_precondition)
+        if not mutation_precondition():
+            return ConfigMutationResult(
+                False,
+                False,
+                None,
+                conflict=True,
+                conflict_reason="identity_changed",
+            )
+        writes.append(True)
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        writer,
+    )
+    mutation = build_provider_setup_mutation(_draft(), {})
+    identity = _write_identity()
+    guard = persistence_module.ProviderSetupWriteGuard()
+    expected = guard.arm(identity)
+    persistence_module.bind_provider_setup_write_expectation(
+        mutation,
+        guard=guard,
+        expectation=expected,
+        current_identity=lambda: identity,
+    )
+    guard.invalidate()
+
+    result = persist_provider_setup(mutation)
+
+    assert result.conflict is True
+    assert result.conflict_reason == "identity_changed"
+    assert writes == []
+
+
+def test_guarded_provider_setup_unchanged_identity_writes_once(monkeypatch):
+    expected_result = ConfigMutationResult(True, True, None)
+    writes = []
+
+    def writer(section_values, *, delete_keys=None, mutation_precondition=None):
+        assert callable(mutation_precondition)
+        assert mutation_precondition()
+        writes.append((section_values, delete_keys))
+        return expected_result
+
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        writer,
+    )
+    mutation = build_provider_setup_mutation(_draft(), {})
+    identity = _write_identity()
+    guard = persistence_module.ProviderSetupWriteGuard()
+    expected = guard.arm(identity)
+    persistence_module.bind_provider_setup_write_expectation(
+        mutation,
+        guard=guard,
+        expectation=expected,
+        current_identity=lambda: identity,
+    )
+
+    result = persist_provider_setup(mutation)
+
+    assert result is expected_result
+    assert writes == [(mutation.section_values, mutation.delete_keys)]
+
+
+def test_guarded_provider_setup_holds_identity_lease_through_atomic_writer(
+    monkeypatch,
+):
+    writer_entered = threading.Event()
+    release_writer = threading.Event()
+    invalidation_finished = threading.Event()
+
+    def writer(_section_values, *, delete_keys=None, mutation_precondition=None):
+        del delete_keys
+        assert callable(mutation_precondition)
+        assert mutation_precondition()
+        writer_entered.set()
+        assert release_writer.wait(timeout=2)
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        writer,
+    )
+    mutation = build_provider_setup_mutation(_draft(), {})
+    identity = _write_identity()
+    guard = persistence_module.ProviderSetupWriteGuard()
+    expected = guard.arm(identity)
+    persistence_module.bind_provider_setup_write_expectation(
+        mutation,
+        guard=guard,
+        expectation=expected,
+        current_identity=lambda: identity,
+    )
+
+    result_holder = []
+    writer_thread = threading.Thread(
+        target=lambda: result_holder.append(persist_provider_setup(mutation))
+    )
+    writer_thread.start()
+    assert writer_entered.wait(timeout=2)
+    invalidator = threading.Thread(
+        target=lambda: (
+            guard.invalidate(),
+            invalidation_finished.set(),
+        )
+    )
+    invalidator.start()
+    assert not invalidation_finished.wait(timeout=0.05)
+
+    release_writer.set()
+    writer_thread.join(timeout=2)
+    invalidator.join(timeout=2)
+
+    assert not writer_thread.is_alive()
+    assert not invalidator.is_alive()
+    assert invalidation_finished.is_set()
+    assert result_holder == [ConfigMutationResult(True, True, None)]
 
 
 def test_combined_provider_settings_boundary_validates_setup_and_writes_once(

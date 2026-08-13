@@ -307,20 +307,37 @@ def resolve_first_run_provider_draft(
 ) -> FirstRunProviderDraft:
     """Resolve an untouched endpoint without turning blank into implicit clear."""
 
+    if type(provider_draft) is not FirstRunProviderDraft:
+        raise ValueError("Provider draft is invalid.")
+    config = _validate_first_run_app_config(app_config, provider_draft.provider)
+    endpoint, discovery_endpoint = _resolve_first_run_provider_endpoints(
+        provider_draft.provider,
+        provider_draft.endpoint,
+        config,
+    )
+    return replace(
+        provider_draft,
+        endpoint=endpoint,
+        discovery_endpoint=discovery_endpoint,
+    )
+
+
+def _resolve_first_run_provider_endpoints(
+    provider: str,
+    editable_endpoint: str,
+    app_config: Mapping[str, object],
+) -> tuple[str, str]:
+    """Resolve persisted and runtime endpoints without credential state."""
+
     from tldw_chatbook.Chat.console_provider_endpoints import (
         effective_provider_discovery_endpoint,
         first_configured_endpoint,
     )
     from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
 
-    if type(provider_draft) is not FirstRunProviderDraft:
-        raise ValueError("Provider draft is invalid.")
-    config = _validate_first_run_app_config(app_config, provider_draft.provider)
-    endpoint = provider_draft.endpoint.strip()
-    owner_key = _first_run_provider_owner_key(provider_draft.provider)
-    provider_settings = _first_run_provider_settings(
-        config, provider_draft.provider
-    )
+    endpoint = editable_endpoint.strip()
+    owner_key = _first_run_provider_owner_key(provider)
+    provider_settings = _first_run_provider_settings(app_config, provider)
     if not endpoint:
         endpoint = first_configured_endpoint(provider_settings) or ""
     if endpoint:
@@ -343,10 +360,49 @@ def resolve_first_run_provider_draft(
         if discovery_resolution.errors or discovery_resolution.chat_url is None:
             raise ValueError("Provider discovery endpoint is invalid.")
         discovery_endpoint = discovery_resolution.chat_url
-    return replace(
-        provider_draft,
-        endpoint=endpoint,
-        discovery_endpoint=discovery_endpoint or "",
+    return endpoint, discovery_endpoint or ""
+
+
+def build_current_first_run_model_discovery_key(
+    *,
+    provider: object,
+    editable_endpoint: object,
+    credential_source: object,
+    credential_revision: object,
+    app_config: object,
+) -> FirstRunModelDiscoveryKey:
+    """Resolve a current secret-free discovery key for persistence CAS."""
+
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+
+    if (
+        type(provider) is not str
+        or type(editable_endpoint) is not str
+        or len(editable_endpoint) > _MAX_ENDPOINT_CHARS
+        or _contains_unsafe_text(editable_endpoint)
+        or type(credential_source) is not str
+        or credential_source not in _CREDENTIAL_SOURCES
+        or type(credential_revision) is not int
+        or not 0 <= credential_revision <= _MAX_IDENTITY_COUNTER
+    ):
+        raise ValueError("Provider discovery identity is invalid.")
+    config = _validate_first_run_app_config(app_config, provider)
+    _, discovery_endpoint = _resolve_first_run_provider_endpoints(
+        provider,
+        editable_endpoint,
+        config,
+    )
+    provider_key = _first_run_provider_owner_key(provider)
+    identity = canonical_connection_identity(provider_key, discovery_endpoint)
+    if identity is None:
+        raise ValueError("Provider discovery identity is invalid.")
+    return FirstRunModelDiscoveryKey(
+        provider_key=provider_key,
+        connection_identity=identity,
+        credential_source=credential_source,
+        credential_revision=credential_revision,
     )
 
 

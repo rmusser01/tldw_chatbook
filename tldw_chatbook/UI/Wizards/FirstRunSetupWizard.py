@@ -18,7 +18,17 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+)
 
 from loguru import logger
 from rich.text import Text
@@ -1629,6 +1639,11 @@ class ProviderStep(SetupStep):
     def _invalidate_provider_test(self, *, changed: bool = True) -> None:
         """Invalidate exact evidence and only clear status owned by that probe."""
 
+        invalidate_save = getattr(
+            self.wizard, "invalidate_provider_write_expectation", None
+        )
+        if callable(invalidate_save):
+            invalidate_save()
         self._provider_draft_generation += 1
         cancelled = self._cancel_active_probe()
         invalidated = self._provider_test_evidence.invalidate()
@@ -3437,6 +3452,11 @@ class ModelStep(SetupStep):
         model_id: str = "",
         discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = None,
     ) -> None:
+        invalidate_save = getattr(
+            self.wizard, "invalidate_provider_write_expectation", None
+        )
+        if callable(invalidate_save):
+            invalidate_save()
         owner = getattr(self.wizard, "_first_run_provider_discovery_owner", None)
         if isinstance(owner, ProviderStep):
             owner._model_semantics_changed(
@@ -3514,7 +3534,14 @@ class ModelStep(SetupStep):
         if selection_key is None:
             pressed = self._live_pressed_radio()
             selection_key = getattr(pressed, "_discovery_key", None)
-        ok = await commit_staged(model_id, discovery_key=selection_key)
+        provenance: Literal["discovered", "manual"] = (
+            "manual" if self._model_id_from_custom_input else "discovered"
+        )
+        ok = await commit_staged(
+            model_id,
+            discovery_key=selection_key,
+            model_provenance=provenance,
+        )
         if ok:
             self.selected_model_id = model_id
             self._selection_discovery_key = self._current_discovery_key()
@@ -6641,8 +6668,17 @@ class SetupWizardContainer(WizardContainer):
         self._provider_commit_lock = asyncio.Lock()
         self._provider_commit_task: asyncio.Task[bool] | None = None
         self._provider_commit_identity: tuple[
-            int, str, wizard_state.FirstRunModelDiscoveryKey
+            int,
+            str,
+            wizard_state.FirstRunModelDiscoveryKey,
+            Literal["discovered", "manual"],
         ] | None = None
+        from tldw_chatbook.Chat.provider_setup_persistence import (
+            ProviderSetupWriteGuard,
+        )
+
+        self._provider_write_guard = ProviderSetupWriteGuard()
+        self._provider_last_config_result: object | None = None
         self._provider_commit_write_started = False
         self._provider_cleanup_requested = False
         self._provider_dismiss_pending = False
@@ -6718,6 +6754,7 @@ class SetupWizardContainer(WizardContainer):
     def invalidate_provider_model_handoff(self) -> None:
         """Clear model state derived from a superseded provider credential."""
 
+        self.invalidate_provider_write_expectation()
         self._first_run_selected_provider_models = {}
         self._first_run_selected_provider_outcomes = {}
         self.wizard_data.pop(wizard_state.STEP_MODEL, None)
@@ -6727,6 +6764,11 @@ class SetupWizardContainer(WizardContainer):
         model_step = self.steps[model_index]
         if isinstance(model_step, ModelStep):
             model_step.invalidate_credential_bound_selection()
+
+    def invalidate_provider_write_expectation(self) -> None:
+        """Fence a queued provider writer without retaining credential material."""
+
+        self._provider_write_guard.invalidate()
 
     def _refresh_changed_provider_identity(
         self,
@@ -6763,6 +6805,7 @@ class SetupWizardContainer(WizardContainer):
     ) -> None:
         """Fence provider work and release raw state at the valid boundary."""
 
+        self.invalidate_provider_write_expectation()
         self._provider_stage_generation += 1
         task = self._provider_commit_task
         irreversible_write = bool(
@@ -6828,6 +6871,7 @@ class SetupWizardContainer(WizardContainer):
         self._provider_cleanup_requested = False
         if self._provider_drafts_match(self._staged_provider_draft, provider_draft):
             return True
+        self.invalidate_provider_write_expectation()
         self._provider_stage_generation += 1
         self._provider_commit_generation += 1
         self._staged_provider_draft = provider_draft
@@ -6869,6 +6913,7 @@ class SetupWizardContainer(WizardContainer):
         model_id: str,
         *,
         discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = None,
+        model_provenance: Literal["discovered", "manual"] = "manual",
     ) -> bool:
         """Persist the staged connection and model through one atomic mutation."""
 
@@ -6877,6 +6922,8 @@ class SetupWizardContainer(WizardContainer):
         if discovery_key is not None and (
             type(discovery_key) is not wizard_state.FirstRunModelDiscoveryKey
         ):
+            return False
+        if model_provenance not in {"discovered", "manual"}:
             return False
         normalized_model = model_id.strip()
         owner = getattr(self, "_first_run_provider_discovery_owner", None)
@@ -6924,6 +6971,7 @@ class SetupWizardContainer(WizardContainer):
                     self._provider_stage_generation,
                     normalized_model,
                     expected_key,
+                    model_provenance,
                 )
                 active_task = self._provider_commit_task
                 if (
@@ -6942,6 +6990,7 @@ class SetupWizardContainer(WizardContainer):
                             provider_draft,
                             normalized_model,
                             expected_key,
+                            model_provenance,
                             self._provider_stage_generation,
                             lease,
                         )
@@ -6968,6 +7017,7 @@ class SetupWizardContainer(WizardContainer):
         provider_draft: wizard_state.FirstRunProviderDraft,
         model_id: str,
         discovery_key: wizard_state.FirstRunModelDiscoveryKey,
+        model_provenance: Literal["discovered", "manual"],
         stage_generation: int,
         lease: int,
     ) -> bool:
@@ -7019,6 +7069,13 @@ class SetupWizardContainer(WizardContainer):
                             model_id,
                             app_config,
                         )
+                        self._bind_provider_write_expectation(
+                            mutation,
+                            provider_draft=provider_draft,
+                            discovery_key=discovery_key,
+                            model_id=model_id,
+                            model_provenance=model_provenance,
+                        )
                     except (TypeError, ValueError):
                         logger.warning(
                             "First-run provider commit rejected (category=validation)"
@@ -7032,12 +7089,26 @@ class SetupWizardContainer(WizardContainer):
                 return False
             assert mutation is not None
 
+            self._provider_last_config_result = None
             saved = await self.commit_config(
                 mutation.section_values,
                 delete_keys=mutation.delete_keys,
                 provider_setup_mutation=mutation,
             )
             if not saved:
+                result = self._provider_last_config_result
+                if (
+                    getattr(result, "conflict_reason", None) == "identity_changed"
+                    and isinstance(owner, ProviderStep)
+                    and owner.is_mounted
+                ):
+                    self._provider_commit_write_started = False
+                    write_started = False
+                    current_draft = owner._effective_provider_draft()
+                    if current_draft is not None and self.stage_provider_setup(
+                        current_draft
+                    ):
+                        self._refresh_changed_provider_identity(owner, current_draft)
                 return False
             if not self._provider_cleanup_requested:
                 self._provider_setup_committed = True
@@ -7055,6 +7126,64 @@ class SetupWizardContainer(WizardContainer):
                 if self._provider_commit_task is current_task:
                     self._provider_commit_task = None
                     self._provider_commit_identity = None
+
+    def _bind_provider_write_expectation(
+        self,
+        mutation: object,
+        *,
+        provider_draft: wizard_state.FirstRunProviderDraft,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey,
+        model_id: str,
+        model_provenance: Literal["discovered", "manual"],
+    ) -> None:
+        """Bind a secret-free CAS token to the issued atomic setup mutation."""
+
+        from tldw_chatbook.Chat.provider_setup_persistence import (
+            ProviderSetupWriteIdentity,
+            bind_provider_setup_write_expectation,
+        )
+
+        expected_identity = ProviderSetupWriteIdentity(
+            provider_key=discovery_key.provider_key,
+            connection_identity=discovery_key.connection_identity,
+            credential_source=discovery_key.credential_source,
+            credential_revision=discovery_key.credential_revision,
+            model_id=model_id,
+            model_provenance=model_provenance,
+        )
+        expectation = self._provider_write_guard.arm(expected_identity)
+        provider = provider_draft.provider
+        editable_endpoint = provider_draft.endpoint
+        credential_source = discovery_key.credential_source
+        credential_revision = discovery_key.credential_revision
+        app_instance = self.app_instance
+
+        def current_identity() -> ProviderSetupWriteIdentity | None:
+            try:
+                current_key = wizard_state.build_current_first_run_model_discovery_key(
+                    provider=provider,
+                    editable_endpoint=editable_endpoint,
+                    credential_source=credential_source,
+                    credential_revision=credential_revision,
+                    app_config=getattr(app_instance, "app_config", {}) or {},
+                )
+                return ProviderSetupWriteIdentity(
+                    provider_key=current_key.provider_key,
+                    connection_identity=current_key.connection_identity,
+                    credential_source=current_key.credential_source,
+                    credential_revision=current_key.credential_revision,
+                    model_id=model_id,
+                    model_provenance=model_provenance,
+                )
+            except (TypeError, ValueError):
+                return None
+
+        bind_provider_setup_write_expectation(
+            mutation,
+            guard=self._provider_write_guard,
+            expectation=expectation,
+            current_identity=current_identity,
+        )
 
     def compose(self) -> ComposeResult:
         """Compose with progress derived from the resolved setup track."""
@@ -8312,9 +8441,11 @@ class SetupWizardContainer(WizardContainer):
                     provider_setup_mutation,
                 )
             except BaseException:
+                self._provider_last_config_result = None
                 if isinstance(owner, ProviderStep):
                     owner._finish_provider_evidence_save(evidence_save, None)
                 raise
+            self._provider_last_config_result = result
             if result.fully_applied:
                 self._mirror_into_app_config(section_values, requested_deletes)
                 if isinstance(owner, ProviderStep):

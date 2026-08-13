@@ -275,7 +275,11 @@ class TestWizardAtomicProviderHandoff:
         release = threading.Event()
         call_count = 0
 
-        def writer(section_values, *, delete_keys=None):
+        def writer(
+            section_values, *, delete_keys=None, mutation_precondition=None
+        ):
+            assert callable(mutation_precondition)
+            assert mutation_precondition()
             nonlocal call_count
             call_count += 1
             started.set()
@@ -309,7 +313,11 @@ class TestWizardAtomicProviderHandoff:
         container = SetupWizardContainer(SimpleNamespace(app_config={}))
         written_models = []
 
-        def writer(section_values, *, delete_keys=None):
+        def writer(
+            section_values, *, delete_keys=None, mutation_precondition=None
+        ):
+            assert callable(mutation_precondition)
+            assert mutation_precondition()
             written_models.append(section_values["chat_defaults"]["model"])
             return ConfigMutationResult(True, True, None)
 
@@ -343,7 +351,11 @@ class TestWizardAtomicProviderHandoff:
         container = SetupWizardContainer(SimpleNamespace(app_config={}))
         written_models = []
 
-        def writer(section_values, *, delete_keys=None):
+        def writer(
+            section_values, *, delete_keys=None, mutation_precondition=None
+        ):
+            assert callable(mutation_precondition)
+            assert mutation_precondition()
             written_models.append(section_values["chat_defaults"]["model"])
             return ConfigMutationResult(True, True, None)
 
@@ -372,7 +384,11 @@ class TestWizardAtomicProviderHandoff:
         started = threading.Event()
         release = threading.Event()
 
-        def writer(section_values, *, delete_keys=None):
+        def writer(
+            section_values, *, delete_keys=None, mutation_precondition=None
+        ):
+            assert callable(mutation_precondition)
+            assert mutation_precondition()
             started.set()
             assert release.wait(2)
             return ConfigMutationResult(True, True, None)
@@ -402,7 +418,11 @@ class TestWizardAtomicProviderHandoff:
         container = SetupWizardContainer(SimpleNamespace(app_config={}))
         call_count = 0
 
-        def writer(section_values, *, delete_keys=None):
+        def writer(
+            section_values, *, delete_keys=None, mutation_precondition=None
+        ):
+            assert callable(mutation_precondition)
+            assert mutation_precondition()
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -429,7 +449,11 @@ class TestWizardAtomicProviderHandoff:
         release = threading.Event()
         call_count = 0
 
-        def writer(section_values, *, delete_keys=None):
+        def writer(
+            section_values, *, delete_keys=None, mutation_precondition=None
+        ):
+            assert callable(mutation_precondition)
+            assert mutation_precondition()
             nonlocal call_count
             call_count += 1
             started.set()
@@ -465,7 +489,11 @@ class TestWizardAtomicProviderHandoff:
         container = SetupWizardContainer(SimpleNamespace(app_config=app_config))
         calls = []
 
-        def writer(section_values, *, delete_keys=None):
+        def writer(
+            section_values, *, delete_keys=None, mutation_precondition=None
+        ):
+            assert callable(mutation_precondition)
+            assert mutation_precondition()
             calls.append((section_values, delete_keys))
             return ConfigMutationResult(True, True, None)
 
@@ -524,7 +552,11 @@ class TestWizardAtomicProviderHandoff:
         container = SetupWizardContainer(SimpleNamespace(app_config=app_config))
         calls = []
 
-        def writer(section_values, *, delete_keys=None):
+        def writer(
+            section_values, *, delete_keys=None, mutation_precondition=None
+        ):
+            assert callable(mutation_precondition)
+            assert mutation_precondition()
             calls.append((section_values, delete_keys))
             return result
 
@@ -560,7 +592,11 @@ class TestWizardAtomicProviderHandoff:
         )
         call_count = 0
 
-        def writer(section_values, *, delete_keys=None):
+        def writer(
+            section_values, *, delete_keys=None, mutation_precondition=None
+        ):
+            assert callable(mutation_precondition)
+            assert mutation_precondition()
             nonlocal call_count
             call_count += 1
             return next(results)
@@ -589,7 +625,11 @@ class TestWizardAtomicProviderHandoff:
         container = SetupWizardContainer(SimpleNamespace(app_config={}))
         call_count = 0
 
-        def writer(section_values, *, delete_keys=None):
+        def writer(
+            section_values, *, delete_keys=None, mutation_precondition=None
+        ):
+            assert callable(mutation_precondition)
+            assert mutation_precondition()
             nonlocal call_count
             call_count += 1
             return ConfigMutationResult(True, True, None)
@@ -613,12 +653,18 @@ class TestWizardAtomicProviderHandoff:
         self, monkeypatch
     ):
         container = SetupWizardContainer(SimpleNamespace(app_config={}))
+        def writer(
+            section_values, *, delete_keys=None, mutation_precondition=None
+        ):
+            del section_values, delete_keys
+            assert callable(mutation_precondition)
+            assert mutation_precondition()
+            return ConfigMutationResult(True, True, None)
+
         monkeypatch.setattr(
             "tldw_chatbook.Chat.provider_setup_persistence."
             "apply_settings_mutation_to_cli_config",
-            lambda section_values, *, delete_keys=None: ConfigMutationResult(
-                True, True, None
-            ),
+            writer,
         )
         container.stage_provider_setup(_typed_provider_draft())
         assert await container.commit_staged_provider_setup("custom-model") is True

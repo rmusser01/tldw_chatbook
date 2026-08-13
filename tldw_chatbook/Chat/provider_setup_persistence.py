@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from threading import RLock
 from types import MappingProxyType
+from typing import Callable, Iterator, Literal
 from unicodedata import category as unicode_category
 from urllib.parse import urlsplit, urlunsplit
 from weakref import ReferenceType, ref
@@ -47,6 +49,7 @@ _API_BASE_ENDPOINT_KEYS = frozenset({"api_base_url", "api_base", "base_url"})
 _ROOT_ENDPOINT_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
 _ISSUED_MUTATION_LOCK = RLock()
 _ISSUED_MUTATIONS: dict[int, ReferenceType[ProviderSetupMutation]] = {}
+_WRITE_EXPECTATIONS: dict[int, _ProviderSetupWriteBinding] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +262,124 @@ class ProviderSetupDraft:
             raise ValueError("Credential setup is invalid.")
 
 
+ModelSelectionProvenance = Literal["discovered", "manual"]
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderSetupWriteIdentity:
+    """Secret-free identity of one provider/model decision at save time."""
+
+    provider_key: str
+    connection_identity: tuple[str, str]
+    credential_source: CredentialSource
+    credential_revision: int
+    model_id: str
+    model_provenance: ModelSelectionProvenance
+
+    def __post_init__(self) -> None:
+        model = _safe_model(self.model_id)
+        if model is None or model != self.model_id:
+            raise ValueError("Provider setup write model is invalid.")
+        if self.model_provenance not in {"discovered", "manual"}:
+            raise ValueError("Provider setup write provenance is invalid.")
+        try:
+            identity = ProviderDraftIdentity(
+                provider_key=self.provider_key,
+                connection_identity=self.connection_identity,
+                credential_source=self.credential_source,
+                credential_revision=self.credential_revision,
+                draft_generation=0,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Provider setup write identity is invalid.") from exc
+        if identity.provider_key != canonical_provider_key(self.provider_key):
+            raise ValueError("Provider setup write identity is invalid.")
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderSetupWriteExpectation:
+    """Generation-stamped compare-and-swap token for one atomic write."""
+
+    identity: ProviderSetupWriteIdentity
+    generation: int
+
+    def __post_init__(self) -> None:
+        if type(self.identity) is not ProviderSetupWriteIdentity:
+            raise ValueError("Provider setup write expectation is invalid.")
+        if (
+            type(self.generation) is not int
+            or not 0 <= self.generation <= _MAX_IDENTITY_COUNTER
+        ):
+            raise ValueError("Provider setup write generation is invalid.")
+
+
+class ProviderSetupWriteGuard:
+    """Synchronize identity changes with the provider's atomic config writer."""
+
+    def __init__(self) -> None:
+        self._lock = RLock()
+        self._generation = 0
+        self._identity: ProviderSetupWriteIdentity | None = None
+
+    def arm(self, identity: ProviderSetupWriteIdentity) -> ProviderSetupWriteExpectation:
+        if type(identity) is not ProviderSetupWriteIdentity:
+            raise ValueError("Provider setup write identity is invalid.")
+        with self._lock:
+            self._advance()
+            self._identity = identity
+            return ProviderSetupWriteExpectation(identity, self._generation)
+
+    def invalidate(self) -> None:
+        with self._lock:
+            self._advance()
+            self._identity = None
+
+    def _advance(self) -> None:
+        if self._generation >= _MAX_IDENTITY_COUNTER:
+            self._generation = 0
+        else:
+            self._generation += 1
+
+    @contextmanager
+    def hold(self) -> Iterator[None]:
+        """Hold identity changes until the atomic config writer returns."""
+
+        with self._lock:
+            yield
+
+    def matches(
+        self,
+        expectation: ProviderSetupWriteExpectation,
+        current_identity: Callable[[], ProviderSetupWriteIdentity | None],
+    ) -> bool:
+        """Evaluate one expectation while the caller owns the guard lease."""
+
+        if type(expectation) is not ProviderSetupWriteExpectation or not callable(
+            current_identity
+        ):
+            raise ValueError("Provider setup write expectation is invalid.")
+        with self._lock:
+            try:
+                observed = current_identity()
+            except Exception:
+                observed = None
+            return bool(
+                self._generation == expectation.generation
+                and self._identity == expectation.identity
+                and observed == expectation.identity
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class _ProviderSetupWriteBinding:
+    mutation_ref: ReferenceType[ProviderSetupMutation]
+    guard: ProviderSetupWriteGuard
+    expectation: ProviderSetupWriteExpectation
+    current_identity: Callable[[], ProviderSetupWriteIdentity | None] = field(
+        repr=False
+    )
+
+
 @dataclass(frozen=True, slots=True, weakref_slot=True)
 class ProviderSetupMutation:
     """One sparse atomic provider/default/provenance configuration mutation."""
@@ -460,13 +581,72 @@ def persist_provider_setup(mutation: ProviderSetupMutation) -> ConfigMutationRes
         validate_credentials=True,
     )
     chat_defaults = mutation.section_values.get("chat_defaults", {})
-    return persist_provider_settings_atomic(
+    binding = _provider_setup_write_binding(mutation)
+
+    def persist(
+        mutation_precondition: Callable[[], bool] | None = None,
+    ) -> ConfigMutationResult:
+        return persist_provider_settings_atomic(
+            mutation,
+            provider=chat_defaults.get("provider"),
+            model=chat_defaults.get("model"),
+            section_values=mutation.section_values,
+            delete_keys=mutation.delete_keys,
+            mutation_precondition=mutation_precondition,
+        )
+
+    if binding is None:
+        return persist()
+    with binding.guard.hold():
+        return persist(
+            lambda: binding.guard.matches(
+                binding.expectation,
+                binding.current_identity,
+            )
+        )
+
+
+def bind_provider_setup_write_expectation(
+    mutation: ProviderSetupMutation,
+    *,
+    guard: ProviderSetupWriteGuard,
+    expectation: ProviderSetupWriteExpectation,
+    current_identity: Callable[[], ProviderSetupWriteIdentity | None],
+) -> None:
+    """Bind a first-run CAS expectation without changing the writer call API."""
+
+    _validate_provider_setup_mutation(
         mutation,
-        provider=chat_defaults.get("provider"),
-        model=chat_defaults.get("model"),
-        section_values=mutation.section_values,
-        delete_keys=mutation.delete_keys,
+        require_issued=True,
+        validate_credentials=True,
     )
+    if (
+        type(guard) is not ProviderSetupWriteGuard
+        or type(expectation) is not ProviderSetupWriteExpectation
+        or not callable(current_identity)
+    ):
+        raise ValueError("Provider setup write expectation is invalid.")
+    mutation_id = id(mutation)
+    with _ISSUED_MUTATION_LOCK:
+        reference = _ISSUED_MUTATIONS.get(mutation_id)
+        if reference is None or reference() is not mutation:
+            raise ValueError("Provider setup mutation is invalid.")
+        _WRITE_EXPECTATIONS[mutation_id] = _ProviderSetupWriteBinding(
+            reference,
+            guard,
+            expectation,
+            current_identity,
+        )
+
+
+def _provider_setup_write_binding(
+    mutation: ProviderSetupMutation,
+) -> _ProviderSetupWriteBinding | None:
+    with _ISSUED_MUTATION_LOCK:
+        binding = _WRITE_EXPECTATIONS.get(id(mutation))
+        if binding is None or binding.mutation_ref() is not mutation:
+            return None
+        return binding
 
 
 def persist_provider_settings_atomic(
@@ -476,6 +656,7 @@ def persist_provider_settings_atomic(
     model: object,
     section_values: Mapping[str, Mapping[str, object]],
     delete_keys: Mapping[str, tuple[str, ...]],
+    mutation_precondition: Callable[[], bool] | None = None,
 ) -> ConfigMutationResult:
     """Validate and persist one combined provider Settings mutation."""
 
@@ -490,10 +671,17 @@ def persist_provider_settings_atomic(
         delete_keys,
     )
     try:
-        result = apply_settings_mutation_to_cli_config(
-            section_values,
-            delete_keys=delete_keys,
-        )
+        if mutation_precondition is None:
+            result = apply_settings_mutation_to_cli_config(
+                section_values,
+                delete_keys=delete_keys,
+            )
+        else:
+            result = apply_settings_mutation_to_cli_config(
+                section_values,
+                delete_keys=delete_keys,
+                mutation_precondition=mutation_precondition,
+            )
     except Exception:  # noqa: BLE001 - persistence must fail closed on writer errors.
         return ConfigMutationResult(False, False, "before_replace")
     if type(result) is not ConfigMutationResult:
@@ -834,6 +1022,7 @@ def _mark_provider_setup_mutation_issued(mutation: ProviderSetupMutation) -> Non
         with _ISSUED_MUTATION_LOCK:
             if _ISSUED_MUTATIONS.get(mutation_id) is reference:
                 _ISSUED_MUTATIONS.pop(mutation_id, None)
+                _WRITE_EXPECTATIONS.pop(mutation_id, None)
 
     reference = ref(mutation, discard)
     with _ISSUED_MUTATION_LOCK:
