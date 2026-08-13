@@ -13,6 +13,51 @@ from types import SimpleNamespace
 
 import pytest
 
+NEW_SCANNER_FIXTURES = {
+    "qwen3_tts_1_7b_base_q8_0": (("qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf", "gguf"),),
+    "omnivoice_safetensors": (
+        ("config.json", "json"),
+        ("tokenizer.json", "json"),
+        ("tokenizer_config.json", "json"),
+        ("audio_tokenizer/config.json", "json"),
+        ("audio_tokenizer/preprocessor_config.json", "json"),
+        ("model.safetensors", "safetensors"),
+        ("audio_tokenizer/model.safetensors", "safetensors"),
+    ),
+    "voxcpm2_safetensors": (
+        ("config.json", "json"),
+        ("tokenizer_config.json", "json"),
+        ("tokenizer.json", "json"),
+        ("special_tokens_map.json", "json"),
+        ("model.safetensors", "safetensors"),
+        ("audiovae.safetensors", "safetensors"),
+    ),
+    "index_tts2_safetensors": (
+        ("config.yaml", "other"),
+        ("bpe.model", "other"),
+        ("w2v-bert-2.0/config.json", "json"),
+        ("w2v-bert-2.0/preprocessor_config.json", "json"),
+        ("bigvgan/config.json", "json"),
+        ("qwen0.6bemo4-merge/config.json", "json"),
+        ("qwen0.6bemo4-merge/generation_config.json", "json"),
+        ("qwen0.6bemo4-merge/tokenizer.json", "json"),
+        ("qwen0.6bemo4-merge/tokenizer_config.json", "json"),
+        ("qwen0.6bemo4-merge/vocab.json", "json"),
+        ("qwen0.6bemo4-merge/merges.txt", "other"),
+        ("gpt.safetensors", "safetensors"),
+        ("s2mel.safetensors", "safetensors"),
+        ("feat1.safetensors", "safetensors"),
+        ("feat2.safetensors", "safetensors"),
+        ("wav2vec2bert_stats.safetensors", "safetensors"),
+        ("w2v-bert-2.0/model.safetensors", "safetensors"),
+        ("semantic_codec_model.safetensors", "safetensors"),
+        ("campplus.safetensors", "safetensors"),
+        ("bigvgan/model.safetensors", "safetensors"),
+        ("qwen0.6bemo4-merge/model.safetensors", "safetensors"),
+    ),
+    "glm_tts_q8_0": (("Text to audio (TTS)/GLM-TTS_Q8.gguf", "gguf"),),
+}
+
 
 def _api():
     from tldw_chatbook.TTS.audio_cpp_package_scanner import (  # noqa: F401
@@ -41,16 +86,13 @@ def _write_safetensors(path: Path) -> None:
 
 
 def _write_recipe_fixture(root: Path, package_variant: str) -> None:
-    from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
-
-    recipe = AUDIO_CPP_RECIPE_REGISTRY.for_package(package_variant)
-    for signal in recipe.required_files:
-        target = root / signal.relative_path
-        if signal.kind.value == "gguf":
+    for relative_path, kind in NEW_SCANNER_FIXTURES[package_variant]:
+        target = root / relative_path
+        if kind == "gguf":
             _write_gguf(target)
-        elif signal.kind.value == "safetensors":
+        elif kind == "safetensors":
             _write_safetensors(target)
-        elif signal.kind.value == "json":
+        elif kind == "json":
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("{}", encoding="utf-8")
         else:
@@ -216,7 +258,7 @@ def test_multifile_safetensors_layout_requires_every_companion(tmp_path: Path) -
     "package_variant",
     (
         "qwen3_tts_1_7b_base_q8_0",
-        "chatterbox_safetensors",
+        "omnivoice_safetensors",
         "voxcpm2_safetensors",
         "index_tts2_safetensors",
         "glm_tts_q8_0",
@@ -232,13 +274,13 @@ def test_new_recipe_layouts_are_exact_through_the_bounded_scanner(
     _write_recipe_fixture(root, package_variant)
 
     exact = api["scan_audio_cpp_package_root"](root)
-    recipe = next(
-        candidate.recipe
+    candidate = next(
+        candidate
         for discovery in exact.discoveries
         for candidate in discovery.match.candidates
         if candidate.recipe.package_variant == package_variant
     )
-    (root / recipe.required_files[-1].relative_path).unlink()
+    (root / NEW_SCANNER_FIXTURES[package_variant][-1][0]).unlink()
     incomplete = api["scan_audio_cpp_package_root"](root)
 
     exact_matches = tuple(
@@ -247,12 +289,34 @@ def test_new_recipe_layouts_are_exact_through_the_bounded_scanner(
         if discovery.match.state is api["AudioCppMatchState"].EXACT
     )
     assert len(exact_matches) == 1
-    assert exact_matches[0].match.candidates[0].recipe is recipe
+    assert exact_matches[0].match.candidates[0] is candidate
     assert all(
         candidate.recipe.package_variant != package_variant
         for discovery in incomplete.discoveries
         for candidate in discovery.match.candidates
     )
+
+
+def test_new_qwen_extra_variant_signal_is_ambiguous_not_selected(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    root = tmp_path / "qwen-conflict"
+    root.mkdir()
+    _write_gguf(root / "qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf")
+    _write_gguf(root / "qwen3-tts-12hz-1.7b-base-bf16.gguf")
+
+    result = api["scan_audio_cpp_package_root"](root)
+
+    exact = next(
+        discovery.match
+        for discovery in result.discoveries
+        if discovery.match.state is api["AudioCppMatchState"].AMBIGUOUS
+    )
+    assert {candidate.recipe.package_variant for candidate in exact.candidates} == {
+        "qwen3_tts_1_7b_base_q8_0",
+        "qwen3_tts_1_7b_base_bf16",
+    }
 
 
 def test_entry_and_depth_limits_return_partial_instead_of_absent(

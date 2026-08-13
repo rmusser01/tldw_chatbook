@@ -960,26 +960,6 @@ _ADDITIONAL_GGUF_VARIANTS = (
     # family, variant, display name, precision, relative model path, capabilities,
     # reference requirement, projected task
     (
-        "chatterbox",
-        "chatterbox_q8_0",
-        "Chatterbox Q8_0 GGUF",
-        "q8_0",
-        "chatterbox-q8_0.gguf",
-        ("tts", "clone"),
-        AudioCppReferenceRequirement.REQUIRED,
-        "tts",
-    ),
-    (
-        "chatterbox",
-        "chatterbox_f16",
-        "Chatterbox F16 GGUF",
-        "f16",
-        "chatterbox-f16.gguf",
-        ("tts", "clone"),
-        AudioCppReferenceRequirement.REQUIRED,
-        "tts",
-    ),
-    (
         "dramabox",
         "dramabox_q8_0",
         "DramaBox Q8_0 GGUF",
@@ -995,8 +975,8 @@ _ADDITIONAL_GGUF_VARIANTS = (
         "VibeVoice 1.5B Q8_0 GGUF",
         "q8_0",
         "vibevoice-1.5b-q8_0.gguf",
-        ("tts",),
-        AudioCppReferenceRequirement.NONE,
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
         "tts",
     ),
     (
@@ -1005,8 +985,8 @@ _ADDITIONAL_GGUF_VARIANTS = (
         "VibeVoice 1.5B BF16 GGUF",
         "bf16",
         "vibevoice-1.5b-bf16.gguf",
-        ("tts",),
-        AudioCppReferenceRequirement.NONE,
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
         "tts",
     ),
     (
@@ -1130,46 +1110,6 @@ _ADDITIONAL_GGUF_VARIANTS = (
         "tts",
     ),
     (
-        "qwen3_tts",
-        "qwen3_tts_1_7b_customvoice_q8_0",
-        "Qwen3 TTS 12Hz 1.7B CustomVoice Q8_0 GGUF",
-        "q8_0",
-        "qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf",
-        ("tts",),
-        AudioCppReferenceRequirement.NONE,
-        "tts",
-    ),
-    (
-        "qwen3_tts",
-        "qwen3_tts_1_7b_customvoice_bf16",
-        "Qwen3 TTS 12Hz 1.7B CustomVoice BF16 GGUF",
-        "bf16",
-        "qwen3-tts-12hz-1.7b-customvoice-bf16.gguf",
-        ("tts",),
-        AudioCppReferenceRequirement.NONE,
-        "tts",
-    ),
-    (
-        "qwen3_tts",
-        "qwen3_tts_1_7b_voicedesign_q8_0",
-        "Qwen3 TTS 12Hz 1.7B VoiceDesign Q8_0 GGUF",
-        "q8_0",
-        "qwen3-tts-12hz-1.7b-voicedesign-q8_0.gguf",
-        ("tts", "design"),
-        AudioCppReferenceRequirement.NONE,
-        "tts",
-    ),
-    (
-        "qwen3_tts",
-        "qwen3_tts_1_7b_voicedesign_bf16",
-        "Qwen3 TTS 12Hz 1.7B VoiceDesign BF16 GGUF",
-        "bf16",
-        "qwen3-tts-12hz-1.7b-voicedesign-bf16.gguf",
-        ("tts", "design"),
-        AudioCppReferenceRequirement.NONE,
-        "tts",
-    ),
-    (
         "voxcpm2",
         "voxcpm2_q8_0",
         "VoxCPM2 Q8_0 GGUF",
@@ -1200,23 +1140,13 @@ _ADDITIONAL_GGUF_VARIANTS = (
         "tts",
     ),
     (
-        "confucius4_tts",
-        "confucius4_tts_orig",
-        "Confucius4-TTS Original-Dtype GGUF",
-        "orig",
-        "confucius4-tts-orig.gguf",
-        ("clone",),
-        AudioCppReferenceRequirement.REQUIRED,
-        "clone",
-    ),
-    (
         "vevo2",
         "vevo2_q8_0",
         "Vevo2 Q8_0 GGUF",
         "q8_0",
         "vevo2-q8_0.gguf",
-        ("tts",),
-        AudioCppReferenceRequirement.NONE,
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
         "tts",
     ),
     (
@@ -1225,8 +1155,8 @@ _ADDITIONAL_GGUF_VARIANTS = (
         "Vevo2 F16 GGUF",
         "f16",
         "vevo2-f16.gguf",
-        ("tts",),
-        AudioCppReferenceRequirement.NONE,
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
         "tts",
     ),
     (
@@ -1235,8 +1165,8 @@ _ADDITIONAL_GGUF_VARIANTS = (
         "Vevo2 Original-Dtype GGUF",
         "orig",
         "vevo2-orig.gguf",
-        ("tts",),
-        AudioCppReferenceRequirement.NONE,
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
         "tts",
     ),
     (
@@ -1427,27 +1357,6 @@ _ADDITIONAL_RECIPES = (
         ) in _ADDITIONAL_GGUF_VARIANTS
     ),
     _recipe(
-        family="chatterbox",
-        package_variant="chatterbox_safetensors",
-        display_name="Chatterbox Safetensors",
-        package_format=AudioCppFileKind.SAFETENSORS,
-        precision="native",
-        capabilities=("tts", "clone"),
-        required_files=_package_files(
-            "tokenizer.json",
-            "grapheme_mtl_merged_expanded_v1.json",
-            "Cangjie5_TC.json",
-            "conds.pt",
-            "ve.safetensors",
-            "s3gen.safetensors",
-            "t3_cfg.safetensors",
-            "t3_mtl23ls_v2.safetensors",
-            "t3_mtl23ls_v3.safetensors",
-        ),
-        model_relative_path=None,
-        reference_requirement=AudioCppReferenceRequirement.REQUIRED,
-    ),
-    _recipe(
         family="omnivoice",
         package_variant="omnivoice_safetensors",
         display_name="OmniVoice Safetensors",
@@ -1612,6 +1521,26 @@ _RELEASE_PACKAGES: dict[str, tuple[str, ...]] = {
 }
 
 _UNSUPPORTED_RELEASE_PACKAGES = {
+    "chatterbox_q8_0": (
+        "The exact clon/vc task tokens are outside the typed guided projection.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/tts.md#chatterbox",
+    ),
+    "chatterbox_f16": (
+        "The exact clon/vc task tokens are outside the typed guided projection.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/tts.md#chatterbox",
+    ),
+    "chatterbox_safetensors": (
+        "The exact clon/vc task tokens are outside the typed guided projection.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/tts.md#chatterbox",
+    ),
+    "confucius4_tts_orig": (
+        "The exact clon task token is outside the typed guided projection.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/tts.md#confucius4-tts",
+    ),
     "miotts_1_7b_q8_0": (
         "Guided projection cannot resolve the required sibling MioCodec path.",
         f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
@@ -1634,6 +1563,26 @@ _UNSUPPORTED_RELEASE_PACKAGES = {
     "qwen3_tts_0_6b_base_safetensors": (
         "Bounded file signals cannot distinguish the two Base Safetensors sizes.",
         f"{_PINNED_MODEL_SPEC_BASE}/qwen3_tts.json",
+    ),
+    "qwen3_tts_1_7b_customvoice_q8_0": (
+        "Packaged speaker input is required, but the typed policy permits no voice.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/models/qwen3.md#qwen3-tts-customvoice",
+    ),
+    "qwen3_tts_1_7b_customvoice_bf16": (
+        "Packaged speaker input is required, but the typed policy permits no voice.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/models/qwen3.md#qwen3-tts-customvoice",
+    ),
+    "qwen3_tts_1_7b_voicedesign_q8_0": (
+        "The exact vdes task token is outside the typed guided projection.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/models/qwen3.md#qwen3-tts-voicedesign",
+    ),
+    "qwen3_tts_1_7b_voicedesign_bf16": (
+        "The exact vdes task token is outside the typed guided projection.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/models/qwen3.md#qwen3-tts-voicedesign",
     ),
 }
 

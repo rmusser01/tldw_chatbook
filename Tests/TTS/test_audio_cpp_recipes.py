@@ -87,7 +87,7 @@ EXPECTED_RELEASE_FAMILY_COUNTS = {
     "outetts": 1,
     "vietneu_tts": 1,
 }
-EXPECTED_APPROVED_COUNT = 62
+EXPECTED_APPROVED_COUNT = 54
 QWEN_BASE_SAFETENSORS_FILES = (
     "config.json",
     "generation_config.json",
@@ -96,6 +96,474 @@ QWEN_BASE_SAFETENSORS_FILES = (
     "speech_tokenizer/model.safetensors",
     "tokenizer_config.json",
 )
+EXPECTED_NEW_RECIPES = {
+    "dramabox_q8_0": (
+        "dramabox",
+        ("dramabox-q8_0.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "optional",
+        "either",
+        "dramabox-q8_0.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "fish_audio_s2_pro_bf16": (
+        "fish_audio",
+        ("fish-audio-s2-pro-bf16.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "optional",
+        "either",
+        "fish-audio-s2-pro-bf16.gguf",
+        "gguf",
+        "bf16",
+    ),
+    "fish_audio_s2_pro_q8_0": (
+        "fish_audio",
+        ("fish-audio-s2-pro-q8_0.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "optional",
+        "either",
+        "fish-audio-s2-pro-q8_0.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "glm_tts_q8_0": (
+        "glm_tts",
+        ("Text to audio (TTS)/GLM-TTS_Q8.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "required",
+        "reference_only",
+        "Text to audio (TTS)/GLM-TTS_Q8.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "higgs_audio_tts_4b_bf16": (
+        "higgs_audio_tts",
+        ("higgs-audio-v3-tts-4b-bf16.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "required",
+        "reference_only",
+        "higgs-audio-v3-tts-4b-bf16.gguf",
+        "gguf",
+        "bf16",
+    ),
+    "higgs_audio_tts_4b_q8_0": (
+        "higgs_audio_tts",
+        ("higgs-audio-v3-tts-4b-q8_0.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "required",
+        "reference_only",
+        "higgs-audio-v3-tts-4b-q8_0.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "index_tts2_f16": (
+        "index_tts2",
+        ("index-tts2-f16.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "required",
+        "reference_only",
+        "index-tts2-f16.gguf",
+        "gguf",
+        "f16",
+    ),
+    "index_tts2_orig": (
+        "index_tts2",
+        ("index-tts2-orig.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "required",
+        "reference_only",
+        "index-tts2-orig.gguf",
+        "gguf",
+        "orig",
+    ),
+    "index_tts2_q8_0": (
+        "index_tts2",
+        ("index-tts2-q8_0.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "required",
+        "reference_only",
+        "index-tts2-q8_0.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "index_tts2_safetensors": (
+        "index_tts2",
+        (
+            "config.yaml",
+            "bpe.model",
+            "w2v-bert-2.0/config.json",
+            "w2v-bert-2.0/preprocessor_config.json",
+            "bigvgan/config.json",
+            "qwen0.6bemo4-merge/config.json",
+            "qwen0.6bemo4-merge/generation_config.json",
+            "qwen0.6bemo4-merge/tokenizer.json",
+            "qwen0.6bemo4-merge/tokenizer_config.json",
+            "qwen0.6bemo4-merge/vocab.json",
+            "qwen0.6bemo4-merge/merges.txt",
+            "gpt.safetensors",
+            "s2mel.safetensors",
+            "feat1.safetensors",
+            "feat2.safetensors",
+            "wav2vec2bert_stats.safetensors",
+            "w2v-bert-2.0/model.safetensors",
+            "semantic_codec_model.safetensors",
+            "campplus.safetensors",
+            "bigvgan/model.safetensors",
+            "qwen0.6bemo4-merge/model.safetensors",
+        ),
+        "tts",
+        ("tts", "clone"),
+        "required",
+        "reference_only",
+        None,
+        "safetensors",
+        "native",
+    ),
+    "inflect_micro_v2_orig": (
+        "inflect_v2",
+        ("inflect-micro-v2-orig.gguf",),
+        "tts",
+        ("tts",),
+        "none",
+        "native_only",
+        "inflect-micro-v2-orig.gguf",
+        "gguf",
+        "orig",
+    ),
+    "irodori_tts_500m_v3_f16": (
+        "irodori_tts",
+        ("irodori-tts-500m-v3-f16.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "optional",
+        "either",
+        "irodori-tts-500m-v3-f16.gguf",
+        "gguf",
+        "f16",
+    ),
+    "irodori_tts_500m_v3_q8_0": (
+        "irodori_tts",
+        ("irodori-tts-500m-v3-q8_0.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "optional",
+        "either",
+        "irodori-tts-500m-v3-q8_0.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "irodori_tts_600m_v3_voicedesign_f16": (
+        "irodori_tts",
+        ("irodori-tts-600m-v3-voicedesign-f16.gguf",),
+        "tts",
+        ("tts", "clone", "design"),
+        "optional",
+        "either",
+        "irodori-tts-600m-v3-voicedesign-f16.gguf",
+        "gguf",
+        "f16",
+    ),
+    "irodori_tts_600m_v3_voicedesign_q8_0": (
+        "irodori_tts",
+        ("irodori-tts-600m-v3-voicedesign-q8_0.gguf",),
+        "tts",
+        ("tts", "clone", "design"),
+        "optional",
+        "either",
+        "irodori-tts-600m-v3-voicedesign-q8_0.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "irodori_tts_v4_small_f16": (
+        "irodori_tts",
+        ("irodori-tts-v4-small-f16.gguf",),
+        "tts",
+        ("tts", "clone", "design"),
+        "optional",
+        "either",
+        "irodori-tts-v4-small-f16.gguf",
+        "gguf",
+        "f16",
+    ),
+    "irodori_tts_v4_small_q8_0": (
+        "irodori_tts",
+        ("irodori-tts-v4-small-q8_0.gguf",),
+        "tts",
+        ("tts", "clone", "design"),
+        "optional",
+        "either",
+        "irodori-tts-v4-small-q8_0.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "moss_tts_local_v1_5_bf16": (
+        "moss_tts_local",
+        ("moss-tts-local-v1.5-bf16.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "optional",
+        "either",
+        "moss-tts-local-v1.5-bf16.gguf",
+        "gguf",
+        "bf16",
+    ),
+    "moss_tts_local_v1_5_q8_0": (
+        "moss_tts_local",
+        ("moss-tts-local-v1.5-q8_0.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "optional",
+        "either",
+        "moss-tts-local-v1.5-q8_0.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "moss_tts_nano_100m_bf16": (
+        "moss_tts_nano",
+        ("moss-tts-nano-100m-bf16.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "optional",
+        "either",
+        "moss-tts-nano-100m-bf16.gguf",
+        "gguf",
+        "bf16",
+    ),
+    "moss_tts_nano_100m_q8_0": (
+        "moss_tts_nano",
+        ("moss-tts-nano-100m-q8_0.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "optional",
+        "either",
+        "moss-tts-nano-100m-q8_0.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "omnivoice_bf16": (
+        "omnivoice",
+        ("omnivoice-bf16.gguf",),
+        "tts",
+        ("tts", "clone", "design"),
+        "optional",
+        "either",
+        "omnivoice-bf16.gguf",
+        "gguf",
+        "bf16",
+    ),
+    "omnivoice_f16": (
+        "omnivoice",
+        ("omnivoice-f16.gguf",),
+        "tts",
+        ("tts", "clone", "design"),
+        "optional",
+        "either",
+        "omnivoice-f16.gguf",
+        "gguf",
+        "f16",
+    ),
+    "omnivoice_q8_0": (
+        "omnivoice",
+        ("omnivoice-q8_0.gguf",),
+        "tts",
+        ("tts", "clone", "design"),
+        "optional",
+        "either",
+        "omnivoice-q8_0.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "omnivoice_safetensors": (
+        "omnivoice",
+        (
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "audio_tokenizer/config.json",
+            "audio_tokenizer/preprocessor_config.json",
+            "model.safetensors",
+            "audio_tokenizer/model.safetensors",
+        ),
+        "tts",
+        ("tts", "clone", "design"),
+        "optional",
+        "either",
+        None,
+        "safetensors",
+        "native",
+    ),
+    "outetts_1_0_1b_q8_0": (
+        "outetts",
+        ("Text to audio (TTS)/Llama-OuteTTS-1.0-1B_Q8.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "optional",
+        "either",
+        "Text to audio (TTS)/Llama-OuteTTS-1.0-1B_Q8.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "qwen3_tts_1_7b_base_bf16": (
+        "qwen3_tts",
+        ("qwen3-tts-12hz-1.7b-base-bf16.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "required",
+        "reference_only",
+        "qwen3-tts-12hz-1.7b-base-bf16.gguf",
+        "gguf",
+        "bf16",
+    ),
+    "qwen3_tts_1_7b_base_orig": (
+        "qwen3_tts",
+        ("qwen3-tts-12hz-1.7b-base-orig.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "required",
+        "reference_only",
+        "qwen3-tts-12hz-1.7b-base-orig.gguf",
+        "gguf",
+        "orig",
+    ),
+    "qwen3_tts_1_7b_base_q8_0": (
+        "qwen3_tts",
+        ("qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "required",
+        "reference_only",
+        "qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "vevo2_f16": (
+        "vevo2",
+        ("vevo2-f16.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "required",
+        "reference_only",
+        "vevo2-f16.gguf",
+        "gguf",
+        "f16",
+    ),
+    "vevo2_orig": (
+        "vevo2",
+        ("vevo2-orig.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "required",
+        "reference_only",
+        "vevo2-orig.gguf",
+        "gguf",
+        "orig",
+    ),
+    "vevo2_q8_0": (
+        "vevo2",
+        ("vevo2-q8_0.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "required",
+        "reference_only",
+        "vevo2-q8_0.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "vibevoice_1_5b_bf16": (
+        "vibevoice",
+        ("vibevoice-1.5b-bf16.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "optional",
+        "either",
+        "vibevoice-1.5b-bf16.gguf",
+        "gguf",
+        "bf16",
+    ),
+    "vibevoice_1_5b_q8_0": (
+        "vibevoice",
+        ("vibevoice-1.5b-q8_0.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "optional",
+        "either",
+        "vibevoice-1.5b-q8_0.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "vietneu_tts_v3_turbo_q8_0": (
+        "vietneu_tts",
+        ("model.gguf",),
+        "tts",
+        ("tts", "clone"),
+        "optional",
+        "either",
+        "model.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "voxcpm2_bf16": (
+        "voxcpm2",
+        ("voxcpm2-bf16.gguf",),
+        "tts",
+        ("tts", "clone", "design"),
+        "optional",
+        "either",
+        "voxcpm2-bf16.gguf",
+        "gguf",
+        "bf16",
+    ),
+    "voxcpm2_orig": (
+        "voxcpm2",
+        ("voxcpm2-orig.gguf",),
+        "tts",
+        ("tts", "clone", "design"),
+        "optional",
+        "either",
+        "voxcpm2-orig.gguf",
+        "gguf",
+        "orig",
+    ),
+    "voxcpm2_q8_0": (
+        "voxcpm2",
+        ("voxcpm2-q8_0.gguf",),
+        "tts",
+        ("tts", "clone", "design"),
+        "optional",
+        "either",
+        "voxcpm2-q8_0.gguf",
+        "gguf",
+        "q8_0",
+    ),
+    "voxcpm2_safetensors": (
+        "voxcpm2",
+        (
+            "config.json",
+            "tokenizer_config.json",
+            "tokenizer.json",
+            "special_tokens_map.json",
+            "model.safetensors",
+            "audiovae.safetensors",
+        ),
+        "tts",
+        ("tts", "clone", "design"),
+        "optional",
+        "either",
+        None,
+        "safetensors",
+        "native",
+    ),
+}
 
 
 def _api():
@@ -158,9 +626,9 @@ def test_registry_is_pinned_and_contains_every_approved_package_exactly_once() -
         "238ab6a9e321c17de8e120559f57efeedaeb1345"
     )
     assert len(registry.recipes) == EXPECTED_APPROVED_COUNT
-    assert set(EXPECTED_INITIAL_PACKAGES) <= {
-        recipe.package_variant for recipe in registry.recipes
-    }
+    assert {recipe.package_variant for recipe in registry.recipes} == (
+        set(EXPECTED_INITIAL_PACKAGES) | set(EXPECTED_NEW_RECIPES)
+    )
     assert len({recipe.recipe_id for recipe in registry.recipes}) == len(
         registry.recipes
     )
@@ -264,6 +732,43 @@ def test_initial_tasks_and_pocket_language_options_follow_the_pinned_specs() -> 
         else:
             assert recipe.reference_requirement is reference_requirement.OPTIONAL
             assert recipe.voice_reference_policy is voice_reference_policy.EITHER
+
+
+def test_every_new_approved_recipe_equals_the_independent_pinned_matrix() -> None:
+    registry = _api()["AUDIO_CPP_RECIPE_REGISTRY"]
+
+    actual = {
+        variant: (
+            recipe.family,
+            tuple(signal.relative_path for signal in recipe.required_files),
+            recipe.projection.task,
+            recipe.capabilities,
+            recipe.reference_requirement.value,
+            recipe.voice_reference_policy.value,
+            recipe.projection.model_relative_path,
+            recipe.package_format.value,
+            recipe.precision,
+        )
+        for variant in EXPECTED_NEW_RECIPES
+        for recipe in (registry.for_package(variant),)
+    }
+
+    assert actual == EXPECTED_NEW_RECIPES
+
+
+def test_vibevoice_and_vevo_reference_contracts_follow_pinned_routes() -> None:
+    registry = _api()["AUDIO_CPP_RECIPE_REGISTRY"]
+
+    for variant in ("vibevoice_1_5b_q8_0", "vibevoice_1_5b_bf16"):
+        recipe = registry.for_package(variant)
+        assert recipe.capabilities == ("tts", "clone")
+        assert recipe.reference_requirement.value == "optional"
+        assert recipe.voice_reference_policy.value == "either"
+    for variant in ("vevo2_q8_0", "vevo2_f16", "vevo2_orig"):
+        recipe = registry.for_package(variant)
+        assert recipe.capabilities == ("tts", "clone")
+        assert recipe.reference_requirement.value == "required"
+        assert recipe.voice_reference_policy.value == "reference_only"
 
 
 @pytest.mark.parametrize(
@@ -532,13 +1037,21 @@ def test_release_accounting_is_complete_and_truthful_for_all_21_families() -> No
         if entry.state is support_state.EXPLICITLY_UNSUPPORTED
     )
     assert len(approved) == EXPECTED_APPROVED_COUNT
-    assert len(unsupported) == 5
+    assert len(unsupported) == 13
     assert {entry.package_variant for entry in unsupported} == {
+        "chatterbox_q8_0",
+        "chatterbox_f16",
+        "chatterbox_safetensors",
+        "confucius4_tts_orig",
         "miotts_1_7b_q8_0",
         "miotts_1_7b_bf16",
         "miotts_1_7b_orig",
         "qwen3_tts_1_7b_base_safetensors",
         "qwen3_tts_0_6b_base_safetensors",
+        "qwen3_tts_1_7b_customvoice_q8_0",
+        "qwen3_tts_1_7b_customvoice_bf16",
+        "qwen3_tts_1_7b_voicedesign_q8_0",
+        "qwen3_tts_1_7b_voicedesign_bf16",
     }
     assert {entry.package_variant for entry in approved} == {
         recipe.package_variant for recipe in registry.recipes
