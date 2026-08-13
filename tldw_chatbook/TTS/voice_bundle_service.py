@@ -1260,7 +1260,7 @@ class TTSVoiceBundlePortabilityService:
             Sanitized review facts plus opaque commit authority.
 
         Raises:
-            TTSVoiceBundleError: The source or bundle fails bounded validation.
+            TTSVoiceBundleError: Inspection cannot complete safely.
             asyncio.CancelledError: The inspection caller is cancelled.
         """
 
