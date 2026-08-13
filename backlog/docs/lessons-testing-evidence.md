@@ -28,6 +28,28 @@ top of the test, and cover its truth table plus the default skip reason. That
 makes default collection safe while ensuring the opt-in command can actually
 reach the code it claims to verify.
 
+---
+
+## A targeted async completion must not rebuild a surface that is transitioning away
+
+**TASK-15706, 2026-08-13.** Database Notes began loading its folder tree in a
+background worker. If the user switched to File Notes before that worker
+finished, the completion path tried to synchronize `#library-notes-canvas`.
+That canvas was legitimately absent during the source transition, so the shared
+sync helper used its generic full-screen recompose fallback. The fallback
+invalidated the just-pressed Files source control and intermittently left the
+transition without its retained File Notes surface. Folder-tree tests all
+passed; only the production-shell source-switch tests reproduced the race.
+
+**What to do.** An async completion that owns one optional child surface should
+first confirm that exact surface is still mounted. If it is absent because the
+user navigated away, treat the result as cached state and skip the paint; do not
+invoke a generic whole-screen fallback. Verify the fix through the real route
+transition, and compare the same test against the untouched baseline before
+attributing nearby focus failures to the branch.
+
+---
+
 ## A schema-version label does not make a synthetic database historical
 
 **TASK-15705/TASK-15707, 2026-08-12.** Raising ChaChaNotes from v35 to v36
