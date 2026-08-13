@@ -6965,9 +6965,7 @@ async def test_library_shell_shows_loading_state_before_snapshot_loads(monkeypat
 
 @pytest.mark.asyncio
 async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
-    """A local-source lookup error must surface in the canvas, not only in
-    the (possibly collapsed) Details disclosure.
-    """
+    """A conversation lookup error keeps its recoverable canvas available."""
     app = _build_test_app()
     _seed_conversations(app, [])
 
@@ -6976,6 +6974,9 @@ async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
     screen = LibraryScreen(app)
     screen.apply_navigation_context({"mode": "conversations"})
     screen._library_lookup_error = "Library sources are unavailable right now."
+    screen._library_conversation_error = (
+        "Couldn't load conversations. Submit the filter to try again."
+    )
     host = LibraryHarness(app, screen=screen)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -6983,8 +6984,18 @@ async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
         await pilot.pause()
         await pilot.pause()
 
-        error_static = active_screen.query_one("#library-canvas-error")
-        assert "unavailable" in str(error_static.renderable).lower()
+        assert active_screen.query_one("#library-conversations-canvas")
+        status = str(
+            active_screen.query_one("#library-conversations-status").renderable
+        ).lower()
+        assert "load" in status
+        assert "try again" in status
+        assert active_screen.query_one("#library-conversations-filter", Input)
+        assert active_screen.query_one(
+            "#library-conversations-previous", Button
+        ).disabled
+        assert active_screen.query_one("#library-conversations-next", Button).disabled
+        assert not active_screen.query("#library-canvas-error")
         assert not active_screen.query("#library-canvas-loading")
 
 
