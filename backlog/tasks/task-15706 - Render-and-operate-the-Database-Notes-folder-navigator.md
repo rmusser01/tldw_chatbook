@@ -1,5 +1,5 @@
 ---
-id: TASK-15703
+id: TASK-15706
 title: Render and operate the Database Notes folder navigator
 status: To Do
 assignee: []
@@ -9,7 +9,7 @@ labels:
   - folders
   - ui
 dependencies:
-  - TASK-15702
+  - TASK-15705
 references:
   - Docs/superpowers/specs/2026-08-12-notes-folder-import-sync-design.md
   - backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md

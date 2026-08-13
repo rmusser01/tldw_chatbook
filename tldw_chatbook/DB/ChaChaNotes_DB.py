@@ -163,7 +163,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 36  # Local note folders and memberships (TASK-15702).
+    _CURRENT_SCHEMA_VERSION = 36  # Local note folders and memberships (TASK-15705).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -4885,7 +4885,7 @@ UPDATE db_schema_version
             ) from exc
 
     def _migrate_from_v35_to_v36(self, conn: sqlite3.Connection) -> None:
-        """Add local note folders and ownership-aware memberships (TASK-15702)."""
+        """Add local note folders and ownership-aware memberships (TASK-15705)."""
         try:
             if self._get_db_version(conn) != 35:
                 raise SchemaError(

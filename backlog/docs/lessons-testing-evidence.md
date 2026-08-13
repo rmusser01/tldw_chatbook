@@ -11,7 +11,7 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ## A schema-version label does not make a synthetic database historical
 
-**TASK-15702/TASK-15704, 2026-08-12.** Raising ChaChaNotes from v35 to v36
+**TASK-15705/TASK-15707, 2026-08-12.** Raising ChaChaNotes from v35 to v36
 first broke migration tests that had either stamped a tiny hand-written database
 with the then-current version or pinned ``_CURRENT_SCHEMA_VERSION`` while using
 the evolving bootstrap SQL. The former skipped migration with required tables

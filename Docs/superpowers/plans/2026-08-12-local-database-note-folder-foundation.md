@@ -12,8 +12,8 @@
 
 ## Scope and governance
 
-- Backlog task: `TASK-15702`
-- Dependent navigator task: `TASK-15703`
+- Backlog task: `TASK-15705`
+- Dependent navigator task: `TASK-15706`
 - Approved design: `Docs/superpowers/specs/2026-08-12-notes-folder-import-sync-design.md`
 - ADR required: yes
 - ADR paths:
@@ -24,7 +24,7 @@
 
 ## Explicit slice boundary
 
-This plan delivers the local data/service foundation consumed by `TASK-15703`.
+This plan delivers the local data/service foundation consumed by `TASK-15706`.
 It does not change the Notes navigator, rename the Media entry, build **Add from
 files…**, import directory content, create the device-private sync database, watch
 files, migrate legacy sync roots, or add server folder endpoints.
@@ -824,7 +824,7 @@ git commit -m "feat(notes): route local folder operations"
 
 **Files:**
 - Modify: `Tests/Notes/test_note_folder_repository.py`
-- Modify: `backlog/tasks/task-15702 - Add-local-Database-Note-folder-data-foundation.md`
+- Modify: `backlog/tasks/task-15705 - Add-local-Database-Note-folder-data-foundation.md`
 - Modify only if an incident generalizes: `backlog/docs/lessons-testing-evidence.md`
 
 - [ ] **Step 1: Measure representative bulk behavior**
@@ -886,12 +886,12 @@ Review the diff and prove:
 
 Check all seven acceptance criteria, add concise Implementation Notes describing
 the approach, files, tests, measured query evidence, trade-offs, and ADR-059/060.
-Set `TASK-15702` to Done only when every repository Definition of Done requirement
+Set `TASK-15705` to Done only when every repository Definition of Done requirement
 is satisfied. Add a lessons entry only if implementation produced a demonstrated,
 generalizable incident.
 
 ```bash
-git add "backlog/tasks/task-15702 - Add-local-Database-Note-folder-data-foundation.md" \
+git add "backlog/tasks/task-15705 - Add-local-Database-Note-folder-data-foundation.md" \
   backlog/docs/lessons-testing-evidence.md
 git commit -m "docs(notes): close folder data foundation"
 ```
