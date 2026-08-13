@@ -3569,6 +3569,55 @@ def test_progress_drain_coalesces_latest_event_with_injected_clock() -> None:
     assert marshaled == [(handler, 4, (latest,))]
 
 
+def test_progress_drain_ignores_hostile_item_and_marshals_later_valid_event() -> None:
+    valid = ParseProgressEvent(4, "ingest-job-1", "extracting", "valid", 30.0)
+
+    class _HostileQueueItem:
+        generation = 4
+
+        @property
+        def job_id(self) -> str:
+            raise RuntimeError("hostile IPC attribute")
+
+    class _ProgressQueue:
+        def __init__(self) -> None:
+            self.events: list[Any] = [_HostileQueueItem(), valid]
+
+        def get(self, timeout: float) -> Any:
+            assert timeout == 0.05
+            if self.events:
+                return self.events.pop(0)
+            raise queue.Empty
+
+    mixin = _bare_ingest_mixin()
+    stop_event = threading.Event()
+
+    def handler(*_args: Any) -> None:
+        return None
+
+    mixin._on_ingest_parse_progress_batch = handler
+    marshaled: list[tuple[Any, ...]] = []
+
+    def _capture_marshal(callback: Any, *args: Any) -> None:
+        marshaled.append((callback, *args))
+        stop_event.set()
+
+    mixin._marshal_ingest_pool_call = _capture_marshal
+    clock_values = iter((10.0, 10.1, 10.25))
+
+    thread = mixin._start_ingest_parse_progress_drain(
+        4,
+        _ProgressQueue(),
+        stop_event,
+        clock=lambda: next(clock_values),
+    )
+    thread.join(timeout=1.0)
+
+    assert not thread.is_alive()
+    assert stop_event.is_set()
+    assert marshaled == [(handler, 4, (valid,))]
+
+
 def test_progress_drain_does_not_marshal_event_released_after_generation_stop() -> None:
     event = ParseProgressEvent(4, "ingest-job-1", "extracting", "late", 40.0)
     get_entered = threading.Event()

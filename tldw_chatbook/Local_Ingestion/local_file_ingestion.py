@@ -6,8 +6,11 @@ This module provides functions to process and store various file types (PDFs, do
 e-books, etc.) without going through the UI, leveraging existing processing capabilities.
 """
 
+import math
 import time
+from collections.abc import Mapping
 from datetime import datetime
+from numbers import Real
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -57,6 +60,46 @@ def _report_ingest_progress(
         progress_callback(phase, message, percent)
     except Exception:
         return
+
+
+def _measured_transcription_percent(metadata: object) -> float | None:
+    """Return progress only for a finite, bounded measured ratio."""
+    if not isinstance(metadata, Mapping):
+        return None
+
+    try:
+        for current_key, total_key in (
+            ("current_time", "total_time"),
+            ("chunk", "total_chunks"),
+            ("current", "total"),
+        ):
+            if current_key not in metadata or total_key not in metadata:
+                continue
+            current_value = metadata[current_key]
+            total_value = metadata[total_key]
+            if (
+                isinstance(current_value, bool)
+                or isinstance(total_value, bool)
+                or not isinstance(current_value, Real)
+                or not isinstance(total_value, Real)
+            ):
+                return None
+            current = float(current_value)
+            total = float(total_value)
+            if (
+                not math.isfinite(current)
+                or not math.isfinite(total)
+                or total <= 0.0
+                or current < 0.0
+                or current > total
+            ):
+                return None
+            return (current / total) * 100.0
+    except Exception:
+        # Provider metadata is non-authoritative telemetry and may be a custom
+        # Mapping; hostile lookup/conversion behavior must not affect parsing.
+        return None
+    return None
 
 
 def _ensure_process_pdf():
@@ -952,15 +995,15 @@ def parse_local_file_for_ingest(
     )
 
     def transcription_progress(
-        percent: float,
+        _percent: float,
         message: str,
-        _data: Any = None,
+        data: Any = None,
     ) -> None:
         _report_ingest_progress(
             progress_callback,
             "transcribing",
             str(message or "Transcribing audio"),
-            percent,
+            _measured_transcription_percent(data),
         )
 
     try:

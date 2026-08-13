@@ -2573,15 +2573,26 @@ class LibraryIngestQueueMixin:
             )
             while not stop_event.is_set() and not self._ingest_shutdown:
                 try:
-                    event = progress_queue.get(timeout=0.05)
+                    raw_event = progress_queue.get(timeout=0.05)
                 except queue.Empty:
-                    event = None
+                    raw_event = None
                 except (EOFError, OSError, ValueError):
                     return
                 if stop_event.is_set() or self._ingest_shutdown:
                     return
-                if event is not None:
-                    coalescer.accept(event)
+                if raw_event is not None:
+                    try:
+                        event = make_parse_progress_event(
+                            raw_event.generation,
+                            raw_event.job_id,
+                            raw_event.phase,
+                            raw_event.message,
+                            raw_event.percent,
+                        )
+                    except Exception:
+                        event = None
+                    if event is not None:
+                        coalescer.accept(event)
                 batch = coalescer.take_due(clock())
                 if batch:
                     if stop_event.is_set() or self._ingest_shutdown:

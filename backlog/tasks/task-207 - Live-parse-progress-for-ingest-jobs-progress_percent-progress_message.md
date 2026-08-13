@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-12 17:34'
-updated_date: '2026-08-13 08:51'
+updated_date: '2026-08-13 14:07'
 labels:
   - follow-up
   - ingest
@@ -58,6 +58,11 @@ Detailed plan: `Docs/superpowers/plans/2026-08-12-task-207-live-ingest-progress.
 
 ## Implementation Notes
 
+- Final-review fix wave: the parent drain now reconstructs every deserialized queue item with `make_parse_progress_event` under an exception guard immediately after the post-`get` stop fence. Only the reconstructed `ParseProgressEvent` reaches the latest-per-job coalescer. A hostile item whose `job_id` access raises no longer terminates the daemon drain, and the later valid event is still marshaled. The pre-marshal stop fence and the existing UI-thread reconstruction/authority checks remain unchanged as defense in depth.
+- Tightened transcription truthfulness per the user's explicit decision: audio/video adapters ignore callback argument 1 because providers use synthetic stage weights such as 10/20/80. They expose a percentage only by recomputing a finite bounded ratio from `current_time`/`total_time`, `chunk`/`total_chunks`, or `current`/`total`; booleans, non-numeric/non-finite values, invalid bounds, non-mappings, and hostile mappings produce text-only progress. Provider/private metadata is consumed only for that allowlisted calculation and never crosses the public callback.
+- Strict TDD evidence was recorded independently. Finding 1 RED: the new drain-level hostile-then-valid test failed because `ParseProgressCoalescer.accept()` dereferenced the hostile `job_id` and the thread died; GREEN: the regression passed and the focused drain set was **3 passed**. Finding 2 RED: audio/video tests exposed synthetic 10/20 and misleading 91 values instead of `None`/25/37.5, and the 19-case pure-helper table failed because the helper was absent; GREEN: adapter plus boundary cases were **21 passed**. A subsequent hostile-mapping callback-isolation mutation was separately RED then GREEN.
+- Final focused verification after the fixes: local adapter module **30 passed**; progress contract/worker plus direct Local-STT routing **10 passed**; drain and UI-thread revalidation **4 passed**; formatter **11 passed**; selected progress canvas/stop-action checks **6 passed**; Local ingestion import-weight guard **1 passed**. The selected Windows Textual checks used the established loopback-only `allow_network` substitution after loading the pytest config sandbox; no external endpoint was used. Scoped Ruff and compile checks passed; the authorized app/runner unfiltered Ruff findings are unchanged inherited E402/F401/F841 findings, and the same files pass when only those baseline classes are excluded. `git diff --check` passed.
+- ADR check: existing ADR-059 remains authoritative for the process boundary, validation, backpressure, and shutdown contract; this bounded correction adds no new architecture, schema, dependency, security boundary, or generalized lesson.
 - Added the ADR-059 process contract: each spawned parse-pool generation owns a bounded queue and a stdlib-only, picklable event containing only bounded primitive data. Worker emission uses `put_nowait`, drops full/closed-channel telemetry, and cannot alter the parse result. A latest-per-job coalescer limits UI delivery; deterministic mutation proof now directly covers `take_due(force=True)` flushing and clearing pending telemetry.
 - Bound parser callbacks only at observable stages. Percentages are retained only when a provider exposes a finite bounded total; indeterminate work remains text-only. The writer transition replaces parse telemetry with `Saving to Library`, so a stale parse percentage cannot survive into WRITING.
 - Local parse ticks use the registry's progress-only listener path with `persist=False`; lifecycle and terminal transitions remain authoritative and persisted. The default `persist=True` Server reconcile path is unchanged. Ordinary ticks patch a stable mounted progress widget in place, while action-signature and lifecycle changes still recompose the necessary structure.
