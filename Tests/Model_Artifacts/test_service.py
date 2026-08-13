@@ -1279,6 +1279,55 @@ def test_descriptor_rejects_unsafe_provenance_urls(
         descriptor(**{field: value})
 
 
+def test_local_integrity_descriptor_accepts_truthful_empty_urls() -> None:
+    local = descriptor(
+        source_url="",
+        license_id="unknown",
+        license_url="",
+        provenance=(ProvenanceClass.LOCAL_INTEGRITY_RECORDED,),
+    )
+
+    assert "file://" not in local.source_url
+    assert "https://local.invalid/" not in local.source_url
+    assert "file://" not in local.license_url
+    assert "https://local.invalid/" not in local.license_url
+    assert ArtifactDescriptor.from_dict(local.to_dict()) == local
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    (
+        {"source_url": ""},
+        {
+            "source_url": "",
+            "license_id": "unknown",
+            "license_url": "",
+            "provenance": (ProvenanceClass.CHATBOOK_CURATED,),
+        },
+        {
+            "source_url": "",
+            "license_id": "unknown",
+            "license_url": "",
+            "provenance": (
+                ProvenanceClass.LOCAL_INTEGRITY_RECORDED,
+                ProvenanceClass.CHATBOOK_CURATED,
+            ),
+        },
+        {
+            "source_url": "",
+            "license_id": "cc-by-4.0",
+            "license_url": "",
+            "provenance": (ProvenanceClass.LOCAL_INTEGRITY_RECORDED,),
+        },
+    ),
+)
+def test_empty_urls_fail_outside_exact_local_provenance(
+    overrides: dict[str, object],
+) -> None:
+    with pytest.raises(ArtifactDescriptorValidationError):
+        descriptor(**overrides)
+
+
 def test_descriptor_accepts_valid_url_with_ipv6_hostname() -> None:
     item = descriptor(
         source_url="https://[2001:db8::1]/model",
