@@ -1,8 +1,10 @@
 # Notes Folder Import and Lasting Sync — Design
 
 Date: 2026-08-12
-Status: Approved design (pre-planning)
-ADR: [ADR-059](../../../backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md)
+Status: Approved design; safety revision pending written-spec review
+ADRs:
+[ADR-059](../../../backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md),
+[ADR-060](../../../backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md)
 
 ## Summary
 
@@ -107,6 +109,11 @@ cannot be mistaken for one another.
 - Renaming or moving inside a managed tree is an explicit guarded filesystem
   action.
 - Local and server-backed Database Notes use the same UI and normalized model.
+- One Database Note may have at most one active lasting filesystem binding across
+  all roots, and one normalized root-relative path may bind to only one note.
+- Bidirectional writes preserve the admitted file's text representation and
+  supported filesystem metadata; ambiguous or unsafe files are never silently
+  normalized.
 
 ## Terminology and Ownership
 
@@ -137,6 +144,12 @@ links to the logical root folder used by note memberships.
 The device-private relationship among a sync root, one normalized relative file
 path, and one Database Note identity. For server-backed Notes, the server sees
 only an opaque claim identity and the note ID—not the physical path or hashes.
+
+Binding uniqueness is global to the device-private sync owner, not merely to one
+root. A Database Note can have at most one active lasting binding across local
+and server-backed roots. Within a root, a normalized relative path and observed
+file identity can resolve to at most one note. Setup, retarget, migration, and
+reconciliation stop on duplicates instead of choosing a winner.
 
 ## User Experience
 
@@ -199,6 +212,12 @@ user-confirmed match—**Update existing**. Updating shows a diff, uses the curr
 optimistic version, and creates the same reversible Library receipt owed by any
 persisted destructive replacement.
 
+For **Update existing**, content replacement and folder placement are separate
+previewed decisions. The preview states whether the existing note will gain the
+imported parent-folder membership, and the user may update content without adding
+that placement or add the placement without replacing content. Neither change is
+implied by approving the other.
+
 If one structured one-time source produces several notes, every resulting note
 inherits that file's parent folder. Structured or multi-note formats are never
 eligible for lasting sync.
@@ -226,6 +245,28 @@ The form collects:
 Activation always follows a path-safety preflight and dry-run. It binds only
 approved discovered files and explicitly selected existing notes. It never
 exports unrelated Database Notes.
+
+The display name is also the logical top-level managed folder label. Renaming it
+changes the Notes tree label only; it does not rename the selected physical root
+directory. Retargeting does not silently replace the display name.
+
+### Direction semantics
+
+Direction governs automatic propagation, not whether the user may explicitly
+resolve an exception:
+
+- **Folder-to-Notes** applies one-sided file creates, changes, renames, and moves
+  to Notes. A note-side change becomes **Needs attention** before any later file
+  update can overwrite it.
+- **Notes-to-folder** applies one-sided note creates, changes, renames, and managed
+  moves to files. An external file change becomes **Needs attention** before a
+  later note write can overwrite it.
+- **Bidirectional** applies a one-sided change toward the unchanged side and marks
+  simultaneous changes as a conflict.
+
+An explicit conflict resolution may choose either side once even when that choice
+runs opposite the configured automatic direction. It does not change the root's
+future direction. Deletions always require confirmation in every direction.
 
 ### Folder tree
 
@@ -271,6 +312,13 @@ Every sync root exposes:
 - attention items;
 - retarget directory; and
 - **Disconnect**.
+
+Retargeting first pauses the root and scans the proposed directory. It presents
+a complete dry-run using stored hashes and file identities, never interprets
+absence from the newly selected directory as deletion, and activates only after
+every ambiguous binding has been resolved or disconnected. The old directory
+remains authoritative until activation commits; canceling leaves it unchanged
+and paused or resumes it at the user's explicit choice.
 
 Disconnect never deletes files or notes. It asks whether to:
 
@@ -370,6 +418,8 @@ targets failures only.
 
 The import ledger stores source path/provenance locally and treats recognition
 after root move/rename as uncertain. It never guesses an update from title alone.
+Its approved action model records content mutation and folder-membership mutation
+separately, including when both target the same existing note.
 
 ### 5. Device-private sync store
 
@@ -390,6 +440,21 @@ The database is owner-only under ADR-029 and independent enough to enumerate and
 restore pending sync recovery without opening ChaChaNotes. Absolute paths,
 content, hashes, and exception messages containing them are excluded from
 persistent ordinary logs.
+
+Folder entities and memberships stored in ChaChaNotes remain part of the normal
+ChaChaNotes backup and restore boundary. The device-private sync database is
+excluded from portable Chatbook export and generic database backup/restore:
+physical roots, leases, journals, and recovery copies are device-bound recovery
+state rather than a portable backup. Any future explicit device-local export must
+restore roots paused, revalidate every path and claim, and require a complete
+dry-run before activation.
+
+Because a ChaChaNotes backup can therefore contain managed memberships without
+their device-only owner, restore treats unmatched managed memberships as inactive.
+After all local sync owners have loaded, a restore review offers conversion to
+manual membership (default) or removal of that organization; it never activates
+or invents a physical root. Until resolved, the placements remain visible and
+clearly labeled **Restored — no sync folder**.
 
 Recovery defaults to 30 days. Admission proves that required bytes and metadata
 fit before a destructive file/note replacement begins. Pending, unresolved, or
@@ -413,6 +478,12 @@ profile-relative configurable paths. Passive Chatbook processes may display
 status but cannot reconcile or mutate that root. Shutdown closes new admission,
 finishes or durably journals the active operation, stops watchers, and releases
 the lease before generic database/worker teardown.
+
+The registry enforces one active lasting binding per Database Note across every
+root it owns, whether the note is local or server-backed. It also enforces one
+note per normalized root-relative path and stable file identity. These constraints
+are revalidated during setup, legacy migration, retarget, claim takeover, and
+before journaled mutation.
 
 ### 7. Reconciler
 
@@ -452,6 +523,13 @@ expected state. Otherwise it becomes **Needs attention** with **Resume**,
 **Restore**, and **Disconnect item** choices. General worker cancellation cannot
 erase or skip a journal stage.
 
+A managed subtree move is a composite journal operation whose ordered child
+entries cover affected files, note mutations, and managed memberships. Only the
+single-authority local folder-row mutation may be described as atomic. The
+cross-authority move is resumable and recoverable but not atomic; partial progress
+is visible, and deterministic replay never substitutes copy/delete for a failed
+rename without fresh approval.
+
 ### 9. Watcher coordinator
 
 Watchers are hints, coalesce bursts, and never apply mutations. Missing roots are
@@ -459,6 +537,12 @@ Watchers are hints, coalesce bursts, and never apply mutations. Missing roots ar
 roots are rejected; symlinked files are skipped with a visible reason. Unsafe,
 network, cloud-synchronized, or insufficiently supported filesystems may offer
 folder-to-Notes but cannot silently enable bidirectional writes.
+
+Bidirectional admission requires a stable single-link regular file. Hard-linked
+or otherwise aliased files are marked unsupported for writing because another
+path could mutate the same inode outside the binding and recovery boundary. If
+safe reading remains possible, setup may offer folder-to-Notes with the limitation
+shown in its dry-run.
 
 A large deletion burst is grouped into one root-level attention event with a
 preview and explicit batch resolution rather than hundreds of prompts.
@@ -479,6 +563,24 @@ including Markdown and plain text.
 - A Database Note explicitly selected for initial Notes-to-folder publication
   receives a previewed, sanitized filename and collision check.
 
+Each writable binding stores a serialization profile captured from bytes before
+the first write: UTF-8 BOM presence, newline convention, and final-newline
+presence. Notes-to-file writes preserve that profile. Mixed-newline files,
+unsupported encodings, and undecodable bytes are never silently normalized; the
+dry-run either restricts them to folder-to-Notes or skips them with a reason.
+For a newly published file with no prior profile, the preview states the
+deterministic default: UTF-8 without BOM, LF line endings, with final-newline
+presence matching the Database Note body exactly.
+
+Writable preflight also records the platform-supported replacement metadata that
+must survive a write, including file mode and any supported ACL, extended
+attribute, ownership, or platform flag fields. The platform adapter must prove it
+can preserve and verify required metadata before enabling bidirectional writes.
+When it cannot, the root or item is read-only/folder-to-Notes. Database Notes sync
+may share centralized containment, identity, atomic-replacement, and metadata
+preservation primitives with File Notes, but it retains separate tables, editor
+authority, recovery ownership, and high-level write orchestration.
+
 These rules avoid progressive file transformation across repeated syncs.
 
 ## Conflict, Deletion, and Move Behavior
@@ -492,8 +594,8 @@ relative path, and a text diff:
 - **Keep note** — admit exact file recovery, update the file, verify, and retain
   Undo.
 - **Keep both** — keep the file as the bound version and create the conflicting
-  Database Note content as a selected, unbound note under the manual
-  `Conflict copies / <root display name>` folder. The receipt names both outcomes
+  Database Note content as a selected, unbound note in a child named after the
+  root under the manual **Conflict copies** folder. The receipt names both outcomes
   and offers Undo while recovery is retained.
 
 Bulk resolution is allowed only when every selected item receives the same
@@ -518,7 +620,14 @@ Show old/new paths and affected descendants. Before action, recheck containment,
 current hash/version, destination absence, filesystem capability, recovery
 capacity, and server claim. A destination collision or external change blocks the
 move and creates attention; copy/delete fallback is not silently substituted for
-an unavailable atomic move.
+an unavailable atomic move. A title change that would rename a bound file first
+shows the proposed old and new filenames; saving note content does not implicitly
+approve that rename. Case-only renames use a platform-proven safe operation or
+remain blocked for explicit resolution.
+
+Moving a managed folder subtree uses the composite journal described above. The
+UI says **Resumable move**, reports completed and pending children, and never
+claims that the filesystem-plus-database operation is atomic.
 
 ## Server-backed Contract
 
@@ -532,7 +641,8 @@ The server contract must provide:
 - bulk folder memberships with paginated note summaries or a batch endpoint;
 - manual membership attach/detach;
 - source-owned managed-membership reconciliation and conversion/removal;
-- opaque filesystem-binding claim, release, and explicit takeover;
+- opaque filesystem-binding claim, release, explicit takeover, and fenced
+  mutation token/version;
 - incremental note change/version discovery; and
 - idempotent mutation identities suitable for retry.
 
@@ -543,13 +653,35 @@ state, recovery payload, or private import provenance.
 At most one active filesystem claim may own a server note. Setup that encounters
 another claim shows **Managed by another device** and requires explicit takeover.
 Takeover invalidates the old opaque claim; it cannot infer or delete the other
-device's files.
+device's files. Every server-backed note, folder, and managed-membership mutation
+includes the current claim token/version; validation occurs at the service
+boundary rather than only during setup.
+
+Expired authentication, changed profile identity, stale claims, and lost folder
+or note write capability pause the root before another local destructive action.
+Chatbook does not silently downgrade direction. The user may reauthenticate,
+resolve takeover, choose a supported direction in settings, or disconnect.
 
 An older server may show a read-only folder grouping when its responses contain
 sufficient folder data. Otherwise it retains flat Notes access. Unsupported
 mutations and lasting sync are disabled with upgrade guidance. If a server
 advertises a capability and then violates it, the root pauses; Chatbook does not
 fall back to flat writes or unowned memberships.
+
+### Sync-v2 interoperability
+
+The existing Sync-v2 M1 `notes.note` envelope remains responsible for note title,
+content, lifecycle, and its established version metadata. Filesystem-driven local
+note writes still pass through the normal Database Note service, so its existing
+Sync-v2 outbox behavior is preserved.
+
+Folder entities, memberships, managed ownership, physical bindings, and claim
+tokens are not added to that M1 payload. Local folder membership remains
+device-local organization when a local-first Note is mirrored through Sync-v2.
+Portable folder synchronization requires a separately versioned Sync-v2 folder
+domain and contract; it is outside this design. A root targeting server-backed
+Notes directly uses the server Notes folder and claim capability described above,
+not an inferred extension of `notes.note`.
 
 ## Migration
 
@@ -590,6 +722,11 @@ Item failures do not block unrelated bindings unless root safety, coordinator
 ownership, server capability, or recovery capacity is compromised. Root-level
 failures pause mutation admission.
 
+Authentication expiry, server profile identity change, claim fencing, or loss of
+write capability transitions the root to **Paused** or **Blocked** before any
+destructive local write. Resuming requires restored capability and a new dry-run;
+changing direction requires an explicit settings action.
+
 Notifications summarize outcomes; durable receipts remain at the point of action.
 Errors name a safe next action without exposing note content, credentials, full
 local paths in logs, or raw remote exception text.
@@ -614,6 +751,8 @@ local paths in logs, or raw remote exception text.
   boundaries.
 - Symlink/reparse traversal fails closed.
 - Root overlap considers canonical ancestor and descendant relationships.
+- Writable candidates must remain single-link regular files with stable identity;
+  hard links and aliases fail closed for bidirectional mutation.
 - Sync databases and recovery content follow ADR-029 owner-only storage.
 - Server profile identity namespaces every remote root, claim, and receipt.
 - API keys and authentication material use existing credential resolution and are
@@ -622,6 +761,8 @@ local paths in logs, or raw remote exception text.
   no content, absolute paths, hashes, exception messages, or credentials.
 - UI disclosure explains local recovery of overwritten server content, 30-day
   retention, capacity, and explicit local recovery clearing.
+- Portable exports and generic database backups exclude active root, lease,
+  journal, and recovery state; ChaChaNotes backups retain logical folder data.
 
 ## Delivery Roadmap
 
@@ -631,17 +772,21 @@ acceptance criteria, plan, verification, and closeout.
 0. **Media import clarity** — independently rename/clarify the Library entry as
    **Import media…**.
 1. **Local folder foundation** — schema, repository, subtree operations, bulk
-   queries, normalized contracts, lazy tree, Unfiled, and manual memberships.
+   queries, normalized contracts, lazy tree, Unfiled, manual memberships, and
+   ChaChaNotes backup/restore coverage.
 2. **One-time import** — planner, preview, receipt ledger, bounded executor,
    recursive folder structure, repeats, and partial-failure retry.
-3. **Local sync substrate** — multi-root registry, private store, coordinator
-   lease, journal, recovery admission, dry-run, and paused legacy migration.
+3. **Local sync substrate** — multi-root registry, binding uniqueness, private
+   store, backup exclusion, coordinator lease, serialization/metadata admission,
+   journal, recovery admission, dry-run, and paused legacy migration.
 4. **Local continuous sync** — watcher hints, reconciliation, conflicts,
-   deletion review, guarded moves, root management, and shutdown recovery.
+   deletion review, guarded/composite moves, root retargeting, root management,
+   and shutdown recovery.
 5. **Server contract** — separate `tldw_server` ADR and APIs for bulk folders,
    ownership, claims, cursors, and idempotency.
 6. **Chatbook server parity** — capability adapter, remote folder tree, import,
-   persistent sync, claim conflict, and takeover UX.
+   persistent sync, per-mutation claim fencing, capability-loss pause, claim
+   conflict, and takeover UX.
 7. **Closeout** — accessibility, large-tree performance, crash recovery,
    multi-process behavior, live local/server verification, docs, and lessons.
 
@@ -673,6 +818,8 @@ acceptance criteria, plan, verification, and closeout.
 - New, unchanged, changed, uncertain, unsupported, and failed classifications.
 - Per-item overrides, optimistic update conflict, cancellation between batches,
   itemized receipt, and failure-only retry.
+- Prove content update and imported-folder placement are independently previewed
+  and independently executable for an existing note.
 - Prove source paths and provenance never enter server payloads or ordinary logs.
 
 ### Sync and recovery
@@ -680,7 +827,18 @@ acceptance criteria, plan, verification, and closeout.
 - Pure reconciliation transition tests for every root/item state.
 - Property/state-machine tests proving repeated reconciliation is idempotent.
 - Temporary-root integration tests for create/update/move/delete, external races,
-  root loss, symlinks, unsafe destinations, and mass-deletion grouping.
+  root loss, symlinks, hard links, unsafe destinations, and mass-deletion grouping.
+- Round-trip BOM, LF/CRLF, final-newline, mixed-newline, invalid-encoding, mode,
+  and supported platform-metadata fixtures without silent normalization.
+- Constraint tests proving one note cannot bind to multiple roots and one
+  normalized path/file identity cannot bind to multiple notes.
+- Root-retarget tests proving the root pauses, performs a dry-run, preserves the
+  old authority until activation, and infers no deletion from the new directory.
+- Direction tests proving out-of-direction edits pause before overwrite, explicit
+  one-time conflict choices do not change configuration, and deletion always
+  requires confirmation.
+- Composite subtree-move crash injection proving deterministic child replay and
+  honest partial-progress/attention reporting.
 - Crash injection after every journal stage, proving the next startup exposes a
   valid Resume, Restore, or Disconnect path.
 - Capacity admission and retention tests proving unresolved/Undo data is not
@@ -696,6 +854,21 @@ acceptance criteria, plan, verification, and closeout.
 - Prove payloads never contain local paths, hashes, watcher data, or recovery
   content.
 - Prove advertised-capability violations pause the root without fallback.
+- Prove every server mutation carries a current claim token/version and that
+  takeover, authentication expiry, or permission loss fences the old writer
+  before any further local destructive mutation.
+- Contract-test that Sync-v2 M1 `notes.note` envelopes remain folder-free and
+  direct server-backed folders use the distinct Notes folder capability.
+
+### Backup and portability
+
+- Verify ChaChaNotes backup/restore preserves logical folders and memberships.
+- Verify portable export and generic backup manifests exclude roots, physical
+  paths, leases, journals, watcher state, bindings, and recovery content.
+- Verify restored managed memberships with no device-local owner remain inactive
+  and visible until review converts them to manual or removes their organization.
+- Verify any future device-local recovery import restores all roots paused and
+  cannot activate without path, claim, and dry-run validation.
 
 ### Textual and live product verification
 
@@ -712,12 +885,17 @@ acceptance criteria, plan, verification, and closeout.
 
 ADR required: yes
 
-ADR path: `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`
+ADR paths:
+
+- `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`
+- `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
 
 Reason: this design changes the local Notes schema, folder and membership
 ownership, sync/conflict/deletion policy, private recovery storage, cross-process
 runtime authority, server service contract, privacy boundary, and long-lived
-Library structure.
+Library structure. ADR-060 amends the accepted ADR-059 with the reviewed
+round-trip representation, binding uniqueness, composite-operation, Sync-v2,
+backup/restore, and per-mutation claim-fencing constraints.
 
 The `tldw_server` portion requires its own separately allocated ADR in that
 repository before server implementation begins. Every implementation plan must
