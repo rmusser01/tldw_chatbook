@@ -139,6 +139,14 @@ from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
     ConsolePromptQueueCoordinator,
     QueueGenerationAuthorization,
 )
+from tldw_chatbook.Chat.console_fleet_wake import (
+    AgentWakeAuthorization,
+    ConsoleFleetWakeCoordinator,
+)
+from tldw_chatbook.Chat.message_metadata import (
+    MESSAGE_ORIGIN_AGENT_WAKE,
+    MessageMetadata,
+)
 from tldw_chatbook.Chat.console_skill_resolver import (
     MENTION_SIGIL,
     SKILL_MENTION_SKIPPED_NOTE,
@@ -1456,6 +1464,20 @@ class ConsoleChatController:
         # attachment -- never from `run_reply` (bridge-lifetime registry;
         # see `FleetDrainFanout.register` for why).
         self._register_fleet_usage_reattach(agent_bridge)
+        #: PR3a-2 Task 5: the auto-wake coordinator (pending completions,
+        #: gating, delivery). Constructed unconditionally so `_set_run_
+        #: state`'s terminal retry hook always has it; registered on the
+        #: bridge fan-out next to the usage fold above.
+        self._fleet_wake = ConsoleFleetWakeCoordinator(self)
+        #: PR3a-2 Task 5, user-wins-ties: screen-wired probe returning
+        #: True while the USER holds a claim on sending (a non-empty
+        #: composer draft -- which also covers the dispatch gap, since the
+        #: composer clears only on ACCEPTED manual sends). A due wake
+        #: defers while it reports (or raises -- user wins on uncertainty)
+        #: and is retried on the next trigger. ``None`` = no probe wired
+        #: (headless/tests): no user claim to lose to.
+        self.wake_user_priority_probe: Callable[[str], bool] | None = None
+        self._register_fleet_wake(agent_bridge)
         #: task-2154.16 (FB-05): UI-thread callback invoked DIRECTLY (same
         #: main-loop guarantee as ``notify_run_outcome`` above) from
         #: ``_set_run_state``'s once-guarded transition INTO ``FAILED`` for
@@ -2411,8 +2433,26 @@ class ConsoleChatController:
         origin: ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
     ) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution.
+
+        PR3a-2 Task 5: ``origin=AGENT_WAKE`` (requires a coordinator-issued
+        ``wake_authorization``, the queue-token precedent) submits a
+        machine-injected auto-wake notice instead of a user draft. The
+        wake branch: no USER transcript row is echoed (a SYSTEM-class row
+        carrying ``MessageMetadata(origin="agent_wake")`` is appended at
+        the acceptance point instead); the composer hook is never invoked
+        (non-MANUAL); pending attachments and the one-shot prefill are
+        left untouched (they are the USER's staged state); auto-titling,
+        RAG capture and prompt history are skipped; and the notice
+        reaches the model as a payload-only trailing user-role entry
+        appended after every per-send transform (see
+        ``console_fleet_wake``'s module docstring for the delivery-path
+        decision record). Skill substitution and dictionary/world-info
+        transforms still run -- they are HISTORY transforms every send
+        re-applies, and the wake's own notice is appended after them, so
+        it is never itself substituted.
 
         F4 fix (Qodo wave, parallel-agents spec §2): sends are dispatched
         per-session -- ``chat_screen._dispatch_console_draft_send`` captures
@@ -2453,6 +2493,26 @@ class ConsoleChatController:
                 raise PermissionError(
                     "queued sends require coordinator-issued generation authority"
                 )
+        elif origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            # PR3a-2 Task 5: only the wake coordinator can mint the token
+            # (queue-token precedent) -- no other code path can fabricate
+            # a machine-origin send.
+            if not self._fleet_wake.authorizes(wake_authorization, target_id):
+                raise PermissionError(
+                    "agent-wake sends require coordinator-issued wake authority"
+                )
+            if target_id and self.prompt_queue_coordinator.controls_generation(
+                target_id
+            ):
+                # Defense-in-depth twin of the coordinator's own gate: a
+                # queue-owned session's next turn belongs to the queue.
+                # Refused WITHOUT a transcript row -- a machine deferral
+                # is not user-visible news; the wake retries later.
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    "Queued messages control the next turn.",
+                )
         elif target_id and self.prompt_queue_coordinator.controls_generation(target_id):
             visible_copy = "Queued messages control the next turn. Resume or manage the queue first."
             if target_id and any(
@@ -2467,7 +2527,9 @@ class ConsoleChatController:
 
         active_rejection = self._active_run_rejection(
             session_id=session_id,
-            append_row=True,
+            # A raced wake refusal is machine-internal (retried later);
+            # only user-facing origins get the explanatory SYSTEM row.
+            append_row=origin is not ConsoleSubmissionOrigin.AGENT_WAKE,
             queue_authorization=queue_authorization,
         )
         if active_rejection is not None:
@@ -2507,16 +2569,31 @@ class ConsoleChatController:
             )
         turn_context = self.resolve_turn_execution_context(session.id)
         turn_selection = turn_context.provider_selection
-        pendings = self.store.pending_attachments(session.id)
+        # PR3a-2 Task 5: a wake never touches the user's staged state --
+        # pending attachments belong to the USER's next send and must be
+        # neither embedded nor cleared by a machine turn.
+        pendings = (
+            self.store.pending_attachments(session.id)
+            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            else []
+        )
         attachment_mode_pendings = [
             pending
             for pending in pendings
             if pending.insert_mode == "attachment" and pending.data is not None
         ]
         has_pending_attachment = bool(attachment_mode_pendings)
-        clean_draft, validation_error = self._validated_draft(
-            draft, allow_empty=has_pending_attachment
-        )
+        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            # The notice is machine-composed from DB text and bounded by
+            # `compose_wake_notice`'s own result budget; `_validated_draft`
+            # exists to validate USER drafts (its length cap and markup
+            # rules are composer policy, not payload policy).
+            clean_draft = str(draft or "").strip()
+            validation_error = None if clean_draft else "Empty wake notice."
+        else:
+            clean_draft, validation_error = self._validated_draft(
+                draft, allow_empty=has_pending_attachment
+            )
         if validation_error is not None:
             return self._block(session.id, validation_error)
         if has_pending_attachment:
@@ -2555,7 +2632,8 @@ class ConsoleChatController:
         # early-returns. Titling first means the conversation is created as the
         # derived title (e.g. "hello") instead of the default "Chat 1", so the
         # workspace rail shows it immediately after persistence.
-        self._maybe_auto_title_session(session, clean_draft)
+        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
+            self._maybe_auto_title_session(session, clean_draft)
         staged_attachments = tuple(
             MessageAttachment(
                 data=pending.data,
@@ -2572,12 +2650,24 @@ class ConsoleChatController:
         # never-sent message re-enter the next send's context, and the orphan
         # would render as a lonely user prompt. The row is flushed to storage
         # only once the turn is confirmed to proceed (below).
-        echoed_user = self.store.append_message(
-            session.id,
-            role=ConsoleMessageRole.USER,
-            content=clean_draft,
-            attachments=staged_attachments,
-            persist=False,
+        #
+        # PR3a-2 Task 5: a wake echoes NOTHING here -- invariant 5 forbids
+        # a USER row for machine input, and the SYSTEM notice row is
+        # appended only at the acceptance point below (TASK-457(a)'s
+        # "reads as sent, not lost" concern protects a HUMAN's typed
+        # message during a slow readiness probe; a machine notice has no
+        # one watching for it, and appending late means a blocked wake
+        # leaves no orphaned notice row to clean up).
+        echoed_user = (
+            self.store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content=clean_draft,
+                attachments=staged_attachments,
+                persist=False,
+            )
+            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            else None
         )
 
         self._set_run_state(
@@ -2591,8 +2681,9 @@ class ConsoleChatController:
             # USER echo must still fail that row — otherwise a never-sent USER
             # message leaks into the NEXT send's provider context (`skip_failed`
             # only drops "failed" rows). Fail it, then re-raise so the caller
-            # still sees the probe failure.
-            self.store.mark_message_send_blocked(echoed_user.id)
+            # still sees the probe failure. (A wake echoed nothing: None guard.)
+            if echoed_user is not None:
+                self.store.mark_message_send_blocked(echoed_user.id)
             raise
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
@@ -2601,8 +2692,9 @@ class ConsoleChatController:
             # The echoed row stays visible but never reached a provider — fail it
             # so it is excluded from the NEXT send's provider context
             # (`skip_failed`) and reads honestly as unsent rather than polluting
-            # the history.
-            self.store.mark_message_send_blocked(echoed_user.id)
+            # the history. (A wake echoed nothing: None guard.)
+            if echoed_user is not None:
+                self.store.mark_message_send_blocked(echoed_user.id)
             return self._block(session.id, visible_copy)
 
         if pendings:
@@ -2627,7 +2719,9 @@ class ConsoleChatController:
                 # A substitution refusal is a block outcome like any other
                 # (provider not ready, probe raise): fail the echoed row so the
                 # refused command never enters the next send's provider context.
-                self.store.mark_message_send_blocked(echoed_user.id)
+                # (A wake echoed nothing: None guard.)
+                if echoed_user is not None:
+                    self.store.mark_message_send_blocked(echoed_user.id)
                 return self._block(session.id, refuse)
             for note in skill_notes:
                 # An embedded skipped-skill note is never an abort: append the
@@ -2635,16 +2729,21 @@ class ConsoleChatController:
                 self.store.append_message(
                     session.id, role=ConsoleMessageRole.SYSTEM, content=note
                 )
-            (
-                citation_context,
-                citation_trace_builder,
-                prompt_evidence_set_id,
-                citation_repair_contract,
-            ) = await self._capture_rag_context(
-                clean_draft,
-                turn_context=turn_context,
-                origin=origin,
-            )
+            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
+                # PR3a-2 Task 5: a wake notice is a delivery, not a query
+                # -- retrieving evidence "about" a machine notice would
+                # inject RAG context the user never asked for. The
+                # pre-initialized Nones above stand.
+                (
+                    citation_context,
+                    citation_trace_builder,
+                    prompt_evidence_set_id,
+                    citation_repair_contract,
+                ) = await self._capture_rag_context(
+                    clean_draft,
+                    turn_context=turn_context,
+                    origin=origin,
+                )
             has_exact_citation_context = (
                 citation_trace_builder is not None
                 or citation_repair_contract is not None
@@ -2665,7 +2764,14 @@ class ConsoleChatController:
                     provider_messages,
                     citation_context,
                 )
-            prefill, prefill_from_one_shot = self._resolve_submit_prefill(session.id)
+            if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+                # The one-shot prefill is USER-staged state; a wake must
+                # not consume (and thereby destroy) it.
+                prefill, prefill_from_one_shot = None, False
+            else:
+                prefill, prefill_from_one_shot = self._resolve_submit_prefill(
+                    session.id
+                )
             terminal_citation_finalizer = self._build_terminal_citation_finalizer(
                 context=citation_context,
                 builder=citation_trace_builder,
@@ -2676,7 +2782,9 @@ class ConsoleChatController:
             # (dictionary/world-info application, prefill resolution) must also
             # fail the echoed row, or a never-sent message leaks into the next
             # send's provider context (`skip_failed` only drops "failed" rows).
-            self.store.mark_message_send_blocked(echoed_user.id)
+            # (A wake echoed nothing: None guard.)
+            if echoed_user is not None:
+                self.store.mark_message_send_blocked(echoed_user.id)
             raise
         # The accepted-hook fires only once the turn is confirmed to
         # actually proceed (Qodo finding 3, PR #636 bot review): it used to
@@ -2694,13 +2802,34 @@ class ConsoleChatController:
             # Close/shutdown can tombstone the chain while this claimed turn
             # awaits readiness/substitution/RAG. Revalidate immediately before
             # acceptance so cancellation cannot turn that stale claim into a
-            # durable user message or provider dispatch.
-            self.store.mark_message_send_blocked(echoed_user.id)
+            # durable user message or provider dispatch. (A wake echoed
+            # nothing: None guard.)
+            if echoed_user is not None:
+                self.store.mark_message_send_blocked(echoed_user.id)
             return ConsoleSubmitResult(
                 False,
                 False,
                 "Queued turn canceled before it could start.",
             )
+        # PR3a-2 Task 5: the wake notice enters the MODEL PAYLOAD here, as
+        # a payload-only trailing user-role entry -- appended AFTER every
+        # per-send transform (substitution/dictionaries/world-info ran on
+        # the history above and must never rewrite the notice) and never
+        # written to the store (the transcript's record is the SYSTEM
+        # machine-origin row at the acceptance point below). Trailing
+        # user-role is deliberate: SYSTEM transcript rows are dropped from
+        # payloads by design, and a payload ending on an assistant row is
+        # a prefill to strict providers -- see console_fleet_wake's
+        # delivery-path decision record for why neither turn_bundle_block
+        # nor the system fold can carry this.
+        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            provider_messages = [
+                *provider_messages,
+                {
+                    "role": ConsoleMessageRole.USER.value,
+                    "content": clean_draft,
+                },
+            ]
         committed_context_epoch = self.store.conversation_context_epoch(session.id)
         self._notify_submission_accepted(
             session_id=session.id,
@@ -2712,12 +2841,29 @@ class ConsoleChatController:
         # Same placement rule as the accepted-hook above: only a send that is
         # confirmed to proceed is recorded -- every `_block`/refusal path
         # returns before this point, and `_record_prompt_history` itself
-        # skips empty (attachment-only) drafts.
-        await self._record_prompt_history(clean_draft)
+        # skips empty (attachment-only) drafts. A wake notice is not a
+        # prompt the user typed and never enters their prompt history.
+        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
+            await self._record_prompt_history(clean_draft)
         # TASK-485: the turn is confirmed to proceed — flush the deferred USER
         # echo to durable storage now (creating the conversation), BEFORE the
         # assistant row, so a reload shows the user's prompt ahead of its reply.
-        self.store.persist_message_if_needed(echoed_user.id)
+        #
+        # PR3a-2 Task 5, the wake half: the SYSTEM-class notice row is
+        # appended HERE, only once the turn is confirmed -- so a blocked
+        # wake leaves no orphaned notice -- ahead of the assistant row,
+        # persisted, and carrying the machine-origin metadata that marks
+        # it as not-user-input for every machine consumer.
+        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            echoed_user = self.store.append_message(
+                session.id,
+                role=ConsoleMessageRole.SYSTEM,
+                content=clean_draft,
+                persist=self.store.persistence is not None,
+                metadata=MessageMetadata(origin=MESSAGE_ORIGIN_AGENT_WAKE),
+            )
+        else:
+            self.store.persist_message_if_needed(echoed_user.id)
         assistant: ConsoleChatMessage | None = None
         citation_repair_session = (
             ConsoleCitationRepairSession(
@@ -2923,6 +3069,8 @@ class ConsoleChatController:
         # re-register the usage fold on it (replace-by-name makes calling
         # this with the SAME bridge a safe no-op).
         self._register_fleet_usage_reattach(bridge)
+        # PR3a-2 Task 5: same rule for the auto-wake consumer.
+        self._register_fleet_wake(bridge)
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing native Console session."""
@@ -8862,6 +9010,37 @@ class ConsoleChatController:
         if callable(register):
             register("usage-reattach", self._on_fleet_drained_reattach_usage)
 
+    @property
+    def fleet_wake(self) -> ConsoleFleetWakeCoordinator:
+        """The auto-wake coordinator (PR3a-2 Task 5): the screen wires its
+        app object (``fleet_wake.wire``), calls ``seed_from_marks`` at
+        mount BEFORE the first tab sync, and pokes ``retry_soon`` when the
+        composer empties."""
+        return self._fleet_wake
+
+    def _register_fleet_wake(self, bridge: Any) -> None:
+        """Register the auto-wake drain consumer on this bridge.
+
+        PR3a-2 Task 5: same contract and same call sites as
+        ``_register_fleet_usage_reattach`` directly above -- constructor
+        and ``update_agent_runtime``, never ``run_reply``; replace-by-name
+        makes re-registration on the same bridge a safe no-op. Also
+        captures the running loop (the app loop in production) as the
+        thread the delivery half hops onto.
+
+        Args:
+            bridge: The Console agent bridge to register on, or ``None``.
+        """
+        self._fleet_wake.capture_loop_if_running()
+        if bridge is None:
+            return
+        register = getattr(bridge, "on_fleet_drained", None)
+        if callable(register):
+            register(
+                ConsoleFleetWakeCoordinator.NAME,
+                self._fleet_wake.on_fleet_drained,
+            )
+
     def _on_fleet_drained_reattach_usage(self, event: Any) -> None:
         """``FleetDrained`` consumer: hop off the child's thread and fold.
 
@@ -10995,6 +11174,15 @@ class ConsoleChatController:
             # stays correct if a future caller ever moves this off-thread).
             with self._approval_state_lock:
                 self._pending_approvals.pop(target, None)
+            # PR3a-2 Task 5: a terminal transition frees send capacity
+            # (this session's own slot, possibly the global cap) -- retry
+            # any deferred wake. Scheduled via the coordinator's loop hop,
+            # never inline: a wake attempt must not reenter whatever send
+            # flow is stamping this terminal state right now. Guarded for
+            # exotic construction orders where the attribute is not up yet.
+            wake = getattr(self, "_fleet_wake", None)
+            if wake is not None:
+                wake.retry_soon()
         # Parallel-agents spec §6: stamp an unvisited terminal outcome, but
         # ONLY for a session other than the currently active (viewed) one --
         # the viewed session's own COMPLETED/FAILED transition is visible
@@ -11060,6 +11248,13 @@ class ConsoleChatController:
     ) -> None:
         """Publish the one terminal marker/toast deferred across a queue chain."""
 
+        # PR3a-2 Task 5: chain end is the moment queue ownership actually
+        # releases (`finalize_empty_chain`/pause ran before this publish),
+        # and no further terminal run-state transition follows it --
+        # without this retry a wake deferred behind a queue chain would
+        # starve until an unrelated trigger. Before the status filters
+        # below: the release happens for EVERY chain-terminal status.
+        self._fleet_wake.retry_soon()
         if status not in {ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED}:
             return
         if not self.activity_for(session_id).terminal_notification_eligible:

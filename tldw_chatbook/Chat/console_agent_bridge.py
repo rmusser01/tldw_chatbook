@@ -3540,6 +3540,17 @@ class ConsoleAgentBridge:
         with self._change_window_lock:
             return self._live_child_counts.get(conversation_id, 0)
 
+    @property
+    def runs_db(self) -> AgentRunsDB:
+        """The run store this bridge writes (PR3a-2 Task 5).
+
+        Public read seam for drain consumers: the sole durable source of
+        a settled child's result is ``agent_runs.result`` (Task 1 A3),
+        and the auto-wake coordinator reads it here rather than reaching
+        for the private handle.
+        """
+        return self._db
+
     def has_unsettled_children(self, conversation_id: str) -> bool:
         """True while this conversation is still owed a drain (PR3a-2 Task 3).
 

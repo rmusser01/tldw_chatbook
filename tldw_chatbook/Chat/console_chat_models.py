@@ -39,10 +39,18 @@ class ConsoleRunStatus(str, Enum):
 
 
 class ConsoleSubmissionOrigin(str, Enum):
-    """Origin of a Console turn entering the accepted-send boundary."""
+    """Origin of a Console turn entering the accepted-send boundary.
+
+    ``AGENT_WAKE`` (PR3a-2 Task 5) is a machine-injected auto-wake turn:
+    it requires a coordinator-issued ``AgentWakeAuthorization`` (the
+    queue-token precedent), writes NO USER transcript row (a SYSTEM-class
+    machine-origin notice instead), never clears the composer, and its
+    notice reaches the model as a payload-only trailing user-role entry.
+    """
 
     MANUAL = "manual"
     QUEUED = "queued"
+    AGENT_WAKE = "agent_wake"
 
 
 @dataclass(frozen=True, slots=True)

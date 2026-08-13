@@ -646,7 +646,11 @@ def test_the_consumer_is_registered_at_construction_and_on_runtime_refresh():
     controller = ConsoleChatController(
         store=store, provider_gateway=object(), agent_bridge=bridge
     )
-    assert list(bridge.registered) == ["usage-reattach"]
+    # PR3a-2 Task 5 widened the exact-list pin: the auto-wake consumer
+    # registers at the same two call sites by the same rule, so the pin
+    # is now "usage-reattach present, registered before fleet-wake"
+    # (mark/usage effects land before a wake attempt reads them).
+    assert list(bridge.registered) == ["usage-reattach", "fleet-wake"]
     assert (
         bridge.registered["usage-reattach"]
         == controller._on_fleet_drained_reattach_usage
@@ -654,7 +658,7 @@ def test_the_consumer_is_registered_at_construction_and_on_runtime_refresh():
 
     refreshed = _FakeFleetBridge()
     controller.update_agent_runtime(enabled=True, bridge=refreshed)
-    assert list(refreshed.registered) == ["usage-reattach"]
+    assert list(refreshed.registered) == ["usage-reattach", "fleet-wake"]
 
     # No bridge / a bridge without the seam: constructor must not raise.
     ConsoleChatController(store=store, provider_gateway=object(), agent_bridge=None)
