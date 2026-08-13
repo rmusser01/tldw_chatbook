@@ -177,6 +177,11 @@ from ...Library.library_notes_sync_state import (
     sync_conflict_label,
     sync_status_line,
 )
+from ...Library.library_notes_tree_state import (
+    LibraryNotesTreeProjection,
+    build_library_notes_tree,
+    empty_note_folder_page,
+)
 from ...Library.library_prompts_state import (
     PromptBrowseResult,
     PromptBrowseScope,
@@ -2916,6 +2921,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter: str = ""
         self._library_notes_filter_records: list | None = None
         self._library_notes_notice: str = ""
+        self._library_notes_tree_root_page = None
+        self._library_notes_tree_expanded_page = None
+        self._library_notes_tree_expanded_ids: set[str] = set()
+        self._library_notes_tree_generation: int = 0
+        self._library_notes_tree_loading: bool = False
+        self._library_notes_tree_error: str = ""
         self._library_note_create_counter: int = 0
         self._library_note_create_token: str | None = None
         self._library_note_create_running: bool = False
@@ -5388,6 +5399,11 @@ class LibraryScreen(BaseAppScreen):
                 # paint.
                 self.refresh(recompose=True)
         self._refresh_local_source_snapshot()
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+        ):
+            self._request_library_notes_tree_refresh(refresh_root=True)
         if (
             self._library_selected_row_id
             in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT)
@@ -9302,7 +9318,14 @@ class LibraryScreen(BaseAppScreen):
             operation_status=(
                 operation.status_line
                 if operation is not None
-                else self._library_notes_notice
+                else (
+                    getattr(self, "_library_notes_tree_error", "")
+                    or (
+                        "Loading folders…"
+                        if getattr(self, "_library_notes_tree_loading", False)
+                        else self._library_notes_notice
+                    )
+                )
             ),
             operation_running=(
                 bool(operation and operation.running)
@@ -9313,6 +9336,98 @@ class LibraryScreen(BaseAppScreen):
         if self._library_notes_select_mode:
             self._library_notes_row_selection.reconcile(r.note_id for r in state.rows)
         return state
+
+    def _build_library_notes_tree_projection(
+        self,
+    ) -> LibraryNotesTreeProjection | None:
+        """Build the visible tree only after its bounded root batch arrives."""
+        root_page = getattr(self, "_library_notes_tree_root_page", None)
+        if root_page is None and getattr(self, "_library_notes_tree_error", ""):
+            # Degraded hosts used by older/local-only integrations keep the
+            # pre-folder flat browser available with an explicit warning.
+            return None
+        return build_library_notes_tree(
+            root_page=root_page or empty_note_folder_page(),
+            expanded_page=(
+                getattr(self, "_library_notes_tree_expanded_page", None)
+                or empty_note_folder_page()
+            ),
+            expanded_folder_ids=getattr(
+                self, "_library_notes_tree_expanded_ids", set()
+            ),
+            filter_text=self._library_notes_filter,
+        )
+
+    def _request_library_notes_tree_refresh(self, *, refresh_root: bool) -> None:
+        """Start one generation-gated normalized tree load."""
+        self._library_notes_tree_generation += 1
+        generation = self._library_notes_tree_generation
+        self._library_notes_tree_loading = True
+        self._library_notes_tree_error = ""
+        self.run_worker(
+            self._load_library_notes_tree(
+                generation=generation,
+                refresh_root=refresh_root,
+            ),
+            exclusive=True,
+            group="library_notes_folder_tree",
+        )
+
+    async def _load_library_notes_tree(
+        self,
+        *,
+        generation: int,
+        refresh_root: bool,
+    ) -> None:
+        """Load root and expanded branches through bounded bulk service calls."""
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        load_batch = getattr(service, "load_note_folder_tree_batch", None)
+        if not callable(load_batch):
+            if generation == self._library_notes_tree_generation:
+                self._library_notes_tree_loading = False
+                self._library_notes_tree_error = "Folder navigation is unavailable."
+            return
+        call_kwargs = {
+            "scope": "local_note",
+            "note_limit": 250,
+            "folder_limit": 250,
+            "membership_limit": 500,
+            "user_id": self._library_notes_user_id(),
+        }
+        try:
+            root_page = self._library_notes_tree_root_page
+            if refresh_root or root_page is None:
+                root_page = await load_batch(
+                    expanded_folder_ids=(),
+                    **call_kwargs,
+                )
+            expanded_page = empty_note_folder_page()
+            expanded_ids = tuple(sorted(self._library_notes_tree_expanded_ids))
+            if expanded_ids:
+                expanded_page = await load_batch(
+                    expanded_folder_ids=expanded_ids,
+                    **call_kwargs,
+                )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to load the Database Notes folder navigator."
+            )
+            if generation == self._library_notes_tree_generation:
+                self._library_notes_tree_loading = False
+                self._library_notes_tree_error = (
+                    "Could not load note folders — retry from the navigator."
+                )
+                if self.is_mounted:
+                    _sync_library_canvas(self, "notes")
+            return
+        if generation != self._library_notes_tree_generation:
+            return
+        self._library_notes_tree_root_page = root_page
+        self._library_notes_tree_expanded_page = expanded_page
+        self._library_notes_tree_loading = False
+        self._library_notes_tree_error = ""
+        if self.is_mounted:
+            _sync_library_canvas(self, "notes")
 
     def _remove_library_note_source_record(self, note_id: str) -> None:
         """Patch one successful delete into the cached Notes rows and count."""
@@ -9352,6 +9467,7 @@ class LibraryScreen(BaseAppScreen):
             "mode": "list",
             "presentation_state": None,
             "sync_panel_state": None,
+            "tree_projection": self._build_library_notes_tree_projection(),
             "title_placeholder_only": False,
             "compact": self._library_notes_compact,
             "create_running": self._library_note_create_running,
@@ -13474,6 +13590,11 @@ class LibraryScreen(BaseAppScreen):
             # failure must not leak into a later fresh Create entry.
             self._library_note_create_status = ""
         self._library_selected_row_id = row_id
+        if (
+            row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+        ):
+            self._request_library_notes_tree_refresh(refresh_root=True)
         try:
             shell_width = self.query_one("#library-shell-grid").region.width
         except (NoMatches, QueryError):
@@ -24871,6 +24992,20 @@ class LibraryScreen(BaseAppScreen):
         if note_id:
             self._begin_library_note_load(note_id)
         _sync_library_canvas(self, "notes")
+
+    @on(Button.Pressed, ".library-notes-folder-row")
+    def handle_library_notes_folder_row(self, event: Button.Pressed) -> None:
+        """Expand or collapse one real folder through stable folder identity."""
+        event.stop()
+        folder_id = str(getattr(event.button, "folder_id", "") or "")
+        if not folder_id:
+            return
+        if folder_id in self._library_notes_tree_expanded_ids:
+            self._library_notes_tree_expanded_ids.remove(folder_id)
+        else:
+            self._library_notes_tree_expanded_ids.add(folder_id)
+        _sync_library_canvas(self, "notes")
+        self._request_library_notes_tree_refresh(refresh_root=False)
 
     @on(Button.Pressed, "#library-notes-select-toggle")
     async def handle_library_notes_select_toggle(self, event: Button.Pressed) -> None:

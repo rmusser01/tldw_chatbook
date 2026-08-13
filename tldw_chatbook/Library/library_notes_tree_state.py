@@ -21,6 +21,18 @@ LibraryNotesTreeSemanticStatus = Literal[
 UNFILED_PLACEMENT_ID = "virtual:unfiled"
 
 
+def empty_note_folder_page() -> NoteFolderPage:
+    """Return an empty bounded page for an unloaded branch set."""
+    return NoteFolderPage(
+        folders=(),
+        memberships=(),
+        notes=(),
+        total_folders=0,
+        total_notes=0,
+        next_offset=None,
+    )
+
+
 @dataclass(frozen=True)
 class LibraryNotesTreeRow:
     """One visible folder, virtual Unfiled, or note-placement row."""
@@ -178,8 +190,10 @@ def build_library_notes_tree(
     root_page: NoteFolderPage,
     expanded_page: NoteFolderPage,
     expanded_folder_ids: set[str] | frozenset[str],
+    filter_text: str = "",
 ) -> LibraryNotesTreeProjection:
     """Project bounded root/expanded batches into one lazy visible tree."""
+    query = filter_text.strip().casefold()
     folders = {
         folder.folder_id: folder
         for folder in (*root_page.folders, *expanded_page.folders)
@@ -231,21 +245,26 @@ def build_library_notes_tree(
         for membership in memberships_by_folder.get(folder.folder_id, ()):
             note = notes.get(membership.note_id)
             if note is not None:
-                rows.append(
-                    _note_row(
-                        note=note,
-                        folder=folder,
-                        membership=membership,
-                        depth=depth + 1,
-                    )
+                note_row = _note_row(
+                    note=note,
+                    folder=folder,
+                    membership=membership,
+                    depth=depth + 1,
                 )
+                if not query or query in note_row.breadcrumb.casefold():
+                    rows.append(note_row)
 
     for root in children.get(None, ()):
         add_folder(root, 0)
 
-    unfiled_notes = sorted(
-        root_page.notes, key=lambda note: (_record_title(note).casefold(), _record_id(note))
-    )
+    unfiled_notes = [
+        note
+        for note in sorted(
+            root_page.notes,
+            key=lambda note: (_record_title(note).casefold(), _record_id(note)),
+        )
+        if not query or query in f"Unfiled / {_record_title(note)}".casefold()
+    ]
     if unfiled_notes or root_page.next_offset is not None:
         rows.append(
             LibraryNotesTreeRow(

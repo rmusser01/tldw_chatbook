@@ -263,3 +263,32 @@ def test_unfiled_identity_is_stable_constant():
         expanded_folder_ids=set(),
     )
     assert projection.rows[0].placement_id == UNFILED_PLACEMENT_ID
+
+
+def test_filter_shows_every_matching_placement_with_its_breadcrumb():
+    folders = (
+        _folder("ideas", None, "/Ideas"),
+        _folder("reading", None, "/Reading"),
+    )
+    projection = build_library_notes_tree(
+        root_page=_page(folders=folders),
+        expanded_page=_page(
+            memberships=(
+                _membership("m1", "ideas", "n1"),
+                _membership("m2", "reading", "n1"),
+                _membership("m3", "reading", "n2"),
+            ),
+            notes=(
+                {"id": "n1", "title": "Garden plan"},
+                {"id": "n2", "title": "Unrelated"},
+            ),
+        ),
+        expanded_folder_ids={"ideas", "reading"},
+        filter_text="garden",
+    )
+    notes = [row for row in projection.rows if row.kind == "note"]
+    assert [row.breadcrumb for row in notes] == [
+        "Ideas / Garden plan",
+        "Reading / Garden plan",
+    ]
+    assert all(row.label != "Unrelated" for row in projection.rows)

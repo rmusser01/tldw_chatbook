@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from Tests.textual_test_utils import widget_pilot  # noqa: F401
 from tldw_chatbook.Library.library_notes_state import LibraryNotesListState
 from tldw_chatbook.Library.library_notes_sync_state import LibraryNotesSyncState
+from tldw_chatbook.Library.library_notes_tree_state import (
+    LibraryNotesTreeProjection,
+    LibraryNotesTreeRow,
+)
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
-
 
 pytestmark = pytest.mark.asyncio
 
@@ -31,6 +34,64 @@ def _sync_state() -> LibraryNotesSyncState:
         auto_sync=False,
         status_line="idle",
         activity_lines=(),
+    )
+
+
+def _tree_projection() -> LibraryNotesTreeProjection:
+    return LibraryNotesTreeProjection(
+        rows=(
+            LibraryNotesTreeRow(
+                placement_id="folder:personal",
+                kind="folder",
+                label="Personal",
+                depth=0,
+                folder_id="personal",
+                breadcrumb="Personal",
+                expanded=True,
+                version=2,
+            ),
+            LibraryNotesTreeRow(
+                placement_id="folder:ideas",
+                kind="folder",
+                label="Ideas",
+                depth=1,
+                folder_id="ideas",
+                breadcrumb="Personal / Ideas",
+                expanded=True,
+                version=1,
+            ),
+            LibraryNotesTreeRow(
+                placement_id="note:ideas:n1",
+                kind="note",
+                label="Garden redesign",
+                depth=2,
+                note_id="n1",
+                folder_id="ideas",
+                membership_id="m1",
+                breadcrumb="Personal / Ideas / Garden redesign",
+                ownership="managed",
+                protected=True,
+                semantic_status="connected",
+                status_text="⇄ Synced placement",
+            ),
+            LibraryNotesTreeRow(
+                placement_id="virtual:unfiled",
+                kind="unfiled",
+                label="Unfiled",
+                depth=0,
+                breadcrumb="Unfiled",
+                expanded=True,
+            ),
+            LibraryNotesTreeRow(
+                placement_id="unfiled:n2",
+                kind="note",
+                label="Loose thought",
+                depth=1,
+                note_id="n2",
+                breadcrumb="Unfiled / Loose thought",
+            ),
+        ),
+        next_note_offset=1000,
     )
 
 
@@ -67,3 +128,68 @@ async def test_sync_mode_placement_sentence_names_files_mode(widget_pilot):  # n
         assert "Files mode" in text
         assert "directly" in text
         assert "mirror" in text.lower()
+
+
+async def test_tree_projection_renders_hierarchy_and_placement_metadata(widget_pilot):  # noqa: F811
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=_tree_projection(),
+    ) as pilot:
+        await pilot.pause()
+        folders = list(pilot.app.query(".library-notes-folder-row"))
+        notes = list(pilot.app.query(".library-notes-row"))
+
+        assert [str(button.label) for button in folders] == [
+            "▾ Personal",
+            "  ▾ Ideas",
+            "▾ Unfiled",
+        ]
+        assert [button.note_id for button in notes] == ["n1", "n2"]
+        assert notes[0].placement_id == "note:ideas:n1"
+        assert notes[0].breadcrumb == "Personal / Ideas / Garden redesign"
+        assert notes[0].membership_id == "m1"
+        assert notes[0].protected_placement is True
+        assert "⇄ Synced placement" in str(notes[0].label)
+
+
+async def test_tree_projection_renders_visible_more_action(widget_pilot):  # noqa: F811
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=_tree_projection(),
+    ) as pilot:
+        await pilot.pause()
+        more = pilot.app.query_one("#library-notes-tree-more", Button)
+        assert "more" in str(more.label).lower()
+
+
+async def test_tree_managed_state_remains_legible_without_color(widget_pilot):  # noqa: F811
+    projection = LibraryNotesTreeProjection(
+        rows=(
+            LibraryNotesTreeRow(
+                placement_id="note:work:n1",
+                kind="note",
+                label="Recovered",
+                depth=1,
+                note_id="n1",
+                folder_id="work",
+                membership_id="m1",
+                breadcrumb="Work / Recovered",
+                ownership="managed",
+                owner_active=False,
+                protected=True,
+                semantic_status="needs_attention",
+                status_text="! Needs owner review",
+            ),
+        )
+    )
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=projection,
+    ) as pilot:
+        await pilot.pause()
+        row = pilot.app.query_one(".library-notes-row", Button)
+        assert "! Needs owner review" in str(row.label)
+        assert row.has_class("library-notes-tree-needs-attention")

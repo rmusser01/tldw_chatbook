@@ -3252,6 +3252,43 @@ ConsoleRunLogModal {
     text-style: bold underline;
     outline: none;
 }
+.library-notes-folder-row {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.library-notes-folder-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
+}
+
+.library-notes-tree-note-row {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+.library-notes-tree-connected {
+    color: $ds-focus-accent;
+}
+
+.library-notes-tree-needs-attention {
+    color: $ds-status-warning;
+}
+
 
 /* Same look as .library-notes-row, on a separate class: the notes Create
    view's Blank note / template rows must not also match the list view's
