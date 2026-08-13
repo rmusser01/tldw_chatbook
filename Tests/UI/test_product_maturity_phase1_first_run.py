@@ -10,19 +10,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, OptionList, Static
 
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.app import TldwCli, setup_owns_startup_networking
+from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
+from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import RefreshReport
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+from tldw_chatbook.UI.Wizards.first_run_setup_state import STEP_PROVIDER
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     FirstRunSetupWizard,
     ProviderStep,
     SetupWizardContainer,
 )
-from tldw_chatbook.app import TldwCli, setup_owns_startup_networking
-from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import RefreshReport
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE = Path(
@@ -64,6 +65,13 @@ def _screen_text(app) -> str:
     for widget in app.screen.query(Button):
         pieces.append(str(widget.label).strip())
     return "\n".join(pieces)
+
+
+def _assert_widget_in_view(widget, width: int, height: int) -> None:
+    region = widget.region
+    assert region.width > 0 and region.height > 0
+    assert region.x >= 0 and region.y >= 0
+    assert region.right <= width and region.bottom <= height
 
 
 def _test_cli_setting(section: str, key: str, default=None):
@@ -260,6 +268,85 @@ async def test_initial_first_run_mount_has_no_unrelated_provider_catalog_calls()
         assert provider_step.selected_provider_key == ""
 
     scope_service.discover_models.assert_not_awaited()
+
+
+@pytest.mark.parametrize("size", [(100, 32), (120, 40), (177, 45)])
+@pytest.mark.asyncio
+async def test_provider_connection_controls_scroll_without_displacing_footer(
+    size: tuple[int, int],
+) -> None:
+    from unittest.mock import AsyncMock
+
+    app_instance = MagicMock(
+        app_config={},
+        llm_provider_catalog_scope_service=None,
+    )
+    wizard = FirstRunSetupWizard(app_instance)
+
+    class _StyledWizardHost(App):
+        CSS_PATH = str(REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss")
+
+        def compose(self) -> ComposeResult:
+            yield from ()
+
+        async def on_mount(self) -> None:
+            self.push_screen(wizard)
+
+    width, height = size
+    host = _StyledWizardHost()
+    async with host.run_test(size=size) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        assert provider_index is not None
+        container.show_step(provider_index)
+        await pilot.pause(0.1)
+        provider = container.steps[provider_index]
+        assert isinstance(provider, ProviderStep)
+        provider._local_discover = AsyncMock(
+            return_value=tuple(
+                DiscoveredLocalServer(
+                    "llama_cpp",
+                    f"http://127.0.0.1:{8080 + index}",
+                    (f"model-{index}",),
+                )
+                for index in range(8)
+            )
+        )
+        provider.select_provider("llama_cpp")
+        endpoint = provider.query_one("#setup-provider-endpoint", Input)
+        endpoint.focus()
+        await pilot.pause(0.1)
+        connection = provider.query_one("#setup-provider-connection")
+        assert connection.display, (
+            f"connection hidden after provider selection: classes={connection.classes}, "
+            f"style={connection.styles.display}"
+        )
+        assert connection.region.height > 0, (
+            f"connection has no layout: region={connection.region}, "
+            f"height={connection.styles.height}, min_height={connection.styles.min_height}, "
+            f"provider_region={provider.region}, provider_display={provider.display}"
+        )
+        _assert_widget_in_view(endpoint, width, height)
+
+        effective = provider.query_one("#setup-provider-effective-chat", Static)
+        effective.scroll_visible()
+        await pilot.pause(0.1)
+        _assert_widget_in_view(effective, width, height)
+        assert "v1/chat/completions" in str(effective.renderable)
+
+        provider.query_one("#setup-provider-detect", Button).press()
+        await pilot.pause(0.1)
+        results = provider.query_one("#setup-provider-detection-results", OptionList)
+        results.focus()
+        await pilot.pause(0.1)
+        _assert_widget_in_view(results, width, height)
+        assert results.option_count == 10
+
+        for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
+            button = wizard.query_one(selector, Button)
+            _assert_widget_in_view(button, width, height)
+            assert button in host.screen._compositor.visible_widgets
 
 
 async def _wait_until(

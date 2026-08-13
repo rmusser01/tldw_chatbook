@@ -47,6 +47,7 @@ import pytest
 from textual.widgets import (
     Button,
     Checkbox,
+    Collapsible,
     Input,
     OptionList,
     RadioButton,
@@ -54,29 +55,20 @@ from textual.widgets import (
     Switch,
 )
 
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_product_maturity_phase1_first_run import (
     _prepare_clean_environment,
     _test_cli_setting,
 )
-from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
-from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
-from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
-    FirstRunSetupWizard,
-    ModelStep,
-    NotesSyncStep,
-    ProviderStep,
-    SpeechSetupStep,
-    SetupWizardContainer,
-    ToolsStep,
-    VoiceSetupStep,
-    _SettlingGuardedConfirmationDialog,
-)
-from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     SETUP_COMPLETED_KEY,
     SETUP_DRAFT_KEYS,
+    SETUP_STARTED_KEY,
     STEP_APPEARANCE,
     STEP_MODEL,
     STEP_NOTES,
@@ -89,7 +81,17 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     TRACK_FULL,
     TRACK_QUICK,
     WIZARD_STATE_SECTION,
-    SETUP_STARTED_KEY,
+)
+from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    FirstRunSetupWizard,
+    ModelStep,
+    NotesSyncStep,
+    ProviderStep,
+    SetupWizardContainer,
+    SpeechSetupStep,
+    ToolsStep,
+    VoiceSetupStep,
+    _SettlingGuardedConfirmationDialog,
 )
 
 
@@ -1833,8 +1835,12 @@ async def test_provider_key_input_visible_at_120x40_without_scrolling(
             await pilot.pause(0.3)
             container = app.screen.query_one(SetupWizardContainer)
             assert container.steps[container.current_step].config.id == STEP_PROVIDER
+            provider_step = container.steps[container.current_step]
+            assert isinstance(provider_step, ProviderStep)
+            provider_step.select_provider("openai")
+            await pilot.pause(0.2)
 
-            key_input = app.screen.query_one("#setup-provider-key-input", Input)
+            key_input = app.screen.query_one("#setup-provider-api-key", Input)
             region = key_input.region
             assert region.width > 0 and region.height > 0, (
                 f"key Input has an empty region at 120x40: {region}"
@@ -2232,7 +2238,7 @@ async def test_navigation_and_focus_stay_stable_at_80x24(
             # measures zero height at this exact size -- see this section's
             # docstring) must not crash the wizard or break the focus chain,
             # even though there is currently no room to actually show it.
-            key_input = app.screen.query_one("#setup-provider-key-input", Input)
+            key_input = app.screen.query_one("#setup-provider-api-key", Input)
             key_input.focus()
             await pilot.pause(0.2)
             assert container.is_running, "focusing an off-screen widget crashed the wizard"
@@ -2270,8 +2276,26 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
             await pilot.pause(0.3)
             container = app.screen.query_one(SetupWizardContainer)
             assert container.steps[container.current_step].config.id == STEP_PROVIDER
+            provider_step = container.steps[container.current_step]
+            assert isinstance(provider_step, ProviderStep)
 
-            key_input = app.screen.query_one("#setup-provider-key-input", Input)
+            async def discover_many():
+                return tuple(
+                    DiscoveredLocalServer(
+                        "llama_cpp", f"http://127.0.0.1:{8080 + index}"
+                    )
+                    for index in range(8)
+                )
+
+            provider_step._local_discover = discover_many
+            provider_step.select_provider("llama_cpp")
+            provider_step.query_one(
+                "#setup-provider-auth-toggle", Collapsible
+            ).collapsed = False
+            provider_step.query_one("#setup-provider-detect", Button).press()
+            await pilot.pause(0.2)
+
+            key_input = app.screen.query_one("#setup-provider-api-key", Input)
             region_before = key_input.region
             fits_before = (
                 region_before.y >= 0
@@ -2452,7 +2476,7 @@ async def test_ctrl_n_ctrl_b_do_not_crash_and_move_one_step(
             assert container.track == TRACK_QUICK
             assert container.steps[container.current_step].config.id == STEP_PROVIDER
 
-            app.screen.query_one("#setup-provider-key-input", Input).focus()
+            app.screen.query_one("#setup-provider-api-key", Input).focus()
             await pilot.pause(0.1)
 
             await pilot.press("ctrl+n")  # provider -> model

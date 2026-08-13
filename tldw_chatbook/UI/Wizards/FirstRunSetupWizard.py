@@ -30,6 +30,7 @@ from textual.widget import Widget
 from textual.widgets import (
     Button,
     Checkbox,
+    Collapsible,
     Input,
     Label,
     OptionList,
@@ -540,6 +541,26 @@ class ProviderChoiceList(OptionList):
         self._post_navigation_interaction()
 
 
+class ProviderEndpointCandidateOption(Option):
+    """One detected endpoint or a disabled result-list heading/status row."""
+
+    def __init__(
+        self,
+        prompt: Text,
+        *,
+        option_id: str,
+        server: object | None = None,
+    ) -> None:
+        super().__init__(prompt, id=option_id, disabled=server is None)
+        self.server = server
+
+
+class ProviderEndpointCandidateList(OptionList):
+    """Keyboard-selectable detected endpoints with nonselectable status rows."""
+
+    BINDINGS = [Binding("space", "select", "Select", show=False)]
+
+
 def _provider_group_option_id(title: str) -> str:
     """Return the deterministic option ID for a provider group heading."""
     return "group-" + "-".join(title.casefold().split())
@@ -567,6 +588,59 @@ def _provider_options(
             for entry in group
         )
     return options
+
+
+async def _probe_first_run_provider_connection(
+    endpoint: str,
+    *,
+    provider: str,
+    credential_source: str,
+    credential_value: str | None,
+):
+    """Send one exact draft to the shared probe without retaining its secret."""
+
+    import httpx
+
+    from tldw_chatbook.Chat.local_server_discovery import (
+        DISCOVERY_PROBE_TIMEOUT_SECONDS,
+    )
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+        probe_settings_endpoint,
+    )
+
+    del credential_source
+    client: httpx.AsyncClient | None = None
+    try:
+        if credential_value:
+            try:
+                client = httpx.AsyncClient(
+                    headers={"Authorization": f"Bearer {credential_value}"}
+                )
+            except Exception:  # noqa: BLE001 - return a bounded connection state.
+                return SettingsEndpointProbeOutcome(
+                    state="unreachable",
+                    category="connection_error",
+                    summary="unreachable: connection error",
+                )
+        return await probe_settings_endpoint(
+            endpoint,
+            provider=provider,
+            timeout=(
+                CLOUD_PROBE_TIMEOUT_SECONDS
+                if credential_value
+                else DISCOVERY_PROBE_TIMEOUT_SECONDS
+            ),
+            http_client=client,
+        )
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - cleanup detail is not user-actionable.
+                pass
 
 
 def _model_ids_from_discovery_result(result: object) -> tuple[str, ...]:
@@ -634,16 +708,13 @@ class ProviderStep(SetupStep):
     ) -> None:
         super().__init__(wizard=wizard, config=config, **kwargs)
         from tldw_chatbook.Chat.local_server_discovery import discover_local_servers
-        from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
-            probe_settings_endpoint,
-        )
 
         # ``discover`` is the selected-provider seam. The provider-neutral
         # localhost scan stays separate so an untouched mount can never pass
         # an application config mapping to a provider/catalog service.
         self._discover = discover
         self._local_discover = local_discover or discover_local_servers
-        self._probe = probe or probe_settings_endpoint
+        self._probe = probe or _probe_first_run_provider_connection
         self._environ = dict(environ) if environ is not None else dict(os.environ)
         self.probe_generation = 0
         self._discovery_visible = False
@@ -670,7 +741,10 @@ class ProviderStep(SetupStep):
         self._credential_decision_generation = 0
         self._last_credential_decision: tuple[str, str | int] | None = None
         self._detected_endpoint_provider_key = ""
+        self._detected_servers: tuple[object, ...] = ()
         self._provider_choice_interacted = False
+        self._updating_connection_controls = False
+        self._pending_programmatic_endpoint_changes: list[tuple[str, str]] = []
         if wizard is not None:
             setattr(wizard, "_first_run_provider_discovery_owner", self)
 
@@ -713,38 +787,56 @@ class ProviderStep(SetupStep):
                 id="setup-provider-choice",
                 classes="setup-choice-list",
             )
-            # TASK-1496: key Input, its status line, and the Keep/Replace/
-            # Clear affordances sit BEFORE the discovered-server banner/button
-            # in both DOM and visual order now -- Tab from the OptionList above
-            # must reach the key Input next, not a below-the-fold "Use this
-            # server" Button (Textual's focus chain follows DOM order, not
-            # rendered position). Before this reorder, a discovered local
-            # server unhid that Button ahead of the Input in DOM order, so
-            # Tab landed on it instead; a typed API key then went into a
-            # Button (which does not accept text input) and vanished
-            # silently, and Protect-keys could never activate since
-            # note_key_entered() never fired. Putting the detected-server
-            # affordance LAST (see below) makes Tab order match visual
-            # top-to-bottom order exactly: radio list -> key input ->
-            # Keep/Replace/Clear -> detected-server button.
-            yield Label("API key", classes="setup-field-label")
-            # TASK-1506: the probe used to fire only on Enter inside the
-            # field — undiscoverable. A visible Test button shares the
-            # input's row so the 1495 row budget is unchanged.
-            with Horizontal(classes="setup-key-row"):
+            with Vertical(id="setup-provider-connection", classes="hidden"):
+                yield Label("Endpoint", classes="setup-field-label")
+                yield Input(
+                    id="setup-provider-endpoint",
+                    placeholder="http://127.0.0.1:8080 or full chat URL",
+                )
+                yield Static(
+                    "",
+                    id="setup-provider-effective-chat",
+                    classes="setup-endpoint-value",
+                )
+                yield Static(
+                    "",
+                    id="setup-provider-endpoint-status",
+                    classes="setup-probe-status",
+                )
+                with Horizontal(classes="setup-provider-connection-actions"):
+                    yield Button("Detect", id="setup-provider-detect")
+                    yield Button("Test", id="setup-provider-test", variant="primary")
+                yield ProviderEndpointCandidateList(
+                    ProviderEndpointCandidateOption(
+                        Text("Detected endpoints", style="bold"),
+                        option_id="detected-endpoints-heading",
+                    ),
+                    ProviderEndpointCandidateOption(
+                        Text("Not checked yet"),
+                        option_id="detected-endpoints-status",
+                    ),
+                    id="setup-provider-detection-results",
+                    classes="setup-detection-results hidden",
+                )
+            with Collapsible(
+                title="Authentication (optional)",
+                collapsed=True,
+                id="setup-provider-auth-toggle",
+                classes="hidden",
+            ):
+                yield Label("API key", classes="setup-field-label")
                 yield Input(
                     password=True,
-                    id="setup-provider-key-input",
+                    id="setup-provider-api-key",
                     placeholder="Paste your API key",
                 )
-                yield Button("Test", id="setup-provider-test")
-            yield Static(
-                "", id="setup-provider-key-status", classes="setup-probe-status"
-            )
-            with Horizontal(id="setup-provider-key-actions", classes="hidden"):
-                yield Button("Keep current", id="setup-provider-key-keep")
-                yield Button("Replace", id="setup-provider-key-replace")
-                yield Button("Clear", id="setup-provider-key-clear")
+                yield Static(
+                    "", id="setup-provider-key-status", classes="setup-probe-status"
+                )
+                with Horizontal(id="setup-provider-key-actions", classes="hidden"):
+                    yield Button("Keep current", id="setup-provider-key-keep")
+                    yield Button("Replace", id="setup-provider-key-replace")
+                    yield Button("Clear", id="setup-provider-key-clear")
             yield Static(
                 "", id="setup-provider-probe-status", classes="setup-probe-status"
             )
@@ -893,10 +985,12 @@ class ProviderStep(SetupStep):
         self._cancel_worker_groups(*groups)
         return self.probe_generation
 
-    def _start_discovery(self) -> None:
+    def _start_discovery(self, *, user_requested: bool = False) -> None:
         self._local_discovery_generation += 1
         generation = self._local_discovery_generation
         self._local_discovery_state = "in_progress"
+        if user_requested:
+            self._render_detection_results((), status="Searching local endpoints…")
         self.run_worker(
             partial(self._discover_servers, generation),
             exclusive=True,
@@ -920,18 +1014,97 @@ class ProviderStep(SetupStep):
         if generation != self._local_discovery_generation:
             return
         self._local_discovery_state = state
-        if self.is_mounted and self.is_active and servers:
+        if not self.is_mounted or not self.is_active:
+            return
+        self._detected_servers = servers
+        if servers:
+            self._render_detection_results(servers)
             self._apply_discovered_server(servers[0])
+        else:
+            status = (
+                "Detection failed. Try again."
+                if state == "failed"
+                else "No local endpoints found."
+            )
+            self._render_detection_results((), status=status)
+
+    def _render_detection_results(
+        self,
+        servers: Sequence[object],
+        *,
+        status: str = "Select an endpoint to use.",
+    ) -> None:
+        """Render bounded, secret-free detection options without editing input."""
+
+        from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
+        from tldw_chatbook.Chat.provider_catalog import provider_display_name
+        from tldw_chatbook.Chat.provider_endpoint_contract import (
+            resolve_provider_endpoint,
+        )
+
+        options: list[Option] = [
+            ProviderEndpointCandidateOption(
+                Text("Detected endpoints", style="bold"),
+                option_id="detected-endpoints-heading",
+            ),
+            ProviderEndpointCandidateOption(
+                Text(status),
+                option_id="detected-endpoints-status",
+            ),
+        ]
+        for index, server in enumerate(servers):
+            if type(server) is not DiscoveredLocalServer:
+                continue
+            try:
+                provider_key = self._canonical_provider_key(server.provider_key)
+            except (TypeError, ValueError):
+                provider_key = ""
+            resolution = resolve_provider_endpoint(provider_key, server.base_url)
+            if resolution.persisted_endpoint is None:
+                label = f"Candidate {index + 1}: invalid endpoint"
+            else:
+                label = (
+                    f"{provider_display_name(provider_key)} · "
+                    f"{resolution.persisted_display}"
+                )
+            options.append(
+                ProviderEndpointCandidateOption(
+                    Text(label),
+                    option_id=f"detected-endpoint-{index}",
+                    server=server,
+                )
+            )
+        results = self.query_one(
+            "#setup-provider-detection-results", ProviderEndpointCandidateList
+        )
+        results.clear_options()
+        results.add_options(options)
+        results.remove_class("hidden")
 
     def _apply_discovered_server(self, server: Any) -> None:
-        self.detected_server = server
-        banner = self.query_one("#setup-provider-detected", Static)
-        banner.update(
-            f"Found a local server at {self.detected_server.base_url} "
-            f"({self.detected_server.provider_key})."
+        from tldw_chatbook.Chat.provider_endpoint_contract import (
+            resolve_provider_endpoint,
         )
-        banner.remove_class("hidden")
+
+        try:
+            provider_key = self._canonical_provider_key(server.provider_key)
+        except (TypeError, ValueError):
+            provider_key = ""
+        resolution = resolve_provider_endpoint(provider_key, server.base_url)
+        banner = self.query_one("#setup-provider-detected", Static)
         use_button = self.query_one("#setup-provider-use-detected", Button)
+        if resolution.persisted_endpoint is None:
+            for attribute in ("detected_server", "detected_base_url"):
+                if hasattr(self, attribute):
+                    delattr(self, attribute)
+            self._detected_endpoint_provider_key = ""
+            banner.update("")
+            banner.add_class("hidden")
+            use_button.add_class("hidden")
+            return
+        self.detected_server = server
+        banner.update(f"Found a local endpoint: {resolution.persisted_display}.")
+        banner.remove_class("hidden")
         use_button.remove_class("hidden")
 
     @staticmethod
@@ -952,7 +1125,7 @@ class ProviderStep(SetupStep):
         presence = wizard_state.read_provider_secret_presence(
             app_config, self._environ, provider_key=provider_key
         )
-        key_input = self.query_one("#setup-provider-key-input", Input)
+        key_input = self.query_one("#setup-provider-api-key", Input)
         typed_key = (
             key_input.value.strip() if key_input.display and key_input.value else ""
         )
@@ -981,6 +1154,71 @@ class ProviderStep(SetupStep):
             ),
         )
 
+    def _provider_settings(self, provider_key: str) -> Mapping[str, object]:
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        try:
+            return wizard_state._first_run_provider_settings(  # noqa: SLF001
+                app_config, provider_key
+            )
+        except (TypeError, ValueError):
+            return {}
+
+    def _initial_endpoint_for(self, provider_key: str) -> str:
+        from tldw_chatbook.Chat.console_provider_endpoints import (
+            builtin_provider_endpoint,
+            first_configured_endpoint,
+        )
+
+        configured = first_configured_endpoint(self._provider_settings(provider_key))
+        if configured:
+            return configured
+        local_defaults = {
+            "llama_cpp": "http://127.0.0.1:8080",
+            "local_llamacpp": "http://127.0.0.1:8080",
+            "ollama": "http://127.0.0.1:11434",
+            "local_ollama": "http://127.0.0.1:11434",
+        }
+        return local_defaults.get(provider_key) or (
+            builtin_provider_endpoint(
+                provider_key, self._provider_settings(provider_key)
+            )
+            or ""
+        )
+
+    def _provider_exposes_endpoint(self, provider_key: str) -> bool:
+        from tldw_chatbook.Chat.console_provider_endpoints import (
+            URL_BASED_PROVIDER_KEYS,
+            provider_uses_endpoint,
+        )
+
+        settings = self._provider_settings(provider_key)
+        return provider_key in URL_BASED_PROVIDER_KEYS or provider_uses_endpoint(
+            provider_key, settings
+        )
+
+    def _refresh_endpoint_resolution(self) -> None:
+        from tldw_chatbook.Chat.provider_endpoint_contract import (
+            resolve_provider_endpoint,
+        )
+
+        provider_key = self.selected_provider_key
+        effective = self.query_one("#setup-provider-effective-chat", Static)
+        status = self.query_one("#setup-provider-endpoint-status", Static)
+        if not provider_key:
+            effective.update("")
+            status.update("")
+            return
+        endpoint = self.query_one("#setup-provider-endpoint", Input).value
+        resolution = resolve_provider_endpoint(provider_key, endpoint)
+        if resolution.chat_url is None:
+            effective.update("")
+            status.update(
+                resolution.errors[0] if resolution.errors else "Invalid endpoint."
+            )
+            return
+        effective.update(f"Chat URL: {resolution.chat_display}")
+        status.update(" ".join(resolution.warnings))
+
     def _effective_provider_draft(
         self, *, revision: int | None = None
     ) -> wizard_state.FirstRunProviderDraft | None:
@@ -990,8 +1228,18 @@ class ProviderStep(SetupStep):
         if not provider_key:
             return None
         endpoint = ""
-        if self._detected_endpoint_provider_key == provider_key:
-            endpoint = str(getattr(self, "detected_base_url", "") or "")
+        try:
+            connection = self.query_one("#setup-provider-connection", Vertical)
+            if connection.display:
+                endpoint = self.query_one("#setup-provider-endpoint", Input).value
+                if (
+                    not endpoint.strip()
+                    and self._detected_endpoint_provider_key == provider_key
+                ):
+                    endpoint = str(getattr(self, "detected_base_url", "") or "")
+        except Exception:
+            if self._detected_endpoint_provider_key == provider_key:
+                endpoint = str(getattr(self, "detected_base_url", "") or "")
         try:
             draft = wizard_state.FirstRunProviderDraft(
                 provider=provider_key,
@@ -1236,18 +1484,119 @@ class ProviderStep(SetupStep):
         await done.wait()
         return self._selected_provider_models.get(discovery_key)
 
+    @on(Input.Changed, "#setup-provider-endpoint")
+    def _on_endpoint_changed(self, event: Input.Changed) -> None:
+        self._refresh_endpoint_resolution()
+        pending = next(
+            (
+                item
+                for item in self._pending_programmatic_endpoint_changes
+                if item[1] == event.value
+            ),
+            None,
+        )
+        if pending is not None:
+            self._pending_programmatic_endpoint_changes.remove(pending)
+            return
+        if self._updating_connection_controls:
+            return
+        for attribute in ("detected_base_url", "detected_server"):
+            if hasattr(self, attribute):
+                delattr(self, attribute)
+        self._detected_endpoint_provider_key = ""
+        self._obsolete_provider_generation(
+            "setup-provider-discovery", "setup-provider-probe"
+        )
+        self._selected_discovery_key = None
+        self._selected_provider_models.clear()
+        self.query_one("#setup-provider-probe-status", Static).update("")
+
+    @on(Button.Pressed, "#setup-provider-detect")
+    def _on_detect_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._cancel_worker_groups("setup-provider-local-discovery")
+        self._start_discovery(user_requested=True)
+
+    @on(OptionList.OptionSelected, "#setup-provider-detection-results")
+    def _on_detected_endpoint_selected(self, event: OptionList.OptionSelected) -> None:
+        from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
+        from tldw_chatbook.Chat.provider_endpoint_contract import (
+            resolve_provider_endpoint,
+        )
+
+        server = getattr(event.option, "server", None)
+        if type(server) is not DiscoveredLocalServer:
+            return
+        try:
+            provider_key = self._canonical_provider_key(server.provider_key)
+        except (TypeError, ValueError):
+            provider_key = ""
+        resolution = resolve_provider_endpoint(provider_key, server.base_url)
+        if resolution.persisted_endpoint is None:
+            self.query_one("#setup-provider-endpoint-status", Static).update(
+                "The selected endpoint is invalid."
+            )
+            return
+        detected_servers = self._detected_servers
+        self.select_provider(provider_key)
+        self._detected_servers = detected_servers
+        self._render_detection_results(detected_servers)
+        self.detected_server = server
+        self.detected_base_url = server.base_url
+        self._detected_endpoint_provider_key = provider_key
+        self._updating_connection_controls = True
+        try:
+            endpoint_input = self.query_one("#setup-provider-endpoint", Input)
+            if endpoint_input.value != server.base_url:
+                self._pending_programmatic_endpoint_changes.append(
+                    (provider_key, server.base_url)
+                )
+                endpoint_input.value = server.base_url
+        finally:
+            self._updating_connection_controls = False
+        self._refresh_endpoint_resolution()
+        self._begin_selected_provider_discovery(self._effective_provider_draft())
+
     @on(Button.Pressed, "#setup-provider-use-detected")
     def _on_use_detected(self) -> None:
         """One-click connect: adopt the discovered server as the provider."""
+        from tldw_chatbook.Chat.provider_endpoint_contract import (
+            resolve_provider_endpoint,
+        )
+
         server = getattr(self, "detected_server", None)
         if server is None:
             return
-        self.select_provider(server.provider_key)
+        try:
+            provider_key = self._canonical_provider_key(server.provider_key)
+        except (TypeError, ValueError):
+            provider_key = ""
+        resolution = resolve_provider_endpoint(provider_key, server.base_url)
+        if resolution.persisted_endpoint is None:
+            self.query_one("#setup-provider-endpoint-status", Static).update(
+                "The selected endpoint is invalid."
+            )
+            return
+        detected_servers = self._detected_servers or (server,)
+        self.select_provider(provider_key)
+        self._detected_servers = detected_servers
+        self._render_detection_results(detected_servers)
         self.detected_server = server
         self.detected_base_url = server.base_url
         self._detected_endpoint_provider_key = self.selected_provider_key
+        self._updating_connection_controls = True
+        try:
+            endpoint_input = self.query_one("#setup-provider-endpoint", Input)
+            if endpoint_input.value != server.base_url:
+                self._pending_programmatic_endpoint_changes.append(
+                    (self.selected_provider_key, server.base_url)
+                )
+                endpoint_input.value = server.base_url
+        finally:
+            self._updating_connection_controls = False
+        self._refresh_endpoint_resolution()
         self.query_one("#setup-provider-detected", Static).update(
-            f"✓ Using {server.base_url} ({server.provider_key})."
+            f"✓ Using {resolution.persisted_display}."
         )
         self.query_one("#setup-provider-detected", Static).remove_class("hidden")
         self.query_one("#setup-provider-use-detected", Button).remove_class("hidden")
@@ -1260,12 +1609,30 @@ class ProviderStep(SetupStep):
             if hasattr(self, attribute):
                 delattr(self, attribute)
         self._detected_endpoint_provider_key = ""
+        self._detected_servers = ()
         self._selected_provider_models.clear()
         try:
             banner = self.query_one("#setup-provider-detected", Static)
             banner.update("")
             banner.add_class("hidden")
             self.query_one("#setup-provider-use-detected", Button).add_class("hidden")
+            results = self.query_one(
+                "#setup-provider-detection-results", ProviderEndpointCandidateList
+            )
+            results.clear_options()
+            results.add_options(
+                [
+                    ProviderEndpointCandidateOption(
+                        Text("Detected endpoints", style="bold"),
+                        option_id="detected-endpoints-heading",
+                    ),
+                    ProviderEndpointCandidateOption(
+                        Text("Not checked yet"),
+                        option_id="detected-endpoints-status",
+                    ),
+                ]
+            )
+            results.add_class("hidden")
         except Exception:
             pass
 
@@ -1276,7 +1643,9 @@ class ProviderStep(SetupStep):
 
         provider_key = self._canonical_provider_key(provider_key)
         provider_changed = provider_key != self.selected_provider_key
-        if provider_changed and self._detected_endpoint_provider_key != provider_key:
+        if provider_changed:
+            self._local_discovery_generation += 1
+            self._cancel_worker_groups("setup-provider-local-discovery")
             self._clear_detected_provider_state()
         self.selected_provider_key = provider_key
         self._clear_requested = False
@@ -1286,13 +1655,43 @@ class ProviderStep(SetupStep):
         )
         status = self.query_one("#setup-provider-key-status", Static)
         actions = self.query_one("#setup-provider-key-actions", Horizontal)
-        key_input = self.query_one("#setup-provider-key-input", Input)
+        key_input = self.query_one("#setup-provider-api-key", Input)
+        connection = self.query_one("#setup-provider-connection", Vertical)
+        auth = self.query_one("#setup-provider-auth-toggle", Collapsible)
         if provider_changed:
-            # Bug-1 fix: the key Input is shared across every provider this
-            # step renders. Without clearing it here, a key typed for
-            # provider A silently survived a switch to provider B and would
-            # commit under B's api_settings section on Next.
-            key_input.value = ""
+            self._updating_connection_controls = True
+            try:
+                key_input.value = ""
+                endpoint_visible = self._provider_exposes_endpoint(provider_key)
+                connection.display = endpoint_visible
+                connection.set_class(not endpoint_visible, "hidden")
+                endpoint_input = self.query_one("#setup-provider-endpoint", Input)
+                if endpoint_visible:
+                    initial_endpoint = self._initial_endpoint_for(provider_key)
+                    if endpoint_input.value != initial_endpoint:
+                        self._pending_programmatic_endpoint_changes.append(
+                            (provider_key, initial_endpoint)
+                        )
+                        endpoint_input.value = initial_endpoint
+                else:
+                    if endpoint_input.value:
+                        self._pending_programmatic_endpoint_changes.append(
+                            (provider_key, "")
+                        )
+                        endpoint_input.value = ""
+                auth.display = True
+                auth.remove_class("hidden")
+                optional_auth = provider_key in {
+                    "custom",
+                    "custom_2",
+                    "llama_cpp",
+                    "local_llamacpp",
+                }
+                auth.title = "Authentication (optional)"
+                auth.collapsed = optional_auth
+            finally:
+                self._updating_connection_controls = False
+            self._refresh_endpoint_resolution()
         if presence.inline_configured:
             status.update("An API key is already configured for this provider.")
             key_input.display = False
@@ -1363,13 +1762,13 @@ class ProviderStep(SetupStep):
         untouched (never re-shown).
         """
         self._clear_requested = False
-        self.query_one("#setup-provider-key-input", Input).display = True
+        self.query_one("#setup-provider-api-key", Input).display = True
 
     @on(Button.Pressed, "#setup-provider-key-keep")
     def _on_keep(self) -> None:
         """Abandon any in-progress Replace/Clear; the stored secret is untouched."""
         self._clear_requested = False
-        key_input = self.query_one("#setup-provider-key-input", Input)
+        key_input = self.query_one("#setup-provider-api-key", Input)
         key_input.value = ""
         key_input.display = False
 
@@ -1384,19 +1783,19 @@ class ProviderStep(SetupStep):
         """
         self._clear_requested = True
         self._credential_decision_generation += 1
-        key_input = self.query_one("#setup-provider-key-input", Input)
+        key_input = self.query_one("#setup-provider-api-key", Input)
         key_input.value = ""
         key_input.display = True
         self.query_one("#setup-provider-key-status", Static).update(
             "The stored key will be removed when you continue."
         )
 
-    @on(Input.Changed, "#setup-provider-key-input")
+    @on(Input.Changed, "#setup-provider-api-key")
     def _on_key_changed(self, event: Input.Changed) -> None:
         del event
         self._credential_decision_generation += 1
 
-    @on(Input.Submitted, "#setup-provider-key-input")
+    @on(Input.Submitted, "#setup-provider-api-key")
     def _on_key_submitted(self, event: Input.Submitted) -> None:
         """Live-but-never-blocking verification: probe on Enter in the key field."""
         if event.value.strip():
@@ -1406,7 +1805,7 @@ class ProviderStep(SetupStep):
     def _on_test_pressed(self, event: Button.Pressed) -> None:
         """TASK-1506: same probe as Enter-in-field, behind a visible control."""
         event.stop()
-        typed = self.query_one("#setup-provider-key-input", Input).value.strip()
+        typed = self.query_one("#setup-provider-api-key", Input).value.strip()
         self._launch_probe(api_key=typed or None)
 
     def _launch_probe(self, *, api_key: str | None = None) -> None:
@@ -1415,14 +1814,42 @@ class ProviderStep(SetupStep):
             "setup-provider-probe",
         )
         provider_key = self.selected_provider_key
-        base_url = getattr(self, "detected_base_url", None)
+        provider_draft = self._effective_provider_draft()
+        typed_endpoint = ""
+        if provider_draft is not None:
+            connection = self.query_one("#setup-provider-connection", Vertical)
+            if connection.display:
+                typed_endpoint = self.query_one("#setup-provider-endpoint", Input).value
+        target = (
+            typed_endpoint
+            if typed_endpoint.strip()
+            else self._cloud_probe_base_url(provider_key)
+        )
+        if not target:
+            self.apply_probe_result(
+                generation,
+                provider_key=provider_key,
+                reachable=False,
+                summary="Enter a valid endpoint before testing.",
+            )
+            return
+        credential = self._credential_draft()
+        credential_source = credential.source
+        credential_value = api_key
+        if credential_value is None:
+            boundary_value = wizard_state._credential_value_for_boundary(credential)
+            if credential_source == "draft":
+                credential_value = boundary_value or None
+            elif credential_source == "environment":
+                credential_value = self._environ.get(boundary_value) or None
         self.query_one("#setup-provider-probe-status", Static).update("Testing…")
         self.run_worker(
             self._run_probe(
                 generation,
                 provider_key=provider_key,
-                base_url=base_url,
-                api_key=api_key,
+                endpoint=target,
+                credential_source=credential_source,
+                credential_value=credential_value,
             ),
             exclusive=True,
             group="setup-provider-probe",
@@ -1433,44 +1860,16 @@ class ProviderStep(SetupStep):
         generation: int,
         *,
         provider_key: str,
-        base_url: str | None,
-        api_key: str | None,
+        endpoint: str,
+        credential_source: str,
+        credential_value: str | None,
     ) -> None:
-        import httpx
-
-        from tldw_chatbook.Chat.local_server_discovery import (
-            DISCOVERY_PROBE_TIMEOUT_SECONDS,
-        )
-
-        # Local servers probe their own base URL; cloud keys probe the
-        # provider's OpenAI-compatible endpoint with the key as a bearer
-        # header via the http_client seam (probe_settings_endpoint has no
-        # auth parameter by design). Providers without a known compatible
-        # endpoint resolve to "couldn't verify — save anyway".
-        target = base_url or self._cloud_probe_base_url(provider_key)
-        if not target:
-            self.apply_probe_result(
-                generation,
-                provider_key=provider_key,
-                reachable=False,
-                summary="No test endpoint for this provider.",
-            )
-            return
-        client = None
         try:
-            if api_key:
-                client = httpx.AsyncClient(
-                    headers={"Authorization": f"Bearer {api_key}"}
-                )
             outcome = await self._probe(
-                target,
-                timeout=(
-                    CLOUD_PROBE_TIMEOUT_SECONDS
-                    if api_key
-                    else DISCOVERY_PROBE_TIMEOUT_SECONDS
-                ),
-                http_client=client,
+                endpoint,
                 provider=provider_key,
+                credential_source=credential_source,
+                credential_value=credential_value,
             )
             self.apply_probe_result(
                 generation,
@@ -1489,9 +1888,6 @@ class ProviderStep(SetupStep):
                 reachable=False,
                 summary="Probe errored.",
             )
-        finally:
-            if client is not None:
-                await client.aclose()
 
     @staticmethod
     def _cloud_probe_base_url(provider_key: str) -> str:
@@ -1529,7 +1925,7 @@ class ProviderStep(SetupStep):
         if not provider_key:
             return True, ""  # legitimately nothing pressed -- skip is correct
         self.selected_provider_key = provider_key
-        key_input = self.query_one("#setup-provider-key-input", Input)
+        key_input = self.query_one("#setup-provider-api-key", Input)
         typed_key = bool(
             key_input.display and key_input.value and key_input.value.strip()
         )

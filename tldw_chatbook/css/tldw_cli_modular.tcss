@@ -18152,6 +18152,59 @@ SmartContentTree Tree > .selected-node {
     margin-bottom: 1;
 }
 
+#setup-provider-connection {
+    height: auto;
+    min-height: 7;
+}
+
+#setup-provider-endpoint {
+    width: 100%;
+    min-height: 3;
+}
+
+.setup-endpoint-value {
+    height: auto;
+    min-height: 1;
+    text-wrap: wrap;
+    color: $text-muted;
+}
+
+.setup-provider-connection-actions {
+    height: 3;
+    min-height: 3;
+    margin-top: 1;
+}
+
+.setup-provider-connection-actions Button {
+    min-width: 12;
+    margin-right: 1;
+}
+
+#setup-provider-auth-toggle {
+    height: auto;
+    min-height: 3;
+    margin-top: 1;
+}
+
+#setup-provider-api-key {
+    width: 100%;
+    min-height: 3;
+}
+
+.setup-detection-results {
+    height: auto;
+    min-height: 3;
+    max-height: 8;
+    border: solid $primary;
+    margin-top: 1;
+}
+
+.setup-detection-results:focus {
+    border: solid $ds-focus-accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
 /* TASK-1498: the wizard's own show/hide toggles (discovery banner + button,
  * Keep/Replace/Clear row) — the repo's ".hidden" convention is styled only
  * for specific widgets elsewhere, so scope a real display:none here. */
