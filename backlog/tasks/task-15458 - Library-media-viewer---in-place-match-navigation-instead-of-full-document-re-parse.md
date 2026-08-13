@@ -1,7 +1,7 @@
 ---
 id: TASK-15458
 title: Library media viewer: in-place match navigation instead of full-document re-parse
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-11 12:05'
 labels:
@@ -22,7 +22,7 @@ Fix direction: keep the Markdown widget mounted and move match-highlight and scr
 <!-- AC:BEGIN -->
 - [x] #1 Match navigation does not re-parse the document or remount the screen (evidence)
 - [x] #2 Search-while-typing performs at most one deferred re-render per debounce window and never the double update(\"\")/update(content) parse
-- [ ] #3 Match highlighting and scroll behavior preserved (tests); click latency before/after on a long document recorded
+- [x] #3 Match highlighting and scroll behavior preserved (tests); click latency before/after on a long document recorded
 - [x] #4 Literal async pytest commands run on Windows without mutating the guarded network families, while ordinary same-thread and concurrent-thread application egress remains blocked and recorded
 <!-- AC:END -->
 
@@ -207,3 +207,100 @@ driver was removed after capture and is not part of the implementation.
 Closeout status: blocked on the rendered Library status/navigation overlap.
 Task status remains In Progress; no layout fix was attempted in this verification
 checkpoint.
+
+### Task 5 final closeout after rendered-layout correction
+
+The reviewed layout correction at `ae757d8d4` makes the focused search-controls
+container size to its content, so the persistent media body starts below the
+status and navigation chrome without changing the in-place ownership model. The
+new 170x48 compositor regression passed and recorded these non-overlapping
+regions:
+
+```text
+controls: (x=35, y=19, width=129, height=7)
+status:   (x=35, y=23, width=129, height=1)
+Previous: (x=36, y=25, width=16,  height=1)
+Next:     (x=53, y=25, width=16,  height=1)
+content:  (x=35, y=26, width=129, height=18)
+heading:  row 29
+```
+
+The rendered frame visibly contained `Match 1 of 101 matches`, `◀ Prev`,
+`Next ▶`, and `Large budget document`. Every control's bottom is at or above
+content row 26, the heading remains within the content region, and the content
+body retains its 3/18 row min/max bounds.
+
+#### Final focused verification
+
+The required commands were rerun from the isolated worktree with the parent
+Python 3.12 virtual environment:
+
+```powershell
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/UI/test_library_shell.py::test_library_shell_media_viewer_inplace_search_chrome_paints_above_content -v -s
+# 1 passed
+
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/Library/test_library_media_content.py Tests/UI/test_media_viewer_content_search_debounce.py -v
+# 16 passed
+
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/test_network_guard.py -q
+# 12 passed, 1 skipped (AF_UNIX unavailable on Windows)
+
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/UI/test_library_shell.py -k 'media_content_search or media_viewer_raw_toggle or media_viewer_defaults_markdown or media_viewer_inplace' -v -s
+# 18 passed, 546 deselected
+
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/UI/test_media_window_v2_parity.py Tests/UI/test_media_handoffs.py -q
+# 38 passed
+```
+
+The complete non-duplicated focused matrix is 84 passed with one expected
+Windows platform skip. The fresh final 2,000-line submit/Next/Previous median is
+`103.962 ms`, compared with `1091.689 ms` before the change. All four viewer
+observations and all four Markdown observations retained one identity, with
+`markdown_update_count=1` for initial construction only; navigation performed
+zero Markdown updates.
+
+The installed `C:\Python312\Scripts\ruff.exe` again reported only the eight
+attributed unchanged-line baseline findings (one `F401` and seven `E721`) on the
+complete task surface, and that surface passed when only those two pre-existing
+rule classes were excluded. `git diff --check origin/dev...HEAD` passed. The
+previous full-suite Windows collection evidence remains applicable because the
+layout correction cannot affect collection: the run stopped after 225.85
+seconds on baseline `signal.SIGSTOP`/`SIGCONT` and `fcntl` incompatibilities in
+two files byte-identical to `origin/dev`. No redundant full-suite rerun was
+performed. Cache-permission, pytest-asyncio loop-scope, SQLite privacy,
+optional-dependency, and missing mapping warnings remain environment/baseline
+warnings.
+
+#### Final rendered keyboard UAT
+
+No configured real-data Library profile was available, so the final UAT used
+the same mounted real `LibraryScreen`/production stylesheet and real legacy
+`MediaViewerPanel` harnesses, drove keyboard events, and rendered compositor
+frames. The ephemeral driver was removed afterward.
+
+- Library at 170x48 used the 49,288-character, 2,000-line fixture with 101
+  `budget` matches. Search remained unapplied until Enter and retained focus.
+  Previous visibly wrapped `Match 1` to `Match 101`, retained focus, and
+  scrolled y=0 to y=404; Next visibly wrapped back to `Match 1`, retained focus,
+  and returned to y=0. The status, both buttons, and heading were painted in the
+  non-overlapping regions above. Raw visibly showed `# Large budget document`
+  with selected span `budget`. Four further Raw/Rendered keyboard toggles kept
+  the same viewer, Markdown, Raw, Previous, and Next identities; content stayed
+  present and the Markdown update count remained one.
+- Legacy Media at 120x36 used the 67-character fixture. A rapid keyboard-event
+  `budget` burst caused no update through the 0.10-second silent observation,
+  then exactly one highlighted repaint (`1/3` visibly painted; 0.510 seconds
+  observed including harness pauses). Loading a replacement during the next
+  pending burst visibly painted the replacement and caused zero stale
+  highlighted updates.
+
+ADR-058 remains the governing decision for the thread-scoped Windows test
+socketpair exemption; the layout correction introduced no new architecture
+decision. Final self-review confirmed all four acceptance criteria, component,
+product-path, network/default-deny, companion, performance, debounce, static,
+diff, and rendered-UAT evidence. The implementation plan was followed, with the
+interim compositor finding and subsequent reviewed geometry correction recorded
+as the only deviation. The existing testing-evidence lesson already covers the
+model-state-versus-painted-frame trap, so no duplicate lesson was added. With
+the Windows full-suite baseline limitation explicitly attributed, all
+task-scoped Definition of Done items are complete and the task is Done.
