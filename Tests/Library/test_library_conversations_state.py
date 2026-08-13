@@ -48,29 +48,33 @@ def test_rows_are_sorted_by_recency_with_age_labels_and_missing_last():
         assert isinstance(row, LibraryConversationRow)
 
 
-def test_query_filters_case_insensitively_with_status_copy_singular_and_plural():
+def test_query_uses_supplied_matching_page_with_status_copy_singular_and_plural():
     records = [
         {"id": "1", "title": "Alpha Chat", "updated_at": "2026-07-05T11:00:00+00:00"},
         {"id": "2", "title": "Alpha Report", "updated_at": "2026-07-05T10:00:00+00:00"},
-        {"id": "3", "title": "Beta Chat", "updated_at": "2026-07-05T09:00:00+00:00"},
     ]
 
-    plural_state = build_library_conversations_state(records, query="alpha", now=NOW)
+    plural_state = build_library_conversations_state(
+        records, query="alpha", total_count=2, now=NOW
+    )
     assert [row.conversation_id for row in plural_state.rows] == ["1", "2"]
     assert plural_state.status_copy == "2 matches for 'alpha'"
     assert plural_state.empty_copy == ""
 
-    singular_state = build_library_conversations_state(records, query="Beta", now=NOW)
+    singular_state = build_library_conversations_state(
+        [{"id": "3", "title": "Beta Chat"}],
+        query="Beta",
+        total_count=1,
+        now=NOW,
+    )
     assert [row.conversation_id for row in singular_state.rows] == ["3"]
     assert singular_state.status_copy == "1 match for 'Beta'"
 
 
 def test_query_with_no_matches_returns_empty_copy_and_zero_status_copy():
-    records = [
-        {"id": "1", "title": "Alpha Chat", "updated_at": "2026-07-05T11:00:00+00:00"},
-    ]
-
-    state = build_library_conversations_state(records, query="zzz", now=NOW)
+    state = build_library_conversations_state(
+        [], query="zzz", total_count=0, now=NOW
+    )
 
     assert state.rows == ()
     assert state.status_copy == "0 matches for 'zzz'"
@@ -155,21 +159,31 @@ def test_preview_lines_for_selected_row():
     )
 
 
-def test_limit_truncates_rows_to_max_after_sorting():
+def test_middle_page_exposes_range_page_and_enabled_navigation():
     records = [
         {
-            "id": f"conv-{i}",
-            "title": f"Chat {i}",
-            "updated_at": f"2026-07-05T{11 - i:02d}:00:00+00:00",
+            "id": f"conv-{index}",
+            "title": f"Chat {index}",
+            "updated_at": f"2026-07-05T{index % 12:02d}:00:00+00:00",
         }
-        for i in range(5)
+        for index in range(20)
     ]
 
-    state = build_library_conversations_state(records, now=NOW, limit=2)
+    state = build_library_conversations_state(
+        records,
+        page=2,
+        page_size=20,
+        total_count=47,
+        total_known=True,
+        has_more=True,
+        now=NOW,
+    )
 
-    # Most recent two: conv-0 (11:00) and conv-1 (10:00).
-    assert [row.conversation_id for row in state.rows] == ["conv-0", "conv-1"]
-    assert len(state.rows) == 2
+    assert len(state.rows) == 20
+    assert state.range_copy == "21-40 of 47"
+    assert state.page_copy == "Page 2 of 3"
+    assert state.previous_disabled is False
+    assert state.next_disabled is False
 
 
 def test_id_title_count_key_fallbacks_using_conversation_id_and_messages_total():
@@ -191,23 +205,130 @@ def test_id_title_count_key_fallbacks_using_conversation_id_and_messages_total()
     assert row.secondary == "7 messages - 3m"
 
 
-def test_match_count_reflects_filtered_set_before_limit_truncation():
-    """Match count in status_copy is total filtered matches, not limited rows."""
+def test_final_page_disables_next_without_dropping_supplied_rows():
     records = [
-        {"id": "1", "title": "Alpha One", "updated_at": "2026-07-05T11:00:00+00:00"},
-        {"id": "2", "title": "Alpha Two", "updated_at": "2026-07-05T10:00:00+00:00"},
-        {"id": "3", "title": "Alpha Three", "updated_at": "2026-07-05T09:00:00+00:00"},
-        {"id": "4", "title": "Alpha Four", "updated_at": "2026-07-05T08:00:00+00:00"},
-        {"id": "5", "title": "Alpha Five", "updated_at": "2026-07-05T07:00:00+00:00"},
+        {"id": f"conv-{index}", "title": f"Chat {index}"}
+        for index in range(7)
     ]
 
-    # Query matches all 5, but limit=2 displays only 2 rows.
-    # Status should reflect 5 matches (before limit), not 2 (after limit).
-    state = build_library_conversations_state(records, query="alpha", limit=2, now=NOW)
+    state = build_library_conversations_state(
+        records,
+        page=3,
+        page_size=20,
+        total_count=47,
+        total_known=True,
+        has_more=False,
+        now=NOW,
+    )
 
-    assert len(state.rows) == 2
-    assert state.status_copy == "5 matches for 'alpha'"
-    assert [row.conversation_id for row in state.rows] == ["1", "2"]
+    assert len(state.rows) == 7
+    assert state.range_copy == "41-47 of 47"
+    assert state.page_copy == "Page 3 of 3"
+    assert state.previous_disabled is False
+    assert state.next_disabled is True
+
+
+def test_empty_filtered_page_reports_zero_matches_and_page_one_of_one():
+    state = build_library_conversations_state(
+        [],
+        query="missing",
+        page=1,
+        page_size=20,
+        total_count=0,
+        total_known=True,
+        has_more=False,
+        now=NOW,
+    )
+
+    assert state.status_copy == "0 matches for 'missing'"
+    assert state.empty_copy == "No conversations match 'missing'."
+    assert state.range_copy == "0 of 0"
+    assert state.page_copy == "Page 1 of 1"
+    assert state.previous_disabled is True
+    assert state.next_disabled is True
+
+
+def test_query_status_uses_full_service_total_not_current_page_length():
+    records = [{"id": f"conv-{index}", "title": "Alpha"} for index in range(20)]
+
+    state = build_library_conversations_state(
+        records,
+        query="alpha",
+        page=2,
+        page_size=20,
+        total_count=43,
+        total_known=True,
+        has_more=True,
+        now=NOW,
+    )
+
+    assert len(state.rows) == 20
+    assert state.status_copy == "43 matches for 'alpha'"
+
+
+def test_loading_and_error_preserve_rows_and_disable_navigation():
+    records = [{"id": "conv-1", "title": "Last successful row"}]
+
+    loading = build_library_conversations_state(
+        records,
+        page=1,
+        page_size=20,
+        total_count=2,
+        total_known=True,
+        has_more=True,
+        loading=True,
+        now=NOW,
+    )
+    failed = build_library_conversations_state(
+        records,
+        page=1,
+        page_size=20,
+        total_count=2,
+        total_known=True,
+        has_more=True,
+        error_copy="Couldn't load conversations. Try again.",
+        now=NOW,
+    )
+
+    assert [row.conversation_id for row in loading.rows] == ["conv-1"]
+    assert loading.status_copy == "Loading conversations…"
+    assert loading.previous_disabled is True
+    assert loading.next_disabled is True
+    assert [row.conversation_id for row in failed.rows] == ["conv-1"]
+    assert failed.status_copy == "Couldn't load conversations. Try again."
+    assert failed.empty_copy == ""
+
+
+def test_unknown_total_disables_next_without_explicit_has_more():
+    state = build_library_conversations_state(
+        [{"id": "conv-1", "title": "One"}],
+        page=1,
+        page_size=20,
+        total_count=1,
+        total_known=False,
+        has_more=False,
+        now=NOW,
+    )
+
+    assert state.range_copy == "1-1"
+    assert state.page_copy == "Page 1"
+    assert state.next_disabled is True
+
+
+def test_initial_failure_does_not_claim_the_library_is_empty():
+    state = build_library_conversations_state(
+        [],
+        page=1,
+        page_size=20,
+        total_count=0,
+        total_known=False,
+        has_more=False,
+        error_copy="Couldn't load conversations. Try again.",
+        now=NOW,
+    )
+
+    assert state.status_copy == "Couldn't load conversations. Try again."
+    assert state.empty_copy == ""
 
 
 def test_secondary_fallback_is_conversation_when_no_message_count():
