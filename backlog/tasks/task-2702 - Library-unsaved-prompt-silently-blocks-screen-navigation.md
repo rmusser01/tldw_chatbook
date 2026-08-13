@@ -43,3 +43,23 @@ veto is asking for isn't visibly available either).
       task-2701.
 - [ ] A test covers the notify-on-veto path so it cannot regress to
       silence.
+
+## Implementation Plan (the how)
+
+ADR required: no
+
+ADR path: N/A
+
+Reason: routine UX bug fix applying the existing Library dirty-veto/discard
+pattern without changing persistence, service contracts, state ownership,
+security, or long-lived application structure.
+
+1. Strengthen the mounted Prompt dirty-navigation test and add clean/save plus
+   compatibility-only Discard regressions, then capture the intended RED.
+2. Mirror the existing Skill warning/discard pattern in the current Prompt canvas
+   and screen seams without new state, CSS, workers, modals, or abstractions.
+3. Mutation-check both the warning and live Discard enablement, run the bounded
+   affected/static/UI-hardening gates, document evidence, and close the task.
+
+Detailed execution plan:
+`Docs/superpowers/plans/2026-08-13-task-2702-prompt-dirty-navigation.md`.
