@@ -55,6 +55,7 @@ from tldw_chatbook.TTS.playground_types import (
     ProfileSaveBlockCode,
 )
 from tldw_chatbook.TTS.TTS_Generation import (
+    TTSDefaultActivationOutcome,
     TTSService,
     TTSSettingsPersistenceOutcome,
     TTSSettingsPublication,
@@ -451,6 +452,7 @@ class STTSSettingsSaveResult:
     provider_runtime_revisions: Mapping[str, int] = field(default_factory=dict)
     staged_provider_ids: frozenset[str] = frozenset()
     defaults_activated: bool | None = None
+    defaults_activation_status: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.request_id) is not int or self.request_id < 0:
@@ -462,6 +464,19 @@ class STTSSettingsSaveResult:
             and type(self.defaults_activated) is not bool
         ):
             raise TypeError("TTS default activation result must be boolean")
+        if self.defaults_activation_status not in {
+            None,
+            "activation_not_ready",
+            "committed",
+            "rolled_back",
+            "rollback_failed",
+        }:
+            raise ValueError("TTS default activation status is invalid")
+        if self.defaults_activation_status is not None and (
+            self.defaults_activated
+            is not (self.defaults_activation_status == "committed")
+        ):
+            raise ValueError("TTS default activation result is inconsistent")
         allowed_statuses = frozenset(
             {"applied", "unchanged", "pending", "superseded", "unavailable"}
         )
@@ -551,6 +566,16 @@ class _SampleGenerationFacts:
     saved_selection: TTSPreferencesSnapshot | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _DefaultActivationIntent:
+    """One immutable, generation-fenced pending default activation."""
+
+    preferences: TTSPreferencesSnapshot
+    expected_saved_revision: int
+    provider_id: str
+    token: int
+
+
 class STTSAudioBookGenerateEvent(Message):
     """Event when audiobook generation is requested"""
 
@@ -597,6 +622,8 @@ class STTSEventHandler:
         self._cleanup_task: asyncio.Task[None] | None = None
         self._settings_save_lock = asyncio.Lock()
         self._sample_generation_facts: dict[str, _SampleGenerationFacts] = {}
+        self._next_default_activation_token = 1
+        self._default_activation_intents: dict[str, _DefaultActivationIntent] = {}
 
     def _capture_sample_evidence_candidate(
         self,
@@ -1921,12 +1948,19 @@ class STTSEventHandler:
                     failure_phase=result.failure_phase,
                 )
 
+            for provider_id in candidate_providers:
+                self._default_activation_intents.pop(provider_id, None)
+            activation_intent: _DefaultActivationIntent | None = None
             if event.commit_defaults_after_handoff:
                 ticket = service.begin_preferences_publication(
                     preferences,
                     provider_configs,
                     persist,
                     publish_preferences=False,
+                )
+                activation_intent = self._new_default_activation_intent(
+                    preferences,
+                    expected_saved_revision=ticket.generation,
                 )
             else:
                 ticket = service.begin_preferences_publication(
@@ -1935,12 +1969,27 @@ class STTSEventHandler:
                     persist,
                 )
             publication = await asyncio.shield(ticket.foreground)
-            defaults_activated: bool | None = None
+            activation_outcome: TTSDefaultActivationOutcome | None = None
             if event.commit_defaults_after_handoff:
-                defaults_activated = await self.commit_voice_setup_default(
-                    preferences,
-                    expected_saved_revision=publication.generation,
+                pending_handoff = any(
+                    status == "pending"
+                    and provider_id not in publication.staged_provider_ids
+                    for provider_id, status in publication.provider_statuses.items()
                 )
+                if pending_handoff:
+                    activation_outcome = TTSDefaultActivationOutcome(
+                        "activation_not_ready"
+                    )
+                else:
+                    claimed = self._claim_default_activation_intent(activation_intent)
+                    activation_outcome = (
+                        await self.commit_voice_setup_default(
+                            preferences,
+                            expected_saved_revision=publication.generation,
+                        )
+                        if claimed
+                        else TTSDefaultActivationOutcome("activation_not_ready")
+                    )
             if publication.persistence.caches_reloaded and self.app is not None:
                 refreshed_settings = getattr(config_module, "settings", None)
                 if isinstance(refreshed_settings, Mapping):
@@ -1970,10 +2019,15 @@ class STTSEventHandler:
                 and provider_id not in publication.staged_provider_ids
                 for provider_id, status in publication.provider_statuses.items()
             ):
-                self._observe_pending_settings_publication(service, ticket, event)
+                self._observe_pending_settings_publication(
+                    service,
+                    ticket,
+                    event,
+                    activation_intent=activation_intent,
+                )
             self._notify_settings_publication(
                 publication,
-                defaults_activated=defaults_activated,
+                activation_outcome=activation_outcome,
             )
             self._reply_settings_save(
                 event,
@@ -1986,7 +2040,16 @@ class STTSEventHandler:
                 },
                 provider_runtime_revisions=publication.provider_revisions,
                 staged_provider_ids=publication.staged_provider_ids,
-                defaults_activated=defaults_activated,
+                defaults_activated=(
+                    activation_outcome.activated
+                    if activation_outcome is not None
+                    else None
+                ),
+                defaults_activation_status=(
+                    activation_outcome.status
+                    if activation_outcome is not None
+                    else None
+                ),
             )
         except asyncio.CancelledError:
             raise
@@ -2012,6 +2075,7 @@ class STTSEventHandler:
         provider_runtime_revisions: Mapping[str, int] = MappingProxyType({}),
         staged_provider_ids: frozenset[str] = frozenset(),
         defaults_activated: bool | None = None,
+        defaults_activation_status: str | None = None,
     ) -> None:
         """Deliver a bounded result to an optional mounted requester."""
         if event.request_id is None or event.reply_to is None:
@@ -2034,6 +2098,7 @@ class STTSEventHandler:
                     provider_runtime_revisions=provider_runtime_revisions,
                     staged_provider_ids=staged_provider_ids,
                     defaults_activated=defaults_activated,
+                    defaults_activation_status=defaults_activation_status,
                 )
             )
         except Exception:
@@ -2044,14 +2109,14 @@ class STTSEventHandler:
         preferences: TTSPreferencesSnapshot,
         *,
         expected_saved_revision: int,
-    ) -> bool:
+    ) -> TTSDefaultActivationOutcome:
         """Persist and activate only default axes for one active provider generation."""
 
         service = self._stts_service
         if service is None or not callable(
             getattr(service, "_commit_voice_setup_default", None)
         ):
-            return False
+            return TTSDefaultActivationOutcome("activation_not_ready")
         mutation = preferences.config_mutation()
         from tldw_chatbook import config as config_module
 
@@ -2108,19 +2173,60 @@ class STTSEventHandler:
                 failure_phase=result.failure_phase,
             )
 
-        changed = await service._commit_voice_setup_default(
+        outcome = await service._commit_voice_setup_default(
             preferences,
             expected_saved_revision=expected_saved_revision,
             persistence=persist_defaults,
             rollback=rollback_defaults,
         )
-        if changed and self.app is not None:
+        if outcome.activated and self.app is not None:
             from tldw_chatbook import config as config_module
 
             refreshed_settings = getattr(config_module, "settings", None)
             if isinstance(refreshed_settings, Mapping):
                 self.app.app_config = deepcopy(dict(refreshed_settings))
-        return bool(changed)
+        return outcome
+
+    def _new_default_activation_intent(
+        self,
+        preferences: TTSPreferencesSnapshot,
+        *,
+        expected_saved_revision: int,
+    ) -> _DefaultActivationIntent:
+        """Replace any older provider intent with one immutable token."""
+
+        intent = _DefaultActivationIntent(
+            preferences=preferences,
+            expected_saved_revision=expected_saved_revision,
+            provider_id=preferences.provider_id,
+            token=self._next_default_activation_token,
+        )
+        self._next_default_activation_token += 1
+        self._default_activation_intents[preferences.provider_id] = intent
+        return intent
+
+    def _claim_default_activation_intent(
+        self,
+        intent: _DefaultActivationIntent | None,
+    ) -> bool:
+        """Consume an intent exactly once if it remains the newest token."""
+
+        if intent is None:
+            return False
+        if self._default_activation_intents.get(intent.provider_id) != intent:
+            return False
+        self._default_activation_intents.pop(intent.provider_id, None)
+        return True
+
+    def _discard_default_activation_intent(
+        self,
+        intent: _DefaultActivationIntent | None,
+    ) -> None:
+        if (
+            intent is not None
+            and self._default_activation_intents.get(intent.provider_id) == intent
+        ):
+            self._default_activation_intents.pop(intent.provider_id, None)
 
     def _post_applied_settings_changes(
         self,
@@ -2143,6 +2249,8 @@ class STTSEventHandler:
         service: TTSService,
         ticket: TTSSettingsPublicationTicket,
         event: STTSSettingsSaveEvent,
+        *,
+        activation_intent: _DefaultActivationIntent | None = None,
     ) -> None:
         """Publish a bounded final handoff for the still-current save."""
 
@@ -2150,14 +2258,48 @@ class STTSEventHandler:
             try:
                 completion = await asyncio.shield(ticket.completion)
             except asyncio.CancelledError:
+                self._discard_default_activation_intent(activation_intent)
                 raise
             except BaseException:
+                self._discard_default_activation_intent(activation_intent)
                 return
+            activation_outcome: TTSDefaultActivationOutcome | None = None
+            if activation_intent is not None:
+                provider_status = completion.provider_statuses.get(
+                    activation_intent.provider_id
+                )
+                if (
+                    completion.generation == activation_intent.expected_saved_revision
+                    and provider_status in {"applied", "unchanged"}
+                    and self._claim_default_activation_intent(activation_intent)
+                ):
+                    activation_outcome = await self.commit_voice_setup_default(
+                        activation_intent.preferences,
+                        expected_saved_revision=(
+                            activation_intent.expected_saved_revision
+                        ),
+                    )
+                else:
+                    self._discard_default_activation_intent(activation_intent)
+                    activation_outcome = TTSDefaultActivationOutcome(
+                        "activation_not_ready"
+                    )
             self._post_applied_settings_changes(service, completion)
             self._reply_settings_runtime(
                 event,
                 completion,
+                activation_outcome=activation_outcome,
             )
+            if (
+                activation_outcome is not None
+                and activation_outcome.status == "rollback_failed"
+            ):
+                self.app.notify(
+                    "Defaults were saved, but rollback failed. Runtime still uses the "
+                    "previous default; restart may use the new default. Retry to "
+                    "reconcile.",
+                    severity="error",
+                )
             if "unavailable" in completion.provider_statuses.values():
                 self.app.notify(
                     "TTS settings are unavailable. Retry/Reconnect.",
@@ -2170,6 +2312,8 @@ class STTSEventHandler:
     def _reply_settings_runtime(
         event: STTSSettingsSaveEvent,
         publication: TTSSettingsPublication,
+        *,
+        activation_outcome: TTSDefaultActivationOutcome | None = None,
     ) -> None:
         """Deliver one safe final runtime result to the original requester."""
 
@@ -2205,6 +2349,16 @@ class STTSEventHandler:
                         for provider_id, revision in publication.provider_revisions.items()
                         if provider_id in provider_statuses
                     },
+                    defaults_activated=(
+                        activation_outcome.activated
+                        if activation_outcome is not None
+                        else None
+                    ),
+                    defaults_activation_status=(
+                        activation_outcome.status
+                        if activation_outcome is not None
+                        else None
+                    ),
                 )
             )
         except Exception:
@@ -2214,7 +2368,7 @@ class STTSEventHandler:
         self,
         publication: TTSSettingsPublication,
         *,
-        defaults_activated: bool | None = None,
+        activation_outcome: TTSDefaultActivationOutcome | None = None,
     ) -> None:
         """Render bounded, value-independent settings publication copy."""
         persistence = publication.persistence
@@ -2225,7 +2379,27 @@ class STTSEventHandler:
             else:
                 self.app.notify("Settings unchanged", severity="information")
             return
-        if defaults_activated is False:
+        if (
+            activation_outcome is not None
+            and activation_outcome.status == "rollback_failed"
+        ):
+            self.app.notify(
+                "Defaults were saved, but rollback failed. Runtime still uses the "
+                "previous default; restart may use the new default. Retry to reconcile.",
+                severity="error",
+            )
+            return
+        if (
+            activation_outcome is not None
+            and activation_outcome.status == "activation_not_ready"
+            and "pending" in statuses.values()
+        ):
+            self.app.notify(
+                "Settings saved; default activation is waiting for TTS handoff.",
+                severity="information",
+            )
+            return
+        if activation_outcome is not None and not activation_outcome.activated:
             self.app.notify(
                 "Saved, activation failed. Previous TTS defaults remain active; retry.",
                 severity="error",

@@ -2384,6 +2384,39 @@ async def test_cache_reload_failure_keeps_persistence_and_runtime_results_distin
 
 
 @pytest.mark.asyncio
+async def test_default_rollback_failure_keeps_retry_draft_and_warns_about_restart() -> (
+    None
+):
+    app = _PanelHarness(configure_provider="audio_cpp", state=_audio_cpp_state())
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one(
+            "#settings-speech-audio_cpp-synthesis-timeout-seconds",
+            Input,
+        ).value = "321"
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=1,
+                persisted=True,
+                provider_statuses={"audio_cpp": "applied"},
+                provider_configuration_revisions={"audio_cpp": 7},
+                provider_runtime_revisions={"audio_cpp": 41},
+                defaults_activated=False,
+                defaults_activation_status="rollback_failed",
+            )
+        )
+
+        result = str(app.query_one("#settings-speech-save-result", Static).renderable)
+        assert "rollback failed" in result
+        assert "restart may use the new default" in result
+        assert "previous default remains active" not in result
+        assert panel.has_unsaved_changes() is True
+
+
+@pytest.mark.asyncio
 async def test_invalid_save_is_field_specific_and_posts_no_event() -> None:
     app = _PanelHarness(configure_provider="audio_cpp")
     async with app.run_test(size=(150, 60)) as pilot:
@@ -2700,9 +2733,7 @@ async def test_cross_provider_failed_save_keeps_stale_confirmation_dirty() -> No
         await pilot.pause()
 
         assert panel.state.openai_plaintext_confirmation_cleanup_needed is True
-        assert (
-            panel.original_state.openai_plaintext_confirmation_cleanup_needed is True
-        )
+        assert panel.original_state.openai_plaintext_confirmation_cleanup_needed is True
         assert panel.has_unsaved_changes() is True
 
 

@@ -491,6 +491,37 @@ class TTSSettingsPersistenceOutcome:
             raise ValueError("Cache-reload failure requires a replaced settings file")
 
 
+TTSDefaultActivationStatus = Literal[
+    "activation_not_ready",
+    "committed",
+    "rolled_back",
+    "rollback_failed",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class TTSDefaultActivationOutcome:
+    """Truthful result of one generation-fenced default activation attempt."""
+
+    status: TTSDefaultActivationStatus
+
+    def __post_init__(self) -> None:
+        if self.status not in {
+            "activation_not_ready",
+            "committed",
+            "rolled_back",
+            "rollback_failed",
+        }:
+            raise ValueError("Unknown TTS default activation status")
+
+    @property
+    def activated(self) -> bool:
+        return self.status == "committed"
+
+    def __bool__(self) -> bool:
+        return self.activated
+
+
 @dataclass(frozen=True, slots=True)
 class TTSSettingsPublication:
     """One safe settings-publication result for foreground or final observers."""
@@ -3179,10 +3210,11 @@ class TTSService:
     ) -> bool:
         """Publish one default only while its exact provider generation is active."""
 
-        return await self._commit_voice_setup_default(
+        outcome = await self._commit_voice_setup_default(
             preferences,
             expected_saved_revision=expected_saved_revision,
         )
+        return outcome.activated
 
     async def _commit_voice_setup_default(
         self,
@@ -3197,7 +3229,7 @@ class TTSService:
             ]
             | None
         ) = None,
-    ) -> bool:
+    ) -> TTSDefaultActivationOutcome:
         """Fence optional defaults persistence and active-snapshot publication."""
 
         if not isinstance(preferences, TTSPreferencesSnapshot):
@@ -3237,54 +3269,72 @@ class TTSService:
                 prior_preferences = self.preferences_snapshot()
                 prior_generation = self.preferences_generation()
                 if self.preferences_generation() > expected_saved_revision:
-                    return False
+                    return TTSDefaultActivationOutcome("activation_not_ready")
                 if not tts_configuration_is_active(
                     self,
                     preferences.provider_id,
                     expected_saved_revision,
                 ):
-                    return False
+                    return TTSDefaultActivationOutcome("activation_not_ready")
                 if persistence is not None:
                     try:
                         outcome = await asyncio.to_thread(persistence)
                     except BaseException:
-                        return False
+                        return TTSDefaultActivationOutcome("activation_not_ready")
                     if not isinstance(outcome, TTSSettingsPersistenceOutcome):
-                        return False
+                        return TTSDefaultActivationOutcome("activation_not_ready")
                     if not outcome.file_replaced:
-                        return False
+                        return TTSDefaultActivationOutcome("activation_not_ready")
                     if not outcome.caches_reloaded:
-                        await compensate(prior_preferences)
-                        return False
+                        restored = await compensate(prior_preferences)
+                        return TTSDefaultActivationOutcome(
+                            "rolled_back" if restored else "rollback_failed"
+                        )
                     if not tts_configuration_is_active(
                         self,
                         preferences.provider_id,
                         expected_saved_revision,
                     ):
-                        await compensate(prior_preferences)
-                        return False
+                        restored = await compensate(prior_preferences)
+                        return TTSDefaultActivationOutcome(
+                            "rolled_back" if restored else "rollback_failed"
+                        )
                 try:
                     self._request_admission._publish_preferences(
                         preferences,
                         expected_saved_revision,
                     )
                 except BaseException:
+                    restored = False
                     if persistence is not None:
-                        await compensate(prior_preferences)
+                        restored = await compensate(prior_preferences)
                     self._request_admission._preferences = prior_preferences
                     self._request_admission._preferences_generation = prior_generation
-                    return False
+                    return TTSDefaultActivationOutcome(
+                        "rolled_back"
+                        if persistence is not None and restored
+                        else "rollback_failed"
+                        if persistence is not None
+                        else "activation_not_ready"
+                    )
                 activated = bool(
                     self.preferences_generation() == expected_saved_revision
                     and self.preferences_snapshot() == preferences
                 )
                 if activated:
-                    return True
+                    return TTSDefaultActivationOutcome("committed")
+                restored = False
                 if persistence is not None:
-                    await compensate(prior_preferences)
+                    restored = await compensate(prior_preferences)
                 self._request_admission._preferences = prior_preferences
                 self._request_admission._preferences_generation = prior_generation
-                return False
+                return TTSDefaultActivationOutcome(
+                    "rolled_back"
+                    if persistence is not None and restored
+                    else "rollback_failed"
+                    if persistence is not None
+                    else "activation_not_ready"
+                )
 
     async def _stage_managed_boundary(
         self,

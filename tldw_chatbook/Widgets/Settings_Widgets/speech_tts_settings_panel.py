@@ -640,6 +640,10 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_provider_id: str | None = None
         self._pending_saved_provider_values: dict[str, object] | None = None
         self._pending_commit_defaults_after_handoff = False
+        self._deferred_default_activation_drafts: dict[
+            int,
+            tuple[object, str | None, dict[str, object] | None],
+        ] = {}
         self._pending_saved_openai_confirmation: OpenAIPlaintextConfirmation | None = (
             None
         )
@@ -3599,6 +3603,16 @@ class SpeechTTSSettingsPanel(Vertical):
         saved_openai_confirmation_cleanup_needed = (
             self._pending_saved_openai_confirmation_cleanup_needed
         )
+        if (
+            result.defaults_activation_status == "activation_not_ready"
+            and "pending" in result.provider_statuses.values()
+            and saved_defaults is not None
+        ):
+            self._deferred_default_activation_drafts[result.request_id] = (
+                deepcopy(saved_defaults),
+                saved_provider_id,
+                deepcopy(saved_provider_values),
+            )
         self._pending_credential_mutation = None
         self._pending_saved_defaults = None
         self._pending_saved_provider_id = None
@@ -3709,7 +3723,20 @@ class SpeechTTSSettingsPanel(Vertical):
             )
         else:
             handoff = "no provider adapter recreation needed"
-        if result.defaults_activated is False:
+        if result.defaults_activation_status == "rollback_failed":
+            result_copy = (
+                "Defaults were saved, but rollback failed. Runtime still uses the "
+                "previous default; restart may use the new default. Retry to reconcile."
+            )
+        elif (
+            result.defaults_activation_status == "activation_not_ready"
+            and "pending" in result.provider_statuses.values()
+        ):
+            result_copy = (
+                "Saved locally; default activation is waiting for the TTS handoff. "
+                "Keep this draft open until activation completes."
+            )
+        elif result.defaults_activated is False:
             result_copy = (
                 "Saved, activation failed. The previous default remains active; "
                 "retry after the provider is available."
@@ -3819,7 +3846,34 @@ class SpeechTTSSettingsPanel(Vertical):
             failure_phase=result.failure_phase,
             provider_configuration_revisions=(matching_configuration_revisions),
             provider_runtime_revisions=matching_runtime_revisions,
+            defaults_activated=result.defaults_activated,
+            defaults_activation_status=result.defaults_activation_status,
         )
+        deferred = self._deferred_default_activation_drafts.pop(
+            result.request_id,
+            None,
+        )
+        if result.defaults_activation_status == "committed" and deferred is not None:
+            saved_defaults, saved_provider_id, saved_provider_values = deferred
+            self.original_state.defaults = deepcopy(saved_defaults)
+            self.state.defaults_source = GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+            self.original_state.defaults_source = (
+                GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+            )
+            if saved_provider_id is not None and saved_provider_values is not None:
+                self.original_state.providers[saved_provider_id] = deepcopy(
+                    saved_provider_values
+                )
+                if (
+                    self.state.provider_sources[saved_provider_id]
+                    is not GlobalSpeechTTSEffectiveSource.ENVIRONMENT
+                ):
+                    self.state.provider_sources[saved_provider_id] = (
+                        GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+                    )
+                    self.original_state.provider_sources[saved_provider_id] = (
+                        GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
+                    )
         self._record_save_runtime_statuses(
             bounded_result,
             saved_provider_id=None,
@@ -3828,11 +3882,23 @@ class SpeechTTSSettingsPanel(Vertical):
             f"{TTS_PROVIDER_LABELS[provider_id]}: {status}"
             for provider_id, status in matching_statuses.items()
         )
+        result_copy = f"Saved locally. Runtime reconfiguration completed: {handoff}."
+        if result.defaults_activation_status == "committed":
+            result_copy = (
+                f"Saved locally. Runtime reconfiguration completed: {handoff}. "
+                "Default activation completed."
+            )
+        elif result.defaults_activation_status == "rollback_failed":
+            result_copy = (
+                "Defaults were saved, but rollback failed. Runtime still uses the "
+                "previous default; restart may use the new default. Retry to reconcile."
+            )
         self._set_result(
-            f"Saved locally. Runtime reconfiguration completed: {handoff}.",
+            result_copy,
             severity=(
                 "error"
                 if "unavailable" in matching_statuses.values()
+                or result.defaults_activation_status == "rollback_failed"
                 else "information"
             ),
         )
