@@ -119,7 +119,7 @@ for css in (source, bundle):
 - [ ] **Step 6: Add the executable real-Console visual/geometry sweep**
 
 In `Tests/UI/test_workbench_visual_snapshots.py`, add a parameterized test over
-`size in ((100, 30), (140, 42), (160, 45))` and
+`size in ((130, 30), (140, 42), (160, 45))` and
 `approval_count in (0, 3)`. Before `run_test`, set
 `app.console_pending_approval_count = approval_count`, complete onboarding,
 and open Console through the existing `_open_console()` helper. Query
@@ -137,6 +137,14 @@ svg = app.export_screenshot(
 )
 _assert_svg_healthy(svg)
 ```
+
+The approved design originally named 100x30. RED-test review found that the
+current baseline places the collapsed Inspector at x=1362 there, outside the
+workspace's x=2..98 range. That separate horizontal-overflow defect cannot be
+made green by this task's vertical/fill change without expanding ADR-043 layout
+scope. Use 130x30 instead: it is the narrowest probed baseline-contained size
+outside the 118–128 auto-open band (handle x=117..128 inside workspace
+x=2..128). Existing compact-access tests remain the authority at 80/90/140.
 
 - [ ] **Step 7: Run every new regression and verify RED**
 
