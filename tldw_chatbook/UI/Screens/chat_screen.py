@@ -22120,7 +22120,7 @@ class ChatScreen(BaseAppScreen):
             try:
                 await worker.wait()
             except Exception as error:
-                logger.error(f"Pending sidebar-state write failed: {error}")
+                logger.error("Pending sidebar-state write failed: {}", type(error).__name__)
             # Falls through to the dirty re-check below (review round,
             # task-15470) rather than returning here: a toggle can land
             # while THIS await was in flight, re-dirtying the state after

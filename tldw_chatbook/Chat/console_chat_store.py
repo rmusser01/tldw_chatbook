@@ -930,9 +930,7 @@ class ConsoleChatStore:
                     payload_hash=payload_hash,
                 )
             except Exception:
-                logger.bind(message_id=message_id).exception(
-                    "Failed to reconcile restored Chat sync intent"
-                )
+                logger.warning("Failed to reconcile restored Chat sync intent")
                 continue
             if not isinstance(result, Mapping) or result.get("status") != "enqueued":
                 for message in self._nodes_by_session.get(session_id, {}).values():
@@ -5080,10 +5078,7 @@ class ConsoleChatStore:
                 payload_hash=canonical_payload_hash(payload),
             )
         except Exception:
-            logger.bind(
-                server_profile_id=profile_id,
-                message_id=persisted_id,
-            ).exception(
+            logger.warning(
                 "Failed to project Sync v2 continuation owner after local mutation"
             )
 
@@ -5431,10 +5426,7 @@ class ConsoleChatStore:
                     payload_hash=payload_hash,
                 )
             except Exception:
-                logger.bind(
-                    server_profile_id=profile_id,
-                    message_id=tombstone.get("message_id"),
-                ).exception(
+                logger.warning(
                     "Failed to project Sync v2 Chat tombstone after local mutation"
                 )
 

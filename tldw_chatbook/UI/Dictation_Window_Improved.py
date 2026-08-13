@@ -564,7 +564,10 @@ class ImprovedDictationWindow(Widget):
             try:
                 await worker.wait()
             except Exception as error:
-                logger.error(f"Pending dictation settings write failed: {error}")
+                logger.error(
+                    "Pending dictation settings write failed: {}",
+                    type(error).__name__,
+                )
             # Falls through to the dirty re-check below (review round,
             # task-15470) rather than returning here: an edit can land
             # while THIS await was in flight, re-dirtying settings after
@@ -898,7 +901,7 @@ Performance Tips:
         try:
             save_settings_to_cli_config(snapshot)
         except Exception:
-            logger.exception("Failed to persist dictation settings")
+            logger.error("Failed to persist dictation settings")
 
     def _save_settings(self):
         """Save dictation settings, synchronously, on this thread.

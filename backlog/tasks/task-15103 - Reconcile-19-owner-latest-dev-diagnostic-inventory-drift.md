@@ -1,11 +1,11 @@
 ---
 id: TASK-15103
 title: Reconcile 19-owner latest-dev diagnostic inventory drift
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-11 04:38'
-updated_date: '2026-08-11 18:00'
+updated_date: '2026-08-13 19:46'
 labels:
   - testing
   - baseline
@@ -25,7 +25,7 @@ Latest-dev stop-gate revalidation on exact `origin/dev` `82b595049d97836482c118c
 - [x] #1 Unsafe private values or exception details in the recorded delta are repaired without changing unrelated production behavior
 - [x] #2 The persistent-diagnostic inventory is regenerated with only reviewed owner changes and unchanged six-file sink topology
 - [x] #3 The focused architecture checker and regression coverage pass without constructing a test application
-- [x] #4 Every generated-versus-stored delta for the recorded 19 owner paths is reviewed under ADR-029
+- [x] #4 Every generated-versus-stored delta on the final integration base is reviewed under ADR-029, including the recorded 19-owner incident and later rebase drift
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,6 +50,10 @@ Detailed executable plan:
 5. Rebase onto the latest `dev`, compare the complete call population for all
    19 owners, rerun only touched-function tests/static gates, complete
    independent review, and close the task.
+6. For the final PR integration rebase, inspect every new generated-versus-
+   stored owner delta without blanket regeneration, repair any unsafe call
+   shape, address valid review feedback, then regenerate once and rerun the
+   focused architecture/privacy gates before returning the task to Done.
 
 ADR required: no
 
@@ -106,4 +110,19 @@ regeneration sent the stored-revision scan hunting for post-repair
 populations that exist in no dev-reachable revision (and onto a
 conflict-markered historical blob). It now reads the immutable
 `recorded_base` tree, which matches the stale baseline on all 19 owner rows.
+
+**Final integration rebase (2026-08-13):** rebased PR #1544 onto `origin/dev`
+`bed39af6b004e4db86218fad01d2ea515b332135`, reviewed all 40 resulting
+owner-row deltas, and repaired unsafe integration diagnostics across 22
+production files. Raw config values, survivor/tool identifiers, stack traces,
+exception capture/text, message/profile/note ids, paths, and dynamic setting
+values were replaced with fixed events plus only reviewed type/count metadata.
+The regenerated manifest now records 489 owners, 1,198 TASK-492 calls, 6,940
+TASK-494 calls, and the same six byte-equal sink-topology rows. The complete
+diagnostic suite passed 60 tests; full Architecture passed 88 tests with only
+the separately tracked Console size ratchet remaining at the unchanged current-
+dev baseline of 22,338/17,727. Qodo's valid feedback was addressed by adding
+the missing public-test docstring and batching/deduplicating provenance Git
+checks; the event-only logging-context suggestion remains intentionally
+rejected under ADR-029.
 <!-- SECTION:NOTES:END -->

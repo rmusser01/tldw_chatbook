@@ -2256,7 +2256,7 @@ class ConsoleChatController:
             try:
                 handles = snapshot(self._agent_conversation_id(session.id))
             except Exception:  # noqa: BLE001 -- never block a navigation
-                logger.opt(exception=True).debug(
+                logger.debug(
                     "fleet survivor count failed for a session; treated as idle"
                 )
                 continue

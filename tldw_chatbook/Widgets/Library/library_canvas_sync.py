@@ -107,6 +107,4 @@ class PostRecomposeCallback:
         try:
             callback()
         except Exception:
-            logger.opt(exception=True).debug(
-                f"{type(self).__name__}: post-recompose callback failed."
-            )
+            logger.debug("Library post-recompose callback failed")

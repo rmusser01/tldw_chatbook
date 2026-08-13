@@ -12277,9 +12277,7 @@ UPDATE db_schema_version
                         entity_id=note_id,
                     )
                 if not current_state["deleted"]:
-                    logger.info(
-                        f"Note ID {note_id} already active. Restore is idempotent."
-                    )
+                    logger.info("Note restore was already active")
                     return True
                 if current_state["version"] != expected_version:
                     raise ConflictError(
@@ -12298,9 +12296,7 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Note ID {note_id} disappeared."
                     elif not final_state["deleted"]:
-                        logger.info(
-                            f"Note ID {note_id} was restored concurrently. Success."
-                        )
+                        logger.info("Note restore completed concurrently")
                         return True
                     elif final_state["version"] != expected_version:
                         msg = (
@@ -12314,18 +12310,12 @@ UPDATE db_schema_version
                         )
                     raise ConflictError(msg, entity="notes", entity_id=note_id)
 
-                logger.info(
-                    f"Restored note ID {note_id} from version {expected_version} "
-                    f"to version {next_version_val}."
-                )
+                logger.info("Note restore completed normally")
                 return True
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(
-                f"Database error restoring note ID {note_id} "
-                f"(expected v{expected_version}): {e}"
-            )
+            logger.error("Database error restoring a note: {}", type(e).__name__)
             raise
 
     def search_notes(

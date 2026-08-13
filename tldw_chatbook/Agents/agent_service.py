@@ -286,16 +286,10 @@ def _coerce_child_max_wall_seconds(value) -> float:
     try:
         parsed = float(value)
     except (TypeError, ValueError):
-        logger.warning(
-            f"[agents] {CHILD_MAX_WALL_SECONDS_KEY}={value!r} is not a "
-            f"number; using {DEFAULT_CHILD_MAX_WALL_SECONDS}"
-        )
+        logger.warning("child_max_wall_seconds is not numeric; using default")
         return DEFAULT_CHILD_MAX_WALL_SECONDS
     if not math.isfinite(parsed):
-        logger.warning(
-            f"[agents] {CHILD_MAX_WALL_SECONDS_KEY}={value!r} is not "
-            f"finite; using {DEFAULT_CHILD_MAX_WALL_SECONDS}"
-        )
+        logger.warning("child_max_wall_seconds is not finite; using default")
         return DEFAULT_CHILD_MAX_WALL_SECONDS
     return parsed
 
@@ -323,10 +317,7 @@ def _coerce_subagents_outlive_turn(value) -> bool:
         return True
     if text in {"0", "false", "no", "off"}:
         return False
-    logger.warning(
-        f"[agents] {SUBAGENTS_OUTLIVE_TURN_KEY}={value!r} is not a boolean; "
-        f"using {DEFAULT_SUBAGENTS_OUTLIVE_TURN}"
-    )
+    logger.warning("subagents_outlive_turn is not boolean; using default")
     return DEFAULT_SUBAGENTS_OUTLIVE_TURN
 
 
@@ -1189,8 +1180,7 @@ class AgentService:
         survivors = self._surviving_handles(fleet, mine, should_cancel)
         if survivors:
             logger.info(
-                f"{len(survivors)} sub-agent(s) outliving their turn: "
-                f"{', '.join(sorted(survivors))}"
+                "{} sub-agents are outliving their turn", len(survivors)
             )
         # Everything else settles exactly as it always has. With no
         # survivors this holds `mine` itself, in the same order, and every

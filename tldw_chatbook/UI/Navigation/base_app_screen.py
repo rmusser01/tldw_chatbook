@@ -179,10 +179,7 @@ class BaseAppScreen(Screen):
         try:
             self.app.capture_mouse(None)
         except Exception:
-            logger.debug(
-                "Mouse-capture release before teardown skipped.",
-                exc_info=True,
-            )
+            logger.debug("Mouse-capture release before teardown skipped.")
 
     def sweep_stale_mouse_capture(self) -> None:
         """Drop a capture left pointing at a no-longer-attached widget.
@@ -200,10 +197,7 @@ class BaseAppScreen(Screen):
             try:
                 self.app.capture_mouse(None)
             except Exception:
-                logger.debug(
-                    "Stale post-teardown mouse-capture sweep skipped.",
-                    exc_info=True,
-                )
+                logger.debug("Stale post-teardown mouse-capture sweep skipped.")
 
     def compose(self) -> ComposeResult:
         """Compose the screen with navigation bar and content."""

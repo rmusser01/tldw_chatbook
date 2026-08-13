@@ -3977,9 +3977,7 @@ class SetupWizardContainer(WizardContainer):
         if not section_values:
             return True
         if not wizard_state.commit_sections_allowed(section_values):
-            logger.error(
-                "Wizard commit rejected non-owned sections: {}", list(section_values)
-            )
+            logger.error("Wizard commit rejected non-owned sections")
             return False
         import asyncio
 

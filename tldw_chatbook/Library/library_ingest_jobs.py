@@ -499,9 +499,7 @@ class LibraryIngestJobRegistry:
             try:
                 callback(before, after)
             except Exception:
-                logger.opt(exception=True).debug(
-                    "LibraryIngestJobRegistry progress listener raised"
-                )
+                logger.debug("LibraryIngestJobRegistry progress listener raised")
 
     # -- mutations -----------------------------------------------------
 

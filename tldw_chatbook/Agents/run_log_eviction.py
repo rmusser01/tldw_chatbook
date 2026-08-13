@@ -49,7 +49,6 @@ model least likely to win that bet.
 
 from __future__ import annotations
 
-import traceback
 from typing import Any, Callable
 
 from loguru import logger
@@ -537,15 +536,10 @@ def bound_history_for_send(
             safe_error = RuntimeError(
                 "provider continuation history could not be bounded"
             )
-            safe_trace = " > ".join(
-                f"{frame.name}:{frame.lineno}"
-                for frame in traceback.extract_tb(exc.__traceback__)
-            )
             logger.warning(
                 "run-log eviction failed for continuation history; refusing "
-                "the provider request (category={}, trace={})",
+                "the provider request (category={})",
                 type(exc).__name__,
-                safe_trace,
             )
             raise safe_error from None
         logger.opt(exception=True).warning(

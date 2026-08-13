@@ -2500,7 +2500,7 @@ class LibraryIngestQueueMixin:
                         try:
                             method()
                         except Exception:
-                            logger.opt(exception=True).error(
+                            logger.error(
                                 "Error cleaning up a partially constructed "
                                 "Library ingest progress queue "
                                 "(operation={}, queue_type={}).",
@@ -4186,16 +4186,12 @@ class LibraryIngestQueueMixin:
                 try:
                     source_service.close()
                 except Exception:
-                    logger.opt(exception=True).error(
-                        "Error closing the Parakeet source service."
-                    )
+                    logger.error("Error closing the Parakeet source service.")
             if coordinator is not None:
                 try:
                     coordinator.close()
                 except Exception:
-                    logger.opt(exception=True).error(
-                        "Error closing the local STT dispatch coordinator."
-                    )
+                    logger.error("Error closing the local STT dispatch coordinator.")
             if executor is not None:
                 try:
                     executor.close()
@@ -4217,7 +4213,7 @@ class LibraryIngestQueueMixin:
                     try:
                         close()
                     except Exception:
-                        logger.opt(exception=True).error(
+                        logger.error(
                             "Error cleaning up the Library ingest progress queue "
                             "(operation={}, queue_type={}).",
                             "close",
@@ -4228,7 +4224,7 @@ class LibraryIngestQueueMixin:
                     try:
                         cancel_join()
                     except Exception:
-                        logger.opt(exception=True).error(
+                        logger.error(
                             "Error cleaning up the Library ingest progress queue "
                             "(operation={}, queue_type={}).",
                             "cancel_join_thread",
@@ -4238,7 +4234,7 @@ class LibraryIngestQueueMixin:
                 try:
                     progress_thread.join(timeout=1.0)
                 except Exception:
-                    logger.opt(exception=True).error(
+                    logger.error(
                         "Error joining the Library ingest progress drain thread."
                     )
 
@@ -5270,9 +5266,8 @@ class TldwCli(
             )
         except Exception as _instance_lock_exc:
             logger.debug(
-                "Instance lock acquisition failed unexpectedly (%s): %s",
+                "Instance lock acquisition failed unexpectedly (%s)",
                 type(_instance_lock_exc).__name__,
-                _instance_lock_exc,
             )
             self._instance_lock_status = InstanceLockStatus(acquired=True)
         self.tts_service = build_default_tts_service(self.app_config)
@@ -10131,9 +10126,9 @@ class TldwCli(
                 route.load_screen_class()
             except Exception as exc:
                 self.loguru_logger.debug(
-                    "Screen pre-import failed for "
-                    f"{route.screen_name!r} (non-fatal, nav-time behavior "
-                    f"unaffected): {type(exc).__name__}: {exc}"
+                    "Screen pre-import failed (route={}, error_type={})",
+                    route.screen_name,
+                    type(exc).__name__,
                 )
 
     def _preimport_heavy_screens(self) -> None:

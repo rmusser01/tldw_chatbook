@@ -3205,7 +3205,7 @@ class PersonasScreen(BaseAppScreen):
                 )
                 records = list(response.get("dictionaries") or [])
             except Exception:
-                logger.opt(exception=True).warning("Could not list chat dictionaries.")
+                logger.warning("Could not list chat dictionaries.")
                 records = []
                 recovery_copy = (
                     "Dictionaries could not be loaded.\nSwitch modes and back to retry."
@@ -3761,9 +3761,7 @@ class PersonasScreen(BaseAppScreen):
         try:
             return statistics_from_record(record, dictionary_id=int(entity_id))
         except Exception:
-            logger.opt(exception=True).warning(
-                f"Could not derive dictionary {entity_id} statistics."
-            )
+            logger.warning("Could not derive dictionary statistics")
             return None
 
     @staticmethod
@@ -4165,7 +4163,7 @@ class PersonasScreen(BaseAppScreen):
             try:
                 picked = await self.app.push_screen_wait(DictionaryAttachPicker(convs))
             except Exception:
-                logger.opt(exception=True).warning("Could not show the attach picker.")
+                logger.warning("Could not show the dictionary attach picker.")
                 return
             if not picked:
                 return
@@ -5183,7 +5181,7 @@ class PersonasScreen(BaseAppScreen):
                     ConversationAttachPicker(convs)
                 )
             except Exception:
-                logger.opt(exception=True).warning("Could not show the attach picker.")
+                logger.warning("Could not show the world-book attach picker.")
                 return
             if not picked:
                 return
@@ -5194,7 +5192,7 @@ class PersonasScreen(BaseAppScreen):
                     int(entity_id),
                 )
             except Exception as exc:
-                logger.opt(exception=True).warning("Could not attach the world book.")
+                logger.warning("Could not attach the world book.")
                 self._notify(f"Attach failed: {exc}", "error")
                 return
             await self._refresh_lore_attachments()

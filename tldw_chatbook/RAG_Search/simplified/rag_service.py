@@ -53,7 +53,7 @@ from tldw_chatbook.Metrics.metrics_logger import (
 from .embeddings_wrapper import EmbeddingsServiceWrapper
 from .vector_store import create_vector_store, SearchResult, SearchResultWithCitations
 from .citations import Citation, CitationType, merge_citations
-from .config import RAGConfig, SearchConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
+from .config import RAGConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
 from ..fusion import (
     reciprocal_rank_fusion,
@@ -3427,13 +3427,7 @@ class RAGService:
         if dedup_key not in self._warned_fts_constructions:
             self._warned_fts_constructions.add(dedup_key)
             logger.warning(
-                "Unknown fts_match_construction {!r}; the keyword leg is "
-                "falling back to the {!r} construction (the conservative "
-                "full AND, NOT the shipped default {!r}). Valid values: {}.",
-                construction,
-                FTS_MATCH_CONSTRUCTION_AND,
-                SearchConfig.fts_match_construction,
-                ", ".join(FTS_MATCH_CONSTRUCTIONS),
+                "Unknown fts_match_construction; using conservative fallback"
             )
         return FTS_MATCH_CONSTRUCTION_AND
 

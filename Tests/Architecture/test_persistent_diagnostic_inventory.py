@@ -25,10 +25,34 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
+    "tldw_chatbook/Agents/agent_service.py": {
+        "child_max_wall_seconds is not numeric": (),
+        "child_max_wall_seconds is not finite": (),
+        "subagents_outlive_turn is not boolean": (),
+        "sub-agents are outliving their turn": ("len(survivors)",),
+    },
+    "tldw_chatbook/Agents/local_tool_provider.py": {
+        "Local tool state resolution failed": (),
+        "Local tool approval-state resolution failed": (),
+        "Local tool approval callback failed": (),
+    },
+    "tldw_chatbook/Agents/run_log_eviction.py": {
+        "continuation owner missing from payload": (),
+        "run-log eviction failed for continuation history": (
+            "type(exc).__name__",
+        ),
+    },
+    "tldw_chatbook/Agents/session_todo_store.py": {
+        "Session todo change callback failed": (),
+    },
     "tldw_chatbook/Chat/console_chat_controller.py": {
         "Console global user display-name accessor failed": ("type(exc).__name__",),
+        "fleet survivor count failed for a session": (),
     },
     "tldw_chatbook/Chat/console_chat_store.py": {
+        "Failed to reconcile restored Chat sync intent": (),
+        "Failed to project Sync v2 continuation owner": (),
+        "Failed to project Sync v2 Chat tombstone": (),
         "Failed to persist seeded Console roleplay context": (),
         "Failed to persist planned Console roleplay system prompt projection": (
             "type(exc).__name__",
@@ -45,6 +69,25 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         ),
         "Failed to persist Console roleplay identity context": ("type(exc).__name__",),
         "Failed to flush Console roleplay context on first persist": (),
+    },
+    "tldw_chatbook/Chat/console_agent_bridge.py": {
+        "model-call loop did not stop": (),
+        "could not open the post-turn window": (),
+        "post-turn window failed": (),
+    },
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+        "Database error restoring a note": ("type(e).__name__",),
+        "Note restore was already active": (),
+        "Note restore completed normally": (),
+        "Note restore completed concurrently": (),
+    },
+    "tldw_chatbook/Library/library_ingest_jobs.py": {
+        "LibraryIngestJobRegistry progress listener raised": (),
+    },
+    "tldw_chatbook/Notes/file_notes_service.py": {
+        "Could not remove a File Notes export temporary": (
+            "type(error).__name__",
+        ),
     },
     "tldw_chatbook/Local_Ingestion/audio_processing.py": {
         "Time-range trim could not be converted": (),
@@ -65,6 +108,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Notes keyword sub-leg failed": ("type(e).__name__",),
         "Conversations keyword sub-leg failed": ("type(e).__name__",),
         "Query truncated": ("len(query)", "MAX_QUERY_LENGTH"),
+        "Unknown fts_match_construction; using conservative fallback": (),
     },
     "tldw_chatbook/UI/Screens/chat_screen.py": {
         # TASK-15600: the per-operation video failure events were consolidated
@@ -73,11 +117,44 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         # be pinned individually by this registry's unique-label contract; the
         # inventory manifest owns them.
         "stream resolution failed": ("type(exc).__name__",),
+        "Pending sidebar-state write failed": ("type(error).__name__",),
     },
     "tldw_chatbook/UI/Screens/library_screen.py": {
         "in bulk delete": (),
         "Failed to restore a Library media item in bulk-delete undo": (
             "type(exc).__name__",
+        ),
+        "Failed to persist a Library notes setting": (),
+        "Failed to persist the Library ingest backend": (),
+        "Failed to persist Library ingest options": (),
+        "Failed to restore a Library note": (),
+        "Failed to restore a Library Collection": (),
+    },
+    "tldw_chatbook/UI/Screens/llm_screen.py": {
+        "External Parakeet source removal failed": ("type(exc).__name__",),
+        "External Parakeet verification rejected the selected source": (
+            "type(exc).__name__",
+        ),
+        "External Parakeet verification failed unexpectedly": (
+            "type(exc).__name__",
+        ),
+        "External Parakeet source save failed": ("type(exc).__name__",),
+        "Managed VAD preflight failed": ("type(exc).__name__",),
+        "Managed VAD installation failed": ("type(exc).__name__",),
+        "External Parakeet copy planning failed": ("type(exc).__name__",),
+        "External Parakeet managed copy failed": ("type(exc).__name__",),
+        "Curated model preflight failed": ("type(exc).__name__",),
+        "Curated model installation failed": ("type(exc).__name__",),
+        "Activated Parakeet source preference update failed": (
+            "type(exc).__name__",
+        ),
+        "Remote model preflight failed": (
+            "type(exc).__name__",
+            "isinstance(exc, TransferError) and getattr(exc, 'retryable', False)",
+        ),
+        "Remote model installation failed": (
+            "type(exc).__name__",
+            "isinstance(exc, TransferError) and getattr(exc, 'retryable', False)",
         ),
     },
     "tldw_chatbook/UI/Console_Modules/session.py": {
@@ -94,6 +171,36 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "generation",
             "type(exc).__name__",
         ),
+        "Settings post-pane-swap callback failed": (),
+        "Failed to persist render_remote_images": (),
+        "Failed to persist model_catalog settings": (),
+    },
+    "tldw_chatbook/UI/Dictation_Window_Improved.py": {
+        "Pending dictation settings write failed": ("type(error).__name__",),
+        "Failed to persist dictation settings": (),
+    },
+    "tldw_chatbook/UI/Navigation/base_app_screen.py": {
+        "Stale post-teardown mouse-capture sweep skipped": (),
+        "Mouse-capture release before teardown skipped": (),
+    },
+    "tldw_chatbook/UI/STTS_Window.py": {
+        "Dropping a stale chapter-detection result": (),
+        "Failed to detect chapters in worker": (),
+        "Failed to apply detected chapters": (),
+    },
+    "tldw_chatbook/UI/Screens/model_installed_view.py": {
+        "Managed model idle recycle failed": ("type(recycle_exc).__name__",),
+        "Managed model deletion blocked by a lease": (),
+    },
+    "tldw_chatbook/UI/Screens/personas_screen.py": {
+        "Could not list chat dictionaries": (),
+        "Could not derive dictionary statistics": (),
+        "Could not attach the world book": (),
+        "Could not show the dictionary attach picker": (),
+        "Could not show the world-book attach picker": (),
+    },
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
+        "Wizard commit rejected non-owned sections": (),
     },
     "tldw_chatbook/UI/Screens/settings_video_gen_defaults.py": {
         "could not resolve config path": ("type(exc).__name__",),
@@ -130,11 +237,33 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/Widgets/Console/console_video_preview.py": {
         "component=inline_preview": ("phase", "type(error).__name__"),
     },
+    "tldw_chatbook/Widgets/Library/library_canvas_sync.py": {
+        "Library post-recompose callback failed": (),
+    },
+    "tldw_chatbook/Widgets/enhanced_file_picker.py": {
+        "Failed to persist file-picker recent/last-dir state": (
+            "type(e).__name__",
+        ),
+    },
     "tldw_chatbook/Widgets/settings_agents_panel.py": {
         "could not open agent runs database": ("type(exc).__name__",),
     },
     "tldw_chatbook/app.py": {
         "Config load failure warning failed": ("type(e).__name__",),
+        "Instance lock acquisition failed unexpectedly": (
+            "type(_instance_lock_exc).__name__",
+        ),
+        "Error closing the Parakeet source service": (),
+        "Error closing the local STT dispatch coordinator": (),
+        "Error joining the Library ingest progress drain thread": (),
+        "Error cleaning up a partially constructed Library ingest": (
+            "method_name",
+            "type(progress_queue).__name__",
+        ),
+        "Screen pre-import failed": (
+            "route.screen_name",
+            "type(exc).__name__",
+        ),
     },
     "tldw_chatbook/config.py": {
         "Invalid chat display name in [chat_defaults]": (),
@@ -1738,6 +1867,12 @@ def test_task_15103_review_ledger_canonical_schema_and_arithmetic(
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
 ) -> None:
+    """Validate the canonical TASK-15103 ledger schema and arithmetic.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the live inventory seam.
+        request: Pytest request used to restore the cached inventory after the test.
+    """
     ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
     repaired_candidate = copy.deepcopy(diagnostic_inventory.build_inventory())
     repaired_owner = next(
@@ -1905,9 +2040,12 @@ def test_task_15103_reviewed_final_state_is_ledger_exact() -> None:
 
 
 def test_task_15103_review_ledger_canonical_provenance_revisions_exist() -> None:
+    """Verify each unique provenance revision and ancestry edge once."""
     ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
     planning_base = ledger["incident"]["planning_base"]
     failures: list[str] = []
+    revision_groups: defaultdict[str, set[str]] = defaultdict(set)
+    ancestry_groups: defaultdict[tuple[str, str], set[str]] = defaultdict(set)
 
     for group in ledger["change_groups"]:
         provenance = group["provenance"]
@@ -1928,26 +2066,37 @@ def test_task_15103_review_ledger_canonical_provenance_revisions_exist() -> None
                 (verified_range["end_inclusive"], planning_base),
             ]
         for revision in revisions:
-            exists = subprocess.run(
-                ["git", "cat-file", "-e", f"{revision}^{{commit}}"],
-                cwd=REPO_ROOT,
-                capture_output=True,
-                check=False,
-                text=True,
-            )
-            if exists.returncode:
-                failures.append(f"{group['id']}: missing commit {revision}")
-        for ancestor, descendant in ancestry_pairs:
-            ancestry = subprocess.run(
-                ["git", "merge-base", "--is-ancestor", ancestor, descendant],
-                cwd=REPO_ROOT,
-                capture_output=True,
-                check=False,
-                text=True,
-            )
-            if ancestry.returncode:
+            revision_groups[revision].add(group["id"])
+        for pair in ancestry_pairs:
+            ancestry_groups[pair].add(group["id"])
+
+    revisions = sorted(revision_groups)
+    existence = subprocess.run(
+        ["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+        input="".join(f"{revision}^{{commit}}\n" for revision in revisions),
+        text=True,
+    )
+    assert existence.returncode == 0, existence.stderr
+    for revision, output in zip(revisions, existence.stdout.splitlines(), strict=True):
+        if output.endswith(" missing") or not output.endswith(" commit"):
+            for group_id in sorted(revision_groups[revision]):
+                failures.append(f"{group_id}: missing commit {revision}")
+
+    for ancestor, descendant in sorted(ancestry_groups):
+        ancestry = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        if ancestry.returncode:
+            for group_id in sorted(ancestry_groups[(ancestor, descendant)]):
                 failures.append(
-                    f"{group['id']}: {ancestor} is not an ancestor of {descendant}"
+                    f"{group_id}: {ancestor} is not an ancestor of {descendant}"
                 )
 
     assert failures == []

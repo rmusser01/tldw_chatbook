@@ -21552,7 +21552,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             save_setting_to_cli_config("notes", key, value)
         except Exception:
-            logger.error(f"Failed to persist notes.{key}")
+            logger.error("Failed to persist a Library notes setting")
 
     @on(Button.Pressed, "#library-notes-sync-browse")
     async def handle_library_notes_sync_browse(self, event: Button.Pressed) -> None:
@@ -22074,7 +22074,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             save_setting_to_cli_config("library.ingest", "backend", target)
         except Exception:
-            logger.error(f"Failed to persist library.ingest.backend={target}")
+            logger.error("Failed to persist the Library ingest backend")
 
     @on(Button.Pressed, "#library-ingest-clear-path")
     def handle_library_ingest_clear_path(self, event: Button.Pressed) -> None:
@@ -23779,9 +23779,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             save_settings_to_cli_config(option_settings)
         except Exception:
-            logger.error(
-                f"Failed to persist library ingest options for {list(option_settings)}"
-            )
+            logger.error("Failed to persist Library ingest options")
 
     def _load_library_ingest_options_from_config(self) -> None:
         """Load persisted per-type ingest options into the form echo.
@@ -25163,9 +25161,7 @@ class LibraryScreen(BaseAppScreen):
                         "This deleted note changed elsewhere — refresh and try again."
                     )
                 except Exception:
-                    logger.opt(exception=True).warning(
-                        f"Failed to restore Library note {receipt.note_id!r}."
-                    )
+                    logger.warning("Failed to restore a Library note")
                     failure_message = "Could not restore this note."
 
             if restored_record is not None:
@@ -27568,9 +27564,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_collections_selected_id = receipt.collection_id
             restored = True
         except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to restore Library Collection {receipt.collection_id!r}."
-            )
+            logger.warning("Failed to restore a Library Collection")
             self._notify_library_collections_warning(
                 "Could not restore this Collection; the receipt is still available."
             )

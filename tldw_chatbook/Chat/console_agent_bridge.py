@@ -1109,10 +1109,7 @@ class _ModelCallLifeline:
             self.loop.call_soon_threadsafe(self.loop.stop)
             self._thread.join(timeout=_LOOP_THREAD_JOIN_SECONDS)
         if self._thread.is_alive():
-            logger.warning(
-                f"model-call loop '{self._name}' did not stop within "
-                f"{_LOOP_THREAD_JOIN_SECONDS}s; leaving it to the daemon thread"
-            )
+            logger.warning("model-call loop did not stop within its bounded join")
         else:
             self.loop.close()
 
@@ -3418,9 +3415,7 @@ class ConsoleAgentBridge:
             if not still_live:
                 self._close_post_turn_change_window(conversation_id)
         except Exception:  # noqa: BLE001 -- tracking never breaks a reply
-            logger.opt(exception=True).warning(
-                "change_review: could not open the post-turn window"
-            )
+            logger.warning("change_review: could not open the post-turn window")
 
     def _note_successor_turn(self, conversation_id: str, handle: Any) -> None:
         """Tell an open survivor window where it must stop (Task 6c).
@@ -3493,7 +3488,7 @@ class ConsoleAgentBridge:
                 kind=CHANGE_KIND_SUBAGENT_POST_TURN,
             )
         except Exception:  # noqa: BLE001 -- never break a child's teardown
-            logger.opt(exception=True).warning(
+            logger.warning(
                 "change_review: post-turn window failed; a survivor's "
                 "changes are untracked"
             )
