@@ -2886,6 +2886,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_operation_counter: int = 0
         self._library_notes_operation: LibraryNotesOperationState | None = None
         self._library_prompts_debounce_timer: Timer | None = None
+        self._library_prompts_filter_cursor_context: tuple[int, int] | None = None
         self._library_prompt_select_mode = False
         self._library_prompt_selection = PromptSelectionBasket()
         self._selected_prompt_id: int | None = None
@@ -9070,6 +9071,19 @@ class LibraryScreen(BaseAppScreen):
             timer.stop()
             self._library_prompts_debounce_timer = None
 
+    def _capture_library_prompts_filter_cursor(
+        self,
+        request_token: int,
+        focus_identity: str | None,
+    ) -> None:
+        """Bind the active filter caret to one exact browse request."""
+        focused = getattr(self, "focused", None)
+        self._library_prompts_filter_cursor_context = (
+            (request_token, focused.cursor_position)
+            if focus_identity == "library-prompts-filter" and isinstance(focused, Input)
+            else None
+        )
+
     def _request_library_prompts_browse(
         self,
         scope: PromptBrowseScope,
@@ -9080,8 +9094,12 @@ class LibraryScreen(BaseAppScreen):
         self._stop_library_prompts_search_debounce()
         if focus_identity is None:
             focus_identity = self._library_prompts_focus_identity()
-        return self._library_prompt_browse_controller.request(
+        controller = self._library_prompt_browse_controller
+        token = controller.begin(scope)
+        self._capture_library_prompts_filter_cursor(token, focus_identity)
+        return controller.dispatch(
             scope,
+            request_token=token,
             focus_identity=focus_identity,
         )
 
@@ -9092,11 +9110,19 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Project controller state and restore stable Prompt-list focus."""
         if self.is_mounted:
+            cursor_context = self._library_prompts_filter_cursor_context
+            filter_cursor = (
+                cursor_context[1]
+                if cursor_context is not None
+                and cursor_context[0] == result.request_token
+                else None
+            )
             self.refresh(recompose=True)
             if result.status == "loading" or focus_identity is not None:
                 self.call_after_refresh(
                     self._restore_library_prompts_focus,
                     focus_identity,
+                    filter_cursor,
                 )
             elif not self._library_pending_list_entry_focus:
                 self.call_after_refresh(
@@ -9113,6 +9139,10 @@ class LibraryScreen(BaseAppScreen):
         self._stop_library_prompts_search_debounce()
         scope = dataclasses.replace(controller.scope, query=query, page=1)
         token = controller.begin(scope)
+        self._capture_library_prompts_filter_cursor(
+            token,
+            "library-prompts-filter",
+        )
 
         def dispatch() -> None:
             self._library_prompts_debounce_timer = None
@@ -9146,6 +9176,10 @@ class LibraryScreen(BaseAppScreen):
             token = current.request_token
         else:
             return
+        self._capture_library_prompts_filter_cursor(
+            token,
+            "library-prompts-filter",
+        )
         controller.dispatch(
             scope,
             request_token=token,
@@ -9155,6 +9189,7 @@ class LibraryScreen(BaseAppScreen):
     def _invalidate_library_prompts_browse(self) -> None:
         """Cancel presentation timing and supersede the active browse token."""
         self._stop_library_prompts_search_debounce()
+        self._library_prompts_filter_cursor_context = None
         self._library_prompt_browse_controller.invalidate()
 
     def _build_library_skills_state(self):

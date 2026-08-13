@@ -2772,6 +2772,130 @@ async def test_library_prompts_result_restores_row_or_toolbar_focus(next_page: i
 
 
 @pytest.mark.asyncio
+async def test_library_prompts_search_preserves_filter_caret_while_loading_and_ready():
+    """Search recomposes keep the active filter's exact logical caret."""
+    started = threading.Event()
+    release = threading.Event()
+
+    class HeldPromptService(_FakePromptScopeServiceWithList):
+        async def browse_prompts(self, **kwargs: Any) -> dict[str, Any]:
+            if kwargs.get("query") == "alpha prompt":
+                started.set()
+                await asyncio.to_thread(release.wait)
+            return await super().browse_prompts(**kwargs)
+
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = HeldPromptService(
+        [{"id": 5, "name": "Alpha prompt", "version": 1}]
+    )
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-prompts").press()
+            await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
+
+            prompt_filter = screen.query_one("#library-prompts-filter", Input)
+            prompt_filter.focus()
+            await pilot.pause()
+            prompt_filter.value = "alpha prompt"
+            prompt_filter.cursor_position = 5
+
+            for _ in range(100):
+                if started.is_set():
+                    break
+                await pilot.pause(0.02)
+            assert started.is_set()
+            await pilot.pause()
+
+            loading_filter = screen.query_one("#library-prompts-filter", Input)
+            assert screen._library_prompt_browse_controller.result.status == "loading"
+            assert screen.focused is loading_filter
+            assert loading_filter.cursor_position == 5
+
+            release.set()
+            await _wait_for_prompt_browse_scope(
+                screen,
+                pilot,
+                PromptBrowseScope(query="alpha prompt"),
+            )
+            settled_filter = screen.query_one("#library-prompts-filter", Input)
+            assert screen.focused is settled_filter
+            assert settled_filter.cursor_position == 5
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_stale_search_cannot_restore_an_old_filter_caret():
+    """A superseded settlement cannot overwrite the latest filter caret."""
+    old_started = threading.Event()
+    old_release = threading.Event()
+
+    class HeldOldPromptService(_FakePromptScopeServiceWithList):
+        async def browse_prompts(self, **kwargs: Any) -> dict[str, Any]:
+            if kwargs.get("query") == "old prompt":
+                old_started.set()
+                await asyncio.to_thread(old_release.wait)
+            return await super().browse_prompts(**kwargs)
+
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = HeldOldPromptService(
+        [
+            {"id": 5, "name": "Old prompt", "version": 1},
+            {"id": 6, "name": "New prompt", "version": 1},
+        ]
+    )
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-prompts").press()
+            await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
+
+            prompt_filter = screen.query_one("#library-prompts-filter", Input)
+            prompt_filter.focus()
+            await pilot.pause()
+            with prompt_filter.prevent(Input.Changed):
+                prompt_filter.value = "old prompt"
+            prompt_filter.cursor_position = 3
+            old_scope = PromptBrowseScope(query="old prompt")
+            screen._request_library_prompts_browse(old_scope)
+            for _ in range(100):
+                if old_started.is_set():
+                    break
+                await pilot.pause(0.02)
+            assert old_started.is_set()
+
+            loading_filter = screen.query_one("#library-prompts-filter", Input)
+            with loading_filter.prevent(Input.Changed):
+                loading_filter.value = "new prompt"
+            loading_filter.cursor_position = 4
+            new_scope = PromptBrowseScope(query="new prompt")
+            screen._request_library_prompts_browse(new_scope)
+            await _wait_for_prompt_browse_scope(screen, pilot, new_scope)
+
+            current_filter = screen.query_one("#library-prompts-filter", Input)
+            assert screen.focused is current_filter
+            assert current_filter.cursor_position == 4
+            current_filter.cursor_position = 7
+            old_release.set()
+            await pilot.pause(0.1)
+
+            assert screen._library_prompt_browse_controller.scope == new_scope
+            assert screen.focused is current_filter
+            assert current_filter.cursor_position == 7
+    finally:
+        old_release.set()
+
+
+@pytest.mark.asyncio
 async def test_library_shell_prompts_row_secondary_line_shows_details_not_author():
     """Task 8b D2/U1: the list row's secondary line surfaces the prompt's
     PURPOSE (``details``) instead of ``author · age`` -- exercises the full
