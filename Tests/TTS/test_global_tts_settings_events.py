@@ -5,9 +5,9 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+    _TTS_SETTING_BINDINGS,
     STTSSettingsSaveEvent,
     STTSSettingsSaveResult,
-    _TTS_SETTING_BINDINGS,
 )
 from tldw_chatbook.UI.Screens.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
@@ -102,6 +102,13 @@ def test_every_global_provider_mutation_targets_exactly_its_adapter() -> None:
 
 
 def test_credential_bindings_set_canonical_and_clear_all_local_aliases() -> None:
+    assert _TTS_SETTING_BINDINGS["OPENAI_AUTH_MODE"].destinations == (
+        ("app_tts", "OPENAI_AUTH_MODE"),
+    )
+    assert _TTS_SETTING_BINDINGS["OPENAI_AUTH_MODE"].provider_id == "openai"
+    assert _TTS_SETTING_BINDINGS["OPENAI_NONE_HTTP_CONFIRMATION"].destinations == (
+        ("app_tts", "OPENAI_NONE_HTTP_CONFIRMATION"),
+    )
     assert _TTS_SETTING_BINDINGS["openai_api_key"].destinations == (
         ("api_settings.openai", "api_key"),
     )

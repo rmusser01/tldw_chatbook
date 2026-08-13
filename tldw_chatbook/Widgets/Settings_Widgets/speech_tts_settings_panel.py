@@ -14,7 +14,7 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, ClassVar, Literal
 
 from loguru import logger
 from rich.text import Text
@@ -105,6 +105,7 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     GlobalSpeechTTSSaveProposal,
     GlobalSpeechTTSState,
     GlobalSpeechTTSValidationError,
+    OpenAIPlaintextConfirmation,
     audio_cpp_transport_warning,
     build_credential_mutation,
     build_global_speech_tts_save_proposal,
@@ -112,6 +113,7 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     global_speech_tts_provider_configuration_changed,
     global_speech_tts_provider_configuration_state,
     project_audio_cpp_global_choices,
+    required_openai_plaintext_confirmation_fingerprint,
     restore_non_secret_defaults,
     validate_audio_cpp_managed_settings,
 )
@@ -390,6 +392,50 @@ class _CredentialClearModal(ModalScreen[bool]):
         self.dismiss(True)
 
 
+class _OpenAINoneHTTPConfirmationModal(ModalScreen[bool]):
+    """Consent before sending speech text over unauthenticated plaintext HTTP."""
+
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("escape", "cancel", "Cancel", show=False)
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="settings-speech-credential-modal"):
+            yield Static(
+                "Confirm unauthenticated HTTP",
+                classes="destination-section",
+            )
+            yield Static(
+                "Speech text will be sent without encryption or authentication. "
+                "Confirm only if you trust the configured server and network.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            with Horizontal(classes="settings-action-row"):
+                yield Button(
+                    "Cancel",
+                    id="settings-speech-openai-none-http-cancel",
+                )
+                yield Button(
+                    "Confirm and save",
+                    id="settings-speech-openai-none-http-confirm",
+                    variant="warning",
+                )
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+    @on(Button.Pressed, "#settings-speech-openai-none-http-cancel")
+    def handle_cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(False)
+
+    @on(Button.Pressed, "#settings-speech-openai-none-http-confirm")
+    def handle_confirm(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(True)
+
+
 class _GlobalSpeechTTSLeaveModal(ModalScreen[LeaveChoice]):
     """Protect a dirty global Speech/TTS draft before changing its owner."""
 
@@ -585,6 +631,9 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_defaults = None
         self._pending_saved_provider_id: str | None = None
         self._pending_saved_provider_values: dict[str, object] | None = None
+        self._pending_saved_openai_confirmation: OpenAIPlaintextConfirmation | None = (
+            None
+        )
         self._pending_focus_control_id: str | None = None
         self._pending_displaced_focus_control_id: str | None = None
         self._pending_focus_moved_after_displacement = False
@@ -2415,6 +2464,27 @@ class SpeechTTSSettingsPanel(Vertical):
 
             if provider_id == "openai":
                 yield self._credential(provider_id)
+                yield self._select(
+                    provider_id,
+                    "authentication_mode",
+                    "Authentication",
+                    [("API key", "api_key"), ("None", "none")],
+                )
+                yield self._row(
+                    "Endpoint preset",
+                    Horizontal(
+                        Button(
+                            "Use Official OpenAI",
+                            id="settings-speech-openai-official-preset",
+                            compact=True,
+                            tooltip=(
+                                "Use the official OpenAI speech endpoint with "
+                                "API key authentication."
+                            ),
+                        ),
+                        classes="settings-action-row",
+                    ),
+                )
                 yield self._input(provider_id, "base_url", "Base URL")
                 yield self._input(
                     provider_id,
@@ -2898,6 +2968,23 @@ class SpeechTTSSettingsPanel(Vertical):
         if self._latest_request_id is not None:
             self._set_result("A global Speech & TTS save is already in progress.")
             return None
+        if self.configure_provider == "openai":
+            required_confirmation = required_openai_plaintext_confirmation_fingerprint(
+                self.state
+            )
+            current_confirmation = self.state.openai_plaintext_confirmation
+            if required_confirmation is not None and (
+                current_confirmation is None
+                or current_confirmation.origin_fingerprint != required_confirmation
+            ):
+                self.app.push_screen(
+                    _OpenAINoneHTTPConfirmationModal(),
+                    lambda confirmed: self._openai_plaintext_confirmation_result(
+                        required_confirmation,
+                        confirmed,
+                    ),
+                )
+                return None
         self._clear_validation_errors()
         try:
             proposal = build_global_speech_tts_save_proposal(
@@ -2920,6 +3007,11 @@ class SpeechTTSSettingsPanel(Vertical):
                 or self.state.defaults.default_profile_id
                 != self.original_state.defaults.default_profile_id
             )
+            if (
+                self.configure_provider == "openai"
+                and "OPENAI_NONE_HTTP_CONFIRMATION" in proposal.delete_setting_keys
+            ):
+                self.state.openai_plaintext_confirmation = None
         except GlobalSpeechTTSValidationError as error:
             self._show_validation_error(error)
             self._refresh_status_rows()
@@ -2992,6 +3084,12 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_provider_values = (
             deepcopy(self.state.providers[self.configure_provider])
             if proposal.settings or proposal.delete_setting_keys
+            else None
+        )
+        self._pending_saved_openai_confirmation = (
+            deepcopy(self.state.openai_plaintext_confirmation)
+            if self.configure_provider == "openai"
+            and (proposal.settings or proposal.delete_setting_keys)
             else None
         )
         if guided_packages:
@@ -3091,6 +3189,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_defaults = None
         self._pending_saved_provider_id = None
         self._pending_saved_provider_values = None
+        self._pending_saved_openai_confirmation = None
         self._set_save_pending(False)
         if isinstance(failure, GlobalSpeechTTSValidationError):
             self._show_validation_error(failure)
@@ -3280,6 +3379,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_defaults = None
         self._pending_saved_provider_id = None
         self._pending_saved_provider_values = None
+        self._pending_saved_openai_confirmation = None
         settings = {} if mutation.delete else {mutation.setting_key: mutation.value}
         delete_keys = (mutation.setting_key,) if mutation.delete else ()
         self._set_result(
@@ -3391,10 +3491,12 @@ class SpeechTTSSettingsPanel(Vertical):
         saved_defaults = self._pending_saved_defaults
         saved_provider_id = self._pending_saved_provider_id
         saved_provider_values = self._pending_saved_provider_values
+        saved_openai_confirmation = self._pending_saved_openai_confirmation
         self._pending_credential_mutation = None
         self._pending_saved_defaults = None
         self._pending_saved_provider_id = None
         self._pending_saved_provider_values = None
+        self._pending_saved_openai_confirmation = None
         if not result.persisted:
             failure = (
                 " before replacing the config file"
@@ -3451,6 +3553,10 @@ class SpeechTTSSettingsPanel(Vertical):
                 )
             if saved_provider_id is not None and saved_provider_values is not None:
                 self.original_state.providers[saved_provider_id] = saved_provider_values
+                if saved_provider_id == "openai":
+                    self.original_state.openai_plaintext_confirmation = (
+                        saved_openai_confirmation
+                    )
                 if (
                     self.state.provider_sources[saved_provider_id]
                     is not GlobalSpeechTTSEffectiveSource.ENVIRONMENT
@@ -3631,6 +3737,48 @@ class SpeechTTSSettingsPanel(Vertical):
             )
         except (TypeError, ValueError) as error:
             self._set_result(str(error), severity="error")
+
+    def _openai_plaintext_confirmation_result(
+        self,
+        origin_fingerprint: str,
+        confirmed: bool,
+    ) -> None:
+        """Accept consent only while the same normalized origin still owns it."""
+
+        if not confirmed:
+            self._set_result("Unauthenticated HTTP settings were not saved.")
+            return
+        self._collect_visible_state()
+        required = required_openai_plaintext_confirmation_fingerprint(self.state)
+        if required != origin_fingerprint:
+            self._set_result(
+                "The OpenAI-compatible destination changed. Review and save again.",
+                severity="warning",
+            )
+            return
+        self.state.openai_plaintext_confirmation = OpenAIPlaintextConfirmation(
+            origin_fingerprint
+        )
+        self.request_save()
+
+    @on(Button.Pressed, "#settings-speech-openai-official-preset")
+    def handle_openai_official_preset(self, event: Button.Pressed) -> None:
+        """Apply the official endpoint only after restoring API-key auth."""
+
+        event.stop()
+        authentication = self.query_one(
+            "#settings-speech-openai-authentication-mode",
+            Select,
+        )
+        endpoint = self.query_one("#settings-speech-openai-base-url", Input)
+        self.state.providers["openai"]["authentication_mode"] = "api_key"
+        authentication.value = "api_key"
+        self.state.openai_plaintext_confirmation = None
+        self.state.providers["openai"]["base_url"] = (
+            "https://api.openai.com/v1/audio/speech"
+        )
+        endpoint.value = "https://api.openai.com/v1/audio/speech"
+        self._announce_draft_state()
 
     def _path_picker_result(self, target_selector: str, path: Path | None) -> None:
         if path is None:

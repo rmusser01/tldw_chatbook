@@ -129,6 +129,8 @@ _TTS_SETTING_BINDINGS = {
         ),
     ),
     "OPENAI_BASE_URL": _app_tts_binding("OPENAI_BASE_URL", "openai"),
+    "OPENAI_AUTH_MODE": _app_tts_binding("OPENAI_AUTH_MODE", "openai"),
+    "OPENAI_NONE_HTTP_CONFIRMATION": _app_tts_binding("OPENAI_NONE_HTTP_CONFIRMATION"),
     "OPENAI_ORG_ID": _app_tts_binding("OPENAI_ORG_ID", "openai"),
     "elevenlabs_api_key": _SettingBinding(
         (("api_settings.elevenlabs", "api_key"),),

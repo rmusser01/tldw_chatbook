@@ -39,6 +39,10 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.audio_cpp_supervisor import AudioCppSupervisor
+from tldw_chatbook.TTS.openai_compatible_config import (
+    normalize_openai_compatible_endpoint,
+    openai_destination_fingerprint,
+)
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Lab_Modules import lab_speech_status as lab_speech_status_module
 from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
@@ -2384,6 +2388,121 @@ async def test_credential_operations_are_separate_from_ordinary_save() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_authentication_control_and_official_preset_are_explicit() -> None:
+    state = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech",
+                    "OPENAI_AUTH_MODE": "none",
+                }
+            }
+        },
+        environment={},
+    )
+    app = _PanelHarness(configure_provider="openai", state=state)
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        authentication = app.query_one(
+            "#settings-speech-openai-authentication-mode", Select
+        )
+        assert authentication.value == "none"
+        assert [(str(label), value) for label, value in authentication._options] == [
+            ("API key", "api_key"),
+            ("None", "none"),
+        ]
+
+        preset = app.query_one("#settings-speech-openai-official-preset", Button)
+        preset.scroll_visible(animate=False)
+        await pilot.pause()
+        preset.press()
+        await pilot.pause()
+
+        assert authentication.value == "api_key"
+        assert (
+            app.query_one("#settings-speech-openai-base-url", Input).value
+            == "https://api.openai.com/v1/audio/speech"
+        )
+
+
+@pytest.mark.asyncio
+async def test_plaintext_none_save_requires_confirmation_before_posting() -> None:
+    app = _PanelHarness(configure_provider="openai")
+    endpoint = "http://voice.example.test:8765/v1/audio/speech"
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        app.query_one("#settings-speech-openai-base-url", Input).value = endpoint
+        app.query_one(
+            "#settings-speech-openai-authentication-mode", Select
+        ).value = "none"
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert app.events == []
+        assert app.screen.query_one("#settings-speech-openai-none-http-confirm")
+
+        await pilot.click("#settings-speech-openai-none-http-confirm")
+        await pilot.pause()
+
+        assert len(app.events) == 1
+        fingerprint = openai_destination_fingerprint(
+            "openai", normalize_openai_compatible_endpoint(endpoint)
+        )
+        assert app.events[0].settings["OPENAI_AUTH_MODE"] == "none"
+        assert app.events[0].settings["OPENAI_NONE_HTTP_CONFIRMATION"] == fingerprint
+        assert app.events[0].settings["OPENAI_NONE_HTTP_CONFIRMATION"] != endpoint
+
+
+@pytest.mark.asyncio
+async def test_switching_back_to_api_key_clears_confirmation_and_saved_baseline() -> (
+    None
+):
+    endpoint = normalize_openai_compatible_endpoint(
+        "http://voice.example.test:8765/v1/audio/speech"
+    )
+    fingerprint = openai_destination_fingerprint("openai", endpoint)
+    state = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": endpoint.speech_url,
+                    "OPENAI_AUTH_MODE": "none",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": fingerprint,
+                }
+            }
+        },
+        environment={},
+    )
+    app = _PanelHarness(configure_provider="openai", state=state)
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one(
+            "#settings-speech-openai-authentication-mode", Select
+        ).value = "api_key"
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert app.events[0].delete_setting_keys == ("OPENAI_NONE_HTTP_CONFIRMATION",)
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.events[0].request_id or 0,
+                persisted=True,
+                provider_statuses={"openai": "applied"},
+                provider_configuration_revisions={"openai": 2},
+                provider_runtime_revisions={"openai": 2},
+            )
+        )
+        await pilot.pause()
+
+        assert panel.state.openai_plaintext_confirmation is None
+        assert panel.original_state.openai_plaintext_confirmation is None
+        assert panel.has_unsaved_changes() is False
+
+
+@pytest.mark.asyncio
 async def test_overlapping_save_is_blocked_without_losing_the_pending_baseline() -> (
     None
 ):
@@ -2539,7 +2658,7 @@ async def test_environment_credential_is_read_only_and_editor_starts_empty() -> 
         edit = app.query_one("#settings-speech-openai-credential-edit", Button)
         edit.scroll_visible(animate=False)
         await pilot.pause()
-        await pilot.click("#settings-speech-openai-credential-edit")
+        edit.press()
         await pilot.pause()
 
         editor = app.screen.query_one(
