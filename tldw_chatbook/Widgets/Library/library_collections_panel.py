@@ -42,6 +42,21 @@ class LibraryCollectionsPanel(Vertical):
         self.description_value = description_value
         self.delete_pending = delete_pending
 
+    def sync_state(
+        self,
+        state: LibraryCollectionsPanelState,
+        *,
+        name_value: str,
+        description_value: str,
+        delete_pending: bool,
+    ) -> None:
+        """Synchronize every compose input on the retained Collections owner."""
+        self.state = state
+        self.name_value = name_value
+        self.description_value = description_value
+        self.delete_pending = delete_pending
+        self.refresh(recompose=True)
+
     def _compose_collection_form(self) -> ComposeResult:
         with Vertical(id="library-collection-form"):
             yield Static("Create / Rename", classes="destination-section")

@@ -7736,7 +7736,9 @@ async def test_library_shell_collections_deeplink_loads_before_mount():
         assert "Launch Evidence" in str(select_button.label)
 
 
-@pytest.mark.parametrize("source_type", ["media", "notes", "conversations"])
+@pytest.mark.parametrize(
+    "source_type", ["media", "notes", "conversations", "prompt"]
+)
 def test_library_open_source_context_accepts_only_supported_exact_types(
     source_type: str,
 ) -> None:
@@ -7764,10 +7766,6 @@ def test_library_open_source_context_rejects_invalid_values_without_replacing_pe
         {},
         {LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media"},
         {LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "source-exact"},
-        {
-            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "prompt",
-            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "source-exact",
-        },
         {
             LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: 1,
             LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "source-exact",
@@ -7846,7 +7844,7 @@ async def test_library_open_source_context_calls_existing_opener_once_when_mount
         )
         await pilot.pause()
 
-        opener.assert_awaited_once_with("media", "media-exact")
+        opener.assert_awaited_once_with("media", "media-exact", entry_origin=True)
 
 
 @pytest.mark.asyncio
@@ -7878,7 +7876,9 @@ async def test_library_open_source_context_defers_before_mount_and_opens_once(
         )
         await pilot.pause()
 
-        opener.assert_awaited_once_with("conversations", "c-2")
+        opener.assert_awaited_once_with(
+            "conversations", "c-2", entry_origin=True
+        )
         assert screen._pending_library_source_open is None
 
 
@@ -7943,6 +7943,7 @@ async def test_library_open_source_context_uses_dirty_note_flush_and_veto(
         await _wait_for_library_shell(screen, pilot)
         opener = AsyncMock()
         flush = AsyncMock()
+        recompose = AsyncMock()
 
         async def flush_note() -> NoteFlushOutcome:
             await flush()
@@ -7952,6 +7953,7 @@ async def test_library_open_source_context_uses_dirty_note_flush_and_veto(
 
         monkeypatch.setattr(screen, "_open_library_item_by_id", opener)
         monkeypatch.setattr(screen, "_flush_library_note_save", flush_note)
+        monkeypatch.setattr(screen, "recompose", recompose)
         monkeypatch.setattr(
             type(screen),
             "_library_note_dirty",
@@ -7972,6 +7974,7 @@ async def test_library_open_source_context_uses_dirty_note_flush_and_veto(
         await pilot.pause()
 
         flush.assert_awaited_once_with()
+        recompose.assert_not_awaited()
         if veto:
             opener.assert_not_awaited()
             assert screen._pending_library_source_open is None
@@ -7981,7 +7984,9 @@ async def test_library_open_source_context_uses_dirty_note_flush_and_veto(
                 lambda: opener.await_count == 1,
                 message="Open-source context never resumed after a successful flush.",
             )
-            opener.assert_awaited_once_with("notes", "note-exact")
+            opener.assert_awaited_once_with(
+                "notes", "note-exact", entry_origin=True
+            )
 
 
 @pytest.mark.asyncio
@@ -18248,12 +18253,24 @@ async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mou
                 "Restored export canvas never re-kicked its counts worker."
             )
 
-        screen.refresh(recompose=True)
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: str(
+                screen.query_one("#library-export-scope-line").renderable
+            )
+            == screen._build_library_export_state().scope_line,
+            message=lambda: (
+                "Export counts landed without updating the retained scope line: "
+                f"{screen.query_one('#library-export-scope-line').renderable!r}; "
+                f"counts={screen._library_export_counts!r}."
+            ),
+        )
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
-        assert scope_line == (
-            "Everything: 1 media · 1 conversations · 1 notes · 0 prompts"
+        assert scope_line == screen._build_library_export_state().scope_line
+        assert all(
+            fragment in scope_line
+            for fragment in ("1 media", "1 conversations", "1 notes", "0 prompts")
         )
         # Non-empty scope + counts landed: Export is no longer stuck
         # disabled by a permanent "Counting…" (only the missing
