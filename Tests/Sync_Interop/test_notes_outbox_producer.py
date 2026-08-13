@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
 from tldw_chatbook.Sync_Interop.notes_outbox_producer import NotesSyncV2OutboxProducer
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
@@ -51,10 +53,13 @@ def test_notes_producer_enqueues_encrypted_note_upsert_and_updates_summary(
     assert "Private body" not in serialized
     assert envelope["payload_clear"] == {"status": "active"}
     assert envelope["routing_metadata"] == {"entity_kind": "note"}
-    assert _decrypt_payload(envelope["payload_ciphertext"], dataset_key) == {
+    decrypted_payload = _decrypt_payload(envelope["payload_ciphertext"], dataset_key)
+    assert decrypted_payload == {
         "body": "Private body",
         "title": "Private title",
     }
+    assert not _contains_forbidden_folder_key(envelope)
+    assert not _contains_forbidden_folder_key(decrypted_payload)
 
     producer.enqueue_note_upsert(
         server_profile_id="server-a",
@@ -163,3 +168,40 @@ def _local_first_repo(tmp_path, *, dataset_key: bytes) -> SyncStateRepository:
 
 def _decrypt_payload(payload_ciphertext: str, dataset_key: bytes) -> dict:
     return decrypt_sync_payload(json.loads(payload_ciphertext), key=dataset_key)
+
+
+def _recursive_dict_keys(value: object) -> set[str]:
+    if isinstance(value, dict):
+        keys = {str(key) for key in value}
+        for nested in value.values():
+            keys.update(_recursive_dict_keys(nested))
+        return keys
+    if isinstance(value, (list, tuple)):
+        keys: set[str] = set()
+        for nested in value:
+            keys.update(_recursive_dict_keys(nested))
+        return keys
+    return set()
+
+
+def _contains_forbidden_folder_key(value: object) -> bool:
+    forbidden_tokens = ("folder", "membership", "owner_id", "binding")
+    return any(
+        token in key.casefold()
+        for key in _recursive_dict_keys(value)
+        for token in forbidden_tokens
+    )
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["folder_id", "memberships", "managed_owner_id", "ROOT_BINDING"],
+)
+def test_folder_key_guard_rejects_derivative_and_case_variant_keys(key: str) -> None:
+    assert _contains_forbidden_folder_key({"nested": [{key: "value"}]})
+
+
+def test_folder_key_guard_does_not_match_payload_values() -> None:
+    assert not _contains_forbidden_folder_key(
+        {"title": "folder_id membership owner_id root_binding"}
+    )

@@ -324,51 +324,29 @@ def _fresh_db(path: Path) -> CharactersRAGDB:
 
 
 def _minimal_v24(path: Path) -> None:
-    with sqlite3.connect(path) as connection:
-        connection.executescript(
-            f"""
-            PRAGMA foreign_keys = ON;
-            CREATE TABLE db_schema_version(
-                schema_name TEXT PRIMARY KEY NOT NULL,
-                version INTEGER NOT NULL
-            );
-            INSERT INTO db_schema_version VALUES ('{SCHEMA_NAME}', 24);
-            CREATE TABLE conversations(
-                id TEXT PRIMARY KEY,
-                character_id INTEGER,
-                assistant_kind TEXT,
-                assistant_id TEXT,
-                runtime_backend TEXT NOT NULL DEFAULT 'local',
-                metadata TEXT,
-                deleted INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE messages(
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL
-                    REFERENCES conversations(id) ON DELETE CASCADE,
-                deleted INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE notes(
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                content TEXT NOT NULL,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                last_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                deleted BOOLEAN NOT NULL DEFAULT 0,
-                client_id TEXT NOT NULL DEFAULT 'unknown',
-                version INTEGER NOT NULL DEFAULT 1,
-                file_path_on_disk TEXT,
-                relative_file_path_on_disk TEXT,
-                sync_root_folder TEXT,
-                last_synced_disk_file_hash TEXT,
-                last_synced_disk_file_mtime REAL,
-                is_externally_synced BOOLEAN NOT NULL DEFAULT 0,
-                sync_strategy TEXT,
-                sync_excluded BOOLEAN NOT NULL DEFAULT 0,
-                file_extension TEXT DEFAULT '.md'
-            );
-            """
-        )
+    """Create a runnable v24 fixture with the real pre-v25 migration chain."""
+    current_version = CharactersRAGDB._CURRENT_SCHEMA_VERSION
+    CharactersRAGDB._CURRENT_SCHEMA_VERSION = 24
+    db = None
+    try:
+        db = CharactersRAGDB(path, client_id="citation-v24-fixture")
+        connection = db.get_connection()
+        assert _version(connection) == 24
+        conversation_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(conversations)")
+        }
+        message_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(messages)")
+        }
+        assert "context_summary" not in conversation_columns
+        assert "summary_boundary_message_id" not in conversation_columns
+        assert "usage_json" not in message_columns
+        assert "metadata_json" not in message_columns
+    finally:
+        if db is not None:
+            db.close_connection()
+        CharactersRAGDB._CURRENT_SCHEMA_VERSION = current_version
 
 
 def _minimal_v26(path: Path) -> None:
@@ -756,7 +734,12 @@ def test_standalone_profile_identifiers_are_utf8_bounded(
     _minimal_v24(path)
     db = _fresh_db(path)
     connection = db.get_connection()
-    connection.execute("INSERT INTO conversations(id) VALUES ('conversation')")
+    connection.execute(
+        """
+        INSERT INTO conversations(id, root_id, client_id)
+        VALUES ('conversation', 'conversation', 'citation-test')
+        """
+    )
 
     with pytest.raises(sqlite3.IntegrityError):
         connection.execute(insert_sql, ("é" * 129,))

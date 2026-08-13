@@ -94,7 +94,7 @@ def test_fresh_database_reaches_current_with_local_tables(tmp_path) -> None:
     )
     table_names = {str(row[0]) for row in rows}
 
-    assert _version(db) == 35  # bumped by TASK-15469
+    assert _version(db) == 36  # bumped by TASK-15705
     assert EXPECTED_TABLES <= table_names
 
     sync_triggers = (
@@ -130,7 +130,7 @@ def test_migration_preserves_valid_legacy_summary_as_inactive_memory(
         .fetchone()
     )
 
-    assert _version(db) == 35  # bumped by TASK-15469
+    assert _version(db) == 36  # bumped by TASK-15705
     assert row is not None
     assert row["conversation_id"] == conversation_id
     assert row["boundary_message_id"] == boundary_id
@@ -154,7 +154,7 @@ def test_v33_policy_migrates_with_inherited_text_representation(
     db = CharactersRAGDB(path, client_id="v34-open")
     result = ConsoleContextRepository(db).load_policy(conversation_id)
 
-    assert _version(db) == 35  # bumped by TASK-15469
+    assert _version(db) == 36  # bumped by TASK-15705
     assert result.error is None
     assert result.overrides.custom_budget_tokens == 12_000
     assert result.overrides.compaction_mode is ContextCompactionMode.AUTOMATIC

@@ -65,6 +65,8 @@ VALID_TABLES = {
         "messages",
         "mindmap_nodes",
         "mindmaps",
+        "note_folder_memberships",
+        "note_folders",
         "note_keywords",
         "notes",
         "quiz_attempts",

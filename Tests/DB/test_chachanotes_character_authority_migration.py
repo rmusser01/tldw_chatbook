@@ -117,43 +117,31 @@ def _identity_only_v28_database(
     path: Path,
     rows: tuple[tuple[str, object], ...],
 ) -> None:
+    db = CharactersRAGDB(path, client_id="identity-fixture")
+    db.close_connection()
     with sqlite3.connect(path) as connection:
         connection.executescript(
-            f"""
-            CREATE TABLE db_schema_version(
-                schema_name TEXT PRIMARY KEY NOT NULL,
-                version INTEGER NOT NULL
-            );
-            INSERT INTO db_schema_version VALUES ('{SCHEMA_NAME}', {CharactersRAGDB._CURRENT_SCHEMA_VERSION});
+            """
+            PRAGMA foreign_keys = OFF;
+            DROP TABLE rag_identity_context;
             CREATE TABLE rag_identity_context(
                 context_name TEXT,
-                local_authority_id
-            );
-            CREATE TABLE notes(
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                content TEXT NOT NULL,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                last_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                deleted BOOLEAN NOT NULL DEFAULT 0,
-                client_id TEXT NOT NULL DEFAULT 'unknown',
-                version INTEGER NOT NULL DEFAULT 1,
-                file_path_on_disk TEXT,
-                relative_file_path_on_disk TEXT,
-                sync_root_folder TEXT,
-                last_synced_disk_file_hash TEXT,
-                last_synced_disk_file_mtime REAL,
-                is_externally_synced BOOLEAN NOT NULL DEFAULT 0,
-                sync_strategy TEXT,
-                sync_excluded BOOLEAN NOT NULL DEFAULT 0,
-                file_extension TEXT DEFAULT '.md'
+                profile_id TEXT,
+                local_authority_id,
+                fingerprint_key_id TEXT,
+                created_at TEXT
             );
             """
         )
         connection.executemany(
             """
-            INSERT INTO rag_identity_context(context_name, local_authority_id)
-            VALUES (?, ?)
+            INSERT INTO rag_identity_context(
+                context_name,
+                profile_id,
+                local_authority_id,
+                fingerprint_key_id,
+                created_at
+            ) VALUES (?, 'fixture-profile', ?, 'fixture-key', CURRENT_TIMESTAMP)
             """,
             rows,
         )

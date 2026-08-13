@@ -17,7 +17,7 @@ def test_fresh_db_is_v28_with_context_summary_columns(tmp_path):
         }
     # Fresh databases always reach the current schema, not merely the version
     # where these columns were introduced.
-    assert version == db._CURRENT_SCHEMA_VERSION
+    assert version == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert "context_summary" in cols
     assert "summary_boundary_message_id" in cols
 

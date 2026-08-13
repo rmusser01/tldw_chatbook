@@ -136,7 +136,7 @@ def test_fresh_database_seeds_rich_content(tmp_path):
     assert row["alternate_greetings"] != BARE_ALTERNATE_GREETINGS
 
     connection = db.get_connection()
-    assert _version(connection) == db._CURRENT_SCHEMA_VERSION
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     db.close_connection()
 
 
@@ -163,7 +163,7 @@ def test_migration_enriches_untouched_bare_row_and_bumps_version(tmp_path, monke
 
     db = CharactersRAGDB(db_path, client_id="migration-test")
     connection = db.get_connection()
-    assert _version(connection) == db._CURRENT_SCHEMA_VERSION
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
 
     row = db.get_character_card_by_id(1)
     assert row["name"] == BARE_NAME
@@ -268,7 +268,7 @@ def test_migration_preserves_row_with_single_field_edited(
 
     db2 = CharactersRAGDB(db_path, client_id="migration-test")
     connection2 = db2.get_connection()
-    assert _version(connection2) == db2._CURRENT_SCHEMA_VERSION
+    assert _version(connection2) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
 
     post_migration_row = db2.get_character_card_by_id(1)
     # The edited field survives untouched.
@@ -302,7 +302,7 @@ def test_migration_preserves_deleted_row(tmp_path, monkeypatch):
 
     db2 = CharactersRAGDB(db_path, client_id="migration-test")
     connection2 = db2.get_connection()
-    assert _version(connection2) == db2._CURRENT_SCHEMA_VERSION
+    assert _version(connection2) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     row = connection2.execute(
         "SELECT description, deleted FROM character_cards WHERE id = 1"
     ).fetchone()
@@ -455,9 +455,8 @@ def test_conversation_and_message_against_character_id_1_still_works(tmp_path):
 # --------------------------------------------------------------------------
 
 
-def test_current_schema_version_is_33():
-    """Keep the historical node ID while ratcheting its current-schema value."""
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 35
+def test_current_schema_version_is_36():
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 36
 
 
 def test_migrate_from_v31_to_v32_requires_version_31(tmp_path):
