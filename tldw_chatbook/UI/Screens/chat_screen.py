@@ -1347,7 +1347,12 @@ def _console_workbench_agents_notes(max_parallel_runs: int) -> tuple[str, ...]:
         "Accepted turns can hold up to 10 queued prompts per tab; use the "
         "queue shelf to manage or pause them.",
         CONSOLE_FLEET_MARKER_LEGEND,
-        "Leaving Console cancels any runs still in progress -- you'll be asked first.",
+        # PR3a-2 Task 4: post-3a-1 this line's old claim ("cancels any
+        # runs still in progress") was half false -- background
+        # sub-agents that outlived their turn keep running.
+        "Leaving Console cancels replies still streaming -- you'll be "
+        "asked first; background sub-agents keep running and notify you "
+        "when they finish.",
     )
 
 
@@ -14527,29 +14532,55 @@ class ChatScreen(BaseAppScreen):
         self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
 
     def _notify_console_fleet_teardown_if_any(self) -> None:
-        """One-shot toast reporting a fleet the LAST Console instance lost.
+        """One-shot toasts reporting the LAST Console instance's teardown.
 
         TASK-1143 (F5): navigating away from Console unmounts the screen,
-        and ``on_unmount`` records how many runs/rounds its ``shutdown()``
-        call killed in ``app_instance._console_fleet_teardown_notice`` --
-        the app outlives this screen instance, and screens are never
-        cached (``TldwCli._create_navigation_screen`` always builds a
-        fresh instance, so there is no "same screen" to have shown a toast
-        on when it happened). A non-zero count here means the user left a
-        busy Console before this mount and the fleet was torn down without
-        being acknowledged; show it exactly once and clear the slot so an
-        ordinary mount (nothing killed, or already reported) stays silent.
+        and ``on_unmount`` (via ``_record_console_fleet_teardown``)
+        records the teardown's two truthful counts on the app object --
+        ``_console_fleet_teardown_notice`` for sessions ``shutdown()``
+        genuinely killed (active turn / pending approval, whose in-flight
+        children die with the turn) and, since PR3a-2 Task 4,
+        ``_console_fleet_survivor_notice`` for sessions whose only work
+        was cross-turn survivors, which KEEP RUNNING through teardown
+        (Task 1 A4 executed the old copy's lie: it called those
+        "cancelled" while they finished ``done``). The app outlives this
+        screen instance, and screens are never cached
+        (``TldwCli._create_navigation_screen`` always builds a fresh
+        instance). Each non-zero slot is shown exactly once and cleared
+        so an ordinary mount (nothing to report) stays silent.
         """
-        count = getattr(self.app_instance, "_console_fleet_teardown_notice", 0)
-        if not count:
-            return
-        self.app_instance._console_fleet_teardown_notice = 0
-        noun = "run" if count == 1 else "runs"
-        verb = "was" if count == 1 else "were"
-        self.app_instance.notify(
-            f"{count} agent {noun} {verb} cancelled when you left Console.",
-            severity="warning",
-        )
+        killed = getattr(self.app_instance, "_console_fleet_teardown_notice", 0)
+        surviving = getattr(self.app_instance, "_console_fleet_survivor_notice", 0)
+        if killed:
+            self.app_instance._console_fleet_teardown_notice = 0
+            noun = "run" if killed == 1 else "runs"
+            verb = "was" if killed == 1 else "were"
+            self.app_instance.notify(
+                f"{killed} agent {noun} {verb} cancelled when you left Console.",
+                severity="warning",
+            )
+        # PR3a-2 Task 4 (Task 1 A4): the pre-3a-2 notice counted these
+        # sessions in the "cancelled" toast above -- while their
+        # sub-agents in fact kept running through shutdown() and finished
+        # (executed, not inferred). Report what actually happens: the work
+        # continues in the background, its results land in the run log,
+        # its spend folds onto the message row (Task 3), and its settle
+        # raises the app-wide completion toast + unseen badge (this task).
+        if surviving:
+            self.app_instance._console_fleet_survivor_notice = 0
+            if surviving == 1:
+                copy = (
+                    "1 conversation's sub-agents kept running in the "
+                    "background when you left Console — you'll be notified "
+                    "as they finish."
+                )
+            else:
+                copy = (
+                    f"{surviving} conversations' sub-agents kept running in "
+                    "the background when you left Console — you'll be "
+                    "notified as they finish."
+                )
+            self.app_instance.notify(copy, severity="information")
 
     async def confirm_navigation(self) -> bool:
         """Delegate revision-pinned Console loss confirmation."""
@@ -14634,19 +14665,7 @@ class ChatScreen(BaseAppScreen):
         self._console_original_attempt_previews.clear()
         controller = self._console_chat_controller
         if controller is not None:
-            # TASK-1143 (F5): snapshot what shutdown() is ABOUT to kill
-            # BEFORE calling it, using the SAME busy_fleet_session_count()
-            # confirm_navigation showed the user before they chose "Leave"
-            # (or that a non-navigation teardown, e.g. app exit, never got
-            # to show) -- the pre-navigate warning and the post-navigate
-            # record always agree on N. The app (not this doomed screen)
-            # holds the count so the NEXT Console mount -- a fresh
-            # instance; screens are never cached -- can report it via
-            # ``_notify_console_fleet_teardown_if_any``.
-            killed = controller.busy_fleet_session_count()
-            await controller.shutdown()
-            if killed:
-                self.app_instance._console_fleet_teardown_notice = killed
+            await self._record_console_fleet_teardown(controller)
         gateway = self._console_provider_gateway
         close = getattr(gateway, "aclose", None)
         if callable(close):
@@ -14656,6 +14675,28 @@ class ChatScreen(BaseAppScreen):
         self._console_provider_gateway = None
         self._console_chat_controller = None
         super().on_unmount()
+
+    async def _record_console_fleet_teardown(self, controller: Any) -> None:
+        """Snapshot this teardown's true fates, shut down, stage the notice.
+
+        TASK-1143 (F5) + PR3a-2 Task 4: snapshot BEFORE ``shutdown()``,
+        using ``fleet_teardown_split()`` -- the same union
+        ``busy_fleet_session_count`` (and the pre-navigate confirm) has
+        always counted, partitioned by what actually happens next.
+        Sessions with an in-flight turn or pending approval are killed by
+        the shutdown below; sessions whose only work is a cross-turn
+        survivor KEEP RUNNING through it (Task 1 A1, executed) and their
+        results/spend land after the screen is gone. The app (not this
+        doomed screen) holds both counts so the NEXT Console mount -- a
+        fresh instance; screens are never cached -- reports each
+        truthfully via ``_notify_console_fleet_teardown_if_any``.
+        """
+        killed, surviving = controller.fleet_teardown_split()
+        await controller.shutdown()
+        if killed:
+            self.app_instance._console_fleet_teardown_notice = killed
+        if surviving:
+            self.app_instance._console_fleet_survivor_notice = surviving
 
     @classmethod
     def _serialize_console_message(cls, message: ConsoleChatMessage) -> dict[str, Any]:

@@ -2189,15 +2189,47 @@ class ConsoleChatController:
             approval-like round, and/or a still-running sub-agent -- 0 when
             the fleet is idle.
         """
+        killed, surviving = self.fleet_teardown_split()
+        return killed + surviving
+
+    def fleet_teardown_split(self) -> tuple[int, int]:
+        """Partition ``busy_fleet_session_count``'s union by teardown fate.
+
+        PR3a-2 Task 4 (Task 1 A4, executed): post-3a-1 the two halves of
+        that union meet OPPOSITE fates at ``shutdown()``, and the
+        teardown notice was reporting both as "cancelled":
+
+        - **killed**: sessions with an active stream task or an
+          outstanding approval-like round. Shutdown's ``_signal_stop``
+          fanout sets the in-flight turn's own cancel event, and a
+          cancelled turn settles its children ``cancelled`` rather than
+          promoting survivors (``AgentService._surviving_handles``;
+          pinned by execution in ``Tests/Agents/test_fleet_runtime.py::
+          test_stopping_the_turn_still_stops_its_children``). This work
+          genuinely dies.
+        - **surviving**: sessions whose ONLY busy-ness is a cross-turn
+          survivor. Task 1 A1 executed the fate: no cancel signal ever
+          reaches such a child (its turn's cancel event was popped when
+          the turn settled), it runs to completion and its terminal row
+          lands durably after the screen is gone.
+
+        Disjoint by construction -- a session holding BOTH an active
+        stream and earlier-turn survivors lands in **killed** (its
+        in-flight turn really is killed; the stated under-report is that
+        its earlier survivors' continuing goes unmentioned in the
+        next-mount notice -- their own settle toast still reports them).
+        ``killed + surviving`` therefore equals the union the navigation
+        confirm has always shown.
+
+        Returns:
+            ``(killed, surviving)`` live-session counts.
+        """
         live_ids = {session.id for session in self.store.sessions()}
         with self._approval_state_lock:
             pending_ids = set(self._pending_approvals)
-        busy_ids = set(self._live_busy_session_ids())
-        return len(
-            busy_ids
-            | (pending_ids & live_ids)
-            | self._fleet_survivor_session_ids()
-        )
+        killed_ids = set(self._live_busy_session_ids()) | (pending_ids & live_ids)
+        surviving_ids = self._fleet_survivor_session_ids() - killed_ids
+        return len(killed_ids), len(surviving_ids)
 
     def fleet_has_unsettled_children(self) -> bool:
         """Whether ANY live session's conversation is still owed a drain.
