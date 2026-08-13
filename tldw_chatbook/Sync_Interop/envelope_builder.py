@@ -240,6 +240,31 @@ class SyncEnvelopeBuilder:
             entity_version=entity_version,
         )
 
+    def build_chat_message_delete(
+        self,
+        *,
+        conversation_id: str,
+        message_id: str,
+        base_version: str | int | None = None,
+        entity_version: str | int | None = None,
+    ) -> SyncV2Envelope:
+        """Build a clear Chat message tombstone without private row data."""
+        clear = {"deleted": True}
+        return self._clear_envelope(
+            domain="chat",
+            entity_id=message_id,
+            operation="delete",
+            stable_key=f"{conversation_id}:{message_id}",
+            payload_clear=clear,
+            routing_metadata={
+                "conversation_id": conversation_id,
+                "entity_kind": "message",
+            },
+            payload_hash=self._payload_hash(clear),
+            base_version=base_version,
+            entity_version=entity_version,
+        )
+
     def build_workspace_source_ref(
         self,
         *,

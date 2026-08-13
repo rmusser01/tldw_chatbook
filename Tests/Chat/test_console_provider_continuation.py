@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -29,8 +30,12 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRound,
     ContinuationResult,
     ProviderContinuationCheckpoint,
+    dump_provider_continuation_json,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProducer
+from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
+from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 
 
 def _active_checkpoint() -> ProviderContinuationCheckpoint:
@@ -54,6 +59,25 @@ def _active_checkpoint() -> ProviderContinuationCheckpoint:
                         state="pending",
                     ),
                 ),
+            ),
+        ),
+    )
+
+
+def _complete_k3_checkpoint(content: str) -> ProviderContinuationCheckpoint:
+    return ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k3",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=(
+            ContinuationRound(
+                assistant_content=content,
+                reasoning_blocks=("PRIVATE-K3-REASONING",),
+                calls=(),
             ),
         ),
     )
@@ -142,6 +166,152 @@ def _store_with_checkpoint(*, content: str = ""):
         )
     )
     return database, store, session, owner
+
+
+def _enable_sync(tmp_path, database, store):
+    repository = SyncStateRepository(tmp_path / "continuation-sync.db")
+    repository.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        profile_mode="local_first",
+        device_id="device-1",
+        dataset_id="dataset-1",
+    )
+    dataset_key = generate_dataset_key()
+    store.sync_v2_chat_producer = ChatSyncV2OutboxProducer(
+        state_repository=repository,
+        dataset_keys={"dataset-1": dataset_key},
+        source=database,
+    )
+    store.sync_v2_server_profile_id = "server-a"
+    store.sync_v2_authenticated_principal_id = "user-a"
+    store.sync_v2_workspace_scope = "workspace-1"
+    return repository, dataset_key
+
+
+@pytest.mark.parametrize(
+    "terminal_method",
+    ["mark_message_complete", "mark_message_stopped", "mark_message_failed"],
+)
+def test_terminal_owner_mutations_refresh_version_and_project_private_checkpoint(
+    tmp_path, terminal_method: str
+) -> None:
+    database, store, _session, owner = _store_with_checkpoint()
+    try:
+        repository, dataset_key = _enable_sync(tmp_path, database, store)
+        store.append_stream_chunk(owner.id, "visible partial")
+
+        getattr(store, terminal_method)(owner.id)
+
+        current = store.get_message(owner.id)
+        row = database.get_message_by_id(owner.id)
+        assert row is not None
+        assert current.provider_continuation_message_version == row["version"] == 2
+        assert row["provider_continuation_json"] is not None
+        entries = repository.list_sync_v2_outbox_entries(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            dataset_id="dataset-1",
+        )
+        assert len(entries) == 1
+        envelope = entries[0]["envelope"]
+        payload = decrypt_sync_payload(
+            json.loads(envelope["payload_ciphertext"]), key=dataset_key
+        )
+        assert envelope["entity_version"] == 2
+        assert payload["content"] == "visible partial"
+        assert "PRIVATE-REASONING-CANARY" in payload["provider_continuation_json"]
+    finally:
+        database.close_connection()
+
+
+def test_visible_discard_projects_explicit_checkpoint_clear(tmp_path) -> None:
+    database, store, _session, owner = _store_with_checkpoint(content="Visible")
+    try:
+        repository, dataset_key = _enable_sync(tmp_path, database, store)
+        version = store.get_message(owner.id).provider_continuation_message_version
+        assert version is not None
+
+        assert store.discard_provider_continuation(
+            owner.id, expected_message_version=version
+        )
+
+        current = store.get_message(owner.id)
+        assert current.provider_continuation is None
+        assert current.provider_continuation_message_version == version + 1
+        entries = repository.list_sync_v2_outbox_entries(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            dataset_id="dataset-1",
+        )
+        assert len(entries) == 1
+        payload = decrypt_sync_payload(
+            json.loads(entries[0]["envelope"]["payload_ciphertext"]),
+            key=dataset_key,
+        )
+        assert payload == {"content": "Visible", "role": "assistant"}
+    finally:
+        database.close_connection()
+
+
+def test_user_edit_clears_complete_k3_checkpoint_and_refreshes_owner_version() -> None:
+    database = CharactersRAGDB(":memory:", "k3-edit-test")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        session = store.create_session(title="K3 edit")
+        owner = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original answer",
+            persist=True,
+        )
+        checkpoint = _complete_k3_checkpoint("original answer")
+        persisted_id = store.get_message(owner.id).persisted_message_id
+        assert persisted_id is not None
+        database.update_provider_continuation(
+            message_id=persisted_id,
+            expected_message_version=1,
+            provider_continuation_json=dump_provider_continuation_json(checkpoint),
+            content="original answer",
+        )
+        live_owner = store._message_or_raise(owner.id)
+        live_owner.provider_continuation = checkpoint
+        live_owner.provider_continuation_message_version = 2
+        before = store.get_message(owner.id).provider_continuation_message_version
+        assert before is not None
+
+        updated = store.update_message_content(owner.id, "user edit")
+
+        row = database.get_message_by_id(persisted_id)
+        assert row is not None
+        assert updated.provider_continuation is None
+        assert updated.provider_continuation_message_version == before + 1
+        assert row["provider_continuation_json"] is None
+        assert row["content"] == "user edit"
+    finally:
+        database.close_connection()
+
+
+def test_user_edit_preserves_non_k3_checkpoint_and_refreshes_owner_version() -> None:
+    database, store, _session, owner = _store_with_checkpoint(content="Visible")
+    try:
+        before = store.get_message(owner.id).provider_continuation_message_version
+        assert before is not None
+
+        updated = store.update_message_content(owner.id, "Edited visible")
+
+        assert updated.persisted_message_id is not None
+        row = database.get_message_by_id(updated.persisted_message_id)
+        assert row is not None
+        assert updated.provider_continuation == _active_checkpoint()
+        assert updated.provider_continuation_message_version == before + 1
+        assert row["provider_continuation_json"] is not None
+        assert row["content"] == "Edited visible"
+    finally:
+        database.close_connection()
 
 
 def test_restore_hydrates_blank_owner_without_exposing_private_fields() -> None:
@@ -452,6 +622,198 @@ async def test_resume_excludes_visible_owner_and_reports_failed_completion(
         recovered = store.get_message(owner.id)
         assert recovered.provider_continuation is not None
         assert "failed" in (recovered.provider_continuation_warning or "").lower()
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "protocol", "base_url", "tool_bearing", "expected_prior"),
+    [
+        (
+            "Moonshot",
+            "kimi-k3",
+            "chat_completions",
+            "https://api.moonshot.ai/v1",
+            False,
+            True,
+        ),
+        (
+            "DeepSeek",
+            "deepseek-v4-flash",
+            "responses",
+            "https://api.deepseek.com/v1",
+            True,
+            True,
+        ),
+        (
+            "ZAI",
+            "glm-5",
+            "chat_completions",
+            "https://api.z.ai/v1",
+            True,
+            False,
+        ),
+        (
+            "Moonshot",
+            "kimi-k2",
+            "chat_completions",
+            "https://api.moonshot.ai/v1",
+            True,
+            False,
+        ),
+    ],
+)
+async def test_resume_forwards_only_policy_retained_prior_complete_sidecars(
+    monkeypatch,
+    provider: str,
+    model: str,
+    protocol: str,
+    base_url: str,
+    tool_bearing: bool,
+    expected_prior: bool,
+) -> None:
+    database = CharactersRAGDB(":memory:", "resume-history-test")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        session = store.create_session(title="Resume history")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="initial request",
+            persist=True,
+        )
+        prior = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="prior visible answer",
+            persist=True,
+        )
+        prior_round = ContinuationRound(
+            assistant_content="prior visible answer",
+            reasoning_blocks=("PRIVATE-PRIOR-REASONING",),
+            calls=(
+                (
+                    ContinuationCall(
+                        call_id="prior_call",
+                        name="calculator",
+                        arguments='{"expression":"1+1"}',
+                        state="completed",
+                        result=ContinuationResult("2"),
+                    ),
+                )
+                if tool_bearing
+                else ()
+            ),
+        )
+        prior_checkpoint = ProviderContinuationCheckpoint(
+            schema_version=1,
+            checkpoint_revision=1,
+            provider=provider.lower(),
+            protocol=protocol,
+            model=model,
+            api_base_url=base_url,
+            state="complete",
+            rounds=(prior_round,),
+        )
+        prior_live = store._message_or_raise(prior.id)
+        prior_persisted = prior_live.persisted_message_id
+        assert prior_persisted is not None
+        database.update_provider_continuation(
+            message_id=prior_persisted,
+            expected_message_version=1,
+            provider_continuation_json=dump_provider_continuation_json(
+                prior_checkpoint
+            ),
+            content="prior visible answer",
+        )
+        prior_live.provider_continuation = prior_checkpoint
+        prior_live.provider_continuation_message_version = 2
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="continue",
+            persist=True,
+        )
+
+        active = ProviderContinuationCheckpoint(
+            schema_version=1,
+            checkpoint_revision=1,
+            provider=provider.lower(),
+            protocol=protocol,
+            model=model,
+            api_base_url=base_url,
+            state="active",
+            rounds=(
+                ContinuationRound(
+                    assistant_content="",
+                    reasoning_blocks=("PRIVATE-ACTIVE",),
+                    calls=(
+                        ContinuationCall(
+                            call_id="active_call",
+                            name="calculator",
+                            arguments='{"expression":"2+2"}',
+                            state="pending",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        owner = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="active visible",
+            persist=True,
+        )
+        owner_live = store._message_or_raise(owner.id)
+        owner_persisted = owner_live.persisted_message_id
+        assert owner_persisted is not None
+        database.update_provider_continuation(
+            message_id=owner_persisted,
+            expected_message_version=1,
+            provider_continuation_json=dump_provider_continuation_json(active),
+            content="active visible",
+        )
+        owner_live.provider_continuation = active
+        owner_live.provider_continuation_message_version = 2
+
+        class Gateway:
+            def expand_provider_continuation(self, _checkpoint):
+                return [{"role": "assistant", "content": "active translated"}]
+
+            async def resolve_for_send(self, _selection):
+                return SimpleNamespace(
+                    ready=True,
+                    provider=provider,
+                    model=model,
+                    base_url=base_url,
+                    api_mode=protocol,
+                )
+
+        controller = ConsoleChatController(
+            store=store, provider_gateway=Gateway(), agent_bridge=object()
+        )
+        captured = {}
+
+        async def capture(**kwargs):
+            captured.update(kwargs)
+            store._message_or_raise(owner.id).provider_continuation = None
+            return ConsoleSubmitResult(True, True, "done")
+
+        monkeypatch.setattr(controller, "_run_agent_reply", capture)
+
+        assert await controller.recover_provider_continuation(
+            "resume", owner.id, expected_message_version=2
+        )
+        sidecar = captured.get("continuation_sidecar", ())
+        assert [item.owner_message_id for item in sidecar] == (
+            [prior.id] if expected_prior else []
+        )
+        assert captured.get("continuation_history_target") == (
+            captured["restore_provider_target"] if expected_prior else None
+        )
+        provider_rows = captured["provider_messages"]
+        assert sum(row.get("content") == "prior visible answer" for row in provider_rows) == 1
+        assert all(row.get("content") != "active visible" for row in provider_rows)
     finally:
         database.close_connection()
 

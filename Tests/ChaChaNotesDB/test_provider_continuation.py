@@ -698,3 +698,109 @@ def test_discard_and_variant_ownership_stay_on_exact_assistant_rows(
     variants = {row["id"]: row for row in db.get_message_variants(variant_id)}
     assert variants[visible_id]["provider_continuation_json"] is None
     assert variants[variant_id]["provider_continuation_json"] is not None
+
+
+def test_generic_ancestor_edit_atomically_tombstones_all_descendant_checkpoints(
+    tmp_path: Path,
+) -> None:
+    """A content edit makes every old descendant ineligible without data loss."""
+    db, conversation_id = _db_with_conversation(tmp_path)
+    root_id = db.add_message(
+        {
+            "id": "edited-user-root",
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "original prompt",
+        }
+    )
+    visible_id = db.create_assistant_with_continuation(
+        message_id="visible-descendant",
+        conversation_id=conversation_id,
+        parent_message_id=root_id,
+        content="visible answer",
+        provider_continuation_json=_checkpoint_json(canary="VISIBLE-PRIVATE"),
+    )
+    variant_id = db.create_message_variant(visible_id, "off-path answer")
+    assert variant_id is not None
+    variant_before = db.get_message_by_id(variant_id)
+    assert variant_before is not None
+    db.update_provider_continuation(
+        message_id=variant_id,
+        expected_message_version=variant_before["version"],
+        provider_continuation_json=_checkpoint_json(canary="VARIANT-PRIVATE"),
+    )
+    blank_id = db.create_assistant_with_continuation(
+        message_id="blank-descendant",
+        conversation_id=conversation_id,
+        parent_message_id=visible_id,
+        content="",
+        provider_continuation_json=_checkpoint_json(canary="BLANK-PRIVATE"),
+    )
+    versions_before = {
+        message_id: db.get_connection()
+        .execute("SELECT version FROM messages WHERE id = ?", (message_id,))
+        .fetchone()[0]
+        for message_id in (root_id, visible_id, variant_id, blank_id)
+    }
+
+    assert db.update_message(
+        root_id,
+        {"content": "edited prompt"},
+        expected_version=versions_before[root_id],
+    )
+
+    rows = {
+        row["id"]: dict(row)
+        for row in db.get_connection()
+        .execute(
+            "SELECT id, content, deleted, version, provider_continuation_json "
+            "FROM messages WHERE id IN (?, ?, ?, ?)",
+            (root_id, visible_id, variant_id, blank_id),
+        )
+        .fetchall()
+    }
+    assert rows[root_id]["content"] == "edited prompt"
+    assert rows[root_id]["version"] == versions_before[root_id] + 1
+    for message_id in (visible_id, variant_id, blank_id):
+        assert rows[message_id]["provider_continuation_json"] is not None
+        assert rows[message_id]["version"] == versions_before[message_id] + 1
+        assert rows[message_id]["deleted"] == 1
+    assert _message_sync_entries(db, visible_id)[-1]["operation"] == "delete"
+    assert _message_sync_entries(db, variant_id)[-1]["operation"] == "delete"
+    assert _message_sync_entries(db, blank_id)[-1]["operation"] == "delete"
+
+
+def test_generic_owner_edit_clears_complete_k3_checkpoint_unless_internal_preserve(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_with_conversation(tmp_path)
+    owner_id = db.create_assistant_with_continuation(
+        message_id="k3-owner",
+        conversation_id=conversation_id,
+        parent_message_id=None,
+        content="original answer",
+        provider_continuation_json=_kimi_checkpoint_json("original answer"),
+    )
+
+    with pytest.raises(InputError):
+        db.update_message(
+            owner_id,
+            {"content": "runtime contradiction"},
+            expected_version=1,
+            preserve_provider_continuation=True,
+        )
+    preserved = db.get_message_by_id(owner_id)
+    assert preserved is not None
+    assert preserved["version"] == 1
+    assert preserved["content"] == "original answer"
+    assert preserved["provider_continuation_json"] is not None
+
+    assert db.update_message(
+        owner_id,
+        {"content": "user edit"},
+        expected_version=preserved["version"],
+    )
+    edited = db.get_message_by_id(owner_id)
+    assert edited is not None
+    assert edited["content"] == "user edit"
+    assert edited["provider_continuation_json"] is None

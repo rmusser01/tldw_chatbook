@@ -348,6 +348,38 @@ def test_delete_is_not_resumable_and_undelete_projects_new_whole_version(
         db.close_connection()
 
 
+def test_committed_delete_projects_exact_sync_v2_tombstone(tmp_path) -> None:
+    db, message_id, _first_hash = _source_message(tmp_path)
+    try:
+        repo = _configured_repo(tmp_path / "delete-sync-state.db")
+        producer = ChatSyncV2OutboxProducer(
+            state_repository=repo,
+            dataset_keys={"dataset-1": generate_dataset_key()},
+            source=db,
+        )
+        deleted_hash = canonical_payload_hash({"deleted": True})
+        tombstones = db.soft_delete_message_subtree(message_id, expected_version=1)
+
+        result = producer.reconcile_chat_message_delete_intent(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            message_id=message_id,
+            message_version=tombstones[0]["version"],
+            payload_hash=deleted_hash,
+        )
+
+        assert result["status"] == "enqueued"
+        envelope = result["outbox_entry"]["envelope"]
+        assert envelope["operation"] == "delete"
+        assert envelope["entity_version"] == 2
+        assert envelope["payload_clear"] == {"deleted": True}
+        assert envelope["payload_ciphertext"] is None
+        assert result["receipt"]["source_version"] == 2
+    finally:
+        db.close_connection()
+
+
 def test_branch_variants_keep_private_checkpoint_on_distinct_stable_ids(
     tmp_path,
 ) -> None:

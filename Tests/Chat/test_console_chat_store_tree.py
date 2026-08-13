@@ -144,6 +144,168 @@ def test_delete_subtree_removes_descendants():
         assert gone not in store._message_session_index
 
 
+def test_delete_persists_whole_subtree_and_restart_cannot_restore_it(tmp_path):
+    """Console deletion is a durable branch tombstone, not an in-memory filter."""
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
+        ChatSyncV2OutboxProducer,
+    )
+    from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
+    from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+
+    database_path = tmp_path / "delete-subtree.db"
+    db = CharactersRAGDB(database_path, "delete-test")
+    sync_repo = SyncStateRepository(tmp_path / "delete-sync.db")
+    sync_repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        profile_mode="local_first",
+        device_id="device-1",
+        dataset_id="dataset-1",
+    )
+    producer = ChatSyncV2OutboxProducer(
+        state_repository=sync_repo,
+        dataset_keys={"dataset-1": generate_dataset_key()},
+        source=db,
+    )
+    store = ConsoleChatStore(
+        persistence=ChatPersistenceService(db),
+        sync_v2_chat_producer=producer,
+        sync_v2_server_profile_id="server-a",
+        sync_v2_authenticated_principal_id="user-a",
+        sync_v2_workspace_scope="workspace-1",
+    )
+    session = store.create_session(title="Delete")
+    root = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="keep", persist=True
+    )
+    branch = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="delete", persist=True
+    )
+    child = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="also delete", persist=True
+    )
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    root_persisted = store.get_message(root.id).persisted_message_id
+    branch_persisted = store.get_message(branch.id).persisted_message_id
+    child_persisted = store.get_message(child.id).persisted_message_id
+    assert root_persisted and branch_persisted and child_persisted
+
+    store.delete_message(branch.id)
+    delete_envelopes = [
+        entry["envelope"]
+        for entry in sync_repo.list_sync_v2_outbox_entries(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            dataset_id="dataset-1",
+        )
+        if entry["envelope"]["operation"] == "delete"
+    ]
+    assert {envelope["entity_id"] for envelope in delete_envelopes} == {
+        branch_persisted,
+        child_persisted,
+    }
+    assert {envelope["entity_version"] for envelope in delete_envelopes} == {2}
+    assert all(envelope["payload_clear"] == {"deleted": True} for envelope in delete_envelopes)
+    db.close_connection()
+
+    restarted = CharactersRAGDB(database_path, "delete-restart")
+    try:
+        assert restarted.get_message_by_id(branch_persisted) is None
+        assert restarted.get_message_by_id(child_persisted) is None
+        restored = ConsoleChatStore(persistence=ChatPersistenceService(restarted))
+        loaded = restored.restore_persisted_session(
+            title="Delete",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=[
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER,
+                    content="keep",
+                    persisted_message_id=root_persisted,
+                )
+            ],
+            active_leaf_persisted_id=root_persisted,
+        )
+        assert len(restored.active_path_message_ids(loaded.id)) == 1
+        assert [message.content for message in restored.messages_for_session(loaded.id)] == [
+            "keep"
+        ]
+    finally:
+        restarted.close_connection()
+
+
+def test_persisted_ancestor_edit_tombstones_and_projects_old_descendants(tmp_path):
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
+        ChatSyncV2OutboxProducer,
+    )
+    from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
+    from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+
+    db = CharactersRAGDB(tmp_path / "edit-subtree.db", "edit-test")
+    sync_repo = SyncStateRepository(tmp_path / "edit-sync.db")
+    sync_repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        profile_mode="local_first",
+        device_id="device-1",
+        dataset_id="dataset-1",
+    )
+    producer = ChatSyncV2OutboxProducer(
+        state_repository=sync_repo,
+        dataset_keys={"dataset-1": generate_dataset_key()},
+        source=db,
+    )
+    store = ConsoleChatStore(
+        persistence=ChatPersistenceService(db),
+        sync_v2_chat_producer=producer,
+        sync_v2_server_profile_id="server-a",
+        sync_v2_authenticated_principal_id="user-a",
+        sync_v2_workspace_scope="workspace-1",
+    )
+    session = store.create_session(title="Edit")
+    root = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="original", persist=True
+    )
+    branch = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="old answer", persist=True
+    )
+    child = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="old follow-up", persist=True
+    )
+    branch_persisted = store.get_message(branch.id).persisted_message_id
+    child_persisted = store.get_message(child.id).persisted_message_id
+    assert branch_persisted and child_persisted
+
+    store.update_message_content(root.id, "edited")
+
+    assert store.active_path_message_ids(session.id) == [root.id]
+    assert db.get_message_by_id(branch_persisted) is None
+    assert db.get_message_by_id(child_persisted) is None
+    delete_envelopes = [
+        entry["envelope"]
+        for entry in sync_repo.list_sync_v2_outbox_entries(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            dataset_id="dataset-1",
+        )
+        if entry["envelope"]["operation"] == "delete"
+    ]
+    assert {envelope["entity_id"] for envelope in delete_envelopes} == {
+        branch_persisted,
+        child_persisted,
+    }
+    db.close_connection()
+
+
 def test_restore_persisted_session_registers_tree_and_supports_append():
     store = ConsoleChatStore()
     m1 = ConsoleChatMessage(

@@ -2461,12 +2461,21 @@ class ConsoleChatController:
                 "Pinned provider settings no longer match. Restore those settings or Discard.",
             )
             return False
+        prior_sidecar, prior_target = (
+            self._provider_continuation_resume_history_for_resolution(
+                session_id,
+                resolution,
+                before_message_id=message.id,
+            )
+        )
         recovery_task = asyncio.current_task()
         try:
             await self._run_agent_reply(
                 resolution=resolution,
                 provider_messages=self._provider_messages_for_session(
-                    session_id, before_message_id=message.id
+                    session_id,
+                    before_message_id=message.id,
+                    annotate_ids=bool(prior_sidecar),
                 ),
                 assistant_message_id=message.id,
                 prepare_retry=False,
@@ -2475,6 +2484,8 @@ class ConsoleChatController:
                 restore_provider_target=target,
                 expand_provider_continuation=translator,
                 resume_provider_continuation=True,
+                continuation_sidecar=prior_sidecar,
+                continuation_history_target=prior_target,
                 turn_context=self.resolve_turn_execution_context(session_id),
             )
         finally:
@@ -10821,6 +10832,44 @@ class ConsoleChatController:
             tuple(item for item in sidecar if item.owner_message_id in owner_ids),
             target,
         )
+
+    def _provider_continuation_resume_history_for_resolution(
+        self,
+        session_id: str,
+        resolution: Any,
+        *,
+        before_message_id: str,
+    ) -> tuple[
+        tuple[ProviderContinuationSidecar, ...], ContinuationRestoreTarget | None
+    ]:
+        """Select policy-retained completed history before an active owner."""
+        target = _continuation_restore_target_for_resolution(resolution)
+        if target is None:
+            return (), None
+        keep_all = target.provider == "moonshot" and target.model == "kimi-k3"
+        keep_tool_history = target.provider == "deepseek"
+        if not keep_all and not keep_tool_history:
+            return (), None
+
+        retained: list[ProviderContinuationSidecar] = []
+        active_ids = set(self.store.active_path_message_ids(session_id))
+        for message in self.store.messages_for_session(session_id):
+            if message.id == before_message_id:
+                break
+            checkpoint = message.provider_continuation
+            if (
+                message.id not in active_ids
+                or message.role is not ConsoleMessageRole.ASSISTANT
+                or not isinstance(checkpoint, ProviderContinuationCheckpoint)
+                or checkpoint.state != "complete"
+            ):
+                continue
+            sidecar = ProviderContinuationSidecar(message.id, checkpoint)
+            if not provider_continuation_owner_groups((sidecar,), target=target):
+                continue
+            if keep_all or any(round_.calls for round_ in checkpoint.rounds):
+                retained.append(sidecar)
+        return (tuple(retained), target) if retained else ((), None)
 
     def _provider_messages_through_message(
         self,

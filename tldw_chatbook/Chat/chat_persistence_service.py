@@ -495,6 +495,7 @@ class ChatPersistenceService:
         expected_message_contents: tuple[str, ...] | None = None,
         allow_source_owned_repair: bool = False,
         expected_roleplay_version: int | None = None,
+        preserve_provider_continuation: bool = False,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -659,6 +660,7 @@ class ChatPersistenceService:
                         message_id,
                         update_data,
                         expected_version=current_message["version"],
+                        preserve_provider_continuation=preserve_provider_continuation,
                     )
                 )
                 if result and attachments is not None:
@@ -689,6 +691,7 @@ class ChatPersistenceService:
                         message_id,
                         update_data,
                         expected_version=current_message["version"],
+                        preserve_provider_continuation=preserve_provider_continuation,
                     )
                 )
                 if result:
@@ -700,6 +703,7 @@ class ChatPersistenceService:
                 message_id,
                 update_data,
                 expected_version=current_message["version"],
+                preserve_provider_continuation=preserve_provider_continuation,
             )
         )
 
@@ -734,6 +738,16 @@ class ChatPersistenceService:
             updated; False otherwise.
         """
         return self.db.update_message_usage_local(message_id, usage_json)
+
+    def delete_message_subtree(self, *, message_id: str) -> list[dict[str, Any]]:
+        """Atomically tombstone one persisted branch and return its versions."""
+        current_message = self.db.get_message_by_id(message_id)
+        if not current_message:
+            raise ValueError(f"Message {message_id} not found")
+        return self.db.soft_delete_message_subtree(
+            message_id,
+            expected_version=current_message["version"],
+        )
 
     def update_message_metadata(self, *, message_id: str, metadata_json: str) -> bool:
         """Persist structured message metadata WITHOUT touching sync metadata.

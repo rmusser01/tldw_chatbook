@@ -18,6 +18,7 @@ from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     ContinuationEventContext,
     ModelTurn,
+    ToolCall,
     ToolBatchReady,
     ToolCallExecuting,
     ToolCallFinished,
@@ -83,6 +84,10 @@ class _CrashSnapshot:
     interrupted_owner_id: str | None
     outbox_before_restart: int
     outbox_after_reconciliation: int
+
+
+class _SimulatedProcessDeath(BaseException):
+    """Escape runtime exception handling at an exact crash boundary."""
 
 
 def _checkpoint_payload(
@@ -340,6 +345,197 @@ def test_every_approved_crash_boundary_has_an_exact_restored_state(tmp_path) -> 
         0,
         0,
     ]
+
+
+@pytest.mark.parametrize(
+    ("boundary", "expected_state", "expected_model_attempts"),
+    [
+        ("during_side_effect", "executing", 1),
+        ("after_result_commit", "completed", 2),
+        ("before_next_provider_request", "completed", 3),
+    ],
+)
+def test_runtime_crash_hooks_restart_without_repeating_side_effects(
+    tmp_path: Path,
+    boundary: CrashBoundary,
+    expected_state: str,
+    expected_model_attempts: int,
+) -> None:
+    database_path = tmp_path / f"runtime-{boundary}.db"
+    database = CharactersRAGDB(database_path, f"runtime-{boundary}")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+    session = store.create_session(title="Runtime crash")
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Use the calculator",
+        persist=True,
+    )
+    owner = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+    )
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    context = ContinuationEventContext(owner.id, "run-a", "primary", "persistent")
+    schema = ToolSchema(
+        id="builtin:calculator",
+        name="calculator",
+        description="math",
+        parameters={"type": "object"},
+    )
+    call = ToolCall(
+        "calculator",
+        {"expression": "2+2"},
+        "call-1",
+        '{"expression":"2+2"}',
+    )
+    side_effects: list[str] = []
+    model_attempts: list[str] = []
+    successful_model_calls: list[str] = []
+
+    def call_model(messages, _schemas):
+        model_attempts.append("original")
+        if len(model_attempts) > 1:
+            if boundary == "before_next_provider_request":
+                raise _SimulatedProcessDeath
+            pytest.fail("provider request crossed an earlier crash boundary")
+        successful_model_calls.append("original")
+        return ModelTurn(
+            tool_calls=(call,),
+            assistant_message={
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "calculator",
+                            "arguments": '{"expression":"2+2"}',
+                        },
+                    }
+                ],
+            },
+            provider_continuation=_checkpoint(),
+        )
+
+    def invoke_tool(actual: ToolCall) -> ToolResult:
+        side_effects.append(actual.call_id)
+        if boundary == "during_side_effect":
+            raise _SimulatedProcessDeath
+        return ToolResult(ok=True, content="4")
+
+    def persist(event) -> None:
+        store.persist_provider_continuation_event(event)
+        if boundary == "after_result_commit" and isinstance(
+            event, ToolCallFinished
+        ):
+            raise _SimulatedProcessDeath
+
+    with pytest.raises(_SimulatedProcessDeath):
+        run_agent_loop(
+            AgentConfig(
+                model="deepseek-v4-flash",
+                system_prompt="system",
+                allowed_tools=("calculator",),
+            ),
+            [{"role": "user", "content": "Use the calculator"}],
+            [schema],
+            LoopDeps(
+                call_model=call_model,
+                invoke_tool=invoke_tool,
+                spawn=lambda task: ToolResult(ok=True, content=task),
+                find_tools=lambda query: [],
+                load_schemas=lambda ids: [],
+                should_cancel=lambda: False,
+                clock=lambda: 0.0,
+                review_tool_calls=lambda calls: {},
+                continuation_context=context,
+                persist_provider_continuation=persist,
+            ),
+        )
+    database.close_connection()
+
+    restarted_db = CharactersRAGDB(database_path, f"restart-runtime-{boundary}")
+    row = restarted_db.get_message_by_id(owner.id)
+    assert row is not None
+    restored = parse_provider_continuation_json(row["provider_continuation_json"])
+    assert restored.rounds[-1].calls[-1].state == expected_state
+    restarted_store = ConsoleChatStore(
+        persistence=ChatPersistenceService(restarted_db)
+    )
+    restarted_store.restore_persisted_session(
+        title="Runtime crash",
+        workspace_id=None,
+        persisted_conversation_id=conversation_id,
+        all_nodes=[],
+        active_leaf_persisted_id=owner.id,
+    )
+
+    def resumed_model(messages, _schemas):
+        model_attempts.append("restarted")
+        successful_model_calls.append("restarted")
+        final = replace(
+            restored,
+            checkpoint_revision=restored.checkpoint_revision + 1,
+            state="complete",
+        )
+        return ModelTurn(text="done", provider_continuation=final)
+
+    outcome = run_agent_loop(
+        AgentConfig(
+            model="deepseek-v4-flash",
+            system_prompt="system",
+            allowed_tools=("calculator",),
+        ),
+        [{"role": "user", "content": "continue"}],
+        [schema],
+        LoopDeps(
+            call_model=resumed_model,
+            invoke_tool=invoke_tool,
+            spawn=lambda task: ToolResult(ok=True, content=task),
+            find_tools=lambda query: [],
+            load_schemas=lambda ids: [],
+            should_cancel=lambda: False,
+            clock=lambda: 0.0,
+            review_tool_calls=lambda calls: {},
+            continuation_context=context,
+            persist_provider_continuation=(
+                restarted_store.persist_provider_continuation_event
+            ),
+            expand_provider_continuation=lambda checkpoint: [
+                {
+                    "role": "tool",
+                    "tool_call_id": canonical.call_id,
+                    "content": canonical.result.value,
+                }
+                for round_ in checkpoint.rounds
+                for canonical in round_.calls
+                if canonical.result is not None
+            ],
+        ),
+        restore_provider_continuation=restored,
+        restore_provider_target=ContinuationRestoreTarget(
+            "deepseek",
+            "deepseek-v4-flash",
+            "responses",
+            "https://api.deepseek.com/v1",
+        ),
+        resume_provider_continuation=True,
+    )
+
+    assert side_effects == ["call-1"]
+    if boundary == "during_side_effect":
+        assert outcome.status == "stuck"
+        assert successful_model_calls == ["original"]
+    else:
+        assert outcome.status == "done"
+        assert successful_model_calls == ["original", "restarted"]
+    assert len(model_attempts) == expected_model_attempts
+    restarted_db.close_connection()
 
 
 @pytest.mark.parametrize(

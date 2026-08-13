@@ -49,7 +49,10 @@ import logging
 from typing import List, Dict, Optional, Any, Union, Set, Tuple, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncIntentRecord
+    from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
+        ChatSyncDeleteIntentRecord,
+        ChatSyncIntentRecord,
+    )
 
 from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
@@ -9517,7 +9520,12 @@ UPDATE db_schema_version
             raise
 
     def update_message(
-        self, message_id: str, update_data: Dict[str, Any], expected_version: int
+        self,
+        message_id: str,
+        update_data: Dict[str, Any],
+        expected_version: int,
+        *,
+        preserve_provider_continuation: bool = False,
     ) -> Optional[bool]:
         """
         Updates an existing message using optimistic locking.
@@ -9552,6 +9560,8 @@ UPDATE db_schema_version
         """
         if not update_data:
             raise InputError("No data provided for message update.")
+        if type(preserve_provider_continuation) is not bool:
+            raise InputError("Preserve provider continuation must be a boolean.")
 
         now = self._get_current_utc_timestamp_iso()
         fields_to_update_sql = []
@@ -9617,20 +9627,51 @@ UPDATE db_schema_version
         where_values = [message_id, expected_version]
         final_params_for_execute = tuple(current_params_for_set_clause + where_values)
 
-        query = f"UPDATE messages SET {', '.join(current_fields_to_update_sql)} WHERE id = ? AND version = ? AND deleted = 0"
-
         try:
             with self.transaction() as conn:
-                current_db_version = self._get_current_db_version(
-                    conn, "messages", "id", message_id
-                )
-
-                if current_db_version != expected_version:
+                current = conn.execute(
+                    "SELECT conversation_id, version, deleted, content, "
+                    "provider_continuation_json "
+                    "FROM messages WHERE id = ?",
+                    (message_id,),
+                ).fetchone()
+                if current is None or current["deleted"]:
                     raise ConflictError(
-                        f"Message ID {message_id} update failed: version mismatch (db has {current_db_version}, client expected {expected_version}).",
+                        f"Message ID {message_id} is unavailable.",
                         entity="messages",
                         entity_id=message_id,
                     )
+                if current["version"] != expected_version:
+                    raise ConflictError(
+                        f"Message ID {message_id} update failed: version mismatch (db has {current['version']}, client expected {expected_version}).",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+
+                content_changed = (
+                    "content" in update_data
+                    and update_data["content"] != current["content"]
+                )
+                private_json = current["provider_continuation_json"]
+                if content_changed and private_json is not None:
+                    checkpoint, _canonical = _validated_provider_continuation(
+                        private_json
+                    )
+                    try:
+                        _validate_continuation_owner_content(
+                            checkpoint, update_data["content"]
+                        )
+                    except InputError:
+                        if preserve_provider_continuation:
+                            raise
+                        current_fields_to_update_sql.append(
+                            "provider_continuation_json = NULL"
+                        )
+
+                query = (
+                    f"UPDATE messages SET {', '.join(current_fields_to_update_sql)} "
+                    "WHERE id = ? AND version = ? AND deleted = 0"
+                )
 
                 cursor = conn.execute(query, final_params_for_execute)
 
@@ -9648,6 +9689,38 @@ UPDATE db_schema_version
                     elif final_state["version"] != expected_version:
                         msg = f"Message ID {message_id} version changed to {final_state['version']} concurrently."
                     raise ConflictError(msg, entity="messages", entity_id=message_id)
+
+                if content_changed:
+                    conn.execute(
+                        """
+                        WITH RECURSIVE descendants(id) AS (
+                            SELECT id
+                              FROM messages
+                             WHERE parent_message_id = ?
+                               AND conversation_id = ? AND deleted = 0
+                            UNION
+                            SELECT child.id
+                              FROM messages AS child
+                              JOIN descendants AS parent
+                                ON child.parent_message_id = parent.id
+                             WHERE child.deleted = 0
+                               AND child.conversation_id = ?
+                        )
+                        UPDATE messages
+                           SET deleted = 1,
+                               last_modified = ?,
+                               version = version + 1,
+                               client_id = ?
+                         WHERE id IN (SELECT id FROM descendants)
+                        """,
+                        (
+                            message_id,
+                            current["conversation_id"],
+                            current["conversation_id"],
+                            now,
+                            self.client_id,
+                        ),
+                    )
 
                 logger.info(
                     f"Updated message ID {message_id} from version {expected_version} to version {next_version_val}. Fields updated: {fields_to_update_sql if fields_to_update_sql else 'None'}"
@@ -9883,6 +9956,116 @@ UPDATE db_schema_version
                 f"Database error soft-deleting message ID {message_id} (expected v{expected_version}): {e}"
             )
             raise
+
+    def soft_delete_message_subtree(
+        self, message_id: str, expected_version: int
+    ) -> List[Dict[str, Any]]:
+        """Atomically soft-delete an active message and all active descendants.
+
+        The returned rows describe the committed tombstones so callers can
+        project the exact entity versions to another outbox after this local
+        transaction succeeds. Provider-continuation sidecars remain attached
+        to tombstoned rows for audit/recovery diagnostics, but normal reads can
+        no longer expose them.
+        """
+        now = self._get_current_utc_timestamp_iso()
+        with self.transaction() as conn:
+            current = conn.execute(
+                "SELECT conversation_id, version, deleted FROM messages WHERE id = ?",
+                (message_id,),
+            ).fetchone()
+            if current is None:
+                raise ConflictError(
+                    f"Message ID {message_id} not found.",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+            if current["deleted"]:
+                return []
+            if current["version"] != expected_version:
+                raise ConflictError(
+                    f"Soft delete for Message ID {message_id} failed: "
+                    f"version mismatch (db has {current['version']}, "
+                    f"client expected {expected_version}).",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+
+            rows = conn.execute(
+                """
+                WITH RECURSIVE subtree(id) AS (
+                    SELECT id FROM messages
+                     WHERE id = ? AND conversation_id = ? AND deleted = 0
+                    UNION
+                    SELECT child.id
+                      FROM messages AS child
+                      JOIN subtree AS parent ON child.parent_message_id = parent.id
+                     WHERE child.deleted = 0
+                       AND child.conversation_id = ?
+                )
+                SELECT id, conversation_id, version
+                  FROM messages
+                 WHERE id IN (SELECT id FROM subtree)
+                """,
+                (message_id, current["conversation_id"], current["conversation_id"]),
+            ).fetchall()
+            conn.execute(
+                """
+                WITH RECURSIVE subtree(id) AS (
+                    SELECT id FROM messages
+                     WHERE id = ? AND conversation_id = ? AND deleted = 0
+                    UNION
+                    SELECT child.id
+                      FROM messages AS child
+                      JOIN subtree AS parent ON child.parent_message_id = parent.id
+                     WHERE child.deleted = 0
+                       AND child.conversation_id = ?
+                )
+                UPDATE messages
+                   SET deleted = 1,
+                       last_modified = ?,
+                       version = version + 1,
+                       client_id = ?
+                 WHERE id IN (SELECT id FROM subtree)
+                """,
+                (
+                    message_id,
+                    current["conversation_id"],
+                    current["conversation_id"],
+                    now,
+                    self.client_id,
+                ),
+            )
+            return [
+                {
+                    "message_id": row["id"],
+                    "conversation_id": row["conversation_id"],
+                    "version": row["version"] + 1,
+                }
+                for row in rows
+            ]
+
+    def get_message_tombstones(
+        self, message_ids: Sequence[str]
+    ) -> List[Dict[str, Any]]:
+        """Return committed tombstone identities and versions for exact IDs."""
+        ids = [message_id for message_id in message_ids if message_id]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.get_connection().execute(
+            f"SELECT id, conversation_id, version FROM messages "
+            f"WHERE deleted = 1 AND id IN ({placeholders})",
+            tuple(ids),
+        ).fetchall()
+        return [
+            {
+                "message_id": row["id"],
+                "conversation_id": row["conversation_id"],
+                "version": row["version"],
+            }
+            for row in rows
+        ]
 
     def update_message_feedback(
         self, message_id: str, feedback: str, expected_version: int
@@ -12689,6 +12872,80 @@ UPDATE db_schema_version
                 payload_hash=payload_hash,
             )
         except (ContinuationValidationError, json.JSONDecodeError, sqlite3.Error):
+            return None
+
+    def read_committed_chat_delete_intent(
+        self,
+        *,
+        message_id: str,
+        message_version: int,
+        payload_hash: str,
+    ) -> "ChatSyncDeleteIntentRecord | None":
+        """Return one exact committed message tombstone intent."""
+        from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
+            ChatSyncDeleteIntentRecord,
+        )
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        if (
+            type(message_id) is not str
+            or not message_id
+            or type(message_version) is not int
+            or message_version < 1
+            or type(payload_hash) is not str
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", payload_hash)
+        ):
+            return None
+        conn = self.get_connection()
+        if conn.in_transaction:
+            return None
+        try:
+            rows = conn.execute(
+                """
+                SELECT m.id, m.conversation_id, m.deleted, m.version,
+                       m.last_modified, m.client_id,
+                       intent.operation, intent.payload
+                  FROM messages AS m
+                  JOIN sync_log AS intent
+                    ON intent.entity = 'messages'
+                   AND intent.entity_id = m.id
+                   AND intent.version = m.version
+                 WHERE m.id = ? AND m.version = ?
+                 ORDER BY intent.change_id
+                """,
+                (message_id, message_version),
+            ).fetchall()
+            if len(rows) != 1:
+                return None
+            row = rows[0]
+            if not row["deleted"] or row["operation"] != "delete":
+                return None
+            intent_payload = json.loads(row["payload"])
+            expected_intent = {
+                "id": row["id"],
+                "deleted": 1,
+                "last_modified": row["last_modified"],
+                "version": row["version"],
+                "client_id": row["client_id"],
+            }
+            if isinstance(expected_intent["last_modified"], datetime):
+                expected_intent["last_modified"] = (
+                    expected_intent["last_modified"]
+                    .astimezone(timezone.utc)
+                    .isoformat(timespec="milliseconds")
+                    .replace("+00:00", "Z")
+                )
+            if intent_payload != expected_intent or canonical_payload_hash(
+                {"deleted": True}
+            ) != payload_hash:
+                return None
+            return ChatSyncDeleteIntentRecord(
+                conversation_id=row["conversation_id"],
+                message_id=row["id"],
+                message_version=message_version,
+                payload_hash=payload_hash,
+            )
+        except (json.JSONDecodeError, sqlite3.Error):
             return None
 
     def get_sync_log_entries(

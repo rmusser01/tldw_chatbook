@@ -7,6 +7,7 @@ import pytest
 from tldw_chatbook.Chat.provider_continuation import ContinuationValidationError
 from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
+from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
 
 def _provider_continuation_json(*, canary: str = "private reasoning") -> str:
@@ -130,6 +131,31 @@ def test_chat_message_preserves_restore_metadata_without_plaintext_leak() -> Non
         "content": "private regenerated answer",
         "role": "assistant",
     }
+
+
+def test_chat_message_delete_is_a_clear_tombstone_with_exact_version() -> None:
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    )
+
+    envelope = builder.build_chat_message_delete(
+        conversation_id="conversation-1",
+        message_id="message-2",
+        entity_version=7,
+    )
+
+    assert envelope.domain == "chat"
+    assert envelope.operation == "delete"
+    assert envelope.stable_key == "conversation-1:message-2"
+    assert envelope.entity_version == 7
+    assert envelope.payload_clear == {"deleted": True}
+    assert envelope.routing_metadata == {
+        "conversation_id": "conversation-1",
+        "entity_kind": "message",
+    }
+    assert envelope.payload_hash == canonical_payload_hash({"deleted": True})
 
 
 def test_chat_message_canonicalizes_continuation_inside_encrypted_payload() -> None:
