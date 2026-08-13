@@ -273,6 +273,55 @@ class _StyledCanvasHost(_CanvasHost):
     CSS_PATH = str(BUNDLED_STYLESHEET)
 
 
+class _FilterDispatchCanvasHost(_StyledCanvasHost):
+    """Record real filter messages reaching the host during a mutation."""
+
+    def __init__(self, state: PromptsListState, **kwargs: Any) -> None:
+        super().__init__(state, **kwargs)
+        self.filter_events: list[str] = []
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "library-prompts-filter":
+            self.filter_events.append("changed")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "library-prompts-filter":
+            self.filter_events.append("submitted")
+
+
+class _SelectionLibraryScreen(LibraryScreen):
+    """Use the real Library shell with a test-owned select-mode projection."""
+
+    def _build_library_prompts_state(self) -> PromptsListState:
+        state = super()._build_library_prompts_state()
+        rows = tuple(
+            replace(row, checked=index < 2) for index, row in enumerate(state.rows)
+        )
+        return replace(
+            state,
+            rows=rows,
+            select_mode=True,
+            total_selected=7,
+            selected_on_page=min(2, len(rows)),
+        )
+
+
+_SELECTION_ACTION_IDS = (
+    "library-prompts-select-page",
+    "library-prompts-clear-selection",
+    "library-prompts-selection-done",
+    "library-prompts-export-selected",
+    "library-prompts-delete-selected",
+)
+
+
+def _assert_region_fully_visible(widget, viewport) -> None:
+    """Assert a mounted widget occupies visible cells without clipping."""
+    assert widget.region.width > 0
+    assert widget.region.height > 0
+    assert viewport.contains_region(widget.region)
+
+
 def _capture_region_messages(region: LibraryPromptHistoryRegion) -> list[Any]:
     """Capture semantic messages emitted by one mounted history region."""
     posted: list[Any] = []
@@ -731,9 +780,10 @@ async def test_prompts_canvas_select_mode_renders_summary_and_selection_toolbars
             "Export selected",
             "Delete selected",
         ]
-        assert len({button.parent for button in management}) == 1
-        assert len({button.parent for button in selected_actions}) == 1
-        assert management[0].parent is not selected_actions[0].parent
+        assert management[0].parent is management[1].parent
+        assert management[2].parent is not management[0].parent
+        assert selected_actions[0].parent is not selected_actions[1].parent
+        assert management[2].parent is not selected_actions[0].parent
         assert not pilot.app.query("#library-prompts-sort")
         assert not pilot.app.query("#library-prompts-import")
         assert not pilot.app.query("#library-prompts-export")
@@ -1429,6 +1479,30 @@ async def test_prompts_canvas_select_mode_mutation_progress_disables_selection_a
 
 
 @pytest.mark.asyncio
+async def test_prompts_canvas_mutation_filter_interlock_blocks_focus_and_dispatch():
+    app = _FilterDispatchCanvasHost(
+        _selection_state(),
+        mutation_in_flight=True,
+    )
+
+    async with app.run_test(size=(40, 30)) as pilot:
+        prompt_filter = pilot.app.query_one("#library-prompts-filter", Input)
+        progress = pilot.app.query_one("#library-prompts-mutation-progress", Static)
+        assert str(progress.renderable) == "Updating selected items…"
+        assert prompt_filter.disabled is True
+        assert prompt_filter not in pilot.app.screen.focus_chain
+
+        app.filter_events.clear()
+        prompt_filter.focus()
+        await pilot.pause()
+        assert prompt_filter.has_focus is False
+        await pilot.click("#library-prompts-filter")
+        await pilot.press("x", "enter")
+        await pilot.pause()
+        assert app.filter_events == []
+
+
+@pytest.mark.asyncio
 async def test_prompts_canvas_bulk_disabled_reason_mutation_disables_error_retry():
     error = build_prompt_browse_error(
         PromptBrowseScope(),
@@ -1463,6 +1537,132 @@ async def test_prompts_canvas_selection_toolbar_sort_choices_keep_import_export_
         export_button = pilot.app.query_one("#library-prompts-export", Button)
         assert import_button.parent is export_button.parent
         assert import_button.parent is not None and import_button.parent.display is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("case", "state", "kwargs", "copy_selector", "exact_copy", "paint_needle"),
+    [
+        (
+            "selected",
+            _selection_state(),
+            {},
+            "#library-prompts-selection-summary",
+            "7 selected · 2 on this page",
+            "7 selected · 2 on this page",
+        ),
+        (
+            "zero",
+            _selection_state(total_selected=0, selected_on_page=0),
+            {},
+            "#library-prompts-selection-reason",
+            "Select one or more items to use bulk actions.",
+            "Select one or more",
+        ),
+        (
+            "mutation",
+            _selection_state(),
+            {"mutation_in_flight": True},
+            "#library-prompts-mutation-progress",
+            "Updating selected items…",
+            "Updating selected items…",
+        ),
+        (
+            "plural-receipt",
+            _selection_state(),
+            {
+                "delete_receipt": PromptBatchDeleteResult(
+                    entries=(
+                        PromptDeleteReceiptEntry(2, "First", "prompt", 4),
+                        PromptDeleteReceiptEntry(3, "Second", "recipe", 5),
+                    )
+                )
+            },
+            "#library-prompts-delete-receipt-copy",
+            "✓ deleted · 2 items",
+            "✓ deleted · 2 items",
+        ),
+    ],
+    ids=["selected", "zero", "mutation", "plural-receipt"],
+)
+async def test_prompts_canvas_select_mode_geometry_fits_40_columns(
+    case: str,
+    state: PromptsListState,
+    kwargs: dict[str, Any],
+    copy_selector: str,
+    exact_copy: str,
+    paint_needle: str,
+) -> None:
+    app = _StyledCanvasHost(state, **kwargs)
+
+    async with app.run_test(size=(40, 40)) as pilot:
+        canvas = pilot.app.query_one(
+            "#library-prompts-canvas", LibraryPromptsListCanvas
+        )
+        visible_copy = pilot.app.query_one(copy_selector, Static)
+        assert str(visible_copy.renderable) == exact_copy
+        assert (
+            _painted_style_of_text(pilot.app, visible_copy.region, paint_needle)
+            is not None
+        )
+
+        action_ids = list(_SELECTION_ACTION_IDS)
+        if case == "plural-receipt":
+            action_ids.extend(
+                (
+                    "library-prompts-delete-undo",
+                    "library-prompts-delete-receipt-dismiss",
+                )
+            )
+        for action_id in action_ids:
+            action = pilot.app.query_one(f"#{action_id}", Button)
+            _assert_region_fully_visible(action, pilot.app.screen.region)
+            assert canvas.region.contains_region(action.region), action_id
+            if not action.disabled:
+                assert action in pilot.app.screen.focus_chain, action_id
+        assert list(canvas.query(VerticalScroll)) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(64, 24), (120, 40)], ids=["narrow", "wide"])
+async def test_library_shell_prompt_select_mode_actions_are_visible_and_reachable(
+    size: tuple[int, int],
+) -> None:
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = _FakePromptScopeServiceWithList(
+        [
+            {"id": 5, "name": "First", "version": 1},
+            {"id": 6, "name": "Second", "version": 2},
+            {"id": 7, "name": "Third", "version": 3},
+        ]
+    )
+    screen = _SelectionLibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=size) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts").press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
+        summary = await _wait_for_selector(
+            screen, pilot, "#library-prompts-selection-summary"
+        )
+        canvas = screen.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+
+        assert str(summary.renderable) == "7 selected · 2 on this page"
+        assert (
+            _painted_style_of_text(
+                pilot.app, summary.region, "7 selected · 2 on this page"
+            )
+            is not None
+        )
+        for action_id in _SELECTION_ACTION_IDS:
+            action = screen.query_one(f"#{action_id}", Button)
+            _assert_region_fully_visible(action, screen.region)
+            assert canvas.region.contains_region(action.region), action_id
+            assert action.disabled is False
+            assert action in screen.focus_chain, action_id
+        assert list(canvas.query(VerticalScroll)) == []
 
 
 @pytest.mark.asyncio

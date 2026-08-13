@@ -303,17 +303,20 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     f"✓ deleted · {receipt.artifact_type.title()} · "
                     f"{_compact_receipt_name(receipt.title)}"
                 )
-            receipt_row = Horizontal(
+            receipt_copy_row = Horizontal(
                 id="library-prompts-delete-receipt", classes="ds-toolbar"
             )
-            receipt_row.styles.height = "auto"
-            with receipt_row:
+            receipt_copy_row.styles.height = "auto"
+            with receipt_copy_row:
                 yield Static(
                     receipt_copy,
                     id="library-prompts-delete-receipt-copy",
                     classes="library-toolbar-count",
                     markup=False,
                 )
+            receipt_actions = Horizontal(classes="ds-toolbar")
+            receipt_actions.styles.height = "auto"
+            with receipt_actions:
                 yield Button(
                     library_disabled_action_label("Undo", self.mutation_in_flight),
                     id="library-prompts-delete-undo",
@@ -334,6 +337,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             placeholder="Filter prompts… (Enter)",
             id="library-prompts-filter",
             value=self.filter_value,
+            disabled=self.mutation_in_flight,
+            tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
         )
         collection_label = library_choice_label(
             "collection", escape_markup(self.collection_label)
@@ -407,6 +412,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         else None
                     ),
                 )
+            done_toolbar = Horizontal(classes="ds-toolbar")
+            done_toolbar.styles.height = "auto"
+            with done_toolbar:
                 yield Button(
                     library_disabled_action_label("Done", self.mutation_in_flight),
                     id="library-prompts-selection-done",
@@ -415,13 +423,13 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     disabled=self.mutation_in_flight,
                     tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
                 )
-            selection_toolbar = Horizontal(classes="ds-toolbar")
-            selection_toolbar.styles.height = "auto"
-            with selection_toolbar:
-                for label, action_id in (
-                    ("Export selected", "library-prompts-export-selected"),
-                    ("Delete selected", "library-prompts-delete-selected"),
-                ):
+            for label, action_id in (
+                ("Export selected", "library-prompts-export-selected"),
+                ("Delete selected", "library-prompts-delete-selected"),
+            ):
+                selection_toolbar = Horizontal(classes="ds-toolbar")
+                selection_toolbar.styles.height = "auto"
+                with selection_toolbar:
                     yield Button(
                         library_disabled_action_label(label, selection_disabled),
                         id=action_id,
