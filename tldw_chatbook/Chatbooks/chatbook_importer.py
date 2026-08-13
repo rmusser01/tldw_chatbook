@@ -46,6 +46,12 @@ from ..Utils.private_paths import secure_private_directory
 
 
 _PROMPT_ARCHIVE_ITEM_ID = re.compile(r"(?:[1-9][0-9]*|item-[0-9]{6,})\Z")
+_MAX_ARCHIVE_MEMBERS = 10_000
+_MAX_ARCHIVE_MEMBER_BYTES = 128 * 1024 * 1024
+_MAX_ARCHIVE_TOTAL_BYTES = 512 * 1024 * 1024
+_MAX_ARCHIVE_COMPRESSION_RATIO = 1_000
+_ARCHIVE_COPY_CHUNK_BYTES = 64 * 1024
+_ARCHIVE_LIMIT_ERROR = "Chatbook archive exceeds safety limits."
 
 
 class ImportStatus:
@@ -135,8 +141,24 @@ class ChatbookImporter:
         """Extract regular ZIP members with owner-only permissions."""
 
         with zipfile.ZipFile(chatbook_path, "r") as archive:
-            for member in archive.infolist():
+            members = archive.infolist()
+            if len(members) > _MAX_ARCHIVE_MEMBERS:
+                raise ValueError(_ARCHIVE_LIMIT_ERROR)
+            total_bytes = 0
+            validated: list[tuple[zipfile.ZipInfo, tuple[str, ...]]] = []
+            for member in members:
                 parts = self._validated_archive_parts(member)
+                total_bytes += member.file_size
+                if (
+                    member.file_size > _MAX_ARCHIVE_MEMBER_BYTES
+                    or total_bytes > _MAX_ARCHIVE_TOTAL_BYTES
+                    or member.file_size
+                    > max(member.compress_size, 1) * _MAX_ARCHIVE_COMPRESSION_RATIO
+                ):
+                    raise ValueError(_ARCHIVE_LIMIT_ERROR)
+                validated.append((member, parts))
+
+            for member, parts in validated:
                 target = extract_dir.joinpath(*parts)
                 if member.is_dir():
                     secure_private_directory(
@@ -160,7 +182,17 @@ class ChatbookImporter:
                     with os.fdopen(file_fd, "wb") as destination:
                         file_fd = -1
                         with archive.open(member, "r") as source:
-                            shutil.copyfileobj(source, destination)
+                            written = 0
+                            while chunk := source.read(_ARCHIVE_COPY_CHUNK_BYTES):
+                                written += len(chunk)
+                                if (
+                                    written > member.file_size
+                                    or written > _MAX_ARCHIVE_MEMBER_BYTES
+                                ):
+                                    raise ValueError(_ARCHIVE_LIMIT_ERROR)
+                                destination.write(chunk)
+                            if written != member.file_size:
+                                raise ValueError(_ARCHIVE_LIMIT_ERROR)
                         destination.flush()
                         os.fsync(destination.fileno())
                 finally:
@@ -755,6 +787,8 @@ class ChatbookImporter:
         expected_path: list[str] = []
         current = active_leaf
         while current is not None:
+            if by_id[current]["deleted"]:
+                raise ValueError("Invalid V2 conversation graph.")
             expected_path.append(current)
             current = by_id[current].get("parent_id")
         expected_path.reverse()

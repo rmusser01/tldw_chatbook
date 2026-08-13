@@ -34,6 +34,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
     ConflictError,
     InputError,
 )
+from tldw_chatbook.Chat.provider_continuation import (  # noqa: E402
+    dump_provider_continuation_json,
+    read_provider_continuation_json,
+)
 from tldw_chatbook.Utils.path_validation import (  # noqa: E402
     validate_path,
     validate_path_simple,
@@ -54,6 +58,8 @@ from tldw_chatbook.TTS.profile_portability import (  # noqa: E402
 #
 # Constants
 DEFAULT_CHARACTER_ID = 1
+_MAX_EXPORTED_HISTORY_MESSAGES = 10_000
+_MAX_EXPORTED_HISTORY_CONTENT_CHARS = 1_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -3119,6 +3125,80 @@ def load_chat_history_from_file_and_save_to_db(
             )
 
         chat_data_dict = json.loads(content_str)
+
+        # Chatbook's ordinary JSON export is a bounded active-path projection,
+        # not a character-card log and not a replacement conversation graph.
+        projected_history = chat_data_dict.get("history")
+        if (
+            isinstance(chat_data_dict.get("conversation_name"), str)
+            and isinstance(projected_history, list)
+            and all(isinstance(message, dict) for message in projected_history)
+        ):
+            if (
+                not projected_history
+                or len(projected_history) > _MAX_EXPORTED_HISTORY_MESSAGES
+            ):
+                raise ValueError("Invalid exported chat history.")
+            staged_messages: list[dict[str, Any]] = []
+            for ordinal, message in enumerate(projected_history, start=1):
+                role = message.get("role")
+                content = message.get("content")
+                if (
+                    role not in {"user", "assistant", "system", "tool"}
+                    or not isinstance(content, str)
+                    or len(content) > _MAX_EXPORTED_HISTORY_CONTENT_CHARS
+                ):
+                    raise ValueError("Invalid exported chat history.")
+                staged = {"sender": role, "role": role, "content": content}
+                private = message.get("_private")
+                checkpoint = None
+                if (
+                    role == "assistant"
+                    and isinstance(private, dict)
+                    and set(private) == {"provider_continuation"}
+                ):
+                    checkpoint = read_provider_continuation_json(
+                        private.get("provider_continuation")
+                    ).checkpoint
+                    if (
+                        checkpoint is not None
+                        and checkpoint.provider == "moonshot"
+                        and checkpoint.model == "kimi-k3"
+                        and checkpoint.state == "complete"
+                        and checkpoint.rounds[-1].assistant_content != content
+                    ):
+                        checkpoint = None
+                if private is not None and checkpoint is None:
+                    logger.warning(
+                        "Exact tool continuation was discarded for message {}.",
+                        ordinal,
+                    )
+                if checkpoint is not None:
+                    staged["provider_continuation_json"] = (
+                        dump_provider_continuation_json(checkpoint)
+                    )
+                staged_messages.append(staged)
+
+            title = chat_data_dict.get("conversation_name")
+            if not isinstance(title, str) or not title.strip():
+                title = "Imported Chat"
+            title = title[:255]
+            with db.transaction():
+                new_conv_id = db.add_conversation(
+                    {"title": title, "assistant_authority_id": None}
+                )
+                if not new_conv_id:
+                    raise CharactersRAGDBError("Failed to import chat history.")
+                parent_id = None
+                for staged in staged_messages:
+                    staged["conversation_id"] = new_conv_id
+                    staged["parent_message_id"] = parent_id
+                    new_message_id = db.add_message(staged)
+                    if not new_message_id:
+                        raise CharactersRAGDBError("Failed to import chat history.")
+                    parent_id = str(new_message_id)
+                db.set_conversation_active_leaf(new_conv_id, parent_id)
+            return str(new_conv_id), None
 
         # Extract character name (flexible key search)
         char_name_from_log = (

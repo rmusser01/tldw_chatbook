@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import io
 import shutil
 from pathlib import Path
 
@@ -15,6 +16,12 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.Chat.document_generator import DocumentGenerator
 from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+    load_chat_history_from_file_and_save_to_db,
+)
+import tldw_chatbook.Character_Chat.Character_Chat_Lib as character_chat_module
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -92,6 +99,128 @@ def test_conversation_json_uses_explicit_private_projection() -> None:
         "PRIVATE-UI-CANARY",
     ):
         assert canary not in serialized
+
+
+def test_exported_json_import_restores_exact_assistant_owner_without_running() -> None:
+    database = CharactersRAGDB(":memory:", "json-continuation-import")
+    try:
+        history = [
+            {"role": "user", "content": "Use a tool"},
+            {
+                "role": "assistant",
+                "content": "visible answer",
+                "provider_continuation_json": json.dumps(_checkpoint()),
+            },
+        ]
+        payload_json, _ = generate_chat_history_content(history, None, None)
+
+        conversation_id, character_id = load_chat_history_from_file_and_save_to_db(
+            database, io.BytesIO(payload_json.encode())
+        )
+
+        assert conversation_id is not None
+        assert character_id is None
+        rows = database.get_messages_for_conversation(conversation_id)
+        assert [(row["role"], row["content"]) for row in rows] == [
+            ("user", "Use a tool"),
+            ("assistant", "visible answer"),
+        ]
+        assert rows[0]["provider_continuation_json"] is None
+        assert (
+            parse_provider_continuation_json(
+                rows[1]["provider_continuation_json"]
+            ).state
+            == "active"
+        )
+
+        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        session = store.restore_persisted_session(
+            title="Imported JSON",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=[],
+            active_leaf_persisted_id=str(rows[1]["id"]),
+        )
+        interrupted = store.interrupted_provider_continuation_message(session.id)
+        assert interrupted is not None
+        assert interrupted.content == "visible answer"
+        assert interrupted.provider_continuation is not None
+        assert interrupted.provider_continuation.rounds[-1].calls[-1].state == "pending"
+    finally:
+        database.close_connection()
+
+
+def test_exported_json_import_drops_invalid_private_with_safe_warning(
+    monkeypatch,
+) -> None:
+    database = CharactersRAGDB(":memory:", "invalid-json-continuation")
+    try:
+        warnings = []
+
+        class WarningLogger:
+            @staticmethod
+            def warning(message, *args):
+                warnings.append(message.format(*args))
+
+        monkeypatch.setattr(character_chat_module, "logger", WarningLogger())
+        checkpoint = _checkpoint()
+        checkpoint["schema_version"] = 99
+        payload = {
+            "conversation_name": "Imported",
+            "history": [
+                {
+                    "role": "assistant",
+                    "content": "visible answer",
+                    "_private": {"provider_continuation": checkpoint},
+                }
+            ],
+        }
+
+        conversation_id, _ = load_chat_history_from_file_and_save_to_db(
+            database, io.BytesIO(json.dumps(payload).encode())
+        )
+
+        assert conversation_id is not None
+        rows = database.get_messages_for_conversation(conversation_id)
+        assert len(rows) == 1
+        assert rows[0]["content"] == "visible answer"
+        assert rows[0]["provider_continuation_json"] is None
+        diagnostic = "\n".join(warnings)
+        assert "Exact tool continuation was discarded for message 1." in diagnostic
+        assert "PRIVATE-JSON-REASONING-CANARY" not in diagnostic
+        assert "PRIVATE-JSON-ARGUMENT-CANARY" not in diagnostic
+    finally:
+        database.close_connection()
+
+
+def test_exported_json_import_bounds_messages_before_database_writes(
+    monkeypatch,
+) -> None:
+    database = CharactersRAGDB(":memory:", "bounded-json-import")
+    try:
+        monkeypatch.setattr(
+            "tldw_chatbook.Character_Chat.Character_Chat_Lib._MAX_EXPORTED_HISTORY_MESSAGES",
+            1,
+        )
+        payload = {
+            "conversation_name": "Bounded",
+            "history": [
+                {"role": "user", "content": "one"},
+                {"role": "assistant", "content": "two"},
+            ],
+        }
+
+        result = load_chat_history_from_file_and_save_to_db(
+            database, io.BytesIO(json.dumps(payload).encode())
+        )
+
+        assert result == (None, None)
+        assert (
+            database.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == 0
+        )
+    finally:
+        database.close_connection()
 
 
 def test_malformed_json_export_input_does_not_log_private_payload(caplog) -> None:

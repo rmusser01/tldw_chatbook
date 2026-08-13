@@ -364,7 +364,16 @@ def _invalid_graph_mutations() -> list:
     def duplicate_order(conversation):
         conversation["messages"][1]["order"] = conversation["messages"][0]["order"]
 
-    return [duplicate_id, dangling_parent, ambiguous_variant, duplicate_order]
+    def deleted_active_ancestor(conversation):
+        conversation["messages"][0]["deleted"] = True
+
+    return [
+        duplicate_id,
+        dangling_parent,
+        ambiguous_variant,
+        duplicate_order,
+        deleted_active_ancestor,
+    ]
 
 
 @pytest.mark.parametrize("mutate_graph", _invalid_graph_mutations())
