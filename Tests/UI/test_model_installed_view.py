@@ -1,15 +1,34 @@
 """Focused tests for the managed-model Installed view."""
 
+import inspect
 import threading
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
-from textual.widgets import Button
+from textual.screen import Screen
+from textual.widgets import Button, Static
 
-from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+from tldw_chatbook.Model_Artifacts.service import (
+    ArtifactDiskUsage,
+    ArtifactRef,
+    InstalledArtifact,
+    LocalGGUFImportProgress,
+    LocalGGUFImportResult,
+    ModelArtifactService,
+)
+
+
+_BUNDLED_CSS = (
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "css"
+    / "tldw_cli_modular.tcss"
+)
 
 
 class _InstalledApp(App):
@@ -19,6 +38,136 @@ class _InstalledApp(App):
 
     def compose(self) -> ComposeResult:
         yield self.view
+
+
+class _StyledInstalledApp(_InstalledApp):
+    """Installed-view harness using the exact production stylesheet bundle."""
+
+    CSS_PATH = _BUNDLED_CSS
+
+
+def _fake_never_cancelled() -> bool:
+    return False
+
+
+def _fake_ignore_progress(_event: LocalGGUFImportProgress) -> None:
+    return None
+
+
+class _ImportServiceFake:
+    """Discriminating import seam with the production service's public shape."""
+
+    def __init__(
+        self,
+        import_impl: Callable[
+            [
+                Path,
+                Callable[[], bool],
+                Callable[[LocalGGUFImportProgress], None],
+            ],
+            LocalGGUFImportResult,
+        ],
+        *,
+        installed: tuple[InstalledArtifact, ...] = (),
+        activation_error: BaseException | None = None,
+    ) -> None:
+        self.import_impl = import_impl
+        self.installed = installed
+        self.activation_error = activation_error
+        self.import_sources: list[Path] = []
+        self.activation_calls: list[ArtifactRef] = []
+        self.import_entered = threading.Event()
+        self.activation_finished = threading.Event()
+        self.inventory_reads = 0
+
+    def import_local_gguf(
+        self,
+        source_file: Path,
+        *,
+        cancelled: Callable[[], bool] = _fake_never_cancelled,
+        progress: Callable[[LocalGGUFImportProgress], None] = _fake_ignore_progress,
+    ) -> LocalGGUFImportResult:
+        self.import_sources.append(source_file)
+        self.import_entered.set()
+        return self.import_impl(source_file, cancelled, progress)
+
+    def activate(self, root_reference: ArtifactRef) -> ArtifactRef:
+        self.activation_calls.append(root_reference)
+        try:
+            if self.activation_error is not None:
+                raise self.activation_error
+            return root_reference
+        finally:
+            self.activation_finished.set()
+
+    def list_installed(self) -> tuple[InstalledArtifact, ...]:
+        self.inventory_reads += 1
+        return self.installed
+
+    def disk_usage(self) -> ArtifactDiskUsage:
+        return ArtifactDiskUsage(0, 0, 64 * 1024 * 1024)
+
+
+def _signature_contract(callable_object) -> tuple[tuple[str, object, bool], ...]:
+    """Normalize the public parameter contract without comparing function objects."""
+    return tuple(
+        (
+            name,
+            parameter.kind,
+            parameter.default is inspect.Parameter.empty,
+        )
+        for name, parameter in inspect.signature(callable_object).parameters.items()
+    )
+
+
+def test_import_service_fake_matches_real_public_signatures() -> None:
+    """The fake cannot silently bless a wrong positional or keyword call shape."""
+    assert _signature_contract(_ImportServiceFake.import_local_gguf) == (
+        ("self", inspect.Parameter.POSITIONAL_OR_KEYWORD, True),
+        ("source_file", inspect.Parameter.POSITIONAL_OR_KEYWORD, True),
+        ("cancelled", inspect.Parameter.KEYWORD_ONLY, False),
+        ("progress", inspect.Parameter.KEYWORD_ONLY, False),
+    )
+    assert _signature_contract(
+        _ImportServiceFake.import_local_gguf
+    ) == _signature_contract(ModelArtifactService.import_local_gguf)
+    assert _signature_contract(_ImportServiceFake.activate) == _signature_contract(
+        ModelArtifactService.activate
+    )
+
+
+def _import_reference(character: str = "a") -> ArtifactRef:
+    return ArtifactRef(
+        f"local-gguf-{character * 16}",
+        f"sha256-{character * 64}",
+        "filetype-7",
+    )
+
+
+def _unmanaged_inventory(source: Path):
+    from tldw_chatbook.UI.Screens.model_browser_state import (
+        UnmanagedRow,
+        inventory_rows,
+    )
+
+    return inventory_rows(
+        (),
+        ArtifactDiskUsage(0, 0, 64 * 1024 * 1024),
+        (UnmanagedRow(source, source.stat().st_size),),
+    )
+
+
+async def _wait_until(pilot, predicate, *, attempts: int = 120) -> None:
+    """Pump Textual until a cross-thread observation becomes true."""
+    for _ in range(attempts):
+        if predicate():
+            return
+        await pilot.pause()
+    assert predicate()
+
+
+def _rendered_static_text(view) -> str:
+    return "\n".join(str(widget.renderable) for widget in view.query(Static))
 
 
 @pytest.mark.asyncio
@@ -199,6 +348,151 @@ def test_unmanaged_scan_validates_root_before_walking(
         module.InstalledView.scan_unmanaged(tmp_path / "../..")
 
     walk.assert_not_called()
+
+
+def test_scan_unmanaged_excludes_managed_artifacts_root(tmp_path: Path) -> None:
+    """The managed subtree is pruned without hiding other outside GGUF files."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    legacy_root = tmp_path / "legacy"
+    store = ModelArtifactService(legacy_root / "managed")
+    managed_payload = store.artifacts_path / "local" / "model.gguf"
+    managed_payload.parent.mkdir(parents=True)
+    managed_payload.write_bytes(b"x" * 1_048_577)
+    external_payload = legacy_root / "outside.gguf"
+    external_payload.write_bytes(b"y" * 1_048_577)
+
+    rows = InstalledView.scan_unmanaged(
+        legacy_root,
+        excluded_root=store.artifacts_path,
+    )
+    paths = {row.path for row in rows}
+
+    assert managed_payload not in paths
+    assert external_payload in paths
+
+
+@pytest.mark.asyncio
+async def test_header_and_unmanaged_row_open_real_gguf_picker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Header and outside-row actions use one real GGUF-only picker contract."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+    from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
+    from tldw_chatbook.Widgets.ModelArtifacts import LocalGGUFImportConsentModal
+
+    source = tmp_path / ("outside-model-" * 5 + ".gguf")
+    source.write_bytes(b"x" * 1_048_577)
+    service = _ImportServiceFake(
+        lambda _source, _cancelled, _progress: LocalGGUFImportResult(
+            _import_reference(),
+            False,
+        )
+    )
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _StyledInstalledApp(view)
+    pushed: list[tuple[Screen, Callable]] = []
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        monkeypatch.setattr(
+            app,
+            "push_screen",
+            lambda screen, callback=None: pushed.append((screen, callback)),
+        )
+        header = view.query_one("#installed-models-import-gguf", Button)
+        row_action = view.query_one(".model-import", Button)
+        for action in (header, row_action):
+            assert action in app.screen._compositor.visible_widgets
+            assert action.region.right <= app.size.width
+            assert action.region.bottom <= app.size.height
+
+        header.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        picker, picked = pushed.pop(0)
+        assert isinstance(picker, EnhancedFileOpen)
+        assert picker.filters is not None
+        assert picker.filters[0](Path("model.gguf")) is True
+        assert picker.filters[0](Path("model.GGUF")) is True
+        assert picker.filters[0](Path("model.bin")) is False
+        assert len(pushed) == 0
+
+        picked(None)
+        assert len(pushed) == 0
+        picked(source)
+        consent, decided = pushed.pop(0)
+        assert isinstance(consent, LocalGGUFImportConsentModal)
+        assert consent.source == source
+        decided(False)
+
+        row_action = view.query_one(".model-import", Button)
+        row_action.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        picker, picked = pushed.pop(0)
+        assert isinstance(picker, EnhancedFileOpen)
+        assert picker.filters is not None
+        assert picker.filters[0](Path("replacement.gguf")) is True
+        assert picker.filters[0](Path("replacement.onnx")) is False
+        picked(source)
+        consent, decided = pushed.pop(0)
+        assert isinstance(consent, LocalGGUFImportConsentModal)
+        assert consent.source == source
+        decided(False)
+
+    assert service.import_sources == []
+    assert service.activation_calls == []
+
+
+@pytest.mark.asyncio
+async def test_declined_consent_performs_no_service_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Declining the transient copy consent leaves the outside row untouched."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+    from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
+    from tldw_chatbook.Widgets.ModelArtifacts import LocalGGUFImportConsentModal
+
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    service = _ImportServiceFake(
+        lambda _source, _cancelled, _progress: LocalGGUFImportResult(
+            _import_reference(),
+            False,
+        )
+    )
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _InstalledApp(view)
+    pushed: list[tuple[Screen, Callable]] = []
+
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(
+            app,
+            "push_screen",
+            lambda screen, callback=None: pushed.append((screen, callback)),
+        )
+        await pilot.click(".model-import")
+        await pilot.pause()
+        picker, picked = pushed.pop()
+        assert isinstance(picker, EnhancedFileOpen)
+        picked(source)
+        consent, decided = pushed.pop()
+        assert isinstance(consent, LocalGGUFImportConsentModal)
+        decided(False)
+        await pilot.pause()
+
+        assert view._pending_import_path is None
+        assert len(view.query(".model-import")) == 1
+        assert source.name in _rendered_static_text(view)
+
+    assert service.import_sources == []
+    assert service.activation_calls == []
 
 
 @pytest.mark.asyncio
@@ -444,6 +738,52 @@ def test_repair_summary_reports_every_reconciliation_outcome(tmp_path: Path) -> 
     assert "2 staging entries observed" in message
     assert "0 staging entries removed" in message
     assert "1 corrupt model" in message
+    assert marker not in message
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    (
+        ("path", "read safely"),
+        ("parse", "valid GGUF"),
+        ("bounds", "valid GGUF"),
+        ("version", "supported GGUF"),
+        ("integrity", "integrity verification"),
+        ("busy", "busy"),
+        ("generic", "could not be imported"),
+    ),
+)
+def test_local_import_failure_message_uses_stable_path_free_taxonomy(
+    error: str,
+    expected: str,
+) -> None:
+    """Every service/admission category maps to fixed recovery copy."""
+    from tldw_chatbook.Model_Artifacts.gguf_admission import (
+        GGUFBoundsError,
+        GGUFParseError,
+        GGUFPathError,
+        GGUFVersionError,
+    )
+    from tldw_chatbook.Model_Artifacts.leases import ArtifactLeaseTimeoutError
+    from tldw_chatbook.Model_Artifacts.service import ArtifactIntegrityError
+    from tldw_chatbook.UI.Screens.model_installed_view import (
+        local_import_failure_message,
+    )
+
+    marker = "PRIVATE-ERROR-PATH"
+    exceptions = {
+        "path": GGUFPathError(marker),
+        "parse": GGUFParseError(marker),
+        "bounds": GGUFBoundsError(marker),
+        "version": GGUFVersionError(marker),
+        "integrity": ArtifactIntegrityError(marker),
+        "busy": ArtifactLeaseTimeoutError(marker),
+        "generic": RuntimeError(marker),
+    }
+
+    message = local_import_failure_message(exceptions[error])
+
+    assert expected in message
     assert marker not in message
 
 
@@ -905,7 +1245,488 @@ async def test_mounted_install_progress_updates_without_recomposing_inventory(
     assert "encoder.onnx" in text
 
 
-def test_forced_refresh_queues_behind_an_inflight_inventory_load(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_import_progress_updates_without_replacing_focused_cancel(
+    tmp_path: Path,
+) -> None:
+    """Byte events update the mounted progress widget and preserve Cancel focus."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    emit_second = threading.Event()
+    second_progress = threading.Event()
+    release = threading.Event()
+    reference = _import_reference()
+
+    def import_impl(_source, _cancelled, progress):
+        progress(LocalGGUFImportProgress("copy", "model.gguf", 1_048_576, 4_194_304))
+        assert emit_second.wait(timeout=3.0)
+        progress(LocalGGUFImportProgress("copy", "model.gguf", 2_097_152, 4_194_304))
+        second_progress.set()
+        assert release.wait(timeout=3.0)
+        return LocalGGUFImportResult(reference, False)
+
+    service = _ImportServiceFake(import_impl)
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _StyledInstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view._begin_import(source)
+        await _wait_until(pilot, lambda: service.import_entered.is_set())
+        cancel = view.query_one("#installed-gguf-import-cancel", Button)
+        app.screen.set_focus(cancel)
+        emit_second.set()
+        await _wait_until(pilot, lambda: second_progress.is_set())
+        await pilot.pause()
+
+        assert view.query_one("#installed-gguf-import-cancel", Button) is cancel
+        assert cancel.has_focus is True
+        painted = _rendered_static_text(view)
+        assert "2.0 MiB / 4.0 MiB" in painted
+
+        release.set()
+        await _wait_until(pilot, lambda: service.activation_finished.is_set())
+
+
+@pytest.mark.asyncio
+async def test_physical_cancel_sets_service_probe_and_preserves_source(
+    tmp_path: Path,
+) -> None:
+    """Enter on the mounted Cancel reaches the service probe, never the source."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactStateError
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    source = tmp_path / "outside.gguf"
+    original = b"user-owned" * 131_073
+    source.write_bytes(original)
+    before = source.stat()
+    probe_now = threading.Event()
+    observed_cancel = threading.Event()
+    release_cancel = threading.Event()
+    probe_values: list[bool] = []
+
+    def import_impl(_source, cancelled, _progress):
+        assert probe_now.wait(timeout=3.0)
+        probe_values.append(cancelled())
+        observed_cancel.set()
+        assert release_cancel.wait(timeout=3.0)
+        raise ArtifactStateError("PRIVATE cancellation detail")
+
+    service = _ImportServiceFake(import_impl)
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _StyledInstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view._begin_import(source)
+        await _wait_until(pilot, lambda: service.import_entered.is_set())
+        cancel = view.query_one("#installed-gguf-import-cancel", Button)
+        app.screen.set_focus(cancel)
+        await pilot.press("enter")
+        probe_now.set()
+        await _wait_until(pilot, lambda: observed_cancel.is_set())
+
+        try:
+            assert probe_values == [True]
+            assert view.query_one("#installed-gguf-import-cancel", Button) is cancel
+            assert cancel.disabled is True
+            assert "Cancelling import…" in _rendered_static_text(view)
+        finally:
+            release_cancel.set()
+        await _wait_until(pilot, lambda: not view._import_active)
+
+        assert view._import_cancel_event is not None
+        assert view._import_cancel_event.is_set() is True
+        assert len(view.query(".model-import")) == 1
+
+    assert source.read_bytes() == original
+    assert source.stat().st_mtime_ns == before.st_mtime_ns
+
+
+@pytest.mark.asyncio
+async def test_finalizing_disables_cancel_before_promotion(tmp_path: Path) -> None:
+    """The synchronous Finalizing callback closes cancellation before commit."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    finalizing_callback_returned = threading.Event()
+    promotion_gate = threading.Event()
+    reference = _import_reference()
+
+    def import_impl(_source, _cancelled, progress):
+        progress(LocalGGUFImportProgress("finalize", None, 1_048_577, 1_048_577))
+        finalizing_callback_returned.set()
+        assert promotion_gate.wait(timeout=3.0)
+        return LocalGGUFImportResult(reference, False)
+
+    service = _ImportServiceFake(import_impl)
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _StyledInstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view._begin_import(source)
+        await _wait_until(pilot, lambda: finalizing_callback_returned.is_set())
+        cancel = view.query_one("#installed-gguf-import-cancel", Button)
+        assert cancel.disabled is True
+        assert "Finalizing managed model" in _rendered_static_text(view)
+        assert promotion_gate.is_set() is False
+
+        promotion_gate.set()
+        await _wait_until(pilot, lambda: service.activation_finished.is_set())
+
+
+@pytest.mark.asyncio
+async def test_import_success_activates_but_does_not_change_source_preference(
+    tmp_path: Path,
+) -> None:
+    """Import activates the exact ref without selecting it for any runtime."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    reference = _import_reference()
+    preference_callback = MagicMock()
+    service = _ImportServiceFake(
+        lambda _source, _cancelled, _progress: LocalGGUFImportResult(
+            reference,
+            False,
+        )
+    )
+    view = InstalledView(
+        service_factory=lambda: service,
+        legacy_dir=tmp_path,
+        on_root_activated=preference_callback,
+    )
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _InstalledApp(view)
+
+    async with app.run_test() as pilot:
+        view._begin_import(source)
+        await _wait_until(pilot, lambda: service.activation_finished.is_set())
+        await _wait_until(pilot, lambda: not view._import_active)
+
+        assert service.activation_calls == [reference]
+        assert service.inventory_reads >= 1
+        assert view._pending_import_path is None
+        assert "Imported and ready" in _rendered_static_text(view)
+
+    preference_callback.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_activation_failure_keeps_installed_row_and_offers_activate(
+    tmp_path: Path,
+) -> None:
+    """A promoted artifact survives readiness failure with exact Activate recovery."""
+    from Tests.Model_Artifacts.test_acquisition_types import make_descriptor
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    reference = _import_reference()
+    descriptor = replace(
+        make_descriptor(),
+        reference=reference,
+        model_id="Imported local model",
+        precision=reference.variant,
+    )
+    installed = InstalledArtifact(
+        path=tmp_path / "managed-copy",
+        descriptor=descriptor,
+        ready=False,
+        active=False,
+        error=None,
+    )
+    service = _ImportServiceFake(
+        lambda _source, _cancelled, _progress: LocalGGUFImportResult(
+            reference,
+            False,
+        ),
+        installed=(installed,),
+        activation_error=RuntimeError("PRIVATE activation detail"),
+    )
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _InstalledApp(view)
+
+    async with app.run_test() as pilot:
+        view._begin_import(source)
+        await _wait_until(pilot, lambda: service.activation_finished.is_set())
+        await _wait_until(pilot, lambda: service.inventory_reads >= 1)
+        await _wait_until(
+            pilot,
+            lambda: "Installed — activation required" in _rendered_static_text(view),
+        )
+
+        activate = view.query_one(".model-activate", Button)
+        assert activate.disabled is False
+        assert view._pending_import_path is None
+        assert source.name in _rendered_static_text(view)
+
+
+@pytest.mark.asyncio
+async def test_stale_import_callback_cannot_replace_newer_status(
+    tmp_path: Path,
+) -> None:
+    """Generation N cannot settle the visible lane after N+1 takes ownership."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    app = _InstalledApp(view)
+
+    async with app.run_test() as pilot:
+        view._import_generation = 2
+        view._import_active = True
+        view._import_status = "Newer import is running"
+        view.refresh(recompose=True)
+        await pilot.pause()
+
+        view._apply_import_success(
+            1,
+            LocalGGUFImportResult(_import_reference(), False),
+        )
+        await pilot.pause()
+
+        assert view._import_generation == 2
+        assert view._import_active is True
+        assert view._import_status == "Newer import is running"
+        assert "Newer import is running" in _rendered_static_text(view)
+
+
+@pytest.mark.asyncio
+async def test_import_failure_logs_only_stable_category_and_never_selected_path(
+    tmp_path: Path,
+) -> None:
+    """Import failures retain a type/category while suppressing exception paths."""
+    from tldw_chatbook.UI.Screens import model_installed_view as module
+
+    source = tmp_path / "PRIVATE-SENTINEL-MODEL.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+
+    def import_impl(_source, _cancelled, _progress):
+        raise RuntimeError(f"failed at {source}")
+
+    service = _ImportServiceFake(import_impl)
+    view = module.InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _InstalledApp(view)
+    logs: list[str] = []
+    sink_id = module.logger.add(lambda message: logs.append(str(message)))
+
+    try:
+        async with app.run_test() as pilot:
+            view._begin_import(source)
+            await _wait_until(pilot, lambda: not view._import_active)
+            notifications = " ".join(
+                notification.message for notification in app._notifications
+            )
+            rendered = _rendered_static_text(view)
+    finally:
+        module.logger.remove(sink_id)
+
+    combined_logs = "".join(logs)
+    assert "phase=import" in combined_logs
+    assert "error_type=RuntimeError" in combined_logs
+    assert str(source) not in combined_logs
+    assert str(source) not in notifications
+    assert str(source) not in rendered
+
+
+@pytest.mark.asyncio
+async def test_cancelled_and_failed_import_offer_retry_and_choose_another(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both recoveries stay path-private; Retry alone retains the selection."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactStateError
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+    from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
+
+    source = tmp_path / "PRIVATE-RETRY-SENTINEL.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    attempts = 0
+    cancellation_seen = threading.Event()
+
+    def import_impl(_source, cancelled, _progress):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            while not cancelled():
+                cancellation_seen.wait(timeout=0.01)
+            cancellation_seen.set()
+            raise ArtifactStateError("private cancellation detail")
+        raise RuntimeError(f"private failure at {source}")
+
+    service = _ImportServiceFake(import_impl)
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _InstalledApp(view)
+    pushed: list[tuple[Screen, Callable]] = []
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        monkeypatch.setattr(
+            app,
+            "push_screen",
+            lambda screen, callback=None: pushed.append((screen, callback)),
+        )
+        view._begin_import(source)
+        await _wait_until(pilot, lambda: service.import_entered.is_set())
+        cancel = view.query_one("#installed-gguf-import-cancel", Button)
+        app.screen.set_focus(cancel)
+        await pilot.press("enter")
+        await _wait_until(pilot, lambda: cancellation_seen.is_set())
+        await _wait_until(pilot, lambda: not view._import_active)
+
+        assert "Import cancelled" in _rendered_static_text(view)
+        assert view.query_one("#installed-gguf-import-retry", Button)
+        assert view.query_one("#installed-gguf-import-choose", Button)
+        assert str(source) not in _rendered_static_text(view)
+
+        retry = view.query_one("#installed-gguf-import-retry", Button)
+        app.screen.set_focus(retry)
+        await pilot.press("enter")
+        await _wait_until(pilot, lambda: len(service.import_sources) == 2)
+        await _wait_until(pilot, lambda: not view._import_active)
+
+        assert "could not be imported" in _rendered_static_text(view)
+        assert service.import_sources == [source, source]
+        assert str(source) not in _rendered_static_text(view)
+
+        choose = view.query_one("#installed-gguf-import-choose", Button)
+        app.screen.set_focus(choose)
+        await pilot.press("enter")
+        await pilot.pause()
+        picker, _callback = pushed.pop()
+        assert isinstance(picker, EnhancedFileOpen)
+        assert view._pending_import_path is None
+        assert str(source) not in _rendered_static_text(view)
+
+
+@pytest.mark.asyncio
+async def test_import_lane_disables_every_lifecycle_action_at_80_columns(
+    tmp_path: Path,
+) -> None:
+    """One active import owns all managed mutations while controls remain visible."""
+    from Tests.Model_Artifacts.test_acquisition_types import make_descriptor
+    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    reference = _import_reference()
+    descriptor = replace(
+        make_descriptor(),
+        reference=reference,
+        precision=reference.variant,
+    )
+    managed = InstalledArtifact(
+        path=tmp_path / "managed-model",
+        descriptor=descriptor,
+        ready=True,
+        active=False,
+        error=None,
+    )
+    release = threading.Event()
+
+    def import_impl(_source, _cancelled, _progress):
+        assert release.wait(timeout=3.0)
+        return LocalGGUFImportResult(reference, True)
+
+    service = _ImportServiceFake(import_impl)
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = inventory_rows(
+        (managed,),
+        ArtifactDiskUsage(0, 0, 64 * 1024 * 1024),
+        (),
+    ) + _unmanaged_inventory(source)
+    app = _StyledInstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view._begin_import(source)
+        await _wait_until(pilot, lambda: service.import_entered.is_set())
+
+        selectors = (
+            "#installed-models-refresh",
+            "#installed-models-repair",
+            "#installed-models-import-gguf",
+            ".model-import",
+            ".model-activate",
+            ".model-delete",
+        )
+        for selector in selectors:
+            button = view.query_one(selector, Button)
+            assert button.disabled is True
+            try:
+                button.query_ancestor(".installed-model-row").scroll_visible(
+                    animate=False,
+                )
+            except NoMatches:
+                button.scroll_visible(animate=False)
+            await pilot.pause()
+            assert button in app.screen._compositor.visible_widgets
+            assert button.region.right <= app.size.width
+            assert button.region.bottom <= app.size.height
+        assert (
+            len(
+                [
+                    worker
+                    for worker in app.workers
+                    if worker.group == "installed_gguf_import"
+                ]
+            )
+            == 1
+        )
+
+        release.set()
+        await _wait_until(pilot, lambda: service.activation_finished.is_set())
+
+
+@pytest.mark.asyncio
+async def test_unmount_cancels_import_and_forgets_selected_path(tmp_path: Path) -> None:
+    """Unmount invalidates the lane without touching detached widgets."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactStateError
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    cancel_seen = threading.Event()
+
+    def import_impl(_source, cancelled, _progress):
+        while not cancelled():
+            cancel_seen.wait(timeout=0.01)
+        cancel_seen.set()
+        raise ArtifactStateError("cancelled after unmount")
+
+    service = _ImportServiceFake(import_impl)
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    app = _InstalledApp(view)
+
+    async with app.run_test() as pilot:
+        view._begin_import(source)
+        await _wait_until(pilot, lambda: service.import_entered.is_set())
+        generation = view._import_generation
+        await view.remove()
+        await _wait_until(pilot, lambda: cancel_seen.is_set())
+
+        assert view._pending_import_path is None
+        assert view._import_generation > generation
+
+
+def test_forced_refresh_queues_behind_an_inflight_inventory_load(
+    tmp_path: Path,
+) -> None:
     """A lifecycle completion cannot lose its mandatory post-operation refresh."""
     from tldw_chatbook.Model_Artifacts.service import ArtifactDiskUsage
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView

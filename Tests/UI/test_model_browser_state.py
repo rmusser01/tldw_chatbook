@@ -158,9 +158,35 @@ def test_inventory_keeps_broken_and_unmanaged_rows_visible(tmp_path: Path) -> No
     assert rows[0].is_broken is True
     assert "Repair" in rows[0].action_hint
     assert rows[1].is_unmanaged is True
+    assert rows[1].reference is None
     assert rows[1].provenance == "Unmanaged — integrity unknown"
+    assert rows[1].action_hint == "Outside Chatbook · integrity unknown"
     assert rows[1].installed_store_bytes == 100
     assert rows[1].staging_store_bytes == 25
+
+
+def test_unmanaged_gguf_row_offers_import_without_managed_reference(
+    tmp_path: Path,
+) -> None:
+    """An outside GGUF remains usable and gains only an optional Import action."""
+    from tldw_chatbook.UI.Screens.model_browser_state import (
+        UnmanagedRow,
+        inventory_rows,
+    )
+
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    usage = ArtifactDiskUsage(0, 0, 0)
+
+    row = inventory_rows(
+        (),
+        usage,
+        (UnmanagedRow(source, source.stat().st_size),),
+    )[0]
+
+    assert row.is_unmanaged is True
+    assert row.reference is None
+    assert row.action_hint == "Outside Chatbook · integrity unknown"
 
 
 def test_inventory_labels_dependencies_and_never_allows_activation(

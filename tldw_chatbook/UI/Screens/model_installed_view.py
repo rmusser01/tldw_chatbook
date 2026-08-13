@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -12,14 +13,26 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Model_Artifacts.gguf_admission import (
+    GGUFBoundsError,
+    GGUFParseError,
+    GGUFPathError,
+    GGUFVersionError,
+)
+from tldw_chatbook.Model_Artifacts.leases import ArtifactLeaseTimeoutError
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactDiskUsage,
     ArtifactInUseError,
     ArtifactNotReadyError,
     ArtifactRef,
+    ArtifactIntegrityError,
+    ArtifactStateError,
+    LocalGGUFImportProgress,
+    LocalGGUFImportResult,
     ModelArtifactService,
     ReconcileReport,
 )
@@ -39,9 +52,15 @@ from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
 from tldw_chatbook.Widgets.ModelArtifacts.install_progress import (
     ModelInstallProgress,
 )
+from tldw_chatbook.Widgets.ModelArtifacts.local_gguf_import import (
+    LocalGGUFImportConsentModal,
+    LocalGGUFImportControls,
+    LocalGGUFImportRequested,
+)
 from tldw_chatbook.Widgets.delete_confirmation_dialog import (
     DeleteConfirmationDialog,
 )
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
 
 if TYPE_CHECKING:
     from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
@@ -53,6 +72,24 @@ _DELETE_RECOVERY_TEXT = {
     "recycle-check": "Checking for an idle model to unload…",
     "recycle-retry": "Idle model unloaded; retrying deletion…",
 }
+
+
+def _is_gguf(path: Path) -> bool:
+    """Return whether a picker candidate is a GGUF file."""
+    return path.suffix.casefold() == ".gguf"
+
+
+_GGUF_FILTERS = Filters(("GGUF models (*.gguf)", _is_gguf))
+
+
+class _PrivateGGUFFileOpen(EnhancedFileOpen):
+    """Use the real picker without persisting the selected user path."""
+
+    def _get_last_directory(self) -> None:
+        return None
+
+    def dismiss(self, result: Path | list[Path] | None) -> None:
+        Screen.dismiss(self, result)
 
 
 def lifecycle_failure_message(exc: BaseException, *, operation: str) -> str:
@@ -91,6 +128,21 @@ def reconcile_result_message(report: ReconcileReport) -> str:
     )
 
 
+def local_import_failure_message(exc: BaseException) -> str:
+    """Map local-import failures to path-free recovery guidance."""
+    if isinstance(exc, GGUFPathError):
+        return "The selected GGUF could not be read safely. Choose another file."
+    if isinstance(exc, GGUFVersionError):
+        return "This is not a supported GGUF file. Choose another file."
+    if isinstance(exc, (GGUFBoundsError, GGUFParseError)):
+        return "This is not a valid GGUF model. Choose another file."
+    if isinstance(exc, ArtifactIntegrityError):
+        return "The managed copy failed integrity verification. Retry or choose another file."
+    if isinstance(exc, ArtifactLeaseTimeoutError):
+        return "The managed model store is busy. Retry shortly."
+    return "This GGUF could not be imported. Retry or choose another file."
+
+
 class InstalledView(Widget):
     """List and manage the shared local model inventory."""
 
@@ -125,6 +177,15 @@ class InstalledView(Widget):
 
     InstalledView .installed-model-muted {
         color: $text-muted;
+    }
+
+    InstalledView .installed-import-actions {
+        height: 3;
+    }
+
+    InstalledView .installed-import-actions Button {
+        width: auto;
+        margin-right: 1;
     }
     """
 
@@ -167,16 +228,30 @@ class InstalledView(Widget):
         self._operation_reference: ArtifactRef | None = None
         self._operation_name: str | None = None
         self._pending_delete_reference: ArtifactRef | None = None
+        self._import_generation = 0
+        self._import_active = False
+        self._import_cancelable = False
+        self._import_cancel_event: threading.Event | None = None
+        self._import_progress: LocalGGUFImportProgress | None = None
+        self._pending_import_path: Path | None = None
+        self._import_status: str | None = None
+        self._import_retry_available = False
         super().__init__(id=id)
 
-    def compose(self) -> ComposeResult:
-        """Compose from retained in-memory state without performing I/O."""
-        lifecycle_pending = (
+    def _lifecycle_pending(self) -> bool:
+        """Return whether any managed-store mutation currently owns the view."""
+        return (
             self._loading
+            or self._install_active
             or self._operation_reference is not None
             or self._operation_name is not None
             or self._pending_delete_reference is not None
+            or self._import_active
         )
+
+    def compose(self) -> ComposeResult:
+        """Compose from retained in-memory state without performing I/O."""
+        lifecycle_pending = self._lifecycle_pending()
         with Horizontal(classes="installed-header"):
             yield Button(
                 "Refresh",
@@ -190,12 +265,44 @@ class InstalledView(Widget):
                 variant="default",
                 disabled=lifecycle_pending,
             )
+            yield Button(
+                "Import GGUF…",
+                id="installed-models-import-gguf",
+                variant="default",
+                disabled=lifecycle_pending,
+            )
         progress = ModelInstallProgress(
             self._install_progress,
             id="installed-model-install-progress",
         )
         progress.display = self._install_active
         yield progress
+        import_progress = ModelInstallProgress(
+            self._import_progress,
+            id="installed-gguf-import-progress",
+        )
+        import_progress.display = self._import_active
+        yield import_progress
+        if self._import_status is not None:
+            yield Static(
+                self._import_status,
+                id="installed-gguf-import-status",
+                markup=False,
+            )
+        if self._import_active:
+            with Horizontal(classes="installed-import-actions"):
+                yield Button(
+                    "Cancel import",
+                    id="installed-gguf-import-cancel",
+                    disabled=not self._import_cancelable,
+                )
+        elif self._import_retry_available:
+            with Horizontal(classes="installed-import-actions"):
+                yield Button("Retry", id="installed-gguf-import-retry")
+                yield Button(
+                    "Choose another file",
+                    id="installed-gguf-import-choose",
+                )
         if self._loading:
             yield Static("Loading installed models…", markup=False)
         elif self._load_error:
@@ -300,12 +407,14 @@ class InstalledView(Widget):
                     active=row.active,
                     ready=row.ready,
                     allow_activation=row.activation_allowed,
-                    pending=(
-                        self._loading
-                        or self._operation_reference is not None
-                        or self._operation_name is not None
-                        or self._pending_delete_reference is not None
-                    ),
+                    pending=self._lifecycle_pending(),
+                )
+            )
+        elif row.is_unmanaged and row.path.suffix.casefold() == ".gguf":
+            children.append(
+                LocalGGUFImportControls(
+                    row.path,
+                    pending=self._lifecycle_pending(),
                 )
             )
         return Vertical(*children, classes="installed-model-row")
@@ -314,22 +423,42 @@ class InstalledView(Widget):
     def scan_unmanaged(
         root: Path,
         *,
+        excluded_root: Path | None = None,
         limit: int = MAX_UNMANAGED_MODELS,
     ) -> tuple[UnmanagedRow, ...]:
         """Return a bounded scan of legacy model files.
 
         Args:
             root: Legacy downloader directory.
+            excluded_root: Managed artifacts subtree to prune from the scan.
             limit: Maximum rows returned.
 
         Returns:
             Bounded legacy model rows in deterministic path order.
         """
         root = validate_path_simple(root, require_exists=False).resolve()
+        excluded = (
+            validate_path_simple(excluded_root, require_exists=False).resolve()
+            if excluded_root is not None
+            else None
+        )
         if limit <= 0 or not root.is_dir():
             return ()
         rows: list[UnmanagedRow] = []
         for directory, directories, filenames in os.walk(root):
+            current = Path(directory).resolve()
+            if excluded is not None and (
+                current == excluded or excluded in current.parents
+            ):
+                directories[:] = []
+                continue
+            if excluded is not None:
+                directories[:] = [
+                    name
+                    for name in directories
+                    if (current / name).resolve() != excluded
+                    and excluded not in (current / name).resolve().parents
+                ]
             directories.sort()
             filenames.sort()
             for filename in filenames:
@@ -377,7 +506,10 @@ class InstalledView(Widget):
             service = self._service_for_worker()
             installed = service.list_installed()
             usage = service.disk_usage()
-            unmanaged = self.scan_unmanaged(self._legacy_dir)
+            unmanaged = self.scan_unmanaged(
+                self._legacy_dir,
+                excluded_root=getattr(service, "artifacts_path", None),
+            )
             rows = inventory_rows(installed, usage, unmanaged)
         except Exception:
             logger.opt(exception=True).error(
@@ -411,26 +543,303 @@ class InstalledView(Widget):
             self.ensure_loaded(force=True)
         else:
             self.refresh(recompose=True)
+            if self._import_status is not None:
+                self.call_after_refresh(self._focus_import_recovery)
+
+    def _focus_import_recovery(self) -> None:
+        """Restore focus to one stable import control after recomposition."""
+        for selector in (
+            "#installed-gguf-import-retry",
+            "#installed-models-import-gguf",
+        ):
+            try:
+                control = self.query_one(selector, Button)
+            except NoMatches:
+                continue
+            if not control.disabled:
+                control.focus()
+                return
+
+    @on(Button.Pressed, "#installed-models-import-gguf")
+    def _header_import_pressed(self) -> None:
+        """Open the local GGUF picker from the persistent header action."""
+        self._open_import_picker()
+
+    @on(LocalGGUFImportRequested)
+    def _row_import_requested(self, event: LocalGGUFImportRequested) -> None:
+        """Open the same picker from an outside-GGUF inventory row."""
+        event.stop()
+        self._open_import_picker(event.path)
+
+    def _open_import_picker(self, suggested_path: Path | None = None) -> None:
+        """Open one GGUF-only picker and give it ownership of a generation."""
+        if self._lifecycle_pending():
+            return
+        if self._import_cancel_event is not None:
+            self._import_cancel_event.set()
+        self._import_generation += 1
+        generation = self._import_generation
+        self._pending_import_path = None
+        self._import_retry_available = False
+        location = (
+            suggested_path.parent if suggested_path is not None else self._legacy_dir
+        )
+        self.app.push_screen(
+            _PrivateGGUFFileOpen(
+                location=location,
+                title="Choose a GGUF model",
+                filters=_GGUF_FILTERS,
+                must_exist=True,
+                context="managed_gguf_import_private",
+                select_button="Choose",
+            ),
+            lambda result: self._import_path_picked(generation, result),
+        )
+
+    def _import_path_picked(
+        self,
+        generation: int,
+        result: Path | list[Path] | None,
+    ) -> None:
+        """Ask for managed-copy consent after one current GGUF selection."""
+        if not self.is_attached or generation != self._import_generation:
+            return
+        if not isinstance(result, Path):
+            return
+        if result.suffix.casefold() != ".gguf":
+            self.notify("Choose a GGUF model file.", severity="warning")
+            return
+        try:
+            size_bytes = result.stat().st_size
+        except OSError:
+            self.notify(
+                "The selected GGUF could not be read safely.",
+                severity="error",
+            )
+            return
+        self._pending_import_path = result
+        self.app.push_screen(
+            LocalGGUFImportConsentModal(result, size_bytes),
+            lambda confirmed: self._import_consent_decided(generation, confirmed),
+        )
+
+    def _import_consent_decided(self, generation: int, confirmed: bool) -> None:
+        """Begin managed I/O only after explicit consent for the current path."""
+        if not self.is_attached or generation != self._import_generation:
+            return
+        source = self._pending_import_path
+        if not confirmed or source is None:
+            self._pending_import_path = None
+            self._import_retry_available = False
+            return
+        self._begin_import(source, generation=generation)
+
+    def _begin_import(self, source: Path, *, generation: int | None = None) -> None:
+        """Start one cancellable local import from retained transient state."""
+        if self._import_active:
+            if self._import_cancel_event is not None:
+                self._import_cancel_event.set()
+            self._import_generation += 1
+            generation = self._import_generation
+        elif generation is None:
+            self._import_generation += 1
+            generation = self._import_generation
+        elif generation != self._import_generation:
+            return
+        self._pending_import_path = source
+        self._import_cancel_event = threading.Event()
+        self._import_active = True
+        self._import_cancelable = True
+        self._import_progress = None
+        self._import_status = "Importing GGUF…"
+        self._import_retry_available = False
+        self.refresh(recompose=True)
+        self._import_local_gguf(generation, source, self._import_cancel_event)
+
+    @work(
+        thread=True,
+        group="installed_gguf_import",
+        exclusive=True,
+        exit_on_error=False,
+        description="Importing local GGUF model",
+    )
+    def _import_local_gguf(
+        self,
+        generation: int,
+        source: Path,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Import and activate one exact managed reference off the UI loop."""
+        try:
+            service = self._service_for_worker()
+            result = service.import_local_gguf(
+                source,
+                cancelled=cancel_event.is_set,
+                progress=lambda progress: self.app.call_from_thread(
+                    self._apply_import_progress,
+                    generation,
+                    progress,
+                ),
+            )
+        except Exception as exc:
+            logger.error(
+                "Local GGUF import failed; phase=import; error_type={}",
+                type(exc).__name__,
+            )
+            cancelled = cancel_event.is_set() and isinstance(exc, ArtifactStateError)
+            self.app.call_from_thread(
+                self._apply_import_failure,
+                generation,
+                (
+                    "Import cancelled. The original file and prior models are unchanged."
+                    if cancelled
+                    else local_import_failure_message(exc)
+                ),
+            )
+            return
+        try:
+            service.activate(result.reference)
+        except Exception as exc:
+            logger.error(
+                "Local GGUF import failed; phase=activation; error_type={}",
+                type(exc).__name__,
+            )
+            self.app.call_from_thread(
+                self._apply_import_activation_required,
+                generation,
+                result,
+            )
+            return
+        self.app.call_from_thread(self._apply_import_success, generation, result)
+
+    def _owns_import(self, generation: int) -> bool:
+        """Return whether a callback still owns the mounted import lane."""
+        return self.is_attached and generation == self._import_generation
+
+    def _apply_import_progress(
+        self,
+        generation: int,
+        progress: LocalGGUFImportProgress,
+    ) -> None:
+        """Paint one current progress event without replacing controls."""
+        if not self._owns_import(generation) or not self._import_active:
+            return
+        self._import_progress = progress
+        if progress.phase == "finalize":
+            self._import_cancelable = False
+            try:
+                self.query_one("#installed-gguf-import-cancel", Button).disabled = True
+            except NoMatches:
+                pass
+        try:
+            self.query_one(
+                "#installed-gguf-import-progress",
+                ModelInstallProgress,
+            ).update_progress(progress)
+        except NoMatches:
+            pass
+
+    def _apply_import_success(
+        self,
+        generation: int,
+        result: LocalGGUFImportResult,
+    ) -> None:
+        """Settle a successful import and reload the converged inventory."""
+        if not self._owns_import(generation):
+            return
+        self._import_active = False
+        self._import_cancelable = False
+        self._import_progress = None
+        self._pending_import_path = None
+        self._import_retry_available = False
+        self._import_status = (
+            "Already imported and ready"
+            if result.already_installed
+            else "Imported and ready"
+        )
+        self.ensure_loaded(force=True)
+
+    def _apply_import_activation_required(
+        self,
+        generation: int,
+        _result: LocalGGUFImportResult,
+    ) -> None:
+        """Retain a promoted artifact whose automatic activation failed."""
+        if not self._owns_import(generation):
+            return
+        self._import_active = False
+        self._import_cancelable = False
+        self._import_progress = None
+        self._pending_import_path = None
+        self._import_retry_available = False
+        self._import_status = "Installed — activation required"
+        self.ensure_loaded(force=True)
+
+    def _apply_import_failure(self, generation: int, message: str) -> None:
+        """Offer path-private recovery while retaining the source in memory."""
+        if not self._owns_import(generation):
+            return
+        self._import_active = False
+        self._import_cancelable = False
+        self._import_progress = None
+        self._import_status = message
+        self._import_retry_available = self._pending_import_path is not None
+        self.notify(message, severity="warning")
+        self.refresh(recompose=True)
+        self.call_after_refresh(self._focus_import_recovery)
+
+    @on(Button.Pressed, "#installed-gguf-import-cancel")
+    def _cancel_import_pressed(self) -> None:
+        """Signal physical cancellation while the copy remains cancellable."""
+        if (
+            not self._import_active
+            or not self._import_cancelable
+            or self._import_cancel_event is None
+        ):
+            return
+        self._import_cancel_event.set()
+        self._import_cancelable = False
+        self._import_status = "Cancelling import…"
+        try:
+            self.query_one("#installed-gguf-import-cancel", Button).disabled = True
+        except NoMatches:
+            pass
+        try:
+            self.query_one("#installed-gguf-import-status", Static).update(
+                self._import_status
+            )
+        except NoMatches:
+            pass
+
+    @on(Button.Pressed, "#installed-gguf-import-retry")
+    def _retry_import_pressed(self) -> None:
+        """Retry the transient source without persisting or rendering its path."""
+        source = self._pending_import_path
+        if source is not None and not self._import_active:
+            self._begin_import(source)
+
+    @on(Button.Pressed, "#installed-gguf-import-choose")
+    def _choose_import_pressed(self) -> None:
+        """Forget the transient source before reopening the picker."""
+        self._pending_import_path = None
+        self._open_import_picker()
+
+    def on_unmount(self) -> None:
+        """Cancel and invalidate import callbacks before detaching."""
+        if self._import_cancel_event is not None:
+            self._import_cancel_event.set()
+        self._pending_import_path = None
+        self._import_generation += 1
 
     @on(Button.Pressed, "#installed-models-refresh")
     def _refresh_pressed(self) -> None:
-        if (
-            self._loading
-            or self._operation_reference is not None
-            or self._operation_name is not None
-            or self._pending_delete_reference is not None
-        ):
+        if self._lifecycle_pending():
             return
         self.ensure_loaded(force=True)
 
     @on(Button.Pressed, "#installed-models-repair")
     def _repair_pressed(self) -> None:
-        if (
-            self._loading
-            or self._operation_reference is not None
-            or self._operation_name is not None
-            or self._pending_delete_reference is not None
-        ):
+        if self._lifecycle_pending():
             return
         self._operation_name = "repair"
         self.refresh(recompose=True)
@@ -443,12 +852,7 @@ class InstalledView(Widget):
 
     def _request_activation(self, reference: ArtifactRef) -> None:
         """Start activation unless another lifecycle operation is pending."""
-        if (
-            self._loading
-            or self._operation_reference is not None
-            or self._operation_name is not None
-            or self._pending_delete_reference is not None
-        ):
+        if self._lifecycle_pending():
             return
         self._operation_reference = reference
         self._operation_name = "activate"
@@ -458,12 +862,7 @@ class InstalledView(Widget):
     @on(DeletionRequested)
     def _deletion_requested(self, event: DeletionRequested) -> None:
         event.stop()
-        if (
-            self._loading
-            or self._operation_reference is not None
-            or self._operation_name is not None
-            or self._pending_delete_reference is not None
-        ):
+        if self._lifecycle_pending():
             return
         blocked = self._may_delete(event.reference)
         if blocked is not None:
@@ -498,7 +897,11 @@ class InstalledView(Widget):
             self.notify(blocked, severity="warning")
             self.refresh(recompose=True)
             return
-        if self._operation_reference is not None or self._operation_name is not None:
+        if (
+            self._import_active
+            or self._operation_reference is not None
+            or self._operation_name is not None
+        ):
             self.refresh(recompose=True)
             return
         self._operation_reference = reference
