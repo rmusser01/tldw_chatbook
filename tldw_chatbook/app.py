@@ -57,6 +57,7 @@ import logging
 import logging.handlers
 import multiprocessing
 import multiprocessing.connection
+import queue
 import random
 import sqlite3
 import subprocess
@@ -66,6 +67,7 @@ import time
 import uuid
 import traceback
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Any, Dict, List, Callable, Iterable, Mapping
 from textual.widget import Widget
 
@@ -226,8 +228,13 @@ from tldw_chatbook.Library.library_local_rag_search_service import (
 from tldw_chatbook.Local_Ingestion import FileIngestionError
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
     classify_parse_failure,
+    initialize_ingest_parse_worker,
     run_parse_job,
-    silence_ingest_worker_import_noise,
+)
+from tldw_chatbook.Local_Ingestion.ingest_parse_progress import (
+    INGEST_PARSE_PROGRESS_FLUSH_SECONDS,
+    INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE,
+    ParseProgressCoalescer,
 )
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     classify_ingest_source,
@@ -1919,6 +1926,14 @@ _MAX_PERSISTED_INGEST_JOBS = 500
 _INGEST_POOL_STDERR_FALLBACK = None
 
 
+@dataclass(frozen=True)
+class _IngestParsePoolResources:
+    """Process-pool resources owned by one ingest parse generation."""
+
+    pool: Any
+    progress_queue: Any | None
+
+
 def _ingest_pool_real_stderr():
     """Return a stream with a REAL file descriptor to stand in for stderr.
 
@@ -2076,6 +2091,8 @@ class LibraryIngestQueueMixin:
         self._ingest_parse_pool_generation: int = 0
         self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
         self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
+        self._ingest_parse_progress_queue: Any | None = None
+        self._ingest_parse_progress_thread: threading.Thread | None = None
         self._ingest_parsed_payloads: dict[str, dict] = {}
         # RLock, not Lock: dev's STT dispatch work re-enters this guard.
         self._local_stt_executor_lock = threading.RLock()
@@ -2420,10 +2437,10 @@ class LibraryIngestQueueMixin:
         """Create the Library ingest parse pool.
 
         UI-thread only. Test seam: monkeypatched to an inline-synchronous
-        fake pool (see ``Tests/Library/test_library_ingest_runner.py``) so
-        pilots stay deterministic without spawning real OS processes. Real
-        callers get a spawn-context ``multiprocessing.Pool`` sized by
-        ``_ingest_parse_worker_count``.
+        fake resource bundle (see
+        ``Tests/Library/test_library_ingest_runner.py``) so pilots stay
+        deterministic without spawning real OS processes. Real callers get a
+        spawn-context ``multiprocessing.Pool`` and bounded progress queue.
 
         Not a ``concurrent.futures.ProcessPoolExecutor`` -- see the F3
         design spec's Architecture section: the executor's ``atexit`` hook
@@ -2442,28 +2459,51 @@ class LibraryIngestQueueMixin:
         value(s) in fds_to_keep`` -- so the very first Pool construction
         (which ensure-runs the process-global resource tracker) crashed
         the app on its first ingest submission. When ``sys.stderr`` has no
-        usable fd, the Pool is constructed under
+        usable fd, both the queue and Pool are constructed under
         ``contextlib.redirect_stderr`` pointing at a genuinely fd-backed
         stream (``_ingest_pool_real_stderr``: ``sys.__stderr__``, else a
         kept-alive devnull handle). The tracker launches at most once per
         process, so covering construction is sufficient -- and applying
-        the redirect on every (re)construction is harmless.
+        the redirect on every (re)construction is harmless. Queue and Pool
+        creation are one atomic owner operation: if Pool creation fails, the
+        already-created queue is closed before the exception escapes.
         """
         ctx = multiprocessing.get_context("spawn")
         processes = self._ingest_parse_worker_count()
-        # (task-2016) The initializer silences worker-side import noise
-        # (loguru default sink, dependency warnings) that would otherwise
-        # write straight over the TUI via the inherited real-TTY stderr.
+
+        def _construct_resources() -> _IngestParsePoolResources:
+            progress_queue = None
+            try:
+                progress_queue = ctx.Queue(
+                    maxsize=INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE
+                )
+                pool = ctx.Pool(
+                    processes=processes,
+                    initializer=initialize_ingest_parse_worker,
+                    initargs=(progress_queue,),
+                )
+            except Exception:
+                if progress_queue is not None:
+                    for method_name in ("close", "cancel_join_thread"):
+                        method = getattr(progress_queue, method_name, None)
+                        if method is None:
+                            continue
+                        try:
+                            method()
+                        except Exception:
+                            logger.opt(exception=True).error(
+                                "Error cleaning up a partially constructed "
+                                "Library ingest progress queue."
+                            )
+                raise
+            return _IngestParsePoolResources(pool, progress_queue)
+
+        # The combined initializer keeps worker import noise off the TUI and
+        # installs this generation's progress sink.
         if _stream_fileno(sys.stderr) >= 0:
-            return ctx.Pool(
-                processes=processes,
-                initializer=silence_ingest_worker_import_noise,
-            )
+            return _construct_resources()
         with contextlib.redirect_stderr(_ingest_pool_real_stderr()):
-            return ctx.Pool(
-                processes=processes,
-                initializer=silence_ingest_worker_import_noise,
-            )
+            return _construct_resources()
 
     def _ensure_ingest_parse_pool(self):
         """Return the current parse pool, lazily creating one if needed.
@@ -2471,11 +2511,17 @@ class LibraryIngestQueueMixin:
         UI-thread only.
         """
         if self._ingest_parse_pool is None:
-            pool = self._create_ingest_parse_pool()
+            resources = self._create_ingest_parse_pool()
+            pool = resources.pool
+            progress_queue = resources.progress_queue
             try:
                 sentinels = self._ingest_parse_pool_worker_sentinels(pool)
             except Exception:
-                self._terminate_ingest_parse_pool_off_thread(pool)
+                self._terminate_ingest_parse_pool_off_thread(
+                    pool,
+                    progress_queue,
+                    None,
+                )
                 raise
 
             generation = getattr(self, "_ingest_parse_pool_generation", 0) + 1
@@ -2487,9 +2533,59 @@ class LibraryIngestQueueMixin:
             self._ingest_parse_jobs_by_generation[generation] = set()
             self._ingest_parse_pool_stop_event = stop_event
             self._ingest_parse_pool = pool
+            self._ingest_parse_progress_queue = progress_queue
+            self._ingest_parse_progress_thread = None
+            if progress_queue is not None:
+                self._ingest_parse_progress_thread = (
+                    self._start_ingest_parse_progress_drain(
+                        generation,
+                        progress_queue,
+                        stop_event,
+                    )
+                )
             if sentinels:
                 self._start_ingest_parse_pool_monitor(generation, sentinels, stop_event)
         return self._ingest_parse_pool
+
+    def _start_ingest_parse_progress_drain(
+        self,
+        generation: int,
+        progress_queue: Any,
+        stop_event: threading.Event,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> threading.Thread:
+        """Start the bounded, latest-per-job drain for one pool generation."""
+
+        def _drain() -> None:
+            coalescer = ParseProgressCoalescer(
+                interval=INGEST_PARSE_PROGRESS_FLUSH_SECONDS,
+                started_at=clock(),
+            )
+            while not stop_event.is_set() and not self._ingest_shutdown:
+                try:
+                    event = progress_queue.get(timeout=0.05)
+                except queue.Empty:
+                    event = None
+                except (EOFError, OSError, ValueError):
+                    return
+                if event is not None:
+                    coalescer.accept(event)
+                batch = coalescer.take_due(clock())
+                if batch:
+                    self._marshal_ingest_pool_call(
+                        self._on_ingest_parse_progress_batch,
+                        generation,
+                        batch,
+                    )
+
+        thread = threading.Thread(
+            target=_drain,
+            name=f"library-ingest-progress-drain-{generation}",
+            daemon=True,
+        )
+        thread.start()
+        return thread
 
     @staticmethod
     def _ingest_parse_pool_worker_sentinels(pool: Any) -> Optional[tuple[Any, ...]]:
@@ -3852,12 +3948,23 @@ class LibraryIngestQueueMixin:
         self._ingest_parse_jobs_by_generation.pop(generation, None)
         pool = self._ingest_parse_pool
         stop_event = self._ingest_parse_pool_stop_event
+        progress_queue = self._ingest_parse_progress_queue
+        progress_thread = self._ingest_parse_progress_thread
         if stop_event is not None:
             stop_event.set()
         self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
-        if pool is not None:
-            self._terminate_ingest_parse_pool_off_thread(pool)
+        self._ingest_parse_progress_queue = None
+        self._ingest_parse_progress_thread = None
+        if any(
+            resource is not None
+            for resource in (pool, progress_queue, progress_thread)
+        ):
+            self._terminate_ingest_parse_pool_off_thread(
+                pool,
+                progress_queue,
+                progress_thread,
+            )
 
         logger.opt(exception=exc).error(f"Library ingest parse pool failed: {exc}")
         for job in self.library_ingest_jobs.jobs():
@@ -3876,25 +3983,20 @@ class LibraryIngestQueueMixin:
             self._start_library_ingest_queue_if_idle()
 
     @staticmethod
-    def _terminate_ingest_parse_pool_off_thread(pool: Any) -> threading.Thread:
-        """Terminate and join one detached Pool without blocking the UI thread."""
-
-        def _terminate_pool() -> None:
-            try:
-                pool.terminate()
-                pool.join()
-            except Exception:
-                logger.opt(exception=True).error(
-                    "Error terminating the Library ingest parse pool."
-                )
-
-        thread = threading.Thread(
-            target=_terminate_pool,
-            name="library-ingest-pool-terminate",
-            daemon=True,
+    def _terminate_ingest_parse_pool_off_thread(
+        pool: Any | None,
+        progress_queue: Any | None = None,
+        progress_thread: threading.Thread | None = None,
+    ) -> threading.Thread:
+        """Clean up one detached parse generation away from the UI thread."""
+        return LibraryIngestQueueMixin._shutdown_ingest_workers_off_thread(
+            None,
+            None,
+            None,
+            pool,
+            progress_queue,
+            progress_thread,
         )
-        thread.start()
-        return thread
 
     def _shutdown_ingest_parse_pool(self) -> Optional[threading.Thread]:
         """Quit-path teardown: flag up, pool detached, terminate off-loop.
@@ -3905,8 +4007,9 @@ class LibraryIngestQueueMixin:
         ``_ingest_pool_error_callback``, running on the pool's
         result-handler thread -- short-circuit before marshaling from this
         point on) and drops every worker reference (nothing can submit to
-        them anymore). Source/coordinator/executor close and parse-pool
-        terminate/join then run sequentially on one detached daemon thread,
+        them anymore). Source/coordinator/executor close, parse-pool
+        terminate/join, queue cleanup, and bounded drain-thread join then run
+        sequentially on one detached daemon thread,
         NEVER on the caller's (loop) thread: verifier close may wait and
         CPython's ``Pool._terminate_pool`` does an unbounded
         ``result_handler.join()``, and if that result-handler thread is at
@@ -3943,13 +4046,24 @@ class LibraryIngestQueueMixin:
             local_jobs.clear()
         pool = getattr(self, "_ingest_parse_pool", None)
         stop_event = getattr(self, "_ingest_parse_pool_stop_event", None)
+        progress_queue = getattr(self, "_ingest_parse_progress_queue", None)
+        progress_thread = getattr(self, "_ingest_parse_progress_thread", None)
         if stop_event is not None:
             stop_event.set()
         self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
+        self._ingest_parse_progress_queue = None
+        self._ingest_parse_progress_thread = None
         if all(
             resource is None
-            for resource in (source_service, coordinator, executor, pool)
+            for resource in (
+                source_service,
+                coordinator,
+                executor,
+                pool,
+                progress_queue,
+                progress_thread,
+            )
         ):
             return None
         return self._shutdown_ingest_workers_off_thread(
@@ -3957,6 +4071,8 @@ class LibraryIngestQueueMixin:
             coordinator,
             executor,
             pool,
+            progress_queue,
+            progress_thread,
         )
 
     @staticmethod
@@ -3965,8 +4081,15 @@ class LibraryIngestQueueMixin:
         coordinator: Any | None,
         executor: Any | None,
         pool: Any | None,
+        progress_queue: Any | None,
+        progress_thread: threading.Thread | None,
     ) -> threading.Thread:
-        """Close detached ingest workers without blocking the UI thread."""
+        """Close detached ingest workers without blocking the UI thread.
+
+        Executor shutdown remains ahead of parse-pool teardown. The parse pool
+        is terminated and joined before its queue is closed/cancelled, then the
+        already-stopped daemon drain receives only a bounded join.
+        """
 
         def _shutdown_workers() -> None:
             if source_service is not None:
@@ -3997,6 +4120,30 @@ class LibraryIngestQueueMixin:
                 except Exception:
                     logger.opt(exception=True).error(
                         "Error terminating the Library ingest parse pool."
+                    )
+            if progress_queue is not None:
+                close = getattr(progress_queue, "close", None)
+                if close is not None:
+                    try:
+                        close()
+                    except Exception:
+                        logger.opt(exception=True).error(
+                            "Error closing the Library ingest progress queue."
+                        )
+                cancel_join = getattr(progress_queue, "cancel_join_thread", None)
+                if cancel_join is not None:
+                    try:
+                        cancel_join()
+                    except Exception:
+                        logger.opt(exception=True).error(
+                            "Error cancelling the Library ingest progress queue join."
+                        )
+            if progress_thread is not None:
+                try:
+                    progress_thread.join(timeout=1.0)
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error joining the Library ingest progress drain thread."
                     )
 
         thread = threading.Thread(

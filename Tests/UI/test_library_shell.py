@@ -4,6 +4,7 @@ import ast
 import asyncio
 import dataclasses
 import json
+import queue
 import re
 import statistics
 import threading
@@ -20,7 +21,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
 
-from tldw_chatbook.app import LibraryIngestQueueMixin
+from tldw_chatbook.app import LibraryIngestQueueMixin, _IngestParsePoolResources
 from Tests.Library.test_library_ingest_runner import _FakeIngestParsePool
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Constants import (
@@ -15385,7 +15386,10 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
             )
 
     def _create_ingest_parse_pool(self):
-        return self._pool_factory()
+        return _IngestParsePoolResources(
+            self._pool_factory(),
+            queue.Queue(maxsize=64),
+        )
 
     def _ingest_parse_worker_count(self) -> int:
         if self._worker_count_override is not None:
@@ -16567,7 +16571,10 @@ async def test_library_shell_ingest_canvas_different_canvas_isolation(tmp_path):
     )
     app.notes_scope_service = StaticLibraryNotesScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
-    app._create_ingest_parse_pool = lambda: _FakeIngestParsePool()
+    app._create_ingest_parse_pool = lambda: _IngestParsePoolResources(
+        _FakeIngestParsePool(),
+        queue.Queue(maxsize=64),
+    )
 
     async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await _wait_for_condition(

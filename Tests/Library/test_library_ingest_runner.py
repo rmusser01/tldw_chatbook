@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import concurrent.futures
 import hashlib
+import multiprocessing
 import os
+import queue
 import subprocess
 import sys
 import textwrap
@@ -48,6 +50,14 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
     LibraryIngestJobRegistry,
+)
+from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
+    initialize_ingest_parse_worker,
+    run_parse_job,
+)
+from tldw_chatbook.Local_Ingestion.ingest_parse_progress import (
+    INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE,
+    ParseProgressEvent,
 )
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactDescriptor,
@@ -111,6 +121,7 @@ class _FakeIngestParsePool:
         # Thread ident `terminate()` was invoked on -- the quit-deadlock
         # pilots assert teardown runs OFF the app's event-loop thread.
         self.terminate_thread_ident: Optional[int] = None
+        self.join_thread_ident: Optional[int] = None
         self._threads: list[threading.Thread] = []
 
     def apply_async(
@@ -164,6 +175,7 @@ class _FakeIngestParsePool:
         self.terminate_thread_ident = threading.get_ident()
 
     def join(self) -> None:
+        self.join_thread_ident = threading.get_ident()
         for thread in self._threads:
             thread.join(timeout=_FAKE_POOL_JOIN_TIMEOUT)
 
@@ -264,7 +276,13 @@ class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
 
     def _create_ingest_parse_pool(self):
         self._pool_create_count += 1
-        return self._pool_factory()
+        pool_or_resources = self._pool_factory()
+        if isinstance(pool_or_resources, _app_module._IngestParsePoolResources):
+            return pool_or_resources
+        return _app_module._IngestParsePoolResources(
+            pool_or_resources,
+            queue.Queue(maxsize=INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE),
+        )
 
     def _ingest_parse_worker_count(self) -> int:
         if self._worker_count_override is not None:
@@ -968,8 +986,12 @@ async def test_real_pool_worker_exit_is_reported_for_owning_generation(
     teardown_threads: list[threading.Thread] = []
     real_terminate = app._terminate_ingest_parse_pool_off_thread
 
-    def _capture_production_teardown(target_pool: Any) -> threading.Thread:
-        thread = real_terminate(target_pool)
+    def _capture_production_teardown(
+        target_pool: Any,
+        progress_queue: Any | None = None,
+        progress_thread: threading.Thread | None = None,
+    ) -> threading.Thread:
+        thread = real_terminate(target_pool, progress_queue, progress_thread)
         teardown_threads.append(thread)
         return thread
 
@@ -2916,6 +2938,81 @@ def test_shutdown_terminates_pool_off_the_caller_thread(tmp_path: Path) -> None:
     assert pool.terminate_thread_ident != caller_ident
 
 
+def test_shutdown_detaches_and_cleans_progress_resources_off_caller_thread(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    progress_queue = _ClosableQueue()
+    resources = _app_module._IngestParsePoolResources(pool, progress_queue)
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: resources,
+    )
+    app._ensure_ingest_parse_pool()
+    stop_event = app._ingest_parse_pool_stop_event
+    progress_thread = app._ingest_parse_progress_thread
+    caller_ident = threading.get_ident()
+
+    teardown_thread = app._shutdown_ingest_parse_pool()
+
+    assert stop_event is not None and stop_event.is_set()
+    assert app._ingest_parse_pool is None
+    assert app._ingest_parse_progress_queue is None
+    assert app._ingest_parse_progress_thread is None
+    assert teardown_thread is not None
+    teardown_thread.join(timeout=_FAKE_POOL_JOIN_TIMEOUT)
+    assert not teardown_thread.is_alive()
+    assert progress_thread is not None and not progress_thread.is_alive()
+    assert pool.terminated is True
+    assert pool.terminate_thread_ident not in {None, caller_ident}
+    assert pool.join_thread_ident not in {None, caller_ident}
+    assert progress_queue.closed is True
+    assert progress_queue.cancelled_join is True
+    assert progress_queue.close_thread_ident not in {None, caller_ident}
+    assert progress_queue.cancel_thread_ident not in {None, caller_ident}
+
+
+def test_broken_pool_detaches_and_cleans_progress_resources_off_caller_thread(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    progress_queue = _ClosableQueue()
+    resources = _app_module._IngestParsePoolResources(pool, progress_queue)
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: resources,
+    )
+    app._ensure_ingest_parse_pool()
+    generation = app._ingest_parse_pool_generation
+    stop_event = app._ingest_parse_pool_stop_event
+    progress_thread = app._ingest_parse_progress_thread
+    caller_ident = threading.get_ident()
+
+    app._handle_broken_ingest_parse_pool(
+        generation,
+        None,
+        RuntimeError("worker exited"),
+    )
+
+    assert stop_event is not None and stop_event.is_set()
+    assert app._ingest_parse_pool is None
+    assert app._ingest_parse_progress_queue is None
+    assert app._ingest_parse_progress_thread is None
+    deadline = time.monotonic() + 5.0
+    while not progress_queue.closed and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert pool.terminated is True
+    assert pool.terminate_thread_ident not in {None, caller_ident}
+    assert pool.join_thread_ident not in {None, caller_ident}
+    assert progress_queue.closed is True
+    assert progress_queue.cancelled_join is True
+    assert progress_queue.close_thread_ident not in {None, caller_ident}
+    assert progress_queue.cancel_thread_ident not in {None, caller_ident}
+    assert progress_thread is not None
+    progress_thread.join(timeout=1.0)
+    assert not progress_thread.is_alive()
+
+
 def test_shutdown_with_no_pool_still_sets_flag_and_returns_none(tmp_path: Path) -> None:
     """`_shutdown_ingest_parse_pool` with no pool ever created: the flag
     still goes up (late callbacks must no-op regardless), no thread is
@@ -3007,6 +3104,179 @@ async def test_broken_pool_spares_payload_ready_job_and_writer_drains_it(
 # the top-up path on the UI thread, and crashed the app.
 
 
+class _ClosableQueue:
+    """Queue double exposing multiprocessing queue cleanup observations."""
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.cancelled_join = False
+        self.close_thread_ident: int | None = None
+        self.cancel_thread_ident: int | None = None
+        self._items: queue.Queue[Any] = queue.Queue()
+
+    def get(self, timeout: float) -> Any:
+        return self._items.get(timeout=timeout)
+
+    def close(self) -> None:
+        self.closed = True
+        self.close_thread_ident = threading.get_ident()
+
+    def cancel_join_thread(self) -> None:
+        self.cancelled_join = True
+        self.cancel_thread_ident = threading.get_ident()
+
+
+def _bare_ingest_mixin() -> LibraryIngestQueueMixin:
+    mixin = LibraryIngestQueueMixin()
+    mixin._ingest_parse_worker_count = lambda: 1
+    mixin._ingest_shutdown = False
+    return mixin
+
+
+def test_create_pool_returns_progress_resources_and_uses_combined_initializer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _Context:
+        def Queue(self, maxsize: int) -> _ClosableQueue:
+            captured["maxsize"] = maxsize
+            progress_queue = _ClosableQueue()
+            captured["progress_queue"] = progress_queue
+            return progress_queue
+
+        def Pool(self, **kwargs: Any) -> _FakeIngestParsePool:
+            captured.update(kwargs)
+            return _FakeIngestParsePool(auto_run=False)
+
+    monkeypatch.setattr(multiprocessing, "get_context", lambda _name: _Context())
+
+    resources = LibraryIngestQueueMixin._create_ingest_parse_pool(
+        _bare_ingest_mixin()
+    )
+
+    assert resources.progress_queue is captured["progress_queue"]
+    assert captured["maxsize"] == INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE
+    assert captured["initializer"] is initialize_ingest_parse_worker
+    assert captured["initargs"] == (resources.progress_queue,)
+
+
+def test_create_pool_progress_resources_close_queue_when_pool_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    progress_queue = _ClosableQueue()
+
+    class _Context:
+        def Queue(self, maxsize: int) -> _ClosableQueue:
+            assert maxsize == INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE
+            return progress_queue
+
+        def Pool(self, **_kwargs: Any) -> Any:
+            raise RuntimeError("pool construction failed")
+
+    monkeypatch.setattr(multiprocessing, "get_context", lambda _name: _Context())
+
+    with pytest.raises(RuntimeError, match="pool construction failed"):
+        LibraryIngestQueueMixin._create_ingest_parse_pool(_bare_ingest_mixin())
+
+    assert progress_queue.closed is True
+    assert progress_queue.cancelled_join is True
+
+
+def test_progress_drain_coalesces_latest_event_with_injected_clock() -> None:
+    first = ParseProgressEvent(4, "ingest-job-1", "extracting", "first", 10.0)
+    latest = ParseProgressEvent(4, "ingest-job-1", "extracting", "latest", 30.0)
+
+    class _ProgressQueue:
+        def __init__(self) -> None:
+            self.events = [first, latest]
+
+        def get(self, timeout: float) -> ParseProgressEvent:
+            assert timeout == 0.05
+            if self.events:
+                return self.events.pop(0)
+            raise queue.Empty
+
+    mixin = _bare_ingest_mixin()
+    stop_event = threading.Event()
+
+    def handler(*_args: Any) -> None:
+        return None
+
+    mixin._on_ingest_parse_progress_batch = handler
+    marshaled: list[tuple[Any, ...]] = []
+
+    def _capture_marshal(callback: Any, *args: Any) -> None:
+        marshaled.append((callback, *args))
+        stop_event.set()
+
+    mixin._marshal_ingest_pool_call = _capture_marshal
+    clock_values = iter((10.0, 10.1, 10.25))
+
+    thread = mixin._start_ingest_parse_progress_drain(
+        4,
+        _ProgressQueue(),
+        stop_event,
+        clock=lambda: next(clock_values),
+    )
+    thread.join(timeout=1.0)
+
+    assert not thread.is_alive()
+    assert marshaled == [(handler, 4, (latest,))]
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows spawn/resource-tracker boundary",
+)
+def test_create_pool_real_windows_spawn_progress_delivery_and_cleanup(
+    tmp_path: Path,
+) -> None:
+    source = _write_text_file(
+        tmp_path,
+        "spawn-progress.txt",
+        "Parsed inside a spawned worker with progress.",
+    )
+    mixin = _bare_ingest_mixin()
+    resources = mixin._create_ingest_parse_pool()
+    cleanup: threading.Thread | None = None
+    cleaned = False
+    try:
+        result = resources.pool.apply_async(
+            run_parse_job,
+            (
+                str(source),
+                {"title": "Spawn progress"},
+                (9, "ingest-job-windows-spawn"),
+            ),
+        ).get(timeout=120)
+        event = resources.progress_queue.get(timeout=120)
+
+        cleanup = mixin._shutdown_ingest_workers_off_thread(
+            None,
+            None,
+            None,
+            resources.pool,
+            resources.progress_queue,
+            None,
+        )
+        cleanup.join(timeout=10.0)
+        cleaned = not cleanup.is_alive()
+
+        assert result["ok"] is True
+        assert result["payload"]["title"] == "Spawn progress"
+        assert event.generation == 9
+        assert event.job_id == "ingest-job-windows-spawn"
+        assert event.phase == "inspecting"
+        assert cleaned, "real parse-pool progress cleanup exceeded 10 seconds"
+    finally:
+        if not cleaned:
+            resources.pool.terminate()
+            resources.pool.join()
+            resources.progress_queue.close()
+            resources.progress_queue.cancel_join_thread()
+
+
 def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProcess[str]:
     """Run `code` in a FRESH interpreter (mirrors the Task 2 import-weight
     helper). Fresh matters here: the multiprocessing resource tracker is
@@ -3096,13 +3366,16 @@ def test_create_pool_survives_filenoless_stderr_real_spawn(tmp_path: Path) -> No
             # Instance shadow: one worker keeps the spawn cost bounded.
             mixin._ingest_parse_worker_count = lambda: 1
 
-            pool = mixin._create_ingest_parse_pool()
+            resources = mixin._create_ingest_parse_pool()
+            pool = resources.pool
             try:
                 result = pool.apply_async(pow, (2, 3)).get(timeout=120)
                 assert result == 8, result
             finally:
                 pool.terminate()
                 pool.join()
+                resources.progress_queue.close()
+                resources.progress_queue.cancel_join_thread()
             print("POOL_OK")
         """,
     )
@@ -3126,7 +3399,7 @@ def test_create_pool_redirects_to_real_stderr_when_fileno_invalid(
     deterministic."""
     import tldw_chatbook.app as app_module
 
-    recorded: dict[str, int] = {}
+    recorded: dict[str, Any] = {}
 
     class _RecordingPool:
         def __init__(self, processes=None):
@@ -3136,10 +3409,21 @@ def test_create_pool_redirects_to_real_stderr_when_fileno_invalid(
                 recorded["fd_during_construction"] = -1
 
     class _RecordingContext:
-        def Pool(self, processes=None, initializer=None):
-            # (task-2016) The real Pool now receives the worker-noise
-            # silencer; the fake records it so the contract is pinned.
+        def Queue(self, maxsize=None):
+            recorded["maxsize"] = maxsize
+            try:
+                recorded["queue_fd_during_construction"] = sys.stderr.fileno()
+            except Exception:
+                recorded["queue_fd_during_construction"] = -1
+            progress_queue = _ClosableQueue()
+            recorded["progress_queue"] = progress_queue
+            return progress_queue
+
+        def Pool(self, processes=None, initializer=None, initargs=()):
+            # The combined initializer retains worker-noise suppression and
+            # installs the progress queue for this spawned generation.
             recorded["initializer"] = initializer
+            recorded["initargs"] = initargs
             return _RecordingPool(processes)
 
     class _RecordingMultiprocessing:
@@ -3153,14 +3437,13 @@ def test_create_pool_redirects_to_real_stderr_when_fileno_invalid(
 
     mixin = LibraryIngestQueueMixin()
     mixin._ingest_parse_worker_count = lambda: 1  # instance shadow: skip config read
-    pool = mixin._create_ingest_parse_pool()
+    resources = mixin._create_ingest_parse_pool()
 
-    assert isinstance(pool, _RecordingPool)
+    assert isinstance(resources.pool, _RecordingPool)
+    assert recorded["queue_fd_during_construction"] >= 0
     assert recorded["fd_during_construction"] >= 0
-    assert (
-        recorded["initializer"]
-        is app_module.silence_ingest_worker_import_noise
-    )
+    assert recorded["initializer"] is initialize_ingest_parse_worker
+    assert recorded["initargs"] == (resources.progress_queue,)
 
 
 def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
@@ -3177,10 +3460,17 @@ def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
             recorded["stderr_during_construction"] = sys.stderr
 
     class _RecordingContext:
-        def Pool(self, processes=None, initializer=None):
-            # (task-2016) The real Pool now receives the worker-noise
-            # silencer; the fake records it so the contract is pinned.
+        def Queue(self, maxsize=None):
+            recorded["maxsize"] = maxsize
+            progress_queue = _ClosableQueue()
+            recorded["progress_queue"] = progress_queue
+            return progress_queue
+
+        def Pool(self, processes=None, initializer=None, initargs=()):
+            # The combined initializer retains worker-noise suppression and
+            # installs the progress queue for this spawned generation.
             recorded["initializer"] = initializer
+            recorded["initargs"] = initargs
             return _RecordingPool(processes)
 
     class _RecordingMultiprocessing:
@@ -3196,13 +3486,11 @@ def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
 
     mixin = LibraryIngestQueueMixin()
     mixin._ingest_parse_worker_count = lambda: 1
-    mixin._create_ingest_parse_pool()
+    resources = mixin._create_ingest_parse_pool()
 
     assert recorded["stderr_during_construction"] is ambient_stderr
-    assert (
-        recorded["initializer"]
-        is app_module.silence_ingest_worker_import_noise
-    )
+    assert recorded["initializer"] is initialize_ingest_parse_worker
+    assert recorded["initargs"] == (resources.progress_queue,)
 
 
 @pytest.mark.asyncio
