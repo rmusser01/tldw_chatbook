@@ -1,8 +1,14 @@
 """Integration tests: wizard commit plans against a real TOML config file."""
 
+import json
+from copy import deepcopy
+from types import SimpleNamespace
+
 import pytest
 
+from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
 
 
 @pytest.fixture()
@@ -32,16 +38,46 @@ def _write(section_values):
 
 class TestCommitRoundTrip:
     def test_provider_and_model_commits_land_in_toml(self, temp_config):
-        _write(wizard_state.build_provider_commit(
-            provider_key="openai", api_key="wizard-test-key-alpha", api_url=None
-        ))
-        _write(wizard_state.build_model_commit(
-            provider_value="OpenAI", model_id="gpt-5.6-terra"
-        ))
+        _write(
+            wizard_state.build_provider_commit(
+                provider_key="openai", api_key="wizard-test-key-alpha", api_url=None
+            )
+        )
+        _write(
+            wizard_state.build_model_commit(
+                provider_value="OpenAI", model_id="gpt-5.6-terra"
+            )
+        )
         config = _reload()
         assert config["api_settings"]["openai"]["api_key"] == "wizard-test-key-alpha"
         assert config["chat_defaults"]["provider"] == "OpenAI"
         assert config["chat_defaults"]["model"] == "gpt-5.6-terra"
+
+    def test_atomic_first_run_provider_commit_lands_as_one_mutation(self, temp_config):
+        from tldw_chatbook.Chat.provider_setup_persistence import (
+            persist_provider_setup,
+        )
+
+        mutation = wizard_state.build_first_run_provider_commit(
+            wizard_state.FirstRunProviderDraft(
+                provider="llama_cpp",
+                endpoint="http://127.0.0.1:8080/v1/chat/completions",
+                credential=wizard_state.ProviderCredentialDraft("none", "", 0),
+            ),
+            "local-model",
+            _reload(),
+        )
+
+        result = persist_provider_setup(mutation)
+
+        assert result.fully_applied is True
+        config = _reload()
+        assert config["api_settings"]["llama_cpp"]["api_url"] == (
+            "http://127.0.0.1:8080"
+        )
+        assert config["chat_defaults"]["provider"] == "llama_cpp"
+        assert config["chat_defaults"]["model"] == "local-model"
+        assert config["provider_setup"]["confirmed"]["llama_cpp"] is True
 
     def test_wizard_state_flags_land_and_gate_offers(self, temp_config):
         _write(wizard_state.build_wizard_state_commit(started=True))
@@ -53,12 +89,16 @@ class TestCommitRoundTrip:
         assert wizard_state.should_show_resume_toast(config, {}) is False
 
     def test_rerun_prefill_round_trip_without_secret_leak(self, temp_config):
-        _write(wizard_state.build_provider_commit(
-            provider_key="openai", api_key="wizard-test-key-beta", api_url=None
-        ))
-        _write(wizard_state.build_model_commit(
-            provider_value="OpenAI", model_id="gpt-5.6-terra"
-        ))
+        _write(
+            wizard_state.build_provider_commit(
+                provider_key="openai", api_key="wizard-test-key-beta", api_url=None
+            )
+        )
+        _write(
+            wizard_state.build_model_commit(
+                provider_value="OpenAI", model_id="gpt-5.6-terra"
+            )
+        )
         config = _reload()
         prefill = wizard_state.read_wizard_prefill(config)
         assert prefill.provider_value == "OpenAI"
@@ -75,13 +115,18 @@ class TestCommitRoundTrip:
         assert wizard_state.should_offer_wizard(config, {}) is False
 
     def test_summary_rows_match_persisted_state(self, temp_config):
-        _write(wizard_state.build_notes_commit(
-            sync_directory="~/N", auto_sync_enabled=True
-        ))
+        _write(
+            wizard_state.build_notes_commit(
+                sync_directory="~/N", auto_sync_enabled=True
+            )
+        )
         config = _reload()
-        rows = {r.label: r for r in wizard_state.build_summary_rows(
-            config, {}, rag_deps_installed=False
-        )}
+        rows = {
+            r.label: r
+            for r in wizard_state.build_summary_rows(
+                config, {}, rag_deps_installed=False
+            )
+        }
         assert rows["Notes sync"].ok is True
 
 
@@ -102,9 +147,11 @@ class TestFreshTemplateOfferGuard:
         assert wizard_state.should_offer_wizard(config, {}) is True
 
     def test_template_with_one_real_inline_key_does_not_offer(self, temp_config):
-        _write(wizard_state.build_provider_commit(
-            provider_key="openai", api_key="wizard-test-key-epsilon", api_url=None
-        ))
+        _write(
+            wizard_state.build_provider_commit(
+                provider_key="openai", api_key="wizard-test-key-epsilon", api_url=None
+            )
+        )
         config = _reload()
         assert wizard_state.should_offer_wizard(config, {}) is False
 
@@ -120,12 +167,17 @@ class TestFreshTemplateSummaryRow:
 
     def test_pristine_template_provider_row_is_unconfigured(self, temp_config):
         config = _reload()
-        rows = {r.label: r for r in wizard_state.build_summary_rows(
-            config, {}, rag_deps_installed=False
-        )}
+        rows = {
+            r.label: r
+            for r in wizard_state.build_summary_rows(
+                config, {}, rag_deps_installed=False
+            )
+        }
         assert rows["Provider"].ok is False
 
-    def test_one_click_local_server_commit_provider_row_is_configured(self, temp_config):
+    def test_one_click_local_server_commit_provider_row_is_configured(
+        self, temp_config
+    ):
         # Mirrors the wizard's own on-mount behavior (FirstRunSetupWizard.on_mount
         # -> _persist_started_flag) plus ProviderStep.commit()'s one-click,
         # no-api-key path (build_provider_commit(api_key=None, api_url=...)
@@ -135,9 +187,12 @@ class TestFreshTemplateSummaryRow:
         _write({"api_settings.llama_cpp": {"api_url": "http://127.0.0.1:8080"}})
         _write({"chat_defaults": {"provider": "llama_cpp", "model": ""}})
         config = _reload()
-        rows = {r.label: r for r in wizard_state.build_summary_rows(
-            config, {}, rag_deps_installed=False
-        )}
+        rows = {
+            r.label: r
+            for r in wizard_state.build_summary_rows(
+                config, {}, rag_deps_installed=False
+            )
+        }
         assert rows["Provider"].ok is True
 
 
@@ -180,10 +235,238 @@ class TestEncryptionAtRest:
     def test_enable_encryption_encrypts_stored_key(self, temp_config):
         from tldw_chatbook.config import enable_config_encryption
 
-        _write(wizard_state.build_provider_commit(
-            provider_key="openai", api_key="wizard-test-key-delta", api_url=None
-        ))
+        _write(
+            wizard_state.build_provider_commit(
+                provider_key="openai", api_key="wizard-test-key-delta", api_url=None
+            )
+        )
         assert enable_config_encryption("integration-test-password") is True
         raw = temp_config.read_text()
         assert "wizard-test-key-delta" not in raw
         assert "enc:" in raw or "password_verifier" in raw
+
+
+def _typed_provider_draft(
+    *,
+    provider="custom",
+    endpoint="https://example.test/v1/chat/completions",
+    source="draft",
+    value="integration-secret",
+    revision=1,
+):
+    return wizard_state.FirstRunProviderDraft(
+        provider=provider,
+        endpoint=endpoint,
+        credential=wizard_state.ProviderCredentialDraft(source, value, revision),
+    )
+
+
+class TestWizardAtomicProviderHandoff:
+    @pytest.mark.asyncio
+    async def test_model_continue_calls_atomic_writer_once_and_mirrors_full_success(
+        self, monkeypatch
+    ):
+        app_config = {"unrelated": {"keep": True}}
+        container = SetupWizardContainer(SimpleNamespace(app_config=app_config))
+        calls = []
+
+        def writer(section_values, *, delete_keys=None):
+            calls.append((section_values, delete_keys))
+            return ConfigMutationResult(True, True, None)
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.provider_setup_persistence."
+            "apply_settings_mutation_to_cli_config",
+            writer,
+        )
+
+        assert container.stage_provider_setup(_typed_provider_draft()) is True
+        assert app_config == {"unrelated": {"keep": True}}
+        assert "not been saved" in container.finish_later_message()
+
+        committed = await container.commit_staged_provider_setup("custom-model")
+
+        assert committed is True
+        assert len(calls) == 1
+        sections, deletes = calls[0]
+        assert set(sections) == {
+            "api_settings.custom",
+            "chat_defaults",
+            "provider_setup.confirmed",
+        }
+        assert sections["chat_defaults"] == {
+            "provider": "custom",
+            "model": "custom-model",
+        }
+        assert deletes["api_settings.custom"] == ("api_key_env_var",)
+        assert app_config["unrelated"] == {"keep": True}
+        assert app_config["chat_defaults"] == {
+            "provider": "custom",
+            "model": "custom-model",
+        }
+        assert app_config["provider_setup"]["confirmed"]["custom"] is True
+        assert container.provider_setup_committed is True
+        assert container.committed_provider_model == "custom-model"
+        assert "provider and model are saved" in container.finish_later_message()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "result",
+        [
+            ConfigMutationResult(False, False, "before_replace"),
+            ConfigMutationResult(True, False, "cache_reload"),
+        ],
+    )
+    async def test_atomic_failure_never_partially_updates_app_config(
+        self, monkeypatch, result
+    ):
+        app_config = {
+            "chat_defaults": {"provider": "openai", "model": "old-model"},
+            "api_settings": {"openai": {"api_key": "old-secret"}},
+        }
+        before = deepcopy(app_config)
+        container = SetupWizardContainer(SimpleNamespace(app_config=app_config))
+        calls = []
+
+        def writer(section_values, *, delete_keys=None):
+            calls.append((section_values, delete_keys))
+            return result
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.provider_setup_persistence."
+            "apply_settings_mutation_to_cli_config",
+            writer,
+        )
+        container.stage_provider_setup(_typed_provider_draft())
+
+        committed = await container.commit_staged_provider_setup("custom-model")
+
+        assert committed is False
+        assert len(calls) == 1
+        assert app_config == before
+        assert container.provider_setup_committed is False
+        assert container.staged_provider_draft is not None
+
+    @pytest.mark.asyncio
+    async def test_atomic_retry_uses_one_writer_per_attempt_and_no_early_mirror(
+        self, monkeypatch
+    ):
+        app_config = {"chat_defaults": {"provider": "openai", "model": "old-model"}}
+        before = deepcopy(app_config)
+        container = SetupWizardContainer(SimpleNamespace(app_config=app_config))
+        results = iter(
+            (
+                ConfigMutationResult(False, False, "before_replace"),
+                ConfigMutationResult(True, True, None),
+            )
+        )
+        call_count = 0
+
+        def writer(section_values, *, delete_keys=None):
+            nonlocal call_count
+            call_count += 1
+            return next(results)
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.provider_setup_persistence."
+            "apply_settings_mutation_to_cli_config",
+            writer,
+        )
+        container.stage_provider_setup(_typed_provider_draft())
+
+        assert await container.commit_staged_provider_setup("custom-model") is False
+        assert app_config == before
+        assert await container.commit_staged_provider_setup("custom-model") is True
+
+        assert call_count == 2
+        assert app_config["chat_defaults"] == {
+            "provider": "custom",
+            "model": "custom-model",
+        }
+
+    @pytest.mark.asyncio
+    async def test_repeated_success_for_same_staged_pair_does_not_write_twice(
+        self, monkeypatch
+    ):
+        container = SetupWizardContainer(SimpleNamespace(app_config={}))
+        call_count = 0
+
+        def writer(section_values, *, delete_keys=None):
+            nonlocal call_count
+            call_count += 1
+            return ConfigMutationResult(True, True, None)
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.provider_setup_persistence."
+            "apply_settings_mutation_to_cli_config",
+            writer,
+        )
+        container.stage_provider_setup(_typed_provider_draft())
+
+        assert await container.commit_staged_provider_setup("custom-model") is True
+        assert await container.commit_staged_provider_setup("custom-model") is True
+        assert call_count == 1
+
+        assert await container.commit_staged_provider_setup("different-model") is True
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_provider_change_invalidates_the_committed_staged_model(
+        self, monkeypatch
+    ):
+        container = SetupWizardContainer(SimpleNamespace(app_config={}))
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.provider_setup_persistence."
+            "apply_settings_mutation_to_cli_config",
+            lambda section_values, *, delete_keys=None: ConfigMutationResult(
+                True, True, None
+            ),
+        )
+        container.stage_provider_setup(_typed_provider_draft())
+        assert await container.commit_staged_provider_setup("custom-model") is True
+
+        container.stage_provider_setup(
+            _typed_provider_draft(
+                provider="llama_cpp",
+                endpoint="http://127.0.0.1:8080",
+                source="none",
+                value="",
+                revision=2,
+            )
+        )
+
+        assert container.provider_setup_committed is False
+        assert container.committed_provider_model == ""
+
+    @pytest.mark.asyncio
+    async def test_uncommitted_provider_checkpoint_resumes_at_provider_without_secret(
+        self,
+    ):
+        app_config = {}
+        container = SetupWizardContainer(SimpleNamespace(app_config=app_config))
+        captured = []
+
+        async def commit_config(settings, *, delete_keys=None, after_write=None):
+            captured.append((settings, delete_keys))
+            return True
+
+        container.commit_config = commit_config
+        container.wizard_data = {
+            "welcome": {"track": "quick"},
+            "provider": {
+                "provider_key": "custom",
+                "provider_value": "custom",
+            },
+        }
+        container.stage_provider_setup(
+            _typed_provider_draft(value="checkpoint-integration-secret")
+        )
+
+        assert await container.persist_setup_checkpoint("model") is True
+
+        checkpoint = captured[0][0]["first_run"]
+        assert checkpoint["active_step_id"] == "provider"
+        serialized = json.dumps(checkpoint, sort_keys=True)
+        assert "checkpoint-integration-secret" not in serialized
+        assert "credential" not in serialized
+        assert "example.test" not in serialized

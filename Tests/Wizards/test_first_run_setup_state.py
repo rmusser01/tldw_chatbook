@@ -1,8 +1,10 @@
 """Unit tests for the pure first-run setup wizard state module."""
 
+import json
+import pickle
 from collections.abc import Iterator, Mapping
 from copy import deepcopy
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, asdict
 
 import pytest
 
@@ -192,7 +194,14 @@ class TestSetupResumeDraft:
 
     @pytest.mark.parametrize(
         "secret_field",
-        ["api_key", "API-Key", "saved_credential", "masterPassword", "access_token", "client_secret"],
+        [
+            "api_key",
+            "API-Key",
+            "saved_credential",
+            "masterPassword",
+            "access_token",
+            "client_secret",
+        ],
     )
     def test_resume_draft_rejects_secret_shaped_fields(self, secret_field):
         from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
@@ -278,9 +287,7 @@ class TestSetupResumeDraft:
     def test_resume_draft_rejects_non_json_value_under_recognized_field(self):
         from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
 
-        config = _resume_draft_config(
-            draft_values={"model": {"model_id": object()}}
-        )
+        config = _resume_draft_config(draft_values={"model": {"model_id": object()}})
 
         assert read_setup_draft(config) is None
 
@@ -355,6 +362,37 @@ class TestSetupResumeDraft:
         assert "never-copy" not in repr(draft)
         assert "example.test" not in repr(draft)
 
+    def test_checkpoint_excludes_typed_provider_credential_record(self):
+        credential_type = getattr(setup_state, "ProviderCredentialDraft", None)
+        assert credential_type is not None
+        credential = credential_type("draft", "checkpoint-secret", 7)
+
+        draft = setup_state.setup_draft_checkpoint(
+            track="quick",
+            active_step_id="model",
+            values={
+                "provider": {
+                    "provider_key": "custom",
+                    "provider_value": "custom",
+                    "credential": credential,
+                }
+            },
+        )
+
+        assert draft.values["provider"] == {
+            "provider_key": "custom",
+            "provider_value": "custom",
+        }
+        assert "checkpoint-secret" not in repr(draft)
+        with pytest.raises(TypeError):
+            setup_state.build_setup_draft_mutation(
+                setup_state.FirstRunProviderDraft(
+                    "custom",
+                    "https://example.test/v1/chat/completions",
+                    credential,
+                )
+            )
+
     def test_resume_parsing_does_not_mutate_active_configuration(self):
         from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
 
@@ -386,9 +424,10 @@ class TestSetupRecoveryAction:
     def test_home_for_uncleared_resume_attempt(self):
         from tldw_chatbook.UI.Wizards.first_run_setup_state import setup_recovery_action
 
-        assert setup_recovery_action(
-            _resume_draft_config(resume_attempted=True), {}
-        ) == "home"
+        assert (
+            setup_recovery_action(_resume_draft_config(resume_attempted=True), {})
+            == "home"
+        )
 
     @pytest.mark.parametrize(
         "config",
@@ -438,8 +477,15 @@ class TestActiveStepIds:
         """TASK-1301: the Speech step joins the FULL track only, right after
         RAG (also model-setup-shaped) and before Tools."""
         assert active_step_ids(TRACK_FULL, key_entered=False) == (
-            STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_RAG, STEP_SPEECH,
-            STEP_TOOLS, STEP_NOTES, STEP_APPEARANCE, STEP_SUMMARY,
+            STEP_WELCOME,
+            STEP_PROVIDER,
+            STEP_MODEL,
+            STEP_RAG,
+            STEP_SPEECH,
+            STEP_TOOLS,
+            STEP_NOTES,
+            STEP_APPEARANCE,
+            STEP_SUMMARY,
         )
 
     def test_full_track_with_key_includes_protect(self):
@@ -447,41 +493,62 @@ class TestActiveStepIds:
 
     def test_quick_track(self):
         assert active_step_ids(TRACK_QUICK, key_entered=False) == (
-            STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_SUMMARY,
+            STEP_WELCOME,
+            STEP_PROVIDER,
+            STEP_MODEL,
+            STEP_SUMMARY,
         )
 
     def test_quick_track_with_key(self):
         assert active_step_ids(TRACK_QUICK, key_entered=True) == (
-            STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_PROTECT, STEP_SUMMARY,
+            STEP_WELCOME,
+            STEP_PROVIDER,
+            STEP_MODEL,
+            STEP_PROTECT,
+            STEP_SUMMARY,
         )
 
 
 class TestCommitBuilders:
     def test_provider_commit_cloud(self):
-        commit = build_provider_commit(provider_key="openai", api_key="sk-x", api_url=None)
+        commit = build_provider_commit(
+            provider_key="openai", api_key="sk-x", api_url=None
+        )
         assert commit == {"api_settings.openai": {"api_key": "sk-x"}}
 
     def test_provider_commit_local(self):
         commit = build_provider_commit(
             provider_key="llama_cpp", api_key=None, api_url="http://127.0.0.1:8080"
         )
-        assert commit == {"api_settings.llama_cpp": {"api_url": "http://127.0.0.1:8080"}}
+        assert commit == {
+            "api_settings.llama_cpp": {"api_url": "http://127.0.0.1:8080"}
+        }
 
     def test_provider_commit_env_key_writes_nothing_secret(self):
-        commit = build_provider_commit(provider_key="openai", api_key=None, api_url=None)
+        commit = build_provider_commit(
+            provider_key="openai", api_key=None, api_url=None
+        )
         assert commit == {}
 
     def test_model_commit(self):
         commit = build_model_commit(provider_value="OpenAI", model_id="gpt-5.6-terra")
-        assert commit == {"chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"}}
+        assert commit == {
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"}
+        }
 
     def test_tools_commit_only_gate_keys(self):
-        commit = build_tools_commit(gate_values={"read_file_enabled": True, "write_file_enabled": False})
-        assert commit == {"tools": {"read_file_enabled": True, "write_file_enabled": False}}
+        commit = build_tools_commit(
+            gate_values={"read_file_enabled": True, "write_file_enabled": False}
+        )
+        assert commit == {
+            "tools": {"read_file_enabled": True, "write_file_enabled": False}
+        }
 
     def test_notes_commit(self):
         commit = build_notes_commit(sync_directory="~/Notes", auto_sync_enabled=True)
-        assert commit == {"notes": {"sync_directory": "~/Notes", "auto_sync_enabled": True}}
+        assert commit == {
+            "notes": {"sync_directory": "~/Notes", "auto_sync_enabled": True}
+        }
 
     def test_notes_commit_disable_only_omits_directory(self):
         """No sync_directory passed -> not present in the commit at all, so
@@ -492,7 +559,9 @@ class TestCommitBuilders:
         assert "sync_directory" not in commit["notes"]
 
     def test_appearance_commit_with_splash(self):
-        commit = build_appearance_commit(default_theme="textual-dark", splash_card="matrix")
+        commit = build_appearance_commit(
+            default_theme="textual-dark", splash_card="matrix"
+        )
         assert commit == {
             "general": {"default_theme": "textual-dark"},
             "splash_screen": {"card_selection": "matrix"},
@@ -531,16 +600,361 @@ class TestCommitBuilders:
         assert commit == {"embedding_config": {"default_model_id": "e5-small-v2"}}
 
     def test_state_commit(self):
-        assert build_wizard_state_commit(started=True) == {"first_run": {"setup_started": True}}
-        assert build_wizard_state_commit(completed=True) == {"first_run": {"setup_completed": True}}
+        assert build_wizard_state_commit(started=True) == {
+            "first_run": {"setup_started": True}
+        }
+        assert build_wizard_state_commit(completed=True) == {
+            "first_run": {"setup_completed": True}
+        }
+
+
+def _first_run_provider_draft(
+    *,
+    provider="custom",
+    endpoint="https://example.test/v1/chat/completions",
+    source="none",
+    value="",
+    revision=0,
+):
+    credential_type = getattr(setup_state, "ProviderCredentialDraft", None)
+    draft_type = getattr(setup_state, "FirstRunProviderDraft", None)
+    assert credential_type is not None
+    assert draft_type is not None
+    return draft_type(
+        provider,
+        endpoint,
+        credential_type(source, value, revision),
+    )
+
+
+class TestFirstRunProviderContracts:
+    def test_credential_value_is_memory_only_repr_compare_and_asdict_safe(self):
+        credential_type = getattr(setup_state, "ProviderCredentialDraft", None)
+        assert credential_type is not None
+        first = credential_type("draft", "first-secret", 3)
+        second = credential_type("draft", "second-secret", 3)
+
+        assert first == second
+        assert first.value == "first-secret"
+        assert "first-secret" not in repr(first)
+        assert asdict(first) == {"source": "draft", "revision": 3}
+        serialized = json.dumps(asdict(first), sort_keys=True)
+        assert "first-secret" not in serialized
+        with pytest.raises(TypeError, match="memory-only"):
+            pickle.dumps(first)
+        assert first.__slots__ == ("source", "revision")
+        with pytest.raises(FrozenInstanceError):
+            first.revision = 4
+
+    @pytest.mark.parametrize(
+        ("source", "value", "revision"),
+        [
+            ("stored", "", 0),
+            ("draft", "secret", -1),
+            ("draft", "secret", True),
+            ("draft", "secret", 2**63),
+            ("draft", "x" * 8193, 0),
+            ("environment", "not an env var", 0),
+        ],
+    )
+    def test_credential_rejects_invalid_source_value_or_revision(
+        self, source, value, revision
+    ):
+        credential_type = getattr(setup_state, "ProviderCredentialDraft", None)
+        assert credential_type is not None
+        with pytest.raises(ValueError):
+            credential_type(source, value, revision)
+
+    def test_provider_draft_repr_and_asdict_are_secret_free(self):
+        draft = _first_run_provider_draft(
+            source="draft", value="provider-draft-secret", revision=4
+        )
+
+        assert "provider-draft-secret" not in repr(draft)
+        serialized = json.dumps(asdict(draft), sort_keys=True)
+        assert "provider-draft-secret" not in serialized
+        assert asdict(draft)["credential"] == {
+            "source": "draft",
+            "revision": 4,
+        }
+
+    @pytest.mark.parametrize(
+        ("provider", "endpoint", "credential"),
+        [
+            ("", "https://example.test/v1", None),
+            ("custom", "x" * 4097, None),
+            ("custom", "https://example.test/\n", None),
+            ("custom", "https://example.test/v1", object()),
+        ],
+    )
+    def test_provider_draft_rejects_invalid_types_and_bounds(
+        self, provider, endpoint, credential
+    ):
+        credential_type = getattr(setup_state, "ProviderCredentialDraft", None)
+        draft_type = getattr(setup_state, "FirstRunProviderDraft", None)
+        assert credential_type is not None
+        assert draft_type is not None
+        effective_credential = credential or credential_type("none", "", 0)
+        with pytest.raises(ValueError):
+            draft_type(provider, endpoint, effective_credential)
+
+    def test_discovery_key_separates_endpoints_and_never_carries_value(self):
+        builder = getattr(setup_state, "build_first_run_model_discovery_key", None)
+        assert callable(builder)
+        first = builder(
+            _first_run_provider_draft(
+                endpoint="http://127.0.0.1:8080",
+                source="draft",
+                value="discovery-secret",
+                revision=8,
+            )
+        )
+        equivalent = builder(
+            _first_run_provider_draft(
+                endpoint="http://127.0.0.1:8080/v1/chat/completions",
+                source="draft",
+                value="different-secret",
+                revision=8,
+            )
+        )
+        second = builder(
+            _first_run_provider_draft(
+                endpoint="http://127.0.0.1:8081",
+                source="draft",
+                value="discovery-secret",
+                revision=8,
+            )
+        )
+
+        assert first == equivalent
+        assert first != second
+        assert first.provider_key == "custom"
+        assert first.credential_source == "draft"
+        assert first.credential_revision == 8
+        assert "secret" not in repr(first).lower()
+        assert set(asdict(first)) == {
+            "provider_key",
+            "connection_identity",
+            "credential_source",
+            "credential_revision",
+        }
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "",
+            "ftp://example.test/v1",
+            "https://user:secret@example.test/v1",
+            "https://example.test/v1?token=secret",
+            "https://example.test/" + ("x" * 4096),
+        ],
+    )
+    def test_discovery_key_rejects_noncanonical_or_oversized_endpoint(self, endpoint):
+        builder = getattr(setup_state, "build_first_run_model_discovery_key", None)
+        assert callable(builder)
+        with pytest.raises(ValueError):
+            builder(_first_run_provider_draft(endpoint=endpoint))
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"provider_key": "Custom"},
+            {
+                "connection_identity": [
+                    "custom",
+                    "https://example.test/v1/chat/completions",
+                ]
+            },
+            {"connection_identity": ("custom", "https://example.test/v1/models")},
+            {"credential_source": "stored"},
+            {"credential_revision": True},
+            {"credential_revision": 2**63},
+        ],
+    )
+    def test_discovery_key_constructor_revalidates_types_bounds_and_canonicality(
+        self, overrides
+    ):
+        key_type = getattr(setup_state, "FirstRunModelDiscoveryKey", None)
+        assert key_type is not None
+        values = {
+            "provider_key": "custom",
+            "connection_identity": (
+                "custom",
+                "https://example.test/v1/chat/completions",
+            ),
+            "credential_source": "draft",
+            "credential_revision": 1,
+        }
+        values.update(overrides)
+        with pytest.raises(ValueError):
+            key_type(**values)
+
+    def test_llama_full_chat_url_commit_persists_root_defaults_and_confirmation(self):
+        builder = getattr(setup_state, "build_first_run_provider_commit", None)
+        assert callable(builder)
+        mutation = builder(
+            _first_run_provider_draft(
+                provider="llama_cpp",
+                endpoint="http://127.0.0.1:8080/v1/chat/completions",
+            ),
+            "local-model",
+            {},
+        )
+
+        assert dict(mutation.section_values["api_settings.llama_cpp"]) == {
+            "model": "local-model",
+            "api_url": "http://127.0.0.1:8080",
+        }
+        assert dict(mutation.section_values["chat_defaults"]) == {
+            "provider": "llama_cpp",
+            "model": "local-model",
+        }
+        assert dict(mutation.section_values["provider_setup.confirmed"]) == {
+            "llama_cpp": True
+        }
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "https://example.test/proxy",
+            "https://example.test/proxy/v1",
+            "https://example.test/proxy/v1/models",
+            "https://example.test/proxy/v1/chat/completions",
+        ],
+    )
+    def test_custom_endpoint_forms_commit_the_effective_chat_url(self, endpoint):
+        builder = getattr(setup_state, "build_first_run_provider_commit", None)
+        assert callable(builder)
+        mutation = builder(
+            _first_run_provider_draft(endpoint=endpoint),
+            "custom-model",
+            {},
+        )
+
+        assert mutation.section_values["api_settings.custom"]["api_url"] == (
+            "https://example.test/proxy/v1/chat/completions"
+        )
+
+    def test_existing_custom_endpoint_alias_is_preserved(self):
+        builder = getattr(setup_state, "build_first_run_provider_commit", None)
+        assert callable(builder)
+        mutation = builder(
+            _first_run_provider_draft(
+                endpoint="https://example.test/proxy/v1/chat/completions"
+            ),
+            "custom-model",
+            {"api_settings": {"custom": {"base_url": "https://old.test/v1"}}},
+        )
+
+        values = mutation.section_values["api_settings.custom"]
+        assert values["base_url"] == "https://example.test/proxy/v1"
+        assert "api_url" not in values
+
+    @pytest.mark.parametrize(
+        ("source", "value", "expected_source", "set_key", "delete_key"),
+        [
+            ("draft", "typed-secret", "stored", "api_key", "api_key_env_var"),
+            (
+                "environment",
+                "CUSTOM_API_KEY",
+                "environment",
+                "api_key_env_var",
+                "api_key",
+            ),
+        ],
+    )
+    def test_commit_maps_credential_source_and_revision_without_identity_value(
+        self, source, value, expected_source, set_key, delete_key
+    ):
+        builder = getattr(setup_state, "build_first_run_provider_commit", None)
+        assert callable(builder)
+        mutation = builder(
+            _first_run_provider_draft(source=source, value=value, revision=11),
+            "custom-model",
+            {},
+        )
+
+        provider_values = mutation.section_values["api_settings.custom"]
+        assert provider_values[set_key] == value
+        assert delete_key in mutation.delete_keys["api_settings.custom"]
+        assert mutation.semantic_identity.credential_source == expected_source
+        assert mutation.semantic_identity.credential_revision == 11
+        assert value not in repr(mutation)
+
+    def test_none_source_preserves_an_existing_stored_credential(self):
+        builder = getattr(setup_state, "build_first_run_provider_commit", None)
+        assert callable(builder)
+        mutation = builder(
+            _first_run_provider_draft(source="none", value="", revision=5),
+            "custom-model",
+            {"api_settings": {"custom": {"api_key": "existing-secret"}}},
+        )
+
+        assert mutation.section_values["api_settings.custom"]["api_key"] == (
+            "existing-secret"
+        )
+        assert mutation.semantic_identity.credential_source == "stored"
+        assert "existing-secret" not in repr(mutation)
+
+    @pytest.mark.parametrize(
+        ("model_id", "app_config"),
+        [
+            ("", {}),
+            (False, {}),
+            ("x" * 121, {}),
+            ("bad\nmodel", {}),
+            ("model", {"api_settings": "malformed"}),
+            ("model", {"api_settings": {"custom": "malformed"}}),
+        ],
+    )
+    def test_commit_rejects_invalid_model_or_malformed_config(
+        self, model_id, app_config
+    ):
+        builder = getattr(setup_state, "build_first_run_provider_commit", None)
+        assert callable(builder)
+        with pytest.raises((TypeError, ValueError)):
+            builder(_first_run_provider_draft(), model_id, app_config)
+
+
+class TestFirstRunSummaryActions:
+    @pytest.mark.parametrize(
+        ("provider_configured", "model_configured", "primary"),
+        [
+            (True, True, "start_chatting"),
+            (True, False, "review_provider"),
+            (False, True, "review_provider"),
+            (False, False, "review_provider"),
+        ],
+    )
+    def test_action_hierarchy_is_complete_and_unique(
+        self, provider_configured, model_configured, primary
+    ):
+        builder = getattr(setup_state, "build_first_run_summary_actions", None)
+        assert callable(builder)
+        actions = builder(
+            provider_configured=provider_configured,
+            model_configured=model_configured,
+        )
+
+        assert actions == (primary, "explore_home", "review_settings")
+        assert len(actions) == len(set(actions)) == 3
+
+    def test_action_hierarchy_rejects_truthy_non_booleans(self):
+        builder = getattr(setup_state, "build_first_run_summary_actions", None)
+        assert callable(builder)
+        with pytest.raises(ValueError):
+            builder(provider_configured=1, model_configured=True)
 
 
 class TestToolsCommitDelta:
     def test_no_changes_yields_empty_delta(self):
-        assert tools_commit_delta(
-            gate_values={"read_file_enabled": False, "write_file_enabled": False},
-            current_gates={},
-        ) == {}
+        assert (
+            tools_commit_delta(
+                gate_values={"read_file_enabled": False, "write_file_enabled": False},
+                current_gates={},
+            )
+            == {}
+        )
 
     def test_absent_current_key_defaults_to_false(self):
         """A gate never persisted before is treated as effectively False --
@@ -569,14 +983,18 @@ class TestToolsCommitDelta:
 
 class TestDependencyInvalidation:
     def test_provider_change_clears_stale_model(self):
-        commit = build_provider_commit(provider_key="anthropic", api_key="sk-a", api_url=None)
+        commit = build_provider_commit(
+            provider_key="anthropic", api_key="sk-a", api_url=None
+        )
         merged = invalidate_model_for_provider_change(
             commit, previous_provider_value="OpenAI", new_provider_value="Anthropic"
         )
         assert merged["chat_defaults"] == {"provider": "Anthropic", "model": ""}
 
     def test_same_provider_leaves_model_alone(self):
-        commit = build_provider_commit(provider_key="openai", api_key="sk-x", api_url=None)
+        commit = build_provider_commit(
+            provider_key="openai", api_key="sk-x", api_url=None
+        )
         merged = invalidate_model_for_provider_change(
             commit, previous_provider_value="OpenAI", new_provider_value="OpenAI"
         )
@@ -589,7 +1007,9 @@ class TestDependencyInvalidation:
         truthiness check silently skipped this because "" is falsy, which is
         exactly why a first-ever provider selection never synced
         chat_defaults.provider."""
-        commit = build_provider_commit(provider_key="openai", api_key="sk-x", api_url=None)
+        commit = build_provider_commit(
+            provider_key="openai", api_key="sk-x", api_url=None
+        )
         merged = invalidate_model_for_provider_change(
             commit, previous_provider_value="", new_provider_value="OpenAI"
         )
@@ -597,7 +1017,9 @@ class TestDependencyInvalidation:
 
     def test_none_previous_is_treated_like_empty(self):
         """None (no information at all) must behave the same as "" above."""
-        commit = build_provider_commit(provider_key="openai", api_key="sk-x", api_url=None)
+        commit = build_provider_commit(
+            provider_key="openai", api_key="sk-x", api_url=None
+        )
         merged = invalidate_model_for_provider_change(
             commit, previous_provider_value=None, new_provider_value="OpenAI"
         )
@@ -622,6 +1044,7 @@ class TestSectionAllowlist:
                 provider_id="parakeet-onnx",
                 model_id="nemo-parakeet-tdt-0.6b-v2",
                 language="en",
+                precision="int8",
             ),
         ]
         for commit in commits:
@@ -786,7 +1209,10 @@ class TestSummaryRows:
             "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
             "encryption": {"enabled": True},
         }
-        rows = {row.label: row for row in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        rows = {
+            row.label: row
+            for row in build_summary_rows(cfg, {}, rag_deps_installed=False)
+        }
         assert rows["Provider"].ok is True
         assert rows["Default model"].ok is True
         assert rows["RAG"].ok is False
@@ -812,7 +1238,10 @@ class TestSummaryRows:
             "chat_defaults": {"provider": "llama_cpp", "model": ""},
             "first_run": {"setup_started": True},
         }
-        rows = {row.label: row for row in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        rows = {
+            row.label: row
+            for row in build_summary_rows(cfg, {}, rag_deps_installed=False)
+        }
         assert rows["Provider"].ok is True
 
     def test_provider_row_stays_unconfigured_for_pristine_template_shape(self):
@@ -827,7 +1256,10 @@ class TestSummaryRows:
             "api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}},
             "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
         }
-        rows = {row.label: row for row in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        rows = {
+            row.label: row
+            for row in build_summary_rows(cfg, {}, rag_deps_installed=False)
+        }
         assert rows["Provider"].ok is False
 
     def test_provider_row_endpoint_ignored_without_wizard_involvement(self):
@@ -840,7 +1272,10 @@ class TestSummaryRows:
             "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8080"}},
             "chat_defaults": {"provider": "llama_cpp", "model": ""},
         }
-        rows = {row.label: row for row in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        rows = {
+            row.label: row
+            for row in build_summary_rows(cfg, {}, rag_deps_installed=False)
+        }
         assert rows["Provider"].ok is False
 
     def test_provider_row_endpoint_for_a_different_provider_does_not_leak(self):
@@ -857,7 +1292,10 @@ class TestSummaryRows:
             "chat_defaults": {"provider": "anthropic", "model": ""},
             "first_run": {"setup_started": True},
         }
-        rows = {row.label: row for row in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        rows = {
+            row.label: row
+            for row in build_summary_rows(cfg, {}, rag_deps_installed=False)
+        }
         assert rows["Provider"].ok is False
 
 
@@ -871,7 +1309,9 @@ class TestSpeechSummaryRow:
     def test_never_configured_by_the_wizard_is_default(self):
         from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_DEFAULT
 
-        rows = {r.label: r for r in build_summary_rows({}, {}, rag_deps_installed=False)}
+        rows = {
+            r.label: r for r in build_summary_rows({}, {}, rag_deps_installed=False)
+        }
         assert rows["Speech transcription"].state == ROW_DEFAULT
 
     def test_shipped_template_defaults_do_not_count_as_configured(self):
@@ -889,7 +1329,9 @@ class TestSpeechSummaryRow:
                 "default_language": "en",
             }
         }
-        rows = {r.label: r for r in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        rows = {
+            r.label: r for r in build_summary_rows(cfg, {}, rag_deps_installed=False)
+        }
         assert rows["Speech transcription"].state == ROW_DEFAULT
 
     def test_configured_and_installed_is_configured(self):
@@ -1056,9 +1498,14 @@ class TestSummaryThreeState:
             build_summary_rows,
         )
 
-        rows = {r.label: r for r in build_summary_rows(
-            {"general": {"default_theme": "textual-dark"}}, {}, rag_deps_installed=False
-        )}
+        rows = {
+            r.label: r
+            for r in build_summary_rows(
+                {"general": {"default_theme": "textual-dark"}},
+                {},
+                rag_deps_installed=False,
+            )
+        }
         assert rows["Theme"].state == ROW_DEFAULT
         assert rows["Theme"].glyph == "–"
         assert rows["Tools"].state == ROW_DEFAULT
@@ -1072,7 +1519,9 @@ class TestSummaryThreeState:
         )
 
         cfg = {"api_settings": {"openai": {"api_key": "wizard-test-key-tri"}}}
-        rows = {r.label: r for r in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        rows = {
+            r.label: r for r in build_summary_rows(cfg, {}, rag_deps_installed=False)
+        }
         assert rows["Key encryption"].state == ROW_ATTENTION
         assert rows["Key encryption"].glyph == "✗"
 
@@ -1084,13 +1533,17 @@ class TestSummaryThreeState:
             build_summary_rows,
         )
 
-        unconfigured = {r.label: r for r in build_summary_rows({}, {}, rag_deps_installed=False)}
+        unconfigured = {
+            r.label: r for r in build_summary_rows({}, {}, rag_deps_installed=False)
+        }
         assert unconfigured["Default model"].state == ROW_DEFAULT
         cfg = {
             "api_settings": {"openai": {"api_key": "wizard-test-key-tri"}},
             "first_run": {"setup_started": True},
         }
-        configured = {r.label: r for r in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        configured = {
+            r.label: r for r in build_summary_rows(cfg, {}, rag_deps_installed=False)
+        }
         assert configured["Default model"].state == ROW_ATTENTION
 
     def test_custom_theme_earns_configured(self):
@@ -1100,9 +1553,12 @@ class TestSummaryThreeState:
             build_summary_rows,
         )
 
-        rows = {r.label: r for r in build_summary_rows(
-            {"general": {"default_theme": "nord"}}, {}, rag_deps_installed=False
-        )}
+        rows = {
+            r.label: r
+            for r in build_summary_rows(
+                {"general": {"default_theme": "nord"}}, {}, rag_deps_installed=False
+            )
+        }
         assert rows["Theme"].state == ROW_CONFIGURED
 
 
@@ -1135,9 +1591,13 @@ class TestRerunModelPrefill:
         from tldw_chatbook.UI.Wizards.first_run_setup_state import rerun_model_prefill
 
         assert rerun_model_prefill({}, provider_value="openai") == ""
-        assert rerun_model_prefill(
-            {"chat_defaults": {"provider": "openai", "model": "m"}}, provider_value=""
-        ) == ""
+        assert (
+            rerun_model_prefill(
+                {"chat_defaults": {"provider": "openai", "model": "m"}},
+                provider_value="",
+            )
+            == ""
+        )
 
 
 class TestSummaryTemplateHonesty:
@@ -1190,8 +1650,7 @@ class TestSummaryTemplateHonesty:
         cfg = dict(self._WALKED_TEMPLATE_CFG)
         cfg["chat_defaults"] = {"provider": "OpenAI", "model": "my-local-model"}
         rows = {
-            r.label: r
-            for r in build_summary_rows(cfg, {}, rag_deps_installed=True)
+            r.label: r for r in build_summary_rows(cfg, {}, rag_deps_installed=True)
         }
         row = rows["Default model"]
         assert row.ok is False
@@ -1202,8 +1661,7 @@ class TestSummaryTemplateHonesty:
         cfg = dict(self._WALKED_TEMPLATE_CFG)
         cfg["embedding_config"] = {"default_model_id": "bge-large-en"}
         rows = {
-            r.label: r
-            for r in build_summary_rows(cfg, {}, rag_deps_installed=True)
+            r.label: r for r in build_summary_rows(cfg, {}, rag_deps_installed=True)
         }
         assert rows["RAG"].ok is True
         assert "bge-large-en" in rows["RAG"].detail

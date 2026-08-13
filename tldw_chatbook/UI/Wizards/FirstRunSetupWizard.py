@@ -1278,9 +1278,9 @@ class ProviderStep(SetupStep):
 
     async def commit(self) -> tuple[bool, str]:
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-            build_provider_commit,
-            invalidate_model_for_provider_change,
-            read_wizard_prefill,
+            FirstRunProviderDraft,
+            ProviderCredentialDraft,
+            read_provider_secret_presence,
         )
 
         provider_key = self._effective_provider_key()
@@ -1291,50 +1291,49 @@ class ProviderStep(SetupStep):
         typed_key = (
             key_input.value.strip() if key_input.display and key_input.value else None
         )
-        api_url = getattr(self, "detected_base_url", None)
-        if not typed_key and self._clear_requested:
-            # build_provider_commit's truthiness check treats "" exactly like
-            # "nothing to write" -- that's right for every other path (an
-            # untouched/blank field must never clobber a stored key) but
-            # wrong for an explicit Clear, which must persist an empty
-            # string. Build that one section directly instead.
-            section = f"api_settings.{self.selected_provider_key}"
-            values: Dict[str, Any] = {"api_key": ""}
-            if api_url:
-                values["api_url"] = api_url
-            commit: Dict[str, Dict[str, Any]] = {section: values}
+        endpoint = str(getattr(self, "detected_base_url", None) or "")
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        presence = read_provider_secret_presence(
+            app_config,
+            self._environ,
+            provider_key=self.selected_provider_key,
+        )
+        if typed_key:
+            credential_source = "draft"
+            credential_value = typed_key
+        elif self._clear_requested:
+            # An empty draft value is the in-memory explicit-clear decision.
+            # It stays distinguishable from source="none", which preserves a
+            # valid stored key when the user chose Keep current.
+            credential_source = "draft"
+            credential_value = ""
+        elif presence.env_var_set and presence.env_var:
+            credential_source = "environment"
+            credential_value = presence.env_var
         else:
-            commit = build_provider_commit(
-                provider_key=self.selected_provider_key,
-                api_key=typed_key,
-                api_url=api_url,
-            )
-        # Resolve the exact chat_defaults.provider value form the same way
-        # chat_screen._apply_detected_local_server does (read it once; mirror it).
+            credential_source = "none"
+            credential_value = ""
+
         self.provider_value_for_chat_defaults = self._display_value_for(
             self.selected_provider_key
         )
-        # Bug-3 fix: on the very first commit this session,
-        # self._last_committed_provider_value is still None -- fall back to
-        # the PERSISTED chat_defaults.provider so a first-ever provider
-        # selection (with Model skipped) still syncs chat_defaults instead
-        # of silently leaving it at whatever the template/previous run had,
-        # even though credentials just landed under api_settings. A later
-        # commit this same session (Back-and-switch) still prefers the
-        # in-session value over a possibly-stale persisted one.
-        if self._last_committed_provider_value is not None:
-            effective_previous_provider = self._last_committed_provider_value
-        else:
-            app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
-            effective_previous_provider = read_wizard_prefill(app_config).provider_value
-        commit = invalidate_model_for_provider_change(
-            commit,
-            previous_provider_value=effective_previous_provider,
-            new_provider_value=self.provider_value_for_chat_defaults,
-        )
-        ok = await self.wizard.commit_config(commit)
-        if not ok:
-            return False, "Saving the provider settings failed."
+        revision = getattr(self, "_credential_revision", 0) + 1
+        try:
+            provider_draft = FirstRunProviderDraft(
+                provider=self.selected_provider_key,
+                endpoint=endpoint,
+                credential=ProviderCredentialDraft(
+                    credential_source,
+                    credential_value,
+                    revision,
+                ),
+            )
+        except ValueError:
+            return False, "The provider settings are invalid."
+        stage = getattr(self.wizard, "stage_provider_setup", None)
+        if not callable(stage) or not stage(provider_draft):
+            return False, "Staging the provider settings failed."
+        self._credential_revision = revision
         self._last_committed_provider_value = self.provider_value_for_chat_defaults
         self._clear_requested = False
         if typed_key:
@@ -1664,14 +1663,17 @@ class ModelStep(SetupStep):
         model_id = self._effective_model_id()
         if not (provider_value and model_id):
             return True, ""  # skip-safe
-        ok = await self.wizard.commit_config(
-            wizard_state.build_model_commit(
-                provider_value=provider_value, model_id=model_id
-            )
-        )
+        commit_staged = getattr(self.wizard, "commit_staged_provider_setup", None)
+        if not callable(commit_staged):
+            return False, "Return to Provider and review the connection."
+        ok = await commit_staged(model_id)
         if ok:
             self.selected_model_id = model_id
-        return (True, "") if ok else (False, "Saving the model choice failed.")
+        return (
+            (True, "")
+            if ok
+            else (False, "Saving the provider and model setup failed.")
+        )
 
     def get_step_data(self) -> Dict[str, Any]:
         return {"model_id": self.selected_model_id}
@@ -4123,6 +4125,9 @@ class SetupWizardContainer(WizardContainer):
         self.rerun = rerun
         self.resume_draft = resume_draft
         self.key_entered = False
+        self._staged_provider_draft: wizard_state.FirstRunProviderDraft | None = None
+        self._provider_setup_committed = False
+        self._committed_provider_model = ""
         self._draft_mutation_lock = asyncio.Lock()
         self._draft_mutations_terminal = False
         # (task-2040) MUST be set before ``_create_steps()``: step
@@ -4163,6 +4168,88 @@ class SetupWizardContainer(WizardContainer):
                 step_id: dict(step_values)
                 for step_id, step_values in resume_draft.values.items()
             }
+
+    @property
+    def staged_provider_draft(self) -> wizard_state.FirstRunProviderDraft | None:
+        """Return the in-memory provider connection staged by Provider."""
+
+        return self._staged_provider_draft
+
+    @property
+    def provider_setup_committed(self) -> bool:
+        """Whether the staged provider/model pair fully reached runtime config."""
+
+        return self._provider_setup_committed
+
+    @property
+    def committed_provider_model(self) -> str:
+        """Return the model committed with the current staged provider."""
+
+        return self._committed_provider_model
+
+    def finish_later_message(self) -> str:
+        """Describe provider persistence accurately for the current step."""
+
+        if self._staged_provider_draft is not None and not self._provider_setup_committed:
+            return (
+                "This provider connection is staged only in this wizard and has "
+                "not been saved. Your non-secret setup progress will resume at "
+                "Provider."
+            )
+        if self._provider_setup_committed:
+            return (
+                "Your provider and model are saved. Other completed setup steps "
+                "are also saved, and you can continue from Settings ▸ Diagnostics."
+            )
+        return (
+            "Steps you've already completed are saved. You can finish setup any "
+            "time from Settings ▸ Diagnostics."
+        )
+
+    def stage_provider_setup(
+        self, provider_draft: wizard_state.FirstRunProviderDraft
+    ) -> bool:
+        """Hold a provider connection in wizard memory without writing config."""
+
+        if type(provider_draft) is not wizard_state.FirstRunProviderDraft:
+            return False
+        self._staged_provider_draft = provider_draft
+        self._provider_setup_committed = False
+        self._committed_provider_model = ""
+        return True
+
+    async def commit_staged_provider_setup(self, model_id: str) -> bool:
+        """Persist the staged connection and model through one atomic mutation."""
+
+        provider_draft = self._staged_provider_draft
+        if provider_draft is None:
+            return False
+        if (
+            type(model_id) is str
+            and self._provider_setup_committed
+            and self._committed_provider_model == model_id.strip()
+        ):
+            return True
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        try:
+            mutation = wizard_state.build_first_run_provider_commit(
+                provider_draft,
+                model_id,
+                app_config,
+            )
+        except (TypeError, ValueError):
+            logger.warning("First-run provider commit rejected (category=validation)")
+            return False
+        saved = await self.commit_config(
+            mutation.section_values,
+            delete_keys=mutation.delete_keys,
+            provider_setup_mutation=mutation,
+        )
+        if not saved or self._staged_provider_draft is not provider_draft:
+            return False
+        self._provider_setup_committed = True
+        self._committed_provider_model = model_id.strip()
+        return True
 
     def compose(self) -> ComposeResult:
         """Compose with progress derived from the resolved setup track."""
@@ -5205,10 +5292,20 @@ class SetupWizardContainer(WizardContainer):
 
         if self._draft_mutations_terminal:
             return False
+        checkpoint_step_id = active_step_id
+        if (
+            self._staged_provider_draft is not None
+            and not self._provider_setup_committed
+            and active_step_id != wizard_state.STEP_PROVIDER
+        ):
+            # The endpoint and credential are intentionally memory-only. A
+            # restart cannot safely reconstruct this staged connection, so
+            # recovery returns to Provider until Model commits it atomically.
+            checkpoint_step_id = wizard_state.STEP_PROVIDER
         try:
             draft = wizard_state.setup_draft_checkpoint(
                 track=self.track,
-                active_step_id=active_step_id,
+                active_step_id=checkpoint_step_id,
                 values=self.wizard_data,
             )
             settings, delete_keys = wizard_state.build_setup_draft_mutation(draft)
@@ -5284,10 +5381,11 @@ class SetupWizardContainer(WizardContainer):
     # -- persistence (the only write path for steps) -----------------------
     async def commit_config(
         self,
-        section_values: dict,
+        section_values: Mapping[str, Mapping[str, object]],
         *,
         delete_keys: Mapping[str, tuple[str, ...]] | None = None,
         after_write: Callable[[], None] | None = None,
+        provider_setup_mutation: object | None = None,
     ) -> bool:
         """Serialize every config write through one worker-side call."""
         requested_deletes = {} if delete_keys is None else dict(delete_keys)
@@ -5305,6 +5403,30 @@ class SetupWizardContainer(WizardContainer):
             )
             return False
         import asyncio
+
+        if provider_setup_mutation is not None:
+            from tldw_chatbook.Chat.provider_setup_persistence import (
+                ProviderSetupMutation,
+                persist_provider_setup,
+            )
+
+            if (
+                type(provider_setup_mutation) is not ProviderSetupMutation
+                or section_values != provider_setup_mutation.section_values
+                or requested_deletes != provider_setup_mutation.delete_keys
+                or after_write is not None
+            ):
+                logger.error("Wizard provider commit rejected (category=validation)")
+                return False
+            result = await asyncio.get_running_loop().run_in_executor(
+                None,
+                persist_provider_setup,
+                provider_setup_mutation,
+            )
+            if result.fully_applied:
+                self._mirror_into_app_config(section_values, requested_deletes)
+                return True
+            return False
 
         from tldw_chatbook.config import save_settings_to_cli_config
 
@@ -5551,18 +5673,20 @@ class FirstRunSetupWizard(WizardScreen):
             ] = True
 
     def action_cancel(self) -> None:
+        message = (
+            "Steps you've already completed are saved. You can finish "
+            "setup any time from Settings ▸ Diagnostics."
+        )
         try:
             container = self.query_one(SetupWizardContainer)
             if container._advancing or container._failure_action_running:
                 return
+            message = container.finish_later_message()
         except NoMatches:
             pass
         dialog = _SettlingGuardedConfirmationDialog(
             title="Finish setup later?",
-            message=(
-                "Steps you've already completed are saved. You can finish "
-                "setup any time from Settings ▸ Diagnostics."
-            ),
+            message=message,
             confirm_label="Finish later",
             cancel_label="Keep going",
         )

@@ -339,6 +339,8 @@ def _provider_step(
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
+    if not callable(getattr(wizard, "stage_provider_setup", None)):
+        wizard.stage_provider_setup = MagicMock(return_value=True)
     return ProviderStep(
         wizard=wizard,
         config=WizardStepConfig(id="provider", title="Provider", step_number=2),
@@ -347,6 +349,12 @@ def _provider_step(
         local_discover=local_discover or AsyncMock(return_value=()),
         environ=environ or {},
     )
+
+
+def _staged_provider_draft(wizard):
+    wizard.commit_config.assert_not_called()
+    wizard.stage_provider_setup.assert_called_once()
+    return wizard.stage_provider_setup.call_args.args[0]
 
 
 class _StepHost(App):
@@ -862,8 +870,10 @@ async def test_provider_step_commit_writes_key_and_notes_key_entered():
         step.query_one("#setup-provider-key-input", Input).value = "sk-new"
         ok, error = await step.commit()
         assert ok, error
-        committed = wizard.commit_config.call_args.args[0]
-        assert committed["api_settings.openai"]["api_key"] == "sk-new"
+        draft = _staged_provider_draft(wizard)
+        assert draft.provider == "openai"
+        assert draft.credential.source == "draft"
+        assert draft.credential.value == "sk-new"
         wizard.note_key_entered.assert_called_once()
 
 
@@ -896,8 +906,7 @@ async def test_provider_step_commit_recovers_user_driven_highlight():
         ok, error = await step.commit()
         assert ok, error
         assert step.selected_provider_key == "anthropic"
-        committed = wizard.commit_config.call_args.args[0]
-        assert committed["chat_defaults"]["provider"] == "anthropic"
+        assert _staged_provider_draft(wizard).provider == "anthropic"
 
 
 @pytest.mark.asyncio
@@ -924,10 +933,11 @@ async def test_provider_step_untouched_mount_does_not_select_or_commit():
         assert ok, error
         assert step.selected_provider_key == ""
         wizard.commit_config.assert_not_called()
+        wizard.stage_provider_setup.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_provider_space_only_selects_initial_provider_and_commits():
+async def test_provider_space_only_selects_initial_provider_and_stages():
     step = _provider_step()
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -942,12 +952,11 @@ async def test_provider_space_only_selects_initial_provider_and_commits():
         assert step.selected_provider_key == "openai"
         ok, error = await step.commit()
         assert ok, error
-        committed = step.wizard.commit_config.call_args.args[0]
-        assert committed["chat_defaults"]["provider"] == "openai"
+        assert _staged_provider_draft(step.wizard).provider == "openai"
 
 
 @pytest.mark.asyncio
-async def test_provider_home_on_initial_row_selects_and_commits_openai():
+async def test_provider_home_on_initial_row_selects_and_stages_openai():
     step = _provider_step(environ={"OPENAI_API_KEY": "sk-x"})
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -964,12 +973,14 @@ async def test_provider_home_on_initial_row_selects_and_commits_openai():
         assert "environment" in str(status.render()).lower()
         ok, error = await step.commit()
         assert ok, error
-        committed = step.wizard.commit_config.call_args.args[0]
-        assert committed["chat_defaults"]["provider"] == "openai"
+        draft = _staged_provider_draft(step.wizard)
+        assert draft.provider == "openai"
+        assert draft.credential.source == "environment"
+        assert draft.credential.value == "OPENAI_API_KEY"
 
 
 @pytest.mark.asyncio
-async def test_provider_page_up_initial_row_preserves_openai_and_commits():
+async def test_provider_page_up_initial_row_preserves_openai_and_stages():
     step = _provider_step()
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -993,8 +1004,7 @@ async def test_provider_page_up_initial_row_preserves_openai_and_commits():
 
         ok, error = await step.commit()
         assert ok, error
-        committed = step.wizard.commit_config.call_args.args[0]
-        assert committed["chat_defaults"]["provider"] == "openai"
+        assert _staged_provider_draft(step.wizard).provider == "openai"
 
 
 def test_provider_grouping_orders_popular_then_other_nonempty_sections():
@@ -1060,8 +1070,7 @@ def test_provider_grouping_orders_popular_then_other_nonempty_sections():
 
 @pytest.mark.asyncio
 async def test_provider_step_one_click_connect_adopts_discovered_server():
-    """Discovered local server: one click selects it; commit persists the
-    endpoint but never calls note_key_entered (no secret was involved)."""
+    """One click stages the discovered endpoint without writing config."""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -1093,16 +1102,10 @@ async def test_provider_step_one_click_connect_adopts_discovered_server():
 
         ok, error = await step.commit()
         assert ok, error
-        committed = wizard.commit_config.call_args.args[0]
-        # Bug-3 fix: this app_config has no persisted chat_defaults, so the
-        # persisted-fallback previous provider is "" -- selecting
-        # "llama_cpp" differs from that, so chat_defaults now syncs
-        # alongside the endpoint, exactly like a first-ever cloud-provider
-        # selection would (see the dedicated Bug-3 tests below).
-        assert committed == {
-            "api_settings.llama_cpp": {"api_url": "http://127.0.0.1:8080"},
-            "chat_defaults": {"provider": "llama_cpp", "model": ""},
-        }
+        draft = _staged_provider_draft(wizard)
+        assert draft.provider == "llama_cpp"
+        assert draft.endpoint == "http://127.0.0.1:8080"
+        assert draft.credential.source == "none"
         wizard.note_key_entered.assert_not_called()
 
 
@@ -1179,7 +1182,7 @@ async def test_provider_step_masked_key_never_round_trips_configured_secret():
 
 @pytest.mark.asyncio
 async def test_provider_step_keep_preserves_existing_key_without_note():
-    """Keep must not touch the stored secret nor trigger the protect-keys gate."""
+    """Keep stages no replacement and does not trigger the protect-keys gate."""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -1203,19 +1206,16 @@ async def test_provider_step_keep_preserves_existing_key_without_note():
         await pilot.pause()
         ok, error = await step.commit()
         assert ok, error
-        committed = wizard.commit_config.call_args.args[0]
-        # Bug-3 fix: this app_config has no persisted chat_defaults, so
-        # selecting "openai" (differing from the persisted-fallback "")
-        # now syncs chat_defaults alongside the untouched (Keep) credential
-        # -- the secret itself is still not written, and note_key_entered is
-        # still not called, which is the whole point of this test.
-        assert committed == {"chat_defaults": {"provider": "openai", "model": ""}}
+        draft = _staged_provider_draft(wizard)
+        assert draft.provider == "openai"
+        assert draft.credential.source == "none"
+        assert draft.credential.value == ""
         wizard.note_key_entered.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_provider_step_clear_persists_empty_key_without_note():
-    """Clear must explicitly erase the stored secret (not just skip writing)."""
+    """Clear remains distinct from Keep in the staged credential decision."""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -1238,15 +1238,10 @@ async def test_provider_step_clear_persists_empty_key_without_note():
         assert key_input.value == ""
         ok, error = await step.commit()
         assert ok, error
-        committed = wizard.commit_config.call_args.args[0]
-        # Bug-3 fix: as with Keep above, selecting "openai" here also
-        # differs from the persisted-fallback "" (no chat_defaults in this
-        # app_config), so the commit picks up the provider sync alongside
-        # the explicit empty-key erasure.
-        assert committed == {
-            "api_settings.openai": {"api_key": ""},
-            "chat_defaults": {"provider": "openai", "model": ""},
-        }
+        draft = _staged_provider_draft(wizard)
+        assert draft.provider == "openai"
+        assert draft.credential.source == "draft"
+        assert draft.credential.value == ""
         wizard.note_key_entered.assert_not_called()
 
 
@@ -1278,9 +1273,10 @@ async def test_provider_step_switching_provider_clears_key_input():
 
         ok, error = await step.commit()
         assert ok, error
-        committed = wizard.commit_config.call_args.args[0]
-        assert "api_settings.anthropic" not in committed
-        assert "api_settings.openai" not in committed
+        draft = _staged_provider_draft(wizard)
+        assert draft.provider == "anthropic"
+        assert draft.credential.source == "none"
+        assert draft.credential.value == ""
 
 
 @pytest.mark.asyncio
@@ -1309,13 +1305,8 @@ async def test_provider_step_reselecting_same_provider_keeps_typed_key():
 
 
 @pytest.mark.asyncio
-async def test_provider_step_first_selection_persists_chat_defaults_provider():
-    """Bug-3: a first-ever provider selection on an empty config previously
-    left chat_defaults.provider untouched (invalidate_model_for_provider_change
-    only fired for a non-empty in-session previous value), so Model-step-
-    skipped left the template default provider active even though
-    credentials landed under api_settings. ProviderStep must fall back to
-    the PERSISTED chat_defaults.provider (empty here) and still sync it."""
+async def test_provider_step_first_selection_stages_without_writing_defaults():
+    """A first selection remains memory-only until Model commits the pair."""
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
 
@@ -1333,14 +1324,14 @@ async def test_provider_step_first_selection_persists_chat_defaults_provider():
         step.query_one("#setup-provider-key-input", Input).value = "sk-new"
         ok, error = await step.commit()
         assert ok, error
-        committed = wizard.commit_config.call_args.args[0]
-        assert committed["chat_defaults"] == {"provider": "openai", "model": ""}
+        draft = _staged_provider_draft(wizard)
+        assert draft.provider == "openai"
+        assert draft.credential.value == "sk-new"
 
 
 @pytest.mark.asyncio
-async def test_provider_step_rerun_same_provider_leaves_chat_defaults_untouched():
-    """Bug-3: a rerun that re-selects the SAME persisted provider must not
-    blank chat_defaults.model -- only an actual provider CHANGE should."""
+async def test_provider_step_rerun_same_provider_stages_without_changing_defaults():
+    """A rerun never changes persisted defaults before Model Continue."""
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
 
@@ -1363,14 +1354,16 @@ async def test_provider_step_rerun_same_provider_leaves_chat_defaults_untouched(
         step._on_keep()
         ok, error = await step.commit()
         assert ok, error
-        committed = wizard.commit_config.call_args.args[0]
-        assert "chat_defaults" not in committed
+        assert _staged_provider_draft(wizard).provider == "openai"
+        assert wizard.app_instance.app_config["chat_defaults"] == {
+            "provider": "openai",
+            "model": "gpt-4o",
+        }
 
 
 @pytest.mark.asyncio
-async def test_provider_step_rerun_different_provider_blanks_model():
-    """Bug-3: a rerun that picks a DIFFERENT provider than the persisted one
-    must sync chat_defaults.provider and blank the stale model."""
+async def test_provider_step_rerun_different_provider_leaves_old_pair_until_model():
+    """A provider switch does not create a cross-provider partial default."""
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
 
@@ -1390,8 +1383,12 @@ async def test_provider_step_rerun_different_provider_blanks_model():
         step.query_one("#setup-provider-key-input", Input).value = "sk-new-anthropic"
         ok, error = await step.commit()
         assert ok, error
-        committed = wizard.commit_config.call_args.args[0]
-        assert committed["chat_defaults"] == {"provider": "anthropic", "model": ""}
+        draft = _staged_provider_draft(wizard)
+        assert draft.provider == "anthropic"
+        assert wizard.app_instance.app_config["chat_defaults"] == {
+            "provider": "openai",
+            "model": "gpt-4o",
+        }
 
 
 @pytest.mark.asyncio
@@ -1421,6 +1418,8 @@ async def test_provider_step_probe_budgets_cloud_vs_local():
 def _model_step(wizard, discover_models=None):
     from unittest.mock import AsyncMock
 
+    if not callable(getattr(wizard, "commit_staged_provider_setup", None)):
+        wizard.commit_staged_provider_setup = AsyncMock(return_value=True)
     return ModelStep(
         wizard=wizard,
         config=WizardStepConfig(id="model", title="Model", step_number=3),
@@ -1454,7 +1453,7 @@ async def test_model_step_provider_change_resets_selection():
 
 
 @pytest.mark.asyncio
-async def test_model_step_commit_writes_chat_defaults():
+async def test_model_step_commit_hands_model_to_staged_provider_commit():
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
 
@@ -1472,10 +1471,8 @@ async def test_model_step_commit_writes_chat_defaults():
         step.set_selected_model("gpt-5.6-terra")
         ok, error = await step.commit()
         assert ok, error
-        committed = wizard.commit_config.call_args.args[0]
-        assert committed == {
-            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"}
-        }
+        wizard.commit_staged_provider_setup.assert_awaited_once_with("gpt-5.6-terra")
+        wizard.commit_config.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1498,6 +1495,7 @@ async def test_model_step_empty_selection_commits_nothing():
         ok, error = await step.commit()
         assert ok, error
         wizard.commit_config.assert_not_called()
+        wizard.commit_staged_provider_setup.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1532,6 +1530,7 @@ async def test_model_step_clearing_custom_input_clears_stale_selection():
         ok, error = await step.commit()
         assert ok, error
         wizard.commit_config.assert_not_called()
+        wizard.commit_staged_provider_setup.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1596,10 +1595,8 @@ async def test_model_step_commit_reads_pressed_radio_without_changed_event():
         ok, error = await step.commit()
         assert ok, error
         assert step.selected_model_id == "radio-model-a"
-        committed = wizard.commit_config.call_args.args[0]
-        assert committed == {
-            "chat_defaults": {"provider": "OpenAI", "model": "radio-model-a"}
-        }
+        wizard.commit_staged_provider_setup.assert_awaited_once_with("radio-model-a")
+        wizard.commit_config.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1654,6 +1651,7 @@ async def test_model_step_provider_switch_does_not_resurrect_stale_pressed_radio
         assert ok, error
         assert step._effective_model_id() != "model-a"
         wizard.commit_config.assert_not_called()  # skip-safe: nothing pressed in B's list
+        wizard.commit_staged_provider_setup.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -2178,7 +2176,7 @@ async def test_summary_default_speech_check_skips_service_construction_when_stor
     absent_root = tmp_path / "never-created"
     monkeypatch.setattr(wizard_module, "managed_model_artifact_root", lambda: absent_root)
     probe = MagicMock()
-    monkeypatch.setattr(wizard_module, "active_managed_parakeet_v2_dir", probe)
+    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", probe)
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
@@ -2221,7 +2219,7 @@ async def test_summary_default_speech_check_still_checks_when_store_root_exists(
     existing_root.mkdir()
     monkeypatch.setattr(wizard_module, "managed_model_artifact_root", lambda: existing_root)
     probe = MagicMock(return_value=None)
-    monkeypatch.setattr(wizard_module, "active_managed_parakeet_v2_dir", probe)
+    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", probe)
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
@@ -2245,7 +2243,7 @@ async def test_summary_default_speech_check_still_checks_when_store_root_exists(
     # Show event plus the explicit call above); the point being pinned is
     # "the real check still runs at all", not an exact call count.
     assert probe.call_count >= 1
-    probe.assert_called_with()
+    probe.assert_called_with("nemo-parakeet-tdt-0.6b-v2", "int8")
 
 
 @pytest.mark.asyncio
