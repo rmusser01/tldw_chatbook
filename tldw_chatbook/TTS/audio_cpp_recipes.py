@@ -524,7 +524,10 @@ def _managed_artifact_matches_recipe(
     recipe: AudioCppPackageRecipe,
     identity: AudioCppManagedArtifactIdentity,
 ) -> bool:
-    manifest = _artifact_manifest()
+    try:
+        manifest = _artifact_manifest()
+    except (OSError, TypeError, ValueError):
+        return False
     return bool(
         type(identity) is AudioCppManagedArtifactIdentity
         and identity.revision == manifest.commit == AUDIO_CPP_ARTIFACT_COMMIT
