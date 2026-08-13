@@ -9,6 +9,25 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## An exact live-test gate must be the first gate that can skip the test
+
+**TASK-15676, 2026-08-13.** The opt-in Moonshot/Z.ai paid harness required an
+exact provider flag plus a nonblank provider key, and its user documentation
+showed that two-part command. The first default run never reached that contract:
+the repository's `slow` marker skipped the test with `Need --run-slow`. Removing
+that marker exposed the same problem from `optional` and `--run-optional`. Even
+with the documented environment flag and key present, the documented command
+could not execute the live case because unrelated collection-time gates ran
+before the test body's explicit safety check.
+
+**What to do.** When the public contract is an exact environment/key gate, do
+not also apply repository markers whose plugins skip before the test body unless
+every required CLI flag is part of the documented contract. Keep descriptive
+markers such as `integration`/`allow_network`, put the paid-call guard at the
+top of the test, and cover its truth table plus the default skip reason. That
+makes default collection safe while ensuring the opt-in command can actually
+reach the code it claims to verify.
+
 ## A schema-version label does not make a synthetic database historical
 
 **TASK-15705/TASK-15707, 2026-08-12.** Raising ChaChaNotes from v35 to v36
