@@ -158,7 +158,14 @@ class NotesScopeService:
     def note_folder_capabilities(
         self, *, scope: ScopeType | str
     ) -> list[NoteFolderCapability]:
-        """Return folder-operation availability for one note scope."""
+        """Return folder-operation availability for one note scope.
+
+        Args:
+            scope: Note scope whose folder capabilities should be described.
+
+        Returns:
+            One capability record for each supported folder operation.
+        """
         normalized_scope = self._normalize_folder_scope(scope)
         if (
             normalized_scope == ScopeType.LOCAL_NOTE

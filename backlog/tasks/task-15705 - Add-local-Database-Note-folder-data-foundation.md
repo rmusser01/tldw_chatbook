@@ -92,6 +92,11 @@ Detailed executable plan:
 - Repaired schema-version expectations and migration fixtures exposed by the v36
   bump, added the two folder tables to the SQL validation allowlist, and recorded the
   general fixture lesson in `backlog/docs/lessons-testing-evidence.md`.
+- Post-rebase review hardened exact-folder reads and uniqueness handling around the
+  shared transaction boundary, routed the isolated installed-wheel migration probe
+  through central path validation, and completed Google-style API documentation.
+  A same-millisecond tombstone regression also verifies that supported Python
+  runtimes advance colliding `Z` timestamps without a parser workaround.
 - Architecture remains governed by
   `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md` and
   `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`;

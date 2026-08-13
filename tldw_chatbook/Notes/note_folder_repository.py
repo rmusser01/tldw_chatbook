@@ -48,7 +48,20 @@ class LocalNoteFolderRepository:
         self.db = db
 
     def create_folder(self, *, name: str, parent_id: str | None) -> NoteFolder:
-        """Create an active folder beneath an active parent, if supplied."""
+        """Create an active folder beneath an active parent.
+
+        Args:
+            name: User-visible name for the new folder.
+            parent_id: Active parent folder identifier, or None for a root.
+
+        Returns:
+            The newly created folder.
+
+        Raises:
+            FolderCollisionError: If the normalized active path already exists.
+            FolderValidationError: If the name or parent cannot be used.
+            FolderConflictError: If database contention prevents the mutation.
+        """
         normalized = normalize_folder_name(name)
         folder_id = str(uuid.uuid4())
         now = _utc_timestamp()
@@ -105,14 +118,7 @@ class LocalNoteFolderRepository:
                 getattr(exc, "sqlite_errorcode", None)
                 == sqlite3.SQLITE_CONSTRAINT_UNIQUE
                 and normalized_path is not None
-                and self.db.get_connection()
-                .execute(
-                    "SELECT 1 FROM note_folders "
-                    "WHERE deleted = 0 AND normalized_path = ?",
-                    (normalized_path,),
-                )
-                .fetchone()
-                is not None
+                and "note_folders.normalized_path" in str(exc)
             ):
                 raise FolderCollisionError(
                     "An active folder already uses the normalized path."
@@ -126,13 +132,23 @@ class LocalNoteFolderRepository:
     def get_folder(
         self, folder_id: str, *, include_deleted: bool = False
     ) -> NoteFolder | None:
-        """Return one exact folder ID, excluding deleted rows by default."""
+        """Return one folder by exact identifier.
+
+        Args:
+            folder_id: Folder identifier to load.
+            include_deleted: Whether a matching soft-deleted row may be returned.
+
+        Returns:
+            The matching folder, or None when it is unavailable.
+        """
         _validate_folder_id(folder_id, field="folder_id")
         deleted_clause = "" if include_deleted else " AND deleted = 0"
-        row = self.db.get_connection().execute(
-            f"SELECT {_FOLDER_COLUMNS} FROM note_folders WHERE id = ?{deleted_clause}",
-            (folder_id,),
-        ).fetchone()
+        with self.db.transaction() as cursor:
+            row = cursor.execute(
+                f"SELECT {_FOLDER_COLUMNS} FROM note_folders "
+                f"WHERE id = ?{deleted_clause}",
+                (folder_id,),
+            ).fetchone()
         return _folder_from_row(row) if row is not None else None
 
     def list_children(

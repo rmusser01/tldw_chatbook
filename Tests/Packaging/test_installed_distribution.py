@@ -686,11 +686,13 @@ expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
 
 import tldw_chatbook
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Utils.path_validation import validate_path
 
 package_file = Path(tldw_chatbook.__file__).resolve(strict=True)
 assert package_file.is_relative_to(expected_target), (package_file, expected_target)
 
-migration_path = Path(os.environ["HOME"]) / "installed-migration-probe.sqlite"
+home_path = Path(os.environ["HOME"]).resolve(strict=True)
+migration_path = validate_path("installed-migration-probe.sqlite", home_path)
 current_schema_version = CharactersRAGDB._CURRENT_SCHEMA_VERSION
 assert current_schema_version == 36
 CharactersRAGDB._CURRENT_SCHEMA_VERSION = 35
@@ -1124,6 +1126,14 @@ def test_installed_wheel_migrates_v35_database_to_v36(
     )
 
     assert "installed-wheel-v35-to-v36-ok" in result.stdout
+
+
+def test_installed_migration_probe_validates_environment_derived_path() -> None:
+    assert (
+        "from tldw_chatbook.Utils.path_validation import validate_path"
+        in INSTALLED_MIGRATION_PROBE
+    )
+    assert "migration_path = validate_path(" in INSTALLED_MIGRATION_PROBE
 
 
 def test_release_checker_accepts_fresh_artifacts(

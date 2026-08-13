@@ -4761,7 +4761,18 @@ def _build_notes_scope_service(
     policy_enforcer: Any,
     sync_scope_service: Any,
 ) -> NotesScopeService:
-    """Compose the Notes facade with one repository over the shared local DB."""
+    """Compose the Notes facade over the shared local database.
+
+    Args:
+        chachanotes_db: Existing local ChaChaNotes database handle, if available.
+        local_notes_service: Local flat-note service implementation.
+        server_service: Server-backed Notes service implementation.
+        policy_enforcer: Authorization policy enforcer shared by the app.
+        sync_scope_service: Optional Sync-v2 scope service.
+
+    Returns:
+        A Notes scope facade with one shared local folder repository.
+    """
     folder_repository = (
         LocalNoteFolderRepository(chachanotes_db)
         if chachanotes_db is not None

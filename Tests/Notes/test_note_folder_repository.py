@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 import sqlite3
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import pytest
@@ -200,6 +202,36 @@ def test_get_folder_excludes_deleted_unless_requested(
     )
     assert repository.get_folder(folder.folder_id, include_deleted=True) == expected
     assert repository.get_folder("missing", include_deleted=True) is None
+
+
+def test_get_folder_uses_shared_transaction_wrapper(
+    repository: LocalNoteFolderRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    original_transaction = repository.db.transaction
+    transaction_calls = 0
+
+    @contextmanager
+    def recording_transaction() -> Iterator[sqlite3.Cursor]:
+        nonlocal transaction_calls
+        transaction_calls += 1
+        with original_transaction() as cursor:
+            yield cursor
+
+    monkeypatch.setattr(repository.db, "transaction", recording_transaction)
+
+    assert repository.get_folder(folder.folder_id) == folder
+    assert transaction_calls == 1
+
+
+@pytest.mark.parametrize("method_name", ["create_folder", "get_folder"])
+def test_repository_methods_do_not_execute_sql_on_raw_connection(
+    method_name: str,
+) -> None:
+    method = getattr(LocalNoteFolderRepository, method_name)
+
+    assert ".get_connection()" not in inspect.getsource(method)
 
 
 def test_list_children_is_deterministic_and_pages_zero_exact_and_limit_plus_one(
@@ -875,6 +907,33 @@ def test_soft_delete_and_restore_subtree_preserve_memberships_and_note_row(
         .fetchone()
     )
     assert note_after == note_before
+
+
+def test_soft_delete_advances_colliding_zulu_tombstone_timestamp(
+    repository: LocalNoteFolderRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = repository.create_folder(name="First", parent_id=None)
+    second = repository.create_folder(name="Second", parent_id=None)
+    fixed_timestamp = "2026-08-13T13:58:15.123Z"
+    monkeypatch.setattr(
+        folder_repository_module,
+        "_utc_timestamp",
+        lambda: fixed_timestamp,
+    )
+
+    repository.soft_delete_folder(first.folder_id, expected_version=first.version)
+    repository.soft_delete_folder(second.folder_id, expected_version=second.version)
+
+    rows = repository.db.get_connection().execute(
+        "SELECT id, modified_at FROM note_folders WHERE id IN (?, ?) ORDER BY id",
+        (first.folder_id, second.folder_id),
+    ).fetchall()
+    timestamps = {str(row["modified_at"]) for row in rows}
+    assert timestamps == {
+        fixed_timestamp,
+        "2026-08-13T13:58:15.124Z",
+    }
 
 
 def test_restore_collision_is_typed_and_atomic(
