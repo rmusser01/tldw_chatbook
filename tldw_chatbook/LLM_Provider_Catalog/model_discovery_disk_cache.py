@@ -17,6 +17,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import Discove
 CACHE_VERSION = 1
 MODEL_CATALOG_DISK_MAX_BYTES = 2 * 1024 * 1024
 MODEL_CATALOG_DISK_MAX_ENTRIES = 128
+MODEL_CATALOG_DISK_MAX_RAW_ENTRIES = 4096
 MODEL_CATALOG_DISK_MAX_MODELS_PER_ENTRY = 100
 _PROVIDER_KEY_MAX_CHARS = 128
 _ENDPOINT_FINGERPRINT_MAX_CHARS = 512
@@ -118,6 +119,46 @@ def _decode_entry(
     return provider_list_key, endpoint_fingerprint, fetched, model_ids
 
 
+def _encode_cache_state(
+    model_ids_by_key: dict[tuple[str, str], tuple[str, ...]],
+    fetched_at_by_key: dict[tuple[str, str], datetime],
+) -> bytes:
+    entries: dict[str, dict[str, object]] = {}
+    for key, model_ids in model_ids_by_key.items():
+        fetched = fetched_at_by_key.get(key)
+        if fetched is None:
+            continue
+        entry_key = json.dumps(
+            key,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        entries[entry_key] = {
+            "provider_list_key": key[0],
+            "endpoint_fingerprint": key[1],
+            "fetched_at": fetched.isoformat().replace("+00:00", "Z"),
+            "models": list(model_ids),
+        }
+    payload = {"version": CACHE_VERSION, "entries": entries}
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def _require_serializable_state(
+    model_ids_by_key: dict[tuple[str, str], tuple[str, ...]],
+    fetched_at_by_key: dict[tuple[str, str], datetime],
+) -> None:
+    if (
+        len(_encode_cache_state(model_ids_by_key, fetched_at_by_key))
+        > MODEL_CATALOG_DISK_MAX_BYTES
+    ):
+        raise ValueError("model catalog cache exceeds disk bounds")
+
+
 class ModelCatalogDiskStore:
     """JSON store mirroring ModelDiscoveryCache entries plus fetched_at.
 
@@ -209,8 +250,13 @@ class ModelCatalogDiskStore:
         if stamp.tzinfo is None:
             stamp = stamp.replace(tzinfo=UTC)
         stamp = stamp.astimezone(UTC)
-        self._model_ids[key] = bounded_ids
-        self._fetched_at[key] = stamp
+        candidate_model_ids = dict(self._model_ids)
+        candidate_fetched_at = dict(self._fetched_at)
+        candidate_model_ids[key] = bounded_ids
+        candidate_fetched_at[key] = stamp
+        _require_serializable_state(candidate_model_ids, candidate_fetched_at)
+        self._model_ids = candidate_model_ids
+        self._fetched_at = candidate_fetched_at
 
     def prune(self, keep_provider_list_keys: set[str]) -> None:
         """Drop entries for providers no longer configured.
@@ -259,15 +305,34 @@ class ModelCatalogDiskStore:
             logger.warning("Ignoring model catalog cache (reason=invalid_shape)")
             return
         entries = payload["entries"]
-        rejected = max(0, len(entries) - MODEL_CATALOG_DISK_MAX_ENTRIES)
-        for index, entry in enumerate(entries.values()):
-            if index >= MODEL_CATALOG_DISK_MAX_ENTRIES:
+        if len(entries) > MODEL_CATALOG_DISK_MAX_RAW_ENTRIES:
+            logger.warning("Ignoring model catalog cache (reason=too_many_entries)")
+            return
+        loaded_model_ids: dict[tuple[str, str], tuple[str, ...]] = {}
+        loaded_fetched_at: dict[tuple[str, str], datetime] = {}
+        accepted = 0
+        rejected = 0
+        examined = 0
+        for entry in entries.values():
+            if accepted >= MODEL_CATALOG_DISK_MAX_ENTRIES:
+                rejected += len(entries) - examined
                 break
+            examined += 1
             decoded = _decode_entry(entry)
             if decoded is None:
                 rejected += 1
                 continue
             provider_list_key, endpoint_fingerprint, fetched, model_ids = decoded
+            key = (provider_list_key, endpoint_fingerprint)
+            candidate_model_ids = dict(loaded_model_ids)
+            candidate_fetched_at = dict(loaded_fetched_at)
+            candidate_model_ids[key] = model_ids
+            candidate_fetched_at[key] = fetched
+            try:
+                _require_serializable_state(candidate_model_ids, candidate_fetched_at)
+            except ValueError:
+                rejected += 1
+                continue
             discovered_at = fetched.isoformat().replace("+00:00", "Z")
             try:
                 cache.replace(
@@ -289,36 +354,25 @@ class ModelCatalogDiskStore:
             except Exception:  # noqa: BLE001 - one bad entry must not abort loading.
                 rejected += 1
                 continue
-            key = (provider_list_key, endpoint_fingerprint)
-            self._model_ids[key] = model_ids
-            self._fetched_at[key] = fetched
+            loaded_model_ids = candidate_model_ids
+            loaded_fetched_at = candidate_fetched_at
+            accepted += 1
+        self._model_ids = loaded_model_ids
+        self._fetched_at = loaded_fetched_at
         if rejected:
-            logger.warning(
-                "Ignored invalid model catalog cache entries (count={})", rejected
-            )
+            logger.warning("Ignored model catalog cache entries (count={})", rejected)
 
     def save(self) -> None:
         """Atomically write the store (pid-scoped temp file + rename).
 
         Raises:
             OSError: if the write or rename fails (a leftover .tmp file may remain).
+            ValueError: if internal state exceeds the serialized byte bound.
         """
-        entries: dict[str, dict] = {}
-        for key, model_ids in self._model_ids.items():
-            fetched = self._fetched_at.get(key)
-            if fetched is None:
-                continue
-            entries[f"{key[0]}|{key[1]}"] = {
-                "provider_list_key": key[0],
-                "endpoint_fingerprint": key[1],
-                "fetched_at": fetched.isoformat().replace("+00:00", "Z"),
-                "models": list(model_ids),
-            }
-        payload = {"version": CACHE_VERSION, "entries": entries}
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
-        encoded = json.dumps(payload, indent=2).encode("utf-8")
+        encoded = _encode_cache_state(self._model_ids, self._fetched_at)
         if len(encoded) > MODEL_CATALOG_DISK_MAX_BYTES:
             raise ValueError("model catalog cache exceeds disk bounds")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
         tmp_path.write_bytes(encoded)
         os.replace(tmp_path, self.path)

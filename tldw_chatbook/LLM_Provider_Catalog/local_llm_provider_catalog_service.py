@@ -623,6 +623,7 @@ class LocalLLMProviderCatalogService:
         """
         self._enforce("llm.catalog.models.discover.local")
         outcomes: list[ProviderRefreshOutcome] = []
+        disk_write_failed = False
         catalog = self._catalog()
         saved_settings = self._settings()
 
@@ -742,7 +743,14 @@ class LocalLLMProviderCatalogService:
                                     f"{persist_result.message}"
                                 )
 
-                    disk_store.record(list_key, fingerprint, fresh_ids)
+                    try:
+                        disk_store.record(list_key, fingerprint, fresh_ids)
+                    except (TypeError, ValueError):
+                        disk_write_failed = True
+                        logger.warning(
+                            f"Model catalog disk cache skipped for {list_key} "
+                            "(reason=validation_error)"
+                        )
                     outcomes.append(ProviderRefreshOutcome(
                         provider_list_key=list_key,
                         status=status,
@@ -766,11 +774,17 @@ class LocalLLMProviderCatalogService:
             disk_store.prune(set(catalog))
             try:
                 disk_store.save()
-            except OSError as exc:
+            except (OSError, TypeError, ValueError) as exc:
                 # Persistence hiccup: in-memory cache is updated for this session;
                 # don't discard the whole report over it.
-                logger.warning(f"Could not persist model catalog cache: {exc}")
-        return RefreshReport(outcomes=tuple(outcomes))
+                disk_write_failed = True
+                logger.warning(
+                    "Could not persist model catalog cache "
+                    f"(reason={type(exc).__name__})"
+                )
+        return RefreshReport(
+            outcomes=tuple(outcomes), disk_write_failed=disk_write_failed
+        )
 
     def list_discovered_models(
         self,
