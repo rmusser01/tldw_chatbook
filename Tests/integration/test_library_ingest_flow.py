@@ -124,7 +124,11 @@ async def test_inline_consent_gates_start_when_pdf_deps_missing(
     # No modal, no job yet: the gate line carries the consent instead.
     assert screen.app.screen_stack[-1] is screen
     assert screen.app_instance.library_ingest_jobs.jobs() == ()
-    assert screen._library_ingest_start_confirm_armed is True
+    consent = screen._library_ingest_start_consent
+    assert consent is not None
+    assert consent.owed is True
+    assert consent.active_job_ids == ()
+    assert consent.tooling_affected_count > 0
 
     # Second press (a decision, not a double-click) submits for real.
     screen._library_ingest_start_confirm_armed_at -= 1.0
@@ -864,7 +868,11 @@ async def test_the_same_folder_still_imports_on_this_machine(
     # backend, so the image import is at risk) -- not the refusal route.
     screen._submit_library_ingest_form()
     await pilot.pause()
-    assert screen._library_ingest_start_confirm_armed is True
+    consent = screen._library_ingest_start_consent
+    assert consent is not None
+    assert consent.owed is True
+    assert consent.active_job_ids == ()
+    assert consent.tooling_affected_count > 0
     screen._library_ingest_start_confirm_armed_at -= 1.0
     screen._submit_library_ingest_form()
     await pilot.pause()
