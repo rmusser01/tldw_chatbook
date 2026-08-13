@@ -13,8 +13,6 @@ from textual.widgets import Input, Markdown
 from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
 
 
-pytestmark = pytest.mark.allow_network
-
 CONTENT = "budget planning mentions budget twice, then a third budget follows."
 NEW_CONTENT = "replacement budget transcript with a fresh matching word."
 
