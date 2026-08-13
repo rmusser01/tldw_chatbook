@@ -45,6 +45,7 @@ from tldw_chatbook.TTS.audio_cpp_contract import validate_pcm16_wav
 from tldw_chatbook.TTS.audio_cpp_guided_config import (
     project_audio_cpp_settings_config,
 )
+from tldw_chatbook.TTS.effective_settings import TTSSelectionSource
 from tldw_chatbook.TTS.legacy_bridge import (
     legacy_provider_config,
     openai_internal_model_id,
@@ -66,6 +67,7 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     load_global_speech_tts_state,
     process_provider_test_evidence_store,
 )
+from tldw_chatbook.UI.Speech.speech_settings_contracts import ProviderTestFingerprint
 from tldw_chatbook.Utils.secure_temp_files import (
     create_secure_temp_file,
     secure_delete_file,
@@ -518,6 +520,21 @@ class _STTSPlaygroundState:
     generation_active: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _SampleEvidenceCandidate:
+    """Saved provider identity captured before one synthesis operation."""
+
+    fingerprint: ProviderTestFingerprint
+
+
+@dataclass(frozen=True, slots=True)
+class _SampleGenerationFacts:
+    """Provider revision and source eligibility returned by effective resolution."""
+
+    provider_configuration_revision: int
+    certifies_saved_configuration: bool
+
+
 class STTSAudioBookGenerateEvent(Message):
     """Event when audiobook generation is requested"""
 
@@ -563,28 +580,66 @@ class STTSEventHandler:
         self._playground_file_leases: dict[Path, int] = {}
         self._cleanup_task: asyncio.Task[None] | None = None
         self._settings_save_lock = asyncio.Lock()
+        self._sample_generation_facts: dict[str, _SampleGenerationFacts] = {}
 
-    def _record_successful_sample_evidence(
+    def _capture_sample_evidence_candidate(
         self,
-        artifact: STTSGeneratedAudio,
-    ) -> bool:
-        """Record only a bounded, validated artifact for the saved provider."""
+        request: STTSPlaygroundRequest,
+    ) -> _SampleEvidenceCandidate | None:
+        """Freeze the saved provider identity before synthesis can begin."""
 
         service = self._stts_service
         saved_revision = getattr(service, "saved_configuration_revision", None)
-        if not callable(saved_revision):
-            return False
+        configuration_revision = getattr(service, "configuration_revision", None)
+        if not callable(saved_revision) or not callable(configuration_revision):
+            return None
         try:
-            revision = saved_revision(artifact.provider_id)
+            saved = saved_revision(request.provider_id)
+            if configuration_revision(request.provider_id) != saved:
+                return None
             values = get_runtime_config_snapshot().values
             state = load_global_speech_tts_state(
                 values if isinstance(values, Mapping) else {}
             )
-            fingerprint = build_provider_test_fingerprint(
-                state,
-                provider_id=artifact.provider_id,
-                saved_revision=revision,
+            return _SampleEvidenceCandidate(
+                build_provider_test_fingerprint(
+                    state,
+                    provider_id=request.provider_id,
+                    saved_revision=saved,
+                )
             )
+        except Exception:  # noqa: BLE001 - evidence cannot block synthesis
+            return None
+
+    def _record_successful_sample_evidence(
+        self,
+        artifact: STTSGeneratedAudio,
+        candidate: _SampleEvidenceCandidate | None,
+        facts: _SampleGenerationFacts | None,
+    ) -> bool:
+        """Record only a bounded, validated artifact for the saved provider."""
+
+        if candidate is None or facts is None:
+            return False
+        fingerprint = candidate.fingerprint
+        if (
+            not facts.certifies_saved_configuration
+            or artifact.provider_id != fingerprint.provider_id
+            or facts.provider_configuration_revision != fingerprint.saved_revision
+        ):
+            return False
+        service = self._stts_service
+        saved_revision = getattr(service, "saved_configuration_revision", None)
+        configuration_revision = getattr(service, "configuration_revision", None)
+        if not callable(saved_revision) or not callable(configuration_revision):
+            return False
+        try:
+            if (
+                saved_revision(artifact.provider_id) != fingerprint.saved_revision
+                or configuration_revision(artifact.provider_id)
+                != fingerprint.saved_revision
+            ):
+                return False
             max_bytes = ProcessProviderTestEvidenceStore._DEFAULT_MAX_SAMPLE_BYTES
             with artifact.path.open("rb") as source:
                 body = source.read(max_bytes + 1)
@@ -886,7 +941,7 @@ class STTSEventHandler:
         if type(response.sample_rate) is int and response.sample_rate > 0:
             artifact_metadata["sample_rate"] = response.sample_rate
         try:
-            return STTSGeneratedAudio(
+            artifact = STTSGeneratedAudio(
                 path=path,
                 provider_id=response.provider_id,
                 model_id=response.model_id,
@@ -898,6 +953,7 @@ class STTSEventHandler:
                 metadata=artifact_metadata,
                 requested_selection=requested_selection,
             )
+            return artifact
         except BaseException:
             if secure_delete_file(path) or not path.exists():
                 self._forget_operation_file(snapshot.operation_id, path)
@@ -1059,7 +1115,7 @@ class STTSEventHandler:
                     ),
                 )
             )
-            return STTSGeneratedAudio(
+            artifact = STTSGeneratedAudio(
                 path=output_file,
                 provider_id=snapshot.provider_id,
                 model_id=snapshot.model_id,
@@ -1072,6 +1128,7 @@ class STTSEventHandler:
                 requested_selection=requested_selection,
                 profile_save_block_code=profile_save_block_code,
             )
+            return artifact
         except BaseException:
             for path in created_paths:
                 if secure_delete_file(path) or not path.exists():
@@ -1187,7 +1244,7 @@ class STTSEventHandler:
             configuration_revision=(lambda: effective.revisions.provider_configuration),
         )
         try:
-            return STTSGeneratedAudio(
+            artifact = STTSGeneratedAudio(
                 path=path,
                 provider_id=effective.provider_id,
                 model_id=effective.model_id,
@@ -1201,6 +1258,23 @@ class STTSEventHandler:
                 profile_save_block_code=profile_save_block_code,
                 clone_evidence=clone_evidence,
             )
+            sources = tuple(getattr(effective, "sources", {}).values()) + tuple(
+                getattr(effective, "provider_option_sources", {}).values()
+            )
+            self._sample_generation_facts[snapshot.operation_id] = (
+                _SampleGenerationFacts(
+                    provider_configuration_revision=(
+                        effective.revisions.provider_configuration
+                    ),
+                    certifies_saved_configuration=bool(
+                        not getattr(effective, "studio_preview", False)
+                        and snapshot.profile_preview is None
+                        and snapshot.clone_audition is None
+                        and TTSSelectionSource.STUDIO_DRAFT not in sources
+                    ),
+                )
+            )
+            return artifact
         except BaseException:
             if secure_delete_file(path) or not path.exists():
                 self._forget_operation_file(snapshot.operation_id, path)
@@ -1286,6 +1360,7 @@ class STTSEventHandler:
     ) -> None:
         """Generate from one immutable request and deliver one artifact."""
         snapshot = event.request
+        sample_candidate = self._capture_sample_evidence_candidate(snapshot)
         self._show_generation_progress(snapshot.operation_id)
 
         async def progress_callback(info: TTSProgress) -> None:
@@ -1310,7 +1385,22 @@ class STTSEventHandler:
             if self._retired_playground_operation_id == snapshot.operation_id:
                 self._delete_operation_files(snapshot.operation_id)
                 return
-            self._record_successful_sample_evidence(artifact)
+            sample_facts = self._sample_generation_facts.pop(
+                snapshot.operation_id,
+                None,
+            )
+            if sample_facts is None and artifact.requested_selection is not None:
+                sample_facts = _SampleGenerationFacts(
+                    provider_configuration_revision=(
+                        artifact.requested_selection.configuration_revision
+                    ),
+                    certifies_saved_configuration=True,
+                )
+            self._record_successful_sample_evidence(
+                artifact,
+                sample_candidate,
+                sample_facts,
+            )
             self._accept_playground_artifact(artifact)
             self._deliver_generation_success(
                 snapshot.operation_id,
@@ -1347,6 +1437,7 @@ class STTSEventHandler:
                 severity="error",
             )
         finally:
+            self._sample_generation_facts.pop(snapshot.operation_id, None)
             if self._active_playground_operation_id == snapshot.operation_id:
                 self._is_generating = False
                 if self._retired_playground_operation_id == snapshot.operation_id:

@@ -32,6 +32,9 @@ from tldw_chatbook.UI.Screens.settings_screen import (
     SettingsScreen,
     overlay_provider_draft_config,
 )
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSConnectionState,
+)
 
 
 def _semantic_identity(
@@ -869,6 +872,23 @@ def test_settings_converts_probe_outcome_to_exact_evidence_dto():
     )
 
 
+def test_settings_converts_tts_enum_probe_state_to_exact_chat_string():
+    outcome = SettingsEndpointProbeOutcome(
+        state=SpeechTTSConnectionState.UNREACHABLE,
+        summary="unreachable: timeout",
+        category="timeout",
+    )
+
+    converted = SettingsScreen._provider_probe_result_from_outcome(outcome)
+
+    assert type(converted.endpoint) is str
+    assert converted == ProviderProbeResult(
+        endpoint="unreachable",
+        model_ids=(),
+        category="timeout",
+    )
+
+
 def test_model_edit_cancels_active_probe_token_but_not_settled_evidence():
     identity = _semantic_identity("https://example.test/v1/models")
     screen = _bare_settings_screen({})
@@ -935,6 +955,44 @@ async def test_probe_worker_cancellation_clears_exact_testing_state(monkeypatch)
     assert "checking" not in screen._provider_test_result.lower()
     assert "cancel" in screen._provider_test_result.lower()
     assert "secret-cancel-detail" not in screen._provider_test_result
+
+
+@pytest.mark.asyncio
+async def test_chat_settings_probe_worker_passes_explicit_chat_catalog_purpose(
+    monkeypatch,
+):
+    screen = _bare_settings_screen({})
+    screen._update_provider_test_result = lambda: None
+    screen._apply_provider_endpoint_probe_outcome = lambda *_args, **_kwargs: None
+    captured: dict[str, object] = {}
+
+    async def capture_probe(base_url, **kwargs):
+        captured["base_url"] = base_url
+        captured.update(kwargs)
+        return SettingsEndpointProbeOutcome(
+            state="reachable",
+            summary="reachable (1 model)",
+            model_ids=("gpt-4o",),
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        capture_probe,
+    )
+
+    await SettingsScreen._provider_endpoint_probe_worker.__wrapped__(
+        screen,
+        "https://example.test/v1/chat/completions",
+        "openai",
+        "Provider test",
+        "Provider test passed",
+    )
+
+    assert captured == {
+        "base_url": "https://example.test/v1/chat/completions",
+        "provider": "openai",
+        "purpose": "chat_catalog",
+    }
 
 
 @pytest.mark.asyncio

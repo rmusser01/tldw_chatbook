@@ -669,6 +669,48 @@ async def test_invalid_input_never_makes_a_request_or_echoes_input() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_probe_defaults_to_chat_catalog_contract() -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": [{"id": "gpt-4o"}]}, request=request)
+
+    async with _client(respond) as client:
+        outcome = await probe_settings_endpoint(
+            "https://example.test/v1/chat/completions",
+            provider="openai",
+            http_client=client,
+        )
+
+    assert type(outcome.state) is str
+    assert outcome.state == "reachable"
+    assert [str(request.url) for request in requests] == [
+        "https://example.test/v1/models"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_openai_probe_uses_tts_contract_only_when_explicit() -> None:
+    requests: list[httpx.Request] = []
+
+    def unexpected(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, request=request)
+
+    async with _client(unexpected) as client:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:8765/custom/speech",
+            provider="openai",
+            purpose="tts_catalog",
+            http_client=client,
+        )
+
+    assert outcome.state is SpeechTTSConnectionState.NOT_TESTED
+    assert requests == []
+
+
+@pytest.mark.asyncio
 async def test_tts_unknown_speech_path_is_not_extended_or_requested() -> None:
     requests: list[httpx.Request] = []
 
@@ -682,6 +724,7 @@ async def test_tts_unknown_speech_path_is_not_extended_or_requested() -> None:
         outcome = await probe_settings_endpoint(
             "http://127.0.0.1:8765/custom/speech",
             provider="openai",
+            purpose="tts_catalog",
             http_client=client,
         )
 
@@ -713,6 +756,7 @@ async def test_tts_catalog_redirect_is_never_followed(location: str) -> None:
         outcome = await probe_settings_endpoint(
             "http://127.0.0.1:8765",
             provider="openai",
+            purpose="tts_catalog",
             http_client=client,
         )
 
@@ -739,6 +783,7 @@ async def test_tts_catalog_uses_only_normalized_declared_url_and_origin() -> Non
         outcome = await probe_settings_endpoint(
             "HTTP://127.0.0.1:8765/v1/audio/speech/",
             provider="openai",
+            purpose="tts_catalog",
             http_client=client,
         )
 
@@ -769,6 +814,7 @@ async def test_tts_catalog_accepts_models_explicitly_labeled_for_speech() -> Non
         outcome = await probe_settings_endpoint(
             "http://127.0.0.1:8765",
             provider="openai",
+            purpose="tts_catalog",
             http_client=client,
         )
 
@@ -801,6 +847,7 @@ async def test_tts_catalog_rejects_response_bound_to_another_origin() -> None:
     outcome = await probe_settings_endpoint(
         "http://127.0.0.1:8765",
         provider="openai",
+        purpose="tts_catalog",
         http_client=MismatchedClient(),  # type: ignore[arg-type]
     )
 
@@ -821,6 +868,7 @@ async def test_tts_missing_catalog_is_unsupported_not_unreachable(
         outcome = await probe_settings_endpoint(
             "http://127.0.0.1:8765/v1/audio/speech",
             provider="openai",
+            purpose="tts_catalog",
             http_client=client,
         )
 
@@ -835,6 +883,7 @@ async def test_tts_malformed_endpoint_is_not_reported_as_offline() -> None:
     outcome = await probe_settings_endpoint(
         "http://127.0.0.1:8765/v1//audio/speech",
         provider="openai",
+        purpose="tts_catalog",
     )
 
     assert outcome.state is SpeechTTSConnectionState.NOT_TESTED
@@ -871,6 +920,7 @@ async def test_owned_tts_probe_client_closes_when_cancelled(monkeypatch) -> None
         await probe_settings_endpoint(
             "http://127.0.0.1:8765",
             provider="openai",
+            purpose="tts_catalog",
         )
 
     assert client.closed is True

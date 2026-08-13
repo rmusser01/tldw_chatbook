@@ -38,7 +38,16 @@ from tldw_chatbook.UI.Speech.speech_playground_pane import (
     PLAYGROUND_ACTIONS,
     SpeechPlaygroundPane,
 )
+from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+    SettingsEndpointProbeOutcome,
+)
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    build_provider_test_fingerprint,
+    load_global_speech_tts_state,
+    process_provider_test_evidence_store,
+)
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSConnectionState,
     SpeechTTSNavigationIntent,
 )
 from tldw_chatbook.UI.stts_playground_catalog import (
@@ -1249,6 +1258,58 @@ async def test_cancelled_old_catalog_worker_cannot_clear_new_checking_state(
         await _wait_until(
             pilot,
             lambda: "audio_cpp" not in pane._catalog_checking_providers,
+        )
+
+
+@pytest.mark.asyncio
+async def test_openai_catalog_worker_uses_explicit_tts_probe_and_records_outcome(
+    faked_service: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _force_default_provider(monkeypatch, "openai")
+    faked_service.saved_configuration_revision = lambda provider_id: (
+        faked_service.revisions[provider_id]
+    )
+    captured: dict[str, object] = {}
+
+    async def probe(base_url: str, **kwargs: object) -> SettingsEndpointProbeOutcome:
+        captured["base_url"] = base_url
+        captured.update(kwargs)
+        return SettingsEndpointProbeOutcome(
+            state=SpeechTTSConnectionState.UNSUPPORTED,
+            operation="catalog",
+            summary="catalog unsupported; speech endpoint not tested",
+            category="http_status",
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Speech.speech_catalog_mixin.probe_settings_endpoint",
+        probe,
+        raising=False,
+    )
+    state = load_global_speech_tts_state({}, environment={})
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Speech.speech_catalog_mixin.get_runtime_config_snapshot",
+        lambda: type("Snapshot", (), {"values": {}})(),
+        raising=False,
+    )
+    app = _AxisHarness()
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        fingerprint = build_provider_test_fingerprint(
+            state,
+            provider_id="openai",
+            saved_revision=1,
+        )
+        evidence = process_provider_test_evidence_store(app)
+
+        assert captured["purpose"] == "tts_catalog"
+        assert captured["provider"] == "openai"
+        assert (
+            evidence.catalog_state(fingerprint)
+            is SpeechTTSConnectionState.UNSUPPORTED
         )
 
 

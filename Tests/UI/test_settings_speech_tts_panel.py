@@ -54,9 +54,12 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     CredentialIntent,
     GlobalSpeechTTSEffectiveSource,
     GlobalSpeechTTSValidationError,
+    ProcessProviderTestEvidenceStore,
+    build_provider_test_fingerprint,
     load_global_speech_tts_state,
 )
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSConnectionState,
     SpeechTTSNavigationIntent,
     SpeechTTSNavigationTarget,
     SpeechTTSRuntimeState,
@@ -117,6 +120,7 @@ class _PanelHarness(App[None]):
         observation: TTSNativeCapabilityObservation | None = None,
         current_configuration_revision: int | None = None,
         runtime_status_store: SpeechTTSRuntimeStatusStore | None = None,
+        provider_test_evidence: ProcessProviderTestEvidenceStore | None = None,
     ) -> None:
         super().__init__()
         self.configure_provider = configure_provider
@@ -128,6 +132,7 @@ class _PanelHarness(App[None]):
         self.observation = observation
         self.current_configuration_revision = current_configuration_revision
         self.runtime_status_store = runtime_status_store
+        self.provider_test_evidence = provider_test_evidence
         self.events: list[STTSSettingsSaveEvent] = []
         self.navigation: list[NavigateToScreen] = []
 
@@ -140,6 +145,7 @@ class _PanelHarness(App[None]):
             audio_cpp_observation=self.observation,
             audio_cpp_configuration_revision=self.current_configuration_revision,
             runtime_status_store=self.runtime_status_store,
+            provider_test_evidence=self.provider_test_evidence,
             id="panel",
         )
 
@@ -863,6 +869,66 @@ async def test_settings_inspector_keeps_audio_cpp_ready_when_local_deps_missing(
             assert "Unavailable" in str(
                 app.query_one(f"#settings-speech-status-{row_id}").render()
             )
+
+
+@pytest.mark.asyncio
+async def test_settings_connection_uses_sample_over_unsupported_catalog() -> None:
+    state = _audio_cpp_state(saved_provider=True)
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="audio_cpp",
+        saved_revision=4,
+    )
+    evidence = ProcessProviderTestEvidenceStore()
+    evidence.record_catalog(fingerprint, SpeechTTSConnectionState.UNSUPPORTED)
+    wav = b"RIFF" + (6).to_bytes(4, "little") + b"WAVE\x00\x00"
+    assert evidence.record_successful_sample(
+        fingerprint,
+        status_code=200,
+        response_format="wav",
+        content_type="audio/wav",
+        body=wav,
+    )
+    app = _PanelHarness(
+        state=state,
+        current_configuration_revision=4,
+        provider_test_evidence=evidence,
+    )
+
+    async with app.run_test(size=(150, 80)):
+        assert "Saved" in str(
+            app.query_one("#settings-speech-status-provider-configuration").render()
+        )
+        connection = str(
+            app.query_one("#settings-speech-status-provider-connection").render()
+        )
+        assert "reachable" in connection
+        assert "catalog unsupported" in connection
+        assert "sample reachable" in connection
+
+
+@pytest.mark.asyncio
+async def test_settings_connection_invalidates_evidence_at_changed_revision() -> None:
+    state = _audio_cpp_state(saved_provider=True)
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="audio_cpp",
+        saved_revision=4,
+    )
+    evidence = ProcessProviderTestEvidenceStore()
+    evidence.record_catalog(fingerprint, SpeechTTSConnectionState.REACHABLE)
+    app = _PanelHarness(
+        state=state,
+        current_configuration_revision=5,
+        provider_test_evidence=evidence,
+    )
+
+    async with app.run_test(size=(150, 80)):
+        connection = str(
+            app.query_one("#settings-speech-status-provider-connection").render()
+        )
+        assert "not_tested" in connection
+        assert "catalog not_tested" in connection
 
 
 @pytest.mark.asyncio

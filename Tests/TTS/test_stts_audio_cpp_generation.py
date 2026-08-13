@@ -43,6 +43,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
 )
 from tldw_chatbook.TTS.effective_settings import (
+    TTSSelectionSource,
     TTSSelectionOverrides,
     TTSStudioDraftSelection,
 )
@@ -145,6 +146,7 @@ class _NativeService:
         self.response = response
         self.requests: list[TTSRequest] = []
         self.legacy_calls = 0
+        self.saved_revision = 3
 
     async def synthesize(
         self,
@@ -186,7 +188,11 @@ class _NativeService:
 
     def saved_configuration_revision(self, provider_id: str) -> int:
         assert provider_id == "audio_cpp"
-        return 3
+        return self.saved_revision
+
+    def configuration_revision(self, provider_id: str) -> int:
+        assert provider_id == "audio_cpp"
+        return self.saved_revision
 
 
 class _LegacyService:
@@ -231,6 +237,7 @@ class _StudioService:
         # it invents a shape the real system never produces.
         effective_provider_options: Mapping[str, Any] | None = None,
         clone_evidence: TTSCloneGenerationEvidence | None = None,
+        effective_uses_draft: bool = False,
     ) -> None:
         self.response = response
         self.calls: list[dict[str, object]] = []
@@ -244,6 +251,7 @@ class _StudioService:
             {} if effective_provider_options is None else effective_provider_options
         )
         self._clone_evidence = clone_evidence
+        self._effective_uses_draft = effective_uses_draft
 
     async def synthesize_effective(self, **kwargs: object) -> tuple[object, object]:
         self.calls.append(kwargs)
@@ -257,6 +265,15 @@ class _StudioService:
             revisions=SimpleNamespace(
                 provider_configuration=self._effective_configuration_revision
             ),
+            sources={
+                "provider_id": (
+                    TTSSelectionSource.STUDIO_DRAFT
+                    if self._effective_uses_draft
+                    else TTSSelectionSource.STUDIO_SAVED
+                )
+            },
+            provider_option_sources={},
+            studio_preview=False,
         )
 
     async def synthesize_effective_with_evidence(
@@ -265,6 +282,14 @@ class _StudioService:
     ) -> tuple[object, object, TTSCloneGenerationEvidence | None]:
         response, effective = await self.synthesize_effective(**kwargs)
         return response, effective, self._clone_evidence
+
+    def saved_configuration_revision(self, provider_id: str) -> int:
+        assert provider_id == self._effective_provider_id
+        return self._effective_configuration_revision
+
+    def configuration_revision(self, provider_id: str) -> int:
+        assert provider_id == self._effective_provider_id
+        return self._effective_configuration_revision
 
 
 class _DeliveryPlayground:
@@ -1040,6 +1065,114 @@ async def test_evidence_lookup_failure_does_not_fail_valid_generation() -> None:
     artifact = handler._current_playground_artifact
     try:
         assert artifact is not None
+    finally:
+        if artifact is not None:
+            artifact.path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_saved_revision_change_prevents_sample_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={}),
+    )
+    service: _NativeService
+
+    async def changing_stream() -> AsyncIterator[bytes]:
+        yield _sample_wav()
+        service.saved_revision = 4
+
+    response = _Response(changing_stream())  # type: ignore[arg-type]
+    service = _NativeService(response)
+    state = load_global_speech_tts_state({}, environment={})
+    original = build_provider_test_fingerprint(
+        state,
+        provider_id="audio_cpp",
+        saved_revision=3,
+    )
+    changed = build_provider_test_fingerprint(
+        state,
+        provider_id="audio_cpp",
+        saved_revision=4,
+    )
+    handler = STTSEventHandler(app=_DeliveryApp())
+    handler._stts_service = service
+
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(_snapshot()))
+
+    artifact = handler._current_playground_artifact
+    try:
+        assert artifact is not None
+        assert (
+            handler.provider_test_evidence.sample_state(original)
+            is SpeechTTSConnectionState.NOT_TESTED
+        )
+        assert (
+            handler.provider_test_evidence.sample_state(changed)
+            is SpeechTTSConnectionState.NOT_TESTED
+        )
+    finally:
+        if artifact is not None:
+            artifact.path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_studio_draft_generation_does_not_certify_saved_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={}),
+    )
+    response = _Response(_CountingStream((_sample_wav(),)))
+    service = _StudioService(
+        response,
+        effective_configuration_revision=9,
+        effective_uses_draft=True,
+    )
+    preferences = StudioTTSPreferencesSnapshot(revision=5)
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="draft/model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=5,
+    )
+    request = STTSPlaygroundRequest(
+        operation_id="studio-draft-evidence",
+        provider_id="audio_cpp",
+        model_id="draft/model",
+        text="draft sample",
+        voice_id=None,
+        response_format="wav",
+        studio_draft=draft,
+        studio_preferences=preferences,
+    )
+    state = load_global_speech_tts_state({}, environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="audio_cpp",
+        saved_revision=9,
+    )
+    handler = STTSEventHandler(app=_DeliveryApp())
+    handler._stts_service = service
+
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(request))
+
+    artifact = handler._current_playground_artifact
+    try:
+        assert artifact is not None
+        assert (
+            handler.provider_test_evidence.sample_state(fingerprint)
+            is SpeechTTSConnectionState.NOT_TESTED
+        )
     finally:
         if artifact is not None:
             artifact.path.unlink(missing_ok=True)

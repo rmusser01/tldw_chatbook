@@ -174,7 +174,11 @@ from .settings_context_memory import (
     resolve_model_context_window,
 )
 from ...model_capabilities import reload_capabilities
-from .settings_endpoint_probe import SettingsEndpointProbeOutcome, probe_settings_endpoint
+from .settings_endpoint_probe import (
+    SettingsEndpointProbeOutcome,
+    SettingsEndpointProbePurpose,
+    probe_settings_endpoint,
+)
 from .settings_config_models import (
     SettingsCategoryId,
     SettingsCategorySummary,
@@ -199,6 +203,7 @@ from ..Speech.speech_runtime_status import (
     speech_tts_runtime_status_store,
 )
 from ..Speech.speech_settings_contracts import (
+    SpeechTTSConnectionState,
     SpeechTTSNavigationIntent,
     SpeechTTSNavigationTarget,
 )
@@ -285,6 +290,7 @@ from .settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GlobalSpeechTTSState,
     load_global_speech_tts_state,
+    process_provider_test_evidence_store,
 )
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -10220,7 +10226,11 @@ class SettingsScreen(BaseAppScreen):
         token: object | None = None,
     ) -> None:
         try:
-            outcome = await probe_settings_endpoint(base_url, provider=provider)
+            outcome = await probe_settings_endpoint(
+                base_url,
+                provider=provider,
+                purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
+            )
         except asyncio.CancelledError:
             cancelled_current = bool(
                 token is not None
@@ -10266,8 +10276,14 @@ class SettingsScreen(BaseAppScreen):
     ) -> ProviderProbeResult:
         if type(outcome) is not SettingsEndpointProbeOutcome:
             raise ValueError("Provider probe outcome is invalid.")
+        endpoint = {
+            SpeechTTSConnectionState.REACHABLE: "reachable",
+            SpeechTTSConnectionState.UNREACHABLE: "unreachable",
+            SpeechTTSConnectionState.NOT_TESTED: "not_tested",
+            SpeechTTSConnectionState.UNSUPPORTED: "model_listing_unavailable",
+        }.get(outcome.state, outcome.state)
         return ProviderProbeResult(
-            endpoint=outcome.state,
+            endpoint=str(endpoint),
             model_ids=outcome.model_ids,
             category=outcome.category,
         )
@@ -14098,6 +14114,9 @@ class SettingsScreen(BaseAppScreen):
                     provider_applied_configuration_revisions
                 ),
                 runtime_status_store=speech_tts_runtime_status_store(self.app_instance),
+                provider_test_evidence=process_provider_test_evidence_store(
+                    self.app_instance
+                ),
                 id="settings-speech-tts-panel",
             )
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:

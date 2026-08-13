@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Literal
 
 import httpx
@@ -74,6 +75,13 @@ _ENDPOINT_PROBE_CATEGORIES = frozenset(
     }
 )
 _MODEL_IDS_UNSET = object()
+
+
+class SettingsEndpointProbePurpose(StrEnum):
+    """Closed operation context for the shared Settings endpoint probe."""
+
+    CHAT_CATALOG = "chat_catalog"
+    TTS_CATALOG = "tts_catalog"
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -515,6 +523,9 @@ async def probe_settings_endpoint(
     base_url: str,
     *,
     provider: str = "custom",
+    purpose: SettingsEndpointProbePurpose | str = (
+        SettingsEndpointProbePurpose.CHAT_CATALOG
+    ),
     timeout: float = SETTINGS_ENDPOINT_PROBE_TIMEOUT_SECONDS,
     http_client: httpx.AsyncClient | None = None,
 ) -> SettingsEndpointProbeOutcome:
@@ -528,6 +539,8 @@ async def probe_settings_endpoint(
             or full models form.
         provider: Canonical provider key controlling endpoint interpretation
             and the Ollama fallback. Defaults to ``custom`` for legacy callers.
+        purpose: Explicit chat or TTS catalog contract. Defaults to chat to
+            preserve the shared helper's existing Settings behavior.
         timeout: Per-request timeout in seconds.
         http_client: Optional client override (tests pass a
             ``httpx.MockTransport``-backed client); when omitted a short-lived
@@ -536,8 +549,17 @@ async def probe_settings_endpoint(
     Returns:
         The probe outcome with a toast-ready ``summary`` fragment.
     """
+    try:
+        resolved_purpose = SettingsEndpointProbePurpose(purpose)
+    except (TypeError, ValueError):
+        raise ValueError("Endpoint probe purpose is invalid.") from None
     provider_key = normalize_probe_provider_key(provider)
-    if provider_key == "openai":
+    if resolved_purpose is SettingsEndpointProbePurpose.TTS_CATALOG:
+        if provider_key != "openai":
+            return _tts_outcome(
+                SpeechTTSConnectionState.NOT_TESTED,
+                "not tested: TTS catalog probe is unsupported for this provider",
+            )
         return await _probe_openai_tts_catalog(
             base_url,
             timeout=timeout,

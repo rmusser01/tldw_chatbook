@@ -85,12 +85,14 @@ from tldw_chatbook.UI.Speech.speech_runtime_status import (
 )
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSConfigurationState,
+    SpeechTTSConnectionState,
     SpeechTTSDiagnosticCategory,
     SpeechTTSNavigationIntent,
     SpeechTTSNavigationTarget,
     SpeechTTSRuntimeState,
     SpeechTTSRuntimeStatus,
     SpeechTTSStatusFreshness,
+    combine_tts_readiness,
 )
 from tldw_chatbook.UI.Screens.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
@@ -106,9 +108,11 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     GlobalSpeechTTSState,
     GlobalSpeechTTSValidationError,
     OpenAIPlaintextConfirmation,
+    ProcessProviderTestEvidenceStore,
     audio_cpp_transport_warning,
     build_credential_mutation,
     build_global_speech_tts_save_proposal,
+    build_provider_test_fingerprint,
     detect_audio_cpp_server_binary,
     global_speech_tts_provider_configuration_changed,
     global_speech_tts_provider_configuration_state,
@@ -555,6 +559,7 @@ class SpeechTTSSettingsPanel(Vertical):
         provider_runtime_revisions: dict[str, int] | None = None,
         provider_applied_configuration_revisions: dict[str, int] | None = None,
         runtime_status_store: SpeechTTSRuntimeStatusStore | None = None,
+        provider_test_evidence: ProcessProviderTestEvidenceStore | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -564,6 +569,9 @@ class SpeechTTSSettingsPanel(Vertical):
         self._audio_cpp_observation = audio_cpp_observation
         self._runtime_status_store = (
             runtime_status_store or SpeechTTSRuntimeStatusStore()
+        )
+        self._provider_test_evidence = (
+            provider_test_evidence or ProcessProviderTestEvidenceStore()
         )
         self._audio_cpp_runtime_revision = audio_cpp_configuration_revision
         saved_revision = (
@@ -1483,6 +1491,38 @@ class SpeechTTSSettingsPanel(Vertical):
             self._runtime_status_store.publish_catalog(projection.catalog_status)
         return projection
 
+    def _connection_readiness(self):
+        """Project saved-fingerprint evidence independently from local validity."""
+
+        provider_id = self.configure_provider
+        revision = self._provider_configuration_revisions.get(provider_id)
+        catalog = SpeechTTSConnectionState.NOT_TESTED
+        sample = SpeechTTSConnectionState.NOT_TESTED
+        if revision is not None:
+            try:
+                fingerprint = build_provider_test_fingerprint(
+                    self.original_state,
+                    provider_id=provider_id,
+                    saved_revision=revision,
+                )
+            except (TypeError, ValueError):
+                pass
+            else:
+                catalog = self._provider_test_evidence.catalog_state(fingerprint)
+                sample = self._provider_test_evidence.sample_state(fingerprint)
+        return combine_tts_readiness(
+            self._configuration_state(),
+            catalog,
+            sample,
+        )
+
+    def _connection_status_copy(self) -> str:
+        readiness = self._connection_readiness()
+        return (
+            f"Provider connection: {readiness.connection.value} — "
+            f"catalog {readiness.catalog.value}; sample {readiness.sample.value}"
+        )
+
     @staticmethod
     def _latest_status(
         first: SpeechTTSRuntimeStatus | None,
@@ -1513,6 +1553,13 @@ class SpeechTTSSettingsPanel(Vertical):
                 ).update(row.copy)
             except QueryError:
                 continue
+        try:
+            self.query_one(
+                "#settings-speech-status-provider-connection",
+                Static,
+            ).update(self._connection_status_copy())
+        except QueryError:
+            pass
         self._refresh_configuration_metadata()
 
     def compose(self) -> ComposeResult:
@@ -1793,6 +1840,42 @@ class SpeechTTSSettingsPanel(Vertical):
             yield Static(
                 self._audio_cpp_observation_copy(audio_cpp_choices),
                 id="settings-speech-audio-cpp-observation-provenance",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield Static(
+                "Selected provider setup source: "
+                f"{self.state.provider_sources[self.configure_provider].value}.",
+                id="settings-speech-provider-source",
+                classes="settings-status-row",
+                markup=False,
+            )
+            yield Static(
+                self._draft_impact_copy(),
+                id="settings-speech-draft-impact",
+                classes="settings-status-row",
+                markup=False,
+            )
+            projection = self._status_projection()
+            dirty_connection = self._provider_connection_draft_dirty(
+                self.configure_provider
+            )
+            for row in projection.rows(dirty_draft=dirty_connection):
+                yield Static(
+                    row.copy,
+                    id=f"settings-speech-status-{row.row_id}",
+                    classes="settings-status-row",
+                    markup=False,
+                )
+            yield Static(
+                self._connection_status_copy(),
+                id="settings-speech-status-provider-connection",
+                classes="settings-status-row",
+                markup=False,
+            )
+            yield Static(
+                "Ordinary Save validates and persists locally. Use Speech Lab for "
+                "connection tests, discovery, generation, and playback.",
                 classes="settings-detail-row",
                 markup=False,
             )
