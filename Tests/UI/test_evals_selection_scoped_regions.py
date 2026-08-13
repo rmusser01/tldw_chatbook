@@ -108,6 +108,127 @@ async def test_rail_click_keeps_focus_on_the_clicked_row(evals_app, seeded_bench
         ), "Focus escaped the rail row the user just clicked."
 
 
+async def test_region_swaps_never_destroy_the_frames_collapse_headers(
+    evals_app, seeded_bench
+):
+    """The frame composes each region's collapse header as its FIRST child.
+
+    `#lab-rail` and `#lab-inspector` are not empty containers the mode fills:
+    `LabWorkbench.compose` puts a title + collapse button in each, because
+    collapse is frame-owned (which is exactly why `LabScreen._populate_regions`
+    APPENDS mode content with `mount_all`). A blanket `remove_children()` in
+    the selection swap destroyed both headers on the first rail click --
+    permanently, since no screen recompose remains to rebuild them and the
+    collapse buttons have no keyboard binding.
+
+    Driven through EvalsScreen, not a probe LabScreen: the defect only exists
+    on the path a real selection takes.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+
+        def _header_state() -> dict[str, str]:
+            state: dict[str, str] = {}
+            for button_id, title in (
+                ("lab-rail-collapse", "Catalog"),
+                ("lab-inspector-collapse", "Inspector"),
+            ):
+                button = screen.query_one(f"#{button_id}", Button)
+                header = button.parent
+                titles = [
+                    str(child.renderable)
+                    for child in header.children
+                    if child is not button
+                ]
+                state[button_id] = f"{titles}"
+                assert title in state[button_id], f"{title} title row is gone"
+            return state
+
+        before = _header_state()
+
+        # Several rail clicks (rail_dirty=False path)...
+        for _ in range(3):
+            await pilot.click("#evals-rail-row-benches-0")
+            await pilot.pause()
+            await pilot.pause()
+            assert _header_state() == before
+
+        # ...and a rail-rebuilding swap (rail_dirty defaults True).
+        screen.select(kind="none")
+        await pilot.pause()
+        await pilot.pause()
+        assert _header_state() == before, (
+            "a rail-rebuilding swap destroyed the frame's collapse chrome"
+        )
+        # Exactly one of each -- not duplicated by the remount either.
+        assert len(screen.query("#lab-rail-collapse")) == 1
+        assert len(screen.query("#lab-inspector-collapse")) == 1
+        assert len(screen.query(".console-rail-header")) == 2
+
+
+async def test_rail_rebuild_returns_focus_to_the_row_the_user_was_on(
+    evals_app, seeded_bench
+):
+    """Focus must not escape into a rail section TOGGLE across a rebuild.
+
+    Textual's `_reset_focus` moves focus to a neighbour when the focused
+    widget is removed; on a rail rebuild that neighbour is the section toggle,
+    one Space away from collapsing the section the user is working in. Rail
+    row ids are stable across the rebuild, so the swap restores the identity.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+        row = screen.query_one("#evals-rail-row-benches-0", Button)
+        row.focus()
+        await pilot.pause()
+        assert getattr(evals_app.focused, "id", None) == "evals-rail-row-benches-0"
+
+        # A mutation-shaped selection: rebuilds the rail under the focus.
+        screen.select(kind="bench", id=seeded_bench)
+        for _ in range(6):
+            await pilot.pause()
+
+        assert getattr(evals_app.focused, "id", None) == "evals-rail-row-benches-0", (
+            "focus escaped the rail row across a rail-rebuilding swap"
+        )
+
+
+async def test_a_burst_of_selections_leaves_every_region_populated(
+    evals_app, seeded_bench
+):
+    """Superseding must never strand a half-torn-down region.
+
+    An exclusive worker group cancels the in-flight swap, and the cancellation
+    can land INSIDE `remove_children` -- leaving a region emptied and never
+    refilled if the superseding swap does not rebuild that one (a rail-click
+    swap does not rebuild the rail). Superseded swaps now lose a revision
+    check and return before touching a widget instead.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+
+        # Interleave rail-rebuilding and rail-preserving selections back to
+        # back, with no pause between them, so each supersedes the last.
+        screen.select(kind="bench", id=seeded_bench)
+        screen.select(kind="none", rail_dirty=False)
+        screen.select(kind="bench", id=seeded_bench)
+        screen.select(kind="none", rail_dirty=False)
+        for _ in range(10):
+            await pilot.pause()
+
+        assert screen.query("#evals-library-pane"), "the rail was left empty"
+        assert screen.query("#evals-detail-pane"), "the detail pane was left empty"
+        assert screen.query("#evals-inspector-pane"), "the inspector was left empty"
+        assert len(screen.query("#evals-library-pane")) == 1, "the rail was duplicated"
+        assert screen.query("#lab-rail-collapse")
+        assert screen.query("#lab-inspector-collapse")
+        # The LAST selection is what is on screen.
+        assert screen._selection.kind == "none"
+
+
 async def test_rail_initiated_creation_still_refreshes_the_rail(
     evals_app, seeded_bench
 ):

@@ -3483,3 +3483,35 @@ screen — was 325 ms before, 146 ms after.
 grep the screen's `refresh`/`recompose` overrides, its `call_after_refresh` call
 sites, and any geometry reads. Port each explicitly. Measure trigger-to-content, never
 "time the two coroutines", and batch the swap.
+
+**Review round 1 added three more, all measured, none visible in the diff:**
+
+* **A "container" you empty may not be yours.** `remove_children()` on a frame region
+  is only safe if the region holds nothing but mode content. `#lab-rail` and
+  `#lab-inspector` each carry a frame-composed collapse header as their FIRST child —
+  which is precisely why `LabScreen._populate_regions` APPENDS with `mount_all` and
+  says so. The blanket removal destroyed both collapse buttons on the first click,
+  permanently (no keyboard binding, no recompose left to restore them). If the
+  existing code mounts with `mount_all` rather than replacing, that is a signal:
+  something else already lives there.
+* **Focus does not "stay put" when the widget under it is destroyed — it MOVES, to a
+  neighbour you did not choose.** Both conversions landed the user on a collapse
+  affordance one Space away from destroying their own context
+  (`settings-category-group-domain-defaults`, `lab-rail-collapse`). Capture the focus
+  token before a teardown and restore it by id, but defer the restore and yield to
+  the rebuilt subtree — a freshly mounted widget may have focused itself ON PURPOSE
+  (`ResultsGrid` does, so its advertised shortcuts work), and an eager restore wins
+  the FIFO race and silently kills that.
+* **`exclusive=True` is the wrong supersede primitive for a teardown.** It cancels the
+  in-flight worker, and the cancellation can land inside `remove_children` — leaving a
+  region emptied and never refilled when the superseding swap does not rebuild that
+  same region, and skipping the post-teardown capture sweep. A lock plus a revision
+  check supersedes just as firmly and lets the loser return before touching a widget.
+  Accumulate any per-call flags (`rail_dirty`) across superseded calls, or the
+  survivor silently drops the loser's work.
+
+And one about the evidence itself: **a test that asserts on the nearest visible text
+can be satisfied by a different code path.** Neutering the sync-rows region rebuild
+left all six evidence tests green, because the assertion read a summary `Static` that
+another path keeps current. Assert on the widgets ONLY the mechanism under test
+writes, then mutation-check by neutering that mechanism.

@@ -5297,15 +5297,25 @@ async def test_settings_provider_category_renders_catalog_select_with_visible_va
         assert "llama.cpp" in _visible_text(screen)
 
 
-# task-15510 was pinned here as a strict xfail: navigation preselect applied
-# the provider, which itself marked Providers & Models dirty, and the DEFERRED
-# `_apply_navigation_provider_context` then hit its unsaved-changes guard and
-# returned without writing the model. task-15475 changed when that callback
-# runs -- `_after_category_panes` fires it as soon as the rebuilt detail pane
-# exists, before the preselect's own `Select.Changed` has been dispatched and
-# marked the category dirty -- so the model now lands. A genuine pre-existing
-# user draft is still protected: that dirty mark predates the navigation. The
-# strict xfail did its job (it flipped loudly); the test is a live pin again.
+# task-15510 was pinned here as a strict xfail, and task-15475 flipped it to
+# XPASS. Spy-probed rather than reasoned about, because the obvious story is
+# wrong: `_apply_navigation_provider_context` still runs and its
+# unsaved-changes guard still returns early (measured `guard_dirty=True` on
+# this tree, as on dev) -- it writes nothing either way.
+#
+# What actually lands the model is the DETAIL PANE's own compose:
+# `_provider_display_setting_values()` returns the navigation provider/model
+# whenever no provider draft exists yet, and task-15475 leaves the pane
+# composed exactly once in that state (measured: a single call, `draft=False`,
+# returning huggingface / meta-llama/test-model). The screen-level recomposes
+# this task removed were what re-composed the pane later, after a draft
+# existed, snapping the field back to the previous provider's model.
+#
+# So the user-visible defect is fixed here, but the ordering task-15510
+# describes -- the guard firing against a draft the navigation itself created
+# -- is untouched and remains that task's to close. Its sibling xfail
+# (`..._does_not_create_provider_draft`) still xfails for the same reason.
+# The strict marker did its job by flipping loudly; the test is a live pin now.
 @pytest.mark.asyncio
 async def test_settings_navigation_context_can_preselect_provider_category_target():
     app = _build_test_app()

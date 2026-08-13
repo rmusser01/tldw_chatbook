@@ -152,6 +152,57 @@ async def test_category_switch_keeps_compact_pane_classes_at_a_compact_size():
         )
 
 
+async def test_same_category_rebuild_keeps_focus_on_the_control_used():
+    """A SAME-category pane rebuild must not throw focus into the rail.
+
+    Workspaces rebuilds its pane in place (row click, "Show archived"), which
+    destroys the control under the user. Textual's `_reset_focus` then lands
+    them on the rail's Domain Defaults GROUP TOGGLE -- where the next Space
+    collapses the group they are not even looking at. Pane control ids are
+    stable across a same-category rebuild, so the swap restores the identity.
+    """
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _open_settings(pilot)
+        screen._select_category("workspaces")
+        await _settle(pilot)
+        assert screen.active_category == "workspaces"
+
+        toggle = screen.query_one("#settings-workspaces-show-archived")
+        toggle.focus()
+        await pilot.pause()
+        assert getattr(host.focused, "id", None) == "settings-workspaces-show-archived"
+
+        # The real in-place rebuild path.
+        screen._refresh_settings_workspaces_pane()
+        await _settle(pilot)
+
+        assert getattr(host.focused, "id", None) == (
+            "settings-workspaces-show-archived"
+        ), "focus escaped the pane on a same-category rebuild"
+
+
+def _sync_row_texts(screen) -> list[str]:
+    """The detail rows inside the two sync-row regions, in order.
+
+    Read from the REGIONS, not from the whole screen: these are the widgets
+    only `_sync_overview_sync_widgets`' region rebuild writes. Asserting on
+    screen-wide text (or on the front-door summary Static alone) passes even
+    with the rebuild removed, because a different path already keeps the
+    summary current -- which is exactly how a neutered rebuild survived a
+    first draft of this test.
+    """
+    rows: list[str] = []
+    for region_id in (
+        "#settings-overview-manual-sync-rows",
+        "#settings-overview-handoff-rows",
+    ):
+        rows.extend(
+            _text(row) for row in screen.query_one(region_id).query(Static)
+        )
+    return rows
+
+
 async def test_sync_row_refresh_patches_rows_without_rebuilding_the_screen():
     """AC#1: the sync rows update in place; nothing outside them moves."""
     host = DestinationHarness(_build_test_app(), "settings")
@@ -161,6 +212,8 @@ async def test_sync_row_refresh_patches_rows_without_rebuilding_the_screen():
         before = _identities(screen, _STABLE)
         nav_before = id(screen.query_one(MainNavigationBar))
         card_before = id(screen.query_one("#settings-overview-card"))
+        rows_before = _sync_row_texts(screen)
+        assert rows_before, "the sync-row regions rendered nothing to begin with"
 
         screen.manual_sync_rows = (
             ("Manual sync status", "ready"),
@@ -177,8 +230,40 @@ async def test_sync_row_refresh_patches_rows_without_rebuilding_the_screen():
             "The sync rows live in their own container; the Overview card "
             "around them must not be rebuilt."
         )
+        # The load-bearing half: the ROW statics themselves carry the new
+        # values. Only the region rebuild writes these.
+        rows_after = _sync_row_texts(screen)
+        assert rows_after != rows_before, "the sync-row regions never repainted"
+        assert "Manual sync status: ready" in rows_after
+        assert "Manual sync preview: Nothing pending." in rows_after
+        assert "Pending outgoing: none" in rows_after
+        # ...and the front door agrees.
         summary = _text(screen.query_one("#settings-overview-sync-summary", Static))
         assert "ready" in summary and "none" in summary
+
+
+async def test_sync_row_regions_repaint_when_the_row_SET_changes():
+    """A run result renames a row and appends two more -- the region rebuild
+    is what makes a variable row set possible at all (a per-row
+    `Static.update` patch could not express it)."""
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = await _open_settings(pilot)
+
+        screen.manual_sync_rows = (
+            ("Manual sync status", "failed"),
+            ("Manual sync result", "Manual Sync failed: TimeoutError"),
+            ("Pending outgoing", "notes: 2"),
+            ("Conflict review", "notes | Note A | edited both sides"),
+        )
+        await _settle(pilot)
+
+        rows = _sync_row_texts(screen)
+        assert "Manual sync result: Manual Sync failed: TimeoutError" in rows
+        assert "Conflict review: notes | Note A | edited both sides" in rows
+        assert not any(row.startswith("Manual sync preview:") for row in rows), (
+            "the replaced row survived -- the region did not rebuild"
+        )
 
 
 async def test_sync_rows_refresh_runs_once_per_visit(monkeypatch):

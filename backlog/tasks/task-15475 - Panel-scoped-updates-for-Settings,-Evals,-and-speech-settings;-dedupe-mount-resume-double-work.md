@@ -128,6 +128,44 @@ deep-linked model before the preselect's own dirty mark, while a genuine
 pre-existing draft still trips the guard. Marker removed, reasoning recorded
 in the test; task-15510 itself is left for its owner to close.
 
+**Review round 1** (1 Critical, 3 Important, 4 minors — all addressed):
+
+- *Critical.* `_replace_region` called `remove_children()` on `#lab-rail` /
+  `#lab-inspector`, whose FIRST child is the frame's collapse header (composed by
+  `LabWorkbench`, which is exactly why `_populate_regions` APPENDS with
+  `mount_all`). One rail click destroyed the Catalog and Inspector collapse
+  buttons permanently — no keyboard binding, and no screen recompose left to
+  rebuild them. The swap now removes only the mode-owned children. Test drives a
+  real `EvalsScreen` through three rail clicks and a rail-rebuilding swap.
+- *Focus escape (both surfaces).* Textual's `_reset_focus` dropped the user on the
+  rail's Domain Defaults GROUP TOGGLE after a same-category Settings rebuild
+  (measured: `settings-category-group-domain-defaults`) and on `lab-rail-collapse`
+  after an Evals rail rebuild — one Space from collapsing something they were not
+  looking at. Both swaps now capture the focus token when focus is inside a region
+  they are about to rebuild and restore it by id, mirroring
+  `_replace_card_bodies`. The Evals restore is deferred and yields to `#lab-body`,
+  so `ResultsGrid`'s deliberate autofocus still wins.
+- *task-15510 comment corrected.* Spy-probed instead of reasoned: the guard
+  returns early on this tree too (`guard_dirty=True`), so
+  `_apply_navigation_provider_context` writes nothing either way. What lands the
+  model is the detail pane composing once through
+  `_provider_display_setting_values()` while no draft exists. The guard-vs-draft
+  ordering task-15510 describes is untouched and remains its owner's.
+- *Overview statics under-protected.* Neutering the region rebuild left every
+  test green, because the added assertion read a summary Static a different path
+  keeps current. The test now reads the ROW statics inside the two regions, plus a
+  second test for a changed row SET; mutation-checked (`refresh(recompose=True)`
+  → `refresh()` fails 2 tests).
+- *Minors.* Exclusive worker groups replaced on both surfaces by a lock + revision
+  check: cancellation could land inside `remove_children` and strand a region
+  emptied but never refilled (and skip the capture sweep), whereas a superseded
+  swap now returns before touching a widget; `rail_dirty` accumulates across
+  superseded calls so a rebuild is never lost. `_category_pane_swap_pending` is
+  cleared only by the swap that still owns the revision. Stale `evals_screen`
+  module docstring rewritten. The duplicate `_update_inspector_overflow_hint`
+  queued by `_select_category` (which fired first, against the pane the swap had
+  not rebuilt yet) is now only queued on the no-switch path.
+
 Files: `UI/Screens/settings_screen.py`, `UI/Screens/evals_screen.py`,
 `UI/Screens/chat_screen.py`, `UI/Evals/library_rail.py`,
 `UI/Navigation/base_app_screen.py`,

@@ -2029,6 +2029,9 @@ class SettingsScreen(BaseAppScreen):
     #: Settings screen ever built.
     _category_pane_swap_pending: bool = False
     _pending_pane_swap_callbacks: "list | None" = None
+    #: Bumped per switch; a swap whose revision is stale no-ops instead of
+    #: being cancelled mid-teardown (see `_swap_category_panes`).
+    _category_swap_revision: int = 0
     # Deliberately NOT recompose=True (Qodo review of PR #1125): a recompose
     # here remounts the theme editor on the FIRST real user edit, discarding
     # the in-progress input and leaving the flag stale-True against a clean
@@ -2229,6 +2232,9 @@ class SettingsScreen(BaseAppScreen):
         #: task-15475: per-instance queue for `_after_category_panes` (the
         #: class attribute is None precisely so this is never shared).
         self._pending_pane_swap_callbacks: list[tuple[Callable[..., object], tuple]] = []
+        #: Serializes category-pane swaps so a superseded one never interrupts
+        #: a teardown -- it loses the revision check and returns untouched.
+        self._category_swap_lock = asyncio.Lock()
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
         self._storage_check_rows: tuple[str, ...] = (
@@ -2497,10 +2503,16 @@ class SettingsScreen(BaseAppScreen):
             # capture silently swallows every click app-wide -- task-627).
             self.release_mouse_capture_for_teardown()
             self._category_pane_swap_pending = True
+            self._category_swap_revision += 1
             self.run_worker(
-                self._swap_category_panes(),
+                self._swap_category_panes(revision=self._category_swap_revision),
                 group="settings-category-panes",
-                exclusive=True,
+                # NOT exclusive: cancelling an in-flight swap can land inside
+                # `recompose()`'s removal and strand a pane emptied but never
+                # refilled, and it skips the post-teardown mouse-capture
+                # sweep. A lock plus a revision check supersedes just as
+                # firmly without ever interrupting a teardown.
+                exclusive=False,
                 exit_on_error=False,
             )
 
@@ -2531,11 +2543,14 @@ class SettingsScreen(BaseAppScreen):
         # the whole-screen recompose used to clear it by construction.
         self._set_static_text("#settings-focus-help", "")
 
-    async def _swap_category_panes(self) -> None:
+    async def _swap_category_panes(self, *, revision: int) -> None:
         """Rebuild the detail and inspector panes for the active category.
 
         Batched (the same lock-plus-``batch_update`` ``Widget.recompose``
-        uses) so the two rebuilds drive one layout pass rather than two.
+        uses) so the two rebuilds drive one layout pass rather than two, and
+        serialized by ``_category_swap_lock`` with a revision check so a
+        superseded swap no-ops BEFORE touching a widget instead of being
+        cancelled mid-teardown.
 
         This is also where the category-switch follow-ups run. They cannot use
         ``screen.call_after_refresh``: a REGION's recompose is serviced by that
@@ -2545,39 +2560,94 @@ class SettingsScreen(BaseAppScreen):
         gone. Hanging them off the end of this coroutine, which awaits the
         rebuilds, restores the ordering the whole-screen recompose gave for
         free.
+
+        Focus: a SAME-category rebuild (Workspaces row click, show-archived
+        toggle, `_refresh_settings_workspaces_pane`) destroys the control the
+        user is standing on, and Textual's ``_reset_focus`` then lands them on
+        the rail's Domain Defaults GROUP TOGGLE -- where the next Space
+        collapses the group. Pane control ids are stable across a same-category
+        rebuild, so the identity is captured and restored, mirroring
+        ``SpeechTTSSettingsPanel._replace_card_bodies``. A genuine category
+        CHANGE keeps the old behaviour instead (``_pending_category_focus_
+        value`` -> the new rail button), since the old category's ids are
+        meaningless in the new one.
+
+        Args:
+            revision: The switch this swap belongs to; a stale one returns
+                without touching anything.
+
+        Returns:
+            None.
         """
-        try:
-            self.release_mouse_capture_for_teardown()
-            async with self.batch():
-                for pane_id in ("#settings-detail-pane", "#settings-impact-pane"):
-                    try:
-                        pane = self.query_one(pane_id, SettingsRegion)
-                    except QueryError:
-                        # Screen torn down (navigated away) mid-swap.
-                        continue
-                    await pane.recompose()
-            # A MouseDown already queued on a child's pump can capture that
-            # child DURING the removal drain, after the release above.
-            self.sweep_stale_mouse_capture()
-            if not getattr(self, "is_mounted", False):
+        async with self._category_swap_lock:
+            if revision != self._category_swap_revision:
+                # Superseded while queued -- the newest swap owns the work,
+                # the pending flag, and the queued follow-ups.
                 return
-            category_value = self._pending_category_focus_value
-            if category_value is not None:
-                self._pending_category_focus_value = None
-                self._focus_category(category_value)
-            self._drain_pane_swap_callbacks()
-            # After a REFRESH, not inline: the hint compares the inspector
-            # body's virtual and container heights, and the pane it belongs to
-            # was remounted a moment ago -- read synchronously here, the
-            # geometry is still the pre-layout zero and the hint stays hidden
-            # over an overflowing body (task-1623's exact defect).
-            self.call_after_refresh(self._update_inspector_overflow_hint)
-        finally:
-            # Also on cancellation: this worker group is exclusive, so a
-            # second category switch kills the first mid-swap and owns the
-            # flag from then on. A stranded True would send every later
-            # follow-up into a queue nothing drains.
-            self._category_pane_swap_pending = False
+            try:
+                if not getattr(self, "is_mounted", False):
+                    return
+                focus_id = self._focused_id_in_category_panes()
+                self.release_mouse_capture_for_teardown()
+                async with self.batch():
+                    for pane_id in ("#settings-detail-pane", "#settings-impact-pane"):
+                        try:
+                            pane = self.query_one(pane_id, SettingsRegion)
+                        except QueryError:
+                            # Screen torn down (navigated away) mid-swap.
+                            continue
+                        await pane.recompose()
+                # A MouseDown already queued on a child's pump can capture that
+                # child DURING the removal drain, after the release above.
+                self.sweep_stale_mouse_capture()
+                if not getattr(self, "is_mounted", False):
+                    return
+                category_value = self._pending_category_focus_value
+                if category_value is not None:
+                    self._pending_category_focus_value = None
+                    self._focus_category(category_value)
+                elif focus_id:
+                    self._restore_category_pane_focus(focus_id)
+                self._drain_pane_swap_callbacks()
+                # After a REFRESH, not inline: the hint compares the inspector
+                # body's virtual and container heights, and the pane it belongs
+                # to was remounted a moment ago -- read synchronously here the
+                # geometry is still the pre-layout zero and the hint stays
+                # hidden over an overflowing body (task-1623's exact defect).
+                self.call_after_refresh(self._update_inspector_overflow_hint)
+            finally:
+                # Token-compared: only the swap that still owns the revision
+                # may clear the flag. A superseded one clearing it would send
+                # the winner's own follow-ups into a queue nothing drains.
+                if revision == self._category_swap_revision:
+                    self._category_pane_swap_pending = False
+
+    def _focused_id_in_category_panes(self) -> str | None:
+        """The focused widget's id, if this swap is about to destroy it.
+
+        Returns:
+            The id to restore afterwards, or None when focus is outside the
+            two rebuilt panes or on a widget with no id to find it by.
+        """
+        focused = self.app.focused if getattr(self, "is_running", False) else None
+        if focused is None or focused.screen is not self or not focused.id:
+            return None
+        for ancestor in focused.ancestors_with_self:
+            if getattr(ancestor, "id", None) in (
+                "settings-detail-pane",
+                "settings-impact-pane",
+            ):
+                return focused.id
+        return None
+
+    def _restore_category_pane_focus(self, focus_id: str) -> None:
+        """Re-focus ``focus_id`` if the rebuilt panes still contain it."""
+        try:
+            self.query_one(f"#{focus_id}").focus()
+        except QueryError:
+            # No counterpart in the rebuilt pane (a different category, or a
+            # control this state does not render) -- leave focus alone.
+            pass
 
     def _after_category_panes(self, callback: Callable[..., object], *args) -> None:
         """Run ``callback`` once the new category's panes are on screen.
@@ -15090,17 +15160,20 @@ class SettingsScreen(BaseAppScreen):
             self._image_gen_raw_section_cache = None
         if restore_focus:
             if category_changed:
-                # The recompose from assigning active_category destroys the
-                # focused widget; _select_category's call_after_refresh restore
-                # races that recompose (task-1338: focus ended up <none>), so
-                # record an intent consumed by recompose() after the fresh
-                # children mount.
+                # The pane swap from assigning active_category destroys the
+                # focused widget; a call_after_refresh restore races it
+                # (task-1338: focus ended up <none>), so record an intent the
+                # swap consumes after the fresh children mount.
                 self._pending_category_focus_value = category_value
             else:
                 self.call_after_refresh(self._focus_category, category_value)
-        # task-1623: the recompose minted a fresh (hidden) fold indicator;
-        # re-evaluate it against the new category's inspector content.
-        self.call_after_refresh(self._update_inspector_overflow_hint)
+        if not category_changed:
+            # task-1623: re-evaluate the fold indicator against the inspector's
+            # content. Only on the no-switch path: a real switch runs a pane
+            # swap, and that queues its own evaluation AFTERWARDS. Queuing one
+            # here too would fire first, against the pane the swap has not
+            # rebuilt yet -- pre-swap geometry, and a wasted pass.
+            self.call_after_refresh(self._update_inspector_overflow_hint)
 
     async def recompose(self) -> None:
         """Restore a pending category focus after a WHOLE-screen rebuild.
