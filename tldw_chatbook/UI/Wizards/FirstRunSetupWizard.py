@@ -1146,7 +1146,22 @@ class ProviderStep(SetupStep):
         results.clear_options()
         results.add_options(options)
         results.remove_class("hidden")
-        self._capture_provider_ui_draft()
+
+    def _highlight_discovered_server(self, server: object) -> None:
+        """Restore the exact candidate row without equating duplicate URLs."""
+
+        try:
+            results = self.query_one(
+                "#setup-provider-detection-results",
+                ProviderEndpointCandidateList,
+            )
+        except NoMatches:
+            return
+        for index in range(results.option_count):
+            option = results.get_option_at_index(index)
+            if getattr(option, "server", None) is server:
+                results.highlighted = index
+                return
 
     def _apply_discovered_server(self, server: Any) -> None:
         from tldw_chatbook.Chat.provider_endpoint_contract import (
@@ -1174,6 +1189,7 @@ class ProviderStep(SetupStep):
         banner.update(f"Found a local endpoint: {resolution.persisted_display}.")
         banner.remove_class("hidden")
         use_button.remove_class("hidden")
+        self._highlight_discovered_server(server)
 
     @staticmethod
     def _canonical_provider_key(provider_key: str) -> str:
@@ -1349,9 +1365,32 @@ class ProviderStep(SetupStep):
         self._capture_provider_ui_draft()
         self._refresh_auth_readiness()
 
-    def _model_semantics_changed(self) -> None:
-        """Invalidate provider evidence when the selected model changes."""
+    def _model_semantics_changed(
+        self,
+        *,
+        model_id: str = "",
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = None,
+    ) -> None:
+        """Keep evidence only for a model returned by its exact settled probe."""
 
+        from tldw_chatbook.Chat.provider_test_evidence import ProviderDraftIdentity
+
+        tested = self._last_tested_provider_identity
+        if (
+            type(discovery_key) is wizard_state.FirstRunModelDiscoveryKey
+            and type(tested) is ProviderDraftIdentity
+            and discovery_key.provider_key == tested.provider_key
+            and discovery_key.connection_identity == tested.connection_identity
+            and discovery_key.credential_source == tested.credential_source
+            and discovery_key.credential_revision == tested.credential_revision
+        ):
+            evidence = self._provider_test_evidence.evidence_for(tested)
+            if (
+                evidence is not None
+                and evidence.endpoint == "reachable"
+                and model_id in evidence.model_ids
+            ):
+                return
         self._invalidate_provider_test()
 
     def _begin_provider_evidence_save(self, mutation: object):
@@ -1854,8 +1893,7 @@ class ProviderStep(SetupStep):
         self.select_provider(provider_key)
         self._detected_servers = detected_servers
         self._render_detection_results(detected_servers)
-        self.detected_server = server
-        self.detected_base_url = server.base_url
+        self._apply_discovered_server(server)
         self._detected_endpoint_provider_key = provider_key
         self._updating_connection_controls = True
         try:
@@ -1869,6 +1907,7 @@ class ProviderStep(SetupStep):
             self._updating_connection_controls = False
         self._refresh_endpoint_resolution()
         self._begin_selected_provider_discovery(self._effective_provider_draft())
+        self._capture_provider_ui_draft()
 
     @on(Button.Pressed, "#setup-provider-use-detected")
     def _on_use_detected(self) -> None:
@@ -1894,8 +1933,7 @@ class ProviderStep(SetupStep):
         self.select_provider(provider_key)
         self._detected_servers = detected_servers
         self._render_detection_results(detected_servers)
-        self.detected_server = server
-        self.detected_base_url = server.base_url
+        self._apply_discovered_server(server)
         self._detected_endpoint_provider_key = self.selected_provider_key
         self._updating_connection_controls = True
         try:
@@ -1914,6 +1952,7 @@ class ProviderStep(SetupStep):
         self.query_one("#setup-provider-detected", Static).remove_class("hidden")
         self.query_one("#setup-provider-use-detected", Button).remove_class("hidden")
         self._begin_selected_provider_discovery(self._effective_provider_draft())
+        self._capture_provider_ui_draft()
 
     def _clear_detected_provider_state(self) -> None:
         """Drop an adopted endpoint and its provider-owned discovery results."""
@@ -2087,19 +2126,24 @@ class ProviderStep(SetupStep):
         typed, non-empty value, so the currently-configured secret is left
         untouched (never re-shown).
         """
+        key_input = self.query_one("#setup-provider-api-key", Input)
+        changed = self._clear_requested or not key_input.display
         self._clear_requested = False
-        self.query_one("#setup-provider-api-key", Input).display = True
-        self._credential_semantics_changed()
+        key_input.display = True
+        if changed:
+            self._credential_semantics_changed()
 
     @on(Button.Pressed, "#setup-provider-key-keep")
     def _on_keep(self) -> None:
         """Abandon any in-progress Replace/Clear; the stored secret is untouched."""
-        self._clear_requested = False
         key_input = self.query_one("#setup-provider-api-key", Input)
+        changed = self._clear_requested or bool(key_input.value) or key_input.display
+        self._clear_requested = False
         with key_input.prevent(Input.Changed):
             key_input.value = ""
         key_input.display = False
-        self._credential_semantics_changed()
+        if changed:
+            self._credential_semantics_changed()
 
     @on(Button.Pressed, "#setup-provider-key-clear")
     def _on_clear(self) -> None:
@@ -2110,15 +2154,19 @@ class ProviderStep(SetupStep):
         leaving the existing one in place (build_provider_commit's truthiness
         check would otherwise treat "" exactly like "nothing to write").
         """
-        self._clear_requested = True
         key_input = self.query_one("#setup-provider-api-key", Input)
+        changed = (
+            not self._clear_requested or bool(key_input.value) or not key_input.display
+        )
+        self._clear_requested = True
         with key_input.prevent(Input.Changed):
             key_input.value = ""
         key_input.display = True
         self.query_one("#setup-provider-key-status", Static).update(
             "The stored key will be removed when you continue."
         )
-        self._credential_semantics_changed()
+        if changed:
+            self._credential_semantics_changed()
 
     @on(Input.Changed, "#setup-provider-api-key")
     def _on_key_changed(self, event: Input.Changed) -> None:
@@ -2335,37 +2383,8 @@ class ProviderStep(SetupStep):
         self.provider_value_for_chat_defaults = self._display_value_for(
             self.selected_provider_key
         )
-        previous_draft = getattr(self.wizard, "staged_provider_draft", None)
-        previous_credential = (
-            previous_draft.credential
-            if type(previous_draft) is wizard_state.FirstRunProviderDraft
-            and previous_draft.provider == self.selected_provider_key
-            else None
-        )
         credential_decision = self._credential_decision()
-        selection_draft = self._effective_provider_draft(
-            revision=self._credential_revision
-        )
-        selection_key = self._model_discovery_key(selection_draft)
-        selection_unchanged = (
-            selection_key is not None
-            and selection_key == self._selected_discovery_key
-            and credential_decision == self._selected_discovery_credential_decision
-        )
-        credential_unchanged = previous_credential is not None and (
-            self._last_credential_decision == credential_decision
-        )
-        revision = (
-            self._credential_revision
-            if selection_unchanged
-            else previous_credential.revision
-            if credential_unchanged and previous_credential is not None
-            else max(
-                self._credential_revision,
-                previous_credential.revision if previous_credential is not None else 0,
-            )
-            + 1
-        )
+        revision = self._credential_revision
         provider_draft = self._effective_provider_draft(revision=revision)
         if provider_draft is None:
             return False, "The provider settings are invalid."
@@ -2733,7 +2752,10 @@ class ModelStep(SetupStep):
                 custom_input.value = ""
         except Exception:
             pass
-        self.set_selected_model(getattr(button, "_model_id", str(button.label)))
+        self.set_selected_model(
+            getattr(button, "_model_id", str(button.label)),
+            discovery_key=getattr(button, "_discovery_key", None),
+        )
 
     def _clear_model_radio_selection(self) -> None:
         """Clear Textual's radio value and owner pointer without event races."""
@@ -2785,7 +2807,12 @@ class ModelStep(SetupStep):
         if self.selected_model_id != previous_model:
             self._notify_provider_model_changed()
 
-    def set_selected_model(self, model_id: str) -> None:
+    def set_selected_model(
+        self,
+        model_id: str,
+        *,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = None,
+    ) -> None:
         changed = model_id != self.selected_model_id
         self.selected_model_id = model_id
         self._model_id_from_custom_input = False
@@ -2793,12 +2820,23 @@ class ModelStep(SetupStep):
             self._current_discovery_key() if model_id else None
         )
         if changed:
-            self._notify_provider_model_changed()
+            self._notify_provider_model_changed(
+                model_id=model_id,
+                discovery_key=discovery_key,
+            )
 
-    def _notify_provider_model_changed(self) -> None:
+    def _notify_provider_model_changed(
+        self,
+        *,
+        model_id: str = "",
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = None,
+    ) -> None:
         owner = getattr(self.wizard, "_first_run_provider_discovery_owner", None)
         if isinstance(owner, ProviderStep):
-            owner._model_semantics_changed()
+            owner._model_semantics_changed(
+                model_id=model_id,
+                discovery_key=discovery_key,
+            )
 
     def _live_pressed_radio(self) -> Optional[RadioButton]:
         """F1 fix: read ``#setup-model-choice``'s ``pressed_button``, but only
