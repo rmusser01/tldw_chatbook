@@ -28,12 +28,12 @@ behavior.
 - [ ] #1 A source matching a QUEUED, PARSING, or WRITING job for the same Local or Server backend is not submitted on the first Start press; terminal jobs never block re-ingestion.
 - [ ] #2 Equivalent local path spellings and conservative HTTP(S) URL spellings share a stable lexical admission key without filesystem, network, database, or content-hash work.
 - [ ] #3 Local and Server jobs use separate admission scopes, so an active Local import does not block submission of the same source to Server and vice versa.
-- [ ] #4 A blocked first press preserves the complete form and displays an inline, non-modal instruction to press Start again; the existing dead zone prevents double-clicks and key repeat from counting as consent.
-- [ ] #5 One deliberate second press applies a one-shot override to the exact current source/backend/form snapshot and covers both an active-source warning and any existing preflight-warning consent without requiring a third press.
-- [ ] #6 Editing the source or options, changing backend, leaving/resetting the canvas, or changing the active-match fingerprint disarms pending consent.
-- [ ] #7 Folder admission is atomic: if any expanded member is already active, the first press queues none; the confirmed second press queues the original batch normally.
-- [ ] #8 The app repeats the guard immediately before local queue creation or remote submission, expected duplicate refusal does not produce a generic failure receipt, and retained external-model resources are released when admission is refused.
-- [ ] #9 Focused registry, coordinator, screen, folder, URL/path-normalization, keyboard-parity, resource-lifecycle, and regression tests plus scoped static checks and documentation pass.
+- [ ] #4 A blocked first press preserves the complete form and displays a compact, fully visible one-row instruction at the minimum supported Library geometry; the existing dead zone prevents double-clicks and key repeat from counting as consent.
+- [ ] #5 One deliberate second press applies a one-shot duplicate override only when the unchanged armed snapshot included an active-source reason; a combined active-source and preflight-warning confirmation still requires two presses total, never three.
+- [ ] #6 Consent fingerprints stable matching job IDs, not their ordinary QUEUED/PARSING/WRITING transitions. Source/form/backend edits, changed warning identity, active-match membership changes, canvas reset/exit, or Escape disarm; identical preflight refresh and focus movement alone do not.
+- [ ] #7 Folder admission is atomic: one outer check runs before any member is queued, and confirmed members use an already-admitted child seam so recursive re-entry cannot partially submit or re-block the batch.
+- [ ] #8 The app repeats the guard immediately before local queue creation or remote submission. Expected refusal carries only bounded job ID/state references, is safe to stringify, creates no generic failure receipt, and releases retained external-model resources.
+- [ ] #9 Focused registry, coordinator, screen, folder, URL/path-normalization, privacy, keyboard-parity, constrained-geometry, resource-lifecycle, and regression tests plus scoped static checks and documentation pass.
 <!-- AC:END -->
 
 ## Design

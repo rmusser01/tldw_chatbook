@@ -20,9 +20,11 @@ the existing bounded expansion.
 
 The screen previews admission from the direct source or the candidate paths
 already produced by background preflight; it performs no new filesystem scan.
-The app repeats the guard immediately before local job creation or remote
-submission and communicates refusal through typed expected control flow. The
-override is explicit, one-shot, and never persisted.
+The app repeats one outer guard immediately before local job creation or remote
+submission, then routes admitted folder members through a private seam that
+cannot re-enter the guard. Expected refusal carries only bounded job ID/state
+references. The override is explicit, reason-specific, one-shot, and never
+persisted.
 
 ## Context
 
@@ -65,6 +67,16 @@ resolution, query sorting, or tracking-parameter removal.
 The app performs the binding check before the first local append or remote call.
 Expected refusal creates no failed job and transfers no external-model resource.
 The screen's preview is explanatory defense in depth, not authority.
+
+Consent fingerprints stable matching job IDs, not lifecycle states. Ordinary
+queued/parsing/writing progress preserves the second press; terminal membership,
+request, backend, option, or warning changes invalidate it. Focus movement alone
+does not. A tooling-only confirmation cannot authorize a duplicate that was not
+part of its armed reason set.
+
+The inline instruction remains complete in the fixed one-row gate at the minimum
+supported Library geometry. Its text, not warning color or a glyph, communicates
+the active-import state and the second-press action.
 
 No schema, dependency, setting, persistent preference, or historical cleanup is
 introduced. ADR-014 remains authoritative for ingest ownership, service authority,

@@ -31,7 +31,7 @@ TASK-208 fills only that gap and reuses the established consent grammar.
 
 ## Approaches considered
 
-### 1. App-boundary active admission with an explicit override — selected
+### 1. App-boundary active admission with an explicit override (selected)
 
 A pure registry query finds active jobs with the same canonical source and
 backend. The screen uses the result to render the first-press confirmation, and
@@ -42,14 +42,14 @@ This approach gives the UI enough information to be honest while retaining an
 authoritative non-UI guard for every entry point. It adds no database schema,
 hashing, network work, or durable state.
 
-### 2. Make registry submission silently return the existing job — rejected
+### 2. Make registry submission silently return the existing job (rejected)
 
 This would be small internally but would make a refused request look like a
 successful new submission. The form could clear, the queue could scroll, and
 resource ownership could transfer even though no job was created. Callers also
 could not offer an intentional override without reverse-engineering the result.
 
-### 3. Add persistent idempotency keys or all-history content hashes — rejected
+### 3. Add persistent idempotency keys or all-history content hashes (rejected)
 
 Persistent uniqueness would conflate active-job safety with historical media
 identity, overlap the existing content-match/overwrite flow, require schema and
@@ -130,12 +130,26 @@ the authoritative admission operation:
 2. expand a directory with the existing bounded collector;
 3. query active matches using that backend origin;
 4. if matches exist and the one-shot override is false, raise a typed expected
-   refusal containing safe job copies;
-5. otherwise continue through the unchanged local or Server submission path.
+   refusal containing only bounded `(job_id, state)` references;
+5. consume the one-shot admission decision once; and
+6. route the single source, or every expanded folder member, through a private
+   already-admitted child seam that cannot re-run or partially re-enter the
+   outer guard.
 
 The check occurs before the first job append and before any remote service call.
 The typed refusal is control flow, not a product failure: it creates no failed
-job, no generic error receipt, and no error-level diagnostic.
+job, no generic error receipt, and no error-level diagnostic. Its payload omits
+source paths, titles, keywords, options, progress, and all other job metadata;
+its string and representation expose only a bounded count and safe lifecycle
+tokens.
+
+The public method resolves the backend and expands the source exactly once. A
+folder override is consumed by that one outer decision; it is not forwarded
+through recursive calls. The private admitted-child seam receives the captured
+backend, batch id, source, and immutable submission snapshot, then performs the
+existing per-source local or Server routing. This structure makes “no members
+before admission” mechanically true and prevents an override from being lost on
+the second or later member.
 
 The screen's read-only preview never repeats directory I/O on the Textual thread.
 For a single source it queries the registry directly; for a folder it compares
@@ -155,29 +169,52 @@ two serial confirmations. Its fingerprint contains:
 - backend origin;
 - the form/options snapshot relevant to submission;
 - preflight-warning identity; and
-- the matching active job IDs and states.
+- the stable matching active job IDs in deterministic order.
+
+Lifecycle state is deliberately absent from the fingerprint. `QUEUED` to
+`PARSING` to `WRITING` is ordinary progress and does not change the duplicate
+risk, so it must not steal the second press. When a matching job becomes
+terminal it leaves the active query, changing membership and invalidating the
+now-obsolete consent.
 
 On the first press, any owed consent arms the gate and returns without calling
-the submit path. Duplicate-only copy is:
+the submit path. Copy is deliberately bounded for the existing fixed one-row
+gate. Duplicate-only copy is:
 
-`This source is already being imported. Press Start again to queue another copy.`
+`Import active. Start again to queue a duplicate.`
 
 Folder copy names the count:
 
-`2 selected files are already being imported. Press Start again to queue another copy.`
+`2 active files. Start again to queue all.`
 
 When duplicate and tooling-warning reasons coexist, one combined inline sentence
-names both risks and one second press accepts both. The user never owes a third
-press.
+names both risks without exceeding the one-row copy budget:
+
+`Import active; 2 may fail. Start again to queue.`
+
+One second press accepts both named reasons. The user never owes a third press.
+The gate stays `markup=False`; warning styling supports the plain-language state
+but color and glyphs are not required to understand it.
 
 The same 300 ms dead zone rejects double-clicks and key repeat. Button, Enter in
 the path field, and any existing Start accelerator continue through the same
 method. Arming changes only the gate line in place, preserving focus and scroll.
 
 The consent disarms when its fingerprint can no longer describe the request:
-source or option edits, backend changes, preflight replacement/invalidation,
-active-match changes, canvas reset/exit, or Escape. The override is not stored in
-form/config state and is consumed by one call only.
+source or form edits, backend changes, preflight invalidation or changed warning
+identity, active-match membership changes, canvas reset/exit, or Escape. An
+identical preflight refresh preserves consent, as does an active job's ordinary
+lifecycle transition. Moving focus or blurring the path field also does not
+disarm because neither changes what Start will do; preserving blur is required
+for Enter-to-arm followed by a mouse click on Start. The current
+`_disarm_library_ingest_start_confirm` docstring incorrectly names blur as a
+disarm trigger and must be corrected while this code is touched.
+
+The override is not stored in form/config state and is consumed by one call only.
+It is `True` only when the current, equal armed fingerprint contains at least one
+active duplicate job ID. A confirmation armed solely for tooling warnings cannot
+silently authorize a duplicate that appears later; the changed active membership
+instead presents the duplicate reason and requires a new first press.
 
 ### External resource ownership
 
@@ -200,11 +237,15 @@ No retained model scope transfers to a duplicate job until admission succeeds.
 - Expected active-duplicate refusal never clears the form, persists option
   defaults, updates last-submission state, scrolls to a new receipt, or produces
   a failed job.
-- If an active job becomes terminal after the first press, the changed match
-  fingerprint disarms consent; the next press submits normally without requiring
-  an obsolete override.
+- If an active job advances from queued to parsing or writing after the first
+  press, its stable ID remains in the fingerprint and the second press still
+  works. If it becomes terminal, membership changes and disarms consent; the next
+  press submits normally without an obsolete override.
 - If a matching active job appears after preview, the authoritative guard refuses
   and arms the current request rather than creating a duplicate silently.
+- If consent was armed only for tooling risk and an active duplicate appears,
+  the generic consent cannot set the duplicate override; the request re-arms with
+  the new reason.
 - Registry mutation remains UI-thread-only, so the comparison and first append
   are atomic with respect to other registry mutations within one submit call.
 
@@ -228,11 +269,15 @@ No retained model scope transfers to a duplicate job until admission succeeds.
   effects;
 - terminal history permits re-ingestion;
 - folder matching is all-or-nothing;
-- the override admits the unchanged original batch once;
+- the override admits the unchanged original batch once through the private
+  admitted-child seam, including when the matching member is not first;
+- no folder member is queued before the outer admission decision;
 - direct/non-screen callers cannot bypass the guard;
 - no local job ID, remote call, failed receipt, or queue runner start occurs on
   refusal; and
-- a refused external-model submission releases its retained scope.
+- a refused external-model submission releases its retained scope; and
+- the typed refusal's payload, string, representation, and expected diagnostics
+  contain no source path or form/job metadata.
 
 ### Screen tests
 
@@ -241,9 +286,17 @@ No retained model scope transfers to a duplicate job until admission succeeds.
 - double-click/key repeat does not submit;
 - Enter follows button semantics;
 - simultaneous tooling and duplicate warnings need two presses total;
-- source/options/backend/active-match changes and canvas exit disarm consent;
+- a queued-to-parsing-to-writing transition between presses preserves consent;
+- source/options/backend/active-membership changes and canvas exit disarm consent;
+- path blur preserves consent for Enter-to-arm then click-to-confirm;
+- tooling-only consent cannot authorize a duplicate that appears later;
 - duplicate and folder copy is exact, markup-safe, and non-modal; and
 - focus, cursor, and scroll survive the in-place gate update.
+
+Painted compositor coverage at the constrained `72x18` Library geometry must
+assert that each exact duplicate, folder, and combined instruction is fully
+visible on the fixed one-row gate, without clipping, ellipsis, overlap, or a
+Start-button position change.
 
 Focused modules will run with repository-local pytest temp roots. Any established
 Windows Proactor/network-guard or symlink-privilege limitation will be separated
