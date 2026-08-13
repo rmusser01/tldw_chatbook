@@ -1350,37 +1350,18 @@ def run_agent_loop(
                 record_status = "ok" if result.ok else "error"
             else:
                 record_status = "refused"
-            record_number = _emit_record(
-                deps,
-                "tool_result",
-                content=content,
-                tool=call.name,
-                status=record_status,
-                call_id=call.call_id,
-            )
-
-            # Truncate once, unconditionally, regardless of which branch set
-            # `content` above -- the review-hook refusal string (verdict !=
-            # "proceed") and every dispatched-tool result share the same cap
-            # so neither path can enter history unbounded. `record_number`
-            # (Task 7) is the number the tool_result record above was just
-            # captured under -- threading it through lets a truncated result
-            # point at its own full copy in the run log.
-            content = _truncate_tool_result(
-                content,
-                (
-                    min(budget.max_tool_result_chars, 16_000)
-                    if continuation_checkpoint is not None
-                    and budget.max_tool_result_chars > 0
-                    else 16_000
-                    if continuation_checkpoint is not None
-                    else budget.max_tool_result_chars
-                ),
-                call.name,
-                record_number=record_number,
-            )
-
             if continuation_checkpoint is not None:
+                full_content = content
+                continuation_cap = (
+                    min(budget.max_tool_result_chars, 16_000)
+                    if budget.max_tool_result_chars > 0
+                    else 16_000
+                )
+                content = _truncate_tool_result(
+                    content,
+                    continuation_cap,
+                    call.name,
+                )
                 target_state = (
                     "completed"
                     if verdict == "proceed" and result.ok
@@ -1392,6 +1373,29 @@ def run_agent_loop(
                     ContinuationResult(content),
                 ):
                     return continuation_error()
+                _emit_record(
+                    deps,
+                    "tool_result",
+                    content=full_content,
+                    tool=call.name,
+                    status=record_status,
+                    call_id=call.call_id,
+                )
+            else:
+                record_number = _emit_record(
+                    deps,
+                    "tool_result",
+                    content=content,
+                    tool=call.name,
+                    status=record_status,
+                    call_id=call.call_id,
+                )
+                content = _truncate_tool_result(
+                    content,
+                    budget.max_tool_result_chars,
+                    call.name,
+                    record_number=record_number,
+                )
 
             add(
                 STEP_TOOL_RESULT,

@@ -21,6 +21,7 @@ from tldw_chatbook.Agents.agent_models import (
     ContinuationEventContext,
     RunBudget,
     ToolCatalogEntry,
+    ToolBatchReady,
     ToolResult,
     ToolSchema,
     definition_fingerprint,
@@ -38,6 +39,7 @@ from tldw_chatbook.Agents.agent_service import (
     _call_with_timeout,
     _usage_total_tokens,
 )
+from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     ToolCatalogRegistry,
@@ -1509,6 +1511,75 @@ def test_call_model_native_path_reports_provider_tokens(db):
     turn = call_model([{"role": "user", "content": "2+2?"}], ())
     assert turn.tokens == 77
     assert turn.tool_calls
+
+
+@pytest.mark.parametrize("canonical_raw", ['{ "b": 2, "a": 1 }', '{"a":1,"b":2}'])
+def test_service_native_turn_reaches_batch_barrier_only_with_exact_raw_arguments(
+    db, canonical_raw
+):
+    raw_arguments = '{ "b": 2, "a": 1 }'
+
+    def chat(**kwargs):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "exact",
+                                "type": "function",
+                                "function": {
+                                    "name": "calculator",
+                                    "arguments": raw_arguments,
+                                },
+                            }
+                        ],
+                    }
+                }
+            ],
+            "usage": {"total_tokens": 1},
+        }
+
+    config = AgentConfig(model="gpt-4o", system_prompt="s", native_tools=True)
+    turn = _service_with_chat(db, chat)._make_call_model(config, "openai", [])([], ())
+    checkpoint = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="deepseek",
+        protocol="responses",
+        model="deepseek-v4-flash",
+        api_base_url="https://api.deepseek.com/v1",
+        state="active",
+        rounds=(
+            ContinuationRound(
+                "",
+                ("private",),
+                (ContinuationCall("exact", "calculator", canonical_raw, "pending"),),
+            ),
+        ),
+    )
+    turn = dataclasses.replace(turn, provider_continuation=checkpoint)
+    events = []
+    deps = LoopDeps(
+        call_model=lambda messages, active: turn,
+        invoke_tool=lambda call: ToolResult(ok=True, content="ok"),
+        spawn=lambda task: ToolResult(ok=True),
+        find_tools=lambda query: [],
+        load_schemas=lambda ids: [],
+        should_cancel=lambda: len(events) >= 3,
+        clock=lambda: 0.0,
+        continuation_context=ContinuationEventContext(
+            "owner", "run", "primary", "persistent"
+        ),
+        persist_provider_continuation=events.append,
+    )
+    outcome = run_agent_loop(config, [], [], deps)
+
+    assert any(isinstance(event, ToolBatchReady) for event in events) is (
+        canonical_raw == raw_arguments
+    )
+    assert outcome.status == ("cancelled" if canonical_raw == raw_arguments else "error")
 
 
 # task-327 (AC#4): per-tool-call timeout, enforced entirely in this impure

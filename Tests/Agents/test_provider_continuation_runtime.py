@@ -236,6 +236,47 @@ def test_executing_failure_emits_no_later_step_record_or_dispatch() -> None:
     assert "invoke" not in order
 
 
+def test_finished_failure_emits_no_result_record_step_history_or_next_model() -> None:
+    order: list[str] = []
+    calls = 0
+    private_result = "PRIVATE-RESULT-CANARY"
+    call = ToolCall(
+        "calculator", {"expression": "2+2"}, "call-1", '{"expression":"2+2"}'
+    )
+
+    def persist(event) -> None:
+        order.append(type(event).__name__)
+        if isinstance(event, ToolCallFinished):
+            raise RuntimeError("private persistence failure")
+
+    def call_model(messages, active):
+        nonlocal calls
+        calls += 1
+        order.append("model")
+        return _native_turn((call,), _checkpoint(_pending_call()))
+
+    deps = _deps(
+        [],
+        order=order,
+        persist=persist,
+        invoke=lambda actual: (
+            order.append("invoke") or ToolResult(ok=True, content=private_result)
+        ),
+        on_record=lambda kind, payload: order.append(
+            f"record:{kind}:{payload.get('content', '')}"
+        ),
+    )
+    deps.call_model = call_model
+    outcome = run_agent_loop(CONFIG, [], [CALCULATOR], deps)
+
+    assert outcome.status == RUN_ERROR
+    assert calls == 1
+    assert any(item == "invoke" for item in order)
+    assert not any(item.startswith("record:tool_result") for item in order)
+    assert not any(step.kind == STEP_TOOL_RESULT for step in outcome.steps)
+    assert private_result not in repr(outcome)
+
+
 @pytest.mark.parametrize(
     ("tool_name", "args", "dependency"),
     [
