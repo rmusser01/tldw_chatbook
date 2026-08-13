@@ -25,6 +25,7 @@ from tldw_chatbook.app import LibraryIngestQueueMixin, _IngestParsePoolResources
 from Tests.Library.test_library_ingest_runner import _FakeIngestParsePool
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
@@ -97,6 +98,13 @@ from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
+from tldw_chatbook.Widgets.Library.library_conversations_canvas import (
+    LibraryConversationsCanvas,
+)
+from tldw_chatbook.Library.library_conversations_state import (
+    LibraryConversationRow,
+    LibraryConversationsCanvasState,
+)
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
     LibraryMediaContentSearchControls,
@@ -319,6 +327,128 @@ class LibraryHarness(App):
     def on_navigate_to_screen(self, message) -> None:
         self.seen_routes.append(message.screen_name)
         self.seen_contexts.append(dict(message.screen_context or {}))
+
+
+class _ConversationCanvasHarness(App):
+    """Mount the conversations canvas with the production stylesheet."""
+
+    CSS_PATH = LibraryHarness.CSS_PATH
+
+    def __init__(self, canvas: LibraryConversationsCanvasState) -> None:
+        super().__init__()
+        self.canvas = canvas
+
+    def compose(self) -> ComposeResult:
+        yield LibraryConversationsCanvas(
+            self.canvas,
+            id="library-conversations-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_canvas_scrolls_current_page_while_pager_stays_fixed():
+    """A full page scrolls at 100x30 while its pager remains a canvas sibling."""
+    canvas = LibraryConversationsCanvasState(
+        rows=tuple(
+            LibraryConversationRow(
+                conversation_id=str(index),
+                title=f"Conversation {index}",
+                secondary="1 message",
+                selected=index == 0,
+            )
+            for index in range(1, 21)
+        ),
+        status_copy="",
+        empty_copy="",
+        selected_id="1",
+        preview_lines=("Conversation 1", "Messages: 1", "Updated: now"),
+        query="",
+        range_copy="1-20 of 20",
+        page_copy="Page 1 of 1",
+        previous_disabled=True,
+        next_disabled=True,
+    )
+    app = _ConversationCanvasHarness(canvas)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        scroll = app.query_one("#library-conversations-list", VerticalScroll)
+        pager = app.query_one("#library-conversations-pager")
+        previous = app.query_one("#library-conversations-previous", Button)
+        next_page = app.query_one("#library-conversations-next", Button)
+        status = app.query_one("#library-conversations-page-status", Static)
+
+        assert scroll.max_scroll_y > 0
+        assert previous.disabled is True
+        assert next_page.disabled is True
+        assert str(status.renderable) == "1-20 of 20 · Page 1 of 1"
+        assert pager.parent is scroll.parent
+        assert pager.parent is not scroll
+
+        last_row = app.query_one("#library-conversation-row-19", Button)
+        last_row.focus()
+        await pilot.pause()
+        assert scroll.scroll_y > 0
+
+
+@pytest.mark.asyncio
+async def test_conversation_canvas_pager_stays_in_the_visible_library_host():
+    """The production canvas must not claim the grid's fractional width again."""
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        [
+            {
+                "title": f"Conversation {index}",
+                "conversation_id": f"chat-{index}",
+                "message_count": 1,
+                "updated_at": "2026-06-01T10:00:00Z",
+            }
+            for index in range(20)
+        ],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-19")
+
+        canvas_host = screen.query_one("#library-canvas")
+        canvas = screen.query_one("#library-conversations-canvas")
+        scroll = screen.query_one("#library-conversations-list", VerticalScroll)
+        pager = screen.query_one("#library-conversations-pager")
+        pager_status = screen.query_one("#library-conversations-page-status", Static)
+        previous = screen.query_one("#library-conversations-previous", Button)
+        next_page = screen.query_one("#library-conversations-next", Button)
+
+        def assert_within_canvas(widget) -> None:
+            assert widget.region.x >= canvas_host.region.x
+            assert widget.region.right <= canvas_host.region.right
+
+        assert_within_canvas(canvas)
+        for widget in (scroll, pager, pager_status, previous, next_page):
+            assert_within_canvas(widget)
+        assert scroll.max_scroll_y > 0
+
+        pager_region = pager.region
+        last_row = screen.query_one("#library-conversation-row-19", Button)
+        last_row.focus()
+        await pilot.pause()
+        assert scroll.scroll_y > 0
+        assert pager.region == pager_region
+
+        # The only-page state rightly disables both controls. Enable each
+        # independently here to prove its compact pager geometry still admits
+        # normal focus when Task 3 supplies a navigable page.
+        previous.disabled = False
+        previous.focus()
+        await pilot.pause()
+        assert previous.has_focus
+        next_page.disabled = False
+        next_page.focus()
+        await pilot.pause()
+        assert next_page.has_focus
 
 
 def _active_library_screen(host: LibraryHarness):
@@ -610,6 +740,17 @@ def _two_conversations():
             "message_count": 3,
             "updated_at": "2026-06-02T09:30:00Z",
         },
+    ]
+
+
+def _conversation_records(count: int) -> list[dict[str, object]]:
+    return [
+        {
+            "conversation_id": f"chat-{index + 1:03d}",
+            "title": f"Conversation {index + 1:03d}",
+            "message_count": index + 1,
+        }
+        for index in range(count)
     ]
 
 
@@ -3064,6 +3205,7 @@ async def test_library_shell_rail_search_submit_aborts_on_note_conflict():
         )
 
         history_before = screen._library_search_history
+        await _wait_for_selector(screen, pilot, "#library-search-input")
         search_input = screen.query_one("#library-search-input", Input)
         search_input.value = "zeta"
         search_input.focus()
@@ -3862,62 +4004,29 @@ async def test_library_shell_open_deleted_media_notifies_and_falls_back_to_list(
 
 
 @pytest.mark.asyncio
-async def test_library_shell_snapshot_replace_carries_over_out_of_page_selection():
-    """(C3) A wholesale ``_local_source_records`` replace (the periodic
-    background refresh) must not silently drop the currently-open
-    conversation when it isn't part of the freshly-fetched page.
-
-    Mirrors the out-of-snapshot open flow ``_open_library_item_by_id``
-    already handles (fetch-and-prepend) -- this closes the same gap for the
-    *next* background snapshot refresh, which would otherwise wholesale
-    ``self._local_source_records = records`` over the prepended record and
-    silently reset the selection back to the first row the next time
-    something reads ``_selected_conversation_id``.
-    """
+async def test_library_shell_snapshot_replace_carries_active_conversation_page():
+    """A background source snapshot must not replace an active page."""
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
+    _seed_conversations(app, _conversation_records(45))
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-
-        # Simulate having opened an out-of-snapshot conversation the same
-        # way `_open_library_item_by_id` does: prepend the fetched record
-        # into `_local_source_records["conversations"]` and select it.
-        out_of_snapshot_record = {
-            "title": "Out of page conversation",
-            "conversation_id": "chat-3",
-            "message_count": 1,
-            "updated_at": "2026-06-03T00:00:00Z",
-        }
-        screen._local_source_records["conversations"] = (
-            out_of_snapshot_record,
-            *screen._local_source_records.get("conversations", ()),
+        screen._library_conversation_request_generation += 1
+        await screen._load_library_conversation_page(
+            2, "", screen._library_conversation_request_generation
         )
-        screen._selected_conversation_id = "chat-3"
+        old_records = screen._conversation_records()
 
-        # Force a wholesale snapshot apply -- e.g. the periodic background
-        # refresh -- whose freshly-fetched page does NOT include chat-3.
         screen._apply_local_source_snapshot(
             {"notes": (), "media": (), "conversations": tuple(_two_conversations())},
             {"notes": 0, "media": 0, "conversations": 2},
             {"notes": True, "media": True, "conversations": True},
         )
 
-        conversation_ids = [
-            screen._source_record_id(record)
-            for record in screen._local_source_records["conversations"]
-        ]
-        assert "chat-3" in conversation_ids, (
-            "The out-of-page conversation record was dropped by the "
-            f"snapshot replace: {conversation_ids}"
-        )
-        assert screen._selected_conversation_id == "chat-3"
-        selected = screen._selected_conversation_record()
-        assert selected is not None
-        _, selected_record = selected
-        assert screen._source_record_id(selected_record) == "chat-3"
+        assert screen._library_conversation_page == 2
+        assert screen._conversation_records() == old_records
 
 
 @pytest.mark.asyncio
@@ -5459,11 +5568,7 @@ async def test_library_shell_media_canvas_shows_loading_before_snapshot_loads(
 
 @pytest.mark.asyncio
 async def test_library_shell_conversations_filter_filters_canvas():
-    """The in-canvas filter (``#library-conversations-filter``) narrows the
-    loaded conversations snapshot client-side; the rail-top box no longer
-    does this (it feeds the Search canvas instead -- see the rail-submit
-    pilots below).
-    """
+    """The in-canvas filter searches the complete conversation service."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -5518,6 +5623,323 @@ async def test_library_shell_conversations_filter_retains_value_after_submit():
         recomposed_input = screen.query_one("#library-conversations-filter")
         assert recomposed_input.value == "quarterly"
         assert recomposed_input.has_focus
+
+
+@pytest.mark.asyncio
+async def test_library_conversations_next_loads_second_service_page():
+    app = _build_test_app()
+    _seed_conversations(app, _conversation_records(45))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-next")
+
+        screen.query_one("#library-conversations-next", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_conversation_page == 2
+                and str(
+                    screen.query_one("#library-conversations-page-status").renderable
+                )
+                == "21-40 of 45 · Page 2 of 3"
+            ),
+            message="Conversation page 2 never loaded.",
+        )
+
+        assert app.chat_conversation_scope_service.calls[-1] == {
+            "mode": "local",
+            "scope_type": "all",
+            "query": None,
+            "limit": 20,
+            "offset": 20,
+        }
+        assert len(screen.query(".library-conversation-row")) == 20
+        assert str(
+            screen.query_one("#library-conversations-page-status").renderable
+        ) == ("21-40 of 45 · Page 2 of 3")
+
+
+@pytest.mark.asyncio
+async def test_library_conversations_filter_searches_beyond_first_page_and_resets_page():
+    app = _build_test_app()
+    records = _conversation_records(45)
+    records[-1] = {**records[-1], "title": "Needle outside first page"}
+    _seed_conversations(app, records)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+
+        screen._library_conversation_page = 2
+        field = screen.query_one("#library-conversations-filter", Input)
+        field.value = "needle"
+        field.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                len(screen.query(".library-conversation-row")) == 1
+                and "Needle"
+                in str(screen.query(".library-conversation-row").first().label)
+            ),
+            message="Full-dataset conversation filter never landed.",
+        )
+
+        assert screen._library_conversation_page == 1
+        assert app.chat_conversation_scope_service.calls[-1]["query"] == "needle"
+        assert app.chat_conversation_scope_service.calls[-1]["offset"] == 0
+        assert str(screen.query_one("#library-conversations-status").renderable) == (
+            "1 match for 'needle'"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_conversations_reentry_restores_unfiltered_first_page():
+    app = _build_test_app()
+    records = _conversation_records(45)
+    records[-1] = {**records[-1], "title": "Needle outside first page"}
+    _seed_conversations(app, records)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+
+        field = screen.query_one("#library-conversations-filter", Input)
+        field.value = "needle"
+        field.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: len(screen.query(".library-conversation-row")) == 1,
+            message="Filtered conversation result never landed.",
+        )
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_conversation_page == 1
+                and screen._library_conversation_query == ""
+                and len(screen.query(".library-conversation-row")) == 20
+                and str(
+                    screen.query_one("#library-conversations-page-status").renderable
+                )
+                == "1-20 of 45 · Page 1 of 3"
+            ),
+            message="Conversation re-entry did not restore unfiltered page 1.",
+        )
+
+        assert app.chat_conversation_scope_service.calls[-1] == {
+            "mode": "local",
+            "scope_type": "all",
+            "query": None,
+            "limit": 20,
+            "offset": 0,
+        }
+        assert screen.query_one("#library-conversations-next", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_library_conversations_reentry_does_not_load_when_dirty_editor_vetoes():
+    app = _build_test_app()
+    records = _conversation_records(25)
+    records[-1] = {**records[-1], "title": "Needle outside first page"}
+    _seed_conversations(app, records, notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+        field = screen.query_one("#library-conversations-filter", Input)
+        field.value = "needle"
+        field.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_conversation_total == 1,
+            message="Filtered conversation pager state never landed.",
+        )
+
+        await _open_note_editor(screen, pilot)
+        _bump_note_version_externally(app.notes_scope_service, "n-1")
+        body = screen.query_one("#library-note-body", TextArea)
+        body.text = "unsaved text that must survive"
+        screen.query_one("#library-note-save").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_autosave_state == "conflict",
+            message="The dirty-editor conflict was never reached.",
+        )
+        body.focus()
+        await pilot.pause()
+        calls_before = len(app.chat_conversation_scope_service.calls)
+
+        screen.query_one("#library-row-browse-conversations").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(app.chat_conversation_scope_service.calls) == calls_before
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        assert screen._library_note_autosave_state == "conflict"
+        mounted_body = screen.query_one("#library-note-body", TextArea)
+        assert mounted_body.text == "unsaved text that must survive"
+
+
+@pytest.mark.asyncio
+async def test_library_conversation_initial_failure_keeps_filter_for_retry():
+    app = _build_test_app()
+    _seed_conversations(app, _conversation_records(2))
+
+    class FailingConversationService:
+        async def list_conversations(self, **kwargs):
+            raise RuntimeError("offline")
+
+    app.chat_conversation_scope_service = FailingConversationService()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active = _active_library_screen(host)
+        await _wait_for_selector(active, pilot, "#library-conversations-filter")
+
+        assert active.query_one("#library-conversations-canvas")
+        assert active.query_one("#library-conversations-previous", Button).disabled
+        assert active.query_one("#library-conversations-next", Button).disabled
+        assert (
+            "load"
+            in str(active.query_one("#library-conversations-status").renderable).lower()
+        )
+
+        app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+            _conversation_records(2)
+        )
+        field = active.query_one("#library-conversations-filter", Input)
+        field.focus()
+        await pilot.press("enter")
+        await _wait_for_selector(active, pilot, "#library-conversation-row-1")
+        assert len(active.query(".library-conversation-row")) == 2
+
+
+@pytest.mark.asyncio
+async def test_library_conversation_page_failure_keeps_last_successful_rows():
+    app = _build_test_app()
+    _seed_conversations(app, _conversation_records(25))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-19")
+        old_ids = [
+            button.conversation_id
+            for button in screen.query(".library-conversation-row")
+        ]
+
+        async def fail(**kwargs):
+            raise RuntimeError("offline")
+
+        app.chat_conversation_scope_service.list_conversations = fail
+        screen.query_one("#library-conversations-next", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                bool(screen._library_conversation_error)
+                and "Couldn't load conversations"
+                in str(screen.query_one("#library-conversations-status").renderable)
+            ),
+            message="Conversation load error never rendered.",
+        )
+
+        assert [
+            button.conversation_id
+            for button in screen.query(".library-conversation-row")
+        ] == old_ids
+        assert "Couldn't load conversations" in str(
+            screen.query_one("#library-conversations-status").renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_conversation_page_reloads_new_final_page_when_total_shrinks():
+    app = _build_test_app()
+    _seed_conversations(app, _conversation_records(45))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-next")
+
+        service = app.chat_conversation_scope_service
+        service.conversations = service.conversations[:25]
+        screen._library_conversation_request_generation += 1
+        generation = screen._library_conversation_request_generation
+        await screen._load_library_conversation_page(3, "", generation)
+
+        assert [call["offset"] for call in service.calls[-2:]] == [40, 20]
+        assert screen._library_conversation_page == 2
+        assert len(screen._conversation_records()) == 5
+        assert screen._library_conversation_has_more is False
+
+
+@pytest.mark.asyncio
+async def test_stale_conversation_page_response_cannot_replace_newer_filter():
+    app = _build_test_app()
+    _seed_conversations(app, _conversation_records(25))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+
+        old_started = threading.Event()
+        release_old = threading.Event()
+
+        def controlled(**kwargs):
+            if kwargs.get("query") == "old":
+                old_started.set()
+                assert release_old.wait(timeout=5)
+                return {
+                    "items": [{"id": "old", "title": "Old"}],
+                    "pagination": {"total": 1},
+                }
+            return {
+                "items": [{"id": "new", "title": "New"}],
+                "pagination": {"total": 1},
+            }
+
+        app.chat_conversation_scope_service.list_conversations = controlled
+        screen._library_conversation_request_generation = 1
+        old_request = asyncio.create_task(
+            screen._load_library_conversation_page(1, "old", 1)
+        )
+        assert await asyncio.to_thread(old_started.wait, 5)
+
+        screen._library_conversation_request_generation = 2
+        await screen._load_library_conversation_page(1, "new", 2)
+        release_old.set()
+        await old_request
+
+        assert [record["id"] for record in screen._conversation_records()] == ["new"]
 
 
 @pytest.mark.asyncio
@@ -6545,9 +6967,7 @@ async def test_library_shell_shows_loading_state_before_snapshot_loads(monkeypat
 
 @pytest.mark.asyncio
 async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
-    """A local-source lookup error must surface in the canvas, not only in
-    the (possibly collapsed) Details disclosure.
-    """
+    """A conversation lookup error keeps its recoverable canvas available."""
     app = _build_test_app()
     _seed_conversations(app, [])
 
@@ -6556,6 +6976,9 @@ async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
     screen = LibraryScreen(app)
     screen.apply_navigation_context({"mode": "conversations"})
     screen._library_lookup_error = "Library sources are unavailable right now."
+    screen._library_conversation_error = (
+        "Couldn't load conversations. Submit the filter to try again."
+    )
     host = LibraryHarness(app, screen=screen)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -6563,8 +6986,18 @@ async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
         await pilot.pause()
         await pilot.pause()
 
-        error_static = active_screen.query_one("#library-canvas-error")
-        assert "unavailable" in str(error_static.renderable).lower()
+        assert active_screen.query_one("#library-conversations-canvas")
+        status = str(
+            active_screen.query_one("#library-conversations-status").renderable
+        ).lower()
+        assert "load" in status
+        assert "try again" in status
+        assert active_screen.query_one("#library-conversations-filter", Input)
+        assert active_screen.query_one(
+            "#library-conversations-previous", Button
+        ).disabled
+        assert active_screen.query_one("#library-conversations-next", Button).disabled
+        assert not active_screen.query("#library-canvas-error")
         assert not active_screen.query("#library-canvas-loading")
 
 
@@ -7008,6 +7441,26 @@ async def test_library_shell_restore_state_seeds_local_source_snapshot_from_cach
     assert conversation_ids == ["chat-1", "chat-2"]
 
 
+def test_library_snapshot_carry_preserves_selection_without_exceeding_page_size():
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    selected = {
+        "conversation_id": "chat-selected",
+        "title": "Selected conversation",
+    }
+    incoming = tuple(_conversation_records(20))
+    screen._selected_conversation_id = "chat-selected"
+    screen._local_source_records = {"conversations": (selected,)}
+
+    merged = screen._carry_selected_conversation_into_snapshot(
+        {"conversations": incoming}
+    )
+
+    assert len(merged["conversations"]) == 20
+    assert merged["conversations"][0] is selected
+    assert merged["conversations"][1:] == incoming[:19]
+
+
 class _FlappingStudyScopeService:
     """Study-scope fake whose ``count_decks`` raises on exactly one call.
 
@@ -7425,6 +7878,52 @@ async def test_library_open_source_context_defers_before_mount_and_opens_once(
 
         opener.assert_awaited_once_with("conversations", "c-2")
         assert screen._pending_library_source_open is None
+
+
+@pytest.mark.asyncio
+async def test_library_conversation_id_context_opens_off_page_conversation() -> None:
+    """Persona's legacy conversation-id route must resolve beyond page 1."""
+    app = _build_test_app()
+    conversations = _conversation_records(25)
+    _seed_conversations(app, conversations)
+    target = conversations[-1]
+
+    class ConversationLookup:
+        is_memory_db = True
+
+        @staticmethod
+        def get_conversation_by_id(conversation_id, *, include_deleted=False):
+            assert include_deleted is False
+            if conversation_id == target["conversation_id"]:
+                return target
+            return None
+
+    app.chachanotes_db = ConversationLookup()
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context(
+        {
+            LIBRARY_NAV_CONTEXT_MODE: "conversations",
+            LIBRARY_NAV_CONTEXT_CONVERSATION_ID: target["conversation_id"],
+        }
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._selected_conversation_id == target["conversation_id"],
+            message="Conversation-id context fell back to the first page row.",
+        )
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+        assert screen._conversation_record_id(
+            screen._conversation_records()[0], 0
+        ) == target["conversation_id"]
+        assert "Conversation 025" in str(
+            screen.query_one("#library-conversation-preview-lines").renderable
+        )
 
 
 @pytest.mark.asyncio
@@ -15758,6 +16257,20 @@ async def test_library_shell_search_result_open_conversation_fetches_missing_id(
                 screen._conversation_record_id(record, index)
                 for index, record in enumerate(screen._conversation_records())
             }
+            screen.query_one("#library-row-browse-conversations").press()
+            await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+            conversation_filter = screen.query_one(
+                "#library-conversations-filter", Input
+            )
+            conversation_filter.value = "quarterly"
+            conversation_filter.focus()
+            await pilot.press("enter")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_conversation_total == 1
+                and len(screen.query(".library-conversation-row")) == 1,
+                message="Conversation filter did not establish filtered pager state.",
+            )
             await _run_library_search_and_wait_for_open_result(
                 screen, pilot, "snapshot"
             )
@@ -15775,6 +16288,14 @@ async def test_library_shell_search_result_open_conversation_fetches_missing_id(
             await pilot.pause()
 
             assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+            assert screen._library_conversation_query == ""
+            assert screen._library_conversation_page == 1
+            assert screen._library_conversation_total == 3
+            assert screen._library_conversation_total_known is True
+            assert screen._library_conversation_has_more is False
+            assert str(
+                screen.query_one("#library-conversations-page-status").renderable
+            ) == "1-3 of 3 · Page 1 of 1"
             preview = str(
                 screen.query_one("#library-conversation-preview-lines").renderable
             )
@@ -16056,6 +16577,7 @@ async def test_library_shell_ingest_canvas_happy_path_open_in_library(tmp_path):
             raise AssertionError("Media detail never loaded after Open in Library.")
 
         assert screen._library_media_view == "viewer"
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         viewer_title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert "tides" in viewer_title.lower()
 
@@ -17524,18 +18046,11 @@ async def test_library_shell_restored_notes_sort_and_filter_render_on_first_pain
 
 
 @pytest.mark.asyncio
-async def test_library_shell_restored_conversation_query_renders_on_first_paint():
-    """The conversations canvas builder reads ``_library_conversation_query``
-    at MOUNT time (``_build_library_conversations_state``'s ``query=``) --
-    a restored query must already narrow the canvas on first paint.
-    Restoring directly (rather than clicking the rail row) is deliberate:
-    the LIVE rail-row press for this pane always resets the query on entry
-    (``handle_library_rail_row``'s canvas-target branch) -- that is
-    existing, unrelated in-session behavior, not what a cross-visit
-    restore goes through.
-    """
+async def test_library_shell_restored_conversation_query_is_reissued_to_service():
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
+    records = _conversation_records(25)
+    records[-1] = {**records[-1], "title": "Quarterly outside first page"}
+    _seed_conversations(app, records)
 
     screen = LibraryScreen(app)
     screen.restore_state(
@@ -17547,15 +18062,78 @@ async def test_library_shell_restored_conversation_query_renders_on_first_paint(
     host = LibraryHarness(app, screen=screen)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        active_screen = _active_library_screen(host)
-        await _wait_for_selector(active_screen, pilot, "#library-conversations-status")
-
-        status = str(
-            active_screen.query_one("#library-conversations-status").renderable
+        active = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                len(active.query(".library-conversation-row")) == 1
+                and "Quarterly"
+                in str(list(active.query(".library-conversation-row"))[0].label)
+            ),
+            message="Restored conversation filter was not reissued.",
         )
-        assert "quarterly" in status
-        filter_box = active_screen.query_one("#library-conversations-filter", Input)
-        assert filter_box.value == "quarterly"
+
+        assert app.chat_conversation_scope_service.calls[-1]["query"] == "quarterly"
+        assert app.chat_conversation_scope_service.calls[-1]["offset"] == 0
+        assert active._library_conversation_page == 1
+        assert active.query_one("#library-conversations-filter", Input).value == (
+            "quarterly"
+        )
+
+
+@pytest.mark.asyncio
+async def test_restored_conversation_query_never_flashes_unfiltered_snapshot_rows():
+    app = _build_test_app()
+    unfiltered = _conversation_records(25)
+    filtered_started = threading.Event()
+    release_filtered = threading.Event()
+
+    class ControlledConversationService:
+        def __init__(self):
+            self.calls = []
+
+        def list_conversations(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("query"):
+                filtered_started.set()
+                assert release_filtered.wait(timeout=5)
+                return {
+                    "items": [{"conversation_id": "needle", "title": "Quarterly"}],
+                    "pagination": {"total": 1, "has_more": False},
+                }
+            return {
+                "items": unfiltered[:20],
+                "pagination": {"total": 25, "has_more": True},
+            }
+
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = ControlledConversationService()
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {
+            "library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS,
+            "library_conversation_query": "quarterly",
+        }
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active = _active_library_screen(host)
+        assert await asyncio.to_thread(filtered_started.wait, 5)
+        await _wait_for_selector(active, pilot, "#library-conversations-filter")
+
+        assert active._library_conversation_loading is True
+        assert not active.query(".library-conversation-row")
+        assert active.query_one("#library-conversations-filter", Input).value == (
+            "quarterly"
+        )
+
+        release_filtered.set()
+        await _wait_for_selector(active, pilot, "#library-conversation-row-0")
+        rows = list(active.query(".library-conversation-row"))
+        assert len(rows) == 1
+        assert "Quarterly" in str(rows[0].label)
 
 
 @pytest.mark.asyncio
