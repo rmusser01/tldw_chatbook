@@ -717,6 +717,16 @@ class LibraryEntryFocusIdentity:
 
 
 @dataclasses.dataclass(frozen=True)
+class _LibraryEntryFocusCapture:
+    """Focus intent carried across superseding strict entry syncs."""
+
+    identity: LibraryEntryFocusIdentity
+    outgoing_focus: Widget
+    route_key: tuple[object, ...]
+    notes_identity: LibraryNotesFocusIdentity | None = None
+
+
+@dataclasses.dataclass(frozen=True)
 class _LibraryNotesRecomposeCapture:
     """Portable identity needed to rehydrate a replaced Notes canvas."""
 
@@ -1455,6 +1465,8 @@ def _sync_library_canvas(
     *,
     then: Callable[[], None] | None = None,
     allow_screen_fallback: bool = True,
+    notes_focus_identity: LibraryNotesFocusIdentity | None = None,
+    deferred_guard: Callable[[], bool] | None = None,
 ) -> bool:
     """Canvas-scoped targeted update for a Library browse canvas (Tier 2).
 
@@ -1497,6 +1509,10 @@ def _sync_library_canvas(
 
         allow_screen_fallback: Whether a failed targeted update may request
             the legacy whole-screen recompose.
+        notes_focus_identity: Rich Notes identity captured before portable
+            entry focus is detached, when automatic reconciliation owns sync.
+        deferred_guard: Ownership predicate checked by deferred retained-owner
+            DOM work before and after each await.
 
     Returns:
         True when the mounted canvas accepted the state; otherwise False.
@@ -1614,7 +1630,11 @@ def _sync_library_canvas(
             # resolves to a fallback target (measured: the rail row), which is
             # worse than leaving focus to the transition's own arming path
             # (``_arm_library_note_editor`` + its explicit editor identity).
-            identity = screen._capture_library_notes_focus_identity()
+            identity = (
+                notes_focus_identity
+                if notes_focus_identity is not None
+                else screen._capture_library_notes_focus_identity()
+            )
 
             def _restore_then_explicit(
                 _identity: LibraryNotesFocusIdentity = identity,
@@ -1625,6 +1645,8 @@ def _sync_library_canvas(
                     _explicit()
 
             follow_up = _restore_then_explicit
+        if kind == "landing":
+            canvas.set_deferred_sync_guard(deferred_guard)
         if follow_up is not None:
             canvas.queue_after_recompose(follow_up)
         canvas.sync_state(*sync_args, **sync_kwargs)
@@ -3593,9 +3615,7 @@ class LibraryScreen(BaseAppScreen):
             tuple[int, tuple[object, ...]] | None
         ) = None
         self._library_entry_reconcile_retry_generation: int | None = None
-        self._library_entry_focus_capture: (
-            tuple[LibraryEntryFocusIdentity, Widget | None] | None
-        ) = None
+        self._library_entry_focus_capture: _LibraryEntryFocusCapture | None = None
         self._seed_local_source_snapshot_from_cache()
 
     def _library_footer_shortcuts_for_current_state(
@@ -4073,6 +4093,7 @@ class LibraryScreen(BaseAppScreen):
                 return f"file-notes:{widget_id}"
         direct_roles = {
             "library-notes-filter": "filter",
+            "library-notes-select-toggle": "select-toggle",
             "library-note-title": "title",
             "library-note-body": "body",
             "library-note-preview-region": "preview-body",
@@ -4227,6 +4248,7 @@ class LibraryScreen(BaseAppScreen):
         role = identity.semantic_role
         selector = {
             "filter": "#library-notes-filter",
+            "select-toggle": "#library-notes-select-toggle",
             "title": "#library-note-title",
             "body": "#library-note-body",
             "preview-body": "#library-note-preview-region",
@@ -6809,7 +6831,14 @@ class LibraryScreen(BaseAppScreen):
         """Capture a focused canvas descendant by stable control or row identity."""
         focused = self.focused
         owner = self._library_entry_canvas_owner()
-        if focused is None or owner is None or owner not in focused.ancestors_with_self:
+        route_key = self._library_entry_route_key()
+        capture = self._library_entry_focus_capture
+        if focused is None:
+            if capture is not None and capture.route_key == route_key:
+                return capture.identity
+            self._library_entry_focus_capture = None
+            return None
+        if owner is None or owner not in focused.ancestors_with_self:
             self._library_entry_focus_capture = None
             return None
 
@@ -6835,7 +6864,17 @@ class LibraryScreen(BaseAppScreen):
             source_id=source_id,
             scroll_offset=scroll_offset,
         )
-        self._library_entry_focus_capture = (identity, focused)
+        notes_identity = (
+            self._capture_library_notes_focus_identity()
+            if owner.id == "library-notes-canvas"
+            else None
+        )
+        self._library_entry_focus_capture = _LibraryEntryFocusCapture(
+            identity=identity,
+            outgoing_focus=focused,
+            route_key=route_key,
+            notes_identity=notes_identity,
+        )
         # Detach DOM focus before the owner removes its focused child. Textual
         # otherwise falls back to unrelated screen chrome during teardown,
         # which is indistinguishable from a user focus move at restore time.
@@ -6858,10 +6897,10 @@ class LibraryScreen(BaseAppScreen):
             return
         capture = self._library_entry_focus_capture
         outgoing_focus = (
-            capture[1] if capture is not None and capture[0] is identity else None
+            capture.outgoing_focus
+            if capture is not None and capture.identity is identity
+            else None
         )
-        if self.focused is not outgoing_focus and self.focused is not None:
-            return
 
         owner = self._library_entry_canvas_owner()
         if owner is None:
@@ -6889,6 +6928,14 @@ class LibraryScreen(BaseAppScreen):
                 target = owner.query_one(f"#{identity.widget_id}", Widget)
             except (NoMatches, QueryError):
                 target = None
+        if (
+            self.focused is not outgoing_focus
+            and self.focused is not None
+            and self.focused is not target
+        ):
+            if self._library_entry_focus_capture is capture:
+                self._library_entry_focus_capture = None
+            return
         if target is not None and not getattr(target, "disabled", False):
             target.focus()
         if identity.scroll_offset is not None and hasattr(owner, "scroll_to"):
@@ -6916,6 +6963,16 @@ class LibraryScreen(BaseAppScreen):
                 route_key=route_key,
             )
         self._complete_library_entry_reconcile(generation, route_key)
+
+    def _library_entry_reconcile_is_current(
+        self, generation: int, route_key: tuple[object, ...]
+    ) -> bool:
+        """Return whether deferred entry work still owns this screen route."""
+        return (
+            self.is_mounted
+            and generation == self._library_snapshot_state_generation
+            and route_key == self._library_entry_route_key()
+        )
 
     def _schedule_library_entry_reconcile(
         self, generation: int, route_key: tuple[object, ...]
@@ -7094,6 +7151,7 @@ class LibraryScreen(BaseAppScreen):
                 self._complete_library_entry_reconcile(generation, route_key)
                 return LibraryEntryReconcileResult.APPLIED
             identity = self._capture_library_entry_focus()
+            capture = self._library_entry_focus_capture
             finish = partial(
                 self._finish_library_entry_canvas_sync,
                 identity,
@@ -7105,6 +7163,16 @@ class LibraryScreen(BaseAppScreen):
                 sync_kind,
                 then=finish,
                 allow_screen_fallback=False,
+                notes_focus_identity=(
+                    capture.notes_identity
+                    if capture is not None and capture.identity is identity
+                    else None
+                ),
+                deferred_guard=partial(
+                    self._library_entry_reconcile_is_current,
+                    generation,
+                    route_key,
+                ),
             ):
                 self._library_entry_reconcile_retry_generation = None
                 return LibraryEntryReconcileResult.APPLIED
@@ -7146,6 +7214,7 @@ class LibraryScreen(BaseAppScreen):
                 )
             if sync_kind is not None:
                 identity = self._capture_library_entry_focus()
+                capture = self._library_entry_focus_capture
                 finish = partial(
                     self._finish_library_entry_canvas_sync,
                     identity,
@@ -7157,6 +7226,16 @@ class LibraryScreen(BaseAppScreen):
                     sync_kind,
                     then=finish,
                     allow_screen_fallback=False,
+                    notes_focus_identity=(
+                        capture.notes_identity
+                        if capture is not None and capture.identity is identity
+                        else None
+                    ),
+                    deferred_guard=partial(
+                        self._library_entry_reconcile_is_current,
+                        generation,
+                        route_key,
+                    ),
                 ):
                     return self._retry_or_fail_library_entry_reconcile(
                         generation, route_key

@@ -573,3 +573,125 @@ async def test_entry_canvas_sync_does_not_focus_an_unrelated_replacement_row():
         await pilot.pause()
 
         assert getattr(screen.focused, "conversation_id", None) != "chat-replacement"
+
+
+@pytest.mark.asyncio
+async def test_overlapping_reconciles_retain_original_semantic_focus():
+    """A replace-latest callback must not discard the first focus capture."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
+        focus_target = await _wait_for_selector(
+            screen, pilot, "#library-conversations-filter"
+        )
+        focus_target.focus()
+        await pilot.pause()
+        route_key = screen._library_entry_route_key()
+
+        first_generation = screen._library_snapshot_state_generation + 1
+        screen._library_snapshot_state_generation = first_generation
+        screen._library_entry_reconcile_dirty = True
+        screen._library_entry_reconcile_pending = (first_generation, route_key)
+        await screen._reconcile_library_entry_state(first_generation, route_key)
+
+        second_generation = first_generation + 1
+        screen._library_snapshot_state_generation = second_generation
+        screen._library_entry_reconcile_dirty = True
+        screen._library_entry_reconcile_pending = (second_generation, route_key)
+        await screen._reconcile_library_entry_state(second_generation, route_key)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.focused is not None
+        assert screen.focused.id == "library-conversations-filter"
+        assert screen._library_snapshot_rendered_generation == second_generation
+
+
+@pytest.mark.asyncio
+async def test_strict_failure_retry_retains_original_semantic_focus(monkeypatch):
+    """Clearing a failed strict callback must not clear its focus capture."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
+        focus_target = await _wait_for_selector(
+            screen, pilot, "#library-conversations-filter"
+        )
+        canvas = screen.query_one("#library-conversations-canvas")
+        original_sync = canvas.sync_state
+        attempts = 0
+
+        def fail_once(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("forced strict-sync failure")
+            return original_sync(*args, **kwargs)
+
+        monkeypatch.setattr(canvas, "sync_state", fail_once)
+        focus_target.focus()
+        await pilot.pause()
+        generation = screen._library_snapshot_state_generation + 1
+        route_key = screen._library_entry_route_key()
+        screen._library_snapshot_state_generation = generation
+        screen._library_entry_reconcile_dirty = True
+        screen._library_entry_reconcile_pending = (generation, route_key)
+
+        await screen._reconcile_library_entry_state(generation, route_key)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert attempts == 2
+        assert screen.focused is not None
+        assert screen.focused.id == "library-conversations-filter"
+        assert screen._library_snapshot_rendered_generation == generation
+
+
+@pytest.mark.asyncio
+async def test_automatic_notes_reconcile_restores_richer_control_focus():
+    """Erasing focus before the Notes capture redirects it to a fallback."""
+    notes = _notes(4)
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=notes)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _open_notes_canvas(host, pilot)
+        focus_target = screen.query_one("#library-notes-select-toggle", Button)
+        focus_target.focus()
+        await pilot.pause()
+        records = dict(screen._local_source_records)
+        records["notes"] = (
+            *records["notes"],
+            {
+                "id": "note-new",
+                "title": "New note",
+                "content": "New body",
+                "last_modified": "2026-08-13T10:00:00Z",
+            },
+        )
+        counts = dict(screen._local_source_counts)
+        counts["notes"] += 1
+
+        screen._apply_local_source_snapshot(
+            records,
+            counts,
+            dict(screen._local_source_total_known),
+            screen._library_lookup_error,
+            screen._library_lookup_recovery_state,
+            dict(screen._library_study_counts),
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.focused is not None
+        assert screen.focused.id == "library-notes-select-toggle"

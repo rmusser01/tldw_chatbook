@@ -185,6 +185,46 @@ async def test_landing_deferred_recents_converge_on_latest_state(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stale_landing_deferred_sync_performs_zero_dom_mutation():
+    """A route-stale deferred replacement must leave mounted rows untouched."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations()[:1])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        landing = screen.query_one("#library-landing-canvas", LibraryLandingCanvas)
+        recents_owner = landing.query_one("#library-hub-recents")
+        children_before = tuple(recents_owner.children)
+        assert len(children_before) == 1
+
+        records = dict(screen._local_source_records)
+        records["conversations"] = (
+            {
+                "title": "Newer conversation",
+                "conversation_id": "chat-new",
+                "message_count": 1,
+                "updated_at": "2026-08-13T10:00:00Z",
+            },
+        )
+        screen._local_source_records = records
+        generation = screen._library_snapshot_state_generation + 1
+        route_key = screen._library_entry_route_key()
+        screen._library_snapshot_state_generation = generation
+        screen._library_entry_reconcile_dirty = True
+        screen._library_entry_reconcile_pending = (generation, route_key)
+
+        await screen._reconcile_library_entry_state(generation, route_key)
+        screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+        await pilot.pause()
+        await pilot.pause()
+
+        assert tuple(recents_owner.children) == children_before
+        assert children_before[0].parent is recents_owner
+
+
+@pytest.mark.asyncio
 async def test_study_handoff_snapshot_sync_retains_open_action_and_paints_readiness():
     """A source/readiness change must patch the mounted handoff owner in place."""
     app = _build_test_app()

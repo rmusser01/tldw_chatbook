@@ -69,8 +69,30 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
     def __init__(self, state: LibraryLandingCanvasState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.state = state
+        self._deferred_sync_guard: Callable[[], bool] | None = None
+        self._deferred_sync_serial = 0
         self.styles.width = "1fr"
         self.styles.min_width = 0
+
+    def set_deferred_sync_guard(self, guard: Callable[[], bool] | None) -> None:
+        """Set the route/generation predicate for the next deferred row sync."""
+        self._deferred_sync_guard = guard
+
+    def _deferred_sync_is_current(self, serial: int) -> bool:
+        """Return whether deferred work still owns this attached canvas."""
+        return (
+            serial == self._deferred_sync_serial
+            and self.is_attached
+            and not getattr(self, "_pruning", False)
+            and (
+                self._deferred_sync_guard is None or self._deferred_sync_guard()
+            )
+        )
+
+    def _discard_stale_deferred_sync(self, serial: int) -> None:
+        """Clear only the callback owned by the latest now-stale sync."""
+        if serial == self._deferred_sync_serial:
+            self.queue_after_recompose(None)
 
     @staticmethod
     def _action_button(
@@ -150,17 +172,31 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         """Patch counts and defer replacement of only the recent rows."""
         self.state = state
         self.query_one("#library-hub-counts", Static).update(state.counts_line)
-        self.call_later(self._replace_recent_rows)
+        self._deferred_sync_serial += 1
+        self.call_later(self._replace_recent_rows, self._deferred_sync_serial)
 
-    async def _replace_recent_rows(self) -> None:
+    async def _replace_recent_rows(self, serial: int | None = None) -> None:
         """Converge queued replacements on the latest state after each await."""
+        serial = self._deferred_sync_serial if serial is None else serial
+        if not self._deferred_sync_is_current(serial):
+            self._discard_stale_deferred_sync(serial)
+            return
         recents = self.query_one("#library-hub-recents", Vertical)
+        if not self._deferred_sync_is_current(serial):
+            self._discard_stale_deferred_sync(serial)
+            return
         await recents.remove_children()
+        if not self._deferred_sync_is_current(serial):
+            self._discard_stale_deferred_sync(serial)
+            return
         recent_items = self.state.recent_items
         if recent_items:
             await recents.mount(*(self._recent_button(item) for item in recent_items))
+        if not self._deferred_sync_is_current(serial):
+            self._discard_stale_deferred_sync(serial)
+            return
         if recent_items != self.state.recent_items:
-            self.call_later(self._replace_recent_rows)
+            self.call_later(self._replace_recent_rows, serial)
             return
         self._complete_targeted_sync()
 
