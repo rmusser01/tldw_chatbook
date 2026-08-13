@@ -58,6 +58,7 @@ from tldw_chatbook.UI.Speech.speech_profile_mixin import (
     AdoptStudioPreferencesRequested,
 )
 from tldw_chatbook.UI.Speech.speech_runtime_status import (
+    SpeechLocalDependencyAvailability,
     speech_tts_runtime_status_store,
 )
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
@@ -93,6 +94,7 @@ from tldw_chatbook.UI.Lab_Modules.lab_speech_status import (
     speech_capability_text,
     speech_capability_tooltip,
     speech_dependencies_available,
+    speech_local_dependency_availability,
 )
 from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileOpen as FileOpen,
@@ -1521,6 +1523,7 @@ class STTSWindow(Container):
         app_instance,
         *,
         playground_axis_values: Mapping[str, str] | None = None,
+        local_dependencies: SpeechLocalDependencyAvailability | None = None,
         **kwargs,
     ):
         """Initialize the S/TT/S window."""
@@ -1543,6 +1546,11 @@ class STTSWindow(Container):
         self._playground_axis_values: dict[str, str] = dict(
             playground_axis_values or {}
         )
+        if local_dependencies is None:
+            local_dependencies = speech_local_dependency_availability(refresh=True)
+        elif type(local_dependencies) is not SpeechLocalDependencyAvailability:
+            raise TypeError("local_dependencies must be a Speech dependency snapshot")
+        self._speech_local_dependencies = local_dependencies
         self._studio_store = StudioTTSPreferenceStore()
         self._global_preferences = SpeechSettingsPane._read_global_preferences()
         self._last_global_preferences_revision: int | None = None
@@ -1628,14 +1636,14 @@ class STTSWindow(Container):
 
     def _speech_capability_status_text(self) -> str:
         """Return a concise local speech dependency status for the sidebar."""
-        return speech_capability_text()
+        return speech_capability_text(self._speech_local_dependencies)
 
     def _speech_capability_status_tooltip(self) -> str:
         """Return install guidance for local speech dependencies."""
-        return speech_capability_tooltip()
+        return speech_capability_tooltip(self._speech_local_dependencies)
 
     def _speech_dependencies_available(self) -> bool:
-        return speech_dependencies_available()
+        return speech_dependencies_available(self._speech_local_dependencies)
 
     def watch_current_view(self, old_view: str, new_view: str) -> None:
         """Handle view changes.
@@ -1843,6 +1851,7 @@ class STTSWindow(Container):
                     runtime_status_store=speech_tts_runtime_status_store(
                         self.app_instance
                     ),
+                    local_dependencies=self._speech_local_dependencies,
                 )
             )
             if self._pending_playground_preset is preset:

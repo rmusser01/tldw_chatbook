@@ -283,10 +283,15 @@ class STTSScreen(LabScreen):
             The ``STTSWindow``, mounted after first paint like every Lab
             body.
         """
+        dependencies = self._speech_local_dependencies
+        if dependencies is None:
+            dependencies = speech_local_dependency_availability(refresh=True)
+            self._speech_local_dependencies = dependencies
         self.stts_window = STTSWindow(
             self.app_instance,
             classes="window",
             playground_axis_values=self._restored_playground_axes,
+            local_dependencies=dependencies,
         )
         self.stts_window.styles.height = "1fr"
         return self.stts_window

@@ -5,6 +5,7 @@ from textual.widgets import Button, Static
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Lab_Modules.lab_speech_status import speech_capability_detail
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
+from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.speech_runtime_status import (
     SpeechLocalDependencyAvailability,
 )
@@ -129,9 +130,16 @@ def test_visible_capability_refresh_ignores_stale_stt_cache(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stts_window_refreshes_local_speech_dependency_flags(monkeypatch):
-    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "tts_processing", False)
-    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "stt_processing", False)
+async def test_speech_surfaces_share_fresh_local_dependency_snapshot(monkeypatch):
+    for dependency in (
+        "tts_processing",
+        "stt_processing",
+        "faster_whisper",
+        "kokoro_onnx",
+        "chatterbox",
+        "higgs_tts",
+    ):
+        monkeypatch.setitem(DEPENDENCIES_AVAILABLE, dependency, False)
 
     installed_modules = {
         "faster_whisper",
@@ -143,14 +151,22 @@ async def test_stts_window_refreshes_local_speech_dependency_flags(monkeypatch):
         "tldw_chatbook.UI.Lab_Modules.lab_speech_status.find_spec",
         lambda module_name: object() if module_name in installed_modules else None,
     )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda _self, *_args, **_kwargs: None,
+    )
 
     app = _SpeechHarness(_build_test_app())
 
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await _wait_until(
+            pilot,
+            lambda: bool(app.screen.query("#speech-status-stt-dependency")),
+        )
 
-        # Two widgets now: the rail's one-line summary, and the inspector's
-        # recovery detail carrying the stable selector. Both must flip.
+        # Rail, inspector, and deferred Playground must project one coherent
+        # fresh snapshot instead of mixing fresh probes with stale globals.
         summary = app.screen.query_one("#speech-capability-summary", Static)
         assert str(summary.render()) == "Remote TTS | Local 4/4"
 
@@ -160,6 +176,15 @@ async def test_stts_window_refreshes_local_speech_dependency_flags(monkeypatch):
         assert "Local Kokoro: ready" in rendered_detail
         assert "Local Chatterbox: ready" in rendered_detail
         assert "Local Higgs: ready" in rendered_detail
+
+        for row_id in (
+            "stt-dependency",
+            "kokoro-dependency",
+            "chatterbox-dependency",
+            "higgs-dependency",
+        ):
+            row = app.screen.query_one(f"#speech-status-{row_id}", Static)
+            assert "Ready" in str(row.renderable)
 
 
 @pytest.mark.asyncio

@@ -89,6 +89,7 @@ from .speech_profile_mixin import (
 from .speech_synthesis_mixin import SpeechSynthesisMixin
 from .speech_param_group import SpeechParamGroup
 from .speech_runtime_status import (
+    SpeechLocalDependencyAvailability,
     SpeechTTSRuntimeStatusStore,
     newest_speech_tts_status,
     project_speech_tts_status,
@@ -297,6 +298,7 @@ class SpeechPlaygroundPane(
         provider_configuration_states: Mapping[str, SpeechTTSConfigurationState]
         | None = None,
         runtime_status_store: SpeechTTSRuntimeStatusStore | None = None,
+        local_dependencies: SpeechLocalDependencyAvailability | None = None,
         **kwargs: Any,
     ) -> None:
         """Create the pane.
@@ -306,6 +308,8 @@ class SpeechPlaygroundPane(
             axis_values: Effective value per comparison axis.
             axis_defaults: Persisted default per axis, for override marking.
             capability_line: One-line local-speech status.
+            local_dependencies: Shared local-capability snapshot. When omitted,
+                a fresh non-importing module-presence probe is used.
             kwargs: Forwarded to ``Vertical``.
         """
         classes = kwargs.pop("classes", "")
@@ -350,6 +354,11 @@ class SpeechPlaygroundPane(
         self._runtime_status_store = (
             runtime_status_store or SpeechTTSRuntimeStatusStore()
         )
+        if local_dependencies is None:
+            local_dependencies = speech_local_dependency_availability(refresh=True)
+        elif type(local_dependencies) is not SpeechLocalDependencyAvailability:
+            raise TypeError("local_dependencies must be a Speech dependency snapshot")
+        self._speech_local_dependencies = local_dependencies
         self._audio_cpp_runtime_observation: AudioCppRuntimeObservation | None = None
         self._audio_cpp_runtime_status_failed = False
         self._audio_cpp_runtime_request_generation = 0
@@ -1691,7 +1700,7 @@ class SpeechPlaygroundPane(
             applied_configuration_revision=applied_configuration_revision,
             model_id=model_id,
             observation=None,
-            local_dependencies=speech_local_dependency_availability(),
+            local_dependencies=self._speech_local_dependencies,
             runtime_status=runtime_status,
             catalog_status=catalog_status,
         )
