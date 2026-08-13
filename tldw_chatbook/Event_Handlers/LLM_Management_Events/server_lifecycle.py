@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import logging
 import subprocess
 import threading
 from typing import Any
@@ -18,13 +19,17 @@ SERVER_PROCESS_ATTRS = {
     "ollama": "ollama_server_process",
 }
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(eq=False)
 class ServerLaunchClaim:
     """An identity-bearing reservation for one provider launch generation."""
 
     provider: str
+    authority: str | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
+    _resource: Any | None = field(default=None, repr=False)
 
 
 def _validate_provider(provider: str) -> str:
@@ -49,7 +54,11 @@ def process_is_running(process: Any) -> bool:
         return True
 
 
-def reserve_server_launch(app: Any, provider: str) -> ServerLaunchClaim | None:
+def reserve_server_launch(
+    app: Any,
+    provider: str,
+    authority: str | None = None,
+) -> ServerLaunchClaim | None:
     """Atomically reserve a provider launch unless it is already active."""
 
     process_attr = _validate_provider(provider)
@@ -61,9 +70,30 @@ def reserve_server_launch(app: Any, provider: str) -> ServerLaunchClaim | None:
             return None
         if process is not None:
             setattr(app, process_attr, None)
-        claim = ServerLaunchClaim(provider)
+        claim = ServerLaunchClaim(provider=provider, authority=authority)
         app._llm_server_launch_claims[provider] = claim
         return claim
+
+
+def attach_server_claim_resource(
+    app: Any,
+    provider: str,
+    claim: ServerLaunchClaim,
+    resource: Any,
+) -> bool:
+    """Transfer one resource to the exact current uncancelled claim."""
+
+    _validate_provider(provider)
+    with _lock(app):
+        if (
+            claim.provider != provider
+            or app._llm_server_launch_claims.get(provider) is not claim
+            or claim.cancel_event.is_set()
+            or claim._resource is not None
+        ):
+            return False
+        claim._resource = resource
+        return True
 
 
 def current_server_claim(app: Any, provider: str) -> ServerLaunchClaim | None:
@@ -134,6 +164,49 @@ def retain_cancelled_server_process(
         return True
 
 
+def _detach_server_claim_resource_locked(
+    app: Any,
+    provider: str,
+    claim: ServerLaunchClaim,
+    *,
+    process: Any = None,
+    require_process_identity: bool = False,
+) -> tuple[bool, Any | None]:
+    """Settle one exact claim and return its resource while the lock is held."""
+
+    process_attr = SERVER_PROCESS_ATTRS[provider]
+    current_process = getattr(app, process_attr, None)
+    if (
+        claim.provider != provider
+        or app._llm_server_launch_claims.get(provider) is not claim
+        or (
+            require_process_identity
+            and (current_process is not process or process_is_running(process))
+        )
+        or (not require_process_identity and process_is_running(current_process))
+    ):
+        return False, None
+    setattr(app, process_attr, None)
+    del app._llm_server_launch_claims[provider]
+    resource = claim._resource
+    claim._resource = None
+    return True, resource
+
+
+def _close_server_claim_resource(provider: str, resource: Any | None) -> None:
+    """Close a detached claim resource without exposing failure details."""
+
+    if resource is None:
+        return
+    try:
+        resource.close()
+    except Exception:
+        logger.error(
+            "%s server claim resource close failed (category=resource_close_failed)",
+            provider,
+        )
+
+
 def release_server_claim(
     app: Any,
     provider: str,
@@ -141,15 +214,15 @@ def release_server_claim(
 ) -> bool:
     """Release a current claim that has no published live process."""
 
-    process_attr = _validate_provider(provider)
+    _validate_provider(provider)
     with _lock(app):
-        if app._llm_server_launch_claims.get(provider) is not claim:
-            return False
-        if process_is_running(getattr(app, process_attr, None)):
-            return False
-        setattr(app, process_attr, None)
-        del app._llm_server_launch_claims[provider]
-        return True
+        settled, resource = _detach_server_claim_resource_locked(
+            app,
+            provider,
+            claim,
+        )
+    _close_server_claim_resource(provider, resource)
+    return settled
 
 
 def clear_server_process(
@@ -160,17 +233,17 @@ def clear_server_process(
 ) -> bool:
     """Clear only the current claim's exact process after confirmed exit."""
 
-    process_attr = _validate_provider(provider)
+    _validate_provider(provider)
     with _lock(app):
-        if (
-            app._llm_server_launch_claims.get(provider) is not claim
-            or getattr(app, process_attr, None) is not process
-            or process_is_running(process)
-        ):
-            return False
-        setattr(app, process_attr, None)
-        del app._llm_server_launch_claims[provider]
-        return True
+        settled, resource = _detach_server_claim_resource_locked(
+            app,
+            provider,
+            claim,
+            process=process,
+            require_process_identity=True,
+        )
+    _close_server_claim_resource(provider, resource)
+    return settled
 
 
 def clear_unclaimed_process(app: Any, provider: str, process: Any) -> bool:
