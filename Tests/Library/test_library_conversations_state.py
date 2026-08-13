@@ -14,6 +14,22 @@ from tldw_chatbook.Library.library_conversations_state import (
 NOW = datetime(2026, 7, 5, 12, 0, tzinfo=timezone.utc)
 
 
+def test_canvas_state_direct_construction_keeps_safe_pager_defaults():
+    state = LibraryConversationsCanvasState(
+        rows=(),
+        status_copy="",
+        empty_copy="",
+        selected_id="",
+        preview_lines=(),
+        query="",
+    )
+
+    assert state.range_copy == ""
+    assert state.page_copy == ""
+    assert state.previous_disabled is True
+    assert state.next_disabled is True
+
+
 def test_rows_are_sorted_by_recency_with_age_labels_and_missing_last():
     records = [
         {
