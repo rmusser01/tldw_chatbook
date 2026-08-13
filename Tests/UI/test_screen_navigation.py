@@ -4534,6 +4534,39 @@ async def test_generic_library_entry_lands_hub_on_first_visit():
 
 
 @pytest.mark.asyncio
+async def test_prompt_receipt_owner_vetoes_real_app_navigation_until_settlement():
+    """The real app cannot replace the Library screen while it owns a mutation."""
+    from tldw_chatbook.Prompt_Management.prompt_batch_models import (
+        PromptBatchDeleteResult,
+        PromptDeleteReceiptEntry,
+    )
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+        screen = app.screen
+        assert type(screen).__name__ == "LibraryScreen"
+        receipt = PromptBatchDeleteResult(
+            (PromptDeleteReceiptEntry(41, "Receipt owner", "prompt", 2),)
+        )
+        screen._library_prompt_delete_receipt = receipt
+        screen._library_prompts_mutation_in_flight = True
+
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        await pilot.pause()
+
+        assert app.screen is screen
+        assert screen._library_prompt_delete_receipt is receipt
+
+        screen._library_prompts_mutation_in_flight = False
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        await pilot.pause()
+        assert type(app.screen).__name__ == "HomeScreen"
+
+
+@pytest.mark.asyncio
 async def test_deep_link_library_route_lands_its_canvas_over_restored_state():
     """An EXPLICIT deep link (mirroring ``LibraryIngestProvider``'s
     "Library: Import..." palette command, which supplies

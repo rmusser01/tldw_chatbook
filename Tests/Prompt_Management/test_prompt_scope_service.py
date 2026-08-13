@@ -6,6 +6,13 @@ import pytest
 
 import tldw_chatbook.Prompt_Management.prompt_scope_service as prompt_scope_module
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+from tldw_chatbook.Prompt_Management.prompt_batch_models import (
+    PromptBatchDeleteResult,
+    PromptBatchRestoreResult,
+    PromptBatchTarget,
+    PromptDeleteReceiptEntry,
+    PromptRestoreResultEntry,
+)
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService,
     PromptBackend,
@@ -2294,3 +2301,297 @@ async def test_measurement_descriptor_requires_exact_json_types(measurement):
     capabilities = await service.get_capabilities(mode="server")
 
     assert capabilities.json_byte_measurement is None
+
+
+class FakeBatchLocalPromptService:
+    def __init__(self):
+        self.calls = []
+        self.deleted_result = PromptBatchDeleteResult(
+            entries=(
+                PromptDeleteReceiptEntry(7, "Seven", "prompt", 4),
+                PromptDeleteReceiptEntry(9, "Nine", "recipe", 3),
+            )
+        )
+        self.restored_result = PromptBatchRestoreResult(
+            entries=(
+                PromptRestoreResultEntry(7, 5),
+                PromptRestoreResultEntry(9, 4),
+            )
+        )
+
+    def delete_prompts(self, *, targets):
+        self.calls.append(("delete", targets))
+        return self.deleted_result
+
+    def restore_deleted_prompts(self, *, targets):
+        self.calls.append(("restore", targets))
+        return self.restored_result
+
+
+class MissingBatchLocalPromptService:
+    def __init__(self):
+        self.calls = []
+
+
+class PromptBatchTargetSubclass(PromptBatchTarget):
+    pass
+
+
+def _forged_prompt_batch_target(local_id, expected_version) -> PromptBatchTarget:
+    target = object.__new__(PromptBatchTarget)
+    object.__setattr__(target, "local_id", local_id)
+    object.__setattr__(target, "expected_version", expected_version)
+    return target
+
+
+@pytest.mark.asyncio
+async def test_prompt_batch_methods_are_keyword_only_typed_and_return_local_objects():
+    from typing import get_type_hints
+
+    local = FakeBatchLocalPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, FakeServerPromptService(), policy)
+    targets = (PromptBatchTarget(7, 3), PromptBatchTarget(9, 2))
+    scope._normalize_prompt_record = Mock(
+        side_effect=AssertionError("batch results must not be normalized")
+    )
+
+    for method_name, result_type in (
+        ("delete_prompts", PromptBatchDeleteResult),
+        ("restore_deleted_prompts", PromptBatchRestoreResult),
+    ):
+        method = getattr(PromptScopeService, method_name)
+        signature = inspect.signature(method)
+        assert signature.parameters["mode"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert signature.parameters["targets"].kind is inspect.Parameter.KEYWORD_ONLY
+        hints = get_type_hints(method)
+        assert hints["targets"] == tuple[PromptBatchTarget, ...]
+        assert hints["return"] is result_type
+
+    with pytest.raises(TypeError):
+        await scope.delete_prompts("local", targets)  # type: ignore[misc]
+    assert policy.actions == []
+    assert local.calls == []
+
+    deleted = await scope.delete_prompts(mode="local", targets=targets)
+    restore_targets = deleted.targets
+    restored = await scope.restore_deleted_prompts(
+        mode="local", targets=restore_targets
+    )
+
+    assert deleted is local.deleted_result
+    assert restored is local.restored_result
+    assert policy.actions == ["prompts.delete.local", "prompts.update.local"]
+    assert local.calls[0][0] == "delete"
+    assert local.calls[0][1] is targets
+    assert local.calls[1][0] == "restore"
+    assert local.calls[1][1] is restore_targets
+    assert scope._normalize_prompt_record.call_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [None, "local", PromptBackend.LOCAL])
+@pytest.mark.parametrize(
+    ("method_name", "action", "result_attribute"),
+    [
+        ("delete_prompts", "prompts.delete.local", "deleted_result"),
+        ("restore_deleted_prompts", "prompts.update.local", "restored_result"),
+    ],
+)
+async def test_prompt_batch_methods_accept_established_local_mode_forms_once(
+    mode, method_name, action, result_attribute
+):
+    local = FakeBatchLocalPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, FakeServerPromptService(), policy)
+    targets = (PromptBatchTarget(7, 3), PromptBatchTarget(9, 2))
+
+    result = await getattr(scope, method_name)(mode=mode, targets=targets)
+
+    assert result is getattr(local, result_attribute)
+    assert policy.actions == [action]
+    assert len(local.calls) == 1
+    assert local.calls[0][1] is targets
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "action", "operation"),
+    [
+        ("delete_prompts", "prompts.delete.local", "delete"),
+        ("restore_deleted_prompts", "prompts.update.local", "restore"),
+    ],
+)
+async def test_prompt_batch_methods_canonicalize_targets_before_one_policy_call(
+    method_name, action, operation
+):
+    local = FakeBatchLocalPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, FakeServerPromptService(), policy)
+    targets = (PromptBatchTarget(9, 2), PromptBatchTarget(7, 3))
+
+    await getattr(scope, method_name)(mode="local", targets=targets)
+
+    assert policy.actions == [action]
+    assert local.calls == [(operation, tuple(reversed(targets)))]
+
+
+INVALID_PROMPT_BATCH_TARGETS = [
+    ([], TypeError, "targets"),
+    ((), ValueError, "non-empty"),
+    ((object(),), TypeError, "targets"),
+    ((PromptBatchTargetSubclass(7, 3),), TypeError, "targets"),
+    (
+        (PromptBatchTarget(7, 3), PromptBatchTarget(7, 4)),
+        ValueError,
+        "unique local IDs",
+    ),
+    ((_forged_prompt_batch_target(True, 1),), ValueError, "local_id"),
+    ((_forged_prompt_batch_target(0, 1),), ValueError, "local_id"),
+    ((_forged_prompt_batch_target(-1, 1),), ValueError, "local_id"),
+    ((_forged_prompt_batch_target(2**63, 1),), ValueError, "local_id"),
+    ((_forged_prompt_batch_target(1, False),), ValueError, "expected_version"),
+    ((_forged_prompt_batch_target(1, 0),), ValueError, "expected_version"),
+    ((_forged_prompt_batch_target(1, -1),), ValueError, "expected_version"),
+    ((_forged_prompt_batch_target(1, 2**63),), ValueError, "expected_version"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name", ["delete_prompts", "restore_deleted_prompts"])
+@pytest.mark.parametrize(
+    ("targets", "error_type", "message"), INVALID_PROMPT_BATCH_TARGETS
+)
+async def test_prompt_batch_invalid_targets_fail_before_policy_or_backends(
+    method_name, targets, error_type, message
+):
+    local = FakeBatchLocalPromptService()
+    server = FakeServerPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, server, policy)
+
+    with pytest.raises(error_type, match=message):
+        await getattr(scope, method_name)(mode="local", targets=targets)
+
+    assert policy.actions == []
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name", ["delete_prompts", "restore_deleted_prompts"])
+@pytest.mark.parametrize("mode", ["LOCAL", "remote", 1])
+async def test_prompt_batch_invalid_modes_fail_before_policy_or_backends(
+    method_name, mode
+):
+    local = FakeBatchLocalPromptService()
+    server = FakeServerPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, server, policy)
+
+    with pytest.raises(ValueError, match="Invalid prompt backend"):
+        await getattr(scope, method_name)(mode=mode, targets=(PromptBatchTarget(7, 3),))
+
+    assert policy.actions == []
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name", ["delete_prompts", "restore_deleted_prompts"])
+@pytest.mark.parametrize("mode", ["server", PromptBackend.SERVER])
+async def test_prompt_batch_server_modes_are_refused_before_policy_or_backends(
+    method_name, mode
+):
+    local = FakeBatchLocalPromptService()
+    server = FakeServerPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, server, policy)
+
+    with pytest.raises(ValueError, match="local-only"):
+        await getattr(scope, method_name)(mode=mode, targets=(PromptBatchTarget(7, 3),))
+
+    assert policy.actions == []
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "action"),
+    [
+        ("delete_prompts", "prompts.delete.local"),
+        ("restore_deleted_prompts", "prompts.update.local"),
+    ],
+)
+async def test_prompt_batch_policy_denial_makes_no_backend_call(method_name, action):
+    local = FakeBatchLocalPromptService()
+    server = FakeServerPromptService()
+    policy = FakePolicyEnforcer.deny()
+    scope = PromptScopeService(local, server, policy)
+
+    with pytest.raises(PermissionError, match="blocked"):
+        await getattr(scope, method_name)(
+            mode="local", targets=(PromptBatchTarget(7, 3),)
+        )
+
+    assert policy.actions == [action]
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "action", "message"),
+    [
+        ("delete_prompts", "prompts.delete.local", "batch delete"),
+        ("restore_deleted_prompts", "prompts.update.local", "batch restore"),
+    ],
+)
+async def test_prompt_batch_missing_local_method_fails_after_one_policy_decision(
+    method_name, action, message
+):
+    local = MissingBatchLocalPromptService()
+    server = FakeServerPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(local, server, policy)
+
+    with pytest.raises(ValueError, match=message):
+        await getattr(scope, method_name)(
+            mode="local", targets=(PromptBatchTarget(7, 3),)
+        )
+
+    assert policy.actions == [action]
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "action"),
+    [
+        ("delete_prompts", "prompts.delete.local"),
+        ("restore_deleted_prompts", "prompts.update.local"),
+    ],
+)
+async def test_prompt_batch_missing_local_backend_fails_after_one_policy_decision(
+    method_name, action
+):
+    server = FakeServerPromptService()
+    policy = FakePolicyEnforcer()
+    scope = PromptScopeService(None, server, policy)
+
+    with pytest.raises(ValueError, match="Local prompt backend is unavailable"):
+        await getattr(scope, method_name)(
+            mode="local", targets=(PromptBatchTarget(7, 3),)
+        )
+
+    assert policy.actions == [action]
+    assert server.calls == []
+
+
+def test_prompt_batch_scope_methods_have_no_post_return_normalizer_or_server_path():
+    for method_name in ("delete_prompts", "restore_deleted_prompts"):
+        source = inspect.getsource(getattr(PromptScopeService, method_name))
+        assert "_normalize_prompt_record" not in source
+        assert "server_service" not in source

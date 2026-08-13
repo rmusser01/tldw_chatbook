@@ -1090,7 +1090,7 @@ class PromptsDatabase:
     ) -> Optional[int]:
         if not entity or not entity_uuid or not operation:
             logging.error("Sync log attempt with missing entity, uuid, or operation.")
-            return
+            return None
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
         payload_json = self._serialize_sync_payload(payload)
@@ -1112,15 +1112,12 @@ class PromptsDatabase:
             )
             if cursor.lastrowid is None:
                 raise DatabaseError("Failed to get change ID for sync event.")
-            logging.debug(
-                f"Logged sync: {entity} {entity_uuid} {operation} v{version} at {current_time}"
-            )
             return int(cursor.lastrowid)
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(
-                f"Failed insert sync_log for {entity} {entity_uuid}: {e}"
+            logging.error(
+                "Prompt sync event write failed category={}", type(e).__name__
             )
-            raise DatabaseError(f"Failed to log sync event: {e}") from e
+            raise DatabaseError("Failed to log Prompt sync event.") from None
 
     def _finalize_prompt_sync_snapshot(
         self,
@@ -1164,10 +1161,11 @@ class PromptsDatabase:
                     "Failed to finalize Prompt sync snapshot: event not found."
                 )
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(
-                f"Failed to finalize Prompt sync snapshot {change_id}: {e}"
+            logging.error(
+                "Prompt sync snapshot finalization failed category={}",
+                type(e).__name__,
             )
-            raise DatabaseError(f"Failed to finalize Prompt sync snapshot: {e}") from e
+            raise DatabaseError("Failed to finalize Prompt sync snapshot.") from None
 
     # --- FTS Helper Methods ---
     def _update_fts_prompt(
@@ -1192,22 +1190,16 @@ class PromptsDatabase:
                     user_prompt or "",
                 ),
             )
-            logging.debug(f"Updated FTS for Prompt ID {prompt_id}")
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(
-                f"Failed FTS update Prompt ID {prompt_id}: {e}"
-            )
-            raise DatabaseError(f"Failed FTS update Prompt ID {prompt_id}: {e}") from e
+            logging.error("Prompt FTS update failed category={}", type(e).__name__)
+            raise DatabaseError("Failed to update Prompt FTS.") from None
 
     def _delete_fts_prompt(self, conn: sqlite3.Connection, prompt_id: int):
         try:
             conn.execute("DELETE FROM prompts_fts WHERE rowid = ?", (prompt_id,))
-            logging.debug(f"Deleted FTS for Prompt ID {prompt_id}")
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(
-                f"Failed FTS delete Prompt ID {prompt_id}: {e}"
-            )
-            raise DatabaseError(f"Failed FTS delete Prompt ID {prompt_id}: {e}") from e
+            logging.error("Prompt FTS delete failed category={}", type(e).__name__)
+            raise DatabaseError("Failed to delete Prompt FTS.") from None
 
     def _update_fts_prompt_keyword(
         self, conn: sqlite3.Connection, keyword_id: int, keyword: str
@@ -1217,28 +1209,22 @@ class PromptsDatabase:
                 "INSERT OR REPLACE INTO prompt_keywords_fts (rowid, keyword) VALUES (?, ?)",
                 (keyword_id, keyword),
             )
-            logging.debug(f"Updated FTS for PromptKeyword ID {keyword_id}")
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(
-                f"Failed FTS update PromptKeyword ID {keyword_id}: {e}"
+            logging.error(
+                "Prompt keyword FTS update failed category={}", type(e).__name__
             )
-            raise DatabaseError(
-                f"Failed FTS update PromptKeyword ID {keyword_id}: {e}"
-            ) from e
+            raise DatabaseError("Failed to update Prompt keyword FTS.") from None
 
     def _delete_fts_prompt_keyword(self, conn: sqlite3.Connection, keyword_id: int):
         try:
             conn.execute(
                 "DELETE FROM prompt_keywords_fts WHERE rowid = ?", (keyword_id,)
             )
-            logging.debug(f"Deleted FTS for PromptKeyword ID {keyword_id}")
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(
-                f"Failed FTS delete PromptKeyword ID {keyword_id}: {e}"
+            logging.error(
+                "Prompt keyword FTS delete failed category={}", type(e).__name__
             )
-            raise DatabaseError(
-                f"Failed FTS delete PromptKeyword ID {keyword_id}: {e}"
-            ) from e
+            raise DatabaseError("Failed to delete Prompt keyword FTS.") from None
 
     # --- Public Mutating Methods ---
     def add_keyword(self, keyword_text: str) -> Optional[int]:
@@ -1840,7 +1826,7 @@ class PromptsDatabase:
             )
             if isinstance(exc, (InputError, DatabaseError)):
                 raise
-            raise DatabaseError("Prompt keyword update failed.") from None
+            raise DatabaseError("Keyword update failed.") from None
 
     def update_prompt_by_id(
         self,
@@ -2110,30 +2096,510 @@ class PromptsDatabase:
                 raise e
             raise DatabaseError(f"Failed to update prompt ID {prompt_id}: {e}") from e
 
+    @staticmethod
+    def _canonical_prompt_batch_targets(
+        targets: tuple["PromptBatchTarget", ...],
+    ) -> tuple["PromptBatchTarget", ...]:
+        """Validate and order one strict non-empty Prompt mutation batch."""
+        if type(targets) is not tuple:
+            raise TypeError("targets must be an exact tuple.")
+        if not targets:
+            raise ValueError("targets must be non-empty.")
+        if any(type(target) is not PromptBatchTarget for target in targets):
+            raise TypeError("targets must contain only exact PromptBatchTarget values.")
+
+        validated = tuple(
+            PromptBatchTarget(target.local_id, target.expected_version)
+            for target in targets
+        )
+        if len({target.local_id for target in validated}) != len(validated):
+            raise ValueError("targets must use unique local IDs.")
+        return tuple(sorted(validated, key=lambda target: target.local_id))
+
+    def _require_prompt_mutation_transaction_ownership(self) -> None:
+        """Reject public mutations that cannot own their durable commit."""
+        if self.get_connection().in_transaction:
+            raise DatabaseError("Prompt mutation transaction ownership unavailable.")
+
+    @staticmethod
+    def _require_canonical_uuid(value: Any, error_message: str) -> str:
+        if type(value) is not str:
+            raise DatabaseError(error_message)
+        try:
+            parsed = uuid.UUID(value)
+        except (AttributeError, ValueError):
+            raise DatabaseError(error_message) from None
+        if str(parsed) != value:
+            raise DatabaseError(error_message)
+        return value
+
+    def _active_prompt_keyword_rows(
+        self, conn: sqlite3.Connection, prompt_id: int
+    ) -> tuple[sqlite3.Row, ...]:
+        rows = tuple(
+            sorted(
+                conn.execute(
+                    """
+                    SELECT pkw.id, pkw.keyword, pkw.uuid AS keyword_uuid
+                    FROM PromptKeywordLinks AS pkl
+                    JOIN PromptKeywordsTable AS pkw ON pkl.keyword_id = pkw.id
+                    WHERE pkl.prompt_id = ? AND pkw.deleted = 0
+                    ORDER BY pkw.keyword COLLATE NOCASE, pkw.id ASC
+                    """,
+                    (prompt_id,),
+                ).fetchall(),
+                key=lambda row: row["keyword"],
+            )
+        )
+        if any(
+            type(row["keyword"]) is not str or not row["keyword"].strip()
+            for row in rows
+        ):
+            raise DatabaseError("Prompt keyword recovery metadata is unavailable.")
+        keywords = [row["keyword"] for row in rows]
+        if self._canonicalize_prompt_keywords(keywords) != keywords:
+            raise DatabaseError("Prompt keyword recovery metadata is unavailable.")
+        for row in rows:
+            self._require_canonical_uuid(
+                row["keyword_uuid"],
+                "Prompt keyword recovery metadata is unavailable.",
+            )
+        return rows
+
+    def _restore_prompt_keyword_rows(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        row: sqlite3.Row,
+        expected_version: int,
+    ) -> tuple[sqlite3.Row, ...]:
+        tombstone_event = conn.execute(
+            """
+            SELECT payload
+            FROM sync_log
+            WHERE entity = 'Prompts'
+              AND entity_uuid = ?
+              AND operation = 'delete'
+              AND version = ?
+            ORDER BY change_id DESC
+            LIMIT 1
+            """,
+            (row["uuid"], expected_version),
+        ).fetchone()
+        try:
+            payload = json.loads(tombstone_event["payload"])
+        except (TypeError, KeyError, json.JSONDecodeError):
+            payload = None
+        if (
+            type(payload) is not dict
+            or payload.get("keywords_captured") is not True
+            or type(payload.get("keywords")) is not list
+            or any(type(keyword) is not str for keyword in payload["keywords"])
+        ):
+            raise DatabaseError("Prompt tombstone recovery metadata is unavailable.")
+
+        keywords = self._canonicalize_prompt_keywords(payload["keywords"])
+        if payload["keywords"] != keywords:
+            raise DatabaseError("Prompt tombstone recovery metadata is unavailable.")
+        if conn.execute(
+            "SELECT COUNT(*) FROM PromptKeywordLinks WHERE prompt_id = ?",
+            (row["id"],),
+        ).fetchone()[0]:
+            raise DatabaseError("Prompt tombstone recovery state is invalid.")
+
+        keyword_rows = []
+        for keyword in keywords:
+            keyword_row = conn.execute(
+                """
+                SELECT id, keyword, uuid AS keyword_uuid, deleted, version
+                FROM PromptKeywordsTable
+                WHERE keyword = ?
+                """,
+                (keyword,),
+            ).fetchone()
+            if (
+                keyword_row is None
+                or type(keyword_row["version"]) is not int
+                or not 1 <= keyword_row["version"] <= self._SQLITE_SIGNED_INTEGER_MAX
+                or int(keyword_row["deleted"]) not in (0, 1)
+                or (
+                    int(keyword_row["deleted"]) == 1
+                    and keyword_row["version"] == self._SQLITE_SIGNED_INTEGER_MAX
+                )
+            ):
+                raise DatabaseError("Prompt keyword recovery metadata is unavailable.")
+            self._require_canonical_uuid(
+                keyword_row["keyword_uuid"],
+                "Prompt keyword recovery metadata is unavailable.",
+            )
+            keyword_rows.append(keyword_row)
+        return tuple(keyword_rows)
+
+    def _validate_delete_prompt_row(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        row: sqlite3.Row,
+        expected_version: int,
+    ) -> None:
+        self._require_canonical_uuid(
+            row["uuid"], "Prompt delete recovery metadata is unavailable."
+        )
+        self._active_prompt_keyword_rows(conn, int(row["id"]))
+        PromptDeleteReceiptEntry(
+            local_id=int(row["id"]),
+            title=row["name"],
+            artifact_type=row["artifact_type"],
+            tombstone_version=expected_version + 1,
+        )
+
+    def _validate_restore_prompt_row(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        row: sqlite3.Row,
+        expected_version: int,
+    ) -> tuple[sqlite3.Row, ...]:
+        self._require_canonical_uuid(
+            row["uuid"], "Prompt tombstone recovery metadata is unavailable."
+        )
+        keyword_rows = self._restore_prompt_keyword_rows(
+            conn, row=row, expected_version=expected_version
+        )
+        PromptRestoreResultEntry(
+            local_id=int(row["id"]), restored_version=expected_version + 1
+        )
+        return keyword_rows
+
+    def _delete_prompt_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        row: sqlite3.Row,
+        expected_version: int,
+    ) -> "PromptDeleteReceiptEntry":
+        """Delete one prevalidated row without owning transaction settlement."""
+        prompt_id = int(row["id"])
+        prompt_uuid = str(row["uuid"])
+        keywords = self._active_prompt_keyword_rows(conn, prompt_id)
+        current_time = self._get_current_utc_timestamp_str()
+        new_version = expected_version + 1
+        cursor = conn.execute(
+            """
+            UPDATE Prompts
+            SET deleted = 1, last_modified = ?, version = ?, client_id = ?
+            WHERE id = ? AND deleted = 0 AND version = ?
+            """,
+            (current_time, new_version, self.client_id, prompt_id, expected_version),
+        )
+        if cursor.rowcount != 1:
+            raise ExpectedVersionConflictError("Prompt batch delete conflict.")
+
+        change_id = self._log_sync_event(
+            conn,
+            "Prompts",
+            prompt_uuid,
+            "delete",
+            new_version,
+            {
+                "uuid": prompt_uuid,
+                "last_modified": current_time,
+                "version": new_version,
+                "client_id": self.client_id,
+                "deleted": 1,
+                "keywords": [keyword["keyword"] for keyword in keywords],
+                "keywords_captured": True,
+            },
+        )
+        if change_id is None:
+            raise DatabaseError("Prompt delete sync event is unavailable.")
+        self._delete_fts_prompt(conn, prompt_id)
+        if keywords:
+            conn.execute(
+                "DELETE FROM PromptKeywordLinks WHERE prompt_id = ?", (prompt_id,)
+            )
+            for keyword in keywords:
+                keyword_uuid = str(keyword["keyword_uuid"])
+                self._log_sync_event(
+                    conn,
+                    "PromptKeywordLinks",
+                    f"{prompt_uuid}_{keyword_uuid}",
+                    "unlink",
+                    1,
+                    {"prompt_uuid": prompt_uuid, "keyword_uuid": keyword_uuid},
+                )
+        return PromptDeleteReceiptEntry(
+            local_id=prompt_id,
+            title=row["name"],
+            artifact_type=row["artifact_type"],
+            tombstone_version=new_version,
+        )
+
+    def _restore_prompt_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        row: sqlite3.Row,
+        expected_version: int,
+        keyword_rows: tuple[sqlite3.Row, ...],
+    ) -> "PromptRestoreResultEntry":
+        """Restore one prevalidated row without owning transaction settlement."""
+        prompt_id = int(row["id"])
+        prompt_uuid = str(row["uuid"])
+        current_time = self._get_current_utc_timestamp_str()
+        new_version = expected_version + 1
+        cursor = conn.execute(
+            """
+            UPDATE Prompts
+            SET deleted = 0, last_modified = ?, version = ?, client_id = ?
+            WHERE id = ? AND deleted = 1 AND version = ?
+            """,
+            (current_time, new_version, self.client_id, prompt_id, expected_version),
+        )
+        if cursor.rowcount != 1:
+            raise ExpectedVersionConflictError("Prompt batch restore conflict.")
+
+        restored_row = conn.execute(
+            "SELECT * FROM Prompts WHERE id = ?", (prompt_id,)
+        ).fetchone()
+        if restored_row is None:
+            raise DatabaseError("Prompt restore state is unavailable.")
+        restored_payload = dict(restored_row)
+        change_id = self._log_sync_event(
+            conn,
+            "Prompts",
+            prompt_uuid,
+            "update",
+            new_version,
+            restored_payload,
+        )
+        for keyword in keyword_rows:
+            if int(keyword["deleted"]) == 1:
+                keyword_version = int(keyword["version"])
+                keyword_uuid = str(keyword["keyword_uuid"])
+                keyword_time = self._get_current_utc_timestamp_str()
+                keyword_cursor = conn.execute(
+                    """
+                    UPDATE PromptKeywordsTable
+                    SET deleted = 0, last_modified = ?, version = ?, client_id = ?
+                    WHERE id = ? AND deleted = 1 AND version = ?
+                    """,
+                    (
+                        keyword_time,
+                        keyword_version + 1,
+                        self.client_id,
+                        keyword["id"],
+                        keyword_version,
+                    ),
+                )
+                if keyword_cursor.rowcount != 1:
+                    raise ExpectedVersionConflictError("Prompt batch restore conflict.")
+                restored_keyword = conn.execute(
+                    "SELECT * FROM PromptKeywordsTable WHERE id = ?", (keyword["id"],)
+                ).fetchone()
+                if restored_keyword is None:
+                    raise DatabaseError("Prompt keyword recovery state is unavailable.")
+                self._log_sync_event(
+                    conn,
+                    "PromptKeywordsTable",
+                    keyword_uuid,
+                    "update",
+                    keyword_version + 1,
+                    dict(restored_keyword),
+                )
+                self._update_fts_prompt_keyword(
+                    conn, int(keyword["id"]), str(keyword["keyword"])
+                )
+            conn.execute(
+                """
+                INSERT INTO PromptKeywordLinks (prompt_id, keyword_id)
+                VALUES (?, ?)
+                """,
+                (prompt_id, keyword["id"]),
+            )
+            keyword_uuid = str(keyword["keyword_uuid"])
+            self._log_sync_event(
+                conn,
+                "PromptKeywordLinks",
+                f"{prompt_uuid}_{keyword_uuid}",
+                "link",
+                1,
+                {"prompt_uuid": prompt_uuid, "keyword_uuid": keyword_uuid},
+            )
+        self._finalize_prompt_sync_snapshot(
+            conn, change_id, prompt_id, restored_payload
+        )
+        self._update_fts_prompt(
+            conn,
+            prompt_id,
+            restored_payload["name"],
+            restored_payload.get("author"),
+            restored_payload.get("details"),
+            restored_payload.get("system_prompt"),
+            restored_payload.get("user_prompt"),
+        )
+        return PromptRestoreResultEntry(
+            local_id=prompt_id, restored_version=new_version
+        )
+
+    def soft_delete_prompts(
+        self, targets: tuple["PromptBatchTarget", ...]
+    ) -> "PromptBatchDeleteResult":
+        """Atomically soft-delete one strict batch of active Prompt rows.
+
+        Args:
+            targets: Exact Prompt IDs and expected active-row versions.
+
+        Returns:
+            The canonical receipt for the committed batch.
+
+        Raises:
+            TypeError: If the target container or entries have invalid types.
+            ValueError: If targets are empty, duplicated, or invalid.
+            ExpectedVersionConflictError: If any target is missing or stale.
+            DatabaseError: If transaction ownership or persistence fails.
+        """
+        canonical_targets = self._canonical_prompt_batch_targets(targets)
+        try:
+            self._require_prompt_mutation_transaction_ownership()
+            with self.transaction(immediate=True) as conn:
+                prepared = []
+                for target in canonical_targets:
+                    row = conn.execute(
+                        "SELECT * FROM Prompts WHERE id = ?", (target.local_id,)
+                    ).fetchone()
+                    if (
+                        row is None
+                        or int(row["deleted"]) != 0
+                        or int(row["version"]) != target.expected_version
+                    ):
+                        raise ExpectedVersionConflictError(
+                            "Prompt batch delete conflict."
+                        )
+                    prepared.append((target, row))
+                for target, row in prepared:
+                    self._validate_delete_prompt_row(
+                        conn,
+                        row=row,
+                        expected_version=target.expected_version,
+                    )
+                result = PromptBatchDeleteResult(
+                    entries=tuple(
+                        self._delete_prompt_in_transaction(
+                            conn,
+                            row=row,
+                            expected_version=target.expected_version,
+                        )
+                        for target, row in prepared
+                    )
+                )
+        except ExpectedVersionConflictError as exc:
+            logger.error(
+                "Prompt batch mutation failed operation=delete count={} category={}",
+                len(canonical_targets),
+                type(exc).__name__,
+            )
+            raise
+        except Exception as exc:
+            logger.error(
+                "Prompt batch mutation failed operation=delete count={} category={}",
+                len(canonical_targets),
+                type(exc).__name__,
+            )
+            raise DatabaseError("Prompt batch delete failed.") from None
+
+        logger.info(
+            "Prompt batch mutation committed operation=delete count={}",
+            len(result.entries),
+        )
+        return result
+
+    def restore_deleted_prompts(
+        self, targets: tuple["PromptBatchTarget", ...]
+    ) -> "PromptBatchRestoreResult":
+        """Atomically restore one strict batch of Prompt tombstones.
+
+        Args:
+            targets: Exact Prompt IDs and expected tombstone versions.
+
+        Returns:
+            The canonical result for the committed batch restore.
+
+        Raises:
+            TypeError: If the target container or entries have invalid types.
+            ValueError: If targets are empty, duplicated, or invalid.
+            ExpectedVersionConflictError: If any target is missing or stale.
+            DatabaseError: If recovery metadata or persistence is unavailable.
+        """
+        canonical_targets = self._canonical_prompt_batch_targets(targets)
+        try:
+            self._require_prompt_mutation_transaction_ownership()
+            with self.transaction(immediate=True) as conn:
+                prepared = []
+                for target in canonical_targets:
+                    row = conn.execute(
+                        "SELECT * FROM Prompts WHERE id = ?", (target.local_id,)
+                    ).fetchone()
+                    if (
+                        row is None
+                        or int(row["deleted"]) != 1
+                        or int(row["version"]) != target.expected_version
+                    ):
+                        raise ExpectedVersionConflictError(
+                            "Prompt batch restore conflict."
+                        )
+                    prepared.append((target, row))
+                validated = [
+                    (
+                        target,
+                        row,
+                        self._validate_restore_prompt_row(
+                            conn,
+                            row=row,
+                            expected_version=target.expected_version,
+                        ),
+                    )
+                    for target, row in prepared
+                ]
+                result = PromptBatchRestoreResult(
+                    entries=tuple(
+                        self._restore_prompt_in_transaction(
+                            conn,
+                            row=row,
+                            expected_version=target.expected_version,
+                            keyword_rows=keyword_rows,
+                        )
+                        for target, row, keyword_rows in validated
+                    )
+                )
+        except ExpectedVersionConflictError as exc:
+            logger.error(
+                "Prompt batch mutation failed operation=restore count={} category={}",
+                len(canonical_targets),
+                type(exc).__name__,
+            )
+            raise
+        except Exception as exc:
+            logger.error(
+                "Prompt batch mutation failed operation=restore count={} category={}",
+                len(canonical_targets),
+                type(exc).__name__,
+            )
+            raise DatabaseError("Prompt batch restore failed.") from None
+
+        logger.info(
+            "Prompt batch mutation committed operation=restore count={}",
+            len(result.entries),
+        )
+        return result
+
     def soft_delete_prompt(
         self,
         prompt_id_or_name_or_uuid: Union[int, str],
         *,
         expected_version: Optional[int] = None,
     ) -> bool:
-        """Soft-delete one active Prompt/Recipe and record its tombstone.
-
-        Args:
-            prompt_id_or_name_or_uuid: Numeric id, UUID, or name of the artifact.
-            expected_version: Optional active-row version required for deletion.
-
-        Returns:
-            ``True`` when the artifact is soft-deleted.
-
-        Raises:
-            InputError: If the identifier or expected version is invalid.
-            ConflictError: If no active artifact matches the identifier.
-            ExpectedVersionConflictError: If the expected version is stale.
-            DatabaseError: If persistence fails.
-        """
-        start_time = time.time()
-        current_time = self._get_current_utc_timestamp_str()
-        client_id = self.client_id
+        """Soft-delete one legacy ID/name/UUID lookup through the shared core."""
         if expected_version is not None and (
             not isinstance(expected_version, int)
             or isinstance(expected_version, bool)
@@ -2143,176 +2609,51 @@ class PromptsDatabase:
 
         col_name = "id"
         if isinstance(prompt_id_or_name_or_uuid, str):
-            # Could be name or UUID. Check if it's a valid UUID format first.
             try:
                 uuid.UUID(prompt_id_or_name_or_uuid, version=4)
                 col_name = "uuid"
             except ValueError:
-                col_name = "name"  # Assume it's a name if not a UUID
-
-        # Validate column name to prevent SQL injection
+                col_name = "name"
         if not validate_column_name(col_name, "Prompts"):
             raise InputError(f"Invalid column name: {col_name}")
 
+        deleted = False
         try:
-            with self.transaction() as conn:
-                cursor = conn.cursor()
-                # Fetch prompt to get its ID (if name/uuid provided), current version, and uuid
-                # Also ensures it's not already deleted
-                cursor.execute(
-                    f"SELECT id, uuid, version FROM Prompts WHERE {col_name} = ? AND deleted = 0",
+            self._require_prompt_mutation_transaction_ownership()
+            with self.transaction(immediate=True) as conn:
+                row = conn.execute(
+                    f"SELECT * FROM Prompts WHERE {col_name} = ? AND deleted = 0",
                     (prompt_id_or_name_or_uuid,),
-                )
-                prompt_info = cursor.fetchone()
-                if not prompt_info:
-                    logger.warning(
-                        f"Prompt '{prompt_id_or_name_or_uuid}' not found or already deleted."
+                ).fetchone()
+                if row is not None:
+                    resolved_version = (
+                        int(row["version"])
+                        if expected_version is None
+                        else expected_version
                     )
-                    return False
-
-                prompt_id, prompt_uuid, current_version = (
-                    prompt_info["id"],
-                    prompt_info["uuid"],
-                    prompt_info["version"],
-                )
-                if expected_version is not None and current_version != expected_version:
-                    raise ExpectedVersionConflictError(
-                        "Prompt changed after it was opened.",
-                        "Prompts",
-                        prompt_id,
-                    )
-                new_version = current_version + 1
-
-                # ADR-055 recovery metadata: PromptKeywordLinks are removed
-                # below as part of the existing sync contract, so preserve the
-                # exact canonical membership on the versioned tombstone. Undo
-                # can then restore the artifact without trusting UI-captured
-                # state or conflating resurrection with retained-history
-                # restore (ADR-049).
-                cursor.execute(
-                    """
-                    SELECT pkw.keyword, pkw.uuid AS keyword_uuid
-                    FROM PromptKeywordLinks pkl
-                    JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
-                    WHERE pkl.prompt_id = ? AND pkw.deleted = 0
-                    ORDER BY pkw.keyword COLLATE NOCASE
-                    """,
-                    (prompt_id,),
-                )
-                keywords_to_unlink = cursor.fetchall()
-
-                # Soft delete the prompt
-                cursor.execute(
-                    "UPDATE Prompts SET deleted=1, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
-                    (current_time, new_version, client_id, prompt_id, current_version),
-                )
-                if cursor.rowcount == 0:
-                    raise ConflictError("Prompts", prompt_id)
-
-                delete_payload = {
-                    "uuid": prompt_uuid,
-                    "last_modified": current_time,
-                    "version": new_version,
-                    "client_id": client_id,
-                    "deleted": 1,
-                    "keywords": [row["keyword"] for row in keywords_to_unlink],
-                    "keywords_captured": True,
-                }
-                self._log_sync_event(
-                    conn, "Prompts", prompt_uuid, "delete", new_version, delete_payload
-                )
-                self._delete_fts_prompt(conn, prompt_id)
-
-                # Explicitly unlink keywords and log those events
-                if keywords_to_unlink:
-                    # The FK ON DELETE CASCADE on PromptKeywordLinks will remove rows.
-                    # However, we want to log these 'unlink' events.
-                    # So, we fetch them first, then rely on cascade or delete them explicitly.
-                    # For clarity and explicit logging, let's delete them explicitly.
-                    cursor.execute(
-                        "DELETE FROM PromptKeywordLinks WHERE prompt_id = ?",
-                        (prompt_id,),
-                    )
-                    link_sync_version = 1
-                    for kw_to_unlink in keywords_to_unlink:
-                        keyword_uuid_val = kw_to_unlink["keyword_uuid"]
-                        link_composite_uuid = f"{prompt_uuid}_{keyword_uuid_val}"
-                        unlink_payload = {
-                            "prompt_uuid": prompt_uuid,
-                            "keyword_uuid": keyword_uuid_val,
-                        }
-                        self._log_sync_event(
-                            conn,
-                            "PromptKeywordLinks",
-                            link_composite_uuid,
-                            "unlink",
-                            link_sync_version,
-                            unlink_payload,
+                    if int(row["version"]) != resolved_version:
+                        raise ExpectedVersionConflictError(
+                            "Prompt changed after it was opened."
                         )
-                    logging.debug(
-                        f"Unlinked {len(keywords_to_unlink)} keywords from soft-deleted prompt ID {prompt_id}."
+                    self._validate_delete_prompt_row(
+                        conn, row=row, expected_version=resolved_version
                     )
-
-                logger.info(
-                    f"Soft deleted prompt '{prompt_id_or_name_or_uuid}' (ID: {prompt_id}, UUID: {prompt_uuid})."
-                )
-
-                # Log success metrics
-                duration = time.time() - start_time
-                log_histogram(
-                    "prompts_db_operation_duration",
-                    duration,
-                    labels={
-                        "operation": "soft_delete_prompt",
-                        "lookup_by": col_name,
-                        "keywords_unlinked": str(len(keywords_to_unlink)),
-                    },
-                )
-                log_counter(
-                    "prompts_db_operation_count",
-                    labels={
-                        "operation": "soft_delete_prompt",
-                        "status": "success",
-                        "had_keywords": "true" if keywords_to_unlink else "false",
-                    },
-                )
-
-                return True
-        except (ConflictError, DatabaseError, sqlite3.Error) as e:
-            # Log error metrics
-            duration = time.time() - start_time
-            error_type = (
-                "conflict"
-                if isinstance(e, ConflictError)
-                else "database_error"
-                if isinstance(e, DatabaseError)
-                else "sqlite_error"
+                    self._delete_prompt_in_transaction(
+                        conn, row=row, expected_version=resolved_version
+                    )
+                    deleted = True
+        except ExpectedVersionConflictError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "Prompt mutation failed operation=delete count=1 category={}",
+                type(exc).__name__,
             )
-            log_histogram(
-                "prompts_db_operation_duration",
-                duration,
-                labels={
-                    "operation": "soft_delete_prompt",
-                    "lookup_by": col_name if "col_name" in locals() else "unknown",
-                    "keywords_unlinked": "0",
-                },
-            )
-            log_counter(
-                "prompts_db_operation_count",
-                labels={
-                    "operation": "soft_delete_prompt",
-                    "status": "error",
-                    "error_type": error_type,
-                },
-            )
+            raise DatabaseError("Prompt delete failed.") from None
 
-            logger.opt(exception=True).error(
-                f"Error soft deleting prompt '{prompt_id_or_name_or_uuid}': {e}"
-            )
-            if isinstance(e, (ConflictError, DatabaseError)):
-                raise e
-            else:
-                raise DatabaseError(f"Failed to soft delete prompt: {e}") from e
+        if deleted:
+            logger.info("Prompt mutation committed operation=delete count=1")
+        return deleted
 
     def restore_deleted_prompt(
         self,
@@ -2320,26 +2661,7 @@ class PromptsDatabase:
         *,
         expected_version: int,
     ) -> Dict[str, Any]:
-        """Restore one exact Prompt/Recipe tombstone as a new current version.
-
-        This is the store-level resurrection seam required by ADR-055. It is
-        intentionally separate from ``restore_prompt_history_entry``: retained
-        history restores artifact content onto an active row, while this method
-        only revives a deleted current row whose tombstone version still matches
-        the caller's receipt.
-
-        Args:
-            prompt_id_or_name_or_uuid: Numeric id, UUID, or name of the tombstone.
-            expected_version: Exact deleted-row version captured after delete.
-
-        Returns:
-            The restored Prompt row with canonical keywords attached.
-
-        Raises:
-            InputError: If the identifier or expected version is invalid.
-            ExpectedVersionConflictError: If the row is missing, active, or newer.
-            DatabaseError: If exact tombstone recovery metadata is unavailable.
-        """
+        """Restore one legacy ID/name/UUID tombstone through the shared core."""
         if (
             not isinstance(expected_version, int)
             or isinstance(expected_version, bool)
@@ -2358,112 +2680,49 @@ class PromptsDatabase:
             raise InputError(f"Invalid column name: {col_name}")
 
         try:
-            with self.transaction() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
+            self._require_prompt_mutation_transaction_ownership()
+            with self.transaction(immediate=True) as conn:
+                row = conn.execute(
                     f"SELECT * FROM Prompts WHERE {col_name} = ?",
                     (prompt_id_or_name_or_uuid,),
-                )
-                row = cursor.fetchone()
+                ).fetchone()
                 if (
                     row is None
                     or int(row["deleted"]) != 1
                     or int(row["version"]) != expected_version
                 ):
                     raise ExpectedVersionConflictError(
-                        "Prompt tombstone changed or is no longer deleted.",
-                        "Prompts",
-                        prompt_id_or_name_or_uuid,
+                        "Prompt tombstone changed or is no longer deleted."
                     )
-
-                prompt_id = int(row["id"])
-                prompt_uuid = str(row["uuid"])
-                cursor.execute(
-                    """
-                    SELECT payload
-                    FROM sync_log
-                    WHERE entity = 'Prompts'
-                      AND entity_uuid = ?
-                      AND operation = 'delete'
-                      AND version = ?
-                    ORDER BY change_id DESC
-                    LIMIT 1
-                    """,
-                    (prompt_uuid, expected_version),
+                recovery_keywords = self._validate_restore_prompt_row(
+                    conn, row=row, expected_version=expected_version
                 )
-                tombstone_event = cursor.fetchone()
-                try:
-                    tombstone_payload = json.loads(tombstone_event["payload"])
-                except (TypeError, KeyError, json.JSONDecodeError):
-                    tombstone_payload = None
-                if (
-                    not isinstance(tombstone_payload, dict)
-                    or tombstone_payload.get("keywords_captured") is not True
-                    or not isinstance(tombstone_payload.get("keywords"), list)
-                    or any(
-                        not isinstance(keyword, str)
-                        for keyword in tombstone_payload["keywords"]
-                    )
-                ):
-                    raise DatabaseError(
-                        "Prompt tombstone does not contain exact recovery metadata."
-                    )
-                keywords = self._canonicalize_prompt_keywords(
-                    tombstone_payload["keywords"]
-                )
-
-                current_time = self._get_current_utc_timestamp_str()
-                new_version = expected_version + 1
-                cursor.execute(
-                    """
-                    UPDATE Prompts
-                    SET deleted = 0, last_modified = ?, version = ?, client_id = ?
-                    WHERE id = ? AND deleted = 1 AND version = ?
-                    """,
-                    (
-                        current_time,
-                        new_version,
-                        self.client_id,
-                        prompt_id,
-                        expected_version,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    raise ExpectedVersionConflictError(
-                        "Prompt tombstone changed before it could be restored.",
-                        "Prompts",
-                        prompt_id,
-                    )
-
-                cursor.execute("SELECT * FROM Prompts WHERE id = ?", (prompt_id,))
-                restored_payload = dict(cursor.fetchone())
-                change_id = self._log_sync_event(
+                entry = self._restore_prompt_in_transaction(
                     conn,
-                    "Prompts",
-                    prompt_uuid,
-                    "update",
-                    new_version,
-                    restored_payload,
+                    row=row,
+                    expected_version=expected_version,
+                    keyword_rows=recovery_keywords,
                 )
-                self.update_keywords_for_prompt(prompt_id, keywords)
-                self._finalize_prompt_sync_snapshot(
-                    conn, change_id, prompt_id, restored_payload
-                )
-                self._update_fts_prompt(
-                    conn,
-                    prompt_id,
-                    restored_payload["name"],
-                    restored_payload.get("author"),
-                    restored_payload.get("details"),
-                    restored_payload.get("system_prompt"),
-                    restored_payload.get("user_prompt"),
-                )
-                restored_payload["keywords"] = keywords
-                return restored_payload
-        except (InputError, ConflictError, DatabaseError):
+                restored_row = conn.execute(
+                    "SELECT * FROM Prompts WHERE id = ?", (entry.local_id,)
+                ).fetchone()
+                if restored_row is None:
+                    raise DatabaseError("Prompt restore state is unavailable.")
+                restored_payload = dict(restored_row)
+                restored_payload["keywords"] = [
+                    keyword_row["keyword"] for keyword_row in recovery_keywords
+                ]
+        except ExpectedVersionConflictError:
             raise
-        except sqlite3.Error as exc:
-            raise DatabaseError(f"Failed to restore deleted prompt: {exc}") from exc
+        except Exception as exc:
+            logger.error(
+                "Prompt mutation failed operation=restore count=1 category={}",
+                type(exc).__name__,
+            )
+            raise DatabaseError("Prompt restore failed.") from None
+
+        logger.info("Prompt mutation committed operation=restore count=1")
+        return restored_payload
 
     def soft_delete_keyword(self, keyword_text: str) -> bool:
         if not keyword_text or not keyword_text.strip():
@@ -4779,3 +5038,15 @@ def export_prompts_formatted(
         error_msg = f"Unexpected error exporting prompts: {e}"
         logging.opt(exception=True).error(error_msg)
         return error_msg, "None"
+
+
+# Import after the legacy standalone surface is defined. Importing this submodule
+# executes Prompt_Management.__init__, whose compatibility adapters import the
+# database class and standalone helpers above.
+from ..Prompt_Management.prompt_batch_models import (  # noqa: E402
+    PromptBatchDeleteResult,
+    PromptBatchRestoreResult,
+    PromptBatchTarget,
+    PromptDeleteReceiptEntry,
+    PromptRestoreResultEntry,
+)
