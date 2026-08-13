@@ -255,6 +255,44 @@ plus `kw-quillon-mast` ("guy tension" vs a document saying "tensions") and
 fallback's own two. The shipped class in one line: a typed content word now
 matches a document word that STARTS with it; the reverse does not hold.
 
+## LIVE CHECK (2026-08-13) — what was demonstrated live, and what is bounded
+
+Scratch profile (own `[paths] data_dir`, `HOME`/`XDG_*` redirected, model
+cache read-only, `HF_HUB_OFFLINE=1`). Isolation confirmed at the running PID
+(`lsof`: 0 handles under the real profile, 64 under the scratch) and the real
+`config.toml` byte-identical before and after (sha256 `ea1f6cfb…`). Library
+built through the app's own paths: 36 of this repo's User Guide pages written
+with `add_note`, indexed with `index_entries`; the app listed "Notes (36)".
+
+**Through the UI:** Library ▸ Search / RAG reached "mode: Search ⇄ ✓ RAG
+Answer" and started a run — which **never returned**: "searching · Notes…" at
+~98% CPU for **eleven minutes**, no Evidence row. That is the 2026-08-12
+recurrence (4+ minutes then), now filed as **TASK-15810**; a CPU sample puts
+the spin in the Python interpreter, NOT in model loading, so the old
+"embedding stack came up" attribution is not established.
+
+**Through the engine, against the same app-written notes and vector index,
+two arms one config value apart** (the TASK-15400 precedent, and stated as
+the fallback it is):
+
+- `how do I schedule a watchlist brief` — shipped: primary
+  `'"how" "do" "I" "schedule" "a" "watchlist" "brief"'` returns nothing, the
+  fallback `'"schedule"* "watchlist"* "brief"*'` returns **1 row**
+  (`watchlists.md`, stamped `prefix`); old default: `'"schedule" "watchlist"
+  "brief"'`, **0 rows** — the page says "briefing", never "brief". Fused
+  score 0.1167 → **0.1667** (fts-only + vector = merged row); rank unchanged
+  at 1 because the vector leg already had it.
+- `what does the anyone brief do` (vector leg misses the target) — shipped:
+  `watchlists.md` at **rank 7 of 13**; old default: **absent**, 12 rows.
+- Control `how do I change the color theme and appearance` — **identical 15
+  rows, order and scores**, both arms.
+
+**Bound:** on 36 real documentation pages the vector leg answers nearly
+everything, so the gain reads as a keyword row plus a score rather than a
+reordering — which is what 0-of-105 predicted. `Docs/User_Guide/library/
+search-and-rag.md` carries the same three results and the same bound, stamped
+at `db73f0953`.
+
 Full tables, the rule line by line, and the reports:
 `.superpowers/sdd/2026-08-13-rag-keyword-leg-tiered-merge/task-{1,2,3,4,5}-report.md`.
 Harness record: `Tests/RAG_Eval/README.md` ("The fifth arc, and the re-stamp

@@ -203,6 +203,26 @@ suite" is exactly when the suite's isolation fixture is absent.
 
 ---
 
+## Redirecting the TUI's stderr blanks the pane — the app renders there, and an empty `capture-pane` looks like a hung app (TASK-15700, 2026-08-13)
+
+**What happened.** A live check launched the app in tmux with the usual
+recipe plus `2>$SCRATCH/app.log`, to keep the log out of the pane.
+`capture-pane -p` then returned **52 blank lines** while the process sat at
+~10% CPU — which reads exactly like "the app hung during startup". Two
+launches and a round of log-archaeology were spent on that: the app's own
+file log ended at `scheduler_configured`, and the redirected `app.log` turned
+out to contain 16,537 lines of **ANSI render output** — the splash screen's
+starfield. The render goes to **stderr**; sending stderr to a file (or
+`/dev/null`) leaves the pane genuinely empty and there is nothing to capture.
+Relaunching with no redirect at all painted the nav bar immediately.
+
+**What to do.** Launch with stderr left attached to the pane. If a log is in
+the way, read the app's own file sink under the profile's data directory
+(`<data_dir>/<user>/tldw_cli_app.log`) instead of redirecting. And before
+concluding a launch hung, check that a *process* is alive AND that something
+was written where the render should be going — an empty pane plus a live PID
+is more often a redirect than a hang.
+
 ## Credentials in a live run
 
 A live credential pasted into a session is a real secret. Keep it in an env var for the
