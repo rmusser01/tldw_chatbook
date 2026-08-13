@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_endpoints import (
     effective_provider_endpoint,
     generic_endpoint_differs,
+    normalize_generic_endpoint_for_compare,
     provider_uses_endpoint,
     unsaved_endpoint_copy,
 )
@@ -45,6 +46,8 @@ from tldw_chatbook.Chat.console_prepared_request import (
 )
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_PER_IMAGE_TOKENS,
+    ProviderContinuationSidecar,
+    is_deleted_history_value,
     provider_continuation_owner_groups,
 )
 from tldw_chatbook.Chat.provider_continuation import (
@@ -56,6 +59,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.qwencloud import (
     normalize_qwencloud_api_mode,
@@ -456,6 +460,7 @@ class ConsoleProviderResolution:
     streaming: bool = True
     prompt_caching: bool | None = None
     api_mode: str | None = None
+    continuation_protocol: str | None = None
 
 
 def _freeze_auxiliary_value(value: Any) -> Any:
@@ -1028,6 +1033,8 @@ class ConsoleProviderGateway:
         apply_safety_window: bool = True,
         response_format: Mapping[str, Any] | None = None,
         continuation_target: ContinuationRestoreTarget | None = None,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_owner_key: str | None = None,
     ) -> PreparedProviderRequest:
         """Prepare the one immutable payload later consumed by dispatch.
 
@@ -1038,14 +1045,27 @@ class ConsoleProviderGateway:
 
         if isinstance(messages, PreparedConsoleRequest) and tools is not None:
             raise ValueError("tools are already owned by PreparedConsoleRequest")
+        sidecar = tuple(continuation_sidecar)
+        if sidecar and (continuation_target is None or not continuation_owner_key):
+            raise ValueError(
+                "continuation target and owner key are required for private history"
+            )
         if continuation_target is not None and (
             continuation_target.provider,
             continuation_target.model,
             continuation_target.api_base_url,
         ) != (
-            resolution.provider,
+            provider_config_key(resolution.provider),
             resolution.model or "",
-            resolution.base_url,
+            normalize_generic_endpoint_for_compare(resolution.base_url),
+        ):
+            raise ContinuationConflictError(
+                "Continuation restore target mismatch."
+            ) from None
+        if (
+            continuation_target is not None
+            and resolution.continuation_protocol is not None
+            and continuation_target.protocol != resolution.continuation_protocol
         ):
             raise ContinuationConflictError(
                 "Continuation restore target mismatch."
@@ -1067,23 +1087,34 @@ class ConsoleProviderGateway:
                 for group in continuation_groups:
                     validate_continuation_restore(group.checkpoint, continuation_target)
             semantic = messages
-        elif continuation_target is None:
+        elif not sidecar:
             if any("provider_continuation" in message for message in messages):
                 raise ValueError(
                     "continuation_target is required for provider continuation history"
                 )
             semantic = build_console_request(messages, tools=tools or ())
         else:
+            assert continuation_target is not None
+            assert continuation_owner_key is not None
+            selected_owner_ids = {
+                message.get(continuation_owner_key)
+                for message in messages
+                if not is_deleted_history_value(message.get("deleted"))
+                and type(message.get(continuation_owner_key)) is str
+            }
+            selected_sidecar = tuple(
+                item for item in sidecar if item.owner_message_id in selected_owner_ids
+            )
             continuation_groups = provider_continuation_owner_groups(
-                messages, target=continuation_target
+                selected_sidecar, target=continuation_target
             )
             owner_ids = {group.owner_message_id for group in continuation_groups}
             visible_messages: list[dict[str, Any]] = []
             for message in messages:
-                if message.get("deleted") is True:
+                if is_deleted_history_value(message.get("deleted")):
                     continue
                 row = dict(message)
-                owner_id = row.pop("id", None)
+                owner_id = row.pop(continuation_owner_key, None)
                 row.pop("provider_continuation", None)
                 row.pop("deleted", None)
                 if type(owner_id) is str and owner_id in owner_ids:
@@ -1596,6 +1627,11 @@ class ConsoleProviderGateway:
             prompt_caching = bool(
                 _caching_config_value(app_config).get("anthropic_enabled", True)
             )
+        continuation_protocol = (
+            "responses"
+            if identity.execution_key in {"moonshot", "zai", "deepseek"}
+            else None
+        )
 
         return ConsoleProviderResolution(
             provider=selection.provider,
@@ -1608,6 +1644,7 @@ class ConsoleProviderGateway:
             api_key_source=readiness.api_key_source,
             prompt_caching=prompt_caching,
             api_mode=api_mode,
+            continuation_protocol=continuation_protocol,
             temperature=selection.temperature,
             top_p=selection.top_p,
             min_p=selection.min_p,

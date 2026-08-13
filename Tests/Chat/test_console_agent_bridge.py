@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRestoreTarget,
@@ -4179,6 +4180,62 @@ def test_run_reply_returns_runoutcome_done():
     assert run_id == "run-1"
     assert result.status == RUN_DONE
     assert result.final_text == "done"
+
+
+def test_run_reply_passes_private_continuation_sidecar_to_agent_service():
+    bridge = _make_bridge()
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+    checkpoint = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="deepseek",
+        protocol="responses",
+        model="deepseek-v4-flash",
+        api_base_url="https://api.deepseek.com/v1",
+        state="complete",
+        rounds=(
+            ContinuationRound(
+                assistant_content="",
+                reasoning_blocks=("BRIDGE-PRIVATE-CANARY",),
+                calls=(
+                    ContinuationCall(
+                        call_id="c",
+                        name="lookup",
+                        arguments="{}",
+                        state="completed",
+                    ),
+                ),
+            ),
+        ),
+    )
+    sidecar = (ProviderContinuationSidecar("a-old", checkpoint),)
+    target = ContinuationRestoreTarget(
+        "deepseek",
+        "deepseek-v4-flash",
+        "responses",
+        "https://api.deepseek.com/v1",
+    )
+
+    with patch.object(
+        AgentService, "run_turn", return_value=("run-1", outcome)
+    ) as run_turn:
+        bridge.run_reply(
+            conversation_id="c1",
+            session_id="s1",
+            resolution=None,
+            assistant_message_id="a1",
+            model="gpt-4",
+            session_system_prompt="sys",
+            agent_messages=[{"role": "assistant", "content": "old", "_owner": "a-old"}],
+            should_cancel=lambda: False,
+            continuation_sidecar=sidecar,
+            continuation_target=target,
+            continuation_owner_key="_owner",
+        )
+
+    assert run_turn.call_args.kwargs["continuation_sidecar"] is sidecar
+    assert run_turn.call_args.kwargs["continuation_target"] is target
+    assert run_turn.call_args.kwargs["continuation_owner_key"] == "_owner"
 
 
 def test_run_reply_returns_runoutcome_error():

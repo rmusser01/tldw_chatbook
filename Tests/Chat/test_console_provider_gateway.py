@@ -46,6 +46,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRestoreTarget,
     parse_provider_continuation_json,
 )
+from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 
 
 def test_gateway_prepare_budgets_private_owner_group_on_real_production_path() -> None:
@@ -76,14 +77,13 @@ def test_gateway_prepare_budgets_private_owner_group_on_real_production_path() -
         }
     )
     messages = [
-        {"id": "u1", "role": "user", "content": "old"},
+        {"_owner": "u1", "role": "user", "content": "old"},
         {
-            "id": "a1",
+            "_owner": "a1",
             "role": "assistant",
             "content": "old answer",
-            "provider_continuation": checkpoint,
         },
-        {"id": "u2", "role": "user", "content": "current"},
+        {"_owner": "u2", "role": "user", "content": "current"},
     ]
     gateway = ConsoleProviderGateway(environ={})
     resolution = ConsoleProviderResolution(
@@ -93,6 +93,7 @@ def test_gateway_prepare_budgets_private_owner_group_on_real_production_path() -
         ready=True,
         execution_key="deepseek",
         max_tokens=10,
+        continuation_protocol="responses",
     )
     target = ContinuationRestoreTarget(
         provider="deepseek",
@@ -106,6 +107,8 @@ def test_gateway_prepare_budgets_private_owner_group_on_real_production_path() -
         messages,
         context_window_override_tokens=600,
         continuation_target=target,
+        continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+        continuation_owner_key="_owner",
     )
     ordinary = gateway.prepare_chat_request(
         resolution,
@@ -122,19 +125,27 @@ def test_gateway_prepare_budgets_private_owner_group_on_real_production_path() -
     assert [row["content"] for row in prepared.messages_payload] == ["current"]
     assert all("provider_continuation" not in row for row in prepared.messages_payload)
     assert "GATEWAY-PRIVATE-CANARY" not in repr(prepared)
-    assert messages[1]["provider_continuation"] is checkpoint
+    assert messages[1] == {
+        "_owner": "a1",
+        "role": "assistant",
+        "content": "old answer",
+    }
 
     with pytest.raises(ContinuationConflictError, match="restore target mismatch"):
         gateway.prepare_chat_request(
             resolution,
             messages,
             continuation_target=dataclasses.replace(target, model="wrong-model"),
+            continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+            continuation_owner_key="_owner",
         )
     with pytest.raises(ContinuationConflictError, match="restore target mismatch"):
         gateway.prepare_chat_request(
             dataclasses.replace(resolution, provider="moonshot"),
             messages,
             continuation_target=target,
+            continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+            continuation_owner_key="_owner",
         )
 
 
@@ -4977,9 +4988,7 @@ def test_aclose_does_not_close_a_still_running_childs_client():
         return gateway._active_http_client()
 
     try:
-        child_client = asyncio.run_coroutine_threadsafe(
-            touch(), child_loop
-        ).result(5)
+        child_client = asyncio.run_coroutine_threadsafe(touch(), child_loop).result(5)
         assert child_client.is_closed is False
 
         async def close_from_the_app_loop() -> None:
@@ -5004,9 +5013,9 @@ def test_aclose_does_not_close_a_still_running_childs_client():
         assert again is child_client
     finally:
         try:
-            asyncio.run_coroutine_threadsafe(
-                child_client.aclose(), child_loop
-            ).result(5)
+            asyncio.run_coroutine_threadsafe(child_client.aclose(), child_loop).result(
+                5
+            )
         except Exception:  # noqa: BLE001 -- teardown best-effort
             pass
         child_loop.call_soon_threadsafe(child_loop.stop)

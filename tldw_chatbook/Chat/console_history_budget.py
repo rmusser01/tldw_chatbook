@@ -30,23 +30,61 @@ DEFAULT_PER_IMAGE_TOKENS = 1024
 _MIN_SAFETY_MARGIN = 512
 
 
+@dataclass(frozen=True, repr=False)
+class ProviderContinuationSidecar:
+    """Private checkpoint attached to one visible assistant owner ID."""
+
+    owner_message_id: str
+    checkpoint: ProviderContinuationCheckpoint
+
+    def __post_init__(self) -> None:
+        if type(self.owner_message_id) is not str or not self.owner_message_id.strip():
+            raise ValueError("Continuation owner ID must be nonblank.")
+        if not isinstance(self.checkpoint, ProviderContinuationCheckpoint):
+            raise TypeError("Continuation checkpoint must be canonical.")
+
+    def __repr__(self) -> str:
+        return (
+            "ProviderContinuationSidecar("
+            f"owner_message_id={self.owner_message_id!r}, checkpoint=<redacted>)"
+        )
+
+
+def is_deleted_history_value(value: object) -> bool:
+    """Accept only SQLite's exact deleted encodings, never generic truthiness."""
+    return value is True or type(value) is int and value == 1
+
+
 def provider_continuation_owner_groups(
-    messages: Sequence[Mapping[str, Any]],
+    messages: Sequence[Mapping[str, Any] | ProviderContinuationSidecar],
     *,
     target: ContinuationRestoreTarget,
 ) -> tuple[ContinuationOwnerGroup, ...]:
     """Return validated canonical private groups for one active history path."""
     if target.provider not in {"moonshot", "zai", "deepseek"}:
+        for message in messages:
+            if isinstance(message, ProviderContinuationSidecar):
+                validate_continuation_restore(message.checkpoint, target)
         return ()
     groups: list[ContinuationOwnerGroup] = []
     for message in messages:
-        if message.get("deleted") is True:
-            continue
-        checkpoint = message.get("provider_continuation")
+        if isinstance(message, ProviderContinuationSidecar):
+            owner_id = message.owner_message_id
+            checkpoint = message.checkpoint
+            visible: Mapping[str, Any] = {
+                "id": owner_id,
+                "role": "assistant",
+                "content": "",
+            }
+        else:
+            if is_deleted_history_value(message.get("deleted")):
+                continue
+            checkpoint = message.get("provider_continuation")
+            visible = message
         if not isinstance(checkpoint, ProviderContinuationCheckpoint):
             continue
         validate_continuation_restore(checkpoint, target)
-        groups.append(continuation_owner_group(message, checkpoint))
+        groups.append(continuation_owner_group(visible, checkpoint))
     return tuple(groups)
 
 

@@ -80,8 +80,12 @@ from tldw_chatbook.Chat.console_chat_store import (
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
+    ProviderContinuationSidecar,
     bound_messages_to_window,
     count_console_messages_tokens,
+)
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    normalize_generic_endpoint_for_compare,
 )
 from tldw_chatbook.Chat.console_context_compaction import (
     CompactionAdmission,
@@ -301,6 +305,27 @@ CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
 # before the payload leaves the controller for a provider/agent, so no
 # provider ever sees it.
 NATIVE_MESSAGE_ID_KEY = "_native_message_id"
+
+
+def _continuation_restore_target_for_resolution(
+    resolution: Any,
+) -> ContinuationRestoreTarget | None:
+    """Build an exact target only from explicitly pinned resolution fields."""
+    protocol = getattr(resolution, "continuation_protocol", None) or getattr(
+        resolution, "api_mode", None
+    )
+    base_url = normalize_generic_endpoint_for_compare(
+        getattr(resolution, "base_url", None)
+    )
+    model = getattr(resolution, "model", None)
+    if not protocol or not base_url.startswith(("http://", "https://")) or not model:
+        return None
+    return ContinuationRestoreTarget(
+        provider=provider_config_key(str(getattr(resolution, "provider", ""))),
+        model=str(model),
+        protocol=str(protocol),
+        api_base_url=base_url,
+    )
 
 
 def _normalize_world_info_history(
@@ -2404,16 +2429,13 @@ class ConsoleChatController:
                 "Provider credentials are not ready. Fix Settings, then retry.",
             )
             return False
-        target = ContinuationRestoreTarget(
-            provider=provider_config_key(str(getattr(resolution, "provider", ""))),
-            model=str(getattr(resolution, "model", "") or ""),
-            protocol=str(
-                getattr(resolution, "continuation_protocol", None)
-                or getattr(resolution, "api_mode", None)
-                or "chat_completions"
-            ),
-            api_base_url=str(getattr(resolution, "base_url", "")).rstrip("/"),
-        )
+        target = _continuation_restore_target_for_resolution(resolution)
+        if target is None:
+            self.store.set_provider_continuation_warning(
+                message.id,
+                "Pinned provider settings are incomplete. Restore those settings or Discard.",
+            )
+            return False
         try:
             validate_continuation_restore(checkpoint, target)
         except Exception:
@@ -8673,6 +8695,16 @@ class ConsoleChatController:
             turn_context = self.resolve_turn_execution_context(owner_id)
         elif turn_context.session_id != owner_id:
             raise ValueError("Console turn context does not own the assistant row.")
+        continuation_sidecar = self._provider_continuation_sidecar_for_session(owner_id)
+        continuation_target = (
+            _continuation_restore_target_for_resolution(resolution)
+            if continuation_sidecar
+            else None
+        )
+        if continuation_sidecar and continuation_target is None:
+            raise ValueError(
+                "Provider continuation history requires a pinned provider resolution."
+            )
         # A character session always takes the plain-provider
         # path, even with the global agent runtime enabled and a bridge
         # present. Keyed on the message's OWNING session (looked up here,
@@ -8805,10 +8837,21 @@ class ConsoleChatController:
         # `_run_agent_reply`), so no provider/gateway/agent ever sees the key.
         # Rebuild fresh row dicts rather than mutating in place, since transforms
         # can leave earlier rows aliased to freshly-built builder dicts.
-        provider_messages = [
-            {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
+        selected_owner_ids = {
+            row.get(NATIVE_MESSAGE_ID_KEY)
             for row in provider_messages
-        ]
+            if type(row.get(NATIVE_MESSAGE_ID_KEY)) is str
+        }
+        continuation_sidecar = tuple(
+            item
+            for item in continuation_sidecar
+            if item.owner_message_id in selected_owner_ids
+        )
+        if not continuation_sidecar:
+            provider_messages = [
+                {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
+                for row in provider_messages
+            ]
         if bound is not None and bound.dropped_count:
             # Reuse the guarded owner_id resolved above; the note helper
             # swallows a store-close race that happens during the append.
@@ -8848,6 +8891,8 @@ class ConsoleChatController:
                     citation_repair_session=citation_repair_session,
                     stream_signals=stream_signals,
                     turn_context=turn_context,
+                    continuation_sidecar=continuation_sidecar,
+                    continuation_history_target=continuation_target,
                 )
             return await self._run_direct_provider_reply(
                 resolution=resolution,
@@ -8859,6 +8904,8 @@ class ConsoleChatController:
                 prefill_from_one_shot=prefill_from_one_shot,
                 citation_repair_session=citation_repair_session,
                 stream_signals=stream_signals,
+                continuation_sidecar=continuation_sidecar,
+                continuation_target=continuation_target,
             )
         finally:
             if (
@@ -9064,6 +9111,8 @@ class ConsoleChatController:
         prefill_from_one_shot: bool,
         citation_repair_session: ConsoleCitationRepairSession | None,
         stream_signals: ConsoleProviderStreamSignals | None,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_target: ContinuationRestoreTarget | None = None,
     ) -> ConsoleSubmitResult:
         # Dev's citation-repair refactor extracted this streaming body out of
         # the wrapper (`_stream_assistant_response_inner`) into its own
@@ -9089,7 +9138,15 @@ class ConsoleChatController:
         dispatch_request: Any = provider_messages
         prepare_request = getattr(self.provider_gateway, "prepare_chat_request", None)
         if callable(prepare_request):
-            dispatch_request = prepare_request(resolution, provider_messages)
+            dispatch_request = prepare_request(
+                resolution,
+                provider_messages,
+                continuation_target=continuation_target,
+                continuation_sidecar=continuation_sidecar,
+                continuation_owner_key=(
+                    NATIVE_MESSAGE_ID_KEY if continuation_sidecar else None
+                ),
+            )
             dropped_messages = int(
                 getattr(dispatch_request, "dropped_messages", 0) or 0
             )
@@ -9614,6 +9671,8 @@ class ConsoleChatController:
             Callable[[ProviderContinuationCheckpoint], list[dict]] | None
         ) = None,
         resume_provider_continuation: bool = False,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_history_target: ContinuationRestoreTarget | None = None,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
         logger.info(
@@ -9809,7 +9868,11 @@ class ConsoleChatController:
                 session_id=session_id,
                 resolution=resolution,
                 assistant_message_id=assistant_message_id,
-                model=turn_context.effective_model or "",
+                model=(
+                    getattr(resolution, "model", None)
+                    or turn_context.effective_model
+                    or ""
+                ),
                 session_system_prompt=session_system_prompt,
                 agent_messages=agent_messages,
                 should_cancel=should_cancel,
@@ -9858,6 +9921,11 @@ class ConsoleChatController:
                 restore_provider_target=restore_provider_target,
                 expand_provider_continuation=expand_provider_continuation,
                 resume_provider_continuation=resume_provider_continuation,
+                continuation_sidecar=continuation_sidecar,
+                continuation_target=continuation_history_target,
+                continuation_owner_key=(
+                    NATIVE_MESSAGE_ID_KEY if continuation_sidecar else None
+                ),
             )
         except asyncio.CancelledError:
             if cancel_event.is_set():
@@ -10664,6 +10732,21 @@ class ConsoleChatController:
             annotate_ids=annotate_ids,
             session_id=session_id,
             turn_context=turn_context,
+        )
+
+    def _provider_continuation_sidecar_for_session(
+        self, session_id: str
+    ) -> tuple[ProviderContinuationSidecar, ...]:
+        """Capture private checkpoints for assistant owners on the active path."""
+        active_ids = set(self.store.active_path_message_ids(session_id))
+        return tuple(
+            ProviderContinuationSidecar(message.id, message.provider_continuation)
+            for message in self.store.messages_for_session(session_id)
+            if message.id in active_ids
+            and message.role is ConsoleMessageRole.ASSISTANT
+            and isinstance(
+                message.provider_continuation, ProviderContinuationCheckpoint
+            )
         )
 
     def _provider_messages_through_message(

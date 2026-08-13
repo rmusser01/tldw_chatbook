@@ -67,6 +67,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderCallSignals,
     ConsoleProviderGateway,
@@ -2318,6 +2319,9 @@ class ConsoleAgentBridge:
             Callable[[ProviderContinuationCheckpoint], list[dict]] | None
         ) = None,
         resume_provider_continuation: bool = False,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_target: ContinuationRestoreTarget | None = None,
+        continuation_owner_key: str | None = None,
     ) -> tuple[str, RunOutcome]:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP, by task-545/T6 for a per-run builtin_gate, and extended again
@@ -3080,6 +3084,9 @@ class ConsoleAgentBridge:
                 restore_provider_continuation=restore_provider_continuation,
                 restore_provider_target=restore_provider_target,
                 resume_provider_continuation=resume_provider_continuation,
+                continuation_sidecar=continuation_sidecar,
+                continuation_target=continuation_target,
+                continuation_owner_key=continuation_owner_key,
             )
         finally:
             # PR2b Task 1: clear the published service in the SAME

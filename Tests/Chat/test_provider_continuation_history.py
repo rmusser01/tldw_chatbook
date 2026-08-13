@@ -201,3 +201,26 @@ def test_groups_only_selected_active_branch_and_skips_deleted_or_malformed_owner
     groups = provider_continuation_owner_groups(selected, target=_target())
 
     assert [group.owner_message_id for group in groups] == ["a-selected"]
+
+
+@pytest.mark.parametrize(
+    ("deleted", "included"),
+    [(True, False), (1, False), (False, True), (0, True), ("1", True), (2, True)],
+)
+def test_deleted_owner_accepts_only_exact_sqlite_boolean_encodings(
+    deleted, included
+) -> None:
+    groups = provider_continuation_owner_groups(
+        [
+            {
+                "id": "a1",
+                "role": "assistant",
+                "content": "visible",
+                "deleted": deleted,
+                "provider_continuation": _checkpoint(),
+            }
+        ],
+        target=_target(),
+    )
+
+    assert bool(groups) is included

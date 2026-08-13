@@ -32,8 +32,12 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.Chat import console_history_budget as budget_module
-from tldw_chatbook.Chat.console_history_budget import bound_messages_to_window
+from tldw_chatbook.Chat.console_history_budget import (
+    ProviderContinuationSidecar,
+    bound_messages_to_window,
+)
 from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRestoreTarget,
     continuation_owner_group,
     parse_provider_continuation_json,
 )
@@ -616,7 +620,9 @@ def test_flag_on_and_log_unavailable_still_sends_full_history(db, tmp_path, monk
     service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "start"}],
-        config=_run_config(native_tools=False),
+        config=dataclasses.replace(
+            _run_config(native_tools=False), model="deepseek-v4-flash"
+        ),
         api_endpoint="llama_cpp",
     )
     last_payload = chat.calls[-1]["messages_payload"]
@@ -1279,3 +1285,45 @@ def test_run_log_eviction_never_logs_private_counter_failures() -> None:
 
     assert result is payload
     assert "PRIVATE-COUNTER-FAILURE-CANARY" not in "".join(map(str, logged))
+
+
+def test_agent_service_run_turn_budgets_private_sidecar_on_real_send(
+    db, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv(_EVICT_ENV_VAR, "true")
+    monkeypatch.setenv(_MIN_RECENT_ROUNDS_ENV_VAR, "1")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(budget_module, "get_model_token_limit", lambda *a, **k: 650)
+    checkpoint = _completed_continuation_group("a1").checkpoint
+    chat = ScriptedChat(["done."])
+    service = AgentService(db=db, registry=_make_registry(0), chat_call=chat)
+    source = [
+        {"role": "user", "content": "old"},
+        {"role": "assistant", "content": "old answer", "_owner": "a1"},
+        {"role": "user", "content": "current"},
+    ]
+
+    _, outcome = service.run_turn(
+        conversation_id="c",
+        messages=source,
+        config=dataclasses.replace(
+            _run_config(native_tools=False), model="deepseek-v4-flash"
+        ),
+        api_endpoint="deepseek",
+        continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+        continuation_target=ContinuationRestoreTarget(
+            "deepseek",
+            "deepseek-v4-flash",
+            "responses",
+            "https://api.deepseek.com/v1",
+        ),
+        continuation_owner_key="_owner",
+    )
+
+    assert chat.calls, outcome
+    sent = chat.calls[0]["messages_payload"]
+    assert not any(row.get("content") == "old answer" for row in sent)
+    assert any(row.get("content") == "current" for row in sent)
+    assert all("_owner" not in row for row in sent)
+    assert "PRIVATE-RUN-LOG-CANARY" not in repr(sent)
+    assert source[1]["_owner"] == "a1"

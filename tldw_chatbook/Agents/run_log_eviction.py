@@ -360,6 +360,7 @@ def bound_history_for_send(
     count_fn: Callable[[list[dict[str, Any]], str], int] | None = None,
     min_recent_rounds: int = DEFAULT_MIN_RECENT_ROUNDS,
     continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
+    continuation_owner_key: str = "id",
 ) -> list[dict[str, Any]]:
     """Bound one turn's SEND payload to the model window, run-log-aware.
 
@@ -426,7 +427,9 @@ def bound_history_for_send(
     try:
         boundary = _make_round_boundary(native=native)
         owner_ids = {
-            message.get("id") for message in payload if type(message.get("id")) is str
+            message.get(continuation_owner_key)
+            for message in payload
+            if type(message.get(continuation_owner_key)) is str
         }
         if any(
             group.owner_message_id not in owner_ids for group in continuation_groups
@@ -451,7 +454,11 @@ def bound_history_for_send(
                 if count_fn is not None
                 else count_console_messages_tokens(rows, selected_model)
             )
-            retained_ids = {row.get("id") for row in rows if type(row.get("id")) is str}
+            retained_ids = {
+                row.get(continuation_owner_key)
+                for row in rows
+                if type(row.get(continuation_owner_key)) is str
+            }
             return visible + sum(
                 token_count
                 for owner_id, token_count in private_tokens.items()
@@ -490,7 +497,7 @@ def bound_history_for_send(
             # asking `bound_messages_to_window` to re-guess a position
             # (`pin_first_user`'s forward scan) -- see that parameter's
             # docstring in console_history_budget.py.
-            pin_row_index=task_index,
+            pin_row_index=None if continuation_groups else task_index,
             # Live-verified follow-up, same day: without a floor, a tight
             # enough window can keep only the in-flight round, so the agent
             # can no longer see the handful of steps it just took and
@@ -506,10 +513,19 @@ def bound_history_for_send(
         # that prefix is preserved verbatim, so its length is identical in
         # `bound.messages`).
         result = list(bound.messages)
-        result.insert(
-            _pinned_prefix_len(payload, task_index),
-            _synthetic_note(bound.dropped_turns),
+        insert_at = (
+            _pinned_prefix_len(payload, task_index)
+            if not continuation_groups
+            else next(
+                (
+                    index
+                    for index, message in enumerate(result)
+                    if message.get("role") != "system"
+                ),
+                len(result),
+            )
         )
+        result.insert(insert_at, _synthetic_note(bound.dropped_turns))
         return result
     except Exception:  # noqa: BLE001 -- eviction must never abort a run
         if continuation_groups:

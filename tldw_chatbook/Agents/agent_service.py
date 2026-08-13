@@ -21,6 +21,11 @@ from typing import Callable, Literal, Protocol, cast
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_history_budget import (
+    ProviderContinuationSidecar,
+    provider_continuation_owner_groups,
+)
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
@@ -58,6 +63,8 @@ from .agent_models import (
     definition_fingerprint as compute_definition_fingerprint,
 )
 from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationConflictError,
+    ContinuationOwnerGroup,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
 )
@@ -726,6 +733,8 @@ class AgentService:
         api_endpoint: str,
         runtime_schemas: list,
         log_active: bool = False,
+        continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
+        continuation_owner_key: str | None = None,
     ):
         native = config.native_tools and provider_supports_native_tools(api_endpoint)
         # TASK-1272 (Phase 3): the ONLY gate on whether eviction may run at
@@ -788,7 +797,18 @@ class AgentService:
                 native=native,
                 enabled=evict_enabled,
                 min_recent_rounds=min_recent_rounds,
+                continuation_groups=continuation_groups,
+                continuation_owner_key=continuation_owner_key or "id",
             )
+            if continuation_owner_key is not None:
+                payload = [
+                    {
+                        key: value
+                        for key, value in message.items()
+                        if key != continuation_owner_key
+                    }
+                    for message in payload
+                ]
             resp = self.chat_call(
                 api_endpoint=api_endpoint,
                 messages_payload=payload,
@@ -1267,6 +1287,8 @@ class AgentService:
         restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
         restore_provider_target: ContinuationRestoreTarget | None = None,
         resume_provider_continuation: bool = False,
+        continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
+        continuation_owner_key: str | None = None,
     ) -> tuple[str, RunOutcome]:
         # PR3a-1 Task 3 -- THE WRITER THIS RUN RECORDS THROUGH, resolved
         # ONCE, here, and closed over by every log closure below instead of
@@ -2677,7 +2699,12 @@ class AgentService:
 
         deps = LoopDeps(
             call_model=self._make_call_model(
-                config, api_endpoint, runtime_schemas, log_active
+                config,
+                api_endpoint,
+                runtime_schemas,
+                log_active,
+                continuation_groups,
+                continuation_owner_key,
             ),
             invoke_tool=invoke_tool,
             spawn=spawn,
@@ -2835,6 +2862,9 @@ class AgentService:
         restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
         restore_provider_target: ContinuationRestoreTarget | None = None,
         resume_provider_continuation: bool = False,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_target: ContinuationRestoreTarget | None = None,
+        continuation_owner_key: str | None = None,
     ) -> tuple[str, RunOutcome]:
         """Run one primary-agent turn (and any sub-agents it spawns).
 
@@ -2877,6 +2907,12 @@ class AgentService:
                 to validate an explicit restore.
             resume_provider_continuation: Explicitly resume pending restored
                 calls through fresh review when ``True``.
+            continuation_sidecar: Canonical private history associated with
+                visible assistant owner IDs. Never added to provider messages.
+            continuation_target: Frozen provider resolution used to validate
+                private history before token accounting.
+            continuation_owner_key: Private key carrying owner IDs through
+                agent history bounding; stripped before provider dispatch.
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
@@ -2923,6 +2959,23 @@ class AgentService:
         """
         if supersede_run_id:
             self.db.supersede_run_tree(supersede_run_id)
+        sidecar = tuple(continuation_sidecar)
+        if sidecar and (continuation_target is None or not continuation_owner_key):
+            raise ValueError(
+                "continuation target and owner key are required for private history"
+            )
+        if sidecar and continuation_target is not None and (
+            continuation_target.provider,
+            continuation_target.model,
+        ) != (provider_config_key(api_endpoint), config.model):
+            raise ContinuationConflictError(
+                "Continuation restore target mismatch."
+            ) from None
+        continuation_groups = (
+            provider_continuation_owner_groups(sidecar, target=continuation_target)
+            if sidecar and continuation_target is not None
+            else ()
+        )
         # Per run tree, not per service instance -- see "Run-log contract"
         # above. `_injected_run_log_writer` is `None` for every caller that
         # didn't pass one to the constructor (i.e. every production caller
@@ -2992,6 +3045,8 @@ class AgentService:
             restore_provider_continuation=restore_provider_continuation,
             restore_provider_target=restore_provider_target,
             resume_provider_continuation=resume_provider_continuation,
+            continuation_groups=continuation_groups,
+            continuation_owner_key=continuation_owner_key,
         )
         # Settle the children that must not outlive this turn. Must happen
         # BEFORE the manifest is written and the writer closed below: a
