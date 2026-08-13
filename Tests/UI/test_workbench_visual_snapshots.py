@@ -189,7 +189,7 @@ async def test_console_workbench_normal_and_compact_snapshots(density: str) -> N
 @pytest.mark.parametrize("size", ((100, 30), (140, 42), (160, 45)))
 @pytest.mark.parametrize("approval_count", (0, 3))
 @pytest.mark.asyncio
-async def test_console_collapsed_inspector_rail_visual_parity_sweep(
+async def test_task_15705_console_collapsed_inspector_rail_visual_parity_sweep(
     size: tuple[int, int], approval_count: int
 ) -> None:
     app = _build_test_app()
@@ -226,16 +226,15 @@ async def test_console_collapsed_inspector_rail_visual_parity_sweep(
             _assert_solid_border(inspector_handle)
             assert transcript.region.width > 0
 
-            if context_handle.display and context_handle.region.width > 0:
-                assert (
-                    inspector_handle.styles.background
-                    == context_handle.styles.background
-                )
-                assert (
-                    inspector_handle.styles.border.top[0]
-                    == context_handle.styles.border.top[0]
-                    == "solid"
-                )
+            assert (
+                inspector_handle.styles.background == context_handle.styles.background
+            )
+            inspector_border = inspector_handle.styles.border
+            context_border = context_handle.styles.border
+            assert inspector_border.top == context_border.top
+            assert inspector_border.right == context_border.right
+            assert inspector_border.bottom == context_border.bottom
+            assert inspector_border.left == context_border.left
 
             badge_rows = list(screen.query("#console-inspector-rail-badge"))
             available_bottom = inspector_handle.content_region.bottom

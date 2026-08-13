@@ -248,6 +248,7 @@ async def test_console_handles_share_full_height_solid_frame_with_real_css():
     assert right.region.width == 11
     assert right.content_region.width == 9
     assert right.styles.background == left.styles.background
+    assert right.styles.border == left.styles.border
 
 
 @pytest.mark.asyncio
