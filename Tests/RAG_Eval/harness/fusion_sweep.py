@@ -1403,6 +1403,14 @@ def lost_census_queries(
 ) -> tuple[str, ...]:
     """Which of the CONTROL's census hits this row's leg no longer answers.
 
+    Control-relative, NOT shipped-relative: the baseline is the pre-arc
+    ``and`` control row's census, so this is a row's cost against the
+    15400-era baseline the whole table is calibrated to. For a row's cost
+    against a specific candidate default (e.g. the shipped
+    ``and_stopword_trim``), pass THAT row's census as ``control`` — the
+    function is baseline-agnostic; only the matrix's printed column fixes
+    the baseline to the control row.
+
     THE COLUMN THE 15400 MATRIX DID NOT HAVE, and the one a widening row
     has to be read against (TASK-15700 review). Every other number on the
     table is blind to a self-inflicted loss:
@@ -1909,6 +1917,14 @@ def format_construction_matrix(report: SweepReport) -> str:
         "count is comparable with); 'lost' = how many of the CONTROL's census "
         "hits this row's leg NO LONGER answers; 'zero' = queries the leg "
         "returned nothing for, negatives included."
+    )
+    lines.append(
+        "'lost' (like 'resc') is measured against the PRE-ARC CONTROL row, "
+        "not against whichever construction ships: for the cost of row X "
+        "versus a candidate default Y, diff the two rows' own hit_queries "
+        "(call lost_census_queries with Y's census as the baseline) — "
+        "reading X's 'lost' cell as its cost versus the shipped row "
+        "misstates it whenever the shipped row itself moved."
     )
     lines.append(
         "'lost' is not derivable from the other columns and is the one to "
