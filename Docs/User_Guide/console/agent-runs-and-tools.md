@@ -268,12 +268,6 @@ survivor's post-turn spend shows on the chip line only.
   the token count cannot be restored that way at all — `agent_runs` has no
   column for it — so that dimension stays live-only until the schema gains
   one).
-- A still-working row's elapsed segment does not tick on its own. It is
-  rewritten only when something else repaints the rail — the child's own
-  next step, your next message, drilling into the row and back. Between
-  those, a sub-agent that has been working for a minute can still show
-  `· 1s`. Observed live during PR 3a-1's verification pass; the status
-  glyph and the "N working" summary stay correct throughout (task-15664).
 - There is no "View all" tail, and expanding the panel does not scroll it
   into view. With a dozen-plus children, or several rail sections open
   above it, you may need to scroll the rail manually to reach the last
@@ -296,8 +290,10 @@ What this means in practice:
 - **It stays visible.** The **Sub-agents** panel keeps its row — glyph,
   name/task, elapsed — after the reply lands and across the turns that
   follow, and clicking that row still drills into that child. The summary
-  keeps counting it under "N working". (The elapsed number goes stale
-  between repaints; see *Known gaps* above.)
+  keeps counting it under "N working". While only survivors are running,
+  a once-a-second tick keeps the elapsed segment advancing on its own and
+  paints the row's terminal glyph the moment the child settles; the tick
+  stops itself as soon as nothing is live (task-15664).
 - **It stays cancellable.** Focus the row and press **Delete** (see
   [The fleet panel](#the-fleet-panel--three-states)). The cancel is
   *cooperative*: the child notices between its own steps, so if it is
@@ -548,5 +544,5 @@ child live, then relaunch, left its row `error` / "Interrupted by app
 restart"; and hovering the cost chip showed `Sub-agents: 1.8k tok (not
 priced)`. One thing found and NOT fixed here: a still-working row's
 elapsed segment froze at `· 1s` for a child a minute old until something
-else repainted the rail — now documented under Known gaps as
-task-15664.)*
+else repainted the rail — task-15664, fixed in fleet PR 3a-2 by the
+survivor tick described above.)*

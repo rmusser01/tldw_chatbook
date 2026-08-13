@@ -225,14 +225,21 @@ from ...Chat.console_chat_models import (
     CONSOLE_RUN_MARKER_GLYPHS,
     ConsoleChatMessage,
     ConsoleContextSnapshot,
+    ConsoleFleetCompletionTarget,
     ConsoleMessageRole,
     ConsoleProviderSelection,
+    ConsoleRunMarker,
     ConsoleRunStatus,
     MessageAttachment,
     ConsoleWorkspaceContext,
     derive_console_session_title,
 )
 from ...Chat.console_turn_context import ConsoleTurnExecutionContext
+from ...Chat.console_fleet_attention import (
+    FLEET_UNSEEN_REVISION_ATTR,
+    clear_fleet_unseen_completion,
+    fleet_unseen_conversation_ids,
+)
 from ...Chat.console_glyphs import GLYPH_VOICE_WORKING
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import (
@@ -1307,6 +1314,7 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
 #: change what a glyph MEANS, update both.
 CONSOLE_FLEET_MARKER_LEGEND = (
     "Status markers: ● running · ◆ needs approval · ✓ finished · ✗ failed "
+    "· ◈ sub-agent ended in background "
     "— clears once you visit that tab. Qn is the unsent prompt count."
 )
 
@@ -3480,6 +3488,15 @@ class ChatScreen(BaseAppScreen):
         #: why `_console_speaking_message_id` in particular still needs one
         #: (`console_transcript.py` reaches it by bare name off `self.screen`).
         self._console_transcript_sync_timer: Any | None = None
+        # PR3a-2 Task 4 (task-15664): the 1s SURVIVOR tick. Runs only
+        # while some live session's fleet still owes a drain
+        # (`ConsoleChatController.fleet_has_unsettled_children`) -- the
+        # exact state in which the 0.2s transcript poll above has
+        # self-stopped (a survivor occupies no slot), leaving the
+        # Sub-agents rows' elapsed, the tab glyphs, and the unseen badge
+        # frozen. Stops itself, with one final paint, when the last child
+        # settles.
+        self._console_fleet_survivor_timer: Any | None = None
         # Cost-ticker PR3 (task-5): the 10s WARM->EXPIRED repaint timer --
         # mirrors `_console_transcript_sync_timer` (started/stopped via the
         # `_record_ui_timer_created/_stopped("console-cost-ttl")` audit
@@ -4139,6 +4156,69 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify(
                 "Console provider selection could not be applied yet; it will retry.",
                 severity="warning",
+            )
+            return False
+        self.app_instance.pending_handoffs.acknowledge(claim)
+        return True
+
+    def consume_pending_console_fleet_completion(self) -> bool:
+        """Claim a staged background sub-agent completion and switch to it.
+
+        PR3a-2 Task 4: the fleet-attention consumer stages a
+        ``ConsoleFleetCompletionTarget`` while Console is NOT the active
+        screen; this claim (mount + resume, 0.15s settle hedge like its
+        sibling handoff claims) switches the store to the settled
+        conversation's still-open session so the user lands on the news
+        the toast announced. A target whose session is no longer open is
+        acknowledged and dropped -- the durable ``fleet_unseen`` mark (and
+        the sidebar badge it drives) still points at the conversation, and
+        Task 5's wake delivery reads the MARK, not this channel, so
+        nothing is lost by not force-resuming here.
+
+        Returns:
+            True when a target was claimed and its session activated.
+        """
+        claim = self.app_instance.pending_handoffs.claim(
+            HandoffChannel.CONSOLE_FLEET_COMPLETION
+        )
+        if claim is None:
+            return False
+        try:
+            target = claim.value
+            if not isinstance(target, ConsoleFleetCompletionTarget):
+                raise TypeError("Console fleet completion handoff was not typed")
+            store = self._ensure_console_chat_store()
+            match = None
+            for session in store.sessions():
+                if target.session_id and session.id == target.session_id:
+                    match = session
+                    break
+                if target.conversation_id in (
+                    session.id,
+                    session.persisted_conversation_id,
+                ):
+                    match = session
+            if match is None:
+                # Session closed since the toast: the badge/mark remains
+                # the durable pointer; nothing to switch to.
+                self.app_instance.pending_handoffs.acknowledge(claim)
+                return False
+            if store.active_session_id != match.id:
+                controller = self._ensure_console_chat_controller()
+                self._workspace._set_active_workspace_for_console_session(match.id)
+                controller.switch_session(match.id)
+                self.run_worker(
+                    self._sync_native_console_chat_ui(),
+                    exclusive=True,
+                    group="console-sync",
+                )
+        except Exception as exc:  # noqa: BLE001 -- release for retry, never crash a mount
+            self.app_instance.pending_handoffs.release(claim)
+            logger.warning(
+                "Console fleet completion handoff will retry "
+                "(revision={}, exception_category={})",
+                claim.revision,
+                type(exc).__name__,
             )
             return False
         self.app_instance.pending_handoffs.acknowledge(claim)
@@ -10202,11 +10282,16 @@ class ChatScreen(BaseAppScreen):
             # raw `ConsoleRunMarker`) so `conversation_browser_state.py` and
             # the tray widget stay free of a model-layer import -- threaded
             # like TASK-717 threaded `openable` (input row -> normalize ->
-            # display row -> row label).
+            # display row -> row label). PR3a-2 Task 4: the durable
+            # unseen-completion mark rides the same pipeline via
+            # `_console_run_marker_with_unseen`.
             run_marker = (
                 resolve_glyph(
                     CONSOLE_RUN_MARKER_GLYPHS.get(
-                        controller.run_marker_for(session.id), ""
+                        self._console_run_marker_with_unseen(
+                            controller, session, self._console_fleet_unseen_ids()
+                        ),
+                        "",
                     )
                 )
                 if controller is not None
@@ -14416,6 +14501,17 @@ class ChatScreen(BaseAppScreen):
         # existing resume/user-triggered retry paths.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.set_timer(0.15, self.consume_pending_console_provider_intent)
+        # PR3a-2 Task 4: claim a background sub-agent completion's deep
+        # link (staged while Console was not mounted) and switch to the
+        # settled conversation's session. Same 0.15s settle hedge as the
+        # surrounding handoff timers.
+        self.set_timer(0.15, self.consume_pending_console_fleet_completion)
+        # PR3a-2 Task 4 (task-15664): mount hedge for the survivor tick --
+        # the primary arming point is the transcript poll's self-stop
+        # edge, but a controller wired at mount with survivors already
+        # live (e.g. a future above-screen bridge) must not stay frozen.
+        # A no-op when nothing is live.
+        self.set_timer(0.3, self._maybe_start_console_fleet_survivor_tick)
         # Same hedge as the handoff timers above: the native composer is not
         # guaranteed to exist in the DOM yet at `call_after_refresh` time
         # either, and `_sync_console_dictation_availability` silently no-ops
@@ -14498,6 +14594,7 @@ class ChatScreen(BaseAppScreen):
             self.app_instance._console_h3_image_edit_screen = None
         self._drain_pending_console_videos()
         self._stop_console_transcript_sync_timer()
+        self._stop_console_fleet_survivor_tick()
         self._stop_console_cost_ttl_timer()
         await self._teardown_console_roleplay_persistence()
         # The pipeline hands-free loop's own two-statement abandon teardown
@@ -15763,6 +15860,46 @@ class ChatScreen(BaseAppScreen):
                     group="console-sync",
                 )
 
+    def _console_fleet_unseen_ids(self) -> frozenset[str]:
+        """Conversation ids carrying the durable unseen-completion mark.
+
+        PR3a-2 Task 4. Cached against the app-level revision counter the
+        fleet-attention consumer bumps on every mark write/clear, so the
+        0.2s sync tick pays a DB read only when something actually changed
+        (the TASK-251 discipline) -- and the badge still survives restart,
+        because a fresh screen's first read comes from the DB.
+        """
+        app = self.app_instance
+        revision = getattr(app, FLEET_UNSEEN_REVISION_ATTR, 0)
+        cache = getattr(self, "_console_fleet_unseen_cache", None)
+        if cache is not None and cache[0] == revision:
+            return cache[1]
+        ids = fleet_unseen_conversation_ids(app)
+        self._console_fleet_unseen_cache = (revision, ids)
+        return ids
+
+    def _console_run_marker_with_unseen(
+        self,
+        controller: Any,
+        session: ConsoleChatSession,
+        unseen_ids: frozenset[str],
+    ) -> ConsoleRunMarker:
+        """A session's fleet marker, backed by the durable unseen mark.
+
+        PR3a-2 Task 4: ``run_marker_for``'s derivation is untouched -- any
+        live or unvisited TURN state it reports outranks this -- but a
+        session whose conversation carries the ``fleet_unseen`` mark and
+        would otherwise show nothing gets ``SUBAGENT_UNSEEN``. Derived in
+        the screen layer because the mark lives in an app-level service the
+        controller deliberately has no handle on.
+        """
+        marker = controller.run_marker_for(session.id)
+        if marker is ConsoleRunMarker.NONE and (
+            (session.persisted_conversation_id or session.id) in unseen_ids
+        ):
+            return ConsoleRunMarker.SUBAGENT_UNSEEN
+        return marker
+
     async def _sync_console_native_session_tabs(self) -> None:
         """Refresh native Console session tabs from store state."""
         try:
@@ -15783,14 +15920,42 @@ class ChatScreen(BaseAppScreen):
             controller.streaming_session_id() if controller is not None else None
         )
         sessions = store.sessions()
+        # PR3a-2 Task 4: viewing IS the clear -- the active session's
+        # conversation carrying the durable unseen-completion mark means
+        # the user is now looking at the conversation the badge points to,
+        # so the mark (and with it every surface it drives) is cleared
+        # through the named seam. Guarded by the cached set first, so the
+        # common no-mark tick costs no DB access.
+        unseen_ids = self._console_fleet_unseen_ids()
+        if unseen_ids and store.active_session_id:
+            active = next(
+                (s for s in sessions if s.id == store.active_session_id), None
+            )
+            if active is not None:
+                active_conversation_id = (
+                    active.persisted_conversation_id or active.id
+                )
+                if active_conversation_id in unseen_ids and (
+                    clear_fleet_unseen_completion(
+                        self.app_instance, active_conversation_id
+                    )
+                ):
+                    unseen_ids = self._console_fleet_unseen_ids()
         # Parallel-agents spec PA-T8: per-session fleet marker (RUNNING /
         # NEEDS_APPROVAL / FINISHED_OK / FINISHED_FAILED), superseding the
         # legacy single-session `streaming_session_id` cursor above for tabs
         # that have a controller -- `run_marker_for` already derives RUNNING
         # from the same live-busy definition `streaming_session_id` used, so
         # this is a strict superset, not a second notion of "in-flight".
+        # PR3a-2 Task 4 threads the durable unseen-completion mark in as
+        # the lowest-precedence marker (`_console_run_marker_with_unseen`).
         run_markers = (
-            {session.id: controller.run_marker_for(session.id) for session in sessions}
+            {
+                session.id: self._console_run_marker_with_unseen(
+                    controller, session, unseen_ids
+                )
+                for session in sessions
+            }
             if controller is not None
             else None
         )
@@ -15864,6 +16029,15 @@ class ChatScreen(BaseAppScreen):
                 # the browser promptly instead of waiting out the TTL.
                 self._invalidate_console_persisted_rows_cache()
                 self._stop_console_transcript_sync_timer()
+                # PR3a-2 Task 4 (task-15664): this stop edge is EXACTLY
+                # where the UI used to go blind on a surviving sub-agent
+                # -- no run occupies a slot, so this poll dies while a
+                # child is still working and nothing repaints its elapsed
+                # segment, the tab glyphs, or (on settle) the unseen
+                # badge. Hand off to the 1s survivor tick, which runs only
+                # while a drain is still owed and stops itself after one
+                # final paint.
+                self._maybe_start_console_fleet_survivor_tick()
 
         self._console_transcript_sync_timer = self.set_interval(0.2, _poll_transcript)
         self._record_ui_timer_created("console-transcript-sync")
@@ -15876,6 +16050,72 @@ class ChatScreen(BaseAppScreen):
         finally:
             self._record_ui_timer_stopped("console-transcript-sync")
             self._console_transcript_sync_timer = None
+
+    # -- PR3a-2 Task 4 (task-15664): the survivor tick ---------------------
+
+    def _console_fleet_survivors_live(self) -> bool:
+        """Whether any live session's fleet still owes a drain."""
+        controller = self._console_chat_controller
+        checker = (
+            getattr(controller, "fleet_has_unsettled_children", None)
+            if controller is not None
+            else None
+        )
+        try:
+            return bool(checker()) if callable(checker) else False
+        except Exception:  # noqa: BLE001 -- a timer predicate must never raise
+            logger.opt(exception=True).debug("fleet survivor check failed")
+            return False
+
+    def _maybe_start_console_fleet_survivor_tick(self) -> None:
+        """Arm the 1s survivor tick when survivors are live and it is not.
+
+        Called from the transcript poll's self-stop edge (the state
+        task-15664 describes: only survivors run, nothing else repaints)
+        and, as a mount hedge, shortly after ``on_mount``. Idempotent; a
+        no-op with no live survivors, so an idle Console never gains a
+        timer (15664 AC#2).
+        """
+        if self._console_fleet_survivor_timer is not None:
+            return
+        if not self._console_fleet_survivors_live():
+            return
+        self._console_fleet_survivor_timer = self.set_interval(
+            1.0, self._console_fleet_survivor_tick
+        )
+        self._record_ui_timer_created("console-fleet-survivor-tick")
+
+    def _stop_console_fleet_survivor_tick(self) -> None:
+        if self._console_fleet_survivor_timer is None:
+            return
+        try:
+            self._console_fleet_survivor_timer.stop()
+        finally:
+            self._record_ui_timer_stopped("console-fleet-survivor-tick")
+            self._console_fleet_survivor_timer = None
+
+    async def _console_fleet_survivor_tick(self) -> None:
+        """One survivor-tick beat: repaint, or stop when nothing is live.
+
+        While the 0.2s transcript poll is running it already repaints
+        everything this would (at 5x the cadence), so the beat is skipped
+        rather than doubled. When the last child has settled, the tick
+        stops itself FIRST and then paints once more -- that final pass is
+        what flips the rail rows to their terminal glyphs and surfaces the
+        unseen badge without any user interaction; it is a settle paint,
+        not a recurring repaint of an idle rail (15664 AC#2).
+        """
+        if self._console_transcript_sync_timer is not None:
+            return
+        controller = self._console_chat_controller
+        if controller is None:
+            self._stop_console_fleet_survivor_tick()
+            return
+        if not self._console_fleet_survivors_live():
+            self._stop_console_fleet_survivor_tick()
+            await self._sync_native_console_chat_ui()
+            return
+        await self._sync_native_console_chat_ui()
 
     async def _submit_console_native_draft(
         self, draft: str, session_id: str | None = None
@@ -21350,6 +21590,9 @@ class ChatScreen(BaseAppScreen):
         # regardless of which lifecycle hook scheduled it.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.set_timer(0.15, self.consume_pending_console_provider_intent)
+        # PR3a-2 Task 4: mirrors the on_mount claim -- a completion staged
+        # while the user was on another screen is claimed on resume too.
+        self.set_timer(0.15, self.consume_pending_console_fleet_completion)
         self.call_after_refresh(self._restore_console_workbench_focus)
         repair_dispatched = self._consume_pending_console_roleplay_repair()
         if (

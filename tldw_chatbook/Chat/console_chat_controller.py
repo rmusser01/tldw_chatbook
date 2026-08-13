@@ -2199,6 +2199,42 @@ class ConsoleChatController:
             | self._fleet_survivor_session_ids()
         )
 
+    def fleet_has_unsettled_children(self) -> bool:
+        """Whether ANY live session's conversation is still owed a drain.
+
+        PR3a-2 Task 4: the drive/stop condition for the screen's survivor
+        tick (task-15664). Reads the bridge's drain-paired unsettled
+        counter (``has_unsettled_children``, Task 3) per live session --
+        cheap dict reads under one lock, safe on a UI timer, unlike
+        ``_fleet_survivor_session_ids``'s coordinator sweep (which
+        ``busy_fleet_session_count`` documents as navigation-only and
+        which task-15666 records as prune-on-read). True exactly while at
+        least one fleet child of a live session has entered its run scope
+        and not yet reached its settle hook -- so the tick keeps painting
+        through the scope-exit->settle window and stops on the same edge
+        the drain (and the badge it stamps) fires on.
+
+        Returns:
+            True while any live session's fleet still owes a drain.
+        """
+        bridge = self._agent_bridge
+        checker = (
+            getattr(bridge, "has_unsettled_children", None)
+            if bridge is not None
+            else None
+        )
+        if not callable(checker):
+            return False
+        for session in self.store.sessions():
+            try:
+                if checker(self._agent_conversation_id(session.id)):
+                    return True
+            except Exception:  # noqa: BLE001 -- a UI timer must never crash on a read
+                logger.opt(exception=True).debug(
+                    "fleet unsettled check failed for a session; treated as idle"
+                )
+        return False
+
     def _fleet_survivor_session_ids(self) -> set[str]:
         """Live sessions with at least one still-running sub-agent.
 
