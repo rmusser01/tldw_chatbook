@@ -813,6 +813,8 @@ class ProviderStep(SetupStep):
         else:
             self._environment_provider = lambda source=environ: source
         self._credential_observation_key = os.urandom(32)
+        self._sensitive_key_input: Input | None = None
+        self._sensitive_endpoint_input: Input | None = None
         self._credential_observations: dict[str, _CredentialObservation] = {}
         self.probe_generation = 0
         self._discovery_visible = False
@@ -1057,13 +1059,14 @@ class ProviderStep(SetupStep):
             self._cancel_discovery_workers()
 
     def on_unmount(self) -> None:
+        self.clear_sensitive_widgets(release_references=True)
+        self._cancel_discovery_workers(publish_status=False)
         self.clear_sensitive_state()
 
     def clear_sensitive_state(self) -> None:
-        """Drop every provider-owned secret and fence background publication."""
+        """Drop provider-owned state without touching mounted UI controls."""
 
         self._discovery_visible = False
-        self._cancel_discovery_workers()
         self._provider_test_evidence.invalidate()
         self._active_probe_token = None
         self._last_tested_provider_identity = None
@@ -1079,9 +1082,21 @@ class ProviderStep(SetupStep):
         for attribute in ("detected_server", "detected_base_url"):
             if hasattr(self, attribute):
                 delattr(self, attribute)
+        for draft in self._provider_drafts.values():
+            draft.clear_secret()
+        self._provider_drafts.clear()
+
+    def clear_sensitive_widgets(self, *, release_references: bool = False) -> None:
+        """Clear provider inputs only while their widget tree is attached."""
+
         try:
-            key_input = self.query_one("#setup-provider-api-key", Input)
-            endpoint_input = self.query_one("#setup-provider-endpoint", Input)
+            key_input = self._sensitive_key_input
+            endpoint_input = self._sensitive_endpoint_input
+            if (key_input is None or endpoint_input is None) and self.is_mounted:
+                key_input = self.query_one("#setup-provider-api-key", Input)
+                endpoint_input = self.query_one("#setup-provider-endpoint", Input)
+            if key_input is None or endpoint_input is None:
+                return
             with (
                 key_input.prevent(Input.Changed),
                 endpoint_input.prevent(Input.Changed),
@@ -1098,13 +1113,21 @@ class ProviderStep(SetupStep):
             ).clear_options()
         except Exception:
             pass
-        for draft in self._provider_drafts.values():
-            draft.clear_secret()
-        self._provider_drafts.clear()
+        finally:
+            if release_references:
+                self._sensitive_key_input = None
+                self._sensitive_endpoint_input = None
+
+    def on_mount(self) -> None:
+        self._sensitive_key_input = self.query_one("#setup-provider-api-key", Input)
+        self._sensitive_endpoint_input = self.query_one(
+            "#setup-provider-endpoint", Input
+        )
 
     def prepare_retry_after_failed_save(self) -> None:
         """Release the failed draft, then restore live boundary resolvers."""
 
+        self._cancel_discovery_workers(publish_status=False)
         self.clear_sensitive_state()
         self._environment_provider = _process_environment
         self._credential_observation_key = os.urandom(32)
@@ -1118,7 +1141,7 @@ class ProviderStep(SetupStep):
             return {}
         return environment if isinstance(environment, Mapping) else {}
 
-    def _cancel_discovery_workers(self) -> None:
+    def _cancel_discovery_workers(self, *, publish_status: bool = True) -> None:
         """Invalidate and cancel setup-owned network work without publishing."""
 
         selected_was_in_progress = self._selected_discovery_state == "in_progress"
@@ -1127,7 +1150,7 @@ class ProviderStep(SetupStep):
             "setup-provider-discovery",
             "setup-provider-probe",
         )
-        if selected_was_in_progress:
+        if selected_was_in_progress and publish_status and self.is_mounted:
             try:
                 self.query_one("#setup-provider-probe-status", Static).update(
                     "Check paused; returning will retry."
@@ -6313,6 +6336,7 @@ class SetupWizardContainer(WizardContainer):
         self._provider_commit_write_started = False
         self._provider_cleanup_requested = False
         self._provider_dismiss_pending = False
+        self._provider_ui_detached = False
         self._provider_dismiss_warning_seconds = max(
             0.0, float(provider_dismiss_warning_seconds)
         )
@@ -6387,7 +6411,9 @@ class SetupWizardContainer(WizardContainer):
         if isinstance(model_step, ModelStep):
             model_step.invalidate_credential_bound_selection()
 
-    def clear_provider_setup_sensitive_state(self) -> None:
+    def clear_provider_setup_sensitive_state(
+        self, *, clear_widgets: bool = True
+    ) -> None:
         """Fence provider work and release raw state at the valid boundary."""
 
         self._provider_stage_generation += 1
@@ -6409,10 +6435,16 @@ class SetupWizardContainer(WizardContainer):
         self._first_run_selected_provider_models = {}
         owner = getattr(self, "_first_run_provider_discovery_owner", None)
         if isinstance(owner, ProviderStep):
+            if not self._provider_ui_detached:
+                owner._cancel_discovery_workers(publish_status=False)
+            if clear_widgets and not self._provider_ui_detached:
+                owner.clear_sensitive_widgets()
             owner.clear_sensitive_state()
 
     def on_unmount(self) -> None:
-        self.clear_provider_setup_sensitive_state()
+        self._provider_ui_detached = True
+        self._provider_dismiss_pending = False
+        self.clear_provider_setup_sensitive_state(clear_widgets=False)
 
     def finish_later_message(self) -> str:
         """Describe provider persistence accurately for the current step."""
@@ -6534,7 +6566,7 @@ class SetupWizardContainer(WizardContainer):
         if not task.cancelled():
             task.exception()
         if self._provider_cleanup_requested:
-            self.clear_provider_setup_sensitive_state()
+            self.clear_provider_setup_sensitive_state(clear_widgets=False)
 
     async def _run_provider_setup_commit(
         self,
@@ -8023,6 +8055,9 @@ class SetupWizardContainer(WizardContainer):
         except Exception:  # noqa: BLE001 - task boundary must recover any writer error.
             saved = False
         self._provider_dismiss_pending = False
+        if self._provider_ui_detached:
+            self.clear_provider_setup_sensitive_state(clear_widgets=False)
+            return
         if saved:
             self._complete_dismiss_screen(result)
             return
@@ -8037,7 +8072,7 @@ class SetupWizardContainer(WizardContainer):
     ) -> None:
         """Publish bounded save state only while this container is mounted."""
 
-        if not self.is_mounted:
+        if self._provider_ui_detached or not self.is_mounted:
             return
         try:
             status = self.query_one("#setup-provider-save-status", _ProviderSaveStatus)
@@ -8050,10 +8085,29 @@ class SetupWizardContainer(WizardContainer):
         if announce:
             self.notify(message, severity="information")
 
+    def hold_provider_save_settlement(self) -> bool:
+        """Keep cancel actions on the active irreversible-save status."""
+
+        if not self._provider_dismiss_pending:
+            return False
+        if self._provider_ui_detached or not self.is_mounted:
+            return True
+        try:
+            status = self.query_one("#setup-provider-save-status", _ProviderSaveStatus)
+        except NoMatches:
+            return True
+        status.focus()
+        self.notify(str(status.renderable), severity="information")
+        return True
+
     def _recover_from_provider_save_failure(self) -> None:
         """Release failed-save secrets and return to an enabled Provider step."""
 
-        self.clear_provider_setup_sensitive_state()
+        self.clear_provider_setup_sensitive_state(
+            clear_widgets=not self._provider_ui_detached
+        )
+        if self._provider_ui_detached:
+            return
         owner = getattr(self, "_first_run_provider_discovery_owner", None)
         if isinstance(owner, ProviderStep):
             owner.prepare_retry_after_failed_save()
@@ -8077,7 +8131,9 @@ class SetupWizardContainer(WizardContainer):
     def _complete_dismiss_screen(self, result: Optional[dict]) -> None:
         """Clear provider state and dismiss after all irreversible work settles."""
 
-        if self._finalized:
+        if self._finalized or self._provider_ui_detached:
+            if self._provider_ui_detached:
+                self.clear_provider_setup_sensitive_state(clear_widgets=False)
             return
         self._finalized = True
         self.clear_provider_setup_sensitive_state()
@@ -8086,6 +8142,8 @@ class SetupWizardContainer(WizardContainer):
             screen.dismiss(result)
 
     def action_cancel(self) -> None:
+        if self.hold_provider_save_settlement():
+            return
         if self._advancing or self._failure_action_running:
             return
         screen = self.screen
@@ -8219,6 +8277,8 @@ class FirstRunSetupWizard(WizardScreen):
         )
         try:
             container = self.query_one(SetupWizardContainer)
+            if container.hold_provider_save_settlement():
+                return
             if container._advancing or container._failure_action_running:
                 return
             message = container.finish_later_message()
@@ -8234,6 +8294,11 @@ class FirstRunSetupWizard(WizardScreen):
 
     def _handle_cancel_confirm(self, confirmed: bool | None) -> None:
         if confirmed:
+            try:
+                if self.query_one(SetupWizardContainer).hold_provider_save_settlement():
+                    return
+            except NoMatches:
+                return
             # TASK-1500: an uncommitted theme preview must not outlive the
             # wizard — finish-later restores whatever the user had before.
             try:
@@ -8249,6 +8314,8 @@ class FirstRunSetupWizard(WizardScreen):
     async def _finish_later(self) -> None:
         try:
             container = self.query_one(SetupWizardContainer)
+            if container.hold_provider_save_settlement():
+                return
             saved = await container.persist_current_checkpoint()
         except Exception:
             logger.warning("Setup finish-later checkpoint failed (category=runtime)")

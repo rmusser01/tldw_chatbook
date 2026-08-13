@@ -3065,6 +3065,18 @@ async def test_dismissal_waits_for_irreversible_provider_executor_write(
             container._dismiss_screen(None)
             pending = container.query_one("#setup-provider-save-status", Static)
             assert "finishing save" in str(pending.renderable).lower()
+            settling_stack = tuple(app.screen_stack)
+            await pilot.press("escape", "escape")
+            await pilot.pause()
+            assert tuple(app.screen_stack) == settling_stack
+            assert app.screen is wizard
+            pending_copy = str(pending.renderable)
+            container.action_cancel()
+            wizard.action_cancel()
+            await pilot.pause()
+            assert tuple(app.screen_stack) == settling_stack
+            assert app.screen is wizard
+            assert str(pending.renderable) == pending_copy
             container._dismiss_screen(None)
             await pilot.pause(0.1)
             assert app.wizard_result == "UNSET"
@@ -3086,6 +3098,8 @@ async def test_dismissal_waits_for_irreversible_provider_executor_write(
         assert not container._provider_commit_write_started
         if writer_outcome == "success":
             assert app.wizard_result is None
+            assert app.wizard_results == [None]
+            assert wizard not in app.screen_stack
             events.append("dismissed")
             assert events == ["writer-settled", "dismissed"]
             assert container.staged_provider_draft is None
@@ -3099,8 +3113,21 @@ async def test_dismissal_waits_for_irreversible_provider_executor_write(
             assert app.focused is provider_step.query_one(
                 "#setup-provider-endpoint", Input
             )
+            for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
+                assert not container.query_one(selector, Button).disabled
             assert secret not in repr(container.__dict__)
             assert endpoint_secret not in repr(provider_step.__dict__)
+
+            await pilot.press("escape")
+            await pilot.pause()
+            from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+                _SettlingGuardedConfirmationDialog,
+            )
+
+            assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
+            await pilot.click("#cancel-button")
+            await pilot.pause()
+            assert app.screen is wizard
 
             provider_step.query_one(
                 "#setup-provider-endpoint", Input
@@ -3151,7 +3178,14 @@ async def test_unmount_during_irreversible_provider_write_never_publishes_to_ui(
         "tldw_chatbook.config.save_settings_to_cli_config",
         lambda *_args, **_kwargs: True,
     )
+    environment_secret = "unmount-environment-secret"
+    monkeypatch.setenv("CUSTOM_API_KEY", environment_secret)
     wizard = _make_wizard(provider_dismiss_warning_seconds=0)
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "custom": {"api_key_env_var": "CUSTOM_API_KEY"},
+        }
+    }
     wizard.app_instance.llm_provider_catalog_scope_service = None
     app = _HostApp(wizard)
 
@@ -3165,12 +3199,10 @@ async def test_unmount_during_irreversible_provider_write_never_publishes_to_ui(
         provider_step = container.steps[provider_index]
         assert isinstance(provider_step, ProviderStep)
         provider_step.select_provider("custom")
-        provider_step.query_one(
-            "#setup-provider-endpoint", Input
-        ).value = "https://unmount.example.test/private/v1"
-        provider_step.query_one(
-            "#setup-provider-api-key", Input
-        ).value = "unmount-secret"
+        endpoint_input = provider_step.query_one("#setup-provider-endpoint", Input)
+        key_input = provider_step.query_one("#setup-provider-api-key", Input)
+        endpoint_input.value = "https://unmount.example.test/private/v1"
+        key_input.value = "unmount-secret"
         await pilot.pause()
         await container._advance()
         commit_waiter = asyncio.create_task(
@@ -3182,18 +3214,51 @@ async def test_unmount_during_irreversible_provider_write_never_publishes_to_ui(
             await pilot.pause(0.025)
         assert writer_started.is_set()
 
-        container.on_unmount()
-        assert container._provider_cleanup_requested
-        assert container.staged_provider_draft is None
+        pop_results_before = list(app.wizard_results)
         try:
+            await app.pop_screen()
+            await pilot.pause(0.1)
+            assert wizard not in app.screen_stack
+            assert len(app.screen_stack) == 1
+
+            provider_query = MagicMock(wraps=provider_step.query_one)
+            cancel_workers = MagicMock(wraps=provider_step._cancel_discovery_workers)
+            container_query = MagicMock(wraps=container.query_one)
+            notify = MagicMock(wraps=container.notify)
+            dismiss = MagicMock(wraps=wizard.dismiss)
+            monkeypatch.setattr(provider_step, "query_one", provider_query)
+            monkeypatch.setattr(
+                provider_step, "_cancel_discovery_workers", cancel_workers
+            )
+            monkeypatch.setattr(container, "query_one", container_query)
+            monkeypatch.setattr(container, "notify", notify)
+            monkeypatch.setattr(wizard, "dismiss", dismiss)
+
             release_writer.set()
             assert await commit_waiter
+            await pilot.pause(0.1)
+
+            provider_query.assert_not_called()
+            cancel_workers.assert_not_called()
+            container_query.assert_not_called()
+            notify.assert_not_called()
+            dismiss.assert_not_called()
         finally:
             release_writer.set()
-        await pilot.pause(0.1)
+
         assert container._provider_commit_task is None
+        assert container._provider_commit_identity is None
+        assert not container._provider_commit_write_started
         assert container.staged_provider_draft is None
+        assert container._first_run_selected_provider_models == {}
+        assert provider_step._environment() == {}
+        assert provider_step._sensitive_key_input is None
+        assert provider_step._sensitive_endpoint_input is None
+        assert endpoint_input.value == ""
+        assert key_input.value == ""
+        assert app.wizard_results == pop_results_before
         assert "unmount-secret" not in repr(container.__dict__)
+        assert environment_secret not in repr(provider_step.__dict__)
         assert "private/v1" not in repr(provider_step.__dict__)
 
 
