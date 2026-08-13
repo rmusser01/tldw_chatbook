@@ -331,6 +331,7 @@ def test_plaintext_none_confirmation_survives_path_change_but_not_origin_or_auth
     }
     original = load_global_speech_tts_state(settings, environment={})
     assert original.openai_plaintext_confirmation is not None
+    assert original.openai_plaintext_confirmation_cleanup_needed is False
     path_draft = deepcopy(original)
     path_draft.providers["openai"]["base_url"] = (
         "http://voice.example.test:8765/custom/speech"
@@ -383,20 +384,188 @@ def test_load_invalidates_confirmation_when_auth_or_origin_changes(
     )
     fingerprint = openai_destination_fingerprint("openai", confirmed)
 
-    state = load_global_speech_tts_state(
+    settings = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "app_tts": {
+                "OPENAI_BASE_URL": base_url,
+                "OPENAI_AUTH_MODE": authentication_mode,
+                "OPENAI_NONE_HTTP_CONFIRMATION": fingerprint,
+            }
+        }
+    }
+    before_load = deepcopy(settings)
+
+    state = load_global_speech_tts_state(settings, environment={})
+
+    assert settings == before_load
+    assert state.openai_plaintext_confirmation is None
+    assert state.openai_plaintext_confirmation_cleanup_needed is True
+
+
+@pytest.mark.parametrize(
+    ("authentication_mode", "base_url", "stored_confirmation"),
+    (
+        (
+            "api_key",
+            "http://voice.example.test:8765/v1/audio/speech",
+            "confirmed-origin",
+        ),
+        (
+            "none",
+            "https://voice.example.test:8765/v1/audio/speech",
+            "confirmed-origin",
+        ),
+        (
+            "none",
+            "http://127.0.0.1:8765/v1/audio/speech",
+            "confirmed-origin",
+        ),
+        (
+            "api_key",
+            "http://voice.example.test:8765/v1/audio/speech",
+            "malformed",
+        ),
+    ),
+)
+def test_rejected_persisted_confirmation_is_deleted_on_next_explicit_save(
+    authentication_mode: str,
+    base_url: str,
+    stored_confirmation: str,
+) -> None:
+    confirmed = normalize_openai_compatible_endpoint(
+        "http://voice.example.test:8765/v1/audio/speech"
+    )
+    persisted_value = (
+        openai_destination_fingerprint("openai", confirmed)
+        if stored_confirmation == "confirmed-origin"
+        else stored_confirmation
+    )
+    original = load_global_speech_tts_state(
         {
             "COMPREHENSIVE_CONFIG_RAW": {
                 "app_tts": {
                     "OPENAI_BASE_URL": base_url,
                     "OPENAI_AUTH_MODE": authentication_mode,
-                    "OPENAI_NONE_HTTP_CONFIRMATION": fingerprint,
+                    "OPENAI_NONE_HTTP_CONFIRMATION": persisted_value,
                 }
             }
         },
         environment={},
     )
 
-    assert state.openai_plaintext_confirmation is None
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        deepcopy(original),
+        configure_provider="openai",
+    )
+
+    assert original.openai_plaintext_confirmation is None
+    assert proposal.delete_setting_keys == ("OPENAI_NONE_HTTP_CONFIRMATION",)
+
+
+def test_absent_confirmation_key_does_not_request_needless_delete() -> None:
+    original = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": "https://voice.example.test/v1/audio/speech",
+                    "OPENAI_AUTH_MODE": "none",
+                }
+            }
+        },
+        environment={},
+    )
+
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        deepcopy(original),
+        configure_provider="openai",
+    )
+
+    assert original.openai_plaintext_confirmation_cleanup_needed is False
+    assert "OPENAI_NONE_HTTP_CONFIRMATION" not in proposal.delete_setting_keys
+
+
+def test_normalized_confirmation_projection_does_not_claim_persisted_cleanup() -> None:
+    original = load_global_speech_tts_state(
+        {
+            "APP_TTS_CONFIG": {
+                "OPENAI_BASE_URL": "https://voice.example.test/v1/audio/speech",
+                "OPENAI_AUTH_MODE": "none",
+                "OPENAI_NONE_HTTP_CONFIRMATION": "normalized-only",
+            }
+        },
+        environment={},
+    )
+
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        deepcopy(original),
+        configure_provider="openai",
+    )
+
+    assert original.openai_plaintext_confirmation_cleanup_needed is False
+    assert "OPENAI_NONE_HTTP_CONFIRMATION" not in proposal.delete_setting_keys
+
+
+def test_changing_confirmed_origin_to_https_deletes_old_confirmation() -> None:
+    endpoint = normalize_openai_compatible_endpoint(
+        "http://voice.example.test:8765/v1/audio/speech"
+    )
+    fingerprint = openai_destination_fingerprint("openai", endpoint)
+    original = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": endpoint.speech_url,
+                    "OPENAI_AUTH_MODE": "none",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": fingerprint,
+                }
+            }
+        },
+        environment={},
+    )
+    draft = deepcopy(original)
+    draft.providers["openai"]["base_url"] = "https://other.example.test/v1/audio/speech"
+
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        draft,
+        configure_provider="openai",
+    )
+
+    assert proposal.delete_setting_keys == ("OPENAI_NONE_HTTP_CONFIRMATION",)
+
+
+def test_correcting_invalid_endpoint_deletes_rejected_persisted_confirmation() -> None:
+    original = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": "not-an-endpoint",
+                    "OPENAI_AUTH_MODE": "none",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": "malformed",
+                }
+            }
+        },
+        environment={},
+    )
+    draft = deepcopy(original)
+    draft.providers["openai"].update(
+        {
+            "base_url": "https://api.openai.com/v1/audio/speech",
+            "authentication_mode": "api_key",
+        }
+    )
+
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        draft,
+        configure_provider="openai",
+    )
+
+    assert proposal.settings["OPENAI_AUTH_MODE"] == "api_key"
+    assert proposal.delete_setting_keys == ("OPENAI_NONE_HTTP_CONFIRMATION",)
 
 
 @pytest.mark.parametrize(

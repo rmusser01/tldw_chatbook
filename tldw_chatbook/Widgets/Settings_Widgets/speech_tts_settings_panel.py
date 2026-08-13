@@ -634,6 +634,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_openai_confirmation: OpenAIPlaintextConfirmation | None = (
             None
         )
+        self._pending_saved_openai_confirmation_cleanup_needed: bool | None = None
         self._pending_focus_control_id: str | None = None
         self._pending_displaced_focus_control_id: str | None = None
         self._pending_focus_moved_after_displacement = False
@@ -3012,6 +3013,12 @@ class SpeechTTSSettingsPanel(Vertical):
                 and "OPENAI_NONE_HTTP_CONFIRMATION" in proposal.delete_setting_keys
             ):
                 self.state.openai_plaintext_confirmation = None
+                self.state.openai_plaintext_confirmation_cleanup_needed = False
+            elif (
+                self.configure_provider == "openai"
+                and "OPENAI_NONE_HTTP_CONFIRMATION" in proposal.settings
+            ):
+                self.state.openai_plaintext_confirmation_cleanup_needed = False
         except GlobalSpeechTTSValidationError as error:
             self._show_validation_error(error)
             self._refresh_status_rows()
@@ -3088,6 +3095,12 @@ class SpeechTTSSettingsPanel(Vertical):
         )
         self._pending_saved_openai_confirmation = (
             deepcopy(self.state.openai_plaintext_confirmation)
+            if self.configure_provider == "openai"
+            and (proposal.settings or proposal.delete_setting_keys)
+            else None
+        )
+        self._pending_saved_openai_confirmation_cleanup_needed = (
+            self.state.openai_plaintext_confirmation_cleanup_needed
             if self.configure_provider == "openai"
             and (proposal.settings or proposal.delete_setting_keys)
             else None
@@ -3190,6 +3203,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_provider_id = None
         self._pending_saved_provider_values = None
         self._pending_saved_openai_confirmation = None
+        self._pending_saved_openai_confirmation_cleanup_needed = None
         self._set_save_pending(False)
         if isinstance(failure, GlobalSpeechTTSValidationError):
             self._show_validation_error(failure)
@@ -3380,6 +3394,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_provider_id = None
         self._pending_saved_provider_values = None
         self._pending_saved_openai_confirmation = None
+        self._pending_saved_openai_confirmation_cleanup_needed = None
         settings = {} if mutation.delete else {mutation.setting_key: mutation.value}
         delete_keys = (mutation.setting_key,) if mutation.delete else ()
         self._set_result(
@@ -3492,11 +3507,15 @@ class SpeechTTSSettingsPanel(Vertical):
         saved_provider_id = self._pending_saved_provider_id
         saved_provider_values = self._pending_saved_provider_values
         saved_openai_confirmation = self._pending_saved_openai_confirmation
+        saved_openai_confirmation_cleanup_needed = (
+            self._pending_saved_openai_confirmation_cleanup_needed
+        )
         self._pending_credential_mutation = None
         self._pending_saved_defaults = None
         self._pending_saved_provider_id = None
         self._pending_saved_provider_values = None
         self._pending_saved_openai_confirmation = None
+        self._pending_saved_openai_confirmation_cleanup_needed = None
         if not result.persisted:
             failure = (
                 " before replacing the config file"
@@ -3557,6 +3576,10 @@ class SpeechTTSSettingsPanel(Vertical):
                     self.original_state.openai_plaintext_confirmation = (
                         saved_openai_confirmation
                     )
+                    if saved_openai_confirmation_cleanup_needed is not None:
+                        self.original_state.openai_plaintext_confirmation_cleanup_needed = (
+                            saved_openai_confirmation_cleanup_needed
+                        )
                 if (
                     self.state.provider_sources[saved_provider_id]
                     is not GlobalSpeechTTSEffectiveSource.ENVIRONMENT
@@ -3759,6 +3782,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self.state.openai_plaintext_confirmation = OpenAIPlaintextConfirmation(
             origin_fingerprint
         )
+        self.state.openai_plaintext_confirmation_cleanup_needed = False
         self.request_save()
 
     @on(Button.Pressed, "#settings-speech-openai-official-preset")

@@ -315,6 +315,50 @@ def test_settings_save_event_defaults_to_provider_settings_only() -> None:
 
 
 @pytest.mark.asyncio
+async def test_confirmation_cleanup_event_removes_persisted_app_tts_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[app_tts]\n"
+        'OPENAI_AUTH_MODE = "api_key"\n'
+        'OPENAI_BASE_URL = "https://api.openai.com/v1/audio/speech"\n'
+        'OPENAI_NONE_HTTP_CONFIRMATION = "stale-confirmation"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(
+        config_module,
+        "settings",
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_AUTH_MODE": "api_key",
+                    "OPENAI_BASE_URL": "https://api.openai.com/v1/audio/speech",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": "stale-confirmation",
+                }
+            }
+        },
+    )
+    handler = STTSEventHandler(RecordingApp())
+    handler._stts_service = ImmediatePublicationService()
+
+    await handler.handle_settings_save(
+        STTSSettingsSaveEvent(
+            {},
+            delete_setting_keys=("OPENAI_NONE_HTTP_CONFIRMATION",),
+        )
+    )
+
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert "OPENAI_NONE_HTTP_CONFIRMATION" not in saved["app_tts"]
+    assert saved["app_tts"]["OPENAI_AUTH_MODE"] == "api_key"
+
+
+@pytest.mark.asyncio
 async def test_explicit_credential_clear_is_atomic_targeted_and_reports_separately(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -2503,6 +2503,50 @@ async def test_switching_back_to_api_key_clears_confirmation_and_saved_baseline(
 
 
 @pytest.mark.asyncio
+async def test_invalid_persisted_confirmation_cleanup_settles_saved_baseline() -> None:
+    endpoint = normalize_openai_compatible_endpoint(
+        "http://voice.example.test:8765/v1/audio/speech"
+    )
+    fingerprint = openai_destination_fingerprint("openai", endpoint)
+    state = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": endpoint.speech_url,
+                    "OPENAI_AUTH_MODE": "api_key",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": fingerprint,
+                }
+            }
+        },
+        environment={},
+    )
+    app = _PanelHarness(configure_provider="openai", state=state)
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert app.events[0].delete_setting_keys == ("OPENAI_NONE_HTTP_CONFIRMATION",)
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.events[0].request_id or 0,
+                persisted=True,
+                provider_statuses={},
+            )
+        )
+        await pilot.pause()
+
+        assert panel.state.openai_plaintext_confirmation_cleanup_needed is False
+        assert (
+            panel.original_state.openai_plaintext_confirmation_cleanup_needed is False
+        )
+        assert panel.request_save() is None
+        assert len(app.events) == 1
+
+
+@pytest.mark.asyncio
 async def test_overlapping_save_is_blocked_without_losing_the_pending_baseline() -> (
     None
 ):

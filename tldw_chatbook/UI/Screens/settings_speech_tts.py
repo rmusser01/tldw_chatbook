@@ -525,6 +525,7 @@ class GlobalSpeechTTSState:
     provider_sources: dict[str, GlobalSpeechTTSEffectiveSource]
     provider_field_sources: dict[str, dict[str, GlobalSpeechTTSEffectiveSource]]
     openai_plaintext_confirmation: OpenAIPlaintextConfirmation | None = None
+    openai_plaintext_confirmation_cleanup_needed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -754,6 +755,16 @@ def load_global_speech_tts_state(
             "organization_id": _value(app_tts, "OPENAI_ORG_ID", ""),
         }
     )
+    raw_app_tts = _raw_settings(settings).get("app_tts")
+    openai_confirmation_persisted = (
+        isinstance(raw_app_tts, Mapping)
+        and "OPENAI_NONE_HTTP_CONFIRMATION" in raw_app_tts
+    )
+    openai_plaintext_confirmation = _load_openai_plaintext_confirmation(
+        app_tts.get("OPENAI_NONE_HTTP_CONFIRMATION"),
+        authentication_mode=providers["openai"]["authentication_mode"],
+        base_url=providers["openai"]["base_url"],
+    )
     providers["elevenlabs"].update(
         {
             "output_format": _value(
@@ -940,10 +951,9 @@ def load_global_speech_tts_state(
         ),
         provider_sources=provider_sources,
         provider_field_sources=provider_field_sources,
-        openai_plaintext_confirmation=_load_openai_plaintext_confirmation(
-            app_tts.get("OPENAI_NONE_HTTP_CONFIRMATION"),
-            authentication_mode=providers["openai"]["authentication_mode"],
-            base_url=providers["openai"]["base_url"],
+        openai_plaintext_confirmation=openai_plaintext_confirmation,
+        openai_plaintext_confirmation_cleanup_needed=(
+            openai_confirmation_persisted and openai_plaintext_confirmation is None
         ),
     )
 
@@ -1945,10 +1955,17 @@ def build_global_speech_tts_save_proposal(
         configure_provider,
         draft.providers[configure_provider],
     )
-    original_validated = _validated_provider_values(
-        configure_provider,
-        original.providers[configure_provider],
-    )
+    try:
+        original_validated = _validated_provider_values(
+            configure_provider,
+            original.providers[configure_provider],
+        )
+    except GlobalSpeechTTSValidationError:
+        if configure_provider != "openai":
+            raise
+        # A valid OpenAI draft must be able to replace malformed persisted
+        # values; an empty comparison sentinel forces the bounded full update.
+        original_validated = {}
     required_confirmation: str | None = None
     if configure_provider == "openai":
         required_confirmation = required_openai_plaintext_confirmation_fingerprint(
@@ -1982,7 +1999,11 @@ def build_global_speech_tts_save_proposal(
         original_confirmation = original.openai_plaintext_confirmation
         draft_confirmation = draft.openai_plaintext_confirmation
         if required_confirmation is None:
-            if original_confirmation is not None:
+            if (
+                original_confirmation is not None
+                or original.openai_plaintext_confirmation_cleanup_needed
+                or draft.openai_plaintext_confirmation_cleanup_needed
+            ):
                 delete_setting_keys.append("OPENAI_NONE_HTTP_CONFIRMATION")
         elif (
             draft_confirmation is not None
