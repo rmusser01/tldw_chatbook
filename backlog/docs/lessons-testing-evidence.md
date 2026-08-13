@@ -3624,3 +3624,41 @@ contract. Across a batch of full-suite failures, mutation-bisect each one agains
 your own diff before writing any of them off as "pre-existing" or accepting any as
 "caused by my change" — a batch this size will usually contain both, plus plain
 flakiness, and a single red run distinguishes none of them.
+
+---
+
+## An unchanged-skip guard is only as reliable as its least reliable compared field (task-15459, 2026-08-13)
+
+**Incident.** task-15459's `_apply_local_source_snapshot` compared an incoming
+snapshot against the currently-rendered one and skipped a recompose when they were
+equal — the flagship AC test asserted this held across a reconcile fetch that
+should have confirmed the cache verbatim. Review reproduced the test failing
+intermittently at exactly that assertion. Root cause: the flat comparison included
+`study_counts` (`study_decks`/`flashcards_due`/`quizzes`) and two rail badge
+counts (Prompts, Skills) — every one fetched by a `..._or_none` helper whose own
+docstring says it swallows ANY exception and degrades to `None`. Under thread-pool
+contention, two fetches of the SAME unchanged data could legitimately disagree on
+one of these fields (one call transiently raised, the other did not), making the
+guard fire a full recompose for a coin-flip on a decorative badge — "fails safe"
+(a spurious recompose, not a missed one) but non-deterministic, which is exactly
+as unacceptable for an "exactly once" acceptance criterion as failing unsafe.
+
+The first attempt at writing THIS test only asserted the guard's happy path — it
+never modeled a field that changes independently of the state a user would call
+"the data." A single flat `==` over a snapshot dict is only as trustworthy as its
+least reliable member field.
+
+**What to do.** Before folding several fields into one equality check that gates
+an expensive operation, audit each field's OWN fetch contract, not just its type.
+A field fetched by a helper that swallows exceptions and degrades to a sentinel
+(`None`, `""`, an empty collection) is not equivalent in reliability to a field
+whose fetch either succeeds or aborts the whole call — the former can flap between
+two fetches of otherwise-identical state, the latter cannot (barring the state
+genuinely changing). Split the comparison into domains — STRUCTURAL fields that
+must gate the expensive operation, and DECORATIVE/best-effort fields that should
+be patched through a cheaper path (an in-place widget update, a `None`-tolerant
+merge) instead of ever gating it. To prove the split actually closes the gap, do
+not just re-run the flaky test and hope: inject the exact transient exception
+deterministically (a fake service that raises on its Nth call, not the Mth) so the
+flap is reproducible on demand, and mutation-test the fix by temporarily re-
+merging the domains to confirm the ORIGINAL failure message comes back verbatim.
