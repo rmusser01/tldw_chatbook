@@ -1060,11 +1060,37 @@ async def test_prompts_canvas_export_toolbar_is_painted_focusable_and_in_bounds(
             assert pilot.app.focused is button
 
 
-def test_prompt_export_control_is_a_stable_focus_identity():
-    fake = SimpleNamespace(focused=SimpleNamespace(id="library-prompts-export"))
-    assert LibraryScreen._library_prompts_focus_identity(fake) == (
-        "library-prompts-export"
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("focus_selector", "expected"),
+    (
+        ("#library-prompts-export", "library-prompts-export"),
+        ("#library-row-browse-prompts", None),
+    ),
+    ids=("prompt-export", "outside-rail"),
+)
+async def test_library_prompts_focus_identity_covers_export_action(
+    focus_selector: str,
+    expected: str | None,
+):
+    """Only mounted descendants of the current Prompt canvas are captured."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = _FakePromptScopeServiceWithList(
+        [{"id": 5, "name": "Alpha prompt", "version": 1}]
     )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-export")
+
+        screen.query_one(focus_selector, Button).focus()
+        await pilot.pause()
+
+        assert screen._library_prompts_focus_identity() == expected
 
 
 @pytest.mark.asyncio
