@@ -1516,6 +1516,14 @@ class LLMManagementWindow(Container):
             status.update(
                 "Managed GGUF inventory unavailable. Refresh managed models to retry."
             )
+        elif (
+            self._gguf_sources[provider].mode is GGUFSourceMode.MANAGED
+            and self._gguf_sources[provider].managed_ref is None
+        ):
+            status.update(
+                "Selected managed GGUF is unavailable. "
+                "Choose another managed model or refresh."
+            )
         else:
             status.update(
                 f"Selected authority: {self._gguf_sources[provider].authority}"
@@ -1531,6 +1539,7 @@ class LLMManagementWindow(Container):
             return
         self._gguf_sources[provider] = self._gguf_sources[provider].for_mode(mode)
         self._render_gguf_source(provider)
+        self._sync_process_controls(provider)
         if mode is GGUFSourceMode.MANAGED:
             self._ensure_managed_gguf_inventory()
 
@@ -1558,7 +1567,7 @@ class LLMManagementWindow(Container):
                 managed_ref=event.value,
                 external_path=self._gguf_sources[provider].external_path,
             )
-            self._render_gguf_authority(provider)
+            self._sync_process_controls(provider)
             return
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -1665,6 +1674,17 @@ class LLMManagementWindow(Container):
                     external_path=selection.external_path,
                 )
                 self._gguf_sources[provider] = selection
+            elif (
+                not error
+                and selection.managed_ref is not None
+                and selection.managed_ref not in references
+            ):
+                selection = GGUFSourceSelection(
+                    mode=selection.mode,
+                    managed_ref=None,
+                    external_path=selection.external_path,
+                )
+                self._gguf_sources[provider] = selection
             select = self.query_one(f"#{provider}-gguf-managed-select", Select)
             with select.prevent(Select.Changed):
                 select.set_options(self._gguf_managed_options())
@@ -1673,8 +1693,7 @@ class LLMManagementWindow(Container):
                     if selection.managed_ref in references
                     else Select.NULL
                 )
-            select.disabled = bool(error) or not choices
-            self._render_gguf_authority(provider)
+            self._sync_process_controls(provider)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route allowlisted actions inside this destination."""
@@ -1741,7 +1760,12 @@ class LLMManagementWindow(Container):
         try:
             start = self.query_one(f"#{start_id}", Button)
             stop = self.query_one(f"#{stop_id}", Button)
-            start.disabled = active
+            source_ready = not (
+                provider in self.GGUF_PROVIDERS
+                and self._gguf_sources[provider].mode is GGUFSourceMode.MANAGED
+                and self._gguf_sources[provider].managed_ref is None
+            )
+            start.disabled = active or not source_ready
             stop.disabled = not active
             if provider in self.GGUF_PROVIDERS:
                 for control_id in self.GGUF_SOURCE_CONTROLS[provider]:
@@ -1755,10 +1779,10 @@ class LLMManagementWindow(Container):
                     else:
                         control.disabled = active
                 self._render_gguf_authority(provider)
-            if active and not was_active:
-                stop.focus()
-            elif was_active and not active:
-                start.focus()
+                if active and not was_active:
+                    stop.focus()
+                elif was_active and not active:
+                    start.focus()
         except QueryError:
             logger.warning(
                 "Could not restore LLM process controls (provider={})",

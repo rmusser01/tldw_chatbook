@@ -22,6 +22,7 @@
 .gguf-source-mode {
     width: 1fr;
     min-width: 12;
+    height: 3;
 }
 
 .gguf-source-region {
@@ -45,6 +46,7 @@
 .gguf-source-managed-select {
     width: 1fr;
     min-width: 8;
+    height: 3;
 }
 
 .gguf-source-refresh,

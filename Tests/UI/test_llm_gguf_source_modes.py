@@ -123,6 +123,20 @@ def _select_values(select: Select) -> tuple[object, ...]:
     return tuple(value for _label, value in select._options if value is not Select.NULL)
 
 
+def _assert_painted_inside(app: Any, widget: Any, view: Any) -> None:
+    """Assert real compositor visibility inside both parent and view bounds."""
+
+    assert widget in app.screen._compositor.visible_widgets
+    assert widget.is_on_screen
+    assert widget.region.width > 0 and widget.region.height > 0
+    assert widget.parent is not None
+    for bounds in (widget.parent.content_region, view.content_region):
+        assert widget.region.x >= bounds.x
+        assert widget.region.right <= bounds.right
+        assert widget.region.y >= bounds.y
+        assert widget.region.bottom <= bounds.bottom
+
+
 @pytest.mark.asyncio
 async def test_source_matrix_and_legacy_compatibility(
     monkeypatch: pytest.MonkeyPatch,
@@ -322,6 +336,78 @@ async def test_inventory_started_before_launch_cannot_overwrite_fenced_state(
 
 
 @pytest.mark.asyncio
+async def test_refresh_removing_selected_ref_blocks_stale_managed_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    choice_a = ManagedGGUFChoice(REF_A, "Model A · Q4_K_M · 4 MiB · Managed")
+    choice_b = ManagedGGUFChoice(REF_B, "Model B · Q8_0 · 8 MiB · Managed")
+    app, pilot, context, _screen, window, _service = await _mount_models(
+        monkeypatch,
+        choices=(choice_a,),
+    )
+    try:
+        mode = window.query_one("#llamacpp-gguf-source-mode", Select)
+        managed = window.query_one("#llamacpp-gguf-managed-select", Select)
+        start = window.query_one("#llamacpp-start-server-button", Button)
+        mode.value = "managed"
+        await pilot.pause()
+        assert managed.value == REF_A
+        assert not start.disabled
+
+        monkeypatch.setattr(
+            window_module,
+            "managed_gguf_choices",
+            lambda _installed: (choice_b,),
+        )
+        generation = window._managed_gguf_inventory_generation
+        refresh = window.query_one("#llamacpp-gguf-refresh-button", Button)
+        await window.on_button_pressed(Button.Pressed(refresh))
+        for _ in range(20):
+            await pilot.pause(0.02)
+            if (
+                window._managed_gguf_inventory_generation > generation
+                and _select_values(managed) == (REF_B,)
+            ):
+                break
+
+        assert _select_values(managed) == (REF_B,)
+        assert managed.value is Select.NULL
+        assert window.gguf_source_snapshot("llamacpp").managed_ref is None
+        assert start.disabled
+        recovery = str(
+            window.query_one("#llamacpp-gguf-source-status", Static).render()
+        )
+        assert recovery == (
+            "Selected managed GGUF is unavailable. "
+            "Choose another managed model or refresh."
+        )
+        assert PRIVATE_MANAGED_PATH not in recovery
+
+        executable = tmp_path / "llama-server"
+        executable.write_text("#!/bin/sh\n", encoding="utf-8")
+        window.query_one("#llamacpp-exec-path", Input).value = str(executable)
+        workers: list[object] = []
+        monkeypatch.setattr(
+            app,
+            "run_worker",
+            lambda work, **_kwargs: workers.append(work),
+        )
+        start.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.click(start)
+        assert current_server_claim(app, "llamacpp") is None
+        assert workers == []
+
+        managed.value = REF_B
+        await pilot.pause()
+        assert window.gguf_source_snapshot("llamacpp").managed_ref == REF_B
+        assert not start.disabled
+    finally:
+        await _close_context(context)
+
+
+@pytest.mark.asyncio
 async def test_inventory_failure_disables_only_managed_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -447,6 +533,57 @@ async def test_status_updates_preserve_stop_identity_and_restore_focus_on_death(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "view_name", "focus_id"),
+    (
+        ("vllm", "vllm", "vllm-model-path"),
+        ("mlx", "mlx-lm", "mlx-model-path"),
+    ),
+)
+async def test_non_gguf_lifecycle_sync_preserves_existing_focus(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    view_name: str,
+    focus_id: str,
+) -> None:
+    app, pilot, context, _screen, window, _service = await _mount_models(monkeypatch)
+    try:
+        window.active_view = view_name
+        await pilot.pause()
+        focused = window.query_one(f"#{focus_id}", Input)
+        focused.value = f"{provider}-value-byte-for-byte"
+        input_values = {
+            widget.id: widget.value
+            for widget in window.query_one(f"#llm-view-{view_name}").query(Input)
+        }
+        focused.scroll_visible(animate=False)
+        focused.focus()
+        await pilot.pause()
+        assert focused.has_focus
+
+        claim = reserve_server_launch(app, provider, authority="Local process")
+        assert claim is not None
+        window._sync_process_controls(provider)
+        await pilot.pause()
+        assert focused.has_focus
+        assert {
+            widget.id: widget.value
+            for widget in window.query_one(f"#llm-view-{view_name}").query(Input)
+        } == input_values
+
+        assert release_server_claim(app, provider, claim)
+        window._sync_process_controls(provider)
+        await pilot.pause()
+        assert focused.has_focus
+        assert {
+            widget.id: widget.value
+            for widget in window.query_one(f"#llm-view-{view_name}").query(Input)
+        } == input_values
+    finally:
+        await _close_context(context)
+
+
+@pytest.mark.asyncio
 async def test_physical_stop_cancels_only_current_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -553,7 +690,13 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
     provider: str,
     view_name: str,
 ) -> None:
-    choices = (ManagedGGUFChoice(REF_A, "Model A · Q4_K_M · 4 MiB · Managed"),)
+    choices = (
+        ManagedGGUFChoice(
+            REF_A,
+            "LongInventoryMarker-model-name-that-must-not-push-actions-outside "
+            "· Q4_K_M · 16384.0 MiB · Managed · local integrity recorded",
+        ),
+    )
     app, pilot, context, _screen, window, _service = await _mount_models(
         monkeypatch,
         size=(80, 24),
@@ -566,6 +709,7 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         assert window.active_view == view_name
         view = window.query_one(f"#llm-view-{view_name}")
         mode = window.query_one(f"#{provider}-gguf-source-mode", Select)
+        refresh = window.query_one(f"#{provider}-gguf-refresh-button", Button)
         start = window.query_one(f"#{provider}-start-server-button", Button)
         stop = window.query_one(f"#{provider}-stop-server-button", Button)
 
@@ -573,10 +717,12 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         mode.focus()
         await pilot.pause()
         await pilot.press("enter")
+        await pilot.pause()
         if provider == "llamacpp":
             await pilot.press("up")
         else:
             await pilot.press("down")
+        await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
         assert mode.value == "managed"
@@ -585,20 +731,44 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         await pilot.pause()
         managed = window.query_one(f"#{provider}-gguf-managed-select", Select)
         assert managed.has_focus
-        for widget in (mode, managed, start):
+        assert not managed.expanded
+        for widget in (mode, managed, refresh, start):
             widget.scroll_visible(animate=False)
             await pilot.pause()
-            assert widget.region.width > 0 and widget.region.height > 0
-            assert widget.region.x >= view.content_region.x
-            assert widget.region.right <= view.content_region.right
+            _assert_painted_inside(app, widget, view)
+        managed.scroll_visible(animate=False)
+        await pilot.pause()
+        _assert_painted_inside(app, managed, view)
+        managed_svg = app.export_screenshot(simplify=True)
+        assert "LongInvent" in managed_svg
+        assert "oryMarker-" in managed_svg
+        assert "Refresh" in managed_svg
+
         claim = reserve_server_launch(app, provider, authority="Managed GGUF")
         assert claim is not None
         window._sync_process_controls(provider)
         stop.scroll_visible(animate=False)
         await pilot.pause()
         assert stop.has_focus
-        assert stop.region.width > 0 and stop.region.height > 0
-        assert stop.region.x >= view.content_region.x
-        assert stop.region.right <= view.content_region.right
+        _assert_painted_inside(app, stop, view)
+        assert "Stop" in app.export_screenshot(simplify=True)
+
+        assert release_server_claim(app, provider, claim)
+        window._sync_process_controls(provider)
+        mode.value = "external"
+        await pilot.pause()
+        browse = window.query_one(f"#{provider}-browse-model-button", Button)
+        copy = window.query_one(f"#{provider}-gguf-external-region").query_one(
+            ".gguf-source-copy", Static
+        )
+        for widget in (browse, copy):
+            widget.scroll_visible(animate=False)
+            await pilot.pause()
+            _assert_painted_inside(app, widget, view)
+        external_svg = app.export_screenshot(simplify=True)
+        assert all(
+            token in external_svg
+            for token in ("Browse", "Outside", "Chatbook", "This", "used")
+        )
     finally:
         await _close_context(context)
