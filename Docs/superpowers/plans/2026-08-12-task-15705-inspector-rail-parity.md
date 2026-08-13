@@ -372,6 +372,17 @@ assert str(right_button.label) == "Inspect"
 assert right_button.tooltip == "Open Inspector rail"
 ```
 
+In
+`Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py`, replace
+the broad `"Inspector" in text` check with an exact widget contract so the
+old prefix cannot pass the new expectation:
+
+```python
+inspector_button = console.query_one("#console-inspector-rail-open", Button)
+assert str(inspector_button.label) == "Inspect"
+assert inspector_button.tooltip == "Open Inspector rail"
+```
+
 Rename the two focused tests whose names currently say the horizontal default
 is preserved or the Inspector label is renamed so they describe the new
 horizontal abbreviation contract. In the shell/config parameterizations,
@@ -382,8 +393,23 @@ tooltip, and open Inspector heading.
 - [ ] **Step 2: Replace the vacuous visual substring oracle**
 
 In `Tests/UI/test_workbench_visual_snapshots.py`, add a small local helper that
-slices a widget's exact rows from `screen._compositor.render_strips()`. In the
-six-state TASK-15705 sweep, assert both the semantic label and the final paint:
+slices a widget's exact rows from `screen._compositor.render_strips()`. Textual
+regions use terminal-cell coordinates, so crop the `Strip` by cells rather
+than applying Python code-point slicing:
+
+```python
+def _composited_rows(widget) -> list[str]:
+    strips = widget.screen._compositor.render_strips()
+    region = widget.region
+    return [
+        strips[y].crop(region.x, region.right).text
+        for y in range(region.y, region.bottom)
+        if 0 <= y < len(strips)
+    ]
+```
+
+In the six-state TASK-15705 sweep, assert both the semantic label and the final
+paint:
 
 ```python
 assert str(inspector_button.label) == "Inspect"
@@ -402,7 +428,18 @@ and `Inspect` is also a prefix of `Inspector`.
 
 - [ ] **Step 3: Run the changed contracts and verify RED**
 
-Run only the directly affected tests:
+First record the known formatter baseline before any code/test edit:
+
+```bash
+.venv/bin/ruff format --check tldw_chatbook/Widgets/Console/console_rail_handle.py Tests/UI/test_console_rail_handle.py Tests/UI/test_destination_rail.py Tests/UI/test_console_shell_regions.py Tests/UI/test_settings_console_rail_labels.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_workbench_visual_snapshots.py
+```
+
+Expected baseline: exit 1 naming exactly these five files and no others:
+`test_console_rail_handle.py`, `test_console_shell_regions.py`,
+`test_destination_rail.py`, `test_settings_console_rail_labels.py`, and
+`console_rail_handle.py`. Do not reformat them as part of this copy-only task.
+
+Then run only the directly affected tests:
 
 ```bash
 .venv/bin/python -m pytest -q Tests/UI/test_console_rail_handle.py Tests/UI/test_destination_rail.py Tests/UI/test_console_shell_regions.py Tests/UI/test_settings_console_rail_labels.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py
@@ -451,20 +488,27 @@ git diff --check
 
 Expected: all selected tests pass; the compositor reports one `Inspect` row at
 all six live Console states; the exact tooltip and stacked label remain
-unchanged. Per the user's explicit instruction, do not run the full repository
-suite for this follow-up.
+unchanged. Ruff check and `git diff --check` exit zero. Ruff format retains the
+exact five-file baseline failure set recorded in Step 3, with no new file or
+finding attributable to the follow-up. Per the user's explicit instruction,
+do not run the full repository suite for this follow-up.
 
 - [ ] **Step 7: Record evidence, close AC #7, and commit**
 
-Update TASK-15705's Implementation Notes with the RED/GREEN counts, the exact
-compositor evidence, preserved invariants, and the user-scoped verification
-boundary. Check AC #7 and return the task to Done only after every focused gate
-above passes.
+Append the follow-up evidence manually to TASK-15705's existing Implementation
+Notes; do not pass `--notes`, because Backlog replaces the entire notes block
+instead of appending. Record the RED/GREEN counts, exact compositor evidence,
+preserved invariants, formatter baseline comparison, and user-scoped
+verification boundary. Then check AC #7 and return the task to Done only after
+every focused gate above passes. Re-read and diff the task before committing to
+prove the existing implementation history was preserved.
 
 ```bash
 git add tldw_chatbook/Widgets/Console/console_rail_handle.py
 git commit -m "fix(console): shorten collapsed rail label to Inspect"
-backlog task edit 15705 --check-ac 7 -s Done --notes "<focused verified follow-up summary>"
+backlog task edit 15705 --check-ac 7 -s Done --plain
+backlog task 15705 --plain
+git diff -- 'backlog/tasks/task-15705 - Match-collapsed-Inspector-rail-to-Context-rail.md'
 git add 'backlog/tasks/task-15705 - Match-collapsed-Inspector-rail-to-Context-rail.md'
 git commit -m "docs(console): record Inspect label verification"
 git push
