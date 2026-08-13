@@ -58,8 +58,43 @@ from tldw_chatbook.TTS.profile_portability import (  # noqa: E402
 #
 # Constants
 DEFAULT_CHARACTER_ID = 1
+_EXPORTED_HISTORY_FORMAT = "tldw_chat_history"
+_EXPORTED_HISTORY_FORMAT_VERSION = 1
+_MAX_EXPORTED_HISTORY_FILE_BYTES = 16 * 1024 * 1024
 _MAX_EXPORTED_HISTORY_MESSAGES = 10_000
 _MAX_EXPORTED_HISTORY_CONTENT_CHARS = 1_000_000
+_MAX_EXPORTED_HISTORY_TOTAL_CONTENT_CHARS = 8 * 1024 * 1024
+_MAX_EXPORTED_HISTORY_ID_CHARS = 256
+_MAX_EXPORTED_HISTORY_TOTAL_ID_CHARS = 1024 * 1024
+_MAX_EXPORTED_HISTORY_PRIVATE_BYTES = 8 * 1024 * 1024
+_MAX_EXPORTED_HISTORY_JSON_DEPTH = 32
+
+
+def _json_depth_is_bounded(value: object, limit: int) -> bool:
+    """Return whether decoded JSON stays within the import nesting limit."""
+    stack = [(value, 1)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > limit:
+            return False
+        if isinstance(current, dict):
+            stack.extend((item, depth + 1) for item in current.values())
+        elif isinstance(current, list):
+            stack.extend((item, depth + 1) for item in current)
+    return True
+
+
+def _read_bounded_chat_history(source: Any) -> str:
+    """Read at most one ordinary-history resource ceiling plus one byte."""
+    raw = source.read(_MAX_EXPORTED_HISTORY_FILE_BYTES + 1)
+    if isinstance(raw, bytes):
+        if len(raw) > _MAX_EXPORTED_HISTORY_FILE_BYTES:
+            raise ValueError("Chat history exceeds safety limits.")
+        return raw.decode("utf-8")
+    text = str(raw)
+    if len(text.encode("utf-8")) > _MAX_EXPORTED_HISTORY_FILE_BYTES:
+        raise ValueError("Chat history exceeds safety limits.")
+    return text
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +114,7 @@ class CharacterCardTTSInspection:
     portable_profile: PortableTTSProfile | None = None
     warning_code: PortableProfileWarningCode | None = None
 
+
 # Image metadata keys that carry embedded character-card JSON:
 # 'chara' holds V1/V2 cards, 'ccv3' holds V3 cards (PNG tEXt/zTXt/iTXt chunks).
 _CARD_IMAGE_METADATA_KEYS = ("chara", "ccv3")
@@ -90,6 +126,7 @@ def _bounded_card_source_type(source: object) -> str:
 
     suffix = Path(str(source)).suffix.lower()
     return suffix if suffix in _CARD_SOURCE_TYPES else "other"
+
 
 # Upper bound on image dimensions for the full decode used to reveal trailing
 # (post-IDAT) PNG metadata chunks. Character card images are typically well
@@ -527,8 +564,8 @@ def replace_placeholders(
         "{{random_user}}": user_name_actual,  # As per original logic
         "<USER>": user_name_actual,  # Common alternative
         "<CHAR>": char_name_actual,  # Common alternative
-        "{{character}}": char_name_actual,   # task-442 alias: the AI character's name
-        "{{persona}}": char_name_actual,     # task-442 alias: the AI character's name (NEVER the user)
+        "{{character}}": char_name_actual,  # task-442 alias: the AI character's name
+        "{{persona}}": char_name_actual,  # task-442 alias: the AI character's name (NEVER the user)
     }
 
     processed_text = text
@@ -749,8 +786,11 @@ def get_character_page_for_ui(
     """
     try:
         rows = db.list_character_cards_page(
-            limit=limit, offset=offset, order_by=order_by,
-            search_term=search_term, tag=tag,
+            limit=limit,
+            offset=offset,
+            order_by=order_by,
+            search_term=search_term,
+            tag=tag,
         )
     except Exception as exc:
         logger.opt(exception=True).error(f"Character page fetch failed: {exc}")
@@ -1451,7 +1491,9 @@ def extract_json_from_image_file(
 
         # Primarily for PNG cards (TavernAI, SillyTavern convention)
         if img_obj.format != "PNG":
-            logger.warning("Character-card image is not PNG; probing alternate metadata.")
+            logger.warning(
+                "Character-card image is not PNG; probing alternate metadata."
+            )
 
         # 'text' attribute in Pillow Image objects holds metadata chunks.
         # For PNGs, these are tEXt, zTXt, or iTXt chunks.
@@ -1473,9 +1515,7 @@ def extract_json_from_image_file(
         if metadata_key is None and img_obj.format == "PNG":
             width, height = img_obj.size
             if width * height > _MAX_CARD_DECODE_PIXELS:
-                logger.warning(
-                    "Skipping full decode of oversized character-card PNG."
-                )
+                logger.warning("Skipping full decode of oversized character-card PNG.")
             else:
                 try:
                     img_obj.load()
@@ -1525,9 +1565,7 @@ def extract_json_from_image_file(
                     "utf-8"
                 )
                 json.loads(decoded_chara_json_str)  # Validate it's JSON
-                logger.info(
-                    "Character-card image metadata decoded successfully."
-                )
+                logger.info("Character-card image metadata decoded successfully.")
                 return decoded_chara_json_str
             except (
                 binascii.Error,
@@ -1701,9 +1739,7 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             ),
             "tags": _coerce_card_str_list(data_node.get("tags")),
             "creator": _coerce_card_text(data_node.get("creator")),
-            "character_version": _coerce_card_text(
-                data_node.get("character_version")
-            ),
+            "character_version": _coerce_card_text(data_node.get("character_version")),
             # Shallow copy so the character_book insertion below can never
             # mutate the caller's original card dict.
             "extensions": dict(data_node["extensions"])
@@ -2214,13 +2250,10 @@ def validate_v2_card(card_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
     if "data" not in card_data or not isinstance(card_data.get("data"), dict):
         # Fatal only when the card *claims* to be V2/V3; a flat card without a
         # 'data' node may be a V1 card and is handled by the V1 parser.
-        claims_v2 = (
-            card_data.get("spec") in ("chara_card_v2", "chara_card_v3")
-            or str(card_data.get("spec_version", "")).startswith(("2.", "3."))
-        )
-        msg = (
-            "Missing 'data' field, or it's not a dictionary. V2 spec requires character data under a 'data' key."
-        )
+        claims_v2 = card_data.get("spec") in ("chara_card_v2", "chara_card_v3") or str(
+            card_data.get("spec_version", "")
+        ).startswith(("2.", "3."))
+        msg = "Missing 'data' field, or it's not a dictionary. V2 spec requires character data under a 'data' key."
         if claims_v2:
             errors.append(f"ERROR: {msg}")
         else:
@@ -2627,8 +2660,7 @@ def inspect_character_card_tts_attachment(
                 )
             except ValueError:
                 logger.error(
-                    "Character inspection source path was rejected "
-                    "(source_type={}).",
+                    "Character inspection source path was rejected (source_type={}).",
                     source_kind,
                 )
                 return None
@@ -2857,8 +2889,7 @@ def import_and_save_character_from_file_with_outcome(
                     card_json_str = stream_bytes.decode("utf-8")
                 except UnicodeDecodeError:
                     logger.error(
-                        "Character import stream is not UTF-8 text "
-                        "(source_type={}).",
+                        "Character import stream is not UTF-8 text (source_type={}).",
                         source_kind,
                     )
                     return None
@@ -2880,8 +2911,7 @@ def import_and_save_character_from_file_with_outcome(
         parsed_card_dict = load_character_card_from_string_content(card_json_str)
         if not parsed_card_dict:  # This means parsing or validation failed.
             logger.error(
-                "Character import failed parsing or validation "
-                "(source_type={}).",
+                "Character import failed parsing or validation (source_type={}).",
                 source_kind,
             )
             return None
@@ -2927,8 +2957,7 @@ def import_and_save_character_from_file_with_outcome(
                 logger.debug("Decoded base64 image from card JSON.")
             except Exception as e_b64:
                 logger.warning(
-                    "Character card image payload could not be decoded "
-                    "(category={}).",
+                    "Character card image payload could not be decoded (category={}).",
                     type(e_b64).__name__,
                 )
                 # Keep image_bytes_for_db as None
@@ -2966,9 +2995,7 @@ def import_and_save_character_from_file_with_outcome(
         if char_id:
             logger.info("Character import persisted (disposition=created).")
         else:
-            logger.error(
-                "Character import persistence returned no identifier."
-            )
+            logger.error("Character import persistence returned no identifier.")
         if char_id is None:
             return None
         return CharacterCardImportOutcome(
@@ -2995,8 +3022,7 @@ def import_and_save_character_from_file_with_outcome(
         return None
     except (CharactersRAGDBError, InputError) as db_e:
         logger.error(
-            "Character import database/input failure "
-            "(source_type={}, category={}).",
+            "Character import database/input failure (source_type={}, category={}).",
             source_kind,
             type(db_e).__name__,
         )
@@ -3008,8 +3034,7 @@ def import_and_save_character_from_file_with_outcome(
         raise
     except Exception as e:
         logger.error(
-            "Unexpected character import failure "
-            "(source_type={}, category={}).",
+            "Unexpected character import failure (source_type={}, category={}).",
             source_kind,
             type(e).__name__,
         )
@@ -3100,46 +3125,55 @@ def load_chat_history_from_file_and_save_to_db(
             try:
                 validated_path = validate_path(file_path_or_obj, base_directory)
                 filename_for_log = str(validated_path)
-                logger.debug(f"Validated chat history file path: {validated_path}")
-            except ValueError as e:
-                logger.error(
-                    f"Invalid chat history file path '{file_path_or_obj}': {e}"
-                )
+            except ValueError:
+                logger.error("Invalid chat history file path.")
                 return None, None
 
-            with open(validated_path, "r", encoding="utf-8") as f:
-                content_str = f.read()
+            if validated_path.stat().st_size > _MAX_EXPORTED_HISTORY_FILE_BYTES:
+                raise ValueError("Chat history exceeds safety limits.")
+            with open(validated_path, "rb") as f:
+                content_str = _read_bounded_chat_history(f)
         elif hasattr(file_path_or_obj, "read"):  # File-like object
             if hasattr(file_path_or_obj, "name") and file_path_or_obj.name:
                 filename_for_log = file_path_or_obj.name
             file_path_or_obj.seek(0)
-            raw_bytes = file_path_or_obj.read()
-            content_str = (
-                raw_bytes.decode("utf-8")
-                if isinstance(raw_bytes, bytes)
-                else str(raw_bytes)
-            )
+            content_str = _read_bounded_chat_history(file_path_or_obj)
         else:
             raise ValueError(
                 "Invalid input for chat history: must be file path or file-like object."
             )
 
         chat_data_dict = json.loads(content_str)
+        if not isinstance(chat_data_dict, dict) or not _json_depth_is_bounded(
+            chat_data_dict, _MAX_EXPORTED_HISTORY_JSON_DEPTH
+        ):
+            raise ValueError("Invalid chat history.")
 
         # Chatbook's ordinary JSON export is a bounded active-path projection,
         # not a character-card log and not a replacement conversation graph.
         projected_history = chat_data_dict.get("history")
+        exported_format = chat_data_dict.get("format")
+        exported_version = chat_data_dict.get("format_version")
+        if exported_format == _EXPORTED_HISTORY_FORMAT and (
+            exported_version != _EXPORTED_HISTORY_FORMAT_VERSION
+        ):
+            raise ValueError("Unsupported exported chat history format.")
         if (
-            isinstance(chat_data_dict.get("conversation_name"), str)
-            and isinstance(projected_history, list)
-            and all(isinstance(message, dict) for message in projected_history)
+            exported_format == _EXPORTED_HISTORY_FORMAT
+            and exported_version == _EXPORTED_HISTORY_FORMAT_VERSION
         ):
             if (
-                not projected_history
+                not isinstance(chat_data_dict.get("conversation_name"), str)
+                or not isinstance(projected_history, list)
+                or not projected_history
                 or len(projected_history) > _MAX_EXPORTED_HISTORY_MESSAGES
+                or not all(isinstance(message, dict) for message in projected_history)
             ):
                 raise ValueError("Invalid exported chat history.")
             staged_messages: list[dict[str, Any]] = []
+            total_content_chars = 0
+            total_id_chars = 0
+            total_private_bytes = 0
             for ordinal, message in enumerate(projected_history, start=1):
                 role = message.get("role")
                 content = message.get("content")
@@ -3149,8 +3183,27 @@ def load_chat_history_from_file_and_save_to_db(
                     or len(content) > _MAX_EXPORTED_HISTORY_CONTENT_CHARS
                 ):
                     raise ValueError("Invalid exported chat history.")
+                total_content_chars += len(content)
+                if total_content_chars > _MAX_EXPORTED_HISTORY_TOTAL_CONTENT_CHARS:
+                    raise ValueError("Invalid exported chat history.")
+                for key in ("id", "parent_id", "variant_of"):
+                    identifier = message.get(key)
+                    if identifier is not None and (
+                        not isinstance(identifier, str)
+                        or len(identifier) > _MAX_EXPORTED_HISTORY_ID_CHARS
+                    ):
+                        raise ValueError("Invalid exported chat history.")
+                    total_id_chars += len(identifier or "")
+                if total_id_chars > _MAX_EXPORTED_HISTORY_TOTAL_ID_CHARS:
+                    raise ValueError("Invalid exported chat history.")
                 staged = {"sender": role, "role": role, "content": content}
                 private = message.get("_private")
+                if private is not None:
+                    total_private_bytes += len(
+                        json.dumps(private, separators=(",", ":")).encode("utf-8")
+                    )
+                    if total_private_bytes > _MAX_EXPORTED_HISTORY_PRIVATE_BYTES:
+                        raise ValueError("Invalid exported chat history.")
                 checkpoint = None
                 if (
                     role == "assistant"
@@ -3330,17 +3383,16 @@ def load_chat_history_from_file_and_save_to_db(
 
         return new_conv_id, character_id_from_db
 
-    except json.JSONDecodeError as e:
-        logger.error(f"Error decoding JSON from chat log '{filename_for_log}': {e}")
-    except ValueError as ve:
-        logger.error(f"Invalid data or format in chat log '{filename_for_log}': {ve}")
-    except CharactersRAGDBError as dbe:
-        logger.error(
-            f"Database error during chat history import from '{filename_for_log}': {dbe}"
-        )
+    except json.JSONDecodeError:
+        logger.error("Error decoding imported chat history JSON.")
+    except ValueError:
+        logger.error("Invalid imported chat history data.")
+    except CharactersRAGDBError:
+        logger.error("Database error during chat history import.")
     except Exception as e:
-        logger.opt(exception=True).error(
-            f"Unexpected error importing chat history from '{filename_for_log}': {e}"
+        logger.error(
+            "Unexpected error importing chat history (category={}).",
+            type(e).__name__,
         )
 
     return None, None
@@ -4181,9 +4233,7 @@ def export_character_card_to_json(
         if portable_tts_profile is not None:
             if extensions is not None and type(extensions) is not dict:
                 raise ValueError("invalid_extensions")
-            export_extensions = (
-                {} if extensions is None else copy.deepcopy(extensions)
-            )
+            export_extensions = {} if extensions is None else copy.deepcopy(extensions)
             if CHARACTER_CARD_TTS_EXTENSION_KEY in export_extensions:
                 raise ValueError("reserved_extension_occupied")
             export_extensions[CHARACTER_CARD_TTS_EXTENSION_KEY] = (

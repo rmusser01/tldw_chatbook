@@ -8,6 +8,8 @@ import io
 import shutil
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.Chat.Chat_Functions import generate_chat_history_content
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -75,6 +77,8 @@ def test_conversation_json_uses_explicit_private_projection() -> None:
     payload_json, _ = generate_chat_history_content(history, "conversation-1", None)
 
     payload = json.loads(payload_json)
+    assert payload["format"] == "tldw_chat_history"
+    assert payload["format_version"] == 1
     assert payload["private_data_warning"] == (
         "This JSON contains private provider continuation data."
     )
@@ -166,6 +170,8 @@ def test_exported_json_import_drops_invalid_private_with_safe_warning(
         checkpoint = _checkpoint()
         checkpoint["schema_version"] = 99
         payload = {
+            "format": "tldw_chat_history",
+            "format_version": 1,
             "conversation_name": "Imported",
             "history": [
                 {
@@ -203,6 +209,8 @@ def test_exported_json_import_bounds_messages_before_database_writes(
             1,
         )
         payload = {
+            "format": "tldw_chat_history",
+            "format_version": 1,
             "conversation_name": "Bounded",
             "history": [
                 {"role": "user", "content": "one"},
@@ -243,6 +251,151 @@ def test_malformed_json_export_input_does_not_log_private_payload(caplog) -> Non
         "PRIVATE-LOG-CREDENTIAL-CANARY",
     ):
         assert canary not in log_text
+
+
+def test_exported_json_requires_exact_marker_without_stealing_legacy_shape() -> None:
+    database = CharactersRAGDB(":memory:", "json-format-discriminator")
+    try:
+        collision = {
+            "conversation_name": "Must stay legacy",
+            "char_name": "Legacy owner",
+            "history": [{"role": "assistant", "content": "visible answer"}],
+        }
+        unknown = {
+            **collision,
+            "format": "tldw_chat_history",
+            "format_version": 999,
+            "history": [
+                {
+                    "role": "assistant",
+                    "content": "visible answer",
+                    "_private": {"provider_continuation": _checkpoint()},
+                }
+            ],
+        }
+
+        assert load_chat_history_from_file_and_save_to_db(
+            database, io.BytesIO(json.dumps(collision).encode())
+        ) == (None, None)
+        assert load_chat_history_from_file_and_save_to_db(
+            database, io.BytesIO(json.dumps(unknown).encode())
+        ) == (None, None)
+        assert (
+            database.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == 0
+        )
+    finally:
+        database.close_connection()
+
+
+def test_exported_json_rejects_oversize_path_before_open(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "history.json"
+    source.write_bytes(b"{}")
+    monkeypatch.setattr(character_chat_module, "_MAX_EXPORTED_HISTORY_FILE_BYTES", 1)
+    opened = False
+
+    def forbidden_open(*_args, **_kwargs):
+        nonlocal opened
+        opened = True
+        raise AssertionError("oversize input must not be opened")
+
+    monkeypatch.setattr(character_chat_module, "open", forbidden_open, raising=False)
+    database = CharactersRAGDB(":memory:", "json-path-bound")
+    try:
+        assert load_chat_history_from_file_and_save_to_db(
+            database, str(source), base_directory=str(tmp_path)
+        ) == (None, None)
+        assert opened is False
+    finally:
+        database.close_connection()
+
+
+def test_exported_json_rejects_aggregate_content_before_database_writes(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        character_chat_module, "_MAX_EXPORTED_HISTORY_TOTAL_CONTENT_CHARS", 3
+    )
+    payload = {
+        "format": "tldw_chat_history",
+        "format_version": 1,
+        "conversation_name": "Bounded",
+        "history": [
+            {"role": "user", "content": "ab"},
+            {"role": "assistant", "content": "cd"},
+        ],
+    }
+    database = CharactersRAGDB(":memory:", "json-content-bound")
+    try:
+        assert load_chat_history_from_file_and_save_to_db(
+            database, io.BytesIO(json.dumps(payload).encode())
+        ) == (None, None)
+        assert (
+            database.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == 0
+        )
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize(
+    ("constant", "value"),
+    [
+        ("_MAX_EXPORTED_HISTORY_TOTAL_ID_CHARS", 0),
+        ("_MAX_EXPORTED_HISTORY_PRIVATE_BYTES", 0),
+        ("_MAX_EXPORTED_HISTORY_JSON_DEPTH", 2),
+    ],
+)
+def test_exported_json_rejects_id_private_and_depth_bounds(
+    monkeypatch, constant, value
+) -> None:
+    monkeypatch.setattr(character_chat_module, constant, value)
+    payload = {
+        "format": "tldw_chat_history",
+        "format_version": 1,
+        "conversation_name": "Bounded",
+        "history": [
+            {
+                "id": "message-1",
+                "role": "assistant",
+                "content": "visible answer",
+                "_private": {"provider_continuation": _checkpoint()},
+            }
+        ],
+    }
+    database = CharactersRAGDB(":memory:", "json-resource-bound")
+    try:
+        assert load_chat_history_from_file_and_save_to_db(
+            database, io.BytesIO(json.dumps(payload).encode())
+        ) == (None, None)
+        assert (
+            database.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == 0
+        )
+    finally:
+        database.close_connection()
+
+
+def test_exported_json_bounded_reader_checks_actual_bytes(monkeypatch) -> None:
+    monkeypatch.setattr(character_chat_module, "_MAX_EXPORTED_HISTORY_FILE_BYTES", 4)
+
+    class DishonestReader(io.BytesIO):
+        def read(self, _size=-1):
+            return b"12345"
+
+    database = CharactersRAGDB(":memory:", "json-actual-byte-bound")
+    try:
+        assert load_chat_history_from_file_and_save_to_db(
+            database, DishonestReader()
+        ) == (None, None)
+        assert (
+            database.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == 0
+        )
+    finally:
+        database.close_connection()
 
 
 def test_search_and_fts_never_project_private_continuation(

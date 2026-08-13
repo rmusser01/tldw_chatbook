@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 import zipfile
 from pathlib import Path
 
@@ -407,6 +408,100 @@ def test_invalid_v2_graph_fails_without_partial_import(
     assert PRIVATE_ARGUMENTS not in diagnostic
     destination = CharactersRAGDB(str(destination_path), "verify")
     assert destination.get_conversation_by_name("Graph") == []
+
+
+def test_v2_manifest_item_identity_mismatch_fails_without_partial_import(
+    tmp_path: Path, chachanotes_template_db: Path
+) -> None:
+    source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
+    export_path = _create_export(tmp_path, source_paths, conversation_id)
+    broken = _rewrite_export(
+        export_path,
+        tmp_path / "identity-mismatch.chatbook.zip",
+        mutate_conversation=lambda conversation: conversation.__setitem__(
+            "id", "other"
+        ),
+    )
+    destination_path = tmp_path / "destination.db"
+    shutil.copyfile(chachanotes_template_db, destination_path)
+    status = ImportStatus()
+    importer = ChatbookImporter({"ChaChaNotes": str(destination_path)})
+    importer.temp_dir = tmp_path / "imports"
+    importer.temp_dir.mkdir()
+
+    success, _ = importer.import_chatbook(broken, import_status=status)
+
+    assert success is False
+    assert status.successful_items == 0
+    destination = CharactersRAGDB(str(destination_path), "verify")
+    assert destination.get_conversation_by_name("Graph") == []
+
+
+def _linear_graph(count: int) -> dict:
+    return {
+        "messages": [
+            {
+                "id": f"m-{index}",
+                "parent_id": None if index == 0 else f"m-{index - 1}",
+                "variant_of": None,
+                "order": index,
+                "role": "user" if index % 2 == 0 else "assistant",
+                "content": "x",
+                "deleted": False,
+                "variant_number": 1,
+                "is_selected_variant": True,
+                "total_variants": 1,
+            }
+            for index in range(count)
+        ],
+        "active_leaf_message_id": f"m-{count - 1}",
+        "selected_path_message_ids": [f"m-{index}" for index in range(count)],
+    }
+
+
+def test_v2_graph_validates_long_chain_in_near_linear_time(monkeypatch) -> None:
+    import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
+
+    count = 4_000
+    monkeypatch.setattr(importer_module, "_MAX_V2_GRAPH_DEPTH", count)
+    graph = _linear_graph(count)
+
+    started = time.perf_counter()
+    ordered = ChatbookImporter._validate_v2_conversation_graph(graph)
+
+    assert len(ordered) == count
+    assert time.perf_counter() - started < 1.0
+
+
+@pytest.mark.parametrize(
+    ("constant", "limit"),
+    [
+        ("_MAX_V2_GRAPH_MESSAGES", 0),
+        ("_MAX_V2_MESSAGE_ID_CHARS", 2),
+        ("_MAX_V2_TOTAL_ID_CHARS", 2),
+        ("_MAX_V2_MESSAGE_CONTENT_CHARS", 0),
+        ("_MAX_V2_TOTAL_CONTENT_CHARS", 0),
+        ("_MAX_V2_GRAPH_DEPTH", 0),
+    ],
+)
+def test_v2_graph_rejects_resource_bounds(monkeypatch, constant, limit) -> None:
+    import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
+
+    monkeypatch.setattr(importer_module, constant, limit)
+    with pytest.raises(ValueError, match="Invalid V2 conversation graph"):
+        ChatbookImporter._validate_v2_conversation_graph(_linear_graph(1))
+
+
+def test_v2_graph_accepts_exact_resource_limits(monkeypatch) -> None:
+    import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
+
+    monkeypatch.setattr(importer_module, "_MAX_V2_GRAPH_MESSAGES", 1)
+    monkeypatch.setattr(importer_module, "_MAX_V2_MESSAGE_ID_CHARS", 3)
+    monkeypatch.setattr(importer_module, "_MAX_V2_MESSAGE_CONTENT_CHARS", 1)
+    monkeypatch.setattr(importer_module, "_MAX_V2_TOTAL_CONTENT_CHARS", 1)
+    monkeypatch.setattr(importer_module, "_MAX_V2_GRAPH_DEPTH", 1)
+
+    assert len(ChatbookImporter._validate_v2_conversation_graph(_linear_graph(1))) == 1
 
 
 def test_v1_flat_import_without_private_data_remains_supported(

@@ -8,6 +8,7 @@ Chatbook Importer
 Handles the import and validation of chatbooks into the application.
 """
 
+import heapq
 import json
 import os
 import re
@@ -52,6 +53,13 @@ _MAX_ARCHIVE_TOTAL_BYTES = 512 * 1024 * 1024
 _MAX_ARCHIVE_COMPRESSION_RATIO = 1_000
 _ARCHIVE_COPY_CHUNK_BYTES = 64 * 1024
 _ARCHIVE_LIMIT_ERROR = "Chatbook archive exceeds safety limits."
+_MAX_V2_GRAPH_MESSAGES = 10_000
+_MAX_V2_MESSAGE_ID_CHARS = 256
+_MAX_V2_TOTAL_ID_CHARS = 1024 * 1024
+_MAX_V2_MESSAGE_CONTENT_CHARS = 1024 * 1024
+_MAX_V2_TOTAL_CONTENT_CHARS = 16 * 1024 * 1024
+_MAX_V2_TOTAL_PRIVATE_BYTES = 16 * 1024 * 1024
+_MAX_V2_GRAPH_DEPTH = 2_048
 
 
 class ImportStatus:
@@ -448,8 +456,7 @@ class ChatbookImporter:
         db = CharactersRAGDB(db_path, "chatbook_importer")
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
-            sidecar_path=get_user_data_dir()
-            / "tldw_chatbook_chat_rag_context.json",
+            sidecar_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
         )
         conv_dir = extract_dir / "content" / "conversations"
         logger.info(
@@ -481,6 +488,10 @@ class ChatbookImporter:
 
                 graph_messages = None
                 if manifest.version == ChatbookVersion.V2:
+                    if not isinstance(conv_data, dict) or str(
+                        conv_data.get("id")
+                    ) != str(conv_id):
+                        raise ValueError("Invalid V2 conversation identity.")
                     graph_messages = self._validate_v2_conversation_graph(conv_data)
 
                 # Check for existing conversation with same name
@@ -699,26 +710,35 @@ class ChatbookImporter:
         if not isinstance(conversation, dict):
             raise ValueError("Invalid V2 conversation graph.")
         raw_messages = conversation.get("messages")
-        if not isinstance(raw_messages, list):
+        if (
+            not isinstance(raw_messages, list)
+            or len(raw_messages) > _MAX_V2_GRAPH_MESSAGES
+        ):
             raise ValueError("Invalid V2 conversation graph.")
         messages: list[dict[str, Any]] = []
         by_id: dict[str, dict[str, Any]] = {}
         orders: set[int] = set()
+        total_id_chars = 0
+        total_content_chars = 0
+        total_private_bytes = 0
         for raw in raw_messages:
             if not isinstance(raw, dict):
                 raise ValueError("Invalid V2 conversation graph.")
             message_id = raw.get("id")
             order = raw.get("order")
             role = raw.get("role")
+            content = raw.get("content")
             if (
                 not isinstance(message_id, str)
                 or not message_id
+                or len(message_id) > _MAX_V2_MESSAGE_ID_CHARS
                 or message_id in by_id
                 or type(order) is not int
                 or order < 0
                 or order in orders
                 or role not in {"user", "assistant", "system", "tool"}
-                or not isinstance(raw.get("content"), str)
+                or not isinstance(content, str)
+                or len(content) > _MAX_V2_MESSAGE_CONTENT_CHARS
                 or type(raw.get("deleted")) is not bool
                 or type(raw.get("variant_number")) is not int
                 or raw["variant_number"] < 1
@@ -727,12 +747,29 @@ class ChatbookImporter:
                 or raw["total_variants"] < 1
             ):
                 raise ValueError("Invalid V2 conversation graph.")
+            total_id_chars += len(message_id)
+            total_content_chars += len(content)
             for link in ("parent_id", "variant_of"):
-                if raw.get(link) is not None and not isinstance(raw.get(link), str):
+                target = raw.get(link)
+                if target is not None and (
+                    not isinstance(target, str)
+                    or len(target) > _MAX_V2_MESSAGE_ID_CHARS
+                ):
                     raise ValueError("Invalid V2 conversation graph.")
-            item = dict(raw)
-            messages.append(item)
-            by_id[message_id] = item
+                total_id_chars += len(target or "")
+            private = raw.get("_private")
+            if private is not None:
+                total_private_bytes += len(
+                    json.dumps(private, separators=(",", ":")).encode("utf-8")
+                )
+            if (
+                total_id_chars > _MAX_V2_TOTAL_ID_CHARS
+                or total_content_chars > _MAX_V2_TOTAL_CONTENT_CHARS
+                or total_private_bytes > _MAX_V2_TOTAL_PRIVATE_BYTES
+            ):
+                raise ValueError("Invalid V2 conversation graph.")
+            messages.append(raw)
+            by_id[message_id] = raw
             orders.add(order)
         if orders != set(range(len(messages))):
             raise ValueError("Invalid V2 conversation graph.")
@@ -744,15 +781,27 @@ class ChatbookImporter:
                 ):
                     raise ValueError("Invalid V2 conversation graph.")
 
+        # Resolve each parent chain once. Completed paths memoize both cycle
+        # state and depth, so a long chain remains linear rather than quadratic.
+        states: dict[str, int] = {}
+        depths: dict[str, int] = {}
         for message in messages:
-            seen: set[str] = set()
             current: str | None = str(message["id"])
-            while current is not None:
-                if current in seen:
-                    raise ValueError("Invalid V2 conversation graph.")
-                seen.add(current)
+            path: list[str] = []
+            while current is not None and states.get(current, 0) == 0:
+                states[current] = 1
+                path.append(current)
                 parent = by_id[current].get("parent_id")
                 current = str(parent) if parent is not None else None
+            if current is not None and states.get(current) == 1:
+                raise ValueError("Invalid V2 conversation graph.")
+            depth = depths.get(current, 0) if current is not None else 0
+            for message_id in reversed(path):
+                depth += 1
+                if depth > _MAX_V2_GRAPH_DEPTH:
+                    raise ValueError("Invalid V2 conversation graph.")
+                depths[message_id] = depth
+                states[message_id] = 2
 
         groups: dict[str, list[dict[str, Any]]] = {}
         for message in messages:
@@ -784,6 +833,17 @@ class ChatbookImporter:
             or by_id[active_leaf]["deleted"]
         ):
             raise ValueError("Invalid V2 conversation graph.")
+        selected_path = conversation.get("selected_path_message_ids")
+        if (
+            not isinstance(selected_path, list)
+            or len(selected_path) > _MAX_V2_GRAPH_DEPTH
+            or any(
+                not isinstance(message_id, str)
+                or len(message_id) > _MAX_V2_MESSAGE_ID_CHARS
+                for message_id in selected_path
+            )
+        ):
+            raise ValueError("Invalid V2 conversation graph.")
         expected_path: list[str] = []
         current = active_leaf
         while current is not None:
@@ -792,26 +852,41 @@ class ChatbookImporter:
             expected_path.append(current)
             current = by_id[current].get("parent_id")
         expected_path.reverse()
-        if conversation.get("selected_path_message_ids") != expected_path:
+        if selected_path != expected_path:
             raise ValueError("Invalid V2 conversation graph.")
 
-        remaining = {str(message["id"]): message for message in messages}
+        # Kahn ordering respects both parent and variant ownership without
+        # repeatedly scanning the remaining graph.
+        indegrees = {str(message["id"]): 0 for message in messages}
+        dependents: dict[str, list[str]] = {
+            str(message["id"]): [] for message in messages
+        }
+        for message in messages:
+            message_id = str(message["id"])
+            dependencies = {
+                str(target)
+                for target in (message.get("parent_id"), message.get("variant_of"))
+                if target is not None
+            }
+            indegrees[message_id] = len(dependencies)
+            for dependency in dependencies:
+                dependents[dependency].append(message_id)
+        ready = [
+            (int(message["order"]), str(message["id"]))
+            for message in messages
+            if indegrees[str(message["id"])] == 0
+        ]
+        heapq.heapify(ready)
         ordered: list[dict[str, Any]] = []
-        while remaining:
-            ready = [
-                message
-                for message in remaining.values()
-                if all(
-                    target is None or target not in remaining
-                    for target in (message.get("parent_id"), message.get("variant_of"))
-                )
-            ]
-            if not ready:
-                raise ValueError("Invalid V2 conversation graph.")
-            ready.sort(key=lambda message: message["order"])
-            for message in ready:
-                ordered.append(message)
-                remaining.pop(str(message["id"]))
+        while ready:
+            _, message_id = heapq.heappop(ready)
+            ordered.append(by_id[message_id])
+            for dependent in dependents[message_id]:
+                indegrees[dependent] -= 1
+                if indegrees[dependent] == 0:
+                    heapq.heappush(ready, (int(by_id[dependent]["order"]), dependent))
+        if len(ordered) != len(messages):
+            raise ValueError("Invalid V2 conversation graph.")
         return ordered
 
     @staticmethod
@@ -1587,12 +1662,17 @@ class ChatbookImporter:
         different moments must still skip as already-present rather than
         spam a conflict.
         """
-        plain_fields = ("preset_name", "roster_snapshot_json", "turns_json", "model_used")
+        plain_fields = (
+            "preset_name",
+            "roster_snapshot_json",
+            "turns_json",
+            "model_used",
+        )
         if any(existing.get(f) != payload.get(f) for f in plain_fields):
             return False
-        return cls._kept_dt_key(existing.get("original_created_at")) == cls._kept_dt_key(
-            payload.get("original_created_at")
-        )
+        return cls._kept_dt_key(
+            existing.get("original_created_at")
+        ) == cls._kept_dt_key(payload.get("original_created_at"))
 
     @staticmethod
     def _kept_briefing_file_path(
@@ -1679,9 +1759,7 @@ class ChatbookImporter:
                         source_briefing_id=source_briefing_id,
                         watchlist_name=payload.get("watchlist_name"),
                         body_markdown=payload["body_markdown"],
-                        covers_through_item_id=payload.get(
-                            "covers_through_item_id"
-                        ),
+                        covers_through_item_id=payload.get("covers_through_item_id"),
                         covers_from_ts=payload.get("covers_from_ts"),
                         selection_mode=payload.get("selection_mode"),
                         model_used=payload.get("model_used"),
@@ -1786,9 +1864,7 @@ class ChatbookImporter:
 
             except Exception as e:
                 status.failed_items += 1
-                status.add_error(
-                    f"Error importing kept briefing {kept_id}: {str(e)}"
-                )
+                status.add_error(f"Error importing kept briefing {kept_id}: {str(e)}")
                 logger.opt(exception=True).error(
                     "ChatbookImporter._import_kept_briefings: Error importing kept briefing {}",
                     kept_id,

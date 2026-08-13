@@ -2401,6 +2401,8 @@ def generate_chat_history_content(
             conversation_name = f"chat-{timestamp}"
 
     chat_data: Dict[str, Any] = {
+        "format": "tldw_chat_history",
+        "format_version": 1,
         "conversation_id": conversation_id,  # Can be None if new chat not yet saved to DB
         "conversation_name": conversation_name,
         "timestamp": timestamp,
