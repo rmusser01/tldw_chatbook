@@ -229,6 +229,8 @@ class ProviderContinuationRecoveryCallout(Vertical):
         succeeded = False
         starting_state = self.recovery_state
         if starting_state is None:
+            self._busy = False
+            self.sync_recovery(None)
             return
         try:
             result = self._on_action(

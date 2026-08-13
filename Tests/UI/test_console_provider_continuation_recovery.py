@@ -244,6 +244,65 @@ async def test_cancelled_recovery_releases_busy_guard_and_remains_recoverable() 
         ]
 
 
+async def test_abandoned_dispatch_releases_busy_guard_before_later_restore(
+    monkeypatch,
+) -> None:
+    message = _message()
+    checkpoint = message.provider_continuation
+    actions: list[tuple[str, str, int]] = []
+
+    async def recover(action: str, message_id: str, version: int) -> bool:
+        actions.append((action, message_id, version))
+        return False
+
+    app = _RegionApp(lambda: message, on_action=recover)
+    async with app.run_test(size=(48, 18)) as pilot:
+        await pilot.pause()
+        region = app.screen.query_one(ProviderContinuationTranscriptRegion)
+        callout = app.screen.query_one(ProviderContinuationRecoveryCallout)
+        original_dispatch = callout._dispatch
+        dispatch_started = asyncio.Event()
+        release_dispatch = asyncio.Event()
+
+        async def delayed_dispatch(action: str) -> None:
+            dispatch_started.set()
+            await release_dispatch.wait()
+            await original_dispatch(action)
+
+        monkeypatch.setattr(callout, "_dispatch", delayed_dispatch)
+        resume = callout.query_one("#console-continuation-resume", Button)
+        resume.focus()
+        await pilot.press("enter")
+        await asyncio.wait_for(dispatch_started.wait(), timeout=1)
+
+        message.provider_continuation = None
+        region.sync_recovery()
+        release_dispatch.set()
+        await pilot.app.workers.wait_for_complete()
+        assert actions == []
+        assert not callout._busy
+
+        message.provider_continuation = checkpoint
+        region.sync_recovery()
+        await pilot.pause()
+        assert callout.display
+        assert not resume.disabled
+        rendered = "\n".join(
+            str(widget.render())
+            for widget in callout.query("*")
+            if hasattr(widget, "render")
+        )
+        assert "PRIVATE_" not in rendered
+
+        discard = callout.query_one("#console-continuation-discard", Button)
+        discard.focus()
+        await pilot.pause()
+        assert app.focused is discard
+        await pilot.press("enter")
+        await pilot.app.workers.wait_for_complete()
+        assert actions == [("discard", "assistant-owner", 1)]
+
+
 @pytest.mark.parametrize("transition", ["same", "changed", "removed"])
 @pytest.mark.parametrize("succeeds", [True, False])
 async def test_sync_during_recovery_never_releases_inflight_action(
