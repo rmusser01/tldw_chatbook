@@ -4,6 +4,7 @@ title: Integrate guided audio.cpp packages with Model Library
 status: In Progress
 assignee: []
 created_date: '2026-08-09 17:39'
+updated_date: '2026-08-13 15:58'
 labels:
   - tts
   - audio-cpp
@@ -17,7 +18,9 @@ references:
   - backlog/decisions/051-private-tts-clone-reference-assets.md
 documentation:
   - Docs/superpowers/specs/2026-08-09-audio-cpp-guided-model-setup-design.md
-  - Docs/superpowers/specs/2026-08-13-audio-cpp-model-library-integration-design.md
+  - >-
+    Docs/superpowers/specs/2026-08-13-audio-cpp-model-library-integration-design.md
+  - Docs/superpowers/plans/2026-08-13-audio-cpp-model-library-integration.md
 priority: high
 ---
 
@@ -38,3 +41,22 @@ Connect reviewed audio.cpp model artifacts to the existing Model Library and pro
 - [ ] #7 Hermetic store/UI/dependency tests and a clean-profile UAT cover install → exact-root return → guided Save → sample generation plus blocked and approved removal, with no network or large artifact requirement in normal CI.
 - [ ] #8 The pinned 21-family, 67-package inventory has no open recipe gap and keeps recipe support separate from artifact availability: every variant is reviewed as downloadable, local-only, or explicitly unsupported, with no family-specific installer path or silent accounting gap.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no new ADR
+ADR path: backlog/decisions/050-audio-cpp-generated-model-setup-ownership.md; backlog/decisions/051-private-tts-clone-reference-assets.md
+Reason: the approved ADR-050 amendment and ADR-051 already govern artifact/runtime and private clone-reference ownership.
+
+1. Add the bounded static-manifest schema/refresh foundation, then complete the 21-family/67-package recipe accounting before populating and joining audited artifacts.
+2. Persist optional managed artifact identity and implement typed Settings↔Model Library handoff with activate=False provisioning.
+3. Preserve one complete versioned Speech/TTS panel snapshot, including Realtime drafts, and merge only an exact non-stale result.
+4. Add service-owned inactive-root leasing and retain shared artifact authority across Save, staged generation, live child, and cleanup retry.
+5. Add one ordered removal authority plus non-mutating contention probe.
+6. Serialize profile/reference/assignment/bundle/settings mutations with exact shared root leases, then preview and revalidate all consumers before removal.
+7. Harden mounted Model Library/Settings UI truth and accessibility.
+8. Run hermetic, static, privacy, concurrency, UAT, review, documentation, and task-hygiene gates.
+
+Executable TDD plan: Docs/superpowers/plans/2026-08-13-audio-cpp-model-library-integration.md
+<!-- SECTION:PLAN:END -->
