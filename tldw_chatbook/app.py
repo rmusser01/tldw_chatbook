@@ -5064,6 +5064,41 @@ class TldwCli(
     TITLE = "tldw chatbook"
     # CSS file path
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
+
+    def _get_default_css(self) -> list[tuple[tuple[str, str], str, int, str]]:
+        """Add the consolidated widget-defaults stylesheet as one CSS source.
+
+        TASK-15450: Textual registers a separate stylesheet source per widget
+        class that declares ``DEFAULT_CSS``, and its parse cache is an
+        ``LRUCache(64)``. A full destination tour used to end at 94 sources, past
+        which *every* ``Stylesheet.parse()`` ran fully cold (125-380 ms measured)
+        on each first mount of a not-yet-seen widget class. The widget CSS now
+        lives in ``css/widget_defaults.tcss``, generated from the class-level
+        ``BUNDLED_CSS`` declarations by ``build_css.py``, and is registered here
+        as a single source.
+
+        It is prepended to the stack (rather than set as a plain ``DEFAULT_CSS``
+        class attribute) for two reasons: the file is read at app start, so a
+        boot-time CSS rebuild is picked up by the same run, and the source stays
+        unscoped with tie-breaker 0 -- the cascade position each class's own
+        ``DEFAULT_CSS`` had, with the scope prefixes baked into the selectors.
+
+        Returns:
+            The default-CSS stack, widget defaults first.
+        """
+        css_stack = super()._get_default_css()
+        widget_defaults = Path(__file__).parent / "css/widget_defaults.tcss"
+        try:
+            css = widget_defaults.read_text(encoding="utf-8")
+        except OSError as exc:
+            # Never fatal: the app still runs, just with unstyled widgets whose
+            # CSS was consolidated. Loud, because that is a build/packaging bug.
+            loguru_logger.error(
+                f"Could not read consolidated widget CSS {widget_defaults}: {exc}"
+            )
+            return css_stack
+        css_stack.insert(0, ((str(widget_defaults), "widget_defaults.tcss"), css, 0, ""))
+        return css_stack
     # Shell destination hotkey layer: Ctrl+1..Ctrl+9 then Ctrl+0, zipped against
     # SHELL_DESTINATION_ORDER, plus F7/F8/F9 for the remaining destinations
     # (Lab, Logs, Settings) so every destination has a keyboard route.

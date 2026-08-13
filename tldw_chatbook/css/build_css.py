@@ -2,10 +2,36 @@
 """
 CSS Build Script for tldw_chatbook
 Concatenates modular CSS files into a single file for Textual
+
+Two files are generated (TASK-15450 -- see ``widget_css.py`` for why):
+
+* ``tldw_cli_modular.tcss`` -- the app bundle, concatenated from the modules
+  listed in ``CSS_MODULES`` plus, last, the class-level ``BUNDLED_SCREEN_CSS``
+  blocks lifted out of the Python sources.
+* ``widget_defaults.tcss`` -- the class-level ``BUNDLED_CSS`` blocks, loaded by
+  the app as a single widget-defaults stylesheet source.
 """
 
+import sys
 from datetime import datetime
 from pathlib import Path
+
+try:
+    # Normal package import (tests, `python -m`) -- no global side effects.
+    from . import widget_css
+except ImportError:  # pragma: no cover - only when run as a bare script
+    # Direct script execution has no package context; add the sibling dir.
+    sys.path.insert(0, str(Path(__file__).parent))
+    import widget_css  # type: ignore[no-redef]
+
+#: Manifest sentinel for the generated ``BUNDLED_SCREEN_CSS`` block.  It is
+#: concatenated last so those rules keep the cascade position they had when
+#: Textual appended a screen's class-level ``CSS`` at first open -- after every
+#: bundle module, including ``utilities/_overrides.tcss``.
+GENERATED_SCREEN_CSS = "<generated: BUNDLED_SCREEN_CSS>"
+
+#: Output filename for the consolidated widget-defaults stylesheet.
+WIDGET_DEFAULTS_FILENAME = "widget_defaults.tcss"
 
 # Define the order of imports (based on dependencies)
 CSS_MODULES = [
@@ -106,6 +132,8 @@ CSS_MODULES = [
     "utilities/_helpers.tcss",
     "utilities/_states.tcss",
     "utilities/_overrides.tcss",
+    # 6. Screen/modal CSS lifted out of Python (must stay last -- see above).
+    GENERATED_SCREEN_CSS,
 ]
 
 
@@ -119,9 +147,12 @@ def build_css(css_dir: Path, output_file: Path) -> None:
     Raises:
         FileNotFoundError: If any declared module is missing. The existing
             output is left unchanged.
+        ValueError: If a ``BUNDLED_SCREEN_CSS`` declaration cannot be lifted.
     """
     missing_modules = [
-        module for module in CSS_MODULES if not (css_dir / module).is_file()
+        module
+        for module in CSS_MODULES
+        if module != GENERATED_SCREEN_CSS and not (css_dir / module).is_file()
     ]
     if missing_modules:
         missing = ", ".join(missing_modules)
@@ -143,20 +174,25 @@ def build_css(css_dir: Path, output_file: Path) -> None:
     # Collect all CSS content
     combined_css = [header]
 
+    package_root = css_dir.parent
+
     for module in CSS_MODULES:
-        module_path = css_dir / module
-
         print(f"✓ Processing: {module}")
-        with open(module_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        if module == GENERATED_SCREEN_CSS:
+            content = widget_css.render_stylesheet(
+                widget_css.iter_blocks(package_root, widget_css.SCREEN_ATTR),
+                "Screen/modal CSS (app-CSS tier), lifted from Python sources",
+            )
+        else:
+            content = (css_dir / module).read_text(encoding="utf-8")
 
-            # Add module separator
-            combined_css.append(f"\n/* ===== MODULE: {module} ===== */\n")
-            combined_css.append(content)
+        # Add module separator
+        combined_css.append(f"\n/* ===== MODULE: {module} ===== */\n")
+        combined_css.append(content)
 
-            # Ensure there's a newline at the end
-            if not content.endswith("\n"):
-                combined_css.append("\n")
+        # Ensure there's a newline at the end
+        if not content.endswith("\n"):
+            combined_css.append("\n")
 
     # Write the combined CSS
     with open(output_file, "w", encoding="utf-8") as f:
@@ -164,6 +200,29 @@ def build_css(css_dir: Path, output_file: Path) -> None:
 
     print(f"\n✅ CSS build complete: {output_file}")
     print(f"📏 Total size: {len(''.join(combined_css)):,} characters")
+
+
+def build_widget_defaults(css_dir: Path, output_file: Path) -> None:
+    """Write the consolidated widget-defaults stylesheet.
+
+    Every class-level ``BUNDLED_CSS`` block in the package is lifted here so the
+    app registers **one** widget-defaults stylesheet source instead of one per
+    widget class (TASK-15450).
+
+    Args:
+        css_dir: Root directory containing the modular stylesheets.
+        output_file: Generated widget-defaults stylesheet path.
+
+    Raises:
+        ValueError: If a ``BUNDLED_CSS`` declaration cannot be lifted.
+    """
+    blocks = widget_css.iter_blocks(css_dir.parent, widget_css.WIDGET_ATTR)
+    content = widget_css.render_stylesheet(
+        blocks, "Widget DEFAULT_CSS (widget-defaults tier), lifted from Python sources"
+    )
+    output_file.write_text(content, encoding="utf-8")
+    print(f"\n✅ Widget defaults build complete: {output_file}")
+    print(f"📏 {len(blocks)} widget classes, {len(content):,} characters")
 
 
 def main():
@@ -176,6 +235,7 @@ def main():
 
     # Build the CSS
     build_css(css_dir, output_file)
+    build_widget_defaults(css_dir, css_dir / WIDGET_DEFAULTS_FILENAME)
 
     print("\nTo use the modular CSS:")
     print("1. Update app.py to use 'tldw_cli_modular.tcss'")
