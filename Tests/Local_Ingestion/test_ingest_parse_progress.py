@@ -80,3 +80,13 @@ def test_coalescer_keeps_latest_event_per_job_until_due():
     assert coalescer.take_due(10.25) == (
         ParseProgressEvent(1, "a", "extracting", "latest", 30.0),
     )
+
+
+def test_coalescer_force_flushes_pending_event_before_deadline():
+    """Flush pending telemetry without waiting for the interval."""
+    coalescer = ParseProgressCoalescer(interval=60.0, started_at=10.0)
+    event = ParseProgressEvent(1, "a", "extracting", "latest", 30.0)
+    coalescer.accept(event)
+
+    assert coalescer.take_due(10.01, force=True) == (event,)
+    assert coalescer.take_due(10.01, force=True) == ()
