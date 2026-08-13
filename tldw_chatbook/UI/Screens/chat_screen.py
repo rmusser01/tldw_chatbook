@@ -5194,6 +5194,16 @@ class ChatScreen(BaseAppScreen):
         self._console_chat_controller.set_pending_skill_script = (
             self._set_console_pending_skill_script
         )
+        # PR3a-2 Task 5 (auto-wake): the app object (durable-mark clear
+        # seam + marks reads) and the user-wins-ties probe. getattr-guarded
+        # because several UI tests swap in hand-built controller doubles
+        # before re-running this wiring block.
+        wake = getattr(self._console_chat_controller, "fleet_wake", None)
+        if wake is not None:
+            wake.wire(app=self.app_instance)
+        self._console_chat_controller.wake_user_priority_probe = (
+            self._console_wake_user_priority
+        )
         self._sync_console_chat_core_state()
         return self._console_chat_controller
 
@@ -14492,6 +14502,11 @@ class ChatScreen(BaseAppScreen):
         if not hasattr(self, "_console_h3_terminal_generations"):
             self._console_h3_terminal_generations: set[str] = set()
         self._notify_console_fleet_teardown_if_any()
+        # PR3a-2 Task 5: claim staged auto-wakes SYNCHRONOUSLY, before any
+        # timer or worker below can run the first tab sync -- whose
+        # view-clear consumes the ACTIVE conversation's FLEET_UNSEEN mark
+        # (Task 4's stated ordering hazard: read marks BEFORE activation).
+        self._claim_console_fleet_wake_marks()
 
         # Restore collapsible states after mount
         self.set_timer(0.1, self._restore_collapsible_states)
@@ -14581,6 +14596,64 @@ class ChatScreen(BaseAppScreen):
                     "notified as they finish."
                 )
             self.app_instance.notify(copy, severity="information")
+
+    def _claim_console_fleet_wake_marks(self) -> None:
+        """Claim staged auto-wakes from the durable marks (PR3a-2 Task 5).
+
+        Runs SYNCHRONOUSLY inside ``on_mount``, before the first
+        ``_sync_console_native_session_tabs`` can view-clear the ACTIVE
+        conversation's ``fleet_unseen`` mark (Task 4's ordering hazard:
+        the mark is the undelivered bit, and it must be read into the
+        wake coordinator's pending set BEFORE activation consumes it).
+        Cheap on the common path: one indexed mark listing, and only a
+        non-empty result touches the bridge/controller at all.
+        ``seed_from_marks`` itself honours ``autowake_enabled`` (the
+        mount fire point of the kill switch); the actual deliveries run
+        later as loop tasks under the full send gating.
+        """
+        try:
+            marked = fleet_unseen_conversation_ids(self.app_instance)
+            if not marked:
+                return
+            if self._ensure_console_agent_bridge() is None:
+                return
+            controller = self._ensure_console_chat_controller()
+            wake = getattr(controller, "fleet_wake", None)
+            if wake is None:
+                return
+            wake.wire(app=self.app_instance)
+            if wake.seed_from_marks():
+                wake.retry_soon()
+        except Exception:  # noqa: BLE001 -- a failed claim must never break a mount
+            logger.opt(exception=True).warning(
+                "console fleet wake mount-claim failed"
+            )
+
+    def _console_wake_user_priority(self, session_id: str) -> bool:
+        """User-wins-ties probe for the auto-wake coordinator.
+
+        True while the Console composer holds a non-empty draft -- for ANY
+        session, deliberately: the composer is the user's live claim on
+        sending, it clears only once a manual send is ACCEPTED (so this
+        also covers the dispatch gap between pressing Send and the run
+        state turning busy), and under cap contention a wake for one
+        session can cost another session's user their slot. A raising
+        probe defers too (coordinator-side: user wins on uncertainty).
+        The wake is retried when the composer empties
+        (``_on_console_composer_draft_changed``'s poke) and on every
+        terminal run-state transition.
+
+        Args:
+            session_id: The session the wake would fire into (unused by
+                the any-session rule; part of the probe contract).
+
+        Returns:
+            Whether the user currently holds a sending claim.
+        """
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return False
+        return bool(composer.draft_text().strip())
 
     async def confirm_navigation(self) -> bool:
         """Delegate revision-pinned Console loss confirmation."""
@@ -19751,8 +19824,20 @@ class ChatScreen(BaseAppScreen):
         must invalidate a pending unknown-command arm -- otherwise a user
         could edit away from an armed unknown draft and back to the exact
         same text and have a *second*, unrelated Enter silently send it.
+
+        PR3a-2 Task 5: this is also the auto-wake retry poke for the
+        user-wins-ties deferral. This handler (unlike its
+        ``DraftChanged`` sibling) fires on EVERY draft mutation from any
+        source -- typing, backspace-to-empty, clear, ``load_draft`` -- so
+        the moment the composer empties, the user's sending claim is gone
+        and a deferred wake may try again. A no-op when nothing is
+        pending (``retry_soon`` -> gated ``_attempt``).
         """
         self._console_unknown_send_armed = None
+        if not str(event.value or "").strip():
+            wake = getattr(self._console_chat_controller, "fleet_wake", None)
+            if wake is not None:
+                wake.retry_soon()
 
     @on(Button.Pressed, "#console-composer-collapse")
     def handle_console_composer_collapse(self, event: Button.Pressed) -> None:
