@@ -223,7 +223,7 @@ def _console_handle(**overrides) -> ConsoleRailHandle:
 
 @pytest.mark.asyncio
 async def test_console_handles_share_full_height_solid_frame_with_real_css():
-    measured: dict[str, ConsoleRailHandle] = {}
+    measured: dict[str, tuple[int, int, int, object, object]] = {}
 
     for side in ("left", "right"):
         handle = _console_handle(side=side)
@@ -238,17 +238,24 @@ async def test_console_handles_share_full_height_solid_frame_with_real_css():
             assert button.styles.content_align_horizontal == "center"
             assert button.styles.content_align_vertical == "middle"
             _assert_region_contains(handle.content_region, button.region)
-            measured[side] = handle
+            if side == "right":
+                assert handle.has_class("console-inspector-rail-handle")
+            measured[side] = (
+                handle.region.height,
+                handle.region.width,
+                handle.content_region.width,
+                handle.styles.background,
+                handle.styles.border,
+            )
 
     left = measured["left"]
     right = measured["right"]
-    assert left.region.height == right.region.height == 20
-    assert left.region.width == 13
-    assert right.has_class("console-inspector-rail-handle")
-    assert right.region.width == 11
-    assert right.content_region.width == 9
-    assert right.styles.background == left.styles.background
-    assert right.styles.border == left.styles.border
+    assert left[0] == right[0] == 20
+    assert left[1] == 13
+    assert right[1] == 11
+    assert right[2] == 9
+    assert right[3] == left[3]
+    assert right[4] == left[4]
 
 
 @pytest.mark.asyncio

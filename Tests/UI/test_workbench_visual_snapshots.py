@@ -13,6 +13,9 @@ import pytest
 from textual.widgets import Button, OptionList, Static
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_console_internals_decomposition import (
+    _configure_native_ready_console,
+)
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
 if TYPE_CHECKING:
@@ -194,6 +197,10 @@ async def test_task_15705_console_collapsed_inspector_rail_visual_parity_sweep(
 ) -> None:
     app = _build_test_app()
     app.console_pending_approval_count = approval_count
+    existing_config = app.app_config
+    _configure_native_ready_console(app)
+    existing_config.update(app.app_config)
+    app.app_config = existing_config
     _mark_console_onboarding_complete(app)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
