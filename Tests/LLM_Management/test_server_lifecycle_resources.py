@@ -57,8 +57,10 @@ class _TrackingLock:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self.depth = 0
+        self.entry_attempted = threading.Event()
 
     def __enter__(self) -> None:
+        self.entry_attempted.set()
         self._lock.acquire()
         self.depth += 1
 
@@ -260,6 +262,105 @@ def test_attach_cancelled_claim_rejects_and_caller_retains_ownership() -> None:
     assert resource.close_count == 1
 
 
+def test_attach_waits_for_claim_settlement_and_rejects_stale_transfer() -> None:
+    app = _App()
+    lock = _TrackingLock()
+    app._llm_server_lifecycle_lock = lock
+    claim = server_lifecycle.reserve_server_launch(app, "llamacpp")
+    assert claim is not None
+    resource = _Resource("PRIVATE_CONTENDED_PATH")
+    results: list[bool] = []
+
+    def attach() -> None:
+        results.append(
+            server_lifecycle.attach_server_claim_resource(
+                app,
+                "llamacpp",
+                claim,
+                resource,
+            )
+        )
+
+    with lock:
+        lock.entry_attempted.clear()
+        thread = threading.Thread(target=attach)
+        thread.start()
+        assert lock.entry_attempted.wait(timeout=5)
+        assert server_lifecycle.release_server_claim(app, "llamacpp", claim) is True
+    thread.join(timeout=5)
+
+    assert thread.is_alive() is False
+    assert results == [False]
+    assert resource.close_count == 0
+    resource.close()
+    assert resource.close_count == 1
+
+
+def test_attach_rejects_resource_without_callable_close() -> None:
+    app = _App()
+    claim = server_lifecycle.reserve_server_launch(app, "llamacpp")
+    assert claim is not None
+
+    assert (
+        server_lifecycle.attach_server_claim_resource(
+            app,
+            "llamacpp",
+            claim,
+            object(),
+        )
+        is False
+    )
+    resource = _Resource()
+    assert server_lifecycle.attach_server_claim_resource(
+        app,
+        "llamacpp",
+        claim,
+        resource,
+    )
+
+
+def test_release_refuses_between_popen_and_publication_until_process_death() -> None:
+    app = _App()
+    resource = _Resource()
+    claim = _reserve_with_resource(app, resource)
+    process = _Process(resource=resource)
+    publication_entered = threading.Event()
+    continue_publication = threading.Event()
+    results: list[str] = []
+
+    def block_before_publication(callback: Any, _args: tuple[Any, ...]) -> None:
+        if callback is server_lifecycle.publish_server_process:
+            publication_entered.set()
+            assert continue_publication.wait(timeout=5)
+
+    app.before_callback = block_before_publication
+    worker = threading.Thread(
+        target=lambda: results.append(
+            server_lifecycle.run_server_subprocess(
+                app,
+                "llamacpp",
+                ["PRIVATE_COMMAND"],
+                claim,
+                _SubprocessModule(process),
+            )
+        )
+    )
+    worker.start()
+    try:
+        assert publication_entered.wait(timeout=5)
+        assert process.poll() is None
+        assert server_lifecycle.release_server_claim(app, "llamacpp", claim) is False
+        assert resource.close_count == 0
+    finally:
+        continue_publication.set()
+        worker.join(timeout=5)
+
+    assert worker.is_alive() is False
+    assert results == ["llamacpp server exited (code=0)"]
+    assert process.poll() is not None
+    assert resource.close_count == 1
+
+
 def test_cancelled_before_spawn_closes_resource_once_when_claim_releases() -> None:
     app = _App()
     resource = _Resource()
@@ -296,6 +397,36 @@ def test_popen_failure_closes_resource_once_without_private_output() -> None:
 
     assert result == "llamacpp server failed (category=RuntimeError)"
     assert "PRIVATE" not in result
+    assert server_lifecycle.current_server_claim(app, "llamacpp") is None
+    assert resource.close_count == 1
+
+
+def test_publication_marshalling_failure_proves_death_before_release() -> None:
+    app = _App()
+    resource = _Resource("PRIVATE_LEASE_PATH")
+    claim = _reserve_with_resource(app, resource)
+    process = _Process(resource=resource)
+
+    def fail_publication_marshalling(
+        callback: Any,
+        _args: tuple[Any, ...],
+    ) -> None:
+        if callback is server_lifecycle.publish_server_process:
+            raise RuntimeError("PRIVATE_MARSHALLING_DETAIL")
+
+    app.before_callback = fail_publication_marshalling
+    result = server_lifecycle.run_server_subprocess(
+        app,
+        "llamacpp",
+        ["PRIVATE_COMMAND"],
+        claim,
+        _SubprocessModule(process),
+    )
+
+    assert result == "llamacpp server failed (category=RuntimeError)"
+    assert "PRIVATE" not in result
+    assert process.close_counts_during_wait == [0]
+    assert process.poll() is not None
     assert server_lifecycle.current_server_claim(app, "llamacpp") is None
     assert resource.close_count == 1
 
@@ -462,6 +593,42 @@ def test_stale_release_and_clear_cannot_close_any_generation_resource() -> None:
     )
     assert current_resource.close_count == 1
     assert stale_resource.close_count == 0
+
+
+def test_stale_generation_cannot_clear_current_spawn_protection() -> None:
+    app = _App()
+    resource = _Resource("PRIVATE_CURRENT_PATH")
+    current_claim = _reserve_with_resource(app, resource)
+    stale_claim = server_lifecycle.ServerLaunchClaim(
+        provider="llamacpp",
+        _spawning=True,
+    )
+    assert server_lifecycle._begin_server_process_spawn(
+        app,
+        "llamacpp",
+        current_claim,
+    )
+
+    assert (
+        server_lifecycle._finish_server_process_spawn(
+            app,
+            "llamacpp",
+            stale_claim,
+        )
+        is False
+    )
+    assert (
+        server_lifecycle.release_server_claim(app, "llamacpp", current_claim) is False
+    )
+    assert resource.close_count == 0
+
+    assert server_lifecycle._finish_server_process_spawn(
+        app,
+        "llamacpp",
+        current_claim,
+    )
+    assert server_lifecycle.release_server_claim(app, "llamacpp", current_claim)
+    assert resource.close_count == 1
 
 
 def test_close_failure_settles_state_and_reports_only_stable_category(

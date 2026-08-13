@@ -30,6 +30,7 @@ class ServerLaunchClaim:
     authority: str | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
     _resource: Any | None = field(default=None, repr=False)
+    _spawning: bool = field(default=False, repr=False)
 
 
 def _validate_provider(provider: str) -> str:
@@ -81,9 +82,15 @@ def attach_server_claim_resource(
     claim: ServerLaunchClaim,
     resource: Any,
 ) -> bool:
-    """Transfer one resource to the exact current uncancelled claim."""
+    """Transfer one closable resource to the exact current uncancelled claim.
+
+    ``resource`` must expose a callable ``close``. When this returns ``False``,
+    ownership remains with the caller.
+    """
 
     _validate_provider(provider)
+    if not callable(getattr(resource, "close", None)):
+        return False
     with _lock(app):
         if (
             claim.provider != provider
@@ -93,6 +100,45 @@ def attach_server_claim_resource(
         ):
             return False
         claim._resource = resource
+        return True
+
+
+def _begin_server_process_spawn(
+    app: Any,
+    provider: str,
+    claim: ServerLaunchClaim,
+) -> bool:
+    """Protect the exact current claim while its process is not yet published."""
+
+    _validate_provider(provider)
+    with _lock(app):
+        if (
+            claim.provider != provider
+            or app._llm_server_launch_claims.get(provider) is not claim
+            or claim.cancel_event.is_set()
+            or claim._spawning
+        ):
+            return False
+        claim._spawning = True
+        return True
+
+
+def _finish_server_process_spawn(
+    app: Any,
+    provider: str,
+    claim: ServerLaunchClaim,
+) -> bool:
+    """Clear spawn protection only for the exact current claim."""
+
+    _validate_provider(provider)
+    with _lock(app):
+        if (
+            claim.provider != provider
+            or app._llm_server_launch_claims.get(provider) is not claim
+            or not claim._spawning
+        ):
+            return False
+        claim._spawning = False
         return True
 
 
@@ -135,6 +181,7 @@ def publish_server_process(
         ):
             return False
         setattr(app, process_attr, process)
+        claim._spawning = False
         return True
 
 
@@ -161,6 +208,7 @@ def retain_cancelled_server_process(
         ):
             return False
         setattr(app, process_attr, process)
+        claim._spawning = False
         return True
 
 
@@ -179,6 +227,7 @@ def _detach_server_claim_resource_locked(
     if (
         claim.provider != provider
         or app._llm_server_launch_claims.get(provider) is not claim
+        or claim._spawning
         or (
             require_process_identity
             and (current_process is not process or process_is_running(process))
@@ -212,7 +261,7 @@ def release_server_claim(
     provider: str,
     claim: ServerLaunchClaim,
 ) -> bool:
-    """Release a current claim that has no published live process."""
+    """Release a current claim with no spawn in flight or published live process."""
 
     _validate_provider(provider)
     with _lock(app):
@@ -424,11 +473,13 @@ def run_server_subprocess(
                 return False
 
     process = None
+    spawn_started = False
     retained = False
     published = False
     final_status = None
     try:
-        if claim.cancel_event.is_set() or not claim_is_current(app, provider, claim):
+        spawn_started = _begin_server_process_spawn(app, provider, claim)
+        if not spawn_started:
             return f"{provider} launch cancelled"
         kwargs = {
             "stdout": subprocess.DEVNULL,
@@ -486,6 +537,8 @@ def run_server_subprocess(
         if retained and not process_is_running(process):
             retained = False
         if not retained:
+            if spawn_started and (process is None or not process_is_running(process)):
+                _finish_server_process_spawn(app, provider, claim)
             if process is None or not published:
                 settle_lifecycle(
                     release_server_claim,
