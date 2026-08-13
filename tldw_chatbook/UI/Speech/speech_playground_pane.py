@@ -329,6 +329,7 @@ class SpeechPlaygroundPane(
         ):
             raise TypeError("global_preferences must be a TTS preferences snapshot")
         self.studio_preferences = studio_preferences
+        self._global_preferences = global_preferences
         self.global_preferences = global_preferences
         if navigation_target is not None and (
             type(navigation_target) is not SpeechTTSNavigationTarget
@@ -397,6 +398,105 @@ class SpeechPlaygroundPane(
         if snapshot:
             self._provider_control_snapshots[provider_id] = snapshot
 
+    @staticmethod
+    def _project_axis_defaults(
+        studio: StudioTTSPreferencesSnapshot | None,
+        global_preferences: TTSPreferencesSnapshot,
+    ) -> dict[str, str]:
+        """Project saved Studio overrides over one global preference snapshot."""
+
+        defaults = {
+            "tts-provider-select": global_preferences.provider_id,
+            "tts-format-select": global_preferences.response_format,
+            "tts-speed-input": str(global_preferences.speed),
+        }
+        if global_preferences.model_mode == "exact":
+            assert global_preferences.model_id is not None
+            defaults["tts-model-select"] = global_preferences.model_id
+        if global_preferences.voice_mode == "exact":
+            assert global_preferences.voice_id is not None
+            defaults["tts-voice-select"] = global_preferences.voice_id
+        if studio is None:
+            return defaults
+
+        selection = studio.selection
+        if selection.provider_id is not None:
+            if selection.provider_id != global_preferences.provider_id:
+                defaults = {}
+            defaults["tts-provider-select"] = selection.provider_id
+        if selection.model_mode == "exact" and selection.model_id is not None:
+            defaults["tts-model-select"] = selection.model_id
+        elif selection.model_mode == "first_available":
+            defaults.pop("tts-model-select", None)
+        if selection.voice_mode == "exact" and selection.voice_id is not None:
+            defaults["tts-voice-select"] = selection.voice_id
+        elif selection.voice_mode == "server_default":
+            defaults.pop("tts-voice-select", None)
+        if selection.response_format is not None:
+            defaults["tts-format-select"] = selection.response_format
+        if selection.speed is not None:
+            defaults["tts-speed-input"] = str(selection.speed)
+        return defaults
+
+    def refresh_global_preferences(self, snapshot: TTSPreferencesSnapshot) -> None:
+        """Rebase inherited axes while preserving every session override."""
+
+        if type(snapshot) is not TTSPreferencesSnapshot:
+            raise TypeError("global preferences must be a TTS preferences snapshot")
+        old_defaults = dict(self.axis_defaults)
+        new_defaults = self._project_axis_defaults(self.studio_preferences, snapshot)
+        protected_by_profile = self._profile_preset is not None
+        changed_inherited_axes: set[str] = set()
+        missing = object()
+        for axis in set(old_defaults) | set(new_defaults):
+            current = self.axis_values.get(axis, missing)
+            old_default = old_defaults.get(axis, missing)
+            new_default = new_defaults.get(axis, missing)
+            if old_default == new_default:
+                continue
+            is_session_override = protected_by_profile or (
+                current is not missing
+                and (old_default is missing or current != old_default)
+            )
+            if is_session_override:
+                continue
+            changed_inherited_axes.add(axis)
+            if new_default is missing:
+                self.axis_values.pop(axis, None)
+            else:
+                self.axis_values[axis] = new_default
+
+        self._global_preferences = snapshot
+        self.global_preferences = snapshot
+        self.axis_defaults = new_defaults
+        if not changed_inherited_axes or not self.is_mounted:
+            self._refresh_axis_markers()
+            return
+
+        provider_id = self.axis_values.get("tts-provider-select")
+        provider_select = self.query_one("#tts-provider-select", Select)
+        if (
+            "tts-provider-select" in changed_inherited_axes
+            and isinstance(provider_id, str)
+            and provider_select.value != provider_id
+        ):
+            provider_select.value = provider_id
+        elif isinstance(provider_id, str):
+            provider_snapshot = self._provider_control_snapshots.get(provider_id)
+            if provider_snapshot is not None:
+                snapshot_keys = {
+                    "tts-model-select": "model_id",
+                    "tts-voice-select": "voice_id",
+                    "tts-format-select": "response_format",
+                    "tts-speed-input": "speed",
+                }
+                for axis in changed_inherited_axes:
+                    snapshot_key = snapshot_keys.get(axis)
+                    if snapshot_key is not None:
+                        provider_snapshot.pop(snapshot_key, None)
+            self._reproject_current_catalog()
+        self._refresh_axis_markers()
+
     def _cli_setting(self, section: str, key: str, default: Any = None) -> Any:
         """Project saved Studio inheritance into the existing catalog loader.
 
@@ -406,7 +506,7 @@ class SpeechPlaygroundPane(
         """
 
         studio = self.studio_preferences
-        global_preferences = self.global_preferences
+        global_preferences = self._global_preferences
         if (
             section == "app_tts"
             and key == "default_provider"

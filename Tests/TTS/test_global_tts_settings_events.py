@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     _TTS_SETTING_BINDINGS,
+    STTSEventHandler,
+    STTSProviderConfigurationChanged,
     STTSSettingsSaveEvent,
     STTSSettingsSaveResult,
+)
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.TTS_Generation import (
+    TTSSettingsPersistenceOutcome,
+    TTSSettingsPublication,
 )
 from tldw_chatbook.UI.Screens.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
@@ -39,6 +48,135 @@ def test_settings_save_event_copies_bounded_delete_intent_and_reply_metadata() -
     assert event.delete_setting_keys == ("openai_api_key",)
     assert event.request_id == 7
     assert event.reply_to is reply_target
+
+
+def test_configuration_changed_message_carries_optional_global_revision() -> None:
+    legacy = STTSProviderConfigurationChanged("openai", 8)
+    current = STTSProviderConfigurationChanged("openai", 8, 12)
+
+    assert legacy.global_preferences_revision is None
+    assert current.global_preferences_revision == 12
+    assert current.provider_id == "openai"
+    assert current.configuration_revision == 8
+
+
+def test_successful_default_only_publication_posts_one_global_refresh_signal() -> None:
+    posted: list[object] = []
+    app = SimpleNamespace(post_message=posted.append)
+    handler = STTSEventHandler(app)
+    preferences = load_global_speech_tts_state({}).defaults.snapshot()
+    service = SimpleNamespace(configuration_revision=Mock(return_value=41))
+    publication = TTSSettingsPublication(
+        generation=12,
+        preferences=preferences,
+        persistence=TTSSettingsPersistenceOutcome(True, True, None),
+        provider_statuses={},
+        provider_revisions={},
+        published=True,
+    )
+
+    handler._post_applied_settings_changes(service, publication)
+
+    assert len(posted) == 1
+    message = posted[0]
+    assert type(message) is STTSProviderConfigurationChanged
+    assert message.provider_id == preferences.provider_id
+    assert message.configuration_revision == 41
+    assert message.global_preferences_revision == 12
+
+
+def test_provider_switch_posts_one_refresh_bearing_signal() -> None:
+    posted: list[object] = []
+    handler = STTSEventHandler(SimpleNamespace(post_message=posted.append))
+    preferences = TTSPreferencesSnapshot(
+        provider_id="elevenlabs",
+        model_mode="exact",
+        model_id="eleven_multilingual_v2",
+        voice_mode="exact",
+        voice_id="rachel",
+        response_format="mp3",
+        speed=1.0,
+    )
+    publication = TTSSettingsPublication(
+        generation=12,
+        preferences=preferences,
+        persistence=TTSSettingsPersistenceOutcome(True, True, None),
+        provider_statuses={"openai": "applied"},
+        provider_revisions={"openai": 41},
+        published=True,
+    )
+
+    handler._post_applied_settings_changes(
+        SimpleNamespace(configuration_revision=Mock(return_value=7)),
+        publication,
+    )
+
+    assert len(posted) == 1
+    assert posted[0].provider_id == "openai"
+    assert posted[0].global_preferences_revision == 12
+
+
+@pytest.mark.parametrize(
+    ("status", "published", "expected_global_revision"),
+    (("unavailable", False, None), ("applied", False, None)),
+)
+def test_failed_or_unpublished_handoff_never_claims_global_refresh(
+    status: str,
+    published: bool,
+    expected_global_revision: None,
+) -> None:
+    posted: list[object] = []
+    handler = STTSEventHandler(SimpleNamespace(post_message=posted.append))
+    preferences = load_global_speech_tts_state({}).defaults.snapshot()
+    publication = TTSSettingsPublication(
+        generation=12,
+        preferences=preferences,
+        persistence=TTSSettingsPersistenceOutcome(True, True, None),
+        provider_statuses={"openai": status},
+        provider_revisions={"openai": 41},
+        published=published,
+    )
+
+    handler._post_applied_settings_changes(SimpleNamespace(), publication)
+
+    assert all(
+        message.global_preferences_revision == expected_global_revision
+        for message in posted
+        if type(message) is STTSProviderConfigurationChanged
+    )
+    if status == "unavailable":
+        assert posted == []
+
+
+def test_handler_forwards_global_refresh_once_without_exposing_configuration() -> None:
+    refreshes: list[STTSProviderConfigurationChanged] = []
+    invalidations: list[tuple[str, int]] = []
+    window = SimpleNamespace(
+        receive_provider_configuration_changed=refreshes.append,
+    )
+    playground = SimpleNamespace(
+        mark_provider_configuration_changed=(
+            lambda provider_id, revision: invalidations.append((provider_id, revision))
+        )
+    )
+
+    class _App:
+        def query(self, selector: str) -> list[object]:
+            return {
+                "STTSWindow": [window],
+                "SpeechPlaygroundPane": [playground],
+            }.get(selector, [])
+
+    event = STTSProviderConfigurationChanged("openai", 8, 12)
+    STTSEventHandler(_App()).on_stts_provider_configuration_changed(event)
+
+    assert refreshes == [event]
+    assert invalidations == [("openai", 8)]
+    assert vars(event) == {
+        "provider_id": "openai",
+        "configuration_revision": 8,
+        "global_preferences_revision": 12,
+    }
 
 
 @pytest.mark.parametrize("request_id", (True, -1, "1"))

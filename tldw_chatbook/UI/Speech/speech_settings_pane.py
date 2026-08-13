@@ -313,6 +313,17 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             )
             return TTSPreferencesSnapshot.from_settings({})
 
+    def refresh_global_preferences(self, snapshot: TTSPreferencesSnapshot) -> None:
+        """Refresh inherited source truth without disturbing Studio edits."""
+
+        if type(snapshot) is not TTSPreferencesSnapshot:
+            raise TypeError("global preferences must be a TTS preferences snapshot")
+        self._global_preferences = snapshot
+        if not self.is_mounted:
+            return
+        self._sync_source_copy()
+        self._sync_dirty_state()
+
     def compose(self) -> ComposeResult:
         yield Static(
             "Studio TTS Preferences",

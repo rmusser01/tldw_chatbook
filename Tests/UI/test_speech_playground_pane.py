@@ -32,12 +32,10 @@ from tldw_chatbook.TTS.playground_types import (
     STTSPlaygroundResultProjection,
     TTSRequestedSelectionSnapshot,
 )
-from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
-from tldw_chatbook.UI.Speech.speech_axis_row import axis_chip_id
-from tldw_chatbook.UI.Speech.speech_playground_model import AXIS_CONTROLS
-from tldw_chatbook.UI.Speech.speech_playground_pane import (
-    PLAYGROUND_ACTIONS,
-    SpeechPlaygroundPane,
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.studio_preferences import (
+    StudioTTSPreferencesSnapshot,
+    StudioTTSSelectionOverrides,
 )
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
@@ -46,6 +44,12 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     build_provider_test_fingerprint,
     load_global_speech_tts_state,
     process_provider_test_evidence_store,
+)
+from tldw_chatbook.UI.Speech.speech_axis_row import axis_chip_id
+from tldw_chatbook.UI.Speech.speech_playground_model import AXIS_CONTROLS
+from tldw_chatbook.UI.Speech.speech_playground_pane import (
+    PLAYGROUND_ACTIONS,
+    SpeechPlaygroundPane,
 )
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSConnectionState,
@@ -1110,6 +1114,160 @@ class _AxisHarness(App[None]):
 
     def compose(self) -> ComposeResult:
         yield SpeechPlaygroundPane(**self._pane_kwargs)
+
+
+def _global_preferences(
+    model_id: str,
+    voice_id: str,
+    *,
+    response_format: str = "mp3",
+    speed: float = 1.0,
+) -> TTSPreferencesSnapshot:
+    return TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id=model_id,
+        voice_mode="exact",
+        voice_id=voice_id,
+        response_format=response_format,
+        speed=speed,
+    )
+
+
+def test_playground_refresh_rebases_only_inherited_global_axes() -> None:
+    old_global = _global_preferences("old-model", "old-voice")
+    new_global = _global_preferences(
+        "pocket-tts",
+        "alba",
+        response_format="wav",
+        speed=1.2,
+    )
+    studio = StudioTTSPreferencesSnapshot(
+        selection=StudioTTSSelectionOverrides(
+            model_mode="exact",
+            model_id="studio-model",
+        )
+    )
+    old_defaults = {
+        "tts-provider-select": "openai",
+        "tts-model-select": "studio-model",
+        "tts-voice-select": "old-voice",
+        "tts-format-select": "mp3",
+        "tts-speed-input": "1.0",
+    }
+    pane = SpeechPlaygroundPane(
+        studio_preferences=studio,
+        global_preferences=old_global,
+        axis_defaults=old_defaults,
+        axis_values={**old_defaults, "tts-speed-input": "1.7"},
+    )
+
+    pane.refresh_global_preferences(new_global)
+
+    assert pane._global_preferences is new_global
+    assert pane.global_preferences is new_global
+    assert pane.axis_defaults == {
+        "tts-provider-select": "openai",
+        "tts-model-select": "studio-model",
+        "tts-voice-select": "alba",
+        "tts-format-select": "wav",
+        "tts-speed-input": "1.2",
+    }
+    assert pane.axis_values == {
+        "tts-provider-select": "openai",
+        "tts-model-select": "studio-model",
+        "tts-voice-select": "alba",
+        "tts-format-select": "wav",
+        "tts-speed-input": "1.7",
+    }
+
+
+def test_playground_refresh_moves_an_untouched_inherited_provider_axis() -> None:
+    old_global = _global_preferences("old-model", "old-voice")
+    new_global = TTSPreferencesSnapshot(
+        provider_id="elevenlabs",
+        model_mode="exact",
+        model_id="eleven_multilingual_v2",
+        voice_mode="exact",
+        voice_id="rachel",
+        response_format="mp3",
+        speed=1.1,
+    )
+    old_defaults = {
+        "tts-provider-select": "openai",
+        "tts-model-select": "old-model",
+        "tts-voice-select": "old-voice",
+        "tts-format-select": "mp3",
+        "tts-speed-input": "1.0",
+    }
+    pane = SpeechPlaygroundPane(
+        studio_preferences=StudioTTSPreferencesSnapshot(),
+        global_preferences=old_global,
+        axis_defaults=old_defaults,
+        axis_values=dict(old_defaults),
+    )
+
+    pane.refresh_global_preferences(new_global)
+
+    assert pane.axis_values == {
+        "tts-provider-select": "elevenlabs",
+        "tts-model-select": "eleven_multilingual_v2",
+        "tts-voice-select": "rachel",
+        "tts-format-select": "mp3",
+        "tts-speed-input": "1.1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_mounted_playground_refresh_preserves_draft_and_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda self, *args, **kwargs: None,
+    )
+    old_global = _global_preferences("old-model", "old-voice")
+    defaults = {
+        "tts-provider-select": "openai",
+        "tts-model-select": "old-model",
+        "tts-voice-select": "old-voice",
+        "tts-format-select": "mp3",
+        "tts-speed-input": "1.0",
+    }
+    app = _AxisHarness(
+        studio_preferences=StudioTTSPreferencesSnapshot(),
+        global_preferences=old_global,
+        axis_defaults=defaults,
+        axis_values={**defaults, "tts-speed-input": "1.7"},
+    )
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await pilot.pause()
+        pane = app.query_one(SpeechPlaygroundPane)
+        speed = app.query_one("#tts-speed-input", Input)
+        speed.value = "1.7"
+        speed.focus()
+        await pilot.pause()
+
+        pane.refresh_global_preferences(
+            _global_preferences("pocket-tts", "alba", response_format="wav", speed=1.2)
+        )
+        await pilot.pause()
+
+        assert speed.value == "1.7"
+        assert speed.has_focus
+        assert pane.axis_values["tts-speed-input"] == "1.7"
+        assert pane.axis_defaults["tts-speed-input"] == "1.2"
+        assert pane.axis_values["tts-model-select"] == "pocket-tts"
+        assert pane.axis_values["tts-voice-select"] == "alba"
+
+
+def test_playground_refresh_requires_exact_global_snapshot_type() -> None:
+    pane = SpeechPlaygroundPane()
+
+    with pytest.raises(TypeError, match="global preferences"):
+        pane.refresh_global_preferences(object())  # type: ignore[arg-type]
 
 
 def _force_default_provider(monkeypatch: pytest.MonkeyPatch, provider_id: str) -> None:

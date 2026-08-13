@@ -532,10 +532,16 @@ class STTSSettingsSaveResult:
 class STTSProviderConfigurationChanged(Message):
     """Signal that one provider's effective configuration revision changed."""
 
-    def __init__(self, provider_id: str, configuration_revision: int) -> None:
+    def __init__(
+        self,
+        provider_id: str,
+        configuration_revision: int,
+        global_preferences_revision: int | None = None,
+    ) -> None:
         super().__init__()
         self.provider_id = provider_id
         self.configuration_revision = configuration_revision
+        self.global_preferences_revision = global_preferences_revision
 
 
 @dataclass(frozen=True, slots=True)
@@ -2230,10 +2236,12 @@ class STTSEventHandler:
 
     def _post_applied_settings_changes(
         self,
-        _service: TTSService,
+        service: TTSService,
         publication: TTSSettingsPublication,
     ) -> None:
         """Post every provider-scoped handoff that definitively applied."""
+        posted_provider_ids: set[str] = set()
+        global_revision = publication.generation if publication.published else None
         for provider_id, status in publication.provider_statuses.items():
             if status != "applied":
                 continue
@@ -2241,8 +2249,38 @@ class STTSEventHandler:
             if revision is None:
                 continue
             self.app.post_message(
-                STTSProviderConfigurationChanged(provider_id, revision)
+                STTSProviderConfigurationChanged(
+                    provider_id,
+                    revision,
+                    global_revision,
+                )
             )
+            posted_provider_ids.add(provider_id)
+
+        if global_revision is None or posted_provider_ids:
+            return
+        provider_id = publication.preferences.provider_id
+        provider_status = publication.provider_statuses.get(provider_id)
+        if provider_status not in {None, "unchanged"}:
+            return
+        revision = publication.provider_revisions.get(provider_id)
+        if revision is None:
+            revision_reader = getattr(service, "configuration_revision", None)
+            if not callable(revision_reader):
+                return
+            try:
+                revision = revision_reader(provider_id)
+            except (KeyError, RuntimeError, TypeError, ValueError):
+                return
+        if type(revision) is not int or revision < 0:
+            return
+        self.app.post_message(
+            STTSProviderConfigurationChanged(
+                provider_id,
+                revision,
+                global_revision,
+            )
+        )
 
     def _observe_pending_settings_publication(
         self,
@@ -2834,6 +2872,10 @@ class STTSEventHandler:
         event: STTSProviderConfigurationChanged,
     ) -> None:
         """Invalidate any mounted Playground for the changed provider."""
+        for widget in self.app.query("STTSWindow"):
+            callback = getattr(widget, "receive_provider_configuration_changed", None)
+            if callable(callback):
+                callback(event)
         for widget in self.app.query("SpeechPlaygroundPane"):
             callback = getattr(widget, "mark_provider_configuration_changed", None)
             if callable(callback):

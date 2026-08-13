@@ -32,6 +32,7 @@ from loguru import logger
 from tldw_chatbook.config import get_cli_setting, get_runtime_config_snapshot
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSAudioBookGenerateEvent,
+    STTSProviderConfigurationChanged,
 )
 from tldw_chatbook.TTS import (
     STTSPlaygroundRequest,
@@ -1339,17 +1340,10 @@ def _seed_axis_defaults(
             defaults["tts-voice-select"] = voice_id
 
         if global_preferences is not None:
-            defaults = {
-                "tts-provider-select": global_preferences.provider_id,
-                "tts-format-select": global_preferences.response_format,
-                "tts-speed-input": str(global_preferences.speed),
-            }
-            if global_preferences.model_mode == "exact":
-                assert global_preferences.model_id is not None
-                defaults["tts-model-select"] = global_preferences.model_id
-            if global_preferences.voice_mode == "exact":
-                assert global_preferences.voice_id is not None
-                defaults["tts-voice-select"] = global_preferences.voice_id
+            return SpeechPlaygroundPane._project_axis_defaults(
+                studio_preferences,
+                global_preferences,
+            )
 
         if studio_preferences is not None:
             selection = studio_preferences.selection
@@ -1436,7 +1430,29 @@ class STTSWindow(Container):
         )
         self._studio_store = StudioTTSPreferenceStore()
         self._global_preferences = SpeechSettingsPane._read_global_preferences()
+        self._last_global_preferences_revision: int | None = None
         self._studio_load_result: StudioTTSLoadResult | None = None
+
+    def receive_provider_configuration_changed(
+        self,
+        message: STTSProviderConfigurationChanged,
+    ) -> None:
+        """Refresh retained Lab panes once for each newer global revision."""
+
+        revision = message.global_preferences_revision
+        if type(revision) is not int or revision < 0:
+            return
+        previous = self._last_global_preferences_revision
+        if previous is not None and revision <= previous:
+            return
+        snapshot = SpeechSettingsPane._read_global_preferences()
+        self._global_preferences = snapshot
+        self._last_global_preferences_revision = revision
+        for pane_type in (SpeechSettingsPane, SpeechPlaygroundPane):
+            for pane in self.query(pane_type):
+                callback = getattr(pane, "refresh_global_preferences", None)
+                if callable(callback):
+                    callback(snapshot)
 
     def compose(self) -> ComposeResult:
         """Compose a non-interactive shell until Studio preferences are loaded."""

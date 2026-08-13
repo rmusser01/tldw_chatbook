@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -10,8 +11,14 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Select, Static, Switch, TextArea
 
+from Tests.UI.speech_playground_fixtures import (
+    FakeTTSService,
+    _resolved,
+    _wait_until,
+)
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSPlaygroundGenerateEvent,
+    STTSProviderConfigurationChanged,
     STTSSettingsSaveEvent,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
@@ -25,20 +32,15 @@ from tldw_chatbook.TTS.studio_preferences import (
     StudioTTSWriteStatus,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.STTS_Window import STTSWindow
-from tldw_chatbook.UI.Speech.speech_settings_pane import (
-    SpeechSettingsPane,
-    StudioPreferencesSaved,
-)
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.speech_profile_mixin import (
     AdoptStudioPreferencesRequested,
 )
-from Tests.UI.speech_playground_fixtures import (
-    FakeTTSService,
-    _resolved,
-    _wait_until,
+from tldw_chatbook.UI.Speech.speech_settings_pane import (
+    SpeechSettingsPane,
+    StudioPreferencesSaved,
 )
+from tldw_chatbook.UI.STTS_Window import STTSWindow
 
 
 def _global_openai() -> TTSPreferencesSnapshot:
@@ -50,6 +52,18 @@ def _global_openai() -> TTSPreferencesSnapshot:
         voice_id="shimmer",
         response_format="mp3",
         speed=1.0,
+    )
+
+
+def _global_pocket() -> TTSPreferencesSnapshot:
+    return TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="pocket-tts",
+        voice_mode="exact",
+        voice_id="alba",
+        response_format="wav",
+        speed=1.2,
     )
 
 
@@ -283,6 +297,126 @@ async def test_inherited_values_are_visible_but_not_copied_on_save() -> None:
         assert await pane.save_preferences()
 
     assert store.saved[0].selection == StudioTTSSelectionOverrides()
+
+
+@pytest.mark.asyncio
+async def test_mounted_settings_refreshes_global_sources_without_losing_draft_focus() -> (
+    None
+):
+    pane = _pane(_Store())
+    app = _Host(pane)
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await pilot.pause()
+        model_mode = pane.query_one("#studio-tts-model-mode", Select)
+        model_id = pane.query_one("#studio-tts-model-id", Input)
+        model_mode.value = "exact"
+        await pilot.pause()
+        model_id.value = "unsaved-studio-model"
+        model_id.focus()
+        await pilot.pause()
+        assert pane.is_dirty
+        assert model_id.has_focus
+
+        pane.refresh_global_preferences(_global_pocket())
+        await pilot.pause()
+
+        _global_pocket_snapshot = pane._global_preferences
+        assert _global_pocket_snapshot == _global_pocket()
+        assert model_mode.value == "exact"
+        assert model_id.value == "unsaved-studio-model"
+        assert model_id.has_focus
+        assert pane.is_dirty
+        assert "alba" in str(
+            pane.query_one("#studio-tts-voice-source", Static).render()
+        )
+        assert "Studio override" in str(
+            pane.query_one("#studio-tts-model-source", Static).render()
+        )
+
+
+def test_settings_refresh_requires_exact_global_snapshot_type() -> None:
+    pane = _pane(_Store())
+
+    with pytest.raises(TypeError, match="global preferences"):
+        pane.refresh_global_preferences(object())  # type: ignore[arg-type]
+
+
+def test_retained_window_reloads_one_snapshot_and_ignores_stale_revisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshots = iter((_global_openai(), _global_pocket(), _global_openai()))
+    reads: list[TTSPreferencesSnapshot] = []
+
+    def read_snapshot() -> TTSPreferencesSnapshot:
+        snapshot = next(snapshots)
+        reads.append(snapshot)
+        return snapshot
+
+    monkeypatch.setattr(
+        SpeechSettingsPane,
+        "_read_global_preferences",
+        staticmethod(read_snapshot),
+    )
+    window = STTSWindow(None)
+    reads.clear()
+    settings_refreshes: list[TTSPreferencesSnapshot] = []
+    playground_refreshes: list[TTSPreferencesSnapshot] = []
+    settings = SimpleNamespace(refresh_global_preferences=settings_refreshes.append)
+    playground = SimpleNamespace(refresh_global_preferences=playground_refreshes.append)
+    monkeypatch.setattr(
+        window,
+        "query",
+        lambda pane_type: (
+            [settings]
+            if pane_type is SpeechSettingsPane
+            else [playground]
+            if pane_type is SpeechPlaygroundPane
+            else []
+        ),
+    )
+
+    window.receive_provider_configuration_changed(
+        STTSProviderConfigurationChanged("openai", 4, 9)
+    )
+    window.receive_provider_configuration_changed(
+        STTSProviderConfigurationChanged("openai", 4, 8)
+    )
+    window.receive_provider_configuration_changed(
+        STTSProviderConfigurationChanged("openai", 4, 9)
+    )
+
+    assert reads == [_global_pocket()]
+    assert settings_refreshes == reads
+    assert playground_refreshes == reads
+    assert window._global_preferences == _global_pocket()
+
+    window.receive_provider_configuration_changed(
+        STTSProviderConfigurationChanged("openai", 5, 10)
+    )
+
+    assert reads == [_global_pocket(), _global_openai()]
+    assert settings_refreshes == reads
+    assert playground_refreshes == reads
+
+
+def test_retained_window_safely_caches_refresh_when_no_pane_is_mounted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _global_pocket()
+    monkeypatch.setattr(
+        SpeechSettingsPane,
+        "_read_global_preferences",
+        staticmethod(lambda: snapshot),
+    )
+    window = STTSWindow(None)
+    monkeypatch.setattr(window, "query", lambda _pane_type: [])
+
+    window.receive_provider_configuration_changed(
+        STTSProviderConfigurationChanged("openai", 4, 9)
+    )
+
+    assert window._global_preferences is snapshot
 
 
 @pytest.mark.asyncio
