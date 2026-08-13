@@ -107,8 +107,10 @@ content widgets in one module avoids growing the existing viewer and gives the
 performance boundary a direct unit-test surface.
 
 - Non-Markdown media mounts only the Raw `Static`.
-- Markdown media initially mounts only the selected mode. The default Raw view
-  therefore does not pay a Markdown parse during initial viewer load.
+- Markdown media initially mounts only the selected mode. The Library screen
+  preserves its current Rendered default for Markdown items; a body explicitly
+  initialized in Raw mode does not pay a Markdown parse until Rendered is first
+  requested.
 - The first switch to an unmounted mode dynamically mounts that mode's widget.
 - Once mounted, Raw and Rendered instances remain children of the content body;
   subsequent toggles change `display` rather than remounting either instance.
@@ -124,12 +126,16 @@ to reach into child implementation details:
 
 - `async sync_mode(mode: str) -> None` ensures the target instance exists and
   updates visibility.
-- `sync_search(query: str, match_index: int) -> None` updates only the Raw
-  renderable.
+- `sync_search(query: str, match_index: int) -> None` stores the complete Raw
+  search state and updates the Raw renderable when that widget is mounted. If
+  Raw has not mounted yet, its first mount uses the stored state.
 
-`LibraryMediaViewer` exposes corresponding delegation methods with those same
-names and signatures. The async mode method does not return until a first-use
-target has mounted and visibility is correct.
+`LibraryMediaViewer` exposes the screen-facing methods
+`sync_query_state(*, query: str, matches: tuple[int, ...], match_index: int)`,
+`sync_match_index(*, matches: tuple[int, ...], match_index: int)`, and
+`async sync_mode(mode: str)`. These methods coordinate the narrower child
+interfaces without exposing child implementation details. The async mode method
+does not return until a first-use target has mounted and visibility is correct.
 
 The content body stores `_desired_mode` and serializes first-use mounts with an
 `asyncio.Lock`. Each call records its desired mode before waiting for the lock.
@@ -227,11 +233,13 @@ Mounted Textual tests will prove:
 - `Markdown.update()` is not called during Library match navigation.
 - Empty submission removes status/navigation through only the scoped controls
   update.
-- Opening Markdown media in Raw mode does not mount/parse Markdown; the first
-  Rendered switch mounts it once; Raw then Rendered reuses the same Markdown
-  instance.
-- A query submitted while Rendered updates the hidden Raw renderable before a
-  switch back.
+- Constructing a Markdown body in Raw mode does not mount/parse Markdown; the
+  first Rendered switch mounts it once; Raw then Rendered reuses the same
+  Markdown instance. The full Library screen continues to open Markdown media
+  in its current Rendered default.
+- A query submitted while Rendered updates stored Raw search state and either
+  updates an already-mounted hidden Raw renderable or initializes the first Raw
+  mount with that state before it becomes visible.
 
 ### Legacy panel debounce
 

@@ -1,7 +1,7 @@
 ---
 id: TASK-15458
 title: Library media viewer: in-place match navigation instead of full-document re-parse
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-11 12:05'
 labels:
@@ -24,3 +24,19 @@ Fix direction: keep the Markdown widget mounted and move match-highlight and scr
 - [ ] #2 Search-while-typing performs at most one deferred re-render per debounce window and never the double update(\"\")/update(content) parse
 - [ ] #3 Match highlighting and scroll behavior preserved (tests); click latency before/after on a long document recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Add mounted tests and a focused `LibraryMediaContentSearchControls` widget whose match-only updates preserve navigation identity and focus.
+2. Add mounted tests and a lazy `LibraryMediaContentBody` that stores Raw search state, mounts each selected mode at most once, and applies latest-request-wins visibility.
+3. Integrate the focused children through `LibraryMediaViewer` and replace Library screen recomposes with narrow query, match-index, mode, and post-layout scroll synchronization.
+4. Add mounted legacy-panel tests and a generation-guarded 250 ms content-search debounce; remove the empty Markdown cache-busting update.
+5. Record deterministic before/after latency and parse/identity evidence, run focused and full verification, complete rendered keyboard UAT, and close the task documentation.
+
+Detailed plan: `Docs/superpowers/plans/2026-08-12-library-media-viewer-inplace.md`
+
+ADR required: no
+
+ADR path: N/A
+
+Reason: this applies existing Textual widget ownership and timer patterns without changing persistence, security, dependencies, services, or cross-module contracts.
