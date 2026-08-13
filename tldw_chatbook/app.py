@@ -2569,10 +2569,14 @@ class LibraryIngestQueueMixin:
                     event = None
                 except (EOFError, OSError, ValueError):
                     return
+                if stop_event.is_set() or self._ingest_shutdown:
+                    return
                 if event is not None:
                     coalescer.accept(event)
                 batch = coalescer.take_due(clock())
                 if batch:
+                    if stop_event.is_set() or self._ingest_shutdown:
+                        return
                     self._marshal_ingest_pool_call(
                         self._on_ingest_parse_progress_batch,
                         generation,

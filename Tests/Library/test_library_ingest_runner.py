@@ -3225,6 +3225,47 @@ def test_progress_drain_coalesces_latest_event_with_injected_clock() -> None:
     assert marshaled == [(handler, 4, (latest,))]
 
 
+def test_progress_drain_does_not_marshal_event_released_after_generation_stop() -> None:
+    event = ParseProgressEvent(4, "ingest-job-1", "extracting", "late", 40.0)
+    get_entered = threading.Event()
+    release_get = threading.Event()
+
+    class _BlockingProgressQueue:
+        def get(self, timeout: float) -> ParseProgressEvent:
+            assert timeout == 0.05
+            get_entered.set()
+            assert release_get.wait(1.0)
+            return event
+
+    mixin = _bare_ingest_mixin()
+    stop_event = threading.Event()
+    marshaled: list[tuple[Any, ...]] = []
+
+    def handler(*_args: Any) -> None:
+        return None
+
+    def _capture_marshal(callback: Any, *args: Any) -> None:
+        marshaled.append((callback, *args))
+
+    mixin._on_ingest_parse_progress_batch = handler
+    mixin._marshal_ingest_pool_call = _capture_marshal
+    clock_values = iter((10.0, 10.25))
+
+    thread = mixin._start_ingest_parse_progress_drain(
+        4,
+        _BlockingProgressQueue(),
+        stop_event,
+        clock=lambda: next(clock_values),
+    )
+    assert get_entered.wait(1.0)
+    stop_event.set()
+    release_get.set()
+    thread.join(timeout=1.0)
+
+    assert not thread.is_alive()
+    assert marshaled == []
+
+
 @pytest.mark.skipif(
     sys.platform != "win32",
     reason="Windows spawn/resource-tracker boundary",
