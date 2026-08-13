@@ -30,6 +30,9 @@ from tldw_chatbook.Chat.console_speech import (
     ConsoleSpeechSnapshotRejected,
     TTSMessageSpeechSnapshot,
 )
+from tldw_chatbook.Chat.console_speech_preferences import (
+    is_console_speech_destination,
+)
 from tldw_chatbook.TTS import (
     CharacterTTSRequestResolution,
     CharacterTTSRequestResolver,
@@ -122,6 +125,10 @@ class _TTSResponseContractError(RuntimeError):
     """Raised when a synthesized response violates the Console audio contract."""
 
 
+class _TTSAutomaticDestinationChangedError(RuntimeError):
+    """Automatic speech no longer targets its consented authority."""
+
+
 class _TTSArtifactIOTimeout(RuntimeError):
     """Raised when bounded artifact I/O continues in a retained worker."""
 
@@ -171,6 +178,7 @@ class TTSMessageSpeechRequestEvent(Message):
         snapshot: TTSMessageSpeechSnapshot,
         validator: Callable[[TTSMessageSpeechSnapshot], str],
         outcome_callback: Callable[[bool], None] | None = None,
+        expected_destination_fingerprint: str | None = None,
     ) -> None:
         super().__init__()
         if type(snapshot) is not TTSMessageSpeechSnapshot:
@@ -179,9 +187,19 @@ class TTSMessageSpeechRequestEvent(Message):
             raise ValueError("validator must be callable")
         if outcome_callback is not None and not callable(outcome_callback):
             raise ValueError("outcome_callback must be callable or None")
+        if (
+            expected_destination_fingerprint is not None
+            and not is_console_speech_destination(
+                expected_destination_fingerprint
+            )
+        ):
+            raise ValueError(
+                "expected_destination_fingerprint must be canonical or None"
+            )
         self.snapshot = snapshot
         self.validator = validator
         self._outcome_callback = outcome_callback
+        self.expected_destination_fingerprint = expected_destination_fingerprint
         self._outcome_reported = False
 
     @property
@@ -566,23 +584,40 @@ class TTSEventHandler:
     ) -> None:
         """Admit a trusted request, then run the shared TTS generation path."""
         if isinstance(event, TTSMessageSpeechRequestEvent):
-            request_text = await self._validate_message_speech_snapshot(
-                event.snapshot,
-                event.validator,
-            )
-            if request_text is None:
+            try:
+                await self._handle_trusted_message_speech_request(event)
+            except asyncio.CancelledError:
                 event.report_outcome(False)
-                return
-            request_message_id: str | None = event.message_id
-            request_voice: str | None = None
-        else:
-            request_text = event.text
-            request_message_id = event.message_id
-            request_voice = event.voice
-            # Preserve the legacy explicit-request maintenance behavior even
-            # when no service is available. Trusted snapshots keep their
-            # stricter validate/resolve-before-cooldown ordering below.
-            self._enforce_cooldown_limit()
+                raise
+            except Exception as error:  # noqa: BLE001 - terminal trust boundary
+                logger.warning(
+                    "Trusted Console speech request failed "
+                    "(exception_category={})",
+                    type(error).__name__,
+                )
+                try:
+                    await self._post_tts_message(
+                        TTSCompleteEvent(
+                            message_id=event.message_id,
+                            error="Speech could not be generated.",
+                        )
+                    )
+                except Exception as post_error:  # noqa: BLE001
+                    logger.warning(
+                        "Trusted Console speech failure notice was rejected "
+                        "(exception_category={})",
+                        type(post_error).__name__,
+                    )
+                finally:
+                    event.report_outcome(False)
+            return
+
+        request_text = event.text
+        request_message_id = event.message_id
+        request_voice = event.voice
+        # Preserve the legacy explicit-request maintenance behavior even
+        # when no service is available.
+        self._enforce_cooldown_limit()
 
         effective_message_id = (
             request_message_id
@@ -598,30 +633,70 @@ class TTSEventHandler:
                 event.report_outcome(False)
             return
 
-        resolution: CharacterTTSRequestResolution | None = None
-        if isinstance(event, TTSMessageSpeechRequestEvent):
-            try:
-                resolution = await self._resolve_message_speech_request(
-                    text,
+        await self._admit_tts_generation(
+            text=text,
+            message_id=effective_message_id,
+            voice=request_voice,
+            resolution=None,
+        )
+
+    async def _handle_trusted_message_speech_request(
+        self,
+        event: TTSMessageSpeechRequestEvent,
+    ) -> None:
+        request_text = await self._validate_message_speech_snapshot(
+            event.snapshot,
+            event.validator,
+        )
+        if request_text is None:
+            event.report_outcome(False)
+            return
+        text = await self._prepare_tts_text(request_text, event.message_id)
+        if text is None:
+            event.report_outcome(False)
+            return
+        try:
+            resolution = await self._resolve_message_speech_request(
+                text,
+                event.snapshot,
+            )
+        except CharacterTTSResolutionError as error:
+            token = None
+            if error.allow_global_override:
+                token = self._issue_global_override(
                     event.snapshot,
+                    event.validator,
+                    error.domain,
                 )
-            except CharacterTTSResolutionError as error:
-                token = None
-                if error.allow_global_override:
-                    token = self._issue_global_override(
-                        event.snapshot,
-                        event.validator,
-                        error.domain,
-                    )
+            logger.warning(
+                "Console speech voice resolution failed (outcome_code={})",
+                error.code,
+            )
+            await self._post_tts_message(
+                TTSCompleteEvent(
+                    message_id=event.message_id,
+                    error=str(error),
+                    global_override_token=token,
+                )
+            )
+            event.report_outcome(False)
+            return
+
+        expected = event.expected_destination_fingerprint
+        if expected is not None:
+            destination = await self._destination_for_resolution(resolution)
+            if destination is None or destination.fingerprint != expected:
                 logger.warning(
-                    "Console speech voice resolution failed (outcome_code={})",
-                    error.code,
+                    "Automatic Console speech destination changed "
+                    "(outcome_code=destination_changed)"
                 )
                 await self._post_tts_message(
                     TTSCompleteEvent(
-                        message_id=effective_message_id,
-                        error=str(error),
-                        global_override_token=token,
+                        message_id=event.message_id,
+                        error=(
+                            "The speech destination changed. Confirm Speak replies "
+                            "again."
+                        ),
                     )
                 )
                 event.report_outcome(False)
@@ -629,15 +704,13 @@ class TTSEventHandler:
 
         await self._admit_tts_generation(
             text=text,
-            message_id=effective_message_id,
-            voice=request_voice,
+            message_id=event.message_id,
+            voice=None,
             resolution=resolution,
             outcome_callback=(
-                event.report_outcome
-                if isinstance(event, TTSMessageSpeechRequestEvent)
-                and event.has_outcome_callback
-                else None
+                event.report_outcome if event.has_outcome_callback else None
             ),
+            expected_destination_fingerprint=expected,
         )
 
     async def speak_utterance(
@@ -982,6 +1055,16 @@ class TTSEventHandler:
             assistant_kind=assistant_kind,
             character_ref=character_ref,
         )
+        return await self._destination_for_resolution(resolution)
+
+    async def _destination_for_resolution(
+        self,
+        resolution: CharacterTTSRequestResolution,
+    ) -> ConsoleTTSDestination | None:
+        """Resolve the network authority for the exact effective selection."""
+        service = self._tts_service
+        if service is None:
+            return None
         character_profile = None
         default_profile = None
         if resolution.source in {"assigned", "default_profile"}:
@@ -1047,7 +1130,7 @@ class TTSEventHandler:
             provider_label=provider_label,
             sanitized_destination=endpoint.origin,
             charges_may_apply=(
-                provider_id in {"openai", "elevenlabs"}
+                provider_id in {"openai", "elevenlabs", "alltalk"}
                 and not is_loopback_openai_compatible_endpoint(endpoint)
             ),
         )
@@ -1059,7 +1142,7 @@ class TTSEventHandler:
             return observation.active_endpoint or "http://localhost"
         if provider_id == "elevenlabs":
             return "https://api.elevenlabs.io"
-        if provider_id != "openai":
+        if provider_id not in {"openai", "alltalk"}:
             return "http://localhost"
 
         configuration = await service.registry.provider_configuration_snapshot(
@@ -1073,9 +1156,17 @@ class TTSEventHandler:
             else None
         )
         if isinstance(app_tts, Mapping):
-            raw_endpoint = app_tts.get("OPENAI_BASE_URL")
-            if isinstance(raw_endpoint, str) and raw_endpoint:
-                return raw_endpoint
+            settings = (
+                ("OPENAI_BASE_URL",)
+                if provider_id == "openai"
+                else ("ALLTALK_TTS_URL", "ALLTALK_TTS_URL_DEFAULT")
+            )
+            for setting in settings:
+                raw_endpoint = app_tts.get(setting)
+                if isinstance(raw_endpoint, str) and raw_endpoint:
+                    return raw_endpoint
+        if provider_id == "alltalk":
+            return "http://127.0.0.1:7851"
         return "https://api.openai.com/v1/audio/speech"
 
     def _read_default_profile_id(self) -> str | None:
@@ -1181,6 +1272,7 @@ class TTSEventHandler:
         voice: str | None,
         resolution: CharacterTTSRequestResolution | None,
         outcome_callback: Callable[[bool], None] | None = None,
+        expected_destination_fingerprint: str | None = None,
     ) -> None:
         """Apply cooldown only after validation and character resolution."""
         current_time = asyncio.get_event_loop().time()
@@ -1213,12 +1305,20 @@ class TTSEventHandler:
         self._request_cooldown[message_id] = current_time
         self._enforce_cooldown_limit()
 
-        if outcome_callback is None:
+        if outcome_callback is None and expected_destination_fingerprint is None:
             generation = self._generate_tts_with_rate_limit(
                 text,
                 message_id,
                 voice,
                 resolution,
+            )
+        elif outcome_callback is None:
+            generation = self._generate_tts_with_rate_limit(
+                text,
+                message_id,
+                voice,
+                resolution,
+                expected_destination_fingerprint=expected_destination_fingerprint,
             )
         else:
             generation = self._generate_tts_with_rate_limit(
@@ -1227,6 +1327,9 @@ class TTSEventHandler:
                 voice,
                 resolution,
                 outcome_callback=outcome_callback,
+                expected_destination_fingerprint=(
+                    expected_destination_fingerprint
+                ),
             )
         task = asyncio.create_task(generation)
         asyncio.create_task(self._add_active_task(task))
@@ -1239,6 +1342,7 @@ class TTSEventHandler:
         resolution: CharacterTTSRequestResolution | None = None,
         *,
         outcome_callback: Callable[[bool], None] | None = None,
+        expected_destination_fingerprint: str | None = None,
     ) -> None:
         """Generate TTS audio (rate limiting handled by TTSService)"""
         try:
@@ -1248,6 +1352,9 @@ class TTSEventHandler:
                 voice,
                 resolution,
                 outcome_callback=outcome_callback,
+                expected_destination_fingerprint=(
+                    expected_destination_fingerprint
+                ),
             )
         except asyncio.CancelledError:
             logger.info("TTS generation cancelled")
@@ -1262,6 +1369,7 @@ class TTSEventHandler:
         *,
         on_finished: Callable[[bool], None] | None = None,
         outcome_callback: Callable[[bool], None] | None = None,
+        expected_destination_fingerprint: str | None = None,
         quiet: bool = False,
     ) -> None:
         """Generate one complete resolved TTS response and publish its artifact.
@@ -1320,6 +1428,16 @@ class TTSEventHandler:
             service = self._tts_service
             if service is None:
                 raise TTSProviderUnavailableError("TTS service is unavailable")
+            if expected_destination_fingerprint is not None:
+                if resolution is None:
+                    raise _TTSAutomaticDestinationChangedError
+                destination = await self._destination_for_resolution(resolution)
+                if (
+                    destination is None
+                    or destination.fingerprint
+                    != expected_destination_fingerprint
+                ):
+                    raise _TTSAutomaticDestinationChangedError
 
             exact_request = (
                 resolution.request
@@ -1751,7 +1869,14 @@ class TTSEventHandler:
                             continue
             raise cancellation
         except Exception as error:
-            outcome_code = self._tts_outcome_code(error)
+            destination_changed = isinstance(
+                error, _TTSAutomaticDestinationChangedError
+            )
+            outcome_code = (
+                "destination_changed"
+                if destination_changed
+                else self._tts_outcome_code(error)
+            )
             await self._discard_tts_artifact(normalized_message_id, artifact_path)
             logger.error(
                 "TTS generation failed (outcome_code={})",
@@ -1761,7 +1886,12 @@ class TTSEventHandler:
                 await self._post_tts_message(
                     TTSCompleteEvent(
                         message_id=normalized_message_id,
-                        error=self._tts_error_copy(error),
+                        error=(
+                            "The speech destination changed. Confirm Speak replies "
+                            "again."
+                            if destination_changed
+                            else self._tts_error_copy(error)
+                        ),
                     )
                 )
         finally:

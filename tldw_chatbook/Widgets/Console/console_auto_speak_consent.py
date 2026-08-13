@@ -145,13 +145,13 @@ class ConsoleAutoSpeakCoordinator:
         store_accessor: Callable[[], ConsoleChatStore],
         resolve_destination: Callable[[str | None, object | None], Awaitable[ConsoleTTSDestination | None]],
         issue_message_speech: Callable[
-            [str, Callable[[bool], None]], Awaitable[bool]
+            [str, Callable[[bool], None], str | None], Awaitable[bool]
         ],
         open_consent: Callable[
             [AutoSpeakConsentModal, Callable[[bool], None]], None
         ],
         hands_free_active: Callable[[], bool],
-        sync_controls: Callable[[bool, bool], None],
+        sync_controls: Callable[[bool, bool, bool], None],
         notify: Callable[[str, str], None],
         schedule: Callable[[Coroutine[Any, Any, Any]], None],
     ) -> None:
@@ -168,8 +168,11 @@ class ConsoleAutoSpeakCoordinator:
         self._modal_generation = 0
         self._modal_open = False
         self._modal_callback_consumed = False
-        self._dispatched_tokens: set[tuple[str, str]] = set()
-        self._settled_outcome_tokens: set[tuple[str, str]] = set()
+        self._operation_generation = 0
+        self._enable_operation_generation: int | None = None
+        self._next_dispatch_generation = 1
+        self._inflight_dispatches: dict[tuple[str, str], int] = {}
+        self._observed_completion_generations: dict[tuple[str, str], int] = {}
         self.failed_message_id: str | None = None
 
     def mount(self) -> None:
@@ -187,6 +190,8 @@ class ConsoleAutoSpeakCoordinator:
         if not self._mounted:
             return
         self._mounted = False
+        self._operation_generation += 1
+        self._enable_operation_generation = None
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
@@ -200,13 +205,38 @@ class ConsoleAutoSpeakCoordinator:
         preferences = getattr(session, "speech_preferences", None)
         enabled = bool(getattr(preferences, "auto_speak", False))
         paused = bool(getattr(preferences, "paused", False))
-        self._sync_controls_fn(enabled, paused)
+        retry_available = False
+        if enabled and paused and session is not None and self.failed_message_id:
+            try:
+                retry_available = (
+                    self._store_accessor().session_id_for_message(
+                        self.failed_message_id
+                    )
+                    == session.id
+                )
+            except (KeyError, ValueError):
+                retry_available = False
+        self._sync_controls_fn(enabled, paused, retry_available)
 
     def request_enabled(self, enabled: bool) -> None:
         """Apply a user toggle request without optimistic UI claims."""
         if not self._mounted or type(enabled) is not bool:
             return
-        self._schedule(self._change_enabled(enabled))
+        if enabled:
+            if self._modal_open or self._enable_operation_generation is not None:
+                self.sync_controls()
+                return
+            session = self._active_session()
+            if session is None:
+                self.sync_controls()
+                return
+            generation = self._reserve_operation()
+            self._enable_operation_generation = generation
+            self._schedule(self._change_enabled(session.id, generation))
+            return
+        generation = self._reserve_operation()
+        self._enable_operation_generation = None
+        self._schedule(self._disable(generation))
 
     def request_resume(self) -> None:
         """Persistently resume auto-speak after a speech failure."""
@@ -214,8 +244,18 @@ class ConsoleAutoSpeakCoordinator:
             return
         self._schedule(self._resume())
 
+    def request_retry(self) -> None:
+        """Retry only the failed reply while leaving auto-speak paused."""
+        if not self._mounted:
+            return
+        session = self._active_session()
+        if session is None:
+            return
+        generation = self._reserve_operation()
+        self._schedule(self._retry(session.id, generation))
+
     def _on_message_completed(self, token: tuple[str, str]) -> None:
-        if not self._mounted or self._modal_open:
+        if not self._mounted:
             return
         if (
             type(token) is not tuple
@@ -223,7 +263,47 @@ class ConsoleAutoSpeakCoordinator:
             or not all(type(value) is str and value for value in token)
         ):
             return
-        self._schedule(self._handle_completion(token))
+        try:
+            completion_generation = (
+                self._store_accessor().message_completion_generation(token[1])
+            )
+        except KeyError:
+            return
+        if (
+            completion_generation
+            <= self._observed_completion_generations.get(token, 0)
+        ):
+            return
+        self._observed_completion_generations[token] = completion_generation
+        if self._modal_open:
+            return
+        generation = self._operation_generation
+        self._schedule(
+            self._handle_completion(token, generation, completion_generation)
+        )
+
+    def _reserve_operation(self) -> int:
+        self._operation_generation += 1
+        return self._operation_generation
+
+    def _operation_is_current(self, generation: int, session_id: str) -> bool:
+        if not self._mounted or generation != self._operation_generation:
+            return False
+        active = self._active_session()
+        return active is not None and active.id == session_id
+
+    def _completion_is_current(
+        self,
+        token: tuple[str, str],
+        completion_generation: int,
+    ) -> bool:
+        try:
+            return (
+                self._store_accessor().message_completion_generation(token[1])
+                == completion_generation
+            )
+        except KeyError:
+            return False
 
     def _active_session(self):
         try:
@@ -236,8 +316,12 @@ class ConsoleAutoSpeakCoordinator:
         except Exception:  # noqa: BLE001 - screen lifecycle access fails closed
             return None
 
-    async def _current_destination(self, session) -> ConsoleTTSDestination | None:
-        if not self._mounted or session is None:
+    async def _current_destination(
+        self,
+        session,
+        generation: int,
+    ) -> ConsoleTTSDestination | None:
+        if session is None or not self._operation_is_current(generation, session.id):
             return None
         try:
             destination = await self._resolve_destination_fn(
@@ -246,39 +330,46 @@ class ConsoleAutoSpeakCoordinator:
             )
         except Exception:  # noqa: BLE001 - provider resolution fails closed
             return None
+        if not self._operation_is_current(generation, session.id):
+            return None
         if type(destination) is not ConsoleTTSDestination:
             return None
         return destination
 
-    async def _change_enabled(self, enabled: bool) -> None:
-        if not self._mounted:
-            return
-        store = self._store_accessor()
+    async def _disable(self, generation: int) -> None:
         session = self._active_session()
-        if session is None:
-            self.sync_controls()
+        if session is None or not self._operation_is_current(generation, session.id):
             return
-        if not enabled:
-            _session, persisted = store.set_auto_speak(session.id, False)
+        _session, persisted = self._store_accessor().set_auto_speak(
+            session.id, False
+        )
+        if self._operation_is_current(generation, session.id):
             if not persisted:
                 self._notify(
                     "Speak replies could not be changed. Try again.",
                     "error",
                 )
             self.sync_controls()
-            return
-        if self._modal_open:
-            self.sync_controls()
-            return
-        destination = await self._current_destination(session)
-        if destination is None or not self._mounted:
-            self._notify(
-                "A TTS destination is not available. Review Speech settings.",
-                "warning",
-            )
-            self.sync_controls()
-            return
-        self._show_enable_consent(session.id, destination)
+
+    async def _change_enabled(self, session_id: str, generation: int) -> None:
+        try:
+            if not self._operation_is_current(generation, session_id):
+                return
+            session = self._active_session()
+            destination = await self._current_destination(session, generation)
+            if not self._operation_is_current(generation, session_id):
+                return
+            if destination is None:
+                self._notify(
+                    "A TTS destination is not available. Review Speech settings.",
+                    "warning",
+                )
+                self.sync_controls()
+                return
+            self._show_enable_consent(session_id, destination, generation)
+        finally:
+            if self._enable_operation_generation == generation:
+                self._enable_operation_generation = None
 
     def _begin_modal(self) -> int:
         self._modal_generation += 1
@@ -310,16 +401,39 @@ class ConsoleAutoSpeakCoordinator:
         self._modal_open = False
         self._modal_callback_consumed = True
 
+    def _open_modal(
+        self,
+        modal: AutoSpeakConsentModal,
+        callback: Callable[[bool], None],
+        *,
+        modal_generation: int,
+        operation_generation: int,
+        session_id: str,
+    ) -> None:
+        try:
+            self._open_consent_fn(modal, callback)
+        except Exception:  # noqa: BLE001 - teardown can reject a modal post
+            self._finish_modal(modal_generation)
+            if self._operation_is_current(operation_generation, session_id):
+                self._notify(
+                    "Speech confirmation could not be opened. Try again.",
+                    "error",
+                )
+                self.sync_controls()
+
     def _show_enable_consent(
         self,
         session_id: str,
         destination: ConsoleTTSDestination,
+        operation_generation: int,
     ) -> None:
         generation = self._begin_modal()
 
         async def finish(accepted: bool) -> None:
             try:
-                if not accepted or not self._mounted:
+                if not accepted or not self._operation_is_current(
+                    operation_generation, session_id
+                ):
                     return
                 store = self._store_accessor()
                 active = self._active_session()
@@ -335,19 +449,31 @@ class ConsoleAutoSpeakCoordinator:
                         "error",
                     )
                     return
-                current = await self._current_destination(active)
+                current = await self._current_destination(
+                    active, operation_generation
+                )
                 if (
                     current is None
                     or current.fingerprint != destination.fingerprint
-                    or not self._mounted
-                ):
-                    self._notify(
-                        "The TTS destination changed. Turn on Speak replies again.",
-                        "warning",
+                    or not self._operation_is_current(
+                        operation_generation, session_id
                     )
+                ):
+                    if self._operation_is_current(
+                        operation_generation, session_id
+                    ):
+                        self._notify(
+                            "The TTS destination changed. Turn on Speak replies again.",
+                            "warning",
+                        )
                     return
                 _session, persisted = store.set_auto_speak(session_id, True)
-                if not persisted:
+                if (
+                    not persisted
+                    and self._operation_is_current(
+                        operation_generation, session_id
+                    )
+                ):
                     self._notify(
                         "Speak replies could not be enabled. Try again.",
                         "error",
@@ -362,25 +488,55 @@ class ConsoleAutoSpeakCoordinator:
             destination.sanitized_destination,
             destination.charges_may_apply,
         )
-        self._open_consent_fn(modal, self._modal_callback(generation, finish))
+        self._open_modal(
+            modal,
+            self._modal_callback(generation, finish),
+            modal_generation=generation,
+            operation_generation=operation_generation,
+            session_id=session_id,
+        )
 
-    async def _handle_completion(self, token: tuple[str, str]) -> None:
-        if not self._mounted or self._modal_open:
+    async def _handle_completion(
+        self,
+        token: tuple[str, str],
+        operation_generation: int,
+        completion_generation: int,
+    ) -> None:
+        if self._modal_open:
             return
-        disposition, destination = await self._disposition(token)
+        disposition, destination = await self._disposition(
+            token, operation_generation
+        )
+        if (
+            not self._operation_is_current(operation_generation, token[0])
+            or not self._completion_is_current(token, completion_generation)
+        ):
+            return
         if disposition is AutoSpeakDisposition.SPEAK:
-            await self._dispatch(token)
+            await self._dispatch(
+                token,
+                operation_generation,
+                completion_generation,
+                destination=destination,
+                revalidated=True,
+            )
             return
         if (
             disposition is AutoSpeakDisposition.NEEDS_CONSENT
             and destination is not None
             and not self._modal_open
         ):
-            self._show_completion_consent(token, destination)
+            self._show_completion_consent(
+                token,
+                destination,
+                operation_generation,
+                completion_generation,
+            )
 
     async def _disposition(
         self,
         token: tuple[str, str],
+        operation_generation: int,
     ) -> tuple[AutoSpeakDisposition, ConsoleTTSDestination | None]:
         store = self._store_accessor()
         session_id, message_id = token
@@ -398,7 +554,11 @@ class ConsoleAutoSpeakCoordinator:
             return AutoSpeakDisposition.PAUSED, None
         if self._hands_free_active() is not False:
             return AutoSpeakDisposition.HANDSFREE_OWNS, None
-        destination = await self._current_destination(active)
+        destination = await self._current_destination(active, operation_generation)
+        if not self._operation_is_current(operation_generation, session_id):
+            return AutoSpeakDisposition.BACKGROUND, None
+        if self._hands_free_active() is not False:
+            return AutoSpeakDisposition.HANDSFREE_OWNS, None
         fingerprint = destination.fingerprint if destination is not None else ""
         disposition = decide_auto_speak(
             message,
@@ -416,12 +576,22 @@ class ConsoleAutoSpeakCoordinator:
         self,
         token: tuple[str, str],
         destination: ConsoleTTSDestination,
+        operation_generation: int,
+        completion_generation: int,
     ) -> None:
         generation = self._begin_modal()
 
         async def finish(accepted: bool) -> None:
             try:
-                if not accepted or not self._mounted:
+                if (
+                    not accepted
+                    or not self._operation_is_current(
+                        operation_generation, token[0]
+                    )
+                    or not self._completion_is_current(
+                        token, completion_generation
+                    )
+                ):
                     return
                 store = self._store_accessor()
                 session_id, _message_id = token
@@ -438,13 +608,24 @@ class ConsoleAutoSpeakCoordinator:
                         "error",
                     )
                     return
-                disposition, current = await self._disposition(token)
+                disposition, current = await self._disposition(
+                    token, operation_generation
+                )
                 if (
                     disposition is AutoSpeakDisposition.SPEAK
                     and current is not None
                     and current.fingerprint == destination.fingerprint
+                    and self._operation_is_current(
+                        operation_generation, session_id
+                    )
                 ):
-                    await self._dispatch(token, revalidated=True)
+                    await self._dispatch(
+                        token,
+                        operation_generation,
+                        completion_generation,
+                        destination=current,
+                        revalidated=True,
+                    )
             finally:
                 self._finish_modal(generation)
                 if self._mounted:
@@ -455,58 +636,168 @@ class ConsoleAutoSpeakCoordinator:
             destination.sanitized_destination,
             destination.charges_may_apply,
         )
-        self._open_consent_fn(modal, self._modal_callback(generation, finish))
+        self._open_modal(
+            modal,
+            self._modal_callback(generation, finish),
+            modal_generation=generation,
+            operation_generation=operation_generation,
+            session_id=token[0],
+        )
 
     async def _dispatch(
         self,
         token: tuple[str, str],
+        operation_generation: int,
+        completion_generation: int,
         *,
+        destination: ConsoleTTSDestination | None = None,
         revalidated: bool = False,
     ) -> None:
-        if not self._mounted or token in self._dispatched_tokens:
+        if (
+            not self._operation_is_current(operation_generation, token[0])
+            or not self._completion_is_current(token, completion_generation)
+            or token in self._inflight_dispatches
+        ):
             return
         if not revalidated:
-            disposition, _destination = await self._disposition(token)
-            if disposition is not AutoSpeakDisposition.SPEAK:
+            disposition, destination = await self._disposition(
+                token, operation_generation
+            )
+            if (
+                disposition is not AutoSpeakDisposition.SPEAK
+                or not self._operation_is_current(
+                    operation_generation, token[0]
+                )
+                or not self._completion_is_current(
+                    token, completion_generation
+                )
+            ):
                 return
-        self._dispatched_tokens.add(token)
+        if destination is None:
+            return
+        store = self._store_accessor()
+        try:
+            preference_epoch = store.speech_preference_epoch(token[0])
+        except KeyError:
+            return
+        dispatch_generation = self._next_dispatch_generation
+        self._next_dispatch_generation += 1
+        self._inflight_dispatches[token] = dispatch_generation
 
         def on_outcome(ok: bool) -> None:
-            if not self._mounted or token in self._settled_outcome_tokens:
+            if self._inflight_dispatches.get(token) != dispatch_generation:
                 return
-            self._settled_outcome_tokens.add(token)
+            self._inflight_dispatches.pop(token, None)
             if ok is not True:
-                self._schedule(self._pause_after_failure(token))
+                self._pause_after_failure(token, preference_epoch)
 
         try:
-            issued = await self._issue_message_speech(token[1], on_outcome)
+            issued = await self._issue_message_speech(
+                token[1],
+                on_outcome,
+                destination.fingerprint,
+            )
         except Exception:  # noqa: BLE001 - dispatch failures become paused state
             issued = False
         if not issued:
             on_outcome(False)
 
-    async def _pause_after_failure(self, token: tuple[str, str]) -> None:
-        if not self._mounted:
-            return
+    def _pause_after_failure(
+        self,
+        token: tuple[str, str],
+        preference_epoch: int,
+    ) -> None:
         store = self._store_accessor()
         session_id, message_id = token
         try:
+            session = next(
+                session
+                for session in store.sessions()
+                if session.id == session_id
+            )
+            if store.speech_preference_epoch(session_id) != preference_epoch:
+                return
+            preferences = session.speech_preferences
+            if preferences.auto_speak is not True or preferences.paused is True:
+                return
             _session, persisted = store.pause_auto_speak(session_id)
-        except KeyError:
+        except (KeyError, StopIteration):
             return
         if not persisted:
-            self._notify(
-                "Automatic speech failed and its paused state could not be saved.",
-                "error",
-            )
-            self.sync_controls()
+            if self._mounted and self._active_session() is session:
+                self._notify(
+                    "Automatic speech failed and its paused state could not be saved.",
+                    "error",
+                )
+                self.sync_controls()
             return
         self.failed_message_id = message_id
-        self._notify(
-            "Automatic speech paused. Use Retry speech, then Resume auto-speak.",
-            "warning",
+        if self._mounted and self._active_session() is session:
+            self._notify(
+                "Automatic speech paused. Use Retry speech for this reply or "
+                "Resume auto-speak for future replies.",
+                "warning",
+            )
+            self.sync_controls()
+
+    async def _retry(self, session_id: str, operation_generation: int) -> None:
+        if not self._operation_is_current(operation_generation, session_id):
+            return
+        store = self._store_accessor()
+        session = self._active_session()
+        message_id = self.failed_message_id
+        if session is None or not message_id:
+            return
+        preferences = session.speech_preferences
+        if preferences.auto_speak is not True or preferences.paused is not True:
+            return
+        try:
+            if store.session_id_for_message(message_id) != session_id:
+                return
+            store.get_message(message_id)
+        except (KeyError, ValueError):
+            return
+        if self._hands_free_active() is not False:
+            return
+        destination = await self._current_destination(
+            session, operation_generation
         )
-        self.sync_controls()
+        if not self._operation_is_current(operation_generation, session_id):
+            return
+        if (
+            destination is None
+            or preferences.consent_destination != destination.fingerprint
+        ):
+            return
+
+        settled = False
+
+        def on_outcome(ok: bool) -> None:
+            nonlocal settled
+            if settled:
+                return
+            settled = True
+            if (
+                ok is not True
+                and self._mounted
+                and self._operation_is_current(operation_generation, session_id)
+            ):
+                self._notify(
+                    "Retry speech failed. Automatic speech remains paused.",
+                    "warning",
+                )
+                self.sync_controls()
+
+        try:
+            issued = await self._issue_message_speech(
+                message_id,
+                on_outcome,
+                destination.fingerprint,
+            )
+        except Exception:  # noqa: BLE001 - retry remains safely paused
+            issued = False
+        if not issued:
+            on_outcome(False)
 
     async def _resume(self) -> None:
         if not self._mounted:

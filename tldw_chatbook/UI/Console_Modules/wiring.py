@@ -558,10 +558,11 @@ def build_console_controllers(
             )
         ),
         issue_message_speech=(
-            lambda message_id, outcome_callback: (
+            lambda message_id, outcome_callback, expected_destination: (
                 screen._message.request_console_message_speech(
                     message_id,
                     outcome_callback,
+                    expected_destination,
                 )
             )
         ),
@@ -574,9 +575,10 @@ def build_console_controllers(
                 or screen._console_realtime is not None
             )
         ),
-        sync_controls=lambda enabled, paused: screen._sync_console_auto_speak_controls(
+        sync_controls=lambda enabled, paused, retry_available: screen._sync_console_auto_speak_controls(
             enabled,
             paused,
+            retry_available,
         ),
         notify=lambda copy, severity: screen.app_instance.notify(
             copy,

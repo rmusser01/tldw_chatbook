@@ -482,7 +482,9 @@ from ...Widgets.Console import (
 )
 from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakChanged,
+    ConsoleAutoSpeakRetryRequested,
     ConsoleAutoSpeakResumeRequested,
+    CONSOLE_CONTROL_BAR_HEIGHT,
 )
 from ...Widgets.Console.console_settings_modal import ConsoleSettingsResult
 from ...Widgets.Console.console_context_controls import (
@@ -14334,7 +14336,7 @@ class ChatScreen(BaseAppScreen):
                     id="console-control-bar",
                     classes="console-control-bar",
                 ),
-                height=1,
+                height=CONSOLE_CONTROL_BAR_HEIGHT,
             )
             workspace_grid = self._frame_console_region(
                 Horizontal(
@@ -20959,13 +20961,18 @@ class ChatScreen(BaseAppScreen):
         self,
         enabled: bool,
         paused: bool,
+        retry_available: bool = False,
     ) -> None:
         """Push authoritative active-conversation state into the control bar."""
         try:
             control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
         except QueryError:
             return
-        control_bar.sync_auto_speak(enabled=enabled, paused=paused)
+        control_bar.sync_auto_speak(
+            enabled=enabled,
+            paused=paused,
+            retry_available=retry_available,
+        )
 
     @on(ConsoleAutoSpeakChanged)
     def on_console_auto_speak_changed(self, event: ConsoleAutoSpeakChanged) -> None:
@@ -20979,6 +20986,14 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         event.stop()
         self._console_auto_speak.request_resume()
+
+    @on(ConsoleAutoSpeakRetryRequested)
+    def on_console_auto_speak_retry_requested(
+        self,
+        event: ConsoleAutoSpeakRetryRequested,
+    ) -> None:
+        event.stop()
+        self._console_auto_speak.request_retry()
 
     def _run_coalesced_control_bar_sync(self) -> None:
         """Execute one coalesced control-bar sync (task-3010)."""

@@ -1075,12 +1075,25 @@ class ConsoleMessageController:
         self,
         message_id: str,
         outcome_callback: Callable[[bool], None] | None = None,
+        expected_destination_fingerprint: str | None = None,
     ) -> bool:
         """Dispatch Manual Speak's exact trusted snapshot/event path."""
         from tldw_chatbook.Chat.console_speech import ConsoleSpeechSnapshotRejected
         from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
             TTSMessageSpeechRequestEvent,
         )
+
+        outcome_reported = False
+
+        def report_outcome(ok: bool) -> None:
+            nonlocal outcome_reported
+            if outcome_reported or outcome_callback is None:
+                return
+            outcome_reported = True
+            try:
+                outcome_callback(ok is True)
+            except Exception:
+                return
 
         store = self._ensure_console_chat_store()
         try:
@@ -1090,8 +1103,14 @@ class ConsoleMessageController:
             )
         except ConsoleSpeechSnapshotRejected as error:
             self.app_instance.notify(str(error), severity="warning")
-            if outcome_callback is not None:
-                outcome_callback(False)
+            report_outcome(False)
+            return False
+        except Exception:
+            self.app_instance.notify(
+                "Speech could not be requested. Try again.",
+                severity="warning",
+            )
+            report_outcome(False)
             return False
 
         def validate_speech_snapshot(snapshot):
@@ -1100,13 +1119,20 @@ class ConsoleMessageController:
                 presentation_context=self._screen._console_presentation_context(),
             )
 
-        self.app_instance.post_message(
-            TTSMessageSpeechRequestEvent(
-                speech_snapshot,
-                validate_speech_snapshot,
-                outcome_callback=outcome_callback,
-            )
+        event = TTSMessageSpeechRequestEvent(
+            speech_snapshot,
+            validate_speech_snapshot,
+            outcome_callback=report_outcome if outcome_callback is not None else None,
+            expected_destination_fingerprint=expected_destination_fingerprint,
         )
+        try:
+            posted = self.app_instance.post_message(event)
+        except Exception:
+            event.report_outcome(False)
+            return False
+        if posted is False:
+            event.report_outcome(False)
+            return False
         self._console_speaking_message_id = message_id
         await self._sync_native_console_chat_ui()
         return True

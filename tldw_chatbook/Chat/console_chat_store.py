@@ -674,6 +674,10 @@ class ConsoleChatStore:
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
+        # Content-free fence that advances only for live successful
+        # completions. It distinguishes duplicate callback delivery from a
+        # later regeneration of the same message without retaining text.
+        self._message_completion_generations: dict[str, int] = {}
         # Cost-ticker PR3: per-session monotonic counter of payload-affecting
         # mutations, so the cost chip knows when its cache-break fingerprint
         # needs recomputing. Process-local, like the speech revisions above.
@@ -695,13 +699,13 @@ class ConsoleChatStore:
             int, Callable[[tuple[str, str]], None]
         ] = {}
         self._next_message_completed_subscriber_id = 1
-        self._message_completion_emitted_ids: set[str] = set()
+        self._speech_preference_epochs: dict[str, int] = {}
 
     def subscribe_message_completed(
         self,
         callback: Callable[[tuple[str, str]], None],
     ) -> Callable[[], None]:
-        """Observe first live completion tokens until the returned unsubscribe.
+        """Observe successful live completion tokens until unsubscribe.
 
         The callback receives only an immutable ``(session_id, message_id)``
         token. Subscriber failures are isolated from message finalization.
@@ -723,18 +727,24 @@ class ConsoleChatStore:
         return unsubscribe
 
     def _publish_message_completed(self, session_id: str, message_id: str) -> None:
-        """Publish one deduplicated live completion without message content."""
-        if message_id in self._message_completion_emitted_ids:
-            return
+        """Publish one validated live terminal transition without message content."""
         if self._message_session_index.get(message_id) != session_id:
             return
-        self._message_completion_emitted_ids.add(message_id)
         token = (session_id, message_id)
         for callback in tuple(self._message_completed_subscribers.values()):
             try:
                 callback(token)
             except Exception:
                 logger.warning("Console completion subscriber failed")
+
+    def _record_message_completed(self, session_id: str, message_id: str) -> None:
+        self._message_completion_generations[message_id] += 1
+        self._publish_message_completed(session_id, message_id)
+
+    def message_completion_generation(self, message_id: str) -> int:
+        """Return the process-local generation of a live successful completion."""
+        self._message_or_raise(message_id)
+        return self._message_completion_generations[message_id]
 
     def ensure_session(
         self,
@@ -1425,9 +1435,9 @@ class ConsoleChatStore:
             self._variant_restored_message_ids.discard(message_id)
             self._failed_retry_message_ids.discard(message_id)
             self._message_speech_revisions.pop(message_id, None)
+            self._message_completion_generations.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
             self._roleplay_message_projection_candidates.pop(message_id, None)
-            self._message_completion_emitted_ids.discard(message_id)
 
         self._messages_by_session.pop(session_id, None)
         self._tool_markers_by_session.pop(session_id, None)
@@ -1437,6 +1447,7 @@ class ConsoleChatStore:
         self._context_summary_by_session.pop(session_id, None)
         self._roleplay_system_projection_candidates.pop(session_id, None)
         self._conversation_context_epochs.pop(session_id, None)
+        self._speech_preference_epochs.pop(session_id, None)
         self._sessions.pop(session_id, None)
 
         if self.active_session_id != session_id:
@@ -1513,6 +1524,16 @@ class ConsoleChatStore:
             replace(session.speech_preferences, auto_speak=enabled),
         )
 
+    def speech_preference_epoch(self, session_id: str) -> int:
+        """Return the process-local revision of one session's speech opt-in."""
+        self._session_or_raise(session_id)
+        return self._speech_preference_epochs.get(session_id, 0)
+
+    def _bump_speech_preference_epoch(self, session_id: str) -> None:
+        self._speech_preference_epochs[session_id] = (
+            self._speech_preference_epochs.get(session_id, 0) + 1
+        )
+
     def pause_auto_speak(self, session_id: str) -> tuple[ConsoleChatSession, bool]:
         """Persistently pause automatic reply speech for one conversation."""
         session = self._session_or_raise(session_id)
@@ -1550,6 +1571,7 @@ class ConsoleChatStore:
                 return session, True
             session.speech_preferences = preferences
             session.updated_at = _utc_now_iso()
+            self._bump_speech_preference_epoch(session.id)
             return session, True
         if self.persistence is None:
             return session, False
@@ -1580,8 +1602,11 @@ class ConsoleChatStore:
             return session, False
         if not persisted:
             return session, False
+        changed = preferences != session.speech_preferences
         session.speech_preferences = preferences
         session.updated_at = _utc_now_iso()
+        if changed:
+            self._bump_speech_preference_epoch(session.id)
         return session, True
 
     def session_workspace_id(self, session_id: str) -> str:
@@ -1815,6 +1840,7 @@ class ConsoleChatStore:
         self._variant_restored_message_ids.clear()
         self._failed_retry_message_ids.clear()
         self._message_speech_revisions.clear()
+        self._message_completion_generations.clear()
         self._payload_revisions.clear()
         self._conversation_context_epochs.clear()
         self._nodes_by_session.clear()
@@ -3719,6 +3745,7 @@ class ConsoleChatStore:
             self._variant_restored_message_ids.discard(node_id)
             self._failed_retry_message_ids.discard(node_id)
             self._message_speech_revisions.pop(node_id, None)
+            self._message_completion_generations.pop(node_id, None)
         # Only when the deleted branch was on the active path does the leaf move
         # (up to the deleted node's parent); an off-path delete leaves it alone.
         self._purge_tool_markers(session_id, set(subtree_ids))
@@ -4134,7 +4161,7 @@ class ConsoleChatStore:
             self._persist_existing_message(
                 message, preserve_provider_continuation=True
             )
-            self._publish_message_completed(session_id, message.id)
+            self._record_message_completed(session_id, message.id)
             return self._snapshot(message)
 
         try:
@@ -4146,7 +4173,7 @@ class ConsoleChatStore:
                 self._persist_existing_message(
                     message, preserve_provider_continuation=True
                 )
-                self._publish_message_completed(session_id, message.id)
+                self._record_message_completed(session_id, message.id)
                 return self._snapshot(message)
 
             citation_write = None
@@ -4170,7 +4197,7 @@ class ConsoleChatStore:
             except Exception:
                 self._pending_persistence_message_ids.discard(message.id)
                 logger.warning("terminal_citation_persistence_abandoned")
-            self._publish_message_completed(session_id, message.id)
+            self._record_message_completed(session_id, message.id)
             return self._snapshot(message)
         finally:
             self.clear_terminal_citation_state(message.id)
@@ -4375,7 +4402,7 @@ class ConsoleChatStore:
         self._persist_existing_message(
             message, force_metadata_write=provenance_cleared
         )
-        self._publish_message_completed(session_id, message.id)
+        self._record_message_completed(session_id, message.id)
         return self._snapshot(message)
 
     def begin_variant_stream(self, message_id: str) -> ConsoleChatMessage:
@@ -4428,10 +4455,15 @@ class ConsoleChatStore:
             KeyError: ``message_id`` does not reference a known message.
         """
         message = self._message_or_raise(message_id)
+        if (
+            message.status != "streaming"
+            or message.id not in self._variant_stream_bases
+        ):
+            raise ValueError("Message has no active variant stream.")
         self._materialize_stream_buffer(message)
         new_content = message.content
-        base_entry = self._variant_stream_bases.pop(message.id, None)
-        base = base_entry.content if base_entry is not None else ""
+        base_entry = self._variant_stream_bases.pop(message.id)
+        base = base_entry.content
         session_id = self._message_session_index[message.id]
         on_active_path = self._message_is_on_active_path(message.id)
         if message.variants is None:
@@ -4451,7 +4483,10 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != base:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(message, force_metadata_write=provenance_cleared)
+        self._persist_existing_message(
+            message, force_metadata_write=provenance_cleared
+        )
+        self._record_message_completed(session_id, message.id)
         return self._snapshot(message)
 
     def select_variant(
@@ -6120,6 +6155,7 @@ class ConsoleChatStore:
         ).append(message.id)
         self._message_session_index[message.id] = session_id
         self._message_speech_revisions[message.id] = 0
+        self._message_completion_generations[message.id] = 0
 
     def _ingest_linear_messages(
         self, session_id: str, messages: Iterable[ConsoleChatMessage]

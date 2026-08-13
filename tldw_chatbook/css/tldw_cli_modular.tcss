@@ -106,7 +106,7 @@ $ds-home-control-button-height: 1;
 $ds-home-compact-row-height: 1;
 $ds-home-followup-row-height: 6;
 $ds-console-workspace-grid-height: 1fr;
-$ds-console-control-bar-height: 1;
+$ds-console-control-bar-height: 2;
 $ds-console-composer-height: 5;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
@@ -4820,6 +4820,44 @@ with stray left-edge border fragments), and padding 0 1 so the full
     max-height: 1;
     layout: horizontal;
     align: left middle;
+}
+
+#console-auto-speak-row,
+#console-auto-speak-control {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+#console-auto-speak-label {
+    width: auto;
+    height: 1;
+    margin-right: 1;
+}
+
+#console-auto-speak {
+    width: 8;
+    min-width: 8;
+    max-width: 8;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    padding: 0;
+    margin: 0 1 0 0;
+    border: none;
+}
+
+#console-auto-speak-retry,
+#console-auto-speak-resume {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0 1 0 0;
 }
 
 #console-status-chips {

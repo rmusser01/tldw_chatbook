@@ -113,7 +113,7 @@ def test_message_completed_subscription_ignores_complete_append_and_unsubscribe(
     assert observed == []
 
 
-def test_message_completed_subscription_isolates_callback_failure_and_duplicates():
+def test_message_completed_subscription_isolates_callback_failure_and_duplicate_terminalization():
     store = ConsoleChatStore()
     session = store.create_session()
     observed: list[tuple[str, str]] = []
@@ -131,7 +131,69 @@ def test_message_completed_subscription_isolates_callback_failure_and_duplicates
     store.append_stream_chunk(message.id, "New reply.")
 
     store.mark_message_complete(message.id)
-    store._publish_message_completed(session.id, message.id)
+    with pytest.raises(ValueError):
+        store.mark_message_complete(message.id)
+
+    assert observed == [(session.id, message.id)]
+
+
+def test_message_completed_subscription_emits_each_successful_regeneration() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    observed: list[tuple[str, str]] = []
+    store.subscribe_message_completed(observed.append)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Original.",
+    )
+
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "First regeneration.")
+    store.finalize_variant_stream(message.id)
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "Second regeneration.")
+    store.finalize_variant_stream(message.id)
+
+    assert observed == [
+        (session.id, message.id),
+        (session.id, message.id),
+    ]
+
+
+def test_message_completed_subscription_add_variant_emits_but_selection_does_not() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    observed: list[tuple[str, str]] = []
+    store.subscribe_message_completed(observed.append)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Original.",
+    )
+
+    store.add_variant(message.id, "Regenerated.")
+    store.select_variant(message.id, 0)
+
+    assert observed == [(session.id, message.id)]
+
+
+def test_message_completed_subscription_duplicate_variant_finalize_fails_closed() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    observed: list[tuple[str, str]] = []
+    store.subscribe_message_completed(observed.append)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Original.",
+    )
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "Regenerated.")
+    store.finalize_variant_stream(message.id)
+
+    with pytest.raises(ValueError, match="active variant stream"):
+        store.finalize_variant_stream(message.id)
 
     assert observed == [(session.id, message.id)]
 
@@ -1414,6 +1476,35 @@ def test_unsaved_session_stages_all_reply_speech_preferences():
     )
     assert store.resume_auto_speak(session.id) == (session, True)
     assert session.speech_preferences.paused is False
+
+
+def test_reply_speech_preference_epoch_advances_only_after_successful_mutation() -> None:
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+
+    assert store.speech_preference_epoch(session.id) == 0
+    store.set_auto_speak(session.id, True)
+    assert store.speech_preference_epoch(session.id) == 1
+    store.set_auto_speak(session.id, True)
+    assert store.speech_preference_epoch(session.id) == 1
+    store.confirm_auto_speak_destination(session.id, "sha256:" + "a" * 64)
+    assert store.speech_preference_epoch(session.id) == 2
+    store.set_auto_speak(session.id, False)
+    store.set_auto_speak(session.id, True)
+    assert store.speech_preference_epoch(session.id) == 4
+
+
+def test_failed_reply_speech_preference_write_does_not_advance_epoch() -> None:
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conv-1"
+    persistence.update_conversation_speech_preferences = lambda **_kwargs: False
+
+    _session, persisted = store.set_auto_speak(session.id, True)
+
+    assert persisted is False
+    assert store.speech_preference_epoch(session.id) == 0
 
 
 def test_persisted_reply_speech_mutation_updates_memory_only_after_versioned_write():

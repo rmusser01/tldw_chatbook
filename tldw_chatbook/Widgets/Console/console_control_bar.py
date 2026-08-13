@@ -17,7 +17,7 @@ from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchAction
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
-CONSOLE_CONTROL_BAR_HEIGHT = 1
+CONSOLE_CONTROL_BAR_HEIGHT = 2
 TOP_ACTION_IDS = {
     "new-tab",
     "settings",
@@ -72,6 +72,10 @@ class ConsoleAutoSpeakResumeRequested(Message):
     """User requested resume after an automatic speech failure."""
 
 
+class ConsoleAutoSpeakRetryRequested(Message):
+    """User requested speech retry for the failed automatic reply."""
+
+
 def _summary_line(state: ConsoleControlState) -> str:
     return " | ".join(
         (
@@ -121,6 +125,7 @@ class ConsoleControlBar(Vertical):
         self.on_sidebar_toggle_requested = on_sidebar_toggle_requested
         self.auto_speak_enabled = False
         self.auto_speak_paused = False
+        self.auto_speak_retry_available = False
         self.styles.height = CONSOLE_CONTROL_BAR_HEIGHT
         self.styles.min_height = CONSOLE_CONTROL_BAR_HEIGHT
         self.styles.max_height = CONSOLE_CONTROL_BAR_HEIGHT
@@ -247,10 +252,17 @@ class ConsoleControlBar(Vertical):
             if action is not None and isinstance(child, Button):
                 self._sync_action_button(child, action)
 
-    def sync_auto_speak(self, *, enabled: bool, paused: bool) -> None:
+    def sync_auto_speak(
+        self,
+        *,
+        enabled: bool,
+        paused: bool,
+        retry_available: bool = False,
+    ) -> None:
         """Render the active conversation's persisted reply-speech state."""
         self.auto_speak_enabled = enabled is True
         self.auto_speak_paused = paused is True
+        self.auto_speak_retry_available = retry_available is True
         try:
             toggle = self.query_one("#console-auto-speak", Switch)
         except NoMatches:
@@ -263,10 +275,13 @@ class ConsoleControlBar(Vertical):
             if self.auto_speak_paused
             else "Speak only new assistant replies in this conversation."
         )
-        try:
-            resume = self.query_one("#console-auto-speak-resume", Button)
-        except NoMatches:
-            return
+        retry = self.query_one("#console-auto-speak-retry", Button)
+        retry.display = (
+            self.auto_speak_enabled
+            and self.auto_speak_paused
+            and self.auto_speak_retry_available
+        )
+        resume = self.query_one("#console-auto-speak-resume", Button)
         resume.display = self.auto_speak_enabled and self.auto_speak_paused
 
     def compose(self) -> ComposeResult:
@@ -292,8 +307,13 @@ class ConsoleControlBar(Vertical):
             yield compact_status_marker
             for action in self._visible_actions():
                 yield self._action(action)
+        with Horizontal(id="console-auto-speak-row") as speech_row:
+            speech_row.styles.height = 1
+            speech_row.styles.min_height = 1
+            speech_row.styles.max_height = 1
             with Horizontal(id="console-auto-speak-control") as auto_speak_control:
                 auto_speak_control.styles.width = "auto"
+                auto_speak_control.styles.height = 1
                 auto_speak_label = Static(
                     "Speak replies",
                     id="console-auto-speak-label",
@@ -310,12 +330,25 @@ class ConsoleControlBar(Vertical):
                     ),
                 )
                 auto_speak_switch.styles.width = "auto"
+                auto_speak_switch.styles.height = 1
+                auto_speak_switch.styles.min_height = 1
+                auto_speak_switch.styles.max_height = 1
+                auto_speak_switch.styles.padding = 0
+                auto_speak_switch.styles.border = ("none", "transparent")
                 yield auto_speak_switch
+            retry = Button(
+                "Retry speech",
+                id="console-auto-speak-retry",
+                compact=True,
+                tooltip="Retry speech for the reply that failed.",
+            )
+            retry.display = False
+            yield retry
             resume = Button(
-                "Resume speech",
+                "Resume auto-speak",
                 id="console-auto-speak-resume",
                 compact=True,
-                tooltip="Resume automatic speech after a failure.",
+                tooltip="Resume speaking future replies automatically.",
             )
             resume.display = False
             yield resume
@@ -406,3 +439,8 @@ class ConsoleControlBar(Vertical):
     def on_console_auto_speak_resume_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(ConsoleAutoSpeakResumeRequested())
+
+    @on(Button.Pressed, "#console-auto-speak-retry")
+    def on_console_auto_speak_retry_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(ConsoleAutoSpeakRetryRequested())

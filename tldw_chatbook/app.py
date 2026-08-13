@@ -8744,21 +8744,53 @@ class TldwCli(
     ) -> None:
         """Route a trusted Console snapshot without logging private content."""
         self.loguru_logger.info("Trusted Console speech request received")
-        handler = await self._ensure_tts_handler()
+        try:
+            handler = await self._ensure_tts_handler()
+        except asyncio.CancelledError:
+            event.report_outcome(False)
+            raise
+        except Exception as error:
+            self.loguru_logger.error(
+                "TTS handler initialization failed "
+                "(operation=trusted_console_speech, exception_category={})",
+                type(error).__name__,
+            )
+            event.report_outcome(False)
+            return
         if handler:
-            await handler.handle_tts_request(event)
+            try:
+                await handler.handle_tts_request(event)
+            except asyncio.CancelledError:
+                event.report_outcome(False)
+                raise
+            except Exception as error:
+                self.loguru_logger.error(
+                    "TTS handler request failed "
+                    "(operation=trusted_console_speech, exception_category={})",
+                    type(error).__name__,
+                )
+                event.report_outcome(False)
         else:
             self.loguru_logger.error(
                 "TTS handler not initialized "
                 "(operation=trusted_console_speech, "
                 "outcome_code=handler_unavailable)"
             )
-            await self.post_message(
-                TTSCompleteEvent(
-                    message_id=event.message_id,
-                    error="TTS service not available",
+            try:
+                await self.post_message(
+                    TTSCompleteEvent(
+                        message_id=event.message_id,
+                        error="TTS service not available",
+                    )
                 )
-            )
+            except Exception as error:
+                self.loguru_logger.error(
+                    "TTS unavailable notice failed "
+                    "(operation=trusted_console_speech, exception_category={})",
+                    type(error).__name__,
+                )
+            finally:
+                event.report_outcome(False)
 
     @on(TTSGlobalOverrideDecisionEvent)
     async def handle_tts_global_override_decision_event(
