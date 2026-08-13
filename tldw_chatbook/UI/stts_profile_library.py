@@ -19,7 +19,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, Protocol, cast
 from uuid import UUID
-from weakref import ReferenceType, ref
 
 from rich.text import Text
 from textual import on
@@ -390,13 +389,48 @@ class _PageRequest:
     offset: int
 
 
+_PROFILE_FOCUS_TARGETS = frozenset(
+    {
+        "stts-profile-table",
+        "stts-profile-preview-btn",
+        "stts-profile-edit-btn",
+        "stts-profile-duplicate-btn",
+        "stts-profile-export-btn",
+        "stts-profile-refresh-btn",
+        "stts-profile-delete-btn",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileLibraryContinuity:
+    """Bounded widget-free state needed to restore the profile library."""
+
+    selected_profile_id: UUID | None
+    cursor_row: int
+    scroll_x: int
+    scroll_y: int
+    focus_target: str | None
+    search: str | None
+    offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileVerificationResult:
+    """One exact successful profile test awaiting library reconciliation."""
+
+    profile_id: UUID
+    repository_generation: int
+    profile_revision: int
+    availability: TTSProfileAvailability
+
+
 @dataclass(frozen=True, slots=True)
 class _ProfileTestContext:
     """Process-local authority for one exact, non-secret profile test."""
 
     service: _ProfileService
     loaded: LoadedTTSProfile
-    library: ReferenceType[STTSProfileLibrary]
 
 
 _PROFILE_TEST_CONTEXTS: dict[tuple[UUID, int, int], _ProfileTestContext] = {}
@@ -444,7 +478,6 @@ def _remember_profile_test_context(
     service: _ProfileService,
     loaded: LoadedTTSProfile,
     preset: TTSPlaygroundSelectionPreset,
-    library: STTSProfileLibrary,
 ) -> TTSPlaygroundSelectionPreset:
     """Attach exact repository identity and retain bounded process authority."""
 
@@ -459,7 +492,7 @@ def _remember_profile_test_context(
         raise ValueError("Profile test preset does not match the selected profile")
     key = _profile_test_key(exact)
     assert key is not None
-    _PROFILE_TEST_CONTEXTS[key] = _ProfileTestContext(service, loaded, ref(library))
+    _PROFILE_TEST_CONTEXTS[key] = _ProfileTestContext(service, loaded)
     while len(_PROFILE_TEST_CONTEXTS) > _PROFILE_TEST_CONTEXT_LIMIT:
         _PROFILE_TEST_CONTEXTS.pop(next(iter(_PROFILE_TEST_CONTEXTS)))
     return exact
@@ -480,9 +513,38 @@ def _resolve_profile_test_context(
 class ProfilePreviewRequested(Message):
     """Request a one-shot exact Playground preview without synthesizing."""
 
-    def __init__(self, preset: TTSPlaygroundSelectionPreset) -> None:
+    def __init__(
+        self,
+        preset: TTSPlaygroundSelectionPreset,
+        continuity: ProfileLibraryContinuity,
+    ) -> None:
         super().__init__()
         self.preset = preset
+        self.continuity = continuity
+
+
+class ProfileTestVerified(Message):
+    """Carry one verified result to the navigation owner without widget refs."""
+
+    def __init__(self, result: ProfileVerificationResult) -> None:
+        super().__init__()
+        self.result = result
+
+
+class ProfileVerificationReconciled(Message):
+    """Retire one pending result after a fresh library mount checks it."""
+
+    def __init__(self, result: ProfileVerificationResult) -> None:
+        super().__init__()
+        self.result = result
+
+
+class ProfileLibraryRestoreReady(Message):
+    """Signal that remounted rows have final geometry for focus restoration."""
+
+    def __init__(self, ownership_token: int) -> None:
+        super().__init__()
+        self.ownership_token = ownership_token
 
 
 def _assignment_copy(count: int) -> str:
@@ -1474,6 +1536,9 @@ class STTSProfileLibrary(Widget):
         default_profile_id_reader: Callable[[], object | None] | None = None,
         voice_bundle_service_loader: VoiceBundleServiceLoader | None = None,
         bundle_platform_supported: bool | None = None,
+        continuity: ProfileLibraryContinuity | None = None,
+        pending_verification: ProfileVerificationResult | None = None,
+        focus_restore_token: int | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
@@ -1518,11 +1583,15 @@ class STTSProfileLibrary(Widget):
         self._loaded_rows: dict[str, LoadedTTSProfile] = {}
         self._row_availability: dict[str, TTSProfileAvailability] = {}
         self._selected_profile: LoadedTTSProfile | None = None
-        self._refresh_continuity: tuple[str, int, int, int, str | None] | None = None
+        self._initial_continuity = continuity
+        self._post_load_continuity: ProfileLibraryContinuity | None = None
+        self._refresh_continuity: ProfileLibraryContinuity | None = None
+        self._pending_verification = pending_verification
+        self._focus_restore_token = focus_restore_token
         self._retained_editor_draft: _RetainedEditorDraft | None = None
         self._active_modal: _OwnedProfileModal | None = None
-        self._search: str | None = None
-        self._offset = 0
+        self._search = None if continuity is None else continuity.search
+        self._offset = 0 if continuity is None else continuity.offset
         self._total = 0
 
     def compose(self) -> ComposeResult:
@@ -1628,7 +1697,11 @@ class STTSProfileLibrary(Widget):
         self._availability_column = columns[3]
         # Dynamic Speech navigation can mount this parent before the trailing
         # action buttons have completed their own mount cycle.
-        self.call_after_refresh(self._queue_page_request, None, 0)
+        self.call_after_refresh(
+            self._queue_page_request,
+            self._search,
+            self._offset,
+        )
 
     async def on_unmount(self) -> None:
         self._live = False
@@ -1679,15 +1752,7 @@ class STTSProfileLibrary(Widget):
             return
         same_page = search == self._search and max(0, offset) == self._offset
         if same_page and self._selected_profile is not None:
-            table = self.query_one("#stts-profile-table", DataTable)
-            focused = self.app.focused
-            self._refresh_continuity = (
-                str(self._selected_profile.profile.profile_id),
-                table.cursor_row,
-                table.scroll_offset.x,
-                table.scroll_offset.y,
-                None if focused is None else focused.id,
-            )
+            self._refresh_continuity = self.navigation_continuity()
         else:
             self._refresh_continuity = None
         self._request_id += 1
@@ -1713,6 +1778,30 @@ class STTSProfileLibrary(Widget):
                     self._detach_active_cleanup(task)
             return
         self._start_page_pipeline(request)
+
+    def navigation_continuity(self) -> ProfileLibraryContinuity:
+        """Capture bounded process-local UI intent without retaining widgets."""
+
+        table = self.query_one("#stts-profile-table", DataTable)
+        selected_id = (
+            None
+            if self._selected_profile is None
+            else self._selected_profile.profile.profile_id
+        )
+        focused = self.app.focused
+        focused_id = None if focused is None else focused.id
+        focus_target = (
+            focused_id if focused_id in _PROFILE_FOCUS_TARGETS else None
+        )
+        return ProfileLibraryContinuity(
+            selected_profile_id=selected_id,
+            cursor_row=max(0, min(table.cursor_row, PROFILE_PAGE_SIZE - 1)),
+            scroll_x=max(0, table.scroll_offset.x),
+            scroll_y=max(0, table.scroll_offset.y),
+            focus_target=focus_target,
+            search=self._search,
+            offset=max(0, self._offset),
+        )
 
     def _start_page_pipeline(self, request: _PageRequest) -> None:
         self._pending_page_request = None
@@ -1839,7 +1928,22 @@ class STTSProfileLibrary(Widget):
                     self._set_status(_PROFILE_AVAILABILITY_FAILED_COPY)
                 return
             if self._availability_can_publish(request, page, availability):
-                self._publish_availability(page, availability)
+                pending_loaded = self._pending_verification_target(page)
+                self._publish_availability(
+                    page,
+                    availability,
+                    skip_profile_id=(
+                        None
+                        if pending_loaded is None
+                        else pending_loaded.profile.profile_id
+                    ),
+                )
+                await self._reconcile_pending_verification(
+                    service,
+                    request,
+                    page,
+                    pending_loaded,
+                )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - publish bounded failure only
@@ -1954,9 +2058,11 @@ class STTSProfileLibrary(Widget):
         table.clear(columns=False)
         self._loaded_rows.clear()
         self._row_availability = previous_availability
-        continuity = self._refresh_continuity
+        continuity = self._refresh_continuity or self._initial_continuity
         self._refresh_continuity = None
+        self._initial_continuity = None
         self._selected_profile = None
+        self._post_load_continuity = continuity
         self._rendered_request = request
         self._rendered_repository_generation = page.repository_generation
         self._rendered_profile_ids = tuple(
@@ -1990,18 +2096,22 @@ class STTSProfileLibrary(Widget):
             )
 
         if continuity is not None:
-            selected_key, cursor_row, scroll_x, scroll_y, focused_id = continuity
+            selected_key = (
+                None
+                if continuity.selected_profile_id is None
+                else str(continuity.selected_profile_id)
+            )
             selected = self._loaded_rows.get(selected_key)
             if selected is not None:
                 self._selected_profile = selected
                 selected_row = self._rendered_profile_ids.index(selected_key)
                 table.move_cursor(row=selected_row, animate=False)
-                table.scroll_to(x=scroll_x, y=scroll_y, animate=False)
-                if focused_id is not None:
-                    try:
-                        self.query_one(f"#{focused_id}").focus()
-                    except Exception:  # noqa: BLE001 - stale focus target is harmless
-                        table.focus()
+            elif page.profiles:
+                table.move_cursor(
+                    row=min(continuity.cursor_row, len(page.profiles) - 1),
+                    animate=False,
+                )
+            self.call_after_refresh(self._restore_navigation_viewport, continuity)
 
         self._sync_paging()
         self._sync_selected_actions()
@@ -2013,14 +2123,39 @@ class STTSProfileLibrary(Widget):
         else:
             self._set_status(_PROFILE_EMPTY_COPY)
 
+    def _restore_navigation_viewport(
+        self,
+        continuity: ProfileLibraryContinuity,
+    ) -> None:
+        """Restore focus and scroll after the remounted table has final geometry."""
+
+        if not self._live:
+            return
+        table = self.query_one("#stts-profile-table", DataTable)
+        table.scroll_to(
+            x=continuity.scroll_x,
+            y=continuity.scroll_y,
+            animate=False,
+        )
+        if self._post_load_continuity is continuity:
+            self._post_load_continuity = None
+        token = self._focus_restore_token
+        self._focus_restore_token = None
+        if token is not None:
+            self.post_message(ProfileLibraryRestoreReady(token))
+
     def _publish_availability(
         self,
         page: TTSProfilePageSnapshot,
         snapshot: TTSProfileAvailabilitySnapshot,
+        *,
+        skip_profile_id: UUID | None = None,
     ) -> None:
         table = self.query_one("#stts-profile-table", DataTable)
         self._row_availability.clear()
         for item in snapshot.profiles:
+            if item.profile_id == skip_profile_id:
+                continue
             key = str(item.profile_id)
             self._row_availability[key] = item
             table.update_cell(
@@ -2039,6 +2174,71 @@ class STTSProfileLibrary(Widget):
             f"{len(page.profiles)} voice profiles loaded. "
             "Availability is current for this page."
         )
+
+    def _pending_verification_target(
+        self,
+        page: TTSProfilePageSnapshot,
+    ) -> LoadedTTSProfile | None:
+        pending = self._pending_verification
+        if pending is None:
+            return None
+        for profile in page.profiles:
+            if (
+                profile.profile_id == pending.profile_id
+                and profile.revision == pending.profile_revision
+                and page.repository_generation == pending.repository_generation
+            ):
+                return LoadedTTSProfile(
+                    repository_generation=page.repository_generation,
+                    profile=profile,
+                )
+        return None
+
+    async def _reconcile_pending_verification(
+        self,
+        service: _ProfileService,
+        request: _PageRequest,
+        page: TTSProfilePageSnapshot,
+        loaded: LoadedTTSProfile | None,
+    ) -> None:
+        """Re-query one exact row and retire stale/edit/delete handoffs."""
+
+        pending = self._pending_verification
+        if pending is None:
+            return
+        try:
+            if loaded is not None:
+                target_page = TTSProfilePageSnapshot(
+                    repository_generation=loaded.repository_generation,
+                    profiles=(loaded.profile,),
+                    total=1,
+                )
+                snapshot = await service.observe_availability(target_page)
+                availability = (
+                    snapshot.profiles[0]
+                    if type(snapshot) is TTSProfileAvailabilitySnapshot
+                    and snapshot.repository_generation == loaded.repository_generation
+                    and len(snapshot.profiles) == 1
+                    else None
+                )
+                if (
+                    self._rendered_page_is_current(request, page)
+                    and availability is not None
+                    and availability.profile_id == loaded.profile.profile_id
+                    and availability.state == "available"
+                    and pending.availability.state == "available"
+                ):
+                    self.publish_profile_test_availability(loaded, availability)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - retain bounded library copy
+            if self._rendered_page_is_current(request, page):
+                self._set_status(_PROFILE_AVAILABILITY_FAILED_COPY)
+        finally:
+            if self._pending_verification is pending:
+                self._pending_verification = None
+                if self._live:
+                    self.post_message(ProfileVerificationReconciled(pending))
 
     def publish_profile_test_availability(
         self,
@@ -2889,11 +3089,11 @@ class STTSProfileLibrary(Widget):
             self._set_status(PROFILE_ACTION_FAILED_COPY)
             return
         try:
-            preset = _remember_profile_test_context(self._service, loaded, preset, self)
+            preset = _remember_profile_test_context(self._service, loaded, preset)
         except Exception:  # noqa: BLE001 - never expose profile-owned values
             self._set_status(PROFILE_ACTION_FAILED_COPY)
             return
-        self.post_message(ProfilePreviewRequested(preset))
+        self.post_message(ProfilePreviewRequested(preset, self.navigation_continuity()))
 
     @on(
         Button.Pressed,

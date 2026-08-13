@@ -73,7 +73,12 @@ from tldw_chatbook.UI.Speech.speech_settings_pane import (
     StudioPreferencesSaved,
 )
 from tldw_chatbook.UI.stts_profile_library import (
+    ProfileLibraryContinuity,
+    ProfileLibraryRestoreReady,
     ProfilePreviewRequested,
+    ProfileTestVerified,
+    ProfileVerificationReconciled,
+    ProfileVerificationResult,
     STTSProfileLibrary,
 )
 from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
@@ -1451,6 +1456,11 @@ class STTSWindow(Container):
         self._pending_playground_preset: TTSPlaygroundSelectionPreset | None = None
         self._pending_playground_navigation: SpeechTTSNavigationTarget | None = None
         self._pending_adopted_preset: TTSPlaygroundSelectionPreset | None = None
+        self._profile_library_continuity: ProfileLibraryContinuity | None = None
+        self._pending_profile_verification: ProfileVerificationResult | None = None
+        self._profile_focus_sequence = 0
+        self._profile_focus_restore_token: int | None = None
+        self._profile_focus_restore_baseline = None
         # Bounded, process-local Playground axes survive only internal Lab
         # view switches. They are never written to global or Studio settings.
         self._playground_axis_values: dict[str, str] = dict(
@@ -1745,6 +1755,7 @@ class STTSWindow(Container):
             if self._pending_playground_navigation is navigation_target:
                 self._pending_playground_navigation = None
         elif new_view == "profiles":
+            focus_restore_token = self._begin_profile_focus_restore()
             content_container.mount(
                 STTSProfileLibrary(
                     self._load_profile_service,
@@ -1752,6 +1763,9 @@ class STTSWindow(Container):
                         lambda: get_cli_setting("app_tts", "default_profile_id", None)
                     ),
                     voice_bundle_service_loader=self._load_voice_bundle_service,
+                    continuity=self._profile_library_continuity,
+                    pending_verification=self._pending_profile_verification,
+                    focus_restore_token=focus_restore_token,
                 )
             )
         elif new_view == "settings":
@@ -1846,7 +1860,96 @@ class STTSWindow(Container):
         """Hand one exact preset to the next Playground mount."""
         if type(message.preset) is not TTSPlaygroundSelectionPreset:
             return
+        if type(message.continuity) is not ProfileLibraryContinuity:
+            return
+        self._profile_library_continuity = message.continuity
         self.select_view("playground", profile_preset=message.preset)
+
+    @on(ProfileTestVerified)
+    def on_profile_test_verified(self, message: ProfileTestVerified) -> None:
+        """Retain one exact result until a fresh library mount rechecks it."""
+
+        if type(message.result) is not ProfileVerificationResult:
+            return
+        self._pending_profile_verification = message.result
+
+    @on(ProfileVerificationReconciled)
+    def on_profile_verification_reconciled(
+        self,
+        message: ProfileVerificationReconciled,
+    ) -> None:
+        """Retire only the result consumed by the current library mount."""
+
+        if self._pending_profile_verification == message.result:
+            self._pending_profile_verification = None
+
+    def _begin_profile_focus_restore(self) -> int | None:
+        """Issue one owner token only for a library return with focus intent."""
+
+        continuity = self._profile_library_continuity
+        if continuity is None or continuity.focus_target is None:
+            self._profile_focus_restore_token = None
+            self._profile_focus_restore_baseline = None
+            return None
+        self._profile_focus_sequence += 1
+        self._profile_focus_restore_token = self._profile_focus_sequence
+        self._profile_focus_restore_baseline = None
+        return self._profile_focus_sequence
+
+    def cancel_profile_focus_restore(self) -> None:
+        """Yield focus ownership after user input during a pending return."""
+
+        if self._profile_focus_restore_token is None:
+            return
+        self._profile_focus_sequence += 1
+        self._profile_focus_restore_token = None
+        self._profile_focus_restore_baseline = None
+
+    @on(ProfileLibraryRestoreReady)
+    def on_profile_library_restore_ready(
+        self,
+        message: ProfileLibraryRestoreReady,
+    ) -> None:
+        """Wait beyond mount fallback before restoring bounded focus intent."""
+
+        if message.ownership_token != self._profile_focus_restore_token:
+            return
+        self.call_after_refresh(
+            self._arm_profile_library_focus_restore,
+            message.ownership_token,
+        )
+
+    def _arm_profile_library_focus_restore(self, ownership_token: int) -> None:
+        if ownership_token != self._profile_focus_restore_token:
+            return
+        self._profile_focus_restore_baseline = self.screen.focused
+        self.call_after_refresh(
+            self._complete_profile_library_focus_restore,
+            ownership_token,
+        )
+
+    def _complete_profile_library_focus_restore(self, ownership_token: int) -> None:
+        if ownership_token != self._profile_focus_restore_token:
+            return
+        if (
+            self.current_view != "profiles"
+            or self.screen.focused is not self._profile_focus_restore_baseline
+        ):
+            self.cancel_profile_focus_restore()
+            return
+        continuity = self._profile_library_continuity
+        if continuity is None or continuity.focus_target is None:
+            self.cancel_profile_focus_restore()
+            return
+        try:
+            library = self.query_one(STTSProfileLibrary)
+            target = library.query_one(f"#{continuity.focus_target}")
+        except QueryError:
+            self.cancel_profile_focus_restore()
+            return
+        target.focus()
+        self._profile_focus_restore_token = None
+        self._profile_focus_restore_baseline = None
 
     @on(AdoptStudioPreferencesRequested)
     def on_adopt_studio_preferences_requested(

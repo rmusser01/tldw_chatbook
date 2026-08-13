@@ -10,6 +10,7 @@ from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.events import Click, Key
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -388,6 +389,18 @@ class STTSScreen(LabScreen):
             row.set_class(
                 getattr(row, "lab_view_key", None) == current_view, "is-active"
             )
+
+    def on_key(self, _event: Key) -> None:
+        """Do not let deferred profile restoration override keyboard intent."""
+
+        if self.stts_window is not None:
+            self.stts_window.cancel_profile_focus_restore()
+
+    def on_click(self, _event: Click) -> None:
+        """Do not let deferred profile restoration override pointer intent."""
+
+        if self.stts_window is not None:
+            self.stts_window.cancel_profile_focus_restore()
 
     @on(Button.Pressed, f".{LAB_RAIL_ROW_CLASS}")
     def _handle_rail_press(self, event: Button.Pressed) -> None:

@@ -2,19 +2,29 @@
 
 from __future__ import annotations
 
+import struct
+import wave
+from collections.abc import Iterable
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Select, Static
+from textual.widgets import Button, DataTable, Select, Static
 
 from Tests.UI.speech_playground_fixtures import FakeTTSService, _resolved
 from tldw_chatbook.TTS import (
+    LoadedTTSProfile,
     STTSGeneratedAudio,
     STTSPlaygroundResultProjection,
+    TTSProfileDraft,
+    TTSProfileService,
     TTSPlaygroundSelectionPreset,
+    TTSRequestedSelectionSnapshot,
 )
+from tldw_chatbook.TTS.adapter_types import TTSNativeCapabilitySnapshot
+from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.UI.STTS_Window import VoiceProfilePickerModal
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import (
@@ -56,14 +66,116 @@ def _artifact(tmp_path, operation_id: str) -> STTSGeneratedAudio:
 
 
 class _SpeechHost(App[None]):
-    def __init__(self, context: dict[str, object] | None = None) -> None:
+    def __init__(
+        self,
+        context: dict[str, object] | None = None,
+        *,
+        profile_service: TTSProfileService | None = None,
+    ) -> None:
         super().__init__()
+        self.profile_service = profile_service
         self.screen_under_test = STTSScreen(self)
         if context is not None:
             self.screen_under_test.apply_navigation_context(context)
 
     async def on_mount(self) -> None:
         await self.push_screen(self.screen_under_test)
+
+    async def _ensure_tts_profile_service(self) -> TTSProfileService | None:
+        return self.profile_service
+
+
+class _OpenAIProfileTTSService:
+    """Small app-service collaborator; OpenAI profiles never use native catalogs."""
+
+    revision = 7
+
+    def configuration_revision(self, _provider_id: str) -> int:
+        return self.revision
+
+    async def require_current_configuration_revision(
+        self,
+        _provider_id: str,
+        expected_revision: int,
+    ) -> None:
+        assert expected_revision == self.revision
+
+    async def get_native_capability_snapshot(
+        self,
+        _provider_id: str,
+        _exact_voice_model_ids: Iterable[str],
+    ) -> TTSNativeCapabilitySnapshot:
+        raise AssertionError("OpenAI-compatible profile tests must not use native catalogs")
+
+    async def audio_cpp_guided_dependency_snapshot(
+        self,
+        _requirement: object,
+    ) -> object:
+        raise AssertionError("OpenAI-compatible profile tests must not use audio.cpp")
+
+
+async def _real_openai_profile_service(
+    tmp_path: Path,
+    *,
+    profile_count: int = 32,
+) -> tuple[TTSProfileService, TTSProfileRepository, LoadedTTSProfile]:
+    repository = TTSProfileRepository(tmp_path / "voice-profiles.sqlite3")
+    await repository.open()
+    target_id = None
+    for index in range(profile_count):
+        created = await repository.create_profile(
+            TTSProfileDraft(
+                display_name=f"Voice {index:02d}",
+                provider_id="openai",
+                model_id="pocket-tts",
+                voice_id=f"alba-{index:02d}",
+                response_format="wav",
+                speed=1.0,
+                options={},
+            )
+        )
+        if index == 24:
+            target_id = created.value.profile_id
+    service = TTSProfileService(repository, _OpenAIProfileTTSService())
+    assert target_id is not None
+    return service, repository, await service.get_profile(target_id)
+
+
+def _valid_openai_artifact(
+    tmp_path: Path,
+    loaded: LoadedTTSProfile,
+    *,
+    model_id: str | None = None,
+) -> STTSGeneratedAudio:
+    profile = loaded.profile
+    path = (tmp_path / "profile-sample.wav").resolve()
+    with wave.open(str(path), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16_000)
+        audio.writeframes(struct.pack("<h", 100) * 1_600)
+    selected_model = profile.model_id if model_id is None else model_id
+    selection = TTSRequestedSelectionSnapshot(
+        provider_id=profile.provider_id,
+        model_id=selected_model,
+        voice_id=profile.voice_id,
+        response_format=profile.response_format,
+        speed=profile.speed,
+        options=profile.options,
+        configuration_revision=_OpenAIProfileTTSService.revision,
+    )
+    return STTSGeneratedAudio(
+        path=path,
+        provider_id=profile.provider_id,
+        model_id=selected_model,
+        voice_id=profile.voice_id,
+        source_text="Profile verification sample.",
+        operation_id="profile-test-operation",
+        audio_format="wav",
+        content_type="audio/wav",
+        metadata={},
+        requested_selection=selection,
+    )
 
 
 async def _wait_until(pilot, predicate, *, attempts: int = 120) -> None:
@@ -82,6 +194,76 @@ def _playground_ready(screen: STTSScreen) -> bool:
         and len(screen.query("#audio-play-btn")) == 1
         and len(screen.query("#tts-provider-select SelectOverlay")) == 1
     )
+
+
+async def _open_real_profile_test(
+    screen: STTSScreen,
+    pilot,
+    target: LoadedTTSProfile,
+) -> tuple[int, SpeechPlaygroundPane]:
+    target_key = str(target.profile.profile_id)
+    await _wait_until(
+        pilot,
+        lambda: (
+            len(screen.query(STTSProfileLibrary)) == 1
+            and target_key in screen.query_one(STTSProfileLibrary)._row_availability
+        ),
+    )
+    library = screen.query_one(STTSProfileLibrary)
+    table = library.query_one("#stts-profile-table", DataTable)
+    target_row = library._rendered_profile_ids.index(target_key)
+    assert str(table.get_row_at(target_row)[3]) == "Needs test"
+    table.move_cursor(row=target_row, animate=False)
+    table.action_select_cursor()
+    table.scroll_to(y=max(1, target_row - 2), animate=False)
+    table.focus()
+    await pilot.pause()
+    selected_scroll = table.scroll_offset.y
+
+    library.query_one("#stts-profile-preview-btn", Button).press()
+    await _wait_until(pilot, lambda: _playground_ready(screen))
+    return selected_scroll, screen.query_one(SpeechPlaygroundPane)
+
+
+async def _deliver_profile_sample(
+    pilot,
+    playground: SpeechPlaygroundPane,
+    artifact: STTSGeneratedAudio,
+    *,
+    expect_save: bool,
+) -> None:
+    playground._generation_operation_id = artifact.operation_id
+    playground._generation_complete(artifact)
+    if expect_save:
+        await _wait_until(
+            pilot,
+            lambda: not playground.query_one(
+                "#audio-save-profile-btn", Button
+            ).disabled,
+        )
+    else:
+        await pilot.pause()
+        await pilot.pause()
+        assert playground.query_one("#audio-save-profile-btn", Button).disabled
+
+
+def _track_live_reconciliations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[str]:
+    reconciled_rows: list[str] = []
+    original_publish = STTSProfileLibrary.publish_profile_test_availability
+
+    def track(self, loaded, availability) -> None:
+        if self._live:
+            reconciled_rows.append(str(loaded.profile.profile_id))
+        original_publish(self, loaded, availability)
+
+    monkeypatch.setattr(
+        STTSProfileLibrary,
+        "publish_profile_test_availability",
+        track,
+    )
+    return reconciled_rows
 
 
 def test_speech_screen_state_keeps_only_bounded_playground_axes() -> None:
@@ -150,6 +332,283 @@ async def test_profile_library_bundle_service_is_lazy_until_warning_acknowledged
 
         app._ensure_tts_voice_bundle_service.assert_not_awaited()  # type: ignore[attr-defined]
         app.screen.query_one("#bundle-warning-cancel", Button).press()
+
+
+@pytest.mark.asyncio
+async def test_real_profile_verification_reconciles_on_library_remount(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, repository, target = await _real_openai_profile_service(tmp_path)
+    reconciled_rows = _track_live_reconciliations(monkeypatch)
+    app = _SpeechHost({"view": "profiles"}, profile_service=service)
+    screen = app.screen_under_test
+
+    try:
+        async with app.run_test(size=(100, 32)) as pilot:
+            selected_scroll, playground = await _open_real_profile_test(
+                screen,
+                pilot,
+                target,
+            )
+            artifact = _valid_openai_artifact(tmp_path, target)
+            await _deliver_profile_sample(
+                pilot,
+                playground,
+                artifact,
+                expect_save=True,
+            )
+
+            screen.stts_window.select_view("profiles")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    len(screen.query(STTSProfileLibrary)) == 1
+                    and str(target.profile.profile_id)
+                    in screen.query_one(STTSProfileLibrary)._row_availability
+                    and screen.query_one(STTSProfileLibrary)
+                    ._row_availability[str(target.profile.profile_id)]
+                    .state
+                    == "available"
+                ),
+            )
+            restored = screen.query_one(STTSProfileLibrary)
+            restored_table = restored.query_one("#stts-profile-table", DataTable)
+            await _wait_until(
+                pilot,
+                lambda: (
+                    getattr(app.focused, "id", None) == "stts-profile-table"
+                    and restored_table.scroll_offset.y == selected_scroll
+                ),
+            )
+
+            assert restored._selected_profile is not None
+            assert restored._selected_profile.profile.profile_id == target.profile.profile_id
+            assert getattr(app.focused, "id", None) == "stts-profile-table"
+            assert restored_table.scroll_offset.y == selected_scroll
+            assert reconciled_rows == [str(target.profile.profile_id)]
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_profile_return_does_not_steal_focus_after_user_input(
+    tmp_path: Path,
+) -> None:
+    service, repository, target = await _real_openai_profile_service(tmp_path)
+    app = _SpeechHost({"view": "profiles"}, profile_service=service)
+    screen = app.screen_under_test
+
+    try:
+        async with app.run_test(size=(100, 32)) as pilot:
+            _scroll, playground = await _open_real_profile_test(
+                screen,
+                pilot,
+                target,
+            )
+            await _deliver_profile_sample(
+                pilot,
+                playground,
+                _valid_openai_artifact(tmp_path, target),
+                expect_save=True,
+            )
+
+            screen.stts_window.select_view("profiles")
+            await _wait_until(
+                pilot,
+                lambda: len(screen.query(STTSProfileLibrary)) == 1,
+            )
+            await pilot.press("tab")
+            user_focus = app.focused
+            assert screen.stts_window._profile_focus_restore_token is None
+            await _wait_until(
+                pilot,
+                lambda: (
+                    str(target.profile.profile_id)
+                    in screen.query_one(STTSProfileLibrary)._row_availability
+                    and screen.query_one(STTSProfileLibrary)
+                    ._row_availability[str(target.profile.profile_id)]
+                    .state
+                    == "available"
+                ),
+            )
+            await pilot.pause()
+            await pilot.pause()
+
+            assert app.focused is user_focus
+            assert getattr(app.focused, "id", None) != "stts-profile-table"
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_edited_profile_cannot_publish_stale_verified_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, repository, target = await _real_openai_profile_service(tmp_path)
+    reconciled_rows = _track_live_reconciliations(monkeypatch)
+    app = _SpeechHost({"view": "profiles"}, profile_service=service)
+    screen = app.screen_under_test
+
+    try:
+        async with app.run_test(size=(100, 32)) as pilot:
+            _scroll, playground = await _open_real_profile_test(
+                screen,
+                pilot,
+                target,
+            )
+            await _deliver_profile_sample(
+                pilot,
+                playground,
+                _valid_openai_artifact(tmp_path, target),
+                expect_save=True,
+            )
+            profile = target.profile
+            updated = await service.update_profile(
+                target,
+                TTSProfileDraft(
+                    display_name="Edited while testing",
+                    provider_id=profile.provider_id,
+                    model_id=profile.model_id,
+                    voice_id=profile.voice_id,
+                    response_format=profile.response_format,
+                    speed=profile.speed,
+                    options=profile.options,
+                ),
+            )
+
+            screen.stts_window.select_view("profiles")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    len(screen.query(STTSProfileLibrary)) == 1
+                    and str(profile.profile_id)
+                    in screen.query_one(STTSProfileLibrary)._row_availability
+                    and screen.query_one(STTSProfileLibrary)
+                    ._row_availability[str(profile.profile_id)]
+                    .state
+                    == "unverified"
+                    and screen.stts_window._pending_profile_verification is None
+                ),
+            )
+            restored = screen.query_one(STTSProfileLibrary)
+            row = restored._rendered_profile_ids.index(str(profile.profile_id))
+
+            assert restored._selected_profile is not None
+            assert restored._selected_profile.profile.profile_id == profile.profile_id
+            assert restored._selected_profile.profile.revision == updated.profile.revision
+            assert str(
+                restored.query_one("#stts-profile-table", DataTable).get_row_at(row)[3]
+            ) == "Needs test"
+            assert reconciled_rows == []
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_deleted_profile_discards_verified_result_and_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, repository, target = await _real_openai_profile_service(tmp_path)
+    reconciled_rows = _track_live_reconciliations(monkeypatch)
+    app = _SpeechHost({"view": "profiles"}, profile_service=service)
+    screen = app.screen_under_test
+
+    try:
+        async with app.run_test(size=(100, 32)) as pilot:
+            _scroll, playground = await _open_real_profile_test(
+                screen,
+                pilot,
+                target,
+            )
+            await _deliver_profile_sample(
+                pilot,
+                playground,
+                _valid_openai_artifact(tmp_path, target),
+                expect_save=True,
+            )
+            await service.delete_profile(target)
+
+            screen.stts_window.select_view("profiles")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    len(screen.query(STTSProfileLibrary)) == 1
+                    and str(target.profile.profile_id)
+                    not in screen.query_one(STTSProfileLibrary)._rendered_profile_ids
+                    and len(screen.query_one(STTSProfileLibrary)._row_availability) == 31
+                    and screen.stts_window._pending_profile_verification is None
+                ),
+            )
+            restored = screen.query_one(STTSProfileLibrary)
+
+            assert restored._selected_profile is None
+            assert all(
+                availability.state == "unverified"
+                for availability in restored._row_availability.values()
+            )
+            assert reconciled_rows == []
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_mismatched_sample_never_updates_real_profile_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, repository, target = await _real_openai_profile_service(tmp_path)
+    reconciled_rows = _track_live_reconciliations(monkeypatch)
+    app = _SpeechHost({"view": "profiles"}, profile_service=service)
+    screen = app.screen_under_test
+
+    try:
+        async with app.run_test(size=(100, 32)) as pilot:
+            _scroll, playground = await _open_real_profile_test(
+                screen,
+                pilot,
+                target,
+            )
+            await _deliver_profile_sample(
+                pilot,
+                playground,
+                _valid_openai_artifact(
+                    tmp_path,
+                    target,
+                    model_id="different/model",
+                ),
+                expect_save=False,
+            )
+
+            screen.stts_window.select_view("profiles")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    len(screen.query(STTSProfileLibrary)) == 1
+                    and str(target.profile.profile_id)
+                    in screen.query_one(STTSProfileLibrary)._row_availability
+                    and screen.query_one(STTSProfileLibrary)
+                    ._row_availability[str(target.profile.profile_id)]
+                    .state
+                    == "unverified"
+                ),
+            )
+            restored = screen.query_one(STTSProfileLibrary)
+            row = restored._rendered_profile_ids.index(
+                str(target.profile.profile_id)
+            )
+
+            assert screen.stts_window._pending_profile_verification is None
+            assert restored._selected_profile is not None
+            assert restored._selected_profile.profile.profile_id == target.profile.profile_id
+            assert str(
+                restored.query_one("#stts-profile-table", DataTable).get_row_at(row)[3]
+            ) == "Needs test"
+            assert reconciled_rows == []
+    finally:
+        await repository.close()
 
 
 @pytest.mark.asyncio

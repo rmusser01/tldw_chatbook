@@ -47,6 +47,8 @@ from tldw_chatbook.UI.stts_profile_library import (
     TTSCloneProfileSaveReview,
     TTSCloneProfileSaveReviewModal,
     TTSProfileNameModal,
+    ProfileTestVerified,
+    ProfileVerificationResult,
     _resolve_profile_test_context,
     profile_action_error_copy,
 )
@@ -465,9 +467,19 @@ class SpeechProfileMixin:
             self._profile_preview_loading = False
             self._profile_voice_validation_token = None
             self._profile_matching_artifact_operation = operation_id
-            library = context.library()
-            if library is not None and availability is not None:
-                library.publish_profile_test_availability(context.loaded, availability)
+            if availability is not None:
+                self.post_message(
+                    ProfileTestVerified(
+                        ProfileVerificationResult(
+                            profile_id=context.loaded.profile.profile_id,
+                            repository_generation=(
+                                context.loaded.repository_generation
+                            ),
+                            profile_revision=context.loaded.profile.revision,
+                            availability=availability,
+                        )
+                    )
+                )
         else:
             self._profile_test_error = True
         self._sync_profile_preview_status()
