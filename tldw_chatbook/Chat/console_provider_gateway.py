@@ -2821,6 +2821,8 @@ def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
             text = first.get("text")
             if isinstance(text, str):
                 return text
+    elif choices == [] and isinstance(item.get("usage"), Mapping):
+        return _EMPTY_RESPONSE
 
     candidates = item.get("candidates")
     if isinstance(candidates, list) and candidates:

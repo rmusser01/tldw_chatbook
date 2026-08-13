@@ -919,6 +919,50 @@ def _apply_continuations(
             )
         except Exception:
             raise _bad_request("Moonshot provider continuation is invalid.") from None
+        if checkpoint.state == "complete" and resolution.model == _DEFAULT_MODEL:
+            final_round = checkpoint.rounds[-1]
+            match_index = _find_round_owner(
+                messages,
+                assistant_content=final_round.assistant_content,
+                call_ids=(),
+                start=cursor,
+            )
+            if match_index is None:
+                raise _bad_request("Moonshot continuation owner is missing.")
+            expanded: list[dict[str, Any]] = []
+            for round_ in checkpoint.rounds:
+                assistant: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": round_.assistant_content,
+                }
+                if round_.reasoning_blocks:
+                    assistant["reasoning_content"] = "".join(round_.reasoning_blocks)
+                if round_.calls:
+                    assistant["tool_calls"] = [
+                        {
+                            "id": call.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": call.name,
+                                "arguments": call.arguments,
+                            },
+                        }
+                        for call in round_.calls
+                    ]
+                expanded.append(assistant)
+                for call in round_.calls:
+                    if call.result is None:
+                        raise _bad_request("Moonshot provider continuation is invalid.")
+                    expanded.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call.call_id,
+                            "content": call.result.value,
+                        }
+                    )
+            messages[match_index : match_index + 1] = expanded
+            cursor = match_index + len(expanded)
+            continue
         for round_ in checkpoint.rounds:
             call_ids = tuple(call.call_id for call in round_.calls)
             match_index = _find_round_owner(

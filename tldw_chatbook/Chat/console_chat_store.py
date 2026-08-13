@@ -5238,7 +5238,7 @@ class ConsoleChatStore:
 
         message_version: int | None
         if message.persisted_message_id is None:
-            if not isinstance(event, ToolBatchReady) or (
+            if not isinstance(event, (ToolBatchReady, FinalContinuation)) or (
                 event.expected_checkpoint_revision is not None
             ):
                 raise RuntimeError("Durable continuation owner is unavailable.")
@@ -5321,6 +5321,16 @@ class ConsoleChatStore:
             ):
                 raise RuntimeError("Continuation revision conflict.")
             return event.checkpoint, message.content
+        if isinstance(event, FinalContinuation):
+            if event.expected_checkpoint_revision is None:
+                if current is not None:
+                    raise RuntimeError("Continuation revision conflict.")
+            elif (
+                current is None
+                or current.checkpoint_revision != event.expected_checkpoint_revision
+            ):
+                raise RuntimeError("Continuation revision conflict.")
+            return event.checkpoint, event.assistant_content
         if current is None:
             raise RuntimeError("Durable continuation owner is unavailable.")
         if isinstance(event, ToolCallExecuting):
@@ -5340,13 +5350,6 @@ class ConsoleChatStore:
                 result=event.result,
             )
             return checkpoint, message.content
-        if isinstance(event, FinalContinuation):
-            if event.expected_checkpoint_revision is None:
-                if current is not None:
-                    raise RuntimeError("Continuation revision conflict.")
-            elif current.checkpoint_revision != event.expected_checkpoint_revision:
-                raise RuntimeError("Continuation revision conflict.")
-            return event.checkpoint, event.assistant_content
         raise RuntimeError("Unsupported continuation event.")
 
     def _enqueue_sync_v2_message_if_ready(

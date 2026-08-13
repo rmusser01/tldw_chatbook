@@ -1599,7 +1599,10 @@ class _StreamingModelAdapter:
             stream_kwargs = {"tools": tools} if tools is not None else {}
             prepare_request = getattr(self._gateway, "prepare_chat_request", None)
             if continuation_groups and callable(prepare_request):
-                if self._continuation_target is None or not self._continuation_owner_key:
+                if (
+                    self._continuation_target is None
+                    or not self._continuation_owner_key
+                ):
                     raise ValueError("Provider continuation request is not pinned.")
                 owner_ids = {group.owner_message_id for group in continuation_groups}
                 semantic_messages: list[dict[str, Any]] = []
@@ -2575,6 +2578,24 @@ class ConsoleAgentBridge:
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
     ) -> tuple[str, RunOutcome]:
+        protocol = getattr(resolution, "continuation_protocol", None)
+        if continuation_target is None and isinstance(protocol, str) and protocol:
+            provider = getattr(resolution, "execution_key", None)
+            model_name = getattr(resolution, "model", None)
+            base_url = getattr(resolution, "base_url", None)
+            if not all(
+                isinstance(value, str) and value
+                for value in (provider, model_name, base_url)
+            ):
+                raise ValueError("Provider continuation request is not pinned.")
+            continuation_target = ContinuationRestoreTarget(
+                provider=provider,
+                protocol=protocol,
+                model=model_name,
+                api_base_url=base_url,
+            )
+        if continuation_target is not None and continuation_owner_key is None:
+            continuation_owner_key = CONTINUATION_OWNER_KEY
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP, by task-545/T6 for a per-run builtin_gate, and extended again
         # for local tools): rebuilt FRESH for this run whenever there is a
@@ -3235,7 +3256,7 @@ class ConsoleAgentBridge:
             ),
             expand_provider_continuation=expand_provider_continuation,
             prepare_provider_continuation_request=bool(
-                continuation_sidecar
+                continuation_target is not None
                 and callable(getattr(self._gateway, "prepare_chat_request", None))
             ),
             # PR3a-1 Task 1: every fleet child gets its own model-call
