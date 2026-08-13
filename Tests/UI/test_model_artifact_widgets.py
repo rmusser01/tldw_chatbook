@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, Static
 
@@ -11,6 +12,7 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
     PreflightReport,
 )
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef, ProvenanceClass
+from tldw_chatbook.Widgets.ModelArtifacts import LocalGGUFImportRequested
 
 
 def _report(
@@ -518,3 +520,147 @@ async def test_default_unready_controls_keep_activation_visible_but_disabled() -
         await pilot.pause()
 
     assert app.requested == []
+
+
+class _ImportControlApp(App):
+    """Capture local-import requests through Textual's real message route."""
+
+    def __init__(self, source: Path, *, pending: bool = False) -> None:
+        self.source = source
+        self.pending = pending
+        self.received: list[Path] = []
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        from tldw_chatbook.Widgets.ModelArtifacts import LocalGGUFImportControls
+
+        yield LocalGGUFImportControls(self.source, pending=self.pending)
+
+    @on(LocalGGUFImportRequested)
+    def _capture_import_request(self, event: LocalGGUFImportRequested) -> None:
+        self.received.append(event.path)
+
+
+@pytest.mark.asyncio
+async def test_unmanaged_import_control_posts_the_exact_selected_path(
+    tmp_path: Path,
+) -> None:
+    """The reusable row control sends intent only, preserving the selected Path."""
+    source = tmp_path / "outside.gguf"
+    app = _ImportControlApp(source)
+
+    async with app.run_test() as pilot:
+        await pilot.click(".model-import")
+        await pilot.pause()
+
+    assert app.received == [source]
+
+
+@pytest.mark.asyncio
+async def test_pending_unmanaged_import_control_is_disabled_and_posts_no_intent(
+    tmp_path: Path,
+) -> None:
+    """A pending import cannot be started a second time through the row action."""
+    app = _ImportControlApp(tmp_path / "outside.gguf", pending=True)
+
+    async with app.run_test() as pilot:
+        control = app.query_one(".model-import", Button)
+        assert control.disabled is True
+        control.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert app.received == []
+
+
+@pytest.mark.asyncio
+async def test_local_import_modal_states_copy_original_and_compatibility_truth(
+    tmp_path: Path,
+) -> None:
+    """Consent says exactly what local import will and will not establish."""
+    from tldw_chatbook.Widgets.ModelArtifacts import LocalGGUFImportConsentModal
+
+    source = tmp_path / "user [private].gguf"
+    app = _ModalApp()
+    async with app.run_test() as pilot:
+        await app.push_screen(LocalGGUFImportConsentModal(source, 4_194_304))
+        await pilot.pause()
+        statics = list(app.screen.query(Static))
+        text = "\n".join(str(widget.renderable) for widget in statics)
+
+    assert source.name in text
+    assert str(source) in text
+    assert "4.0 MiB" in text
+    assert "managed copy" in text
+    assert "original stays in place" in text
+    assert "License and runtime compatibility are not verified" in text
+    assert all(widget._render_markup is False for widget in statics)
+
+
+@pytest.mark.asyncio
+async def test_local_import_modal_confirm_cancel_and_escape_return_booleans(
+    tmp_path: Path,
+) -> None:
+    """Every consent exit returns a boolean decision without starting import work."""
+    from tldw_chatbook.Widgets.ModelArtifacts import LocalGGUFImportConsentModal
+
+    source = tmp_path / "outside.gguf"
+    app = _ModalApp()
+    decisions: list[bool] = []
+    async with app.run_test() as pilot:
+        await app.push_screen(LocalGGUFImportConsentModal(source, 1), decisions.append)
+        await pilot.pause()
+        confirm = app.screen.query_one("#local-gguf-import-confirm", Button)
+        confirm.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        await app.push_screen(LocalGGUFImportConsentModal(source, 1), decisions.append)
+        await pilot.pause()
+        cancel = app.screen.query_one("#local-gguf-import-cancel", Button)
+        cancel.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        await app.push_screen(LocalGGUFImportConsentModal(source, 1), decisions.append)
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert decisions == [True, False, False]
+
+
+@pytest.mark.asyncio
+async def test_progress_widget_reuses_byte_bar_for_local_copy_only() -> None:
+    """Local import shares the stable display; only copy is a byte phase."""
+    from tldw_chatbook.Model_Artifacts import LocalGGUFImportProgress
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+
+    events = (
+        LocalGGUFImportProgress("copy", "outside.gguf", 512, 1024),
+        LocalGGUFImportProgress("inspect", None, 0, 0),
+        LocalGGUFImportProgress("verify", None, 0, 0),
+        LocalGGUFImportProgress("finalize", None, 0, 0),
+    )
+    expected_labels = (
+        "Copying model into Chatbook",
+        "Checking GGUF structure",
+        "Verifying managed copy",
+        "Finalizing managed model",
+    )
+    app = _ProgressApp()
+    async with app.run_test() as pilot:
+        widget = app.query_one(ModelInstallProgress)
+        bar = widget.query_one("#model-install-progress-bar")
+        for index, (event, expected_label) in enumerate(zip(events, expected_labels)):
+            widget.update_progress(event)
+            await pilot.pause()
+            text = "\n".join(str(item.renderable) for item in widget.query(Static))
+            assert expected_label in text
+            assert bar.display is (index == 0)
+            if index == 0:
+                assert "outside.gguf" in text
+                assert "/" in text
+            else:
+                assert "outside.gguf" not in text
+                assert "/" not in text
