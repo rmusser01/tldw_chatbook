@@ -167,37 +167,38 @@ class LocalNoteFolderRepository:
             total_folders=total,
             total_notes=0,
             next_offset=returned_end if folders and returned_end < total else None,
+            # Preserve ``next_offset`` for callers of the original child-list API
+            # while exposing the unambiguous folder cursor used by tree batching.
+            next_folder_offset=(
+                returned_end if folders and returned_end < total else None
+            ),
         )
 
     def load_tree_batch(
-        self, *, expanded_folder_ids: Iterable[str], note_limit: int
+        self,
+        *,
+        expanded_folder_ids: Iterable[str],
+        note_limit: int,
+        note_offset: int = 0,
+        folder_limit: int = 500,
+        folder_offset: int = 0,
+        membership_limit: int = 1000,
+        membership_offset: int = 0,
     ) -> NoteFolderPage:
         """Bulk-load roots or the immediate contents of expanded folders."""
         _validate_int_bound("note_limit", note_limit, minimum=1, maximum=1000)
+        _validate_int_bound("note_offset", note_offset, minimum=0)
+        _validate_int_bound("folder_limit", folder_limit, minimum=1, maximum=500)
+        _validate_int_bound("folder_offset", folder_offset, minimum=0)
+        _validate_int_bound(
+            "membership_limit", membership_limit, minimum=1, maximum=1000
+        )
+        _validate_int_bound("membership_offset", membership_offset, minimum=0)
         expanded_ids = _normalize_folder_ids(expanded_folder_ids)
         with self.db.transaction() as cursor:
             if expanded_ids:
                 placeholders = _placeholders(len(expanded_ids))
-                folder_rows = cursor.execute(
-                    f"SELECT {_FOLDER_COLUMNS}, COUNT(*) OVER() AS _total_folders "
-                    "FROM note_folders WHERE deleted = 0 "
-                    f"AND parent_id IN ({placeholders}) "
-                    "ORDER BY normalized_path, id",
-                    expanded_ids,
-                ).fetchall()
-                membership_rows = cursor.execute(
-                    "SELECT m.id, m.folder_id, m.note_id, m.ownership, m.owner_id, "
-                    "m.owner_active, m.version "
-                    "FROM note_folder_memberships AS m "
-                    "JOIN note_folders AS f "
-                    "ON f.id = m.folder_id AND f.deleted = 0 "
-                    f"WHERE m.deleted = 0 AND m.folder_id IN ({placeholders}) "
-                    "ORDER BY f.normalized_path, m.note_id, m.ownership, "
-                    "m.owner_id, m.id",
-                    expanded_ids,
-                ).fetchall()
-                note_rows = cursor.execute(
-                    f"SELECT candidate.*, COUNT(*) OVER() AS _total_notes FROM ("
+                note_candidates_sql = (
                     f"SELECT DISTINCT n.{_NOTE_COLUMNS.replace(', ', ', n.')} "
                     "FROM notes AS n "
                     "JOIN note_folder_memberships AS m "
@@ -205,21 +206,27 @@ class LocalNoteFolderRepository:
                     "JOIN note_folders AS f "
                     "ON f.id = m.folder_id AND f.deleted = 0 "
                     f"WHERE n.deleted = 0 AND m.folder_id IN ({placeholders})"
-                    ") AS candidate ORDER BY title COLLATE NOCASE, id LIMIT ?",
-                    (*expanded_ids, note_limit),
+                )
+                folder_rows = cursor.execute(
+                    f"SELECT {_FOLDER_COLUMNS}, COUNT(*) OVER() AS _total_folders "
+                    "FROM note_folders WHERE deleted = 0 "
+                    f"AND parent_id IN ({placeholders}) "
+                    "ORDER BY normalized_path, id LIMIT ? OFFSET ?",
+                    (*expanded_ids, folder_limit, folder_offset),
+                ).fetchall()
+                note_rows = cursor.execute(
+                    f"SELECT candidate.*, COUNT(*) OVER() AS _total_notes FROM ("
+                    f"{note_candidates_sql}"
+                    ") AS candidate ORDER BY title COLLATE NOCASE, id "
+                    "LIMIT ? OFFSET ?",
+                    (*expanded_ids, note_limit, note_offset),
                 ).fetchall()
             else:
                 folder_rows = cursor.execute(
                     f"SELECT {_FOLDER_COLUMNS}, COUNT(*) OVER() AS _total_folders "
                     "FROM note_folders WHERE deleted = 0 AND parent_id IS NULL "
-                    "ORDER BY normalized_path, id",
-                    (),
-                ).fetchall()
-                membership_rows = cursor.execute(
-                    "SELECT m.id, m.folder_id, m.note_id, m.ownership, m.owner_id, "
-                    "m.owner_active, m.version FROM note_folder_memberships AS m "
-                    "WHERE 0",
-                    (),
+                    "ORDER BY normalized_path, id LIMIT ? OFFSET ?",
+                    (folder_limit, folder_offset),
                 ).fetchall()
                 note_rows = cursor.execute(
                     f"SELECT candidate.*, COUNT(*) OVER() AS _total_notes FROM ("
@@ -231,24 +238,134 @@ class LocalNoteFolderRepository:
                     "WHERE m.note_id = n.id AND m.deleted = 0 "
                     "AND m.owner_active = 1"
                     ")"
-                    ") AS candidate ORDER BY title COLLATE NOCASE, id LIMIT ?",
-                    (note_limit,),
+                    ") AS candidate ORDER BY title COLLATE NOCASE, id "
+                    "LIMIT ? OFFSET ?",
+                    (note_limit, note_offset),
                 ).fetchall()
+
+            page_note_ids = tuple(str(row["id"]) for row in note_rows)
+            if expanded_ids and page_note_ids:
+                page_notes_cte = (
+                    "WITH page_notes AS (SELECT candidate.id FROM ("
+                    f"{note_candidates_sql}"
+                    ") AS candidate ORDER BY title COLLATE NOCASE, id "
+                    "LIMIT ? OFFSET ?) "
+                )
+                membership_from_sql = (
+                    "FROM note_folder_memberships AS m "
+                    "JOIN note_folders AS f "
+                    "ON f.id = m.folder_id AND f.deleted = 0 "
+                    "JOIN page_notes AS page ON page.id = m.note_id "
+                    "WHERE m.deleted = 0 "
+                    f"AND m.folder_id IN ({placeholders}) "
+                )
+                membership_params = (
+                    *expanded_ids,
+                    note_limit,
+                    note_offset,
+                    *expanded_ids,
+                )
+                membership_rows = cursor.execute(
+                    f"{page_notes_cte}"
+                    "SELECT m.id, m.folder_id, m.note_id, m.ownership, m.owner_id, "
+                    "m.owner_active, m.version, "
+                    "COUNT(*) OVER() AS _total_memberships "
+                    f"{membership_from_sql}"
+                    "ORDER BY f.normalized_path, m.note_id, m.ownership, "
+                    "m.owner_id, m.id LIMIT ? OFFSET ?",
+                    (*membership_params, membership_limit, membership_offset),
+                ).fetchall()
+            else:
+                membership_rows = ()
+
+            total_memberships = (
+                int(membership_rows[0]["_total_memberships"])
+                if membership_rows
+                else 0
+            )
+            if (
+                expanded_ids
+                and page_note_ids
+                and not membership_rows
+                and membership_offset
+            ):
+                total_memberships = int(
+                    cursor.execute(
+                        f"{page_notes_cte}SELECT COUNT(*) AS total "
+                        f"{membership_from_sql}",
+                        membership_params,
+                    ).fetchone()["total"]
+                )
+
+            total_folders = (
+                int(folder_rows[0]["_total_folders"]) if folder_rows else 0
+            )
+            if not folder_rows and folder_offset:
+                if expanded_ids:
+                    total_folders = int(
+                        cursor.execute(
+                            "SELECT COUNT(*) AS total FROM note_folders "
+                            "WHERE deleted = 0 "
+                            f"AND parent_id IN ({_placeholders(len(expanded_ids))})",
+                            expanded_ids,
+                        ).fetchone()["total"]
+                    )
+                else:
+                    total_folders = int(
+                        cursor.execute(
+                            "SELECT COUNT(*) AS total FROM note_folders "
+                            "WHERE deleted = 0 AND parent_id IS NULL"
+                        ).fetchone()["total"]
+                    )
+            total_notes = int(note_rows[0]["_total_notes"]) if note_rows else 0
+            if not note_rows and note_offset:
+                if expanded_ids:
+                    total_notes = int(
+                        cursor.execute(
+                            "SELECT COUNT(DISTINCT n.id) AS total FROM notes AS n "
+                            "JOIN note_folder_memberships AS m ON m.note_id = n.id "
+                            "AND m.deleted = 0 "
+                            "JOIN note_folders AS f ON f.id = m.folder_id "
+                            "AND f.deleted = 0 "
+                            "WHERE n.deleted = 0 "
+                            f"AND m.folder_id IN ({_placeholders(len(expanded_ids))})",
+                            expanded_ids,
+                        ).fetchone()["total"]
+                    )
+                else:
+                    total_notes = int(
+                        cursor.execute(
+                            "SELECT COUNT(*) AS total FROM notes AS n "
+                            "WHERE n.deleted = 0 AND NOT EXISTS ("
+                            "SELECT 1 FROM note_folder_memberships AS m "
+                            "JOIN note_folders AS f ON f.id = m.folder_id "
+                            "AND f.deleted = 0 WHERE m.note_id = n.id "
+                            "AND m.deleted = 0 AND m.owner_active = 1)"
+                        ).fetchone()["total"]
+                    )
 
         folders = tuple(_folder_from_row(row) for row in folder_rows)
         memberships = tuple(_membership_from_row(row) for row in membership_rows)
         notes = tuple(_note_from_row(row) for row in note_rows)
-        total_folders = (
-            int(folder_rows[0]["_total_folders"]) if folder_rows else 0
-        )
-        total_notes = int(note_rows[0]["_total_notes"]) if note_rows else 0
+        note_end = note_offset + len(notes)
+        folder_end = folder_offset + len(folders)
+        membership_end = membership_offset + len(memberships)
         return NoteFolderPage(
             folders=folders,
             memberships=memberships,
             notes=notes,
             total_folders=total_folders,
             total_notes=total_notes,
-            next_offset=note_limit if total_notes > len(notes) else None,
+            next_offset=note_end if notes and note_end < total_notes else None,
+            next_folder_offset=(
+                folder_end if folders and folder_end < total_folders else None
+            ),
+            total_memberships=total_memberships,
+            next_membership_offset=(
+                membership_end
+                if memberships and membership_end < total_memberships
+                else None
+            ),
         )
 
     def attach_manual(
@@ -1419,15 +1536,21 @@ def _validate_int_bound(
 def _normalize_folder_ids(folder_ids: Iterable[str]) -> tuple[str, ...]:
     if isinstance(folder_ids, (str, bytes)):
         raise FolderValidationError("expanded_folder_ids must be a collection of IDs.")
+    unique_values: set[str] = set()
     try:
-        values = tuple(folder_ids)
+        iterator = iter(folder_ids)
     except TypeError as exc:
         raise FolderValidationError(
             "expanded_folder_ids must be a collection of IDs."
         ) from exc
-    for folder_id in values:
+    for item_count, folder_id in enumerate(iterator, start=1):
+        if item_count > 100:
+            raise FolderValidationError(
+                "expanded_folder_ids exceeds the allowed range."
+            )
         _validate_folder_id(folder_id, field="expanded folder ID")
-    return tuple(sorted(set(values)))
+        unique_values.add(folder_id)
+    return tuple(sorted(unique_values))
 
 
 def _normalize_ids(values: Iterable[str], *, field: str) -> tuple[str, ...]:

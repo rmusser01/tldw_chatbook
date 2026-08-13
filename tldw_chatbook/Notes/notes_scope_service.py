@@ -263,6 +263,11 @@ class NotesScopeService:
         scope: ScopeType | str,
         expanded_folder_ids: Sequence[str],
         note_limit: int,
+        note_offset: int = 0,
+        folder_limit: int = 500,
+        folder_offset: int = 0,
+        membership_limit: int = 1000,
+        membership_offset: int = 0,
         user_id: str | None = None,
     ) -> NoteFolderPage:
         repository = self._folder_repository_for_action(
@@ -272,6 +277,11 @@ class NotesScopeService:
             repository.load_tree_batch,
             expanded_folder_ids=expanded_folder_ids,
             note_limit=note_limit,
+            note_offset=note_offset,
+            folder_limit=folder_limit,
+            folder_offset=folder_offset,
+            membership_limit=membership_limit,
+            membership_offset=membership_offset,
         )
 
     async def create_note_folder(

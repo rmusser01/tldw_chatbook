@@ -44,9 +44,28 @@ class RecordingFolderRepository:
         return _empty_page()
 
     def load_tree_batch(
-        self, *, expanded_folder_ids: tuple[str, ...], note_limit: int
+        self,
+        *,
+        expanded_folder_ids: tuple[str, ...],
+        note_limit: int,
+        note_offset: int,
+        folder_limit: int,
+        folder_offset: int,
+        membership_limit: int,
+        membership_offset: int,
     ) -> NoteFolderPage:
-        self._record(("load_tree_batch", expanded_folder_ids, note_limit))
+        self._record(
+            (
+                "load_tree_batch",
+                expanded_folder_ids,
+                note_limit,
+                note_offset,
+                folder_limit,
+                folder_offset,
+                membership_limit,
+                membership_offset,
+            )
+        )
         return _empty_page()
 
     def create_folder(self, *, name: str, parent_id: str | None) -> NoteFolder:
@@ -183,6 +202,7 @@ def _empty_page() -> NoteFolderPage:
         total_folders=0,
         total_notes=0,
         next_offset=None,
+        next_folder_offset=None,
     )
 
 
@@ -195,9 +215,17 @@ LOCAL_FOLDER_CASES = [
     ),
     (
         "load_note_folder_tree_batch",
-        {"expanded_folder_ids": ("folder-1",), "note_limit": 100},
+        {
+            "expanded_folder_ids": ("folder-1",),
+            "note_limit": 100,
+            "note_offset": 20,
+            "folder_limit": 40,
+            "folder_offset": 10,
+            "membership_limit": 60,
+            "membership_offset": 30,
+        },
         "notes.list.local",
-        ("load_tree_batch", ("folder-1",), 100),
+        ("load_tree_batch", ("folder-1",), 100, 20, 40, 10, 60, 30),
     ),
     (
         "create_note_folder",
@@ -286,6 +314,7 @@ async def test_list_folder_children_routes_to_local_repository() -> None:
         total_folders=0,
         total_notes=0,
         next_offset=None,
+        next_folder_offset=None,
     )
     assert repository.calls == [("list_children", None, 50, 0)]
 

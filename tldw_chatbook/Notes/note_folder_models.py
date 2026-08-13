@@ -94,6 +94,9 @@ class NoteFolderPage:
     total_folders: int
     total_notes: int
     next_offset: int | None
+    next_folder_offset: int | None = None
+    total_memberships: int = 0
+    next_membership_offset: int | None = None
 
 
 @dataclass(frozen=True)

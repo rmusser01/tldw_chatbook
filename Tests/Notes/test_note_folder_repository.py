@@ -350,13 +350,16 @@ def test_load_tree_batch_bulk_loads_expanded_folders_and_inactive_owner_rows(
     selects = [
         statement
         for statement in statements
-        if statement.lstrip().upper().startswith("SELECT")
+        if statement.lstrip().upper().startswith(("SELECT", "WITH"))
     ]
     assert sum("FROM note_folders" in statement for statement in selects) == 1
     assert (
         sum("FROM note_folder_memberships" in statement for statement in selects) == 1
     )
-    assert sum("FROM notes AS n" in statement for statement in selects) == 1
+    # The membership query repeats the bounded note-page CTE so it never binds
+    # every returned note ID and remains compatible with SQLite's 999-variable cap.
+    assert sum("FROM notes AS n" in statement for statement in selects) == 2
+    assert len(selects) == 3
 
 
 def test_load_tree_batch_limits_notes_and_reports_next_offset(
@@ -375,6 +378,253 @@ def test_load_tree_batch_limits_notes_and_reports_next_offset(
     assert len(page.notes) == 2
     assert page.total_notes == 3
     assert page.next_offset == 2
+
+
+def test_load_tree_batch_returns_second_note_page_with_only_page_memberships(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_ids: list[str] = []
+    membership_ids: list[str] = []
+    for title in ("A", "B", "C", "D", "E"):
+        note_id = repository.db.add_note(title, title)
+        assert note_id is not None
+        note_ids.append(note_id)
+        membership_ids.append(
+            _attach_membership(
+                repository, folder_id=folder.folder_id, note_id=note_id
+            )
+        )
+
+    page = repository.load_tree_batch(
+        expanded_folder_ids=(folder.folder_id,),
+        note_limit=2,
+        note_offset=2,
+    )
+
+    assert [note["id"] for note in page.notes] == note_ids[2:4]
+    assert {row.membership_id for row in page.memberships} == set(membership_ids[2:4])
+    assert page.total_notes == 5
+    assert page.next_offset == 4
+
+
+def test_load_tree_batch_pages_folders_independently_from_notes(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folders = tuple(
+        repository.create_folder(name=name, parent_id=None)
+        for name in ("A", "B", "C")
+    )
+
+    first = repository.load_tree_batch(
+        expanded_folder_ids=(), note_limit=10, folder_limit=2
+    )
+    second = repository.load_tree_batch(
+        expanded_folder_ids=(),
+        note_limit=10,
+        folder_limit=2,
+        folder_offset=2,
+    )
+
+    assert first.folders == folders[:2]
+    assert first.total_folders == 3
+    assert first.next_folder_offset == 2
+    assert second.folders == folders[2:]
+    assert second.total_folders == 3
+    assert second.next_folder_offset is None
+
+
+def test_list_children_exposes_folder_cursor_without_breaking_legacy_cursor(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    for name in ("A", "B", "C"):
+        repository.create_folder(name=name, parent_id=None)
+
+    page = repository.list_children(parent_id=None, limit=2, offset=0)
+
+    assert page.next_offset == 2
+    assert page.next_folder_offset == 2
+
+
+def test_load_tree_batch_preserves_totals_beyond_last_page(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folders = tuple(
+        repository.create_folder(name=name, parent_id=None)
+        for name in ("A", "B", "C")
+    )
+    for title in ("One", "Two", "Three"):
+        note_id = repository.db.add_note(title, title)
+        assert note_id is not None
+        _attach_membership(
+            repository,
+            folder_id=folders[0].folder_id,
+            note_id=note_id,
+        )
+
+    page = repository.load_tree_batch(
+        expanded_folder_ids=(folders[0].folder_id,),
+        note_limit=2,
+        note_offset=10,
+        folder_limit=2,
+        folder_offset=10,
+    )
+
+    assert page.folders == ()
+    assert page.notes == ()
+    assert page.memberships == ()
+    assert page.total_folders == 0
+    assert page.total_notes == 3
+    assert page.next_offset is None
+    assert page.next_folder_offset is None
+
+    roots = repository.load_tree_batch(
+        expanded_folder_ids=(),
+        note_limit=2,
+        folder_limit=2,
+        folder_offset=10,
+    )
+    assert roots.folders == ()
+    assert roots.total_folders == 3
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"note_offset": -1},
+        {"folder_limit": 0},
+        {"folder_limit": 501},
+        {"folder_offset": -1},
+        {"membership_limit": 0},
+        {"membership_limit": 1001},
+        {"membership_offset": -1},
+        {"expanded_folder_ids": tuple(f"folder-{index}" for index in range(101))},
+    ],
+)
+def test_load_tree_batch_rejects_unbounded_or_invalid_page_inputs(
+    repository: LocalNoteFolderRepository, kwargs: dict[str, object]
+) -> None:
+    arguments: dict[str, object] = {
+        "expanded_folder_ids": (),
+        "note_limit": 10,
+        **kwargs,
+    }
+    with pytest.raises(FolderValidationError):
+        repository.load_tree_batch(**arguments)
+
+
+def test_load_tree_batch_bounds_expanded_id_input_consumption(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    consumed = 0
+
+    def repeated_ids() -> Iterator[str]:
+        nonlocal consumed
+        for _ in range(10_000):
+            consumed += 1
+            yield "same-folder"
+
+    with pytest.raises(FolderValidationError):
+        repository.load_tree_batch(
+            expanded_folder_ids=repeated_ids(),
+            note_limit=10,
+        )
+
+    assert consumed == 101
+
+
+def test_load_tree_batch_pages_high_cardinality_memberships(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    assert note_id is not None
+    now = _timestamp()
+    membership_ids = tuple(str(uuid.uuid4()) for _ in range(1001))
+    with repository.db.transaction() as cursor:
+        cursor.executemany(
+            "INSERT INTO note_folder_memberships("
+            "id, folder_id, note_id, ownership, owner_id, owner_active, "
+            "version, deleted, created_at, modified_at"
+            ") VALUES (?, ?, ?, 'managed', ?, 1, 1, 0, ?, ?)",
+            (
+                (
+                    membership_id,
+                    folder.folder_id,
+                    note_id,
+                    f"owner-{index:04d}",
+                    now,
+                    now,
+                )
+                for index, membership_id in enumerate(membership_ids)
+            ),
+        )
+
+    first = repository.load_tree_batch(
+        expanded_folder_ids=(folder.folder_id,),
+        note_limit=1,
+        membership_limit=1000,
+    )
+    second = repository.load_tree_batch(
+        expanded_folder_ids=(folder.folder_id,),
+        note_limit=1,
+        membership_limit=1000,
+        membership_offset=1000,
+    )
+
+    assert len(first.memberships) == 1000
+    assert first.total_memberships == 1001
+    assert first.next_membership_offset == 1000
+    assert len(second.memberships) == 1
+    assert second.total_memberships == 1001
+    assert second.next_membership_offset is None
+    assert {row.membership_id for row in first.memberships + second.memberships} == set(
+        membership_ids
+    )
+
+
+def test_load_tree_batch_stays_below_supported_sqlite_variable_limit(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    now = _timestamp()
+    note_ids = tuple(str(uuid.uuid4()) for _ in range(1000))
+    with repository.db.transaction() as cursor:
+        cursor.executemany(
+            "INSERT INTO notes("
+            "id, title, content, last_modified, client_id, version, deleted, created_at"
+            ") VALUES (?, ?, 'Body', ?, 'folder-tests', 1, 0, ?)",
+            (
+                (note_id, f"Note {index:04d}", now, now)
+                for index, note_id in enumerate(note_ids)
+            ),
+        )
+        cursor.executemany(
+            "INSERT INTO note_folder_memberships("
+            "id, folder_id, note_id, ownership, owner_id, owner_active, "
+            "version, deleted, created_at, modified_at"
+            ") VALUES (?, ?, ?, 'manual', '', 1, 1, 0, ?, ?)",
+            (
+                (str(uuid.uuid4()), folder.folder_id, note_id, now, now)
+                for note_id in note_ids
+            ),
+        )
+
+    connection = repository.db.get_connection()
+    previous_limit = connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+    try:
+        page = repository.load_tree_batch(
+            expanded_folder_ids=(folder.folder_id,),
+            note_limit=1000,
+            membership_limit=1000,
+        )
+    finally:
+        connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, previous_limit)
+
+    assert len(page.notes) == 1000
+    assert len(page.memberships) == 1000
+    assert page.total_memberships == 1000
+    assert page.next_membership_offset is None
 
 
 @pytest.mark.parametrize("name", ["", "..", "bad/name", "bad\\name", "\x00"])
@@ -1364,6 +1614,7 @@ def test_load_tree_batch_pages_zero_exact_limit_and_limit_plus_one_notes(
     assert len(page.notes) == min(note_count, 2)
     assert page.total_notes == note_count
     assert page.next_offset == expected_next_offset
+    assert len(page.memberships) == min(note_count, 2)
 
 
 @pytest.mark.parametrize("placement_count", [10, 500])
@@ -1400,7 +1651,7 @@ def test_load_tree_batch_query_count_is_constant_for_placements(
     selects = [
         statement
         for statement in statements
-        if statement.lstrip().upper().startswith("SELECT")
+        if statement.lstrip().upper().startswith(("SELECT", "WITH"))
     ]
     assert len(page.notes) == placement_count
     assert len(selects) == 3
@@ -1421,7 +1672,7 @@ def test_list_memberships_chunks_large_unique_id_sets_without_per_note_queries(
     selects = [
         statement
         for statement in statements
-        if statement.lstrip().upper().startswith("SELECT")
+        if statement.lstrip().upper().startswith(("SELECT", "WITH"))
     ]
     assert len(selects) == 3
     assert all("note_id IN" in statement for statement in selects)
