@@ -18,12 +18,13 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Generic, Self, TypeVar
+from typing import Generic, Literal, Self, TypeVar
 from urllib.parse import urlsplit
 
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from . import leases as _leases
+from .gguf_admission import GGUFMetadata, inspect_gguf_structure, open_local_gguf
 from .leases import (
     ArtifactLeaseError,
     ArtifactLeaseKey,
@@ -121,6 +122,7 @@ _READINESS_KEYS = frozenset(
     {"schema_version", "root", "closure", "closure_fingerprint"}
 )
 _LOCAL_COPY_CHUNK_BYTES = 1024 * 1024
+_LOCAL_COPY_PROGRESS_BYTES = 64 * _LOCAL_COPY_CHUNK_BYTES
 
 
 def _never_cancelled() -> bool:
@@ -557,8 +559,28 @@ class ArtifactDescriptor:
 
         for field_name in _DESCRIPTOR_STRING_FIELDS:
             _validate_nonempty_text(field_name, getattr(self, field_name))
-        _validate_url("source_url", self.source_url)
-        _validate_url("license_url", self.license_url)
+        local_only = self.provenance == (ProvenanceClass.LOCAL_INTEGRITY_RECORDED,)
+        if type(self.source_url) is not str:
+            raise ArtifactDescriptorValidationError(
+                "source_url must be a non-empty canonical string"
+            )
+        if self.source_url:
+            _validate_url("source_url", self.source_url)
+        elif not local_only:
+            raise ArtifactDescriptorValidationError(
+                "source_url may be empty only for local integrity provenance"
+            )
+
+        if type(self.license_url) is not str:
+            raise ArtifactDescriptorValidationError(
+                "license_url must be a non-empty canonical string"
+            )
+        if self.license_url:
+            _validate_url("license_url", self.license_url)
+        elif not (local_only and self.license_id == "unknown"):
+            raise ArtifactDescriptorValidationError(
+                "license_url may be empty only for unknown local-import licensing"
+            )
 
         if self.precision != self.reference.variant:
             raise ArtifactDescriptorValidationError(
@@ -877,6 +899,71 @@ class InstalledArtifact:
     ready: bool
     active: bool
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class LocalGGUFImportProgress:
+    """Path-private progress emitted by one local GGUF import."""
+
+    phase: Literal["copy", "inspect", "verify", "finalize"]
+    file: str | None
+    bytes_done: int
+    bytes_total: int
+
+
+@dataclass(frozen=True)
+class LocalGGUFImportResult:
+    """Exact managed reference and convergence outcome for an import."""
+
+    reference: ArtifactRef
+    already_installed: bool
+
+
+def _ignore_local_import_progress(_progress: LocalGGUFImportProgress) -> None:
+    """Accept one import progress update without side effects."""
+
+
+def _local_gguf_descriptor(
+    metadata: GGUFMetadata,
+    *,
+    digest: str,
+    size_bytes: int,
+) -> ArtifactDescriptor:
+    """Build one path-private descriptor from staged GGUF facts."""
+
+    revision = f"sha256-{digest}"
+    variant = (
+        f"filetype-{metadata.file_type}"
+        if metadata.file_type is not None
+        else "imported"
+    )
+    label = (metadata.model_name or "").strip() or f"Imported GGUF {digest[:8]}"
+    reference = ArtifactRef(f"local-gguf-{digest[:16]}", revision, variant)
+    return ArtifactDescriptor(
+        reference=reference,
+        model_id=label,
+        role=ArtifactRole.ROOT,
+        format=ArtifactFormat.GGUF,
+        consumer="unassigned",
+        model_family=metadata.architecture,
+        upstream_repository="local-import",
+        upstream_revision=revision,
+        source_url="",
+        precision=variant,
+        expected_installed_bytes=size_bytes,
+        license_id="unknown",
+        license_url="",
+        usage_notice=(
+            "Imported from a user-selected local file; license and runtime "
+            "compatibility are not verified."
+        ),
+        runtime_name="unassigned",
+        runtime_version_constraint="none",
+        supported_os=("unassigned",),
+        supported_architectures=("unassigned",),
+        provenance=(ProvenanceClass.LOCAL_INTEGRITY_RECORDED,),
+        files=(ArtifactFile("model.gguf", size_bytes, digest),),
+    )
 
 
 @dataclass(frozen=True)
@@ -3010,6 +3097,247 @@ class ModelArtifactService:
 
     # -- end TASK-1694 download-stage seam -----------------------------------
 
+    def _create_install_staging(self) -> tuple[Path, ArtifactOperationLease]:
+        """Create one leased operation-owned install staging directory."""
+
+        self._assert_managed_path(self._staging_path)
+        # Name before create so reconcile() cannot observe an unleased stage.
+        staging_name = f"{_INSTALL_STAGING_PREFIX}{uuid.uuid4().hex}"
+        staging = self._staging_path / staging_name
+        self._assert_managed_path(self._locks_path)
+        # Use the leases submodule so tests replacing the public writer-lease
+        # name do not intercept this orphan-detection lease.
+        staging_lease = _leases.ArtifactOperationLease(
+            self._locks_path,
+            _install_staging_lease_key(staging_name),
+            LeaseMode.EXCLUSIVE,
+            timeout_seconds=self._lease_timeout_seconds,
+        )
+        staging_lease.acquire()
+        try:
+            os.mkdir(staging, 0o700)
+        except OSError as error:
+            primary_error = ArtifactStateError(
+                "failed to create artifact install staging directory"
+            )
+            try:
+                try:
+                    shutil.rmtree(staging)
+                except FileNotFoundError:
+                    pass
+                except OSError as cleanup_error:
+                    primary_error.add_note(
+                        f"operation staging cleanup failed: {cleanup_error!r}"
+                    )
+            finally:
+                try:
+                    staging_lease.release()
+                except BaseException as release_error:
+                    primary_error.add_note(
+                        f"staging operation lease release failed: {release_error!r}"
+                    )
+            raise primary_error from error
+        return staging, staging_lease
+
+    def _commit_verified_staging(
+        self,
+        descriptor: ArtifactDescriptor,
+        staging: Path,
+        *,
+        cancelled: Callable[[], bool],
+        on_finalizing: Callable[[], None] | None = None,
+    ) -> bool:
+        """Verify and converge or promote one operation-owned staging tree."""
+
+        destination = self.artifact_path(descriptor.reference)
+        self._assert_managed_path(self._locks_path)
+
+        # ponytail: one lifecycle writer lock is enough until measured install
+        # throughput justifies per-artifact writer coordination.
+        with ArtifactOperationLease(
+            self._locks_path,
+            _LIFECYCLE_LEASE_KEY,
+            LeaseMode.EXCLUSIVE,
+            timeout_seconds=self._lease_timeout_seconds,
+        ):
+            with ArtifactOperationLease(
+                self._locks_path,
+                descriptor.reference.lease_key(),
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            ):
+                _raise_if_install_cancelled(cancelled)
+                if self._managed_path_exists(destination):
+                    self._verify_existing_destination(destination, descriptor)
+                    return True
+                self._verify_payload(
+                    staging,
+                    descriptor.files,
+                    cancelled=cancelled,
+                )
+                _raise_if_install_cancelled(cancelled)
+                atomic_write_json(
+                    staging / "manifest.json",
+                    {
+                        "schema_version": _MANIFEST_SCHEMA_VERSION,
+                        "descriptor": descriptor.to_dict(),
+                    },
+                )
+                self._ensure_final_parent(destination.parent)
+                if self._managed_path_exists(destination):
+                    raise ArtifactConflictError(
+                        "immutable artifact destination already exists"
+                    )
+                self._assert_managed_path(staging)
+                self._assert_managed_path(destination.parent)
+                _raise_if_install_cancelled(cancelled)
+                if on_finalizing is not None:
+                    on_finalizing()
+                self._promote(staging, destination)
+                self._assert_managed_path(destination)
+                return False
+
+    def import_local_gguf(
+        self,
+        source_file: Path,
+        *,
+        cancelled: Callable[[], bool] = _never_cancelled,
+        progress: Callable[
+            [LocalGGUFImportProgress], None
+        ] = _ignore_local_import_progress,
+    ) -> LocalGGUFImportResult:
+        """Copy one local GGUF into the immutable managed artifact store.
+
+        Args:
+            source_file: User-owned regular GGUF selected for import.
+            cancelled: Optional caller-thread-safe cancellation probe.
+            progress: Synchronous path-private progress callback. Exceptions raised
+                by the callback propagate to the caller.
+
+        Returns:
+            The exact managed reference and whether it already existed.
+
+        Raises:
+            TypeError: An argument has the wrong public API type.
+            ArtifactLeaseTimeoutError: A managed writer lease remains busy.
+            ArtifactError: Managed staging, verification, or promotion fails.
+            GGUFError: The source path or staged GGUF structure is invalid.
+        """
+
+        if not isinstance(source_file, Path):
+            raise TypeError("source_file must be a Path")
+        if not callable(cancelled):
+            raise TypeError("cancelled must be callable")
+        if not callable(progress):
+            raise TypeError("progress must be callable")
+        _raise_if_install_cancelled(cancelled)
+
+        staging: Path | None = None
+        staging_lease: ArtifactOperationLease | None = None
+        try:
+            staging, staging_lease = self._create_install_staging()
+            self._assert_managed_path(staging)
+            target = staging / "model.gguf"
+            with open_local_gguf(source_file) as opened, open(target, "xb") as output:
+                digest = hashlib.sha256()
+                copied = 0
+                last_progress = 0
+                progress(
+                    LocalGGUFImportProgress(
+                        "copy",
+                        "model.gguf",
+                        copied,
+                        opened.identity.size_bytes,
+                    )
+                )
+                while chunk := opened.handle.read(_LOCAL_COPY_CHUNK_BYTES):
+                    _raise_if_install_cancelled(cancelled)
+                    output.write(chunk)
+                    digest.update(chunk)
+                    copied += len(chunk)
+                    if copied - last_progress >= _LOCAL_COPY_PROGRESS_BYTES:
+                        progress(
+                            LocalGGUFImportProgress(
+                                "copy",
+                                "model.gguf",
+                                copied,
+                                opened.identity.size_bytes,
+                            )
+                        )
+                        last_progress = copied
+                if copied != last_progress:
+                    progress(
+                        LocalGGUFImportProgress(
+                            "copy",
+                            "model.gguf",
+                            copied,
+                            opened.identity.size_bytes,
+                        )
+                    )
+                output.flush()
+                os.fsync(output.fileno())
+                opened.recheck()
+
+            _raise_if_install_cancelled(cancelled)
+            progress(LocalGGUFImportProgress("inspect", None, 0, copied))
+            with target.open("rb", buffering=0) as staged:
+                metadata = inspect_gguf_structure(staged, file_size=copied)
+            descriptor = _local_gguf_descriptor(
+                metadata,
+                digest=digest.hexdigest(),
+                size_bytes=copied,
+            )
+            progress(LocalGGUFImportProgress("verify", "model.gguf", 0, copied))
+            already_installed = self._commit_verified_staging(
+                descriptor,
+                staging,
+                cancelled=cancelled,
+                on_finalizing=lambda: progress(
+                    LocalGGUFImportProgress("finalize", None, copied, copied)
+                ),
+            )
+            if not already_installed:
+                staging = None
+            return LocalGGUFImportResult(descriptor.reference, already_installed)
+        except ArtifactError:
+            raise
+        except ArtifactLeaseTimeoutError:
+            raise
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire artifact writer leases"
+            ) from error
+        except OSError as error:
+            raise ArtifactStateError("artifact import I/O failed") from error
+        finally:
+            primary_error = sys.exception()
+            try:
+                if staging is not None:
+                    try:
+                        shutil.rmtree(staging)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as cleanup_error:
+                        if primary_error is None:
+                            raise ArtifactStateError(
+                                "failed to clean operation-owned artifact staging"
+                            ) from cleanup_error
+                        primary_error.add_note(
+                            f"operation staging cleanup failed: {cleanup_error!r}"
+                        )
+            finally:
+                if staging_lease is not None:
+                    try:
+                        staging_lease.release()
+                    except BaseException as release_error:
+                        if primary_error is None:
+                            raise ArtifactStateError(
+                                "failed to release staging operation lease"
+                            ) from release_error
+                        primary_error.add_note(
+                            f"staging operation lease release failed: {release_error!r}"
+                        )
+
     def install(
         self,
         descriptor: ArtifactDescriptor,
@@ -3072,50 +3400,7 @@ class ModelArtifactService:
         staging: Path | None = None
         staging_lease: ArtifactOperationLease | None = None
         try:
-            self._assert_managed_path(self._staging_path)
-            # The staging directory's NAME is generated and its
-            # per-directory orphan-detection lease acquired BEFORE the
-            # directory itself is created on disk -- deliberately NOT a
-            # bare ``tempfile.mkdtemp``, whose combined name-and-create
-            # step makes the directory visible to a directory listing
-            # before anything protects it. reconcile()'s staging GC
-            # (``_gc_install_staging_orphan``) only ever considers names
-            # that already exist as real directories, and only treats one
-            # as abandoned -- safe to delete -- when its lease is free.
-            # Creating the directory first and leasing it second leaves a
-            # window where a concurrent reconcile() pass can observe the
-            # (leaseless) directory, acquire the lease itself, and delete
-            # a staging dir this call is about to copy files into. Naming
-            # then leasing then creating closes that window: nothing
-            # exists for reconcile() to find until the lease already
-            # belongs to this call.
-            staging_name = f"{_INSTALL_STAGING_PREFIX}{uuid.uuid4().hex}"
-            staging = self._staging_path / staging_name
-            self._assert_managed_path(self._locks_path)
-            # Held for this call's whole staging lifetime so reconcile()'s
-            # staging GC can tell this directory apart from one abandoned by
-            # a crashed install (see _install_staging_lease_key). Built via
-            # the leases submodule rather than the plain ArtifactOperationLease
-            # import: this is an orphan-detection lock, not one of the writer
-            # leases tests intentionally intercept via that name (see
-            # test_install_acquires_exact_writer_leases_in_fixed_order), and
-            # must keep working even when those tests replace that symbol.
-            staging_lease = _leases.ArtifactOperationLease(
-                self._locks_path,
-                _install_staging_lease_key(staging_name),
-                LeaseMode.EXCLUSIVE,
-                timeout_seconds=self._lease_timeout_seconds,
-            )
-            staging_lease.acquire()
-            try:
-                # Matches tempfile.mkdtemp's own directory permission bits
-                # (owner-only rwx) -- this is still a temporary, operation-
-                # owned staging directory, not a final managed-store path.
-                os.mkdir(staging, 0o700)
-            except OSError as error:
-                raise ArtifactStateError(
-                    "failed to create artifact install staging directory"
-                ) from error
+            staging, staging_lease = self._create_install_staging()
             self._assert_managed_path(staging)
             self._copy_payload(
                 descriptor,
@@ -3138,54 +3423,13 @@ class ModelArtifactService:
                 ):
                     raise ArtifactPathError("source tree changed during artifact copy")
             _raise_if_install_cancelled(cancelled)
-            destination = self.artifact_path(descriptor.reference)
-            self._assert_managed_path(self._locks_path)
-
-            # ponytail: one lifecycle writer lock is enough until measured install throughput
-            # justifies per-artifact writer coordination.
-            with ArtifactOperationLease(
-                self._locks_path,
-                _LIFECYCLE_LEASE_KEY,
-                LeaseMode.EXCLUSIVE,
-                timeout_seconds=self._lease_timeout_seconds,
-            ):
-                with ArtifactOperationLease(
-                    self._locks_path,
-                    descriptor.reference.lease_key(),
-                    LeaseMode.EXCLUSIVE,
-                    timeout_seconds=self._lease_timeout_seconds,
-                ):
-                    if self._managed_path_exists(destination):
-                        self._verify_existing_destination(
-                            destination,
-                            descriptor,
-                        )
-                        return descriptor.reference
-                    _raise_if_install_cancelled(cancelled)
-                    self._verify_payload(
-                        staging,
-                        descriptor.files,
-                        cancelled=cancelled,
-                    )
-                    _raise_if_install_cancelled(cancelled)
-                    atomic_write_json(
-                        staging / "manifest.json",
-                        {
-                            "schema_version": _MANIFEST_SCHEMA_VERSION,
-                            "descriptor": descriptor.to_dict(),
-                        },
-                    )
-                    self._ensure_final_parent(destination.parent)
-                    if self._managed_path_exists(destination):
-                        raise ArtifactConflictError(
-                            "immutable artifact destination already exists"
-                        )
-                    self._assert_managed_path(staging)
-                    self._assert_managed_path(destination.parent)
-                    _raise_if_install_cancelled(cancelled)
-                    self._promote(staging, destination)
-                    self._assert_managed_path(destination)
-                    staging = None
+            already_installed = self._commit_verified_staging(
+                descriptor,
+                staging,
+                cancelled=cancelled,
+            )
+            if not already_installed:
+                staging = None
             return descriptor.reference
         except ArtifactError:
             raise

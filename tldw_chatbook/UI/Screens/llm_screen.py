@@ -165,6 +165,7 @@ class LLMScreen(LabScreen):
         self._model_install_active = False
         self._model_install_phase: str | None = None
         self._model_install_succeeded: bool | None = None
+        self._local_gguf_import_active = False
         self._external_selection_generation = 0
         self._external_selection_token: tuple[int, int] | None = None
         self._external_scope_id: str | None = None
@@ -448,7 +449,7 @@ class LLMScreen(LabScreen):
         return None
 
     def _install_in_progress(self) -> bool:
-        """Return whether a curated or remote install is in ANY phase.
+        """Return whether any managed-model acquisition owns the host.
 
         TASK-1914 fix round 2: the concurrency guard in ``_curated_
         install_requested``/``_remote_install_requested`` used to check
@@ -477,7 +478,17 @@ class LLMScreen(LabScreen):
         Returns:
             Whether an install (either kind) is currently in progress.
         """
-        return self._model_install_kind is not None
+        return self._model_install_kind is not None or getattr(
+            self, "_local_gguf_import_active", False
+        )
+
+    def _can_start_local_gguf_import(self) -> bool:
+        """Return whether Installed may reserve the shared host lane."""
+        return not self._install_in_progress()
+
+    def _set_local_gguf_import_active(self, active: bool) -> None:
+        """Retain Installed ownership across picker, consent, and worker phases."""
+        self._local_gguf_import_active = active
 
     # -- External Parakeet roots: screen-owned picker and workers -------
 
@@ -2120,7 +2131,12 @@ class LLMScreen(LabScreen):
             The ``LLMManagementWindow``, mounted after first paint because
             composing its nine views costs 488-787 ms.
         """
-        self.llm_window = LLMManagementWindow(self.app_instance, classes="window")
+        self.llm_window = LLMManagementWindow(
+            self.app_instance,
+            can_start_import=self._can_start_local_gguf_import,
+            on_import_lane_changed=self._set_local_gguf_import_active,
+            classes="window",
+        )
         self.llm_window.styles.height = "1fr"
         return self.llm_window
 

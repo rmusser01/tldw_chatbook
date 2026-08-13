@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import ctypes
+import errno
 import importlib
+import importlib.util
 import io
 import json
 import os
 import pickle
 import sqlite3
 import stat
+import sys
 from hashlib import sha256
 from pathlib import Path
 from types import ModuleType
@@ -18,6 +22,33 @@ import pytest
 
 from tldw_chatbook.TTS import profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+
+
+def test_namespace_import_on_windows_does_not_probe_posix_libc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows imports safely while descriptor rename remains unsupported."""
+    module_name = "_test_windows_profile_migration_namespace"
+    module_path = Path(profile_schema.__file__).with_name(
+        "profile_migration_namespace.py"
+    )
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+
+    def forbid_posix_libc(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("Windows namespace import must not load POSIX libc")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(ctypes, "CDLL", forbid_posix_libc)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+        with pytest.raises(OSError) as caught:
+            module.rename_noreplace_at(-1, "source", "destination")
+        assert caught.value.errno == errno.ENOTSUP
+    finally:
+        sys.modules.pop(module_name, None)
 
 
 def _modules() -> tuple[ModuleType, ModuleType]:

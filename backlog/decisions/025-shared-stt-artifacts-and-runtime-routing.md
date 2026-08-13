@@ -2,9 +2,10 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Tasks: TASK-505, TASK-593 through TASK-605
+Related Tasks: TASK-505, TASK-593 through TASK-605, TASK-2062, TASK-2062.1 through TASK-2062.3
 Supersedes: N/A
 Amended By: ADR-041 for direct-path-first transcribe.cpp delivery
+Amended: 2026-08-12 by TASK-2062 for managed and external LLM GGUF ownership
 
 ## Decision
 
@@ -54,7 +55,8 @@ provenance labels. Descriptors can require other exact artifacts; Parakeet
 long-form support depends on a separately pinned managed VAD artifact. Remote
 content is called integrity verified only when the repository independently
 supplies the expected digest. STT is the first consumer. LLM artifact migration
-is outside this decision.
+was outside the initial scope of this decision. The TASK-2062 amendment below
+governs the later local LLM GGUF adoption.
 
 Dependency closures become loadable through a root readiness record written
 last after every immutable dependency revision is verified; the design does not
@@ -121,6 +123,56 @@ provider-specific settings will be removed in the landing release only after
 the design's platform, batch, buffer, migration, artifact, accuracy,
 performance, memory, cancellation, and crash-recovery gates pass. External
 model caches will not be deleted automatically.
+
+## TASK-2062 amendment: managed and external local LLM GGUFs
+
+Chatbook will extend the format-neutral artifact service to accept an optional,
+user-initiated local GGUF import for LLM runtimes. Import copies the selected regular
+file once into service-owned staging, performs bounded generic GGUF-v3 structural
+inspection and authoritative digest verification on the staged bytes, then promotes
+an immutable managed artifact. The original remains user-owned and Chatbook never
+writes, renames, or deletes it.
+
+Local imports use exact `LOCAL_INTEGRITY_RECORDED` provenance. Their canonical
+identity is derived from staged content, with the full SHA-256 in the immutable
+revision; filenames and absolute paths are not identity or provenance. Because a
+local import has no truthful remote source or reviewed license URL, an empty
+`source_url` is valid only for exact local-integrity provenance, and an empty
+`license_url` additionally requires `license_id=unknown`. Such descriptors are never
+eligible for network acquisition. Fabricated HTTP origins and `file://` source paths
+are forbidden.
+
+Generic GGUF structural admission is separate from consumer compatibility policy.
+Existing transcribe.cpp models continue through their speech-specific architecture
+allowlist. LLM import does not claim that llama.cpp or llamafile supports the
+artifact's architecture or quantization merely because its structure and managed
+digest are valid.
+
+Managed ownership remains optional. llama.cpp exposes mutually exclusive Managed
+GGUF and External GGUF authority. llamafile exposes Embedded, Managed GGUF, and
+External GGUF authority. External mode continues to launch an arbitrary user-owned
+GGUF outside the store without importing, deleting, or globally selecting it, and is
+labelled `integrity unknown`. vLLM and MLX retain their existing Hugging Face model-ID
+or directory contracts and are not routed through a GGUF-only picker.
+
+An LLM server launched from a managed artifact holds the exact artifact lease from
+pre-spawn acquisition until the exact process claim proves that process dead. Lease
+ownership transfers atomically from the launch worker to the existing identity-bearing
+server claim; cleanup detaches the lease under the claim lock and closes it outside
+the lock exactly once. A stubborn retained process retains both its claim and lease,
+and stale generations cannot release either.
+
+After managed import and explicit external launch are usable, Chatbook will remove
+the obsolete Models destination direct-write downloaders, including the legacy
+`Widgets/HuggingFace` surface and the Transformers `huggingface-cli download
+--local-dir` path. The separate Hugging Face inference provider, provider-owned
+model-ID caching, external directories, legacy scan roots, and unmanaged-file
+discovery remain supported.
+
+This amendment rejects forcing all GGUFs into the store, persisting local source paths,
+using filename-based or shortened immutable identities, resolving managed selections
+to raw store paths, releasing leases at worker completion, removing llamafile's
+embedded mode, and applying this GGUF contract to vLLM or MLX.
 
 ## Context
 
@@ -262,6 +314,7 @@ own local binary artifacts and is not superseded by this decision.
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-07-23-stt-parakeet-onnx-transcribe-cpp-design.md)
+- [TASK-2062 managed and external GGUF design](../../Docs/superpowers/specs/2026-08-03-task-2062-model-browser-phase-3-design.md)
 - [ADR-020: Automatic cloud model catalog refresh](020-automatic-model-catalog-refresh.md)
 - [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp)
 - [transcribe.cpp v0.1.3](https://github.com/handy-computer/transcribe.cpp/releases/tag/v0.1.3)

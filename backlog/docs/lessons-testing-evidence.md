@@ -3414,3 +3414,28 @@ ordering.
 *after* the mount (`_reseed_active_section_pane`) rather than trusting the read that
 happened before it. Reactive assignments make the re-apply free when nothing moved, so
 the cost is a few lines and the failure mode it closes is silent.
+
+---
+
+## A pathname stat and an open-handle stat need not expose the same native identity field (TASK-2062.1, 2026-08-13)
+
+TASK-2062.1's local-GGUF admission passed on Linux and macOS but rejected an
+unchanged file on Windows. CPython 3.12's Windows pathname `stat` compatibility
+surface reports creation time through `st_ctime`, while `fstat` on the already
+opened descriptor retains the file's ChangeTime. Comparing the complete tuples
+made an unchanged pathname and its own open handle look different. The first
+two native Windows runs also exposed test-only POSIX assumptions before the
+real identity mismatch became visible.
+
+The correction compares only fields with shared pathname/descriptor semantics
+when proving the name still refers to the opened file on Windows, while keeping
+the descriptor-to-descriptor recheck strict, including ChangeTime. Tests mutate
+device, inode, mode, size, and mtime independently, and the exact three-OS lane
+runs the Windows reparse and replacement cases instead of accepting skips.
+
+**What to do.** For TOCTOU defenses, distinguish the two questions: whether a
+pathname still names the opened object, and whether the opened object changed
+after inspection. Do not assume every portable `stat_result` field has identical
+meaning across pathname and handle APIs. Preserve strict handle rechecks, test
+each stable identity field, and require native-platform evidence for filesystem
+security claims.
