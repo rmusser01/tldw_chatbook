@@ -16510,6 +16510,7 @@ async def test_library_shell_ingest_canvas_happy_path_open_in_library(tmp_path):
             raise AssertionError("Media detail never loaded after Open in Library.")
 
         assert screen._library_media_view == "viewer"
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         viewer_title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert "tides" in viewer_title.lower()
 
