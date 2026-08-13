@@ -86,6 +86,95 @@ def _wav_sample(frames: bytes = b"\x00\x00\x01\x00") -> bytes:
     return output.getvalue()
 
 
+def _ogg_page(payload: bytes, *, sequence: int, header_type: int = 0) -> bytes:
+    return b"".join(
+        (
+            b"OggS",
+            b"\x00",
+            bytes((header_type,)),
+            b"\x00" * 8,
+            b"\x01\x00\x00\x00",
+            sequence.to_bytes(4, "little"),
+            b"\x00" * 4,
+            b"\x01",
+            bytes((len(payload),)),
+            payload,
+        )
+    )
+
+
+def _malformed_sized_compressed_sample(response_format: str) -> bytes:
+    if response_format == "mp3":
+        return b"\xff\xfb\x90\x64" + b"\x00" * 413
+    if response_format == "opus":
+        opus_head = (
+            b"OpusHead\x01\x01\x00\x00\x80\xbb\x00\x00\x00\x00\x00"
+        )
+        return _ogg_page(opus_head, sequence=0, header_type=2) + _ogg_page(
+            b"\x00" * 20,
+            sequence=1,
+        )
+    if response_format == "flac":
+        stream_info = bytearray(34)
+        packed = (44_100 << 44) | (15 << 36) | 1
+        stream_info[10:18] = packed.to_bytes(8, "big")
+        return (
+            b"fLaC\x80\x00\x00\x22"
+            + bytes(stream_info)
+            + b"\xff\xf8"
+            + b"\x00" * 20
+        )
+    if response_format == "aac":
+        return b"\xff\xf1\x50\x80\x02\x9f\xfc" + b"\x00" * 13
+    raise AssertionError(f"Unsupported test format: {response_format}")
+
+
+def _pyav_encoded_sample(response_format: str) -> bytes:
+    av = pytest.importorskip("av")
+    container_format, sample_rate, samples, codec_names = {
+        "mp3": ("mp3", 44_100, 1_152, ("libmp3lame", "mp3")),
+        "opus": ("ogg", 48_000, 960, ("libopus", "opus")),
+        "flac": ("flac", 44_100, 1_024, ("flac",)),
+        "aac": ("adts", 44_100, 1_024, ("aac",)),
+    }[response_format]
+    errors: list[str] = []
+    for codec_name in codec_names:
+        output = io.BytesIO()
+        try:
+            codec = av.Codec(codec_name, "w")
+            sample_format = next(
+                audio_format.name
+                for preferred in ("s16", "s16p", "flt", "fltp")
+                for audio_format in codec.audio_formats
+                if audio_format.name == preferred
+            )
+            with av.open(output, mode="w", format=container_format) as container:
+                stream = container.add_stream(codec_name, rate=sample_rate)
+                stream.layout = "mono"
+                stream.codec_context.format = sample_format
+                frame = av.AudioFrame(
+                    format=sample_format,
+                    layout="mono",
+                    samples=samples,
+                )
+                frame.sample_rate = sample_rate
+                frame.pts = 0
+                for plane in frame.planes:
+                    plane.update(bytes(plane.buffer_size))
+                for packet in stream.encode(frame):
+                    container.mux(packet)
+                for packet in stream.encode(None):
+                    container.mux(packet)
+            payload = output.getvalue()
+            if payload:
+                return payload
+        except Exception as error:  # pragma: no cover - codec-build dependent
+            errors.append(f"{codec_name}: {error}")
+    pytest.skip(
+        f"No usable PyAV {response_format} encoder in this build: {'; '.join(errors)}"
+    )
+
+
 def _wav_with_declared_data_size(size: int) -> bytes:
     body = bytearray(_wav_sample())
     data_size_offset = body.index(b"data") + 4
@@ -426,6 +515,68 @@ def test_compressed_sample_evidence_rejects_magic_only_or_truncated_audio(
         body=body,
     )
     assert store.sample_state(fingerprint) is SpeechTTSConnectionState.NOT_TESTED
+
+
+@pytest.mark.parametrize(
+    ("response_format", "content_type"),
+    (
+        ("mp3", "audio/mpeg"),
+        ("opus", "audio/ogg"),
+        ("flac", "audio/flac"),
+        ("aac", "audio/aac"),
+    ),
+)
+def test_compressed_sample_evidence_rejects_sized_but_undecodable_frames(
+    response_format: str,
+    content_type: str,
+) -> None:
+    state = load_global_speech_tts_state(_settings(), environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=3,
+    )
+    store = ProcessProviderTestEvidenceStore()
+
+    assert not store.record_successful_sample(
+        fingerprint,
+        status_code=200,
+        response_format=response_format,
+        content_type=content_type,
+        body=_malformed_sized_compressed_sample(response_format),
+    )
+    assert store.sample_state(fingerprint) is SpeechTTSConnectionState.NOT_TESTED
+
+
+@pytest.mark.parametrize(
+    ("response_format", "content_type"),
+    (
+        ("mp3", "audio/mpeg"),
+        ("opus", "audio/ogg"),
+        ("flac", "audio/flac"),
+        ("aac", "audio/aac"),
+    ),
+)
+def test_compressed_sample_evidence_accepts_a_decoder_produced_audio_frame(
+    response_format: str,
+    content_type: str,
+) -> None:
+    state = load_global_speech_tts_state(_settings(), environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=3,
+    )
+    store = ProcessProviderTestEvidenceStore()
+
+    assert store.record_successful_sample(
+        fingerprint,
+        status_code=200,
+        response_format=response_format,
+        content_type=content_type,
+        body=_pyav_encoded_sample(response_format),
+    )
+    assert store.sample_state(fingerprint) is SpeechTTSConnectionState.REACHABLE
 
 
 def test_global_field_inventory_is_bounded_complete_and_includes_managed_audio_cpp() -> (
