@@ -1,7 +1,7 @@
 ---
 id: TASK-15675
 title: Add durable provider tool-continuation checkpoints
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-12 18:06'
 labels: []
@@ -22,16 +22,16 @@ Persist the private provider context required to resume interrupted native funct
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A versioned, bounded `provider_continuation_json` field is owned by the assistant generation/variant and stores only validated canonical continuation data, never credentials or raw provider responses.
-- [ ] #2 The first complete assistant tool-call batch and its continuation checkpoint are durably created in one transaction before any tool executes; every call transition and provider-bound result is durable before the next provider request.
-- [ ] #3 Restored `completed`/`failed` calls are never executed again, restored `executing` calls are treated as ambiguous and blocked, and pending calls require an explicit Resume action plus fresh approval.
-- [ ] #4 Opening, importing, or syncing a conversation never starts tools automatically; resume pins the original provider, model, API mode, and normalized base while resolving the current credential normally.
-- [ ] #5 Continuation data participates in message versioning, both supported sync paths, payload hashing, branch/variant ownership, deletion, edit/regenerate behavior, and whole-record conflict handling without field-level merge; the ChaChaNotes mutation and trigger-written intent commit together, then reconcile idempotently into the separate durable Sync-v2 outbox before configured portable tool execution.
-- [ ] #6 Versioned `.chatbook` preserves/remaps graph and variant ownership before attaching private continuation, while ordinary active-path JSON uses an explicit private projection with a warning; text, Markdown, rendering, FTS, logs, errors, usage, and summaries exclude it.
-- [ ] #7 Import validates version, provider, protocol, shapes, ordering, sizes, and call/result pairing; invalid private data is discarded with a safe warning while visible messages still import.
-- [ ] #8 Provider-history expansion counts private continuation against the existing context budget and retains or evicts an owning visible turn and its private tool rounds atomically.
-- [ ] #9 The shared runtime supports provider-specific replay policy without an open metadata bag: Kimi K3 replays retained reasoning on later K3 turns, other Kimi/GLM policies preserve only documented active/restored tool runs, and DeepSeek replays completed tool-associated reasoning on later same-provider turns.
-- [ ] #10 Crash-boundary, sync/conflict, import/export, privacy, cancellation, branch/variant, and mutation tests prove the contract without paid requests.
+- [x] #1 A versioned, bounded `provider_continuation_json` field is owned by the assistant generation/variant and stores only validated canonical continuation data, never credentials or raw provider responses.
+- [x] #2 The first complete assistant tool-call batch and its continuation checkpoint are durably created in one transaction before any tool executes; every call transition and provider-bound result is durable before the next provider request.
+- [x] #3 Restored `completed`/`failed` calls are never executed again, restored `executing` calls are treated as ambiguous and blocked, and pending calls require an explicit Resume action plus fresh approval.
+- [x] #4 Opening, importing, or syncing a conversation never starts tools automatically; resume pins the original provider, model, API mode, and normalized base while resolving the current credential normally.
+- [x] #5 Continuation data participates in message versioning, both supported sync paths, payload hashing, branch/variant ownership, deletion, edit/regenerate behavior, and whole-record conflict handling without field-level merge; the ChaChaNotes mutation and trigger-written intent commit together, then reconcile idempotently into the separate durable Sync-v2 outbox before configured portable tool execution.
+- [x] #6 Versioned `.chatbook` preserves/remaps graph and variant ownership before attaching private continuation, while ordinary active-path JSON uses an explicit private projection with a warning; text, Markdown, rendering, FTS, logs, errors, usage, and summaries exclude it.
+- [x] #7 Import validates version, provider, protocol, shapes, ordering, sizes, and call/result pairing; invalid private data is discarded with a safe warning while visible messages still import.
+- [x] #8 Provider-history expansion counts private continuation against the existing context budget and retains or evicts an owning visible turn and its private tool rounds atomically.
+- [x] #9 The shared runtime supports provider-specific replay policy without an open metadata bag: Kimi K3 replays retained reasoning on later K3 turns, other Kimi/GLM policies preserve only documented active/restored tool runs, and DeepSeek replays completed tool-associated reasoning on later same-provider turns.
+- [x] #10 Crash-boundary, sync/conflict, import/export, privacy, cancellation, branch/variant, and mutation tests prove the contract without paid requests.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -57,3 +57,47 @@ ADR path: `backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuat
 Reason: This task changes durable message storage, sync/export behavior, and the
 provider/runtime side-effect boundary. ADR-058 records the approved contract.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+- Added the bounded canonical continuation record on assistant message owners,
+  schema-v36 persistence and migration, both sync paths plus durable scoped
+  Sync-v2 projection receipts, typed runtime lifecycle barriers, explicit
+  Console Resume/Take over/Discard recovery, atomic history budgeting, and
+  versioned `.chatbook`/explicit JSON portability. ADR-058 remains the governing
+  storage, sync, runtime, privacy, and provider-policy boundary; provider wire
+  adapters remain follow-up work.
+- Added deterministic joined crash coverage for all seven approved boundaries
+  and mutation/property coverage for terminal/ambiguous replay, validation
+  bounds and unknown versions, whole-record branch/variant conflicts, and
+  atomic owner/private eviction. No paid or live provider request is present.
+- Final focused continuation verification: `356 passed, 2 warnings in 41.39s`
+  across 13 named canonical storage/migration, runtime/eviction, Console
+  persistence/recovery/history/privacy/budget, Sync-v2 reconciliation, and
+  `.chatbook` round-trip files. The new crash module independently passed
+  `9 passed`.
+- Settled touched surfaces: Agents `1386 passed`; Chat effective `4536 passed,
+  3 verified baseline failures, 64 skipped`; Chatbooks `243 passed, 1 skipped`;
+  Sync Interop `250 passed`; DB retained 37 verified pre-task failures after
+  three branch-caused fixture failures were fixed and their focused 14 tests
+  passed; ChaChaNotesDB retained 2 verified baseline failures with 187 passed.
+- A full-repository pytest run reached 86% before the user explicitly stopped
+  broad testing. It has no terminal summary, was not restarted, and is not used
+  as passing evidence; the user directed closeout from directly related tests
+  only.
+- Static evidence: the Task 8 Python file passes Ruff lint/format and
+  `py_compile`; mypy reports no issues in `provider_continuation.py`,
+  `agent_runtime.py`, and `chat_outbox_producer.py`; working-tree and branch
+  whitespace checks pass. Branch-wide Ruff lint's 31 findings reproduce exactly
+  on `origin/dev`. Ruff format's 17 inherited deviations also reproduce on
+  `origin/dev`; the one branch-added test-file deviation was corrected in
+  `3b2a5ea85`, whose 57 runtime tests passed.
+- Documentation explains private-state exclusions, explicit recovery and
+  ambiguity, frozen targets with current credential resolution, local commit
+  plus idempotent encrypted Sync-v2 projection, export compatibility, and the
+  absence of provider-retention or cross-device exactly-once claims.
+- Changed areas: canonical Chat continuation and history, ChaChaNotes storage,
+  Sync Interop, Agents runtime, Console recovery, Chatbook import/export,
+  migrations, focused tests, README/user guides, this plan/task, and ADR/spec
+  references. No provider adapter/default, vendor built-in tool, legacy
+  Settings surface, or paid test was added.
