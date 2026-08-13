@@ -1313,6 +1313,10 @@ def suppress_ingestion_indexing() -> Iterator[None]:
     Source persistence stays authoritative. The context-local value is only
     consulted by the best-effort post-commit hook and is reset even when the
     surrounding database write raises.
+
+    Yields:
+        None. Post-ingest semantic indexing is suppressed until the context
+        exits, then the previous context-local setting is restored.
     """
     token = _ingestion_indexing_suppressed.set(True)
     try:
