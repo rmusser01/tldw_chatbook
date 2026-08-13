@@ -1,7 +1,7 @@
 ---
 id: TASK-15470
 title: Config persistence: batch writes and take them off the click path
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-11 12:05'
@@ -20,9 +20,9 @@ Fix direction: batch the dictation save into one call; debounce + `to_thread` th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The dictation save performs one batched config write; no config rewrite fires on a parsing keystroke
-- [ ] #2 Sidebar toggles perform no synchronous file I/O on the event loop; state survives restart including quit-immediately-after-toggle (flush test)
-- [ ] #3 Each listed per-click rewrite site is converted or explicitly justified in the notes
+- [x] #1 The dictation save performs one batched config write; no config rewrite fires on a parsing keystroke
+- [x] #2 Sidebar toggles perform no synchronous file I/O on the event loop; state survives restart including quit-immediately-after-toggle (flush test)
+- [x] #3 Each listed per-click rewrite site is converted or explicitly justified in the notes
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -35,3 +35,72 @@ Fix direction: batch the dictation save into one call; debounce + `to_thread` th
 6. Update every existing test that called a handler on a bare/unmounted screen and hit `run_worker`'s `NoActiveAppError` -- patch the new per-site worker method instead of the module-level config function it wraps, preserving each test's actual subject.
 7. Write flush-on-quit tests for dictation and sidebar; mutation-verify by disabling the flush and confirming the test goes red, then restore via Edit.
 8. Run the full affected test surface; write the report.
+
+## Implementation Notes
+
+All thirteen sites from the audit (dictation, sidebar, plus the ~10 per-click
+sites) are converted to debounce+worker or `to_thread` dispatch; one more
+(`settings_screen.py`'s model-catalog stale-hours `Input.Changed` handler) was
+found and fixed alongside the remote-images toggle -- same per-keystroke
+defect class as dictation, not in the audit's literal citation.
+
+**Per-site classification:**
+
+| Site | Treatment |
+|---|---|
+| Dictation `_save_settings`/`_persist_settings` (buffer-duration keystroke + 4 switches) | Debounced (0.6s) + batched into ONE `save_settings_to_cli_config` call (`dictation`+`dictation.privacy`), dispatched via `run_worker`+`asyncio.to_thread`; `on_unmount` flush |
+| Chat sidebar `watch_sidebar_state` (Collapsible toggles, expand/collapse/reset) | Debounced (0.5s), `asyncio.to_thread` dispatch; `on_unmount` flush (waits on in-flight worker instead of double-writing) |
+| Library notes-sync (folder submit/browse, direction/conflict choice, auto-sync toggle, validated sync run -- 6 sites) | `@work(thread=True)` via shared `_save_library_notes_sync_setting` helper (one-shot user actions, no burst risk -- no debounce needed) |
+| Library ingest backend switch | `@work(thread=True)` |
+| Library ingest browse (`_remember_library_ingest_location`) | `@work(thread=True)` thin wrapper (`_persist_library_ingest_location`); the method itself stays synchronous since existing tests call it directly without a mounted app |
+| Library ingest submit (option batch save) | `@work(thread=True)`; the batching itself was already done by earlier work (task-3313-adjacent), this task only moved it off the loop |
+| Library ingest option reset | `@work(thread=True)`, reusing the submit path's helper |
+| `enhanced_file_picker.py` `_save_last_directory` | `@work(thread=True)` (it's a `ModalScreen`, `self.app` always available) |
+| `settings_splash_screen_viewer.py` (6 Checkbox/Select/Input handlers via `_save_config_value`) | In-memory update + message stay synchronous; only the disk write deferred to a new `@work(thread=True)` worker |
+| `settings_screen.py` remote-images toggle | `@work(thread=True)`; in-memory `app_config` poke (read live by the transcript gate) stays synchronous |
+| `settings_screen.py` model-catalog stale-hours `Input.Changed` (bonus find) | Same treatment as the toggle; the existing no-op guard (cheap, cache-only) stays synchronous |
+| `console_settings_modal.py` "Save as default" button | `await asyncio.to_thread(...)`, NOT fire-and-forget -- its success/failure UX contract (inline error vs. dismiss) needs the awaited result |
+| `enhanced_file_picker.py`'s `RecentLocations`/`BookmarksManager` | NOT converted -- plain non-Widget classes with no `self.app`; not the line the audit cited (`:1137` = `_save_last_directory` only); out of the enumerated scope |
+
+**Stability guards added on review:** every new `@work(thread=True)`/`run_worker` callback wraps its `save_setting(s)_to_cli_config` call in `try/except` -- an uncaught worker exception is fatal to the whole app by default (`exit_on_error=True`), which would have been a worse regression than the synchronous-write bug this task fixes. Two workers (`_persist_remote_images_toggle`, `_persist_model_catalog_section_values`) were missing this guard in an earlier pass and were fixed in a follow-up commit. Every debounced write that snapshots mutable state (`self.ui_state`, `self.settings`) does so on the calling (main) thread before handing off to `to_thread`, so a further edit arriving mid-write cannot race the worker's read of the same dict.
+
+**Tests:** two new files (`test_chat_screen_sidebar_state_debounce.py`, `test_dictation_settings_debounce.py`) cover the debounce-armed / no-sync-write / natural-fire / flush-on-quit behavior; the flush-on-quit tests were mutation-verified (temporarily disabled the `on_unmount` flush call, confirmed the test goes red, restored via Edit). Eight existing tests across `test_library_ingest_canvas.py`, `test_library_screen.py`, `test_library_ingest_retry_last.py`, `test_library_ingest_flow.py`, and `test_settings_configuration_hub.py` called a handler on a bare/unmounted screen and broke on `run_worker`'s `NoActiveAppError`; each now patches the new per-site worker method instead of the module-level config function it wraps.
+
+Consolidated run across every directly touched test file: 612-619 passed
+(counted across two overlapping runs), 7 failures -- all confirmed
+pre-existing and unrelated to this task: a `QwenCloud`-provider test-data
+drift (`test_model_catalog_toggles_initialize_from_saved_config`, caused by
+an unrelated earlier commit, `assert set` doesn't touch anywhere this task
+edited), a generic-ingest-options content mismatch exposed only once the
+`run_worker` crash this task fixed stopped masking it
+(`test_options_persist_to_config` -- schema drift, not a threading bug),
+two dependency-presence governance fixtures whose premise requires PDF/audio
+tooling to be ABSENT (`test_forecast_counts_equal_the_real_receipt_for_a_*`),
+one OCR-backend-absence-dependent consent-routing test
+(`test_the_same_folder_still_imports_on_this_machine`), and two rendering/
+geometry tests (`test_schema_disabled_fields_paint_legibly_inert`,
+`test_the_fold_pays_for_itself_in_the_shipped_screen`) -- the latter two
+directly A/B-probed by temporarily reverting the one changed line back to
+the synchronous call and confirming the SAME failure. A separate full run
+of `Tests/UI/test_library_shell.py` + 3 sibling files (598 passed, 15 failed)
+surfaced the same failure classes (missing-dependency governance fixtures,
+label-text drift, geometry, `Local prompt/quiz/study backend is
+unavailable` fixture gaps) plus two directly probed the same way (the
+"reset to defaults" title-receipt test and a sync-navigator-focus test, the
+latter never even calling any handler this task touched); none intersect
+this task's diff.
+
+**Modified files:** `tldw_chatbook/UI/Dictation_Window_Improved.py`,
+`tldw_chatbook/UI/Screens/chat_screen.py`,
+`tldw_chatbook/UI/Screens/library_screen.py`,
+`tldw_chatbook/UI/Screens/settings_screen.py`,
+`tldw_chatbook/Widgets/Console/console_settings_modal.py`,
+`tldw_chatbook/Widgets/enhanced_file_picker.py`,
+`tldw_chatbook/Widgets/settings_splash_screen_viewer.py`, plus test files
+(`Tests/UI/test_chat_screen_sidebar_state_debounce.py` and
+`Tests/UI/test_dictation_settings_debounce.py` new;
+`Tests/Local_Ingestion/test_dictation_window_provider_ids.py`,
+`Tests/UI/test_library_ingest_canvas.py`, `Tests/UI/test_library_screen.py`,
+`Tests/UI/test_library_ingest_retry_last.py`,
+`Tests/integration/test_library_ingest_flow.py`,
+`Tests/UI/test_settings_configuration_hub.py` updated).
