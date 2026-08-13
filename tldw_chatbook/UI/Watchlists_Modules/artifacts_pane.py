@@ -1545,8 +1545,44 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         self.post_message(CitationActivated(item_id))
 
     def watch_selected_briefing(self, briefing: dict[str, Any] | None) -> None:
-        if self.is_mounted:
-            self.post_message(BriefingSelected(briefing))
+        if not self.is_mounted:
+            # Pre-mount seeding (`WatchlistsCollectionsScreen.
+            # _build_detail_pane` sets `selected_briefing` and then the
+            # script/citation state, in that order). Clearing here would wipe
+            # the seeding that follows, and there is no screen to tell.
+            return
+        self._clear_selection_derived_state()
+        self.post_message(BriefingSelected(briefing))
+
+    def _clear_selection_derived_state(self) -> None:
+        """Drop the previous briefing's scripts, audio and citations.
+
+        A briefing owns its scripts and its citations, so the instant the
+        selection moves, whatever is rendered below the detail belongs to a
+        briefing that is no longer on screen. `handle_briefing_selected` used
+        to clear these from the SCREEN, one reactive assignment at a time, in
+        the message handler that runs after this watcher -- which meant the
+        select->clear->reload pipeline cost two pane recomposes before the
+        reload's own: one for the selection, then a second for the clearing.
+
+        Doing it here, with `set_reactive`, folds the clearing into the ONE
+        recompose the selection change has already queued (task-15461):
+        `set_reactive` writes the value without firing watchers or scheduling
+        a second rebuild, and `compose` reads the cleared values when that
+        single pending recompose runs. The stale-frame guarantee
+        `handle_briefing_selected` documents is unchanged -- if anything it is
+        stronger, since the clearing now happens in the same synchronous
+        instant as the selection rather than one message later.
+
+        `selected_script` is deliberately included: its watcher would post
+        `ScriptSelected(None)`, which the screen documents as the redundant
+        reactive echo of exactly this clearing.
+        """
+        self.set_reactive(ArtifactsPane.scripts, [])
+        self.set_reactive(ArtifactsPane.selected_script, None)
+        self.set_reactive(ArtifactsPane.script_audio, None)
+        self.set_reactive(ArtifactsPane.scripts_with_audio, {})
+        self.set_reactive(ArtifactsPane.citations, [])
 
     def watch_selected_script(self, script: dict[str, Any] | None) -> None:
         if self.is_mounted:

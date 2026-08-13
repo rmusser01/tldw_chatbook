@@ -3358,3 +3358,59 @@ carries on, so nothing was broken for users -- only the warning was lost. It was
 tempting, and I did briefly claim, that a failing save in tests meant a failing
 save in the product. Check which layer makes a failure fatal before assigning it
 user impact.
+## A DOM swap moved into a worker is invisible to `pilot.pause()` (task-15461, 2026-08-11)
+
+**The trap.** `Pilot.pause(delay)` is `await self._wait_for_screen()` then
+`await asyncio.sleep(delay)`. `_wait_for_screen` drains the **message pump** — it posts a
+callback to every widget on the screen and waits for them all to come back. It knows
+nothing about Textual **workers**. So a UI update scheduled with `call_next` is covered
+by every `pilot.pause()` in the suite; the identical update scheduled with `run_worker`
+is covered only by whatever wall-clock `delay` the test happened to pass.
+
+**What happened.** Replacing Watchlists' whole-screen `refresh(recompose=True)` on a tab
+click with a region-scoped swap also moved the swap from a `call_next` callback (which is
+what `refresh(recompose=True)` is, internally: `_recompose_required = True;
+call_next(self._check_recompose)`) onto the screen's existing surface-refresh drain, which
+ran as `run_worker(..., group="wc_surface_refresh")`. Nothing about the swap's *duration*
+changed — instrumented at ~250 ms for the Artifacts pane before and after — but the
+suite's shared helper opens a section with `pilot.pause(0.2)`, and 250 > 200. Eight tests
+in `test_watchlists_artifacts_pane.py` began failing with `NoMatches:
+#watchlists-artifacts-pane`, **passing in isolation and failing in a full-file run**,
+because the margin was machine load. Two more flipped between runs. It looked exactly
+like flakiness and was not: it was a deterministic ordering change, mis-read as noise
+because the symptom was load-dependent.
+
+Scheduling the drain with `call_next` fixed all ten and cost nothing else — it is also
+strictly safer than the worker it replaced, whose own comment explains that it needed a
+private worker group so the screen's several `run_worker(..., exclusive=True)` call sites
+could not cancel it mid-swap. A `call_next` callback cannot be cancelled by a worker at
+all.
+
+**What to do.** Before moving any DOM mutation onto a worker, ask what the tests (and the
+app's own idle handling) actually wait for. `run_worker` is for *work*; the mount/remove
+pair that lands its result belongs on the pump. And when a batch of tests starts failing
+together in a full run while passing alone, do not reach for "flaky" — check whether the
+change under review moved something out of what the harness waits on.
+
+## A region factory that reads state before its `await` loses whatever lands in the gap (task-15461, 2026-08-11)
+
+**The trap.** Textual's own `Widget.recompose` removes its children **first** and calls
+`compose()` afterwards, so it always reads widget state on the late side of the yield.
+Hand-rolled in-place swaps usually do the opposite — build the replacement first, so a
+factory that raises leaves the old content standing rather than an empty box — and that
+inversion opens a window: state read, `await remove()`, state changes, `await mount()`.
+
+**What happened.** `watch_active_section` dispatches the new section's loader and the
+region swap in the same breath. `WatchlistsWorkbench.refresh_region_content` calls the
+region factory (which reads `self._loaded_rules`) *before* its remove/mount awaits. The
+loader — an `AsyncMock` in the test, a fast local query in production — completed during
+the removal, wrote its rows to the screen, then looked for its pane and could not find it:
+the replacement existed but was not yet mounted. Result: an Alert-rules table that stayed
+empty over a `_loaded_rules` holding the row, with nothing left to correct it. The
+whole-screen recompose being replaced had never had the gap, purely because of Textual's
+ordering.
+
+**What to do.** When you replace a recompose with a hand-rolled swap, re-apply the state
+*after* the mount (`_reseed_active_section_pane`) rather than trusting the read that
+happened before it. Reactive assignments make the re-apply free when nothing moved, so
+the cost is a few lines and the failure mode it closes is silent.

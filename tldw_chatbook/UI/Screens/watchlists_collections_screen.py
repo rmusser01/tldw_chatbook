@@ -557,11 +557,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # label, so the crumb would still render, just anonymously.
     #
     # Both live on the screen, not on the tree widget, precisely because
-    # `region_layout` is `recompose=True`: any collapse/solo/rail toggle
-    # rebuilds the whole workbench, constructing a brand new `WatchlistTree`
-    # instance. Pane-local state does not survive that (see `selected_run`
-    # and the create-form draft above for the same reasoning already applied
-    # elsewhere on this screen).
+    # collapsing or expanding the left rail constructs a brand new
+    # `WatchlistTree` instance -- the region's rendered form changes, so its
+    # widget is swapped for a freshly built one (task-15461 narrowed the
+    # blast radius of a layout change from "every region" to "the region that
+    # changed", but a toggled region is still rebuilt). Pane-local state does
+    # not survive that (see `selected_run` and the create-form draft above
+    # for the same reasoning already applied elsewhere on this screen).
     selected_scope = reactive(TreeScope(kind="all"))
     tree_scope = reactive(TreeScope(kind="all"))
 
@@ -844,12 +846,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._breadcrumb_labels: list[str] = []
         self._applying_navigation_context = False
         # Mirrors SourcesPane's create-form state (Finding 1, fix round 1):
-        # `region_layout` is `recompose=True`, so any collapse/solo/rail
-        # toggle rebuilds the whole workbench, constructing a brand new
-        # SourcesPane. Without holding the draft here — the same way
-        # selected_source/selected_run/active_section already survive pane
-        # rebuilds — a half-typed create form would be silently destroyed by
-        # a keybinding that has nothing to do with Sources.
+        # collapsing or expanding the region the pane lives in constructs a
+        # brand new SourcesPane, and so does a section switch. Without
+        # holding the draft here — the same way selected_source/selected_run/
+        # active_section already survive pane rebuilds — a half-typed create
+        # form would be silently destroyed by a keybinding that has nothing
+        # to do with Sources. (Since task-15461 a rebuild is scoped to the
+        # region that actually changed, which narrows how OFTEN this fires,
+        # not whether the draft has to survive it.)
         self._source_create_form_open = False
         self._source_create_draft: dict[str, str] = {"name": "", "url": "", "tags": ""}
         # The create form's noise-selector text, mirrored for the same reason
@@ -1658,9 +1662,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _build_tree_pane(self) -> WatchlistTree:
         """Build the LEFT_RAIL-region content: the watchlist tree.
 
-        A factory, not an instance: `region_layout` is `recompose=True`, so
-        any collapse/solo/rail toggle rebuilds every region, and a widget
-        instance can only be mounted once (see the factory note on
+        A factory, not an instance: collapsing or expanding the left rail
+        swaps its widget for a freshly built one, and a widget instance can
+        only be mounted once (see the factory note on
         `WatchlistsWorkbench.__init__`).
 
         Seeds `expanded`/`active_tag` from screen state (whole-branch review,
@@ -2333,9 +2337,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         Reads `_console_follow_item` -- a plain attribute -- rather than
         polling the adapter (review wave, M4). The workbench calls this
-        factory again on every region rebuild, and `region_layout` is
-        `recompose=True`, so a `z`/`Z`/`[`/`]`/chevron toggle would otherwise
-        re-run the adapter's multi-query fan-out from inside `compose()`. The
+        factory again on every rebuild of the RIGHT_RAIL region, so a `]`
+        (or a chevron on the Inspector) would otherwise re-run the adapter's
+        multi-query fan-out from inside `compose()`. The
         handoff's cache makes that free once a poll has SUCCEEDED, but on the
         failure path it is retried every time -- exactly the shape this file
         insists its content factories must not have.
@@ -2377,9 +2381,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         cross-cutting action unrelated to whatever is currently selected --
         moves to the bottom.
         """
-        # Seed from screen state (Finding 3, fix round 2): `region_layout` is
-        # `recompose=True`, so any collapse/solo/rail toggle constructs a
-        # brand new InspectorPane. Without this, the screen keeps
+        # Seed from screen state (Finding 3, fix round 2): collapsing or
+        # expanding the right rail constructs a brand new InspectorPane, and
+        # so does the drain's conditional rail rebuild
+        # (`_rebuild_inspector_if_console_follow_drifted`). Without this,
+        # the screen keeps
         # `selected_entity` but the freshly-built Inspector starts at its
         # class default (`None`) until the NEXT explicit selection change —
         # `watch_selected_entity` only pushes on change, so a rebuild alone
@@ -2598,9 +2604,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             yield WatchlistsWorkbench(
                 self._rendered_region_layout(),
                 content={
-                    # Factories, not instances: `region_layout` is
-                    # `recompose=True`, so any collapse/solo/rail toggle
-                    # rebuilds every region, not just the one that changed.
+                    # Factories, not instances: a region whose rendered form
+                    # changes (collapse/expand, and for ITEMS a section
+                    # switch) is swapped for a freshly built widget, so each
+                    # of these is called more than once.
                     # A pre-built container's constructor-supplied children
                     # only mount on its FIRST mount; the same instance
                     # remounted a second time comes back childless (verified
@@ -2734,7 +2741,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.query_one(WatchlistsWorkbench).region_layout = self._rendered_region_layout()
         except Exception:
             logger.debug("Workbench not mounted yet; layout applies on compose.")
+        self._sync_reader_expanded_state()
         self._schedule_layout_persist(layout)
+
+    def _sync_reader_expanded_state(self) -> None:
+        """Push CONTENT's solo state into the live reader (task-15461).
+
+        `_build_content_pane` seeds `ContentPane.expanded` on every build,
+        which used to be enough because every layout change rebuilt every
+        region. Scoped updates keep a still-expanded CONTENT on its ORIGINAL
+        instance, and `Z` on CONTENT is exactly the case that changes this
+        flag without changing CONTENT's own form (solo collapses ITEMS, the
+        sibling) -- so without this push the reader's Expand/Restore button
+        would keep offering the action it has just performed.
+
+        A no-op when CONTENT is collapsed or hidden: there is no pane, and
+        the next `_build_content_pane` seeds the fresh one anyway.
+        """
+        try:
+            reader = self.query_one("#watchlists-content-pane", ContentPane)
+        except NoMatches:
+            return
+        reader.expanded = self.region_layout.solo_region == Region.CONTENT
 
     def _schedule_layout_persist(self, layout: RegionLayout) -> None:
         """Persist ``layout`` off the UI thread, skipping genuine no-ops.
@@ -3066,8 +3094,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Store the tree's selection on the screen, not the tree.
 
         `selected_scope` lives here for the same reason `selected_run` and
-        the create-form draft do: the workbench's `region_layout` is
-        `recompose=True`, so a bare rail toggle rebuilds a brand new
+        the create-form draft do: a bare rail toggle swaps in a brand new
         `WatchlistTree` that would otherwise lose the selection.
         """
         event.stop()
@@ -3676,6 +3703,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     _SURFACE_RAIL = "rail"
     _SURFACE_HEADER = "header"
     _SURFACE_INSPECTOR = "inspector"
+    #: task-15461. The section swap: the ITEMS region's pane (routed by
+    #: `active_section`), the centre header (which carries the tab strip) and
+    #: whichever centre regions the new tab hides or shows. Queued here rather
+    #: than run straight from `watch_active_section` because it swaps the SAME
+    #: `#wl-centre-status` widget `_SURFACE_HEADER` does, and two independent
+    #: remove/mount pairs over one id is exactly the interleaving this queue
+    #: exists to prevent.
+    _SURFACE_SECTION = "section"
 
     def _request_surface_refresh(self, *surfaces: str) -> None:
         """Record that one or more workbench surfaces need rebuilding.
@@ -3696,13 +3731,29 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         runs. Requests that arrive while it is running are picked up by its
         next loop rather than starting -- or cancelling -- anything.
 
+        **Scheduled on the message pump, not as a worker** (task-15461). This
+        used to be `run_worker(..., group="wc_surface_refresh")`, whose own
+        group existed so that the several `run_worker(..., exclusive=True)`
+        call sites on this screen without a group (e.g.
+        `_load_active_section_data`) could not cancel the drainer mid-swap.
+        `call_next` is immune to that by construction -- it is not a worker at
+        all -- and it restores a property the section swap depends on:
+        `refresh(recompose=True)`, which `watch_active_section` used to call,
+        is itself a `call_next` callback, so anything that waits for the
+        message pump to go quiet (`Pilot.pause`'s `_wait_for_screen`, and the
+        app's own idle handling) waits for the DOM swap. A worker is invisible
+        to that wait. Moving the section swap into a worker made every
+        harness that opens a section and immediately queries its pane a
+        coin-flip on how long the swap happened to take -- measured at ~250 ms
+        for Artifacts, against a 200 ms pause.
+
         Args:
-            surfaces: Any of `_SURFACE_RAIL`, `_SURFACE_HEADER` (each an
-                unconditional rebuild of that surface) or
-                `_SURFACE_INSPECTOR` (conditional -- the right rail is
-                rebuilt only when the Console-follow row no longer matches
-                the adapter; see `_resolve_console_follow_drift`). Unknown
-                names are ignored by the drainer.
+            surfaces: Any of `_SURFACE_RAIL`, `_SURFACE_HEADER`,
+                `_SURFACE_SECTION` (each an unconditional rebuild of that
+                surface) or `_SURFACE_INSPECTOR` (conditional -- the right
+                rail is rebuilt only when the Console-follow row no longer
+                matches the adapter; see `_resolve_console_follow_drift`).
+                Unknown names are ignored by the drainer.
         """
         if not self._dom_is_live:
             return
@@ -3712,26 +3763,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # Arm, then disarm if scheduling fails -- `_start_tree_write`'s
         # discipline, for the identical failure mode (review wave, M1). Only
         # `_drain_surface_refresh`'s `finally` ever lowers this flag, and it
-        # never runs if `run_worker` raises synchronously; the flag would then
+        # never runs if scheduling raises synchronously; the flag would then
         # be stuck True for the life of the screen, every later request would
         # queue and return, and the rail/header would silently stop
         # following every background loader. Arming *after* scheduling is not
         # the fix either: the drainer's `finally` could already have lowered
         # the flag by the time we raised it.
-        #
-        # Its own group, not the default one: several call sites on this
-        # screen run `run_worker(..., exclusive=True)` without a group (e.g.
-        # `_load_active_section_data`), and those would otherwise cancel this
-        # drainer mid-swap -- the very failure this queue exists to prevent.
-        drain = self._drain_surface_refresh()
         self._surface_refresh_draining = True
         try:
-            self.run_worker(drain, group="wc_surface_refresh")
+            self.call_next(self._drain_surface_refresh)
         except Exception:
             self._surface_refresh_draining = False
-            # Close the un-awaited coroutine explicitly, or it leaks a
-            # `RuntimeWarning` at collection time.
-            drain.close()
             logger.opt(exception=True).warning(
                 "Watchlists surface refresh could not be scheduled."
             )
@@ -3757,6 +3799,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     # screen's current state on the way back, so the pending
                     # update is not lost -- it arrives with that rebuild.
                     break
+                if self._SURFACE_SECTION in surfaces:
+                    await self._rebuild_surface(
+                        self._swap_active_section(workbench),
+                        "the Watchlists section",
+                    )
+                    # The swap rebuilds the centre header itself, so a HEADER
+                    # request that arrived in the same batch is already
+                    # served; running it again would be the second of the two
+                    # rebuilds task-15461 removes.
+                    surfaces = surfaces - {self._SURFACE_HEADER}
                 if self._SURFACE_RAIL in surfaces:
                     await self._rebuild_surface(
                         workbench.refresh_region_content(Region.LEFT_RAIL),
@@ -3775,6 +3827,221 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         finally:
             self._pending_surface_refresh = set()
             self._surface_refresh_draining = False
+
+    async def _swap_active_section(self, workbench: WatchlistsWorkbench) -> None:
+        """Move the workbench onto `active_section`, region by region.
+
+        task-15461. This replaces `watch_active_section`'s whole-screen
+        `refresh(recompose=True)`, which rebuilt the navigation bar, the
+        footer, the header bar, both rails and both centre regions to change
+        which pane the centre shows -- 75-176 mounted widgets per tab click,
+        measured, including a fresh `WatchlistTree` whose `compose` runs one
+        synchronous source-row query per expanded watchlist.
+
+        Only three things on this screen actually read `active_section`:
+
+        * the ITEMS region, whose pane `_build_detail_pane` routes by section;
+        * the centre header, which carries the tab strip and the scoped
+          snapshot markers;
+        * `_hidden_centre_regions`/`_rendered_region_layout`, i.e. whether
+          CONTENT exists at all on this tab and whether ITEMS may render
+          collapsed there.
+
+        The header bar's backend Select is the fourth, and is patched in
+        place by `_sync_backend_header_bar` (which also runs synchronously
+        from the watcher, so the disabled state never lags the tab).
+
+        Known and accepted: this path removes widgets WITHOUT going through
+        `BaseAppScreen.refresh`, so the task-627 defensive `capture_mouse
+        (None)` no longer runs on a tab switch. Reachability is low -- it
+        needs a mouse still captured by something inside the header or the
+        ITEMS pane at the instant a tab changes, i.e. a drag whose `MouseUp`
+        has not landed while the section changes by some other route -- and
+        the panes that recompose themselves already carry
+        `RecomposeCaptureGuard`. Documented rather than fixed; a guard here
+        would have to release only captures inside the two surfaces this
+        swap actually tears down.
+
+        Args:
+            workbench: The mounted workbench, resolved once by the drainer.
+        """
+        # Asked BEFORE the swap: afterwards the widget is already gone and
+        # Textual has already re-homed focus (see `_restore_focus_after_swap`).
+        rehome_focus = self._swap_will_destroy_focus()
+        await workbench.apply_section_view(
+            hidden=self._hidden_centre_regions(),
+            layout=self._rendered_region_layout(),
+            rebuild_regions=(Region.ITEMS,),
+            rebuild_header=True,
+        )
+        if rehome_focus:
+            self._restore_focus_after_swap()
+        # CONTENT is not rebuilt by the swap (the reader is deliberately not
+        # gated on `active_section` -- see `_build_content_pane`), so a still
+        # -mounted reader keeps its instance across the tab change. Its
+        # `expanded` flag is layout-derived, and `_rendered_region_layout`
+        # can move ITEMS' collapse state across the Read boundary, so
+        # re-push it for the same reason `_apply_layout` does.
+        self._sync_reader_expanded_state()
+        self._reseed_active_section_pane()
+
+    #: The two surfaces `_swap_active_section` tears down: the centre header
+    #: (which carries the tab strip) and the ITEMS region (the section's own
+    #: pane). Focus living inside either one does not survive the swap.
+    _SWAP_OWNED_CONTAINER_IDS = frozenset({"wl-centre-status", "wl-region-items"})
+
+    def _swap_will_destroy_focus(self) -> bool:
+        """Whether the section swap is about to unmount the focused widget.
+
+        Asked before the swap, because Textual answers it for us afterwards --
+        badly. See `_restore_focus_after_swap`.
+
+        Returns:
+            `True` when something is focused and it sits inside the centre
+            header or the ITEMS region.
+        """
+        node = self.focused
+        while node is not None:
+            if (getattr(node, "id", None) or "") in self._SWAP_OWNED_CONTAINER_IDS:
+                return True
+            node = node.parent
+        return False
+
+    def _restore_focus_after_swap(self) -> None:
+        """Put focus back on the tab the user just switched to.
+
+        A tab click focuses the tab `Button`, which lives in the centre header
+        -- and the swap rebuilds that header, so the focused widget is removed
+        from under the user. Textual's `Screen._reset_focus` then walks for a
+        replacement and lands on the first focusable thing it finds, which on
+        this screen is a node in the LEFT RAIL. That is not cosmetic:
+        `on_descendant_focus` reads the new focus and sets
+        `focused_region = LEFT_RAIL`, so the very next `z` collapses the rail
+        AND persists that collapse to config -- from a keypress the user aimed
+        at the section they were looking at. Measured A/B against the
+        pre-task code, where the whole-screen recompose left focus at `None`
+        and `z` was refused by `_refuse_region_gesture_off_read_tab`.
+
+        Re-focusing the freshly built tab restores that refusal by the honest
+        route rather than by accident: focus lands in `#wl-centre-status`, so
+        `on_descendant_focus` sets `_focus_in_centre_header`, which is exactly
+        what `action_toggle_region`/`action_solo_region` already consult.
+
+        Only called when the swap really did unmount the focused widget
+        (`_swap_will_destroy_focus`): a section change driven from elsewhere
+        -- a deep link, `EditRuleRequested` -- must not steal focus from
+        wherever the user actually is.
+        """
+        try:
+            self.query_one(f"#wl-tab-{self.active_section}", Button).focus()
+        except NoMatches:
+            # No tab for this section (nothing in `SECTIONS` matches), or the
+            # header could not be rebuilt. Leaving focus where Textual put it
+            # is still wrong, but there is nothing better to reach for here.
+            logger.debug("No section tab to restore focus to after the swap.")
+
+    def _reseed_active_section_pane(self) -> None:
+        """Re-apply the section's loaded rows to the pane the swap mounted.
+
+        `watch_active_section` dispatches this section's loader and the swap
+        in the same breath, and `WatchlistsWorkbench.refresh_region_content`
+        deliberately calls the region factory BEFORE detaching the old pane
+        (so a factory that raises leaves what is on screen standing). Those
+        two facts open a window: the factory reads screen state, then the
+        remove/mount pair awaits, and a loader that lands in that gap writes
+        its rows to `self._loaded_*` and then fails to find its pane, because
+        the replacement is built but not yet mounted. The pane then renders
+        the state as it was one instant before the data arrived, with nothing
+        left to correct it -- measured as an Alert-rules table that stayed
+        empty over a `self._loaded_rules` holding the row.
+
+        (The whole-screen `refresh(recompose=True)` this replaced did not have
+        the gap: Textual's `Widget.recompose` removes its children first and
+        calls `compose()` only afterwards, so it always read screen state on
+        the late side of the yield.)
+
+        Re-applying after the mount closes it from the other end, and costs
+        nothing when no loader landed: these are reactive assignments, and an
+        unchanged value fires no watcher and no recompose. It is also what
+        keeps a section switch to ONE pane build -- the loader's own push,
+        arriving later, finds the values already in place.
+        """
+        if not self._dom_is_live:
+            return
+        section = self.active_section
+        try:
+            if section == "items":
+                self.query_one(
+                    "#watchlists-items-pane", ArticleListPane
+                ).items = self._loaded_items
+            elif section == "sources":
+                self.query_one(
+                    "#watchlists-sources-pane", SourcesPane
+                ).sources = self.scoped_loaded_sources()
+            elif section == "runs":
+                self.query_one("#watchlists-runs-pane", RunsPane).runs = (
+                    self._loaded_runs
+                )
+            elif section == "rules":
+                self.query_one("#watchlists-rules-pane", RulesPane).rules = (
+                    self._loaded_rules
+                )
+            elif section == "notifications":
+                pane = self.query_one(
+                    "#watchlists-notifications-pane", NotificationsPane
+                )
+                pane.notifications = self._loaded_notifications
+                pane.selected_notification = self.selected_notification
+            elif section == "artifacts":
+                self._apply_briefing_state_to_pane()
+        except NoMatches:
+            # The region is collapsed, or the swap could not build its pane.
+            # Either way the next build seeds from this same state.
+            pass
+
+    def _sync_backend_header_bar(self) -> None:
+        """Repaint the backend picker row for the active section, in place.
+
+        `_LOCAL_ONLY_SECTIONS` disables the Select and adds an explanatory
+        `#watchlists-backend-label`; both used to arrive via the whole-screen
+        recompose `watch_active_section` no longer does (task-15461). Kept
+        synchronous, unlike the region swap: this is three attribute writes
+        and at most one one-widget mount, and a Select that stays enabled for
+        even one frame on a local-only tab is a control that lies about what
+        it can do.
+
+        The Select instance itself is deliberately NOT rebuilt -- its `value`
+        already tracks `runtime_backend`, and rebuilding it would close an
+        open dropdown mid-choice.
+        """
+        local_only = self._local_only_section()
+        try:
+            backend_select = self.query_one("#watchlists-backend-select", PruneSafeSelect)
+        except NoMatches:
+            return
+        backend_select.disabled = local_only is not None
+        backend_select.tooltip = (
+            (local_only or {}).get("tooltip")
+            or "Choose the Watchlists data backend."
+        )
+        label_text = self._backend_label_text()
+        try:
+            label: Static | None = self.query_one("#watchlists-backend-label", Static)
+        except NoMatches:
+            label = None
+        if label_text is None:
+            if label is not None:
+                label.remove()
+            return
+        if label is None:
+            try:
+                self.query_one("#watchlists-header-bar").mount(
+                    Static(label_text, id="watchlists-backend-label")
+                )
+            except NoMatches:
+                pass
+            return
+        label.update(label_text)
 
     async def _rebuild_inspector_if_console_follow_drifted(
         self, workbench: WatchlistsWorkbench
@@ -3863,9 +4130,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._focus_in_centre_header = False
 
     def watch_active_section(self) -> None:
-        # A tab switch always fully recomposes the centre (below): whatever
-        # `_focus_in_centre_header` was tracking about the OLD DOM is moot
-        # the instant that DOM is torn down. Reset
+        # A tab switch always rebuilds the centre header and the section's own
+        # pane (below): whatever `_focus_in_centre_header` was tracking about
+        # the OLD DOM is moot the instant that DOM is torn down. Reset
         # to "not in the header" rather than leave a stale `True` standing
         # -- `on_descendant_focus` will set it again the moment a fresh
         # focus event actually lands there, but nothing guarantees one
@@ -3879,7 +4146,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._pending_navigation_run_id = None
             self._pending_navigation_run_backend = None
         if self.is_mounted:
-            self.refresh(recompose=True)
+            # task-15461: one region-scoped swap, not a whole-screen
+            # `refresh(recompose=True)`. Queued on the surface drain rather
+            # than run here because it swaps `#wl-centre-status`, the same
+            # widget `_SURFACE_HEADER` swaps -- see `_SURFACE_SECTION`.
+            self._sync_backend_header_bar()
+            self._request_surface_refresh(self._SURFACE_SECTION)
             if not self._applying_navigation_context:
                 self._load_active_section_data()
 
@@ -6002,6 +6274,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             self._loaded_briefing_presets = preset_rows
             self._watchlist_has_audio_episodes = has_audio_episodes
+        self._apply_briefing_state_to_pane()
+
+    def _apply_briefing_state_to_pane(self) -> None:
+        """Push every screen-held briefing value into the mounted pane.
+
+        Extracted from `_load_briefings`' tail (task-15461) so the section
+        swap can re-apply the same state after mounting a fresh
+        `ArtifactsPane` -- see `_reseed_active_section_pane` for why that is
+        not redundant. Every write is a reactive assignment, so a value that
+        has not moved costs nothing: Textual only fires watchers (and the
+        recompose that follows) when `!=` says the value actually changed.
+        """
         if not self._dom_is_live:
             return
         try:
@@ -6177,16 +6461,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # in the one frame before `_load_briefings`'s reload lands.
         self._loaded_citations = []
         self._citation_item_lookup = {}
-        try:
-            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
-        except NoMatches:
-            pane = None
-        if pane is not None:
-            pane.scripts = []
-            pane.selected_script = None
-            pane.script_audio = None
-            pane.scripts_with_audio = {}
-            pane.citations = []
+        # task-15461: the PANE's own copies are cleared by
+        # `ArtifactsPane._clear_selection_derived_state`, inside the same
+        # synchronous instant the selection moves, so the clearing rides the
+        # recompose that selection already queued instead of adding a second
+        # one. The screen-side mirrors above still have to be cleared here --
+        # they are what `handle_citation_activated` and a later rebuild read.
         self.run_worker(
             self._load_briefings(), exclusive=True, group="wl-briefings-load"
         )

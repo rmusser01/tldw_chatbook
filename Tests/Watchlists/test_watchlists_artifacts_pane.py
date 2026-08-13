@@ -2835,9 +2835,18 @@ async def test_switching_the_selected_briefing_clears_stale_scripts_before_the_r
         # IMMEDIATELY after it returns -- before `run_worker` has let the
         # reload do anything at all -- proves the clearing itself, not
         # merely that it finishes "soon".
-        screen.handle_briefing_selected(BriefingSelected(second_row))
-
+        # task-15461 moved the clearing from the screen's message handler
+        # into `ArtifactsPane.watch_selected_briefing`, so that the
+        # select->clear->reload pipeline costs ONE pane recompose instead of
+        # two. The selection is therefore what has to be driven here, not the
+        # handler -- and it is still a fully synchronous route: a reactive
+        # assignment runs its watcher inline, so state read on the very next
+        # line is state that was set before `run_worker` could schedule
+        # anything. (Driving the handler directly would now assert nothing:
+        # it no longer touches the pane.)
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.selected_briefing = second_row
+
         assert pane.selected_script is None, (
             "the stale script selection must clear synchronously, before "
             "the reload worker is even dispatched"

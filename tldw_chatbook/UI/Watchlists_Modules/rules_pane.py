@@ -46,13 +46,15 @@ class RuleFormVisibilityChanged(Message):
     """Posted whenever the rule form opens or closes, and which rule (if any)
     it is editing.
 
-    `RulesPane` lives inside a `WatchlistsWorkbench` region, and that
-    workbench's `region_layout` reactive is `recompose=True` — collapsing or
-    expanding *any* region (including one unrelated to Rules, e.g. `[` on the
-    left rail) rebuilds the whole workbench and constructs a brand new
-    `RulesPane`. Without this message the screen has no way to know an edit
-    was in progress, so an open edit form would be silently destroyed on the
-    next such rebuild — the same failure `CreateFormVisibilityChanged` in
+    `RulesPane` lives inside a `WatchlistsWorkbench` region, and that region
+    is swapped for a freshly built one whenever it collapses or expands, or
+    whenever the section switches — each of which constructs a brand new
+    `RulesPane`. (Until task-15461 the trigger was wider still: `region_
+    layout` was `recompose=True`, so `[` on the left rail — a region
+    unrelated to Rules — rebuilt this pane too.) Without this message the
+    screen has no way to know an edit was in progress, so an open edit form
+    would be silently destroyed on the next such rebuild — the same failure
+    `CreateFormVisibilityChanged` in
     sources_pane.py already fixes for the Sources create form. The owning
     screen mirrors this into its own state and re-seeds it into the
     freshly-constructed pane via `RulesPane.edit_rule`.

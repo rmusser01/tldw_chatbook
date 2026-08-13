@@ -20,7 +20,7 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from .region_layout import CENTRE_REGIONS, Region, RegionLayout
+from .region_layout import CENTRE_REGIONS, REGION_ORDER, Region, RegionLayout
 
 
 #: Human-readable titles, used for both expanded bodies and collapsed headers.
@@ -78,13 +78,24 @@ class WatchlistsWorkbench(Horizontal):
     not specific to this dataclass.
 
     Attributes:
-        region_layout: The current collapse/solo state. Setting it
-            (`recompose=True`) unmounts and rebuilds every region, not just
-            the one that changed — see `__init__`'s note on `content` for
-            why that requires factories rather than widget instances.
+        region_layout: The current collapse/solo state. Setting it swaps ONLY
+            the regions whose rendered form actually changed — a region that
+            flipped between its collapsed one-line header and its expanded
+            body. Regions that stayed expanded keep their live widget
+            instance and are patched in place (the sole-centre CSS marker is
+            the only other thing a layout change can move for them).
+
+            This was `recompose=True` until task-15461, which meant every
+            `z`/`Z`/`[`/`]`/chevron rebuilt all four regions: measured on a
+            seeded screen, one `]` tore down and rebuilt 76–99 widgets
+            (the tree with its per-expanded-watchlist synchronous source
+            query, the tab strip, the article list, the Inspector) to
+            collapse a rail. `content` still holds FACTORIES rather than
+            instances — see `__init__` — because a swapped-out region's
+            replacement must still be a brand new widget.
     """
 
-    region_layout: reactive[RegionLayout] = reactive(RegionLayout(), recompose=True)
+    region_layout: reactive[RegionLayout] = reactive(RegionLayout())
 
     def __init__(
         self,
@@ -95,15 +106,14 @@ class WatchlistsWorkbench(Horizontal):
         collapsed_suffixes: Mapping[Region, str] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Build the workbench, seeding `region_layout` without triggering a recompose.
+        """Build the workbench, seeding `region_layout` without a region sync.
 
         Args:
             layout: Initial collapse/solo state.
-            content: Per-region **factories**, not widget instances —
-                ``region_layout`` is ``recompose=True``, so *any* collapse/
-                solo/rail toggle fully unmounts and rebuilds every region,
-                not just the one that changed (that blast radius is
-                inherited from the reactive design, not introduced here).
+            content: Per-region **factories**, not widget instances — a
+                region whose rendered form changes (collapsed header <->
+                expanded body) is swapped for a freshly built one, so the
+                factory must be callable more than once.
                 Passing already-constructed instances was tried first and
                 verified broken empirically: a container widget's
                 constructor-supplied children (e.g. ``Vertical(Static(...),
@@ -126,14 +136,14 @@ class WatchlistsWorkbench(Horizontal):
                 UNMOUNT rather than keep a one-row header). The caller
                 (`WatchlistsCollectionsScreen._hidden_centre_regions`)
                 decides which regions this is, keyed on `active_section`;
-                the workbench itself has no opinion about tabs. Constructor-
-                only, not a reactive: the caller fully reconstructs this
-                widget (via `compose_content`'s own recompose) whenever
-                `active_section` changes, so nothing here needs to react to
-                that change directly. A plain toggle/solo (`_apply_layout`
-                pushing a new `region_layout` onto the ALREADY-mounted
-                instance) never changes which tab is active, so a stale
-                `hidden` is never observable.
+                the workbench itself has no opinion about tabs. The initial
+                value only: since task-15461 a section switch no longer
+                rebuilds this widget, so the caller pushes the new set
+                through `apply_section_view` instead, which mounts or
+                unmounts exactly the centre regions that crossed the
+                boundary. A plain toggle/solo (`_apply_layout` pushing a new
+                `region_layout` onto the ALREADY-mounted instance) never
+                changes which tab is active, so `hidden` is untouched there.
             header: An optional factory for a widget rendered as the FIRST
                 child of the centre stack, unconditionally — regardless of
                 `hidden`. TASK-1344: the section tab strip and the
@@ -162,9 +172,9 @@ class WatchlistsWorkbench(Horizontal):
     def compose(self) -> ComposeResult:
         """Render the left rail, the stacked centre, and the right rail.
 
-        Re-runs in full on every `region_layout` change (`recompose=True`),
-        rebuilding all four regions from `self.region_layout` and
-        `self._content` regardless of which single region actually changed.
+        Runs once per mount. A later `region_layout` change no longer
+        re-runs this (task-15461): `watch_region_layout` swaps only the
+        regions whose form actually changed — see that watcher.
 
         Returns:
             The left-rail region, the centre `Vertical` (an optional header,
@@ -240,7 +250,7 @@ class WatchlistsWorkbench(Horizontal):
         if supplied is not None:
             children.append(supplied)
         classes = ["watchlists-region", f"watchlists-region-{region.value}"]
-        if self._is_sole_expanded_centre_region(region):
+        if self._is_sole_expanded_centre_region(region, self.region_layout):
             # A CSS hook for the solo case. `.watchlists-region-content`
             # carries a `max-height` cap so a long article cannot crowd
             # ITEMS out of the centre stack — but when ITEMS is collapsed
@@ -265,7 +275,9 @@ class WatchlistsWorkbench(Horizontal):
         body.can_focus = True
         return body
 
-    def _is_sole_expanded_centre_region(self, region: Region) -> bool:
+    def _is_sole_expanded_centre_region(
+        self, region: Region, layout: RegionLayout
+    ) -> bool:
         """Whether ``region`` is the only centre region still expanded.
 
         True exactly when the centre stack shows one real pane and, for
@@ -283,6 +295,10 @@ class WatchlistsWorkbench(Horizontal):
         Args:
             region: The region to test. Rails always answer `False`; solo
                 applies to the centre stack only (`RegionLayout.solo`).
+            layout: The layout to answer against. Passed explicitly rather
+                than read off `self` (task-15461) so `watch_region_layout`
+                can ask the same question of the OUTGOING layout and tell
+                whether this marker is what actually moved.
 
         Returns:
             `True` if `region` is a centre region and every other
@@ -293,9 +309,212 @@ class WatchlistsWorkbench(Horizontal):
         expanded = [
             r
             for r in CENTRE_REGIONS
-            if r not in self._hidden and not self.region_layout.is_collapsed(r)
+            if r not in self._hidden and not layout.is_collapsed(r)
         ]
         return expanded == [region]
+
+    # --- scoped layout/section updates (task-15461) -----------------------
+
+    async def watch_region_layout(
+        self, previous: RegionLayout, layout: RegionLayout
+    ) -> None:
+        """Swap only the regions whose rendered form the new layout moves.
+
+        The reactive used to be `recompose=True`, which rebuilt all four
+        regions for every `z`/`Z`/`[`/`]`/chevron. A layout change can only
+        move two things about a region: whether it renders as its collapsed
+        one-line header or its expanded body, and whether it carries the
+        `watchlists-region-sole-centre` marker. The first needs a widget
+        swap; the second is a class toggle on the live widget, which keeps
+        the pane instance (and everything mounted inside it) alive.
+
+        Args:
+            previous: The layout being replaced.
+            layout: The layout now in effect (already stored on `self`, so
+                `_region_widget` builds against it).
+        """
+        if not self.is_mounted:
+            return
+        await self._sync_regions(previous)
+
+    async def apply_section_view(
+        self,
+        *,
+        hidden: frozenset[Region],
+        layout: RegionLayout,
+        rebuild_regions: tuple[Region, ...] = (),
+        rebuild_header: bool = False,
+    ) -> None:
+        """Move the workbench onto a different section, region by region.
+
+        The caller's `active_section` feeds exactly three things here: which
+        centre regions exist at all (`hidden`), the tab-adjusted collapse
+        state (`layout`), and the content of the region whose pane is routed
+        by the section (passed in `rebuild_regions`). Everything else --
+        both rails above all -- is left standing, which is the whole point:
+        rebuilding the left rail means re-running `WatchlistTree.compose`,
+        and that runs one synchronous source-row query per expanded
+        watchlist.
+
+        Args:
+            hidden: Centre regions that must have no DOM presence on the new
+                section. Newly hidden regions are unmounted; newly shown ones
+                are mounted back into their `CENTRE_REGIONS` position.
+            layout: The tab-adjusted layout (see
+                `WatchlistsCollectionsScreen._rendered_region_layout`).
+                Applied without firing `watch_region_layout`, so the
+                hidden-set change and the layout change are reconciled in
+                one pass rather than two.
+            rebuild_regions: Regions whose supplied content must be rebuilt
+                even though their form did not change -- the section's own
+                pane lives in one of these.
+            rebuild_header: Whether to rebuild the centre header too (the
+                tab strip lives there, so a real section switch always does).
+        """
+        if not self.is_mounted:
+            self._hidden = frozenset(hidden)
+            self.set_reactive(WatchlistsWorkbench.region_layout, layout)
+            return
+        previous_layout = self.region_layout
+        previous_hidden = self._hidden
+        self._hidden = frozenset(hidden)
+        # `set_reactive`, not assignment: `watch_region_layout` would run a
+        # SECOND reconcile pass against a `_hidden` this method has already
+        # moved, so the two changes would be applied in the wrong order and
+        # the layout half would be done twice.
+        self.set_reactive(WatchlistsWorkbench.region_layout, layout)
+        await self._sync_regions(previous_layout)
+        for region in rebuild_regions:
+            if region in self._hidden:
+                continue
+            # A region the sync above just swapped is already built from the
+            # current factory; rebuilding it again would be the second of the
+            # two rebuilds this task exists to remove.
+            if self._region_form_changed(previous_layout, previous_hidden, region):
+                continue
+            await self.refresh_region_content(region)
+        if rebuild_header:
+            await self.refresh_header_content()
+
+    def _region_form_changed(
+        self,
+        previous_layout: RegionLayout,
+        previous_hidden: frozenset[Region],
+        region: Region,
+    ) -> bool:
+        """Whether ``region``'s mounted widget has to be replaced outright."""
+        was_present = region not in previous_hidden
+        is_present = region not in self._hidden
+        if was_present != is_present:
+            return True
+        if not is_present:
+            return False
+        return previous_layout.is_collapsed(region) != self.region_layout.is_collapsed(
+            region
+        )
+
+    async def _sync_regions(self, previous_layout: RegionLayout) -> None:
+        """Bring the mounted regions in line with `region_layout`/`_hidden`.
+
+        Rails first (they are direct children of this `Horizontal` and are
+        never hidden), then the centre stack, which is rebuilt positionally
+        because a region can be absent from it entirely.
+        """
+        for region in (Region.LEFT_RAIL, Region.RIGHT_RAIL):
+            if previous_layout.is_collapsed(region) == self.region_layout.is_collapsed(
+                region
+            ):
+                continue
+            index = 0 if region is Region.LEFT_RAIL else len(self.children) - 1
+            await self._swap_region_widget(region, self, index)
+        await self._sync_centre_regions(previous_layout)
+
+    async def _sync_centre_regions(self, previous_layout: RegionLayout) -> None:
+        """Mount, unmount, swap or repaint each centre region as required.
+
+        Reads the CURRENT `self._hidden` rather than needing the previous one:
+        a region that is newly shown simply has no mounted node, and a region
+        that is newly hidden is removed by the first loop below -- both cases
+        fall out of comparing the DOM against the desired set.
+        """
+        try:
+            centre = self.query_one("#wl-centre")
+        except NoMatches:
+            return
+        for region in CENTRE_REGIONS:
+            if region not in self._hidden:
+                continue
+            node = self._mounted_region_node(region)
+            if node is not None:
+                await node.remove()
+
+        desired = [region for region in CENTRE_REGIONS if region not in self._hidden]
+        for position, region in enumerate(desired):
+            index = self._centre_content_offset(centre) + position
+            node = self._mounted_region_node(region)
+            if node is None:
+                await centre.mount(self._region_widget(region), before=index)
+                continue
+            if previous_layout.is_collapsed(region) != self.region_layout.is_collapsed(
+                region
+            ):
+                await self._swap_region_widget(region, centre, index)
+                continue
+            if self.region_layout.is_collapsed(region):
+                continue
+            # Still an expanded body, same instance: the only thing a layout
+            # change can have moved for it is the solo marker.
+            node.set_class(
+                self._is_sole_expanded_centre_region(region, self.region_layout),
+                "watchlists-region-sole-centre",
+            )
+
+    def _centre_content_offset(self, centre: Widget) -> int:
+        """How many non-region children the centre stack starts with.
+
+        The optional `header` factory's widget is mounted first and carries
+        whatever id the caller gave it, so it is identified by exclusion
+        rather than by name.
+        """
+        region_ids = {f"wl-region-{r.value}" for r in REGION_ORDER}
+        region_ids |= {f"wl-header-{r.value}" for r in REGION_ORDER}
+        offset = 0
+        for child in centre.children:
+            if (child.id or "") in region_ids:
+                break
+            offset += 1
+        return offset
+
+    def _mounted_region_node(self, region: Region) -> Widget | None:
+        """The widget currently rendering ``region``, in either form."""
+        for prefix in ("wl-region-", "wl-header-"):
+            try:
+                return self.query_one(f"#{prefix}{region.value}")
+            except NoMatches:
+                continue
+        return None
+
+    async def _swap_region_widget(
+        self, region: Region, parent: Widget, index: int
+    ) -> None:
+        """Replace ``region``'s mounted widget with a freshly built one.
+
+        Built before the old one is detached, for the reason
+        `refresh_region_content` states: a factory that raises must leave
+        what is on screen standing rather than emptying the slot. The
+        remove-then-mount pair still has an await between its halves --
+        `NodeList._ensure_unique_id` refuses to mount a second
+        `#wl-region-<r>`.
+        """
+        node = self._mounted_region_node(region)
+        if node is None:
+            return
+        replacement = self._region_widget(region)
+        await node.remove()
+        if index >= len(parent.children):
+            await parent.mount(replacement)
+        else:
+            await parent.mount(replacement, before=index)
 
     async def refresh_region_content(self, region: Region) -> None:
         """Rebuild one expanded region's supplied content in place.
@@ -303,14 +522,15 @@ class WatchlistsWorkbench(Horizontal):
         Task 7: a region's content can go stale without `region_layout`
         itself changing (the tree scope moving under the rail, a background
         load landing), so nothing would otherwise call its factory again.
-        Setting `region_layout` (`recompose=True`) would work too, but at
-        the cost of tearing down and remounting *every* region, including
-        ones whose whole design point is staying the same instance across
-        an unrelated change -- the Inspector is pushed new
-        `scope`/`selected_entity` values in place for exactly that reason
-        (see `WatchlistsCollectionsScreen.watch_selected_scope`), and a
-        full recompose would silently replace it with a fresh instance
-        instead, breaking any caller holding a reference to the old one.
+        Pushing a new `region_layout` would not work at all: since task-15461
+        that only swaps regions whose COLLAPSE state moved, so a layout equal
+        to the current one is a no-op and one that differs changes what the
+        user is looking at. (Before task-15461 it worked for the wrong
+        reason -- it recomposed every region -- at the cost of replacing
+        widgets whose whole design point is staying the same instance across
+        an unrelated change: the Inspector is pushed new
+        `scope`/`selected_entity` values in place for exactly that reason,
+        see `WatchlistsCollectionsScreen.watch_selected_scope`.)
 
         A no-op when `region` is collapsed (nothing mounted to replace) or
         was not given a content factory (nothing to refresh either).
@@ -360,15 +580,15 @@ class WatchlistsWorkbench(Horizontal):
         """Rebuild the header in place from a fresh call to its factory.
 
         The header's twin of `refresh_region_content` above (task-1344 fix
-        wave, Qodo correctness): `region_layout` is `recompose=True`, so
-        picking up a header-only change (the tree scope moving -- see
-        `WatchlistsCollectionsScreen.watch_tree_scope`) by pushing a new
-        layout would tear down and remount every region, including the
-        Inspector, which `watch_tree_scope` deliberately avoids (see its
-        own docstring). The header is the only surface that carries the
-        tab strip and the snapshot's scoped markers (since task-2513, on
-        every tab), so a header-only refresh path is the one that keeps
-        that readout current between recomposes.
+        wave, Qodo correctness), and reached the same way: nothing else calls
+        the `header` factory again, so a header-only change (the tree scope
+        moving -- see `WatchlistsCollectionsScreen.watch_tree_scope`) has no
+        other route onto the screen. Pushing a new `region_layout` is not one
+        either: since task-15461 that touches only the regions whose collapse
+        state moved, and never the header. The header is the only surface
+        carrying the tab strip and the snapshot's scoped markers (since
+        task-2513, on every tab), so this is what keeps that readout current
+        between rebuilds.
 
         A no-op when this workbench was built with no `header` factory:
         nothing to refresh, and no `#wl-centre-status` to query for either.
