@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import json
 
 import pytest
 from pydantic import ValidationError
@@ -79,35 +78,26 @@ def _managed_identity():
 
 def test_legacy_accepted_package_json_shape_and_bytes_remain_unchanged() -> None:
     accepted = _accepted_package()
-    expected = {
-        "package_uuid": "d3f6d610-6fd9-4cde-9ea7-cc5175ca445b",
-        "recipe_id": "audio-cpp-0.5.1.supertonic.supertonic_3_orig",
-        "recipe_revision": 1,
-        "package_variant": "supertonic_3_orig",
-        "public_model_id": "supertonic-3-orig",
-        "canonical_root": "/models/Supertonic-3-GGUF",
-        "canonical_root_identity": "1" * 64,
-        "configuration_identity": "2" * 64,
-        "weight_identity": "3" * 64,
-        "projection": {
-            "family": "supertonic",
-            "task": "tts",
-            "mode": "offline",
-            "model_relative_path": "supertonic-3-orig.gguf",
-            "model_spec_override_relative_path": None,
-            "busy_timeout_ms": None,
-            "load_options": [],
-            "session_options": [],
-        },
-    }
+    expected_json = (
+        '{"package_uuid":"d3f6d610-6fd9-4cde-9ea7-cc5175ca445b",'
+        '"recipe_id":"audio-cpp-0.5.1.supertonic.supertonic_3_orig",'
+        '"recipe_revision":1,"package_variant":"supertonic_3_orig",'
+        '"public_model_id":"supertonic-3-orig",'
+        '"canonical_root":"/models/Supertonic-3-GGUF",'
+        '"canonical_root_identity":"1111111111111111111111111111111111111111111111111111111111111111",'
+        '"configuration_identity":"2222222222222222222222222222222222222222222222222222222222222222",'
+        '"weight_identity":"3333333333333333333333333333333333333333333333333333333333333333",'
+        '"projection":{"family":"supertonic","task":"tts","mode":"offline",'
+        '"model_relative_path":"supertonic-3-orig.gguf",'
+        '"model_spec_override_relative_path":null,"busy_timeout_ms":null,'
+        '"load_options":[],"session_options":[]}}'
+    )
 
-    dumped = accepted.model_dump(mode="json")
+    serialized = accepted.model_dump_json()
 
     assert accepted.managed_artifact is None
-    assert dumped == expected
-    assert json.dumps(dumped, separators=(",", ":"), sort_keys=True).encode() == (
-        json.dumps(expected, separators=(",", ":"), sort_keys=True).encode()
-    )
+    assert serialized == expected_json
+    assert '"managed_artifact":' not in serialized
 
 
 def test_exact_managed_artifact_identity_round_trips_frozen() -> None:
@@ -185,6 +175,44 @@ def test_partial_or_malformed_managed_identity_is_rejected_boundedly(
         AudioCppAcceptedPackage.model_validate(values)
 
     assert "/models/Supertonic-3-GGUF" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "component",
+    (
+        "a",
+        "a.b-c_d",
+        "a" * 1024,
+        "",
+        "-a",
+        "a-",
+        "A",
+        "a/b",
+        "con",
+        "com1.txt",
+        "nul",
+    ),
+)
+def test_managed_identity_components_match_artifact_ref_semantics(
+    component: str,
+) -> None:
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.TTS.audio_cpp_guided_config import (
+        AudioCppManagedArtifactIdentity,
+    )
+
+    def accepts(factory: type) -> bool:
+        try:
+            factory(
+                artifact_id=component,
+                revision=component,
+                variant=component,
+            )
+        except (TypeError, ValueError):
+            return False
+        return True
+
+    assert accepts(ArtifactRef) == accepts(AudioCppManagedArtifactIdentity)
 
 
 def test_existing_external_and_managed_json_mappings_keep_legacy_runtime_meaning() -> (

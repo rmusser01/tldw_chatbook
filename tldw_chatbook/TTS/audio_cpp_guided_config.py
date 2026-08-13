@@ -31,8 +31,18 @@ from .audio_cpp_config import AudioCppConfig, _nested_audio_cpp_config
 
 _IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z", re.ASCII)
 _MANAGED_ARTIFACT_COMPONENT = re.compile(
-    r"[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?\Z",
+    r"[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?\Z",
     re.ASCII,
+)
+_WINDOWS_RESERVED_BASENAMES = frozenset(
+    {
+        "aux",
+        "con",
+        "nul",
+        "prn",
+        *(f"com{number}" for number in range(1, 10)),
+        *(f"lpt{number}" for number in range(1, 10)),
+    }
 )
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 _MAX_JSON_INTEGER = 2**53 - 1
@@ -106,7 +116,7 @@ def _safe_managed_artifact_component(value: object, *, label: str) -> str:
     if (
         type(value) is not str
         or _MANAGED_ARTIFACT_COMPONENT.fullmatch(value) is None
-        or _contains_unsafe_text(value)
+        or value.split(".", 1)[0].casefold() in _WINDOWS_RESERVED_BASENAMES
     ):
         raise ValueError(f"audio.cpp managed artifact {label} is invalid")
     return value

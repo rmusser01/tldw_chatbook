@@ -10,12 +10,17 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import cache
 from hashlib import sha256
 from pathlib import PurePosixPath, PureWindowsPath
 from types import MappingProxyType
 from uuid import uuid4
 
-from .audio_cpp_artifact_catalog import AUDIO_CPP_ARTIFACT_COMMIT
+from .audio_cpp_artifact_catalog import (
+    AUDIO_CPP_ARTIFACT_COMMIT,
+    AudioCppArtifactSourceManifest,
+    load_audio_cpp_artifact_source_manifest,
+)
 from .audio_cpp_guided_config import (
     AudioCppAcceptedPackage,
     AudioCppBackendPreference,
@@ -510,15 +515,31 @@ def _identity(parts: tuple[str, ...]) -> str:
     return sha256("\x00".join(parts).encode("utf-8")).hexdigest()
 
 
+@cache
+def _artifact_manifest() -> AudioCppArtifactSourceManifest:
+    return load_audio_cpp_artifact_source_manifest()
+
+
 def _managed_artifact_matches_recipe(
     recipe: AudioCppPackageRecipe,
     identity: AudioCppManagedArtifactIdentity,
 ) -> bool:
+    manifest = _artifact_manifest()
     return bool(
         type(identity) is AudioCppManagedArtifactIdentity
-        and recipe.model_library_artifact_ids == (identity.artifact_id,)
-        and identity.revision == AUDIO_CPP_ARTIFACT_COMMIT
+        and identity.revision == manifest.commit == AUDIO_CPP_ARTIFACT_COMMIT
         and identity.variant == recipe.precision
+        and recipe.model_library_artifact_ids == (identity.artifact_id,)
+        and any(
+            package.key
+            == (
+                recipe.recipe_id,
+                recipe.recipe_revision,
+                recipe.package_variant,
+            )
+            and package.artifact_id == identity.artifact_id
+            for package in manifest.packages
+        )
     )
 
 

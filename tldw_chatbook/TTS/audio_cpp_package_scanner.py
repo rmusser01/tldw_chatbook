@@ -524,20 +524,14 @@ def _cancelled_result(
 def _managed_expectation(
     expected_managed_artifact: AudioCppManagedArtifactIdentity | None,
     expected_canonical_root: str | os.PathLike[str] | None,
-    expected_canonical_root_identity: str | None,
-) -> tuple[AudioCppManagedArtifactIdentity, str, str] | None:
+) -> tuple[AudioCppManagedArtifactIdentity, str] | None:
     values = (
         expected_managed_artifact,
         expected_canonical_root,
-        expected_canonical_root_identity,
     )
     if not any(value is not None for value in values):
         return None
-    if (
-        expected_managed_artifact is None
-        or expected_canonical_root is None
-        or expected_canonical_root_identity is None
-    ):
+    if expected_managed_artifact is None or expected_canonical_root is None:
         raise ValueError("audio.cpp managed scan expectation must be complete")
     if type(expected_managed_artifact) is not AudioCppManagedArtifactIdentity:
         raise TypeError("audio.cpp managed artifact identity is required")
@@ -547,16 +541,7 @@ def _managed_expectation(
         raise TypeError("audio.cpp managed canonical root is required") from None
     if type(root) is not str:
         raise TypeError("audio.cpp managed canonical root is required")
-    if (
-        type(expected_canonical_root_identity) is not str
-        or len(expected_canonical_root_identity) != 64
-        or any(
-            character not in "0123456789abcdef"
-            for character in expected_canonical_root_identity
-        )
-    ):
-        raise ValueError("audio.cpp managed canonical root identity is invalid")
-    return expected_managed_artifact, root, expected_canonical_root_identity
+    return expected_managed_artifact, root
 
 
 def _require_managed_exact_result(
@@ -622,7 +607,6 @@ def scan_audio_cpp_package_root(
     request_revision: int = 0,
     expected_managed_artifact: AudioCppManagedArtifactIdentity | None = None,
     expected_canonical_root: str | os.PathLike[str] | None = None,
-    expected_canonical_root_identity: str | None = None,
 ) -> AudioCppPackageScanResult:
     """Inspect exactly one user-selected root with finite no-follow budgets.
 
@@ -637,8 +621,6 @@ def scan_audio_cpp_package_root(
         request_revision: Non-negative caller revision copied into the result.
         expected_managed_artifact: Optional exact managed-store identity.
         expected_canonical_root: Canonical managed root, present with identity.
-        expected_canonical_root_identity: Exact managed root identity, present
-            with identity.
 
     Returns:
         One immutable, bounded scan result with sanitized retained evidence.
@@ -650,10 +632,9 @@ def scan_audio_cpp_package_root(
     """
     if not isinstance(registry, AudioCppRecipeRegistry):
         raise TypeError("audio.cpp recipe registry is required")
-    managed_expectation = _managed_expectation(
+    managed_contract = _managed_expectation(
         expected_managed_artifact,
         expected_canonical_root,
-        expected_canonical_root_identity,
     )
     if type(request_revision) is not int or request_revision < 0:
         raise ValueError("audio.cpp scan request revision is invalid")
@@ -667,14 +648,18 @@ def scan_audio_cpp_package_root(
         root,
         allow_root_symlink=allow_root_symlink,
     )
-    if managed_expectation is not None and (
-        str(canonical_root) != managed_expectation[1]
-        or _filesystem_identity(root_info) != managed_expectation[2]
-        or root_was_symlink
+    selected_root_identity = _filesystem_identity(root_info)
+    if managed_contract is not None and (
+        str(canonical_root) != managed_contract[1] or root_was_symlink
     ):
         raise AudioCppPackageScanError(
             "Managed audio.cpp package no longer matches its installed identity."
         )
+    managed_expectation = (
+        None
+        if managed_contract is None
+        else (*managed_contract, selected_root_identity)
+    )
     if cancellation.is_set():
         return _cancelled_result(
             request_revision=request_revision,
@@ -971,7 +956,6 @@ async def scan_audio_cpp_package_root_async(
     request_revision: int = 0,
     expected_managed_artifact: AudioCppManagedArtifactIdentity | None = None,
     expected_canonical_root: str | os.PathLike[str] | None = None,
-    expected_canonical_root_identity: str | None = None,
 ) -> AudioCppPackageScanResult:
     """Run one package scan off-loop and propagate caller cancellation.
 
@@ -984,8 +968,6 @@ async def scan_audio_cpp_package_root_async(
         request_revision: Non-negative caller revision copied into the result.
         expected_managed_artifact: Optional exact managed-store identity.
         expected_canonical_root: Canonical managed root, present with identity.
-        expected_canonical_root_identity: Exact managed root identity, present
-            with identity.
 
     Returns:
         The immutable result produced by :func:`scan_audio_cpp_package_root`.
@@ -1008,7 +990,6 @@ async def scan_audio_cpp_package_root_async(
             request_revision=request_revision,
             expected_managed_artifact=expected_managed_artifact,
             expected_canonical_root=expected_canonical_root,
-            expected_canonical_root_identity=expected_canonical_root_identity,
         )
     )
     try:
