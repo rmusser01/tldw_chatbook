@@ -28,6 +28,7 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
 from tldw_chatbook.UI.Library_Modules.library_prompt_browse_controller import (
     LibraryPromptBrowseController,
 )
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import (
     LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS,
     LibraryEntryReconcileResult,
@@ -1671,20 +1672,401 @@ async def test_retained_entry_actions_paint_before_and_after_sync(size, surface)
 
 
 @pytest.mark.asyncio
+async def test_source_worker_completion_during_mount_dispatch_reconciles_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removing mount-safe scheduling would lose a fetch that completes in Mount."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    fetch_started = asyncio.Event()
+    release_fetch = asyncio.Event()
+    fresh_applied = asyncio.Event()
+    mount_dispatch_active = False
+    apply_during_mount: list[bool] = []
+    mounted_at_apply: list[bool] = []
+    attached_at_apply: list[bool] = []
+    target_sync_calls: list[int] = []
+    original_on_mount = LibraryScreen.on_mount
+    original_apply = LibraryScreen._apply_local_source_snapshot
+    original_sync = library_screen_module._sync_library_canvas
+
+    async def gated_snapshot(_screen: LibraryScreen):
+        fetch_started.set()
+        await release_fetch.wait()
+        return (
+            {
+                "notes": (),
+                "media": (),
+                "conversations": tuple(_two_conversations()),
+                "prompts": (0, ()),
+                "skills": (
+                    0,
+                    {"available_skills": [], "blocked_skills": []},
+                ),
+            },
+            {"notes": 0, "media": 0, "conversations": 2},
+            {"notes": True, "media": True, "conversations": True},
+            None,
+            None,
+            {"study_decks": 0, "flashcards_due": 0, "quizzes": 0},
+        )
+
+    def recorded_apply(screen: LibraryScreen, records, *args, **kwargs):
+        result = original_apply(screen, records, *args, **kwargs)
+        if len(records.get("conversations", ())) == 2:
+            apply_during_mount.append(mount_dispatch_active)
+            mounted_at_apply.append(screen.is_mounted)
+            attached_at_apply.append(screen.is_attached)
+            fresh_applied.set()
+        return result
+
+    def recorded_sync(screen: LibraryScreen, kind: str, **kwargs):
+        target_sync_calls.append(screen._library_snapshot_state_generation)
+        return original_sync(screen, kind, **kwargs)
+
+    async def gated_on_mount(screen: LibraryScreen) -> None:
+        nonlocal mount_dispatch_active
+        mount_dispatch_active = True
+        try:
+            original_on_mount(screen)
+            await fetch_started.wait()
+            release_fetch.set()
+            async with asyncio.timeout(10):
+                await fresh_applied.wait()
+        finally:
+            mount_dispatch_active = False
+
+    monkeypatch.setattr(LibraryScreen, "_list_local_source_snapshot", gated_snapshot)
+    monkeypatch.setattr(LibraryScreen, "_apply_local_source_snapshot", recorded_apply)
+    monkeypatch.setattr(library_screen_module, "_sync_library_canvas", recorded_sync)
+    monkeypatch.setattr(LibraryScreen, "on_mount", gated_on_mount)
+
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert apply_during_mount == [True]
+        assert mounted_at_apply == [False]
+        assert attached_at_apply == [True]
+        assert screen._local_source_counts["conversations"] == 2
+        assert screen._library_snapshot_rendered_generation == (
+            screen._library_snapshot_state_generation
+        )
+        assert target_sync_calls == [screen._library_snapshot_state_generation]
+        assert "Conversations (2)" in _compositor_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_timeout_is_repaired_by_blocked_fresh_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timeout generation must not prevent the in-flight fetch from repairing it."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    fetch_started = asyncio.Event()
+    release_fetch = asyncio.Event()
+    success_applied = asyncio.Event()
+    target_sync_calls: list[int] = []
+    original_apply = LibraryScreen._apply_local_source_snapshot
+    original_sync = library_screen_module._sync_library_canvas
+
+    async def gated_snapshot(_screen: LibraryScreen):
+        fetch_started.set()
+        await release_fetch.wait()
+        return (
+            {
+                "notes": (),
+                "media": (),
+                "conversations": tuple(_two_conversations()),
+                "prompts": (0, ()),
+                "skills": (
+                    0,
+                    {"available_skills": [], "blocked_skills": []},
+                ),
+            },
+            {"notes": 0, "media": 0, "conversations": 2},
+            {"notes": True, "media": True, "conversations": True},
+            None,
+            None,
+            {"study_decks": 0, "flashcards_due": 0, "quizzes": 0},
+        )
+
+    def recorded_apply(screen: LibraryScreen, records, *args, **kwargs):
+        result = original_apply(screen, records, *args, **kwargs)
+        if len(records.get("conversations", ())) == 2:
+            success_applied.set()
+        return result
+
+    def recorded_sync(screen: LibraryScreen, kind: str, **kwargs):
+        target_sync_calls.append(screen._library_snapshot_state_generation)
+        return original_sync(screen, kind, **kwargs)
+
+    monkeypatch.setattr(LibraryScreen, "_list_local_source_snapshot", gated_snapshot)
+    monkeypatch.setattr(LibraryScreen, "_apply_local_source_snapshot", recorded_apply)
+    monkeypatch.setattr(library_screen_module, "_sync_library_canvas", recorded_sync)
+
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await fetch_started.wait()
+        screen._apply_source_snapshot_timeout()
+        await pilot.pause()
+        assert screen._library_lookup_error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
+
+        release_fetch.set()
+        async with asyncio.timeout(10):
+            await success_applied.wait()
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_lookup_error is None
+        assert screen._local_source_counts["conversations"] == 2
+        assert screen._library_entry_reconcile_dirty is False
+        assert target_sync_calls[-1] == screen._library_snapshot_state_generation
+        assert "Conversations (2)" in _compositor_text(screen)
+        assert library_screen_module.LIBRARY_SERVICE_ERROR_COPY not in _compositor_text(
+            screen
+        )
+
+
+@pytest.mark.asyncio
+async def test_two_changed_generations_render_only_the_newer_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removing the generation guard would project both queued generations."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
+        await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+
+        canvas = screen.query_one(
+            "#library-conversations-canvas", LibraryConversationsCanvas
+        )
+        sync_generations: list[int] = []
+        original_sync_state = canvas.sync_state
+
+        def recorded_sync_state(*args, **kwargs):
+            sync_generations.append(screen._library_snapshot_state_generation)
+            return original_sync_state(*args, **kwargs)
+
+        monkeypatch.setattr(canvas, "sync_state", recorded_sync_state)
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        original_reconcile = screen._reconcile_library_entry_state
+        route_key = screen._library_entry_route_key()
+
+        first_records = dict(screen._local_source_records)
+        first_records["conversations"] = (
+            *first_records["conversations"],
+            {
+                "title": "Superseded generation",
+                "conversation_id": "chat-old",
+                "message_count": 1,
+                "updated_at": "2026-08-13T10:00:00Z",
+            },
+        )
+        assert screen._apply_local_source_snapshot(
+            first_records,
+            {**screen._local_source_counts, "conversations": 3},
+            dict(screen._local_source_total_known),
+            screen._library_lookup_error,
+            screen._library_lookup_recovery_state,
+            dict(screen._library_study_counts),
+            schedule_reconcile=False,
+        )
+        first_generation = screen._library_snapshot_state_generation
+
+        async def gated_reconcile(generation, queued_route):
+            if generation == first_generation:
+                first_started.set()
+                await release_first.wait()
+            return await original_reconcile(generation, queued_route)
+
+        monkeypatch.setattr(screen, "_reconcile_library_entry_state", gated_reconcile)
+        first_task = asyncio.create_task(
+            screen._reconcile_library_entry_state(first_generation, route_key)
+        )
+        await first_started.wait()
+
+        newer_records = dict(first_records)
+        newer_records["conversations"] = (
+            *tuple(
+                record
+                for record in first_records["conversations"]
+                if record.get("conversation_id") != "chat-old"
+            ),
+            {
+                "title": "Newest generation",
+                "conversation_id": "chat-new",
+                "message_count": 2,
+                "updated_at": "2026-08-13T10:01:00Z",
+            },
+        )
+        assert screen._apply_local_source_snapshot(
+            newer_records,
+            {**screen._local_source_counts, "conversations": 3},
+            dict(screen._local_source_total_known),
+            screen._library_lookup_error,
+            screen._library_lookup_recovery_state,
+            dict(screen._library_study_counts),
+            schedule_reconcile=False,
+        )
+        newer_generation = screen._library_snapshot_state_generation
+        newer_result = await original_reconcile(newer_generation, route_key)
+        await pilot.pause()
+        await pilot.pause()
+
+        release_first.set()
+        first_result = await first_task
+
+        assert (first_result, newer_result) == (
+            LibraryEntryReconcileResult.SUPERSEDED,
+            LibraryEntryReconcileResult.APPLIED,
+        )
+        assert sync_generations == [newer_generation]
+        assert screen._library_snapshot_rendered_generation == newer_generation
+        assert "Newest generation" in _compositor_text(screen)
+        assert "Superseded generation" not in _compositor_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_queued_reconcile_supersedes_after_route_switch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removing the queued route guard would mutate the successor route."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
+        await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+
+        generation = screen._library_snapshot_state_generation
+        stale_route = screen._library_entry_route_key()
+        screen._library_entry_reconcile_dirty = True
+        queued: list[tuple[object, tuple[object, ...]]] = []
+        results: list[LibraryEntryReconcileResult] = []
+        target_sync_calls: list[str] = []
+        original_sync = library_screen_module._sync_library_canvas
+
+        def capture_call_later(callback, *args):
+            queued.append((callback, args))
+
+        def recorded_sync(active_screen: LibraryScreen, kind: str, **kwargs):
+            target_sync_calls.append(kind)
+            return original_sync(active_screen, kind, **kwargs)
+
+        monkeypatch.setattr(screen, "call_later", capture_call_later)
+        monkeypatch.setattr(library_screen_module, "_sync_library_canvas", recorded_sync)
+        screen._schedule_library_entry_reconcile(generation, stale_route)
+        assert len(queued) == 1
+
+        screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+        callback, args = queued.pop()
+        results.append(await callback(*args))
+
+        assert results == [LibraryEntryReconcileResult.SUPERSEDED]
+        assert target_sync_calls == []
+        assert screen._library_entry_reconcile_pending is None
+
+
+@pytest.mark.asyncio
+async def test_detached_queued_reconcile_completion_is_a_noop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removing the attachment guard would let detached completion touch the DOM."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+    completion_started = asyncio.Event()
+    release_completion = asyncio.Event()
+    target_sync_calls: list[str] = []
+    result: LibraryEntryReconcileResult | None = None
+    task: asyncio.Task[LibraryEntryReconcileResult] | None = None
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
+        await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
+        await screen.workers.wait_for_complete()
+        generation = screen._library_snapshot_state_generation
+        route_key = screen._library_entry_route_key()
+        screen._library_entry_reconcile_dirty = True
+        screen._library_entry_reconcile_pending = (generation, route_key)
+        original_reconcile = screen._reconcile_library_entry_state
+        original_sync = library_screen_module._sync_library_canvas
+
+        def recorded_sync(active_screen: LibraryScreen, kind: str, **kwargs):
+            target_sync_calls.append(kind)
+            return original_sync(active_screen, kind, **kwargs)
+
+        async def delayed_completion() -> LibraryEntryReconcileResult:
+            completion_started.set()
+            await release_completion.wait()
+            return await original_reconcile(generation, route_key)
+
+        monkeypatch.setattr(library_screen_module, "_sync_library_canvas", recorded_sync)
+        task = asyncio.create_task(delayed_completion())
+        await completion_started.wait()
+
+    assert task is not None
+    assert screen.is_attached is False
+    release_completion.set()
+    result = await task
+
+    assert result is LibraryEntryReconcileResult.SUPERSEDED
+    assert target_sync_calls == []
+    assert screen._library_entry_reconcile_pending is None
+
+
+@pytest.mark.asyncio
 async def test_warm_repeat_visit_composes_once_before_fresh_reconcile(monkeypatch):
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
     calls: list[LibraryScreen] = []
+    refresh_recompose_calls: list[LibraryScreen] = []
+    recompose_calls: list[LibraryScreen] = []
     original = LibraryScreen.compose_content
+    original_refresh = LibraryScreen.refresh
+    original_recompose = LibraryScreen.recompose
 
     def counted_compose(screen):
         calls.append(screen)
         yield from original(screen)
 
+    def recorded_refresh(screen, *regions, **kwargs):
+        if kwargs.get("recompose"):
+            refresh_recompose_calls.append(screen)
+        return original_refresh(screen, *regions, **kwargs)
+
+    async def recorded_recompose(screen):
+        recompose_calls.append(screen)
+        return await original_recompose(screen)
+
     monkeypatch.setattr(LibraryScreen, "compose_content", counted_compose)
+    monkeypatch.setattr(LibraryScreen, "refresh", recorded_refresh)
+    monkeypatch.setattr(LibraryScreen, "recompose", recorded_recompose)
     samples: list[float] = []
     revisits: list[LibraryScreen] = []
+    identity_samples: list[tuple[int, int, int, int]] = []
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         first = _active_library_screen(host)
         await _wait_for_library_shell(first, pilot)
@@ -1697,6 +2079,16 @@ async def test_warm_repeat_visit_composes_once_before_fresh_reconcile(monkeypatc
             await host.push_screen(revisit)
             await _wait_for_library_shell(revisit, pilot)
             samples.append((time.perf_counter() - started) * 1000)
+            await revisit.workers.wait_for_complete()
+            await pilot.pause()
+            identity_samples.append(
+                (
+                    id(revisit),
+                    id(revisit.query_one("#library-rail")),
+                    id(revisit.query_one("#library-canvas")),
+                    id(revisit._library_entry_canvas_owner()),
+                )
+            )
             await host.pop_screen()
             await pilot.pause()
     print(
@@ -1704,7 +2096,16 @@ async def test_warm_repeat_visit_composes_once_before_fresh_reconcile(monkeypatc
         f"min_ms={min(samples):.3f} max_ms={max(samples):.3f} n={len(samples)}"
     )
     print(f"warm_visit_compose_counts={[calls.count(revisit) for revisit in revisits]}")
+    print(f"warm_visit_identity_samples={identity_samples}")
+    print(
+        "warm_visit_screen_recompose_counts="
+        f"refresh={len(refresh_recompose_calls)} recompose={len(recompose_calls)}"
+    )
     assert all(calls.count(revisit) == 1 for revisit in revisits)
+    assert len(identity_samples) == 5
+    assert all(all(identity > 0 for identity in sample) for sample in identity_samples)
+    assert refresh_recompose_calls == []
+    assert recompose_calls == []
 
 
 @pytest.mark.asyncio
@@ -2021,27 +2422,37 @@ async def test_library_source_snapshot_missing_skills_retries_then_equal_can_ret
         screen._library_entry_reconcile_dirty = True
         screen._library_entry_reconcile_pending = (generation, route_key)
         queued: list[tuple[object, tuple[object, ...]]] = []
+        scheduled_attempts: list[tuple[object, ...]] = []
+        reconcile_results: list[LibraryEntryReconcileResult] = []
 
         def capture_call_later(callback, *args):
             queued.append((callback, args))
+            scheduled_attempts.append(args)
 
         monkeypatch.setattr(screen, "call_later", capture_call_later)
 
-        first = await screen._reconcile_library_entry_state(generation, route_key)
+        reconcile_results.append(
+            await screen._reconcile_library_entry_state(generation, route_key)
+        )
 
-        assert first is LibraryEntryReconcileResult.FAILED
+        assert reconcile_results == [LibraryEntryReconcileResult.FAILED]
         assert screen._library_entry_reconcile_dirty is True
         assert screen._library_entry_reconcile_pending == (generation, route_key)
         assert screen._library_entry_reconcile_retry_generation == generation
         assert len(queued) == 1
 
         callback, args = queued.pop()
-        second = await callback(*args)
+        reconcile_results.append(await callback(*args))
 
-        assert second is LibraryEntryReconcileResult.FAILED
+        assert reconcile_results == [
+            LibraryEntryReconcileResult.FAILED,
+            LibraryEntryReconcileResult.FAILED,
+        ]
         assert screen._library_entry_reconcile_dirty is True
         assert screen._library_entry_reconcile_pending is None
         assert screen._library_entry_reconcile_retry_generation is None
+        assert queued == []
+        assert len(scheduled_attempts) == 1
 
         changed = screen._apply_local_source_snapshot(
             dict(screen._local_source_records),
@@ -2055,6 +2466,7 @@ async def test_library_source_snapshot_missing_skills_retries_then_equal_can_ret
         assert changed is False
         assert screen._library_entry_reconcile_pending == (generation, route_key)
         assert len(queued) == 1
+        assert len(scheduled_attempts) == 2
 
 
 @pytest.mark.asyncio

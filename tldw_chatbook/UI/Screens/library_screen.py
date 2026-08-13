@@ -7707,7 +7707,7 @@ class LibraryScreen(BaseAppScreen):
         if not presentation_changed:
             if (
                 schedule_reconcile
-                and self.is_mounted
+                and self.is_attached
                 and not self._file_notes_active()
                 and (
                     self._library_entry_reconcile_dirty
@@ -7732,7 +7732,7 @@ class LibraryScreen(BaseAppScreen):
         self._invalidate_library_workspace_depth_state()
         self._library_snapshot_state_generation += 1
         self._library_entry_reconcile_dirty = True
-        if schedule_reconcile and self.is_mounted and not self._file_notes_active():
+        if schedule_reconcile and self.is_attached and not self._file_notes_active():
             self._schedule_library_entry_reconcile(
                 self._library_snapshot_state_generation,
                 self._library_entry_route_key(),
