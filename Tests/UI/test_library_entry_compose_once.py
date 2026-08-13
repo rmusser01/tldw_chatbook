@@ -13,6 +13,7 @@ from tldw_chatbook.UI.Screens.library_screen import (
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
+    LIBRARY_ROW_BROWSE_SKILLS,
 )
 from tldw_chatbook.Widgets.Library import LibraryConversationsCanvas
 from Tests.UI.test_library_shell import (
@@ -141,6 +142,56 @@ async def test_library_source_snapshot_changed_reconciles_conversations_below_sc
         assert "(3)" in str(screen.query_one("#library-row-browse-conversations").label)
         assert True not in refresh_calls
         assert recompose_calls == []
+
+
+@pytest.mark.asyncio
+async def test_library_source_snapshot_changed_retains_conversation_row_focus():
+    """Dropping the Conversations follow-up moves focus outside its canvas."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        await screen.workers.wait_for_complete()
+        row = screen.query_one("#library-conversation-row-0")
+        row.focus()
+        await pilot.pause()
+        assert getattr(screen.focused, "conversation_id", None) == "chat-2"
+
+        records = dict(screen._local_source_records)
+        records["conversations"] = (
+            *records["conversations"],
+            {
+                "title": "Incident review",
+                "conversation_id": "chat-3",
+                "message_count": 5,
+                "updated_at": "2026-06-03T12:00:00Z",
+            },
+        )
+        counts = dict(screen._local_source_counts)
+        counts["conversations"] = 3
+
+        screen._apply_local_source_snapshot(
+            records,
+            counts,
+            dict(screen._local_source_total_known),
+            screen._library_lookup_error,
+            screen._library_lookup_recovery_state,
+            dict(screen._library_study_counts),
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert getattr(focused, "conversation_id", None) == "chat-2"
+        assert focused is not None and focused.disabled is False
+        assert screen.query_one("#library-conversations-canvas") in (
+            focused.ancestors_with_self
+        )
 
 
 @pytest.mark.asyncio
@@ -307,6 +358,121 @@ async def test_library_source_snapshot_stale_route_clears_retry_markers():
         assert result is LibraryEntryReconcileResult.SUPERSEDED
         assert screen._library_entry_reconcile_pending is None
         assert screen._library_entry_reconcile_retry_generation is None
+
+
+@pytest.mark.asyncio
+async def test_library_source_snapshot_missing_skills_retries_then_equal_can_retry(
+    monkeypatch,
+):
+    """Falling through a missing Skills selector would falsely mark it rendered."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+        screen._library_skills_view = "list"
+        generation = screen._library_snapshot_state_generation
+        route_key = screen._library_entry_route_key()
+        screen._library_entry_reconcile_dirty = True
+        screen._library_entry_reconcile_pending = (generation, route_key)
+        queued: list[tuple[object, tuple[object, ...]]] = []
+
+        def capture_call_later(callback, *args):
+            queued.append((callback, args))
+
+        monkeypatch.setattr(screen, "call_later", capture_call_later)
+
+        first = await screen._reconcile_library_entry_state(generation, route_key)
+
+        assert first is LibraryEntryReconcileResult.FAILED
+        assert screen._library_entry_reconcile_dirty is True
+        assert screen._library_entry_reconcile_pending == (generation, route_key)
+        assert screen._library_entry_reconcile_retry_generation == generation
+        assert len(queued) == 1
+
+        callback, args = queued.pop()
+        second = await callback(*args)
+
+        assert second is LibraryEntryReconcileResult.FAILED
+        assert screen._library_entry_reconcile_dirty is True
+        assert screen._library_entry_reconcile_pending is None
+        assert screen._library_entry_reconcile_retry_generation is None
+
+        changed = screen._apply_local_source_snapshot(
+            dict(screen._local_source_records),
+            dict(screen._local_source_counts),
+            dict(screen._local_source_total_known),
+            screen._library_lookup_error,
+            screen._library_lookup_recovery_state,
+            dict(screen._library_study_counts),
+        )
+
+        assert changed is False
+        assert screen._library_entry_reconcile_pending == (generation, route_key)
+        assert len(queued) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_site", ["rail", "header"])
+async def test_library_source_snapshot_shell_exception_releases_retry_markers(
+    monkeypatch, failure_site
+):
+    """An owned shell failure must not deduplicate the next equal repair."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
+        await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
+        generation = screen._library_snapshot_state_generation
+        route_key = screen._library_entry_route_key()
+        screen._library_entry_reconcile_dirty = True
+        screen._library_entry_reconcile_pending = (generation, route_key)
+        screen._library_entry_reconcile_retry_generation = generation
+        queued: list[tuple[object, tuple[object, ...]]] = []
+
+        def capture_call_later(callback, *args):
+            queued.append((callback, args))
+
+        def fail_shell_sync(*args, **kwargs):
+            raise RuntimeError(f"forced {failure_site} sync failure")
+
+        monkeypatch.setattr(screen, "call_later", capture_call_later)
+        if failure_site == "rail":
+            rail = screen.query_one("#library-rail")
+            monkeypatch.setattr(rail, "sync_state", fail_shell_sync)
+        else:
+            header = screen.query_one("#library-header-line")
+            header.update("stale header")
+            monkeypatch.setattr(header, "update", fail_shell_sync)
+
+        result = await screen._reconcile_library_entry_state(
+            generation, route_key
+        )
+
+        assert result is LibraryEntryReconcileResult.FAILED
+        assert screen._library_entry_reconcile_dirty is True
+        assert screen._library_entry_reconcile_pending is None
+        assert screen._library_entry_reconcile_retry_generation is None
+
+        changed = screen._apply_local_source_snapshot(
+            dict(screen._local_source_records),
+            dict(screen._local_source_counts),
+            dict(screen._local_source_total_known),
+            screen._library_lookup_error,
+            screen._library_lookup_recovery_state,
+            dict(screen._library_study_counts),
+        )
+
+        assert changed is False
+        assert screen._library_entry_reconcile_pending == (generation, route_key)
+        assert len(queued) == 1
 
 
 def test_constructor_seeds_cached_snapshot_before_restore_state_wins_selection():

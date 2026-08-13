@@ -1571,6 +1571,41 @@ def _sync_library_canvas(
         # the restore runs first (portable focus + scroll), then the site's
         # own follow-up gets the last word on where focus lands.
         follow_up: Callable[[], None] | None = then
+        if kind == "conversations":
+            focused = screen.focused
+            if focused is not None and canvas in focused.ancestors_with_self:
+                focused_id = focused.id
+                conversation_id = getattr(focused, "conversation_id", None)
+
+                def _restore_conversations_then_explicit(
+                    _focused_id: str | None = focused_id,
+                    _conversation_id: str | None = conversation_id,
+                    _explicit: Callable[[], None] | None = then,
+                ) -> None:
+                    target: Widget | None = None
+                    if _conversation_id:
+                        target = next(
+                            (
+                                candidate
+                                for candidate in canvas.query(
+                                    ".library-conversation-row"
+                                )
+                                if getattr(candidate, "conversation_id", None)
+                                == _conversation_id
+                            ),
+                            None,
+                        )
+                    if target is None and _focused_id and not _conversation_id:
+                        try:
+                            target = canvas.query_one(f"#{_focused_id}", Widget)
+                        except (NoMatches, QueryError):
+                            target = None
+                    if target is not None and not target.disabled:
+                        target.focus()
+                    if _explicit is not None:
+                        _explicit()
+
+                follow_up = _restore_conversations_then_explicit
         # Gated on the KIND, not on the screen-level workflow predicate
         # (review m5): the identity is the notes canvas's, and
         # ``_library_notes_workflow_active()`` is also true while a
@@ -6819,6 +6854,18 @@ class LibraryScreen(BaseAppScreen):
         self._library_entry_reconcile_retry_generation = None
         return LibraryEntryReconcileResult.FAILED
 
+    def _fail_library_entry_reconcile(
+        self, generation: int, route_key: tuple[object, ...]
+    ) -> LibraryEntryReconcileResult:
+        """Leave a failed generation dirty and release its owned markers."""
+        pending = (generation, route_key)
+        self._library_entry_reconcile_dirty = True
+        if self._library_entry_reconcile_pending == pending:
+            self._library_entry_reconcile_pending = None
+            if self._library_entry_reconcile_retry_generation == generation:
+                self._library_entry_reconcile_retry_generation = None
+        return LibraryEntryReconcileResult.FAILED
+
     async def _reconcile_library_entry_state(
         self, generation: int, route_key: tuple[object, ...]
     ) -> LibraryEntryReconcileResult:
@@ -6851,15 +6898,21 @@ class LibraryScreen(BaseAppScreen):
                 generation, route_key
             )
 
-        rail.sync_state(
-            shell,
-            self._library_rail_preferences(),
-            query=self._library_rag_query,
-        )
-        header_renderable = header.renderable
-        header_text = getattr(header_renderable, "plain", str(header_renderable))
-        if header_text != shell.header_line:
-            header.update(shell.header_line)
+        try:
+            rail.sync_state(
+                shell,
+                self._library_rail_preferences(),
+                query=self._library_rag_query,
+            )
+            header_renderable = header.renderable
+            header_text = getattr(header_renderable, "plain", str(header_renderable))
+            if header_text != shell.header_line:
+                header.update(shell.header_line)
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Library snapshot shell reconciliation failed."
+            )
+            return self._fail_library_entry_reconcile(generation, route_key)
 
         sync_kind: str | None = None
         expected_selector = ""
@@ -6980,6 +7033,11 @@ class LibraryScreen(BaseAppScreen):
             else:
                 self._complete_library_entry_reconcile(generation, route_key)
             return LibraryEntryReconcileResult.APPLIED
+
+        if expected_selector:
+            return self._retry_or_fail_library_entry_reconcile(
+                generation, route_key
+            )
 
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
             try:
