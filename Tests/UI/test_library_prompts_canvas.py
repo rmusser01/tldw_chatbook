@@ -33,7 +33,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from loguru import logger
 from textual.app import App
-from textual.containers import Container, Horizontal, VerticalScroll
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
 from tldw_chatbook.DB.Prompts_DB import ConflictError, DatabaseError, PromptsDatabase
@@ -70,6 +70,10 @@ from tldw_chatbook.Prompt_Management.Prompts_Interop import (
 )
 from tldw_chatbook.Prompt_Management.prompt_markdown_export import (
     render_prompt_markdown,
+)
+from tldw_chatbook.Prompt_Management.prompt_batch_models import (
+    PromptBatchDeleteResult,
+    PromptDeleteReceiptEntry,
 )
 from tldw_chatbook.Prompt_Management.prompt_restore_errors import (
     PromptRestoreError,
@@ -199,6 +203,23 @@ def _three_row_state(*, sort: str = "newest") -> PromptsListState:
         ),
         count=3,
         sort=sort,
+    )
+
+
+def _selection_state(
+    *,
+    total_selected: int = 7,
+    selected_on_page: int = 2,
+    rows: tuple[PromptListRow, ...] | None = None,
+) -> PromptsListState:
+    """Return one literal select-mode projection for canvas tests."""
+    return PromptsListState(
+        rows=rows if rows is not None else _three_row_state().rows,
+        count=3 if rows is None else len(rows),
+        sort="newest",
+        select_mode=True,
+        total_selected=total_selected,
+        selected_on_page=selected_on_page,
     )
 
 
@@ -643,14 +664,138 @@ async def test_prompts_canvas_renders_named_delete_receipt_actions_literal():
     app = _CanvasHost(_three_row_state(), delete_receipt=receipt)
 
     async with app.run_test() as pilot:
-        copy = pilot.app.query_one(
-            "#library-prompts-delete-receipt-copy", Static
-        )
+        copy = pilot.app.query_one("#library-prompts-delete-receipt-copy", Static)
         assert str(copy.renderable) == "✓ deleted · Recipe · [draft] Morning brief"
         assert pilot.app.query_one("#library-prompts-delete-undo", Button)
-        assert pilot.app.query_one(
-            "#library-prompts-delete-receipt-dismiss", Button
+        assert pilot.app.query_one("#library-prompts-delete-receipt-dismiss", Button)
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_plural_delete_receipt_preserves_shared_actions():
+    receipt = PromptBatchDeleteResult(
+        entries=(
+            PromptDeleteReceiptEntry(2, "[draft] Morning brief", "recipe", 4),
+            PromptDeleteReceiptEntry(9, "计划 [/bold]", "prompt", 3),
         )
+    )
+    app = _CanvasHost(_three_row_state(), delete_receipt=receipt)
+
+    async with app.run_test() as pilot:
+        copy = pilot.app.query_one("#library-prompts-delete-receipt-copy", Static)
+        assert str(copy.renderable) == "✓ deleted · 2 items"
+        assert pilot.app.query_one("#library-prompts-delete-undo", Button)
+        assert pilot.app.query_one("#library-prompts-delete-receipt-dismiss", Button)
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_single_batch_delete_receipt_preserves_named_copy():
+    receipt = PromptBatchDeleteResult(
+        entries=(PromptDeleteReceiptEntry(2, "[draft] Morning brief", "recipe", 4),)
+    )
+    app = _CanvasHost(_three_row_state(), delete_receipt=receipt)
+
+    async with app.run_test() as pilot:
+        copy = pilot.app.query_one("#library-prompts-delete-receipt-copy", Static)
+        assert str(copy.renderable) == "✓ deleted · Recipe · [draft] Morning brief"
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_select_mode_renders_summary_and_selection_toolbars():
+    app = _CanvasHost(_selection_state())
+
+    async with app.run_test() as pilot:
+        summary = pilot.app.query_one("#library-prompts-selection-summary", Static)
+        assert str(summary.renderable) == "7 selected · 2 on this page"
+
+        management = tuple(
+            pilot.app.query_one(selector, Button)
+            for selector in (
+                "#library-prompts-select-page",
+                "#library-prompts-clear-selection",
+                "#library-prompts-selection-done",
+            )
+        )
+        selected_actions = tuple(
+            pilot.app.query_one(selector, Button)
+            for selector in (
+                "#library-prompts-export-selected",
+                "#library-prompts-delete-selected",
+            )
+        )
+        assert [str(button.label) for button in management] == [
+            "Select page",
+            "Clear all",
+            "Done",
+        ]
+        assert [str(button.label) for button in selected_actions] == [
+            "Export selected",
+            "Delete selected",
+        ]
+        assert len({button.parent for button in management}) == 1
+        assert len({button.parent for button in selected_actions}) == 1
+        assert management[0].parent is not selected_actions[0].parent
+        assert not pilot.app.query("#library-prompts-sort")
+        assert not pilot.app.query("#library-prompts-import")
+        assert not pilot.app.query("#library-prompts-export")
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_select_mode_rows_are_literal_and_self_contained():
+    prompt_name = "[bold]规划 🌐[/bold]"
+    recipe_name = "配方 [/bold] ✅"
+    state = _selection_state(
+        total_selected=1,
+        selected_on_page=1,
+        rows=(
+            PromptListRow(
+                4,
+                prompt_name,
+                "[/] literal",
+                artifact_type="prompt",
+                version=8,
+                checked=True,
+            ),
+            PromptListRow(
+                11,
+                recipe_name,
+                "[wip] literal",
+                artifact_type="recipe",
+                type_label="Recipe",
+                version=3,
+                checked=False,
+            ),
+        ),
+    )
+    app = _CanvasHost(state)
+
+    async with app.run_test() as pilot:
+        checked = pilot.app.query_one("#library-prompt-row-4", Button)
+        unchecked = pilot.app.query_one("#library-prompt-row-11", Button)
+        assert str(checked.label).splitlines()[0] == f"☑ {prompt_name}"
+        assert str(unchecked.label).splitlines()[0] == f"☐ {recipe_name}"
+        assert (
+            checked.prompt_id,
+            checked.prompt_version,
+            checked.artifact_type,
+            checked.prompt_name,
+        ) == (4, 8, "prompt", prompt_name)
+        assert (
+            unchecked.prompt_id,
+            unchecked.prompt_version,
+            unchecked.artifact_type,
+            unchecked.prompt_name,
+        ) == (11, 3, "recipe", recipe_name)
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_select_mode_keeps_incumbent_scroll_ownership():
+    app = _CanvasHost(_selection_state())
+
+    async with app.run_test() as pilot:
+        assert len(pilot.app.query(VerticalScroll)) == 0
+        list_owner = pilot.app.query_one("#library-prompts-list")
+        assert isinstance(list_owner, Vertical)
+        assert not isinstance(list_owner, VerticalScroll)
 
 
 @pytest.mark.asyncio
@@ -810,36 +955,46 @@ async def test_prompts_canvas_escapes_secondary_line_markup_and_unmatched_close_
 
 
 @pytest.mark.asyncio
-async def test_prompts_canvas_toolbar_is_one_horizontal_row():
-    """Sort/Import/Export share a single ``ds-toolbar`` parent -- proven
-    structurally (shared parentage), not via region/geometry (the bare
-    harness has no app CSS loaded)."""
+async def test_prompts_canvas_selection_toolbar_normal_mode_has_two_rows():
+    """Normal management keeps two fixed-button rows at narrow widths."""
     app = _CanvasHost(_three_row_state())
     async with app.run_test() as pilot:
         sort_button = pilot.app.query_one("#library-prompts-sort", Button)
+        select_button = pilot.app.query_one("#library-prompts-select", Button)
         import_button = pilot.app.query_one("#library-prompts-import", Button)
         export_button = pilot.app.query_one("#library-prompts-export", Button)
-        toolbar = sort_button.parent
-        assert toolbar is not None and toolbar.has_class("ds-toolbar")
-        assert import_button.parent is toolbar
-        assert export_button.parent is toolbar
+        first_toolbar = sort_button.parent
+        second_toolbar = import_button.parent
+        assert first_toolbar is not None and first_toolbar.has_class("ds-toolbar")
+        assert second_toolbar is not None and second_toolbar.has_class("ds-toolbar")
+        assert tuple(first_toolbar.children) == (sort_button, select_button)
+        assert tuple(second_toolbar.children) == (import_button, export_button)
+        assert first_toolbar is not second_toolbar
+        assert str(select_button.label) == "Select"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(64, 24), (120, 40)], ids=["narrow", "wide"])
 async def test_prompts_canvas_export_toolbar_is_painted_focusable_and_in_bounds(size):
-    """All three compact actions remain readable in the real stylesheet."""
+    """Both normal-mode action rows remain readable in the real stylesheet."""
     app = _StyledCanvasHost(_three_row_state())
     async with app.run_test(size=size) as pilot:
         buttons = [
             pilot.app.query_one("#library-prompts-sort", Button),
+            pilot.app.query_one("#library-prompts-select", Button),
             pilot.app.query_one("#library-prompts-import", Button),
             pilot.app.query_one("#library-prompts-export", Button),
         ]
-        toolbar = buttons[0].parent
-        assert toolbar is not None and toolbar.has_class("ds-toolbar")
-        for button, needle in zip(buttons, ("sort", "Import", "Export"), strict=True):
-            assert button.parent is toolbar
+        first_toolbar = buttons[0].parent
+        second_toolbar = buttons[2].parent
+        assert first_toolbar is not None and first_toolbar.has_class("ds-toolbar")
+        assert second_toolbar is not None and second_toolbar.has_class("ds-toolbar")
+        for button, needle in zip(
+            buttons, ("sort", "Select", "Import", "Export"), strict=True
+        ):
+            toolbar = button.parent
+            assert toolbar in {first_toolbar, second_toolbar}
+            assert toolbar is not None
             assert button.region.width > 0 and button.region.height > 0
             assert toolbar.region.x <= button.region.x
             assert button.region.right <= toolbar.region.right
@@ -1020,6 +1175,113 @@ async def test_prompts_canvas_loading_keeps_search_and_toolbar_stable():
 
 
 @pytest.mark.asyncio
+async def test_prompts_canvas_bulk_disabled_reason_zero_selection_takes_precedence():
+    state = _selection_state(total_selected=0, selected_on_page=0)
+    loading = begin_prompt_browse(PromptBrowseScope(), request_token=8)
+    app = _CanvasHost(state, browse_result=loading)
+
+    async with app.run_test() as pilot:
+        reason = pilot.app.query_one("#library-prompts-selection-reason", Static)
+        assert str(reason.renderable) == (
+            "Select one or more items to use bulk actions."
+        )
+        clear = pilot.app.query_one("#library-prompts-clear-selection", Button)
+        export = pilot.app.query_one("#library-prompts-export-selected", Button)
+        delete = pilot.app.query_one("#library-prompts-delete-selected", Button)
+        for button, label in (
+            (clear, "○ Clear all"),
+            (export, "○ Export selected"),
+            (delete, "○ Delete selected"),
+        ):
+            assert button.disabled is True
+            assert str(button.label) == label
+            assert button.tooltip == "Select one or more items first."
+            assert button not in pilot.app.screen.focus_chain
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_bulk_disabled_reason_empty_normal_mode_marks_select():
+    app = _CanvasHost(PromptsListState(rows=(), count=0, sort="newest"))
+
+    async with app.run_test() as pilot:
+        select = pilot.app.query_one("#library-prompts-select", Button)
+        assert select.disabled is True
+        assert str(select.label) == "○ Select"
+        assert select.tooltip == "Nothing here to select yet."
+        assert select not in pilot.app.screen.focus_chain
+        assert (
+            str(
+                pilot.app.query_one(
+                    "#library-prompts-selection-reason", Static
+                ).renderable
+            )
+            == "Nothing here to select yet."
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["loading", "error"])
+async def test_prompts_canvas_select_mode_keeps_persistent_basket_actions_available(
+    status: str,
+):
+    result = (
+        begin_prompt_browse(PromptBrowseScope(), request_token=5)
+        if status == "loading"
+        else build_prompt_browse_error(
+            PromptBrowseScope(),
+            request_token=5,
+            error="Couldn't load prompts. Check the local Library and retry.",
+        )
+    )
+    app = _CanvasHost(
+        _selection_state(total_selected=7, selected_on_page=0, rows=()),
+        browse_result=result,
+    )
+
+    async with app.run_test() as pilot:
+        reason = pilot.app.query_one("#library-prompts-selection-reason", Static)
+        assert str(reason.renderable) == (
+            "Current page is unavailable; selected items remain available for "
+            "Export or Delete."
+        )
+        select_page = pilot.app.query_one("#library-prompts-select-page", Button)
+        assert select_page.disabled is True
+        assert str(select_page.label) == "○ Select page"
+        assert select_page.tooltip == "Current page is unavailable."
+        assert select_page not in pilot.app.screen.focus_chain
+        for selector in (
+            "#library-prompts-clear-selection",
+            "#library-prompts-export-selected",
+            "#library-prompts-delete-selected",
+        ):
+            action = pilot.app.query_one(selector, Button)
+            assert action.disabled is False
+            assert action in pilot.app.screen.focus_chain
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_select_mode_empty_page_explains_disabled_select_page():
+    app = _CanvasHost(
+        _selection_state(total_selected=3, selected_on_page=0, rows=()),
+        browse_result=_browse_result(),
+    )
+
+    async with app.run_test() as pilot:
+        select_page = pilot.app.query_one("#library-prompts-select-page", Button)
+        assert select_page.disabled is True
+        assert str(select_page.label) == "○ Select page"
+        assert select_page.tooltip == "Nothing here to select yet."
+        assert (
+            str(
+                pilot.app.query_one(
+                    "#library-prompts-selection-reason", Static
+                ).renderable
+            )
+            == "Nothing here to select yet."
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("result", "expected"),
     [
@@ -1074,6 +1336,133 @@ async def test_prompts_canvas_error_names_recovery_and_renders_retry():
         assert str(line.render()) == error.error
         assert pilot.app.query_one("#library-prompts-retry", Button)
         assert not pilot.app.query("#library-prompts-empty")
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_selection_toolbar_mutation_progress_disables_normal_actions():
+    result = _browse_result(
+        items=[
+            {
+                "id": f"local:prompt:{index}",
+                "local_id": index,
+                "name": f"Literal [{index}]",
+                "backend": "local",
+            }
+            for index in range(1, 51)
+        ],
+        total_items=51,
+    )
+    receipt = LibraryPromptDeleteReceipt(8, "Prior [receipt]", "prompt", 2)
+    app = _CanvasHost(
+        _three_row_state(),
+        browse_result=result,
+        delete_receipt=receipt,
+        mutation_in_flight=True,
+    )
+
+    async with app.run_test() as pilot:
+        progress = pilot.app.query_one("#library-prompts-mutation-progress", Static)
+        assert str(progress.renderable) == "Updating selected items…"
+        for selector in (
+            "#library-prompts-delete-undo",
+            "#library-prompts-delete-receipt-dismiss",
+            "#library-prompts-collection",
+            "#library-prompts-sort",
+            "#library-prompts-select",
+            "#library-prompts-import",
+            "#library-prompts-export",
+            "#library-prompts-page-previous",
+            "#library-prompts-page-next",
+            "#library-prompt-row-1",
+            "#library-prompt-row-2",
+            "#library-prompt-row-3",
+        ):
+            button = pilot.app.query_one(selector, Button)
+            assert button.disabled is True, selector
+            assert button not in pilot.app.screen.focus_chain
+        for selector in (
+            "#library-prompts-collection",
+            "#library-prompts-sort",
+            "#library-prompts-select",
+            "#library-prompts-import",
+            "#library-prompts-export",
+            "#library-prompt-row-1",
+            "#library-prompt-row-2",
+            "#library-prompt-row-3",
+        ):
+            button = pilot.app.query_one(selector, Button)
+            assert str(button.label).startswith("○ "), selector
+            assert button.tooltip == "Updating selected items…"
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_select_mode_mutation_progress_disables_selection_actions():
+    receipt = PromptBatchDeleteResult(
+        entries=(PromptDeleteReceiptEntry(2, "Deleted", "prompt", 4),)
+    )
+    app = _CanvasHost(
+        _selection_state(),
+        delete_receipt=receipt,
+        mutation_in_flight=True,
+    )
+
+    async with app.run_test() as pilot:
+        progress = pilot.app.query_one("#library-prompts-mutation-progress", Static)
+        assert str(progress.renderable) == "Updating selected items…"
+        for selector in (
+            "#library-prompts-select-page",
+            "#library-prompts-clear-selection",
+            "#library-prompts-selection-done",
+            "#library-prompts-export-selected",
+            "#library-prompts-delete-selected",
+        ):
+            action = pilot.app.query_one(selector, Button)
+            assert action.disabled is True
+            assert str(action.label).startswith("○ ")
+            assert action.tooltip == "Updating selected items…"
+            assert action not in pilot.app.screen.focus_chain
+        assert all(button.disabled for button in pilot.app.query(".library-prompt-row"))
+        assert pilot.app.query_one("#library-prompts-delete-undo", Button).disabled
+        assert pilot.app.query_one(
+            "#library-prompts-delete-receipt-dismiss", Button
+        ).disabled
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_bulk_disabled_reason_mutation_disables_error_retry():
+    error = build_prompt_browse_error(
+        PromptBrowseScope(),
+        request_token=6,
+        error="Couldn't load prompts. Check the local Library and retry.",
+    )
+    app = _CanvasHost(
+        _selection_state(total_selected=2, selected_on_page=0, rows=()),
+        browse_result=error,
+        mutation_in_flight=True,
+    )
+
+    async with app.run_test() as pilot:
+        retry = pilot.app.query_one("#library-prompts-retry", Button)
+        assert retry.disabled is True
+        assert str(retry.label) == "○ Retry"
+        assert retry.tooltip == "Updating selected items…"
+        assert retry not in pilot.app.screen.focus_chain
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_selection_toolbar_sort_choices_keep_import_export_row():
+    app = _CanvasHost(_three_row_state(), sort_choices_visible=True)
+
+    async with app.run_test() as pilot:
+        sort = pilot.app.query_one("#library-prompts-sort", Button)
+        select = pilot.app.query_one("#library-prompts-select", Button)
+        assert sort.parent is select.parent
+        assert sort.parent is not None and sort.parent.display is False
+        assert pilot.app.query_one("#library-prompts-sort-choices", Horizontal)
+        import_button = pilot.app.query_one("#library-prompts-import", Button)
+        export_button = pilot.app.query_one("#library-prompts-export", Button)
+        assert import_button.parent is export_button.parent
+        assert import_button.parent is not None and import_button.parent.display is True
 
 
 @pytest.mark.asyncio
@@ -1350,6 +1739,7 @@ def test_build_library_prompts_state_reads_browse_result_not_sampled_source():
                 "local_id": 2,
                 "name": "Browse result",
                 "backend": "local",
+                "version": 1,
             }
         ]
     )
@@ -1506,7 +1896,7 @@ class _FakePromptScopeServiceWithList:
                 "details": prompt.get("details"),
                 "keywords": prompt.get("keywords") or [],
                 "last_modified": prompt.get("last_modified"),
-                "version": prompt.get("version"),
+                "version": prompt["version"],
             }
             for prompt in matching[start : start + page_size]
         ]
@@ -1535,12 +1925,14 @@ async def test_library_shell_prompts_row_press_renders_list_canvas():
                 "name": "Summarize",
                 "author": "Alice",
                 "last_modified": "2026-07-01T00:00:00+00:00",
+                "version": 1,
             },
             {
                 "id": 6,
                 "name": "Translate",
                 "author": "Bob",
                 "last_modified": "2026-07-02T00:00:00+00:00",
+                "version": 1,
             },
         ]
     )
@@ -1580,7 +1972,9 @@ async def test_library_prompts_restored_create_row_list_dispatches_browse_once()
     """A restored create-row/list state settles one exact browse request."""
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
-    service = _FakePromptScopeServiceWithList([{"id": 5, "name": "Restored prompt"}])
+    service = _FakePromptScopeServiceWithList(
+        [{"id": 5, "name": "Restored prompt", "version": 1}]
+    )
     app.prompt_scope_service = service
 
     original = LibraryScreen(app)
@@ -1619,7 +2013,14 @@ async def test_library_prompts_enter_flushes_debounce_without_duplicate_call():
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     service = _FakePromptScopeServiceWithList(
-        [{"id": 5, "name": "Summarize", "details": "Summarize a plan"}]
+        [
+            {
+                "id": 5,
+                "name": "Summarize",
+                "details": "Summarize a plan",
+                "version": 1,
+            }
+        ]
     )
     app.prompt_scope_service = service
     host = LibraryHarness(app)
@@ -1646,7 +2047,7 @@ async def test_library_prompts_retry_recovers_service_error():
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     service = _FakePromptScopeServiceWithList(
-        [{"id": 5, "name": "Recovered"}],
+        [{"id": 5, "name": "Recovered", "version": 1}],
         browse_failures=1,
     )
     app.prompt_scope_service = service
@@ -1724,6 +2125,7 @@ async def test_library_prompts_result_restores_row_or_toolbar_focus(next_page: i
                 "id": index,
                 "name": f"Prompt {index:02d}",
                 "last_modified": "2026-07-01T00:00:00+00:00",
+                "version": 1,
             }
             for index in range(1, 52)
         ]
@@ -1774,6 +2176,7 @@ async def test_library_shell_prompts_row_secondary_line_shows_details_not_author
                 "author": "Alice",
                 "details": "Summarizes text",
                 "last_modified": "2026-07-01T00:00:00+00:00",
+                "version": 1,
             },
         ]
     )

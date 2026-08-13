@@ -2,8 +2,8 @@
 
 Structural template copy of ``library_notes_canvas.py``'s list-view
 ``compose`` -- prompts and notes diverge (two-part editor, no sync), so only
-the list shape (header count line, filter Input, single-row
-``ds-toolbar``, row Buttons with escaped labels) is mirrored here.
+the list shape (header count line, filter Input, fixed-button
+``ds-toolbar`` rows, row Buttons with escaped labels) is mirrored here.
 """
 
 from __future__ import annotations
@@ -30,6 +30,10 @@ from tldw_chatbook.Library.library_prompts_state import (
 from tldw_chatbook.Library.library_shell_state import (
     library_choice_label,
     library_choice_tooltip,
+    library_disabled_action_label,
+)
+from tldw_chatbook.Prompt_Management.prompt_batch_models import (
+    PromptBatchDeleteResult,
 )
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
@@ -56,6 +60,14 @@ _EMPTY_PROMPT_COLLECTION_COPY = (
 # explaining the two-part prompt model to a new user.
 _SYSTEM_PROMPT_HINT = "Instructions the model always follows."
 _USER_PROMPT_HINT = "The message inserted into the composer."
+_NOTHING_TO_SELECT = "Nothing here to select yet."
+_SELECT_FIRST = "Select one or more items first."
+_SELECTION_EMPTY_REASON = "Select one or more items to use bulk actions."
+_PAGE_UNAVAILABLE = "Current page is unavailable."
+_PAGE_UNAVAILABLE_REASON = (
+    "Current page is unavailable; selected items remain available for Export or Delete."
+)
+_MUTATION_PROGRESS = "Updating selected items…"
 
 
 def _compact_receipt_name(value: str, limit: int = 42) -> str:
@@ -141,7 +153,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         collection_label: str = "All prompts",
         membership_state: PromptMembershipState | None = None,
         sort_choices_visible: bool = False,
-        delete_receipt: LibraryPromptDeleteReceipt | None = None,
+        delete_receipt: LibraryPromptDeleteReceipt
+        | PromptBatchDeleteResult
+        | None = None,
         mutation_in_flight: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -275,97 +289,244 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         )
         if self.delete_receipt is not None:
             receipt = self.delete_receipt
-            artifact_label = receipt.artifact_type.title()
-            receipt_name = _compact_receipt_name(receipt.title)
+            if isinstance(receipt, PromptBatchDeleteResult):
+                if len(receipt.entries) == 1:
+                    entry = receipt.entries[0]
+                    receipt_copy = (
+                        f"✓ deleted · {entry.artifact_type.title()} · "
+                        f"{_compact_receipt_name(entry.title)}"
+                    )
+                else:
+                    receipt_copy = f"✓ deleted · {len(receipt.entries)} items"
+            else:
+                receipt_copy = (
+                    f"✓ deleted · {receipt.artifact_type.title()} · "
+                    f"{_compact_receipt_name(receipt.title)}"
+                )
             receipt_row = Horizontal(
                 id="library-prompts-delete-receipt", classes="ds-toolbar"
             )
             receipt_row.styles.height = "auto"
             with receipt_row:
                 yield Static(
-                    f"✓ deleted · {artifact_label} · {receipt_name}",
+                    receipt_copy,
                     id="library-prompts-delete-receipt-copy",
                     classes="library-toolbar-count",
                     markup=False,
                 )
                 yield Button(
-                    "Undo",
+                    library_disabled_action_label("Undo", self.mutation_in_flight),
                     id="library-prompts-delete-undo",
                     classes="library-canvas-action",
                     compact=True,
                     disabled=self.mutation_in_flight,
+                    tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
                 )
                 yield Button(
-                    "Dismiss",
+                    library_disabled_action_label("Dismiss", self.mutation_in_flight),
                     id="library-prompts-delete-receipt-dismiss",
                     classes="library-canvas-action",
                     compact=True,
                     disabled=self.mutation_in_flight,
+                    tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
                 )
         yield Input(
             placeholder="Filter prompts… (Enter)",
             id="library-prompts-filter",
             value=self.filter_value,
         )
+        collection_label = library_choice_label(
+            "collection", escape_markup(self.collection_label)
+        )
         yield Button(
             # task-14902: a chooser, not a cycler -- pressing opens the
             # collection manager modal (browse lane: the full, unbounded
             # collection set with a direct pick), so the label must not
             # carry the press-advances "⇄" glyph.
-            library_choice_label("collection", escape_markup(self.collection_label)),
+            library_disabled_action_label(collection_label, self.mutation_in_flight),
             id="library-prompts-collection",
             classes="library-canvas-action",
             compact=True,
+            disabled=self.mutation_in_flight,
             # The collection set is user-data (dynamic), so the tooltip
             # names the pick's shape rather than a stale enumeration.
-            tooltip="Press to pick the prompt scope: All prompts, or one collection.",
+            tooltip=(
+                _MUTATION_PROGRESS
+                if self.mutation_in_flight
+                else "Press to pick the prompt scope: All prompts, or one collection."
+            ),
         )
-        # One horizontal ds-toolbar row for Sort/Import/Export -- mirrors
-        # library_notes_canvas.py's toolbar exactly (same render-safe shape:
-        # every child is a fixed-width compact Button, never mixed with a
-        # 1fr sibling). TASK-197 wires the list Export action to the existing
-        # Chatbook export canvas; per-prompt Markdown export remains in the
-        # editor's own #library-prompt-export action.
-        toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
-        # task-14902: the sort choice strip replaces this toolbar row while
-        # open (the Notes Sort precedent).
-        toolbar.display = not self.sort_choices_visible
-        with toolbar:
-            yield Button(
-                library_choice_label(
-                    "sort", _SORT_LABELS.get(self.sort_mode, "Newest")
-                ),
-                id="library-prompts-sort",
-                classes="library-canvas-action",
-                compact=True,
-                tooltip=library_choice_tooltip(
-                    "the sort order", tuple(_SORT_LABELS.values())
-                ),
+        page_unavailable = bool(
+            browse_result is not None and browse_result.status in {"loading", "error"}
+        )
+        page_selectable = bool(state.rows) and not page_unavailable
+        selection_reason = ""
+        if state.select_mode:
+            yield Static(
+                f"{state.total_selected} selected · "
+                f"{state.selected_on_page} on this page",
+                id="library-prompts-selection-summary",
+                classes="library-toolbar-count",
+                markup=False,
             )
-            yield Button(
-                "Import…",
-                id="library-prompts-import",
-                classes="library-canvas-action",
-                compact=True,
+            select_page_disabled = not page_selectable or self.mutation_in_flight
+            zero_selection = state.total_selected == 0
+            selection_disabled = zero_selection or self.mutation_in_flight
+            management_toolbar = Horizontal(classes="ds-toolbar")
+            management_toolbar.styles.height = "auto"
+            with management_toolbar:
+                yield Button(
+                    library_disabled_action_label("Select page", select_page_disabled),
+                    id="library-prompts-select-page",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=select_page_disabled,
+                    tooltip=(
+                        _MUTATION_PROGRESS
+                        if self.mutation_in_flight
+                        else (
+                            _PAGE_UNAVAILABLE
+                            if page_unavailable
+                            else _NOTHING_TO_SELECT
+                        )
+                        if select_page_disabled
+                        else None
+                    ),
+                )
+                yield Button(
+                    library_disabled_action_label("Clear all", selection_disabled),
+                    id="library-prompts-clear-selection",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=selection_disabled,
+                    tooltip=(
+                        _MUTATION_PROGRESS
+                        if self.mutation_in_flight
+                        else _SELECT_FIRST
+                        if selection_disabled
+                        else None
+                    ),
+                )
+                yield Button(
+                    library_disabled_action_label("Done", self.mutation_in_flight),
+                    id="library-prompts-selection-done",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=self.mutation_in_flight,
+                    tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
+                )
+            selection_toolbar = Horizontal(classes="ds-toolbar")
+            selection_toolbar.styles.height = "auto"
+            with selection_toolbar:
+                for label, action_id in (
+                    ("Export selected", "library-prompts-export-selected"),
+                    ("Delete selected", "library-prompts-delete-selected"),
+                ):
+                    yield Button(
+                        library_disabled_action_label(label, selection_disabled),
+                        id=action_id,
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=selection_disabled,
+                        tooltip=(
+                            _MUTATION_PROGRESS
+                            if self.mutation_in_flight
+                            else _SELECT_FIRST
+                            if selection_disabled
+                            else None
+                        ),
+                    )
+            if not self.mutation_in_flight:
+                if zero_selection:
+                    selection_reason = _SELECTION_EMPTY_REASON
+                elif page_unavailable:
+                    selection_reason = _PAGE_UNAVAILABLE_REASON
+                elif not state.rows:
+                    selection_reason = _NOTHING_TO_SELECT
+        else:
+            select_disabled = not page_selectable or self.mutation_in_flight
+            sort_label = library_choice_label(
+                "sort", _SORT_LABELS.get(self.sort_mode, "Newest")
             )
-            yield Button(
-                "Export…",
-                id="library-prompts-export",
-                classes="library-canvas-action",
-                compact=True,
+            management_toolbar = Horizontal(classes="ds-toolbar")
+            management_toolbar.styles.height = "auto"
+            # task-14902: the sort choice strip replaces only this row;
+            # Import/Export remain available below it.
+            management_toolbar.display = not self.sort_choices_visible
+            with management_toolbar:
+                yield Button(
+                    library_disabled_action_label(sort_label, self.mutation_in_flight),
+                    id="library-prompts-sort",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=self.mutation_in_flight,
+                    tooltip=(
+                        _MUTATION_PROGRESS
+                        if self.mutation_in_flight
+                        else library_choice_tooltip(
+                            "the sort order", tuple(_SORT_LABELS.values())
+                        )
+                    ),
+                )
+                yield Button(
+                    library_disabled_action_label("Select", select_disabled),
+                    id="library-prompts-select",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=select_disabled,
+                    tooltip=(
+                        _MUTATION_PROGRESS
+                        if self.mutation_in_flight
+                        else _NOTHING_TO_SELECT
+                        if select_disabled
+                        else None
+                    ),
+                )
+            if self.sort_choices_visible:
+                yield from compose_library_choice_strip(
+                    strip_id="library-prompts-sort-choices",
+                    choice_class="library-prompts-sort-choice",
+                    options=tuple(
+                        (f"library-prompts-sort-{mode}", mode, label)
+                        for mode, label in _SORT_LABELS.items()
+                    ),
+                    active_value=self.sort_mode,
+                    disabled=self.mutation_in_flight,
+                )
+            transfer_toolbar = Horizontal(classes="ds-toolbar")
+            transfer_toolbar.styles.height = "auto"
+            with transfer_toolbar:
+                for label, action_id in (
+                    ("Import…", "library-prompts-import"),
+                    ("Export…", "library-prompts-export"),
+                ):
+                    yield Button(
+                        library_disabled_action_label(label, self.mutation_in_flight),
+                        id=action_id,
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=self.mutation_in_flight,
+                        tooltip=(
+                            _MUTATION_PROGRESS if self.mutation_in_flight else None
+                        ),
+                    )
+            if not self.mutation_in_flight and select_disabled:
+                selection_reason = _NOTHING_TO_SELECT
+        if self.mutation_in_flight:
+            yield Static(
+                _MUTATION_PROGRESS,
+                id="library-prompts-mutation-progress",
+                classes="destination-purpose",
+                markup=False,
             )
-        if self.sort_choices_visible:
-            yield from compose_library_choice_strip(
-                strip_id="library-prompts-sort-choices",
-                choice_class="library-prompts-sort-choice",
-                options=tuple(
-                    (f"library-prompts-sort-{mode}", mode, label)
-                    for mode, label in _SORT_LABELS.items()
-                ),
-                active_value=self.sort_mode,
+        elif selection_reason:
+            yield Static(
+                selection_reason,
+                id="library-prompts-selection-reason",
+                classes="destination-purpose",
+                markup=False,
             )
-        if self.import_open:
+        if self.import_open and not state.select_mode:
             yield from self._compose_import_row()
         if browse_result is not None and browse_result.status == "loading":
             yield Static(
@@ -383,10 +544,12 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 markup=False,
             )
             yield Button(
-                "Retry",
+                library_disabled_action_label("Retry", self.mutation_in_flight),
                 id="library-prompts-retry",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.mutation_in_flight,
+                tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
             )
             return
         if browse_result is not None and browse_result.total_pages > 1:
@@ -429,14 +592,29 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 artifact_summary = escape_markup(
                     f"{row.type_label} · {row.source_label} · {row.lane_summary}"
                 )
-                label_parts = (name, artifact_summary, secondary)
+                selection_prefix = ""
+                if state.select_mode:
+                    selection_prefix = "☑ " if row.checked else "☐ "
+                label_parts = (
+                    f"{selection_prefix}{name}",
+                    artifact_summary,
+                    secondary,
+                )
                 button = Button(
-                    "\n".join(part for part in label_parts if part),
+                    library_disabled_action_label(
+                        "\n".join(part for part in label_parts if part),
+                        self.mutation_in_flight,
+                    ),
                     id=f"library-prompt-row-{row.prompt_id}",
                     classes="library-prompt-row",
                     compact=True,
+                    disabled=self.mutation_in_flight,
+                    tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
                 )
                 button.prompt_id = row.prompt_id
+                button.prompt_version = row.version
+                button.artifact_type = row.artifact_type
+                button.prompt_name = row.name
                 yield button
 
     def _compose_paging(self, result: PromptBrowseResult) -> ComposeResult:
@@ -455,18 +633,20 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         toolbar.styles.height = "auto"
         with toolbar:
             yield Button(
-                "Previous",
+                library_disabled_action_label("Previous", self.mutation_in_flight),
                 id="library-prompts-page-previous",
                 classes="library-canvas-action",
                 compact=True,
-                disabled=result.page <= 1,
+                disabled=result.page <= 1 or self.mutation_in_flight,
+                tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
             )
             yield Button(
-                "Next",
+                library_disabled_action_label("Next", self.mutation_in_flight),
                 id="library-prompts-page-next",
                 classes="library-canvas-action",
                 compact=True,
-                disabled=result.page >= result.total_pages,
+                disabled=result.page >= result.total_pages or self.mutation_in_flight,
+                tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
             )
 
     def _compose_import_row(self) -> ComposeResult:
@@ -486,6 +666,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             placeholder="File or folder path…",
             id="library-prompts-import-path",
             value=self.import_path,
+            disabled=self.mutation_in_flight,
         )
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
@@ -496,22 +677,28 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             # be typed by hand into the path Input above; this only covers
             # the file case (see handle_library_prompts_import_browse).
             yield Button(
-                "Browse…",
+                library_disabled_action_label("Browse…", self.mutation_in_flight),
                 id="library-prompts-import-browse",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.mutation_in_flight,
+                tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
             )
             yield Button(
-                "Import",
+                library_disabled_action_label("Import", self.mutation_in_flight),
                 id="library-prompts-import-run",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.mutation_in_flight,
+                tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
             )
             yield Button(
-                "Cancel",
+                library_disabled_action_label("Cancel", self.mutation_in_flight),
                 id="library-prompts-import-cancel",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.mutation_in_flight,
+                tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
             )
         yield Static(
             self.import_status,
