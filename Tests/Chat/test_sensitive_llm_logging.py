@@ -23,6 +23,7 @@ from loguru import logger
 import tldw_chatbook.Chat.Chat_Functions as chat_functions
 import tldw_chatbook.LLM_Calls.LLM_API_Calls as cloud_adapters
 import tldw_chatbook.LLM_Calls.LLM_API_Calls_Local as local_adapters
+import tldw_chatbook.LLM_Calls.hosted_chat as hosted_chat
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 from tldw_chatbook.Chat.Chat_Functions import SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
@@ -874,20 +875,11 @@ def test_sensitive_openai_compatible_error_bodies_are_not_logged(
     provider: str,
 ) -> None:
     session = _FakeSession(_FakeResponse({}, status_code=500, text="ERROR-BODY-CANARY"))
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
     if provider == "moonshot":
-        monkeypatch.setattr(
-            cloud_adapters,
-            "load_settings",
-            lambda: {
-                "moonshot_api": {
-                    "api_key": "key",
-                    "api_base_url": "https://moonshot.test",
-                }
-            },
-        )
+        monkeypatch.setattr(hosted_chat.requests, "Session", lambda: session)
         call: Callable[..., object] = cloud_adapters.chat_with_moonshot
     else:
+        monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
         monkeypatch.setattr(
             cloud_adapters,
             "get_runtime_config_snapshot",

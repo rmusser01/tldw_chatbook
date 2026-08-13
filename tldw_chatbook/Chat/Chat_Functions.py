@@ -722,6 +722,7 @@ PROVIDER_PARAM_MAP = {
         "response_format": "response_format",
         "n": "n",
         "user_identifier": "user",
+        "reasoning_effort": "reasoning_effort",
     },
     "zai": {
         "api_key": "api_key",

@@ -442,6 +442,26 @@ class TestTemperatureForwarding:
         assert handler.call_args.kwargs.get("temp") == 0.42
 
 
+def test_moonshot_reasoning_effort_reaches_public_handler() -> None:
+    handler = Mock(return_value={"choices": [{"message": {"content": "ok"}}]})
+    handler.__name__ = "chat_with_moonshot"
+    original = API_CALL_HANDLERS["moonshot"]
+    API_CALL_HANDLERS["moonshot"] = handler
+    try:
+        chat_api_call(
+            api_endpoint="moonshot",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="test_key",
+            model="kimi-k3",
+            reasoning_effort="high",
+            streaming=False,
+        )
+    finally:
+        API_CALL_HANDLERS["moonshot"] = original
+
+    assert handler.call_args.kwargs["reasoning_effort"] == "high"
+
+
 def test_provider_param_map_has_no_dead_generic_keys() -> None:
     """Pin the generic side of PROVIDER_PARAM_MAP to the dispatcher's truth.
 

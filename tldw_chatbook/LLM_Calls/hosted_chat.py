@@ -403,6 +403,28 @@ def normalize_hosted_chat_response(
     )
 
 
+def hosted_chat_request(
+    *,
+    config: HostedHTTPTransportConfig,
+    payload: Mapping[str, Any],
+    streaming: bool,
+    finish_policy: HostedChatFinishPolicy,
+) -> HostedChatTurn | HostedChatStream:
+    """Run one hosted Chat-Completions request through the shared boundary."""
+    response = owned_json_post(
+        config=config,
+        route="chat/completions",
+        payload=payload,
+        streaming=streaming,
+    )
+    if streaming:
+        return HostedChatStream(
+            cast(Iterator[SSERecord], response),
+            finish_policy=finish_policy,
+        )
+    return normalize_hosted_chat_response(response, finish_policy=finish_policy)
+
+
 def owned_json_post(
     *,
     config: HostedHTTPTransportConfig,

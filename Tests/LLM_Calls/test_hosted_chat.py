@@ -26,6 +26,7 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatProtocolError,
     HostedChatStream,
     HostedChatTurn,
+    hosted_chat_request,
     normalize_hosted_chat_base_url,
     normalize_hosted_chat_response,
     owned_json_post,
@@ -63,6 +64,62 @@ class _FinishPolicy:
 
 
 _POLICY = _FinishPolicy()
+
+
+def test_hosted_chat_request_composes_nonstream_transport_and_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = {
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "hello"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+    }
+    monkeypatch.setattr(hosted_chat, "owned_json_post", lambda **_kwargs: response)
+
+    result = hosted_chat_request(
+        config=HostedHTTPTransportConfig(
+            provider="moonshot",
+            base_url="https://example.test/v1",
+            api_key="secret",
+            timeout=10,
+            retries=0,
+            retry_delay=0,
+        ),
+        payload={"model": "kimi-k3", "messages": [], "stream": False},
+        streaming=False,
+        finish_policy=_POLICY,
+    )
+
+    assert isinstance(result, HostedChatTurn)
+    assert result.text == "hello"
+
+
+def test_hosted_chat_request_composes_stream_transport_and_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = iter([SSERecord(event=None, data="[DONE]")])
+    monkeypatch.setattr(hosted_chat, "owned_json_post", lambda **_kwargs: records)
+
+    result = hosted_chat_request(
+        config=HostedHTTPTransportConfig(
+            provider="moonshot",
+            base_url="https://example.test/v1",
+            api_key="secret",
+            timeout=10,
+            retries=0,
+            retry_delay=0,
+        ),
+        payload={"model": "kimi-k3", "messages": [], "stream": True},
+        streaming=True,
+        finish_policy=_POLICY,
+    )
+
+    assert isinstance(result, HostedChatStream)
 
 
 class _ScriptedHostedServer(ThreadingHTTPServer):
