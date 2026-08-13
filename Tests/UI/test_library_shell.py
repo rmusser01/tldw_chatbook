@@ -7008,6 +7008,171 @@ async def test_library_shell_restore_state_seeds_local_source_snapshot_from_cach
     assert conversation_ids == ["chat-1", "chat-2"]
 
 
+class _FlappingStudyScopeService:
+    """Study-scope fake whose ``count_decks`` raises on exactly one call.
+
+    Reproduces -- deterministically, no thread-pool race needed -- the
+    transient exception ``_study_count_or_none`` swallows (task-15459
+    review fix). ``count_due_flashcards`` always succeeds so only the
+    ``study_decks`` decorative field flaps.
+    """
+
+    def __init__(self, *, decks, raise_on_call):
+        self._decks = decks
+        self._raise_on_call = raise_on_call
+        self.count_decks_calls = 0
+
+    async def count_decks(self, **kwargs):
+        self.count_decks_calls += 1
+        if self.count_decks_calls == self._raise_on_call:
+            raise ValueError("Local study backend is unavailable.")
+        return self._decks
+
+    async def count_due_flashcards(self, **kwargs):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_library_shell_decorative_count_flap_patches_rail_in_place_without_recompose(
+    monkeypatch,
+):
+    """task-15459 review fix (root-cause reproduction): a decorative rail
+    count that transiently fails between the pre-mount cache seed and this
+    visit's own reconcile fetch must patch the rail's badge in place, and
+    must NEVER force a whole-screen recompose.
+
+    ``_study_count_or_none``/``_prompts_count_or_none``/``_skills_context_
+    or_none`` swallow ANY exception and degrade to ``None`` (their own
+    docstrings), so under real thread-pool contention the SEED fetch
+    (populating the app-scoped cache on a prior visit) and the RECONCILE
+    fetch (this visit's own worker) can legitimately disagree on a
+    decorative field even though nothing a user would call "the data"
+    changed. Reproduced here without any race: ``_FlappingStudyScopeService``
+    raises on its SECOND ``count_decks`` call -- the warm revisit's own
+    reconcile -- while its FIRST call (the prior visit that populated the
+    cache) succeeds, so the pre-mount seed shows ``study_decks=3`` and the
+    reconcile computes ``None`` for the exact same visit.
+
+    Before the review fix, folding ``study_counts`` into the flat
+    ``unchanged`` comparison made this disagreement force a full recompose
+    even though every STRUCTURAL field (notes/media/conversations rows,
+    counts, lookup state) was byte-identical -- the flake the reviewer
+    reproduced against the flagship AC test. This test pins the fix:
+    ``LibraryRail.sync_state`` is called (the rail's count patches in
+    place, visibly) and ``compose_content`` is not.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    flapping_study_service = _FlappingStudyScopeService(decks=3, raise_on_call=2)
+    app.study_scope_service = flapping_study_service
+    host = LibraryHarness(app)
+
+    calls = {"count": 0}
+    gate = threading.Event()
+    original_list_snapshot = LibraryScreen._list_local_source_snapshot
+
+    async def _gated_list_snapshot(self):
+        calls["count"] += 1
+        if calls["count"] > 1:
+            await asyncio.to_thread(gate.wait, _GATED_RELEASE_TIMEOUT_SECONDS)
+        return await original_list_snapshot(self)
+
+    monkeypatch.setattr(
+        LibraryScreen, "_list_local_source_snapshot", _gated_list_snapshot
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        first_screen = _active_library_screen(host)
+        await _wait_for_library_shell(first_screen, pilot)
+        assert "Study decks (3)" in str(
+            first_screen.query_one("#library-row-create-study").label
+        )
+        cached = getattr(app, "_library_source_snapshot_cache", None)
+        assert cached is not None
+        assert cached[5]["study_decks"] == 3  # index 5: study_counts
+
+        await host.pop_screen()
+        await pilot.pause()
+
+        compose_calls: list = []
+        original_compose = LibraryScreen.compose_content
+
+        def _counting_compose(self):
+            compose_calls.append(self)
+            return original_compose(self)
+
+        monkeypatch.setattr(LibraryScreen, "compose_content", _counting_compose)
+
+        sync_state_calls: list = []
+        original_sync_state = LibraryRail.sync_state
+
+        def _counting_sync_state(self, *args, **kwargs):
+            sync_state_calls.append(self)
+            return original_sync_state(self, *args, **kwargs)
+
+        monkeypatch.setattr(LibraryRail, "sync_state", _counting_sync_state)
+
+        apply_calls: list = []
+        original_apply = LibraryScreen._apply_local_source_snapshot
+
+        def _counting_apply(self, *args, **kwargs):
+            apply_calls.append(self)
+            return original_apply(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            LibraryScreen, "_apply_local_source_snapshot", _counting_apply
+        )
+
+        second_screen = LibraryScreen(app)
+        await host.push_screen(second_screen)
+
+        try:
+            await pilot.pause()
+            await pilot.pause()
+
+            # Pre-mount cache seed: the FIRST compose already shows the
+            # (still correct, at the time) cached count.
+            assert len(compose_calls) == 1
+            assert "Study decks (3)" in str(
+                second_screen.query_one("#library-row-create-study").label
+            )
+        finally:
+            gate.set()
+
+        # Wait for the reconcile fetch's own apply (the second entry
+        # against `second_screen`) to land.
+        deadline = time.monotonic() + _GATED_RELEASE_TIMEOUT_SECONDS
+        while len(apply_calls) < 2 and time.monotonic() < deadline:
+            await pilot.pause(0.02)
+        assert len(apply_calls) >= 2, "reconcile fetch's apply never landed"
+        await pilot.pause()
+        await pilot.pause()
+
+        # The injected exception actually fired and flapped the decorative
+        # field -- otherwise this test would not be exercising the bug at
+        # all (a vacuous pass).
+        assert flapping_study_service.count_decks_calls == 2
+        assert second_screen._library_study_counts["study_decks"] is None
+
+        # The fix: patched in place, never recomposed.
+        assert len(compose_calls) == 1, (
+            "a decorative-only count flap forced a whole-screen recompose "
+            f"({len(compose_calls)} total)"
+        )
+        assert sync_state_calls, (
+            "the rail was never re-synced -- the decorative flap was "
+            "silently dropped instead of being patched in place"
+        )
+        # "Study decks" with no count suffix at all is `_count_suffix`'s
+        # rendering for `count=None` -- the visible proof the rail badge
+        # actually followed the flapped value through to the DOM.
+        decks_label = str(
+            second_screen.query_one("#library-row-create-study").label
+        )
+        assert "Study decks (3)" not in decks_label
+        assert "Study decks" in decks_label
+
+
 @pytest.mark.asyncio
 async def test_library_shell_details_toggle_persists():
     app = _build_test_app()

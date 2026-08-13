@@ -6560,6 +6560,74 @@ class LibraryScreen(BaseAppScreen):
         merged["conversations"] = (carried_record, *new_conversations)
         return merged
 
+    @staticmethod
+    def _structural_records_for_comparison(
+        records: Mapping[str, tuple[Any, ...]],
+    ) -> dict[str, Any]:
+        """Mask the DECORATIVE-only rail-count fields out of ``records``
+        for the task-15459 ``unchanged`` check in
+        ``_apply_local_source_snapshot`` -- see that method's own comment
+        for why decorative counts must not gate a recompose.
+
+        ``records["prompts"]`` is entirely decorative: its second slot is
+        permanently ``()`` (Prompt rows have their own exact browse owner
+        -- see the ``__init__``/``_list_local_source_snapshot`` comments on
+        this key), so the whole entry is dropped. ``records["skills"]`` is
+        mixed: only its COUNT (first slot) is the decorative rail badge;
+        its ``available_skills``/``blocked_skills`` payload (second slot)
+        is the actual content a mounted Skills canvas renders
+        (``_build_library_skills_state``), so only the count is masked out
+        there, not the whole entry.
+
+        Args:
+            records: A ``_local_source_records``-shaped snapshot (either
+                the incoming one or the currently-rendered one).
+
+        Returns:
+            A shallow copy of ``records`` with decorative count fields
+            neutralized, suitable for ``==`` comparison against another
+            such copy to detect a genuine STRUCTURAL (rendered-content)
+            change.
+        """
+        view = {key: value for key, value in records.items() if key != "prompts"}
+        skills_entry = view.get("skills")
+        if isinstance(skills_entry, tuple) and len(skills_entry) == 2:
+            view["skills"] = (None, skills_entry[1])
+        return view
+
+    @staticmethod
+    def _decorative_rail_counts_for_comparison(
+        records: Mapping[str, tuple[Any, ...]],
+    ) -> tuple[Any, Any]:
+        """Return the two decorative rail counts folded into ``records``
+        (Prompts, Skills) as a comparable tuple -- the counterpart half of
+        ``_structural_records_for_comparison``'s masking. ``study_counts``
+        is the third decorative field but lives outside ``records``
+        entirely, so callers compare it separately.
+
+        Args:
+            records: A ``_local_source_records``-shaped snapshot.
+
+        Returns:
+            ``(prompts_count, skills_count)``, each ``None`` when the
+            corresponding entry is absent or malformed (mirrors
+            ``_build_library_shell_input``'s own extraction of these two
+            fields for the rail).
+        """
+        prompts_entry = records.get("prompts")
+        prompts_count = (
+            prompts_entry[0]
+            if isinstance(prompts_entry, tuple) and len(prompts_entry) == 2
+            else None
+        )
+        skills_entry = records.get("skills")
+        skills_count = (
+            skills_entry[0]
+            if isinstance(skills_entry, tuple) and len(skills_entry) == 2
+            else None
+        )
+        return (prompts_count, skills_count)
+
     def _apply_local_source_snapshot(
         self,
         records: dict[str, tuple[Mapping[str, Any], ...]],
@@ -6575,22 +6643,57 @@ class LibraryScreen(BaseAppScreen):
             if study_counts is not None
             else {"study_decks": None, "flashcards_due": None, "quizzes": None}
         )
-        # task-15459: detect whether this snapshot actually differs from
-        # what is already rendered -- typically the pre-mount cache seed
-        # (``_seed_local_source_snapshot_from_cache``) being confirmed
-        # verbatim by this same visit's reconcile fetch -- so the recompose
-        # below can be skipped entirely on that common warm-revisit case
-        # instead of repainting an identical screen. ``not self._library_
-        # loaded`` always counts as a change even if the incoming records
-        # happen to be all-empty: the screen is still showing the "Loading…"
-        # placeholder in that case, which DOES need a recompose to clear.
-        unchanged = self._library_loaded and (
-            records == self._local_source_records
+        # task-15459 (+ review fix): detect whether this snapshot actually
+        # differs from what is already rendered -- typically the pre-mount
+        # cache seed (``_seed_local_source_snapshot_from_cache``) being
+        # confirmed by this same visit's reconcile fetch -- so the
+        # recompose below can be skipped on that common warm-revisit case
+        # instead of repainting an identical screen. Split into TWO
+        # domains rather than one flat comparison:
+        #
+        # STRUCTURAL = notes/media/conversations rows+counts+total_known,
+        # the whole-snapshot lookup_error/recovery_state, and the Skills
+        # canvas's actual available/blocked payload -- everything a
+        # currently mounted canvas renders as content.
+        #
+        # DECORATIVE = the Create-rail badges (study_decks/flashcards_due/
+        # quizzes) plus the Prompts/Skills rail COUNTS. Every one of these
+        # is fetched by a ``..._or_none`` helper (``_study_count_or_none``,
+        # ``_prompts_count_or_none``, ``_skills_context_or_none``) that
+        # swallows ANY exception and degrades to ``None`` (see their
+        # docstrings) -- so under thread-pool contention the pre-mount
+        # cache seed and this visit's reconcile fetch can legitimately
+        # disagree on a decorative field even though nothing a user would
+        # call "the data" changed. Folding decorative fields into a single
+        # flat comparison made that disagreement force a full recompose
+        # for a badge flap -- reproduced deterministically by injecting a
+        # transient exception into one decorative fetch between the seed
+        # and the reconcile (see
+        # ``test_library_shell_decorative_count_flap_patches_rail_in_
+        # place_without_recompose``). Splitting the domains lets a
+        # decorative-only change patch the rail's counts in place
+        # (``rail.sync_state``, the exact mechanism the Ingest/Prompts/
+        # Search branch below already uses) instead of recomposing, while
+        # a STRUCTURAL change (the only kind covered by ``notes_true_
+        # count``'s optional override -- deliberately kept structural per
+        # review scope, not folded into the decorative bucket here) still
+        # gets the full picture. ``not self._library_loaded`` always
+        # counts as a structural change even if the incoming records
+        # happen to be all-empty: the screen is still showing the
+        # "Loading…" placeholder in that case, which DOES need a
+        # recompose to clear.
+        structural_unchanged = self._library_loaded and (
+            self._structural_records_for_comparison(records)
+            == self._structural_records_for_comparison(self._local_source_records)
             and counts == self._local_source_counts
             and total_known == self._local_source_total_known
             and lookup_error == self._library_lookup_error
             and recovery_state == self._library_lookup_recovery_state
-            and study_counts == self._library_study_counts
+        )
+        decorative_changed = (
+            study_counts != self._library_study_counts
+            or self._decorative_rail_counts_for_comparison(records)
+            != self._decorative_rail_counts_for_comparison(self._local_source_records)
         )
         self._local_source_records = records
         self._local_source_counts = counts
@@ -6644,17 +6747,39 @@ class LibraryScreen(BaseAppScreen):
                 if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
                     self._sync_library_rag_scope_toggle_and_run_gate_widgets()
                 return
-            if unchanged and not self._library_notes_pending_focus_waits_for_snapshot:
-                # task-15459: the in-memory snapshot above is already
-                # up to date and nothing on screen needs to change --
-                # update-in-place, no recompose. The pending-focus-wait
-                # carve-out matters because that flag's own release
-                # (``_release_library_notes_focus_after_snapshot``) is only
-                # ever armed from inside the recompose branch below (see
-                # ``action_library_note_editor_back``'s docstring): skipping
-                # the recompose while the flag is armed would strand it set
-                # forever, since nothing else clears it.
-                return
+            # The pending-focus-wait carve-out applies to BOTH skip paths
+            # below: that flag's own release
+            # (``_release_library_notes_focus_after_snapshot``) is only
+            # ever armed from inside the recompose call further down (see
+            # ``action_library_note_editor_back``'s docstring), so skipping
+            # the recompose while the flag is armed -- for ANY reason --
+            # would strand it set forever, since nothing else clears it.
+            if not self._library_notes_pending_focus_waits_for_snapshot:
+                if structural_unchanged and not decorative_changed:
+                    # task-15459: the in-memory snapshot above is already
+                    # up to date and nothing on screen needs to change --
+                    # update-in-place, no recompose.
+                    return
+                if structural_unchanged:
+                    # task-15459 review fix: only a DECORATIVE rail badge
+                    # flapped (see the domain-split comment above) --
+                    # patch the rail's counts in place via the same
+                    # targeted sync the Ingest/Prompts/Search branch above
+                    # already uses, instead of paying for a whole-screen
+                    # recompose over a badge repaint.
+                    try:
+                        rail = self.query_one("#library-rail", LibraryRail)
+                    except (NoMatches, QueryError):
+                        return
+                    rail.sync_state(
+                        build_library_shell_state(
+                            self._build_library_shell_input(),
+                            selected_row_id=self._library_selected_row_id,
+                        ),
+                        self._library_rail_preferences(),
+                        query=self._library_rag_query,
+                    )
+                    return
             self.refresh(recompose=True)
             if self._library_notes_pending_focus_waits_for_snapshot:
                 self.call_after_refresh(
