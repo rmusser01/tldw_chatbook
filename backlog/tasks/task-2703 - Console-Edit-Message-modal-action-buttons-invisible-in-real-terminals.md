@@ -26,13 +26,15 @@ Edit & resend, and a keyboard user gets no focus feedback.
 Reproduced on dev @ ff435772c (G1 user-guide verification session,
 2026-07-31): tmux, both 235×52 and 200×50, two separate app instances,
 opened via transcript selection → `e` on a USER message. Crucially, the
-same flow **headless under `app.run_test(size=(200, 50))` renders the
-buttons correctly** (probe showed `display=True`, non-zero regions,
-fully on-screen y=36..39) — so UI tests cannot catch this, and the bug is
-specific to the live terminal driver/paint path. Other Console modals
-(Rewind, Console Settings) paint their button rows fine in the same
-terminal, so it is something about this modal's actions-row styling, not a
-general modal problem.
+same flow **headless under `app.run_test(size=(200, 50))` appeared healthy
+under geometry-only inspection** (`display=True`, non-zero regions, and
+on-screen coordinates). A later real-bundle compositor probe showed why that
+was a false positive: the fixed editor height pushes the USER action row
+outside the opaque modal content region, so its button cells never paint and
+center hit-tests resolve to the modal. The shorter non-USER shape still paints
+its actions, although its full action region may overhang by one row. The
+regression therefore needs compositor-cell, containment, and hit-test evidence,
+not mounted/display geometry alone. Other Console modals remain unaffected.
 
 ## Acceptance Criteria (the what)
 
@@ -46,3 +48,28 @@ general modal problem.
 - [ ] The User Guide quirk note in
       `Docs/User_Guide/console/branching-and-rewind.md` is updated/removed
       to match the fixed behavior.
+
+## Implementation Plan (the how)
+
+ADR required: no
+
+ADR path: N/A
+
+Reason: this is a localized Textual layout/rendering correction that changes no
+storage, ownership, interface, security, dependency, or long-lived UX boundary.
+
+1. Add independent real-bundle compositor paint, containment, and hit-test RED
+   coverage for USER and non-USER modal shapes at the reported terminal sizes;
+   evaluate ordinary/focused contrast after containment is repaired.
+2. Replace only the editor's fixed height with remaining-space sizing and prove
+   the fixed-height regression by mutation.
+3. Add modal-scoped paint/focus CSS only if a separate post-containment RED
+   proves it necessary; rebuild the generated bundle through the existing tool.
+4. Verify both shapes and every focus step through tmux and a separate PTY with
+   scratch state and before/after isolation fingerprints.
+5. Remove the obsolete guide workaround, run bounded behavior/static/UI review
+   plus the required full suite, record evidence, and close the task only after
+   final candidate verification.
+
+Detailed execution plan:
+`Docs/superpowers/plans/2026-08-13-task-2703-console-edit-modal-paint.md`.

@@ -75,7 +75,8 @@ For both modal shapes:
   that contract, use the scoped heavy focus outline defined above;
 - action/background and focused-action/background contrast must meet the
   repository's established 3:1 action-label floor;
-- mouse and Enter activation behavior remains covered by incumbent tests.
+- mouse activation remains covered by incumbent tests, and an explicit mounted
+  focused-button Enter regression pins keyboard activation.
 
 Representative checks will use the reported 200x50 and 235x52 sizes. A smaller
 supported viewport may be included as a stress case only if it does not expand
