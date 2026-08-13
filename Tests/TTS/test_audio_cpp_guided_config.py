@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 
 import pytest
 from pydantic import ValidationError
@@ -59,6 +60,131 @@ def _accepted_package(*, public_model_id: str = "supertonic-3-orig"):
             model_relative_path="supertonic-3-orig.gguf",
         ),
     )
+
+
+def _managed_identity():
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        AUDIO_CPP_ARTIFACT_COMMIT,
+    )
+    from tldw_chatbook.TTS.audio_cpp_guided_config import (
+        AudioCppManagedArtifactIdentity,
+    )
+
+    return AudioCppManagedArtifactIdentity(
+        artifact_id="audio-cpp-supertonic-3-orig",
+        revision=AUDIO_CPP_ARTIFACT_COMMIT,
+        variant="orig",
+    )
+
+
+def test_legacy_accepted_package_json_shape_and_bytes_remain_unchanged() -> None:
+    accepted = _accepted_package()
+    expected = {
+        "package_uuid": "d3f6d610-6fd9-4cde-9ea7-cc5175ca445b",
+        "recipe_id": "audio-cpp-0.5.1.supertonic.supertonic_3_orig",
+        "recipe_revision": 1,
+        "package_variant": "supertonic_3_orig",
+        "public_model_id": "supertonic-3-orig",
+        "canonical_root": "/models/Supertonic-3-GGUF",
+        "canonical_root_identity": "1" * 64,
+        "configuration_identity": "2" * 64,
+        "weight_identity": "3" * 64,
+        "projection": {
+            "family": "supertonic",
+            "task": "tts",
+            "mode": "offline",
+            "model_relative_path": "supertonic-3-orig.gguf",
+            "model_spec_override_relative_path": None,
+            "busy_timeout_ms": None,
+            "load_options": [],
+            "session_options": [],
+        },
+    }
+
+    dumped = accepted.model_dump(mode="json")
+
+    assert accepted.managed_artifact is None
+    assert dumped == expected
+    assert json.dumps(dumped, separators=(",", ":"), sort_keys=True).encode() == (
+        json.dumps(expected, separators=(",", ":"), sort_keys=True).encode()
+    )
+
+
+def test_exact_managed_artifact_identity_round_trips_frozen() -> None:
+    AudioCppAcceptedPackage, *_ = _api()
+    identity = _managed_identity()
+    accepted = _accepted_package().model_copy(update={"managed_artifact": identity})
+
+    dumped = accepted.model_dump(mode="json")
+    reparsed = AudioCppAcceptedPackage.model_validate(dumped)
+
+    assert reparsed == accepted
+    assert reparsed.managed_artifact == identity
+    assert dumped["managed_artifact"] == {
+        "artifact_id": identity.artifact_id,
+        "revision": identity.revision,
+        "variant": identity.variant,
+    }
+    with pytest.raises(ValidationError):
+        identity.variant = "changed"  # type: ignore[misc]
+
+
+def test_persisted_managed_identity_must_still_match_the_exact_recipe() -> None:
+    from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+
+    AudioCppAcceptedPackage, *_ = _api()
+    values = _accepted_package().model_dump(mode="json")
+    values["managed_artifact"] = _managed_identity().model_dump(mode="json")
+    values["managed_artifact"]["artifact_id"] = "audio-cpp-supertonic-3-f16"
+    accepted = AudioCppAcceptedPackage.model_validate(values)
+
+    with pytest.raises(ValueError, match="requires recipe review"):
+        AUDIO_CPP_RECIPE_REGISTRY.validate_accepted(accepted)
+
+
+@pytest.mark.parametrize(
+    "managed_artifact",
+    (
+        {},
+        {"artifact_id": "audio-cpp-supertonic-3-orig"},
+        {
+            "artifact_id": "audio-cpp-supertonic-3-orig",
+            "revision": "597048d9a920592808d7d4e2acd7b9c4596a143a",
+        },
+        {
+            "artifact_id": "",
+            "revision": "597048d9a920592808d7d4e2acd7b9c4596a143a",
+            "variant": "orig",
+        },
+        {
+            "artifact_id": "Audio-Cpp-Supertonic",
+            "revision": "597048d9a920592808d7d4e2acd7b9c4596a143a",
+            "variant": "orig",
+        },
+        {
+            "artifact_id": "audio-cpp-supertonic-3-orig",
+            "revision": "main",
+            "variant": "orig/escape",
+        },
+        {
+            "artifact_id": "audio-cpp-supertonic-3-orig",
+            "revision": "597048d9a920592808d7d4e2acd7b9c4596a143a",
+            "variant": "orig",
+            "recipe_id": "unexpected",
+        },
+    ),
+)
+def test_partial_or_malformed_managed_identity_is_rejected_boundedly(
+    managed_artifact: dict[str, object],
+) -> None:
+    AudioCppAcceptedPackage, *_ = _api()
+    values = _accepted_package().model_dump(mode="json")
+    values["managed_artifact"] = managed_artifact
+
+    with pytest.raises(ValidationError) as raised:
+        AudioCppAcceptedPackage.model_validate(values)
+
+    assert "/models/Supertonic-3-GGUF" not in str(raised.value)
 
 
 def test_existing_external_and_managed_json_mappings_keep_legacy_runtime_meaning() -> (

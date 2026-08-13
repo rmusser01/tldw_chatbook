@@ -15,9 +15,11 @@ from pathlib import PurePosixPath, PureWindowsPath
 from types import MappingProxyType
 from uuid import uuid4
 
+from .audio_cpp_artifact_catalog import AUDIO_CPP_ARTIFACT_COMMIT
 from .audio_cpp_guided_config import (
     AudioCppAcceptedPackage,
     AudioCppBackendPreference,
+    AudioCppManagedArtifactIdentity,
     AudioCppRecipeOption,
     AudioCppSafeModelProjection,
     AudioCppSettingsConfig,
@@ -508,6 +510,18 @@ def _identity(parts: tuple[str, ...]) -> str:
     return sha256("\x00".join(parts).encode("utf-8")).hexdigest()
 
 
+def _managed_artifact_matches_recipe(
+    recipe: AudioCppPackageRecipe,
+    identity: AudioCppManagedArtifactIdentity,
+) -> bool:
+    return bool(
+        type(identity) is AudioCppManagedArtifactIdentity
+        and recipe.model_library_artifact_ids == (identity.artifact_id,)
+        and identity.revision == AUDIO_CPP_ARTIFACT_COMMIT
+        and identity.variant == recipe.precision
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class AudioCppPackageCandidate:
     """One exact candidate suitable for explicit user acceptance."""
@@ -520,18 +534,30 @@ class AudioCppPackageCandidate:
     safe_name: str
     evidence_relative_paths: tuple[str, ...]
 
-    def accept(self, *, public_model_id: str | None = None) -> AudioCppAcceptedPackage:
+    def accept(
+        self,
+        *,
+        public_model_id: str | None = None,
+        managed_artifact: AudioCppManagedArtifactIdentity | None = None,
+    ) -> AudioCppAcceptedPackage:
         """Freeze this exact match into a durable accepted snapshot.
 
         Args:
             public_model_id: Optional user-facing model ID override.
+            managed_artifact: Optional exact managed-store identity.
 
         Returns:
             A new immutable accepted-package snapshot with a durable UUID.
 
         Raises:
-            ValueError: If the requested public model ID is invalid.
+            ValueError: If the requested public model ID or managed identity is
+                invalid for this exact recipe.
         """
+        if managed_artifact is not None and not _managed_artifact_matches_recipe(
+            self.recipe,
+            managed_artifact,
+        ):
+            raise ValueError("audio.cpp managed artifact does not match recipe")
         return AudioCppAcceptedPackage(
             package_uuid=str(uuid4()),
             recipe_id=self.recipe.recipe_id,
@@ -547,6 +573,7 @@ class AudioCppPackageCandidate:
             configuration_identity=self.configuration_identity,
             weight_identity=self.weight_identity,
             projection=self.recipe.projection,
+            managed_artifact=managed_artifact,
         )
 
 
@@ -758,6 +785,13 @@ class AudioCppRecipeRegistry:
             accepted.recipe_revision != recipe.recipe_revision
             or accepted.package_variant != recipe.package_variant
             or accepted.projection != recipe.projection
+            or (
+                accepted.managed_artifact is not None
+                and not _managed_artifact_matches_recipe(
+                    recipe,
+                    accepted.managed_artifact,
+                )
+            )
         ):
             raise ValueError("audio.cpp accepted package requires recipe review")
         return recipe

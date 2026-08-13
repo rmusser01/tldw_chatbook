@@ -43,6 +43,21 @@ def _accept(root: Path, package_variant: str, public_model_id: str):
     return candidates[0].accept(public_model_id=public_model_id)
 
 
+def _managed_identity():
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        AUDIO_CPP_ARTIFACT_COMMIT,
+    )
+    from tldw_chatbook.TTS.audio_cpp_guided_config import (
+        AudioCppManagedArtifactIdentity,
+    )
+
+    return AudioCppManagedArtifactIdentity(
+        artifact_id="audio-cpp-supertonic-3-orig",
+        revision=AUDIO_CPP_ARTIFACT_COMMIT,
+        variant="orig",
+    )
+
+
 def _binary(tmp_path: Path) -> Path:
     binary = tmp_path / "bin" / "audiocpp_server"
     binary.parent.mkdir()
@@ -187,6 +202,34 @@ async def test_materializes_exact_private_multi_model_server_json(
     launch.generated_artifact.cleanup()
     launch.generated_artifact.cleanup()
     assert not artifact_directory.exists()
+
+
+@pytest.mark.asyncio
+async def test_managed_identity_does_not_change_guided_launch_projection(
+    tmp_path: Path,
+) -> None:
+    _, materialize = _launch_api()
+    root = tmp_path / "models" / "managed-supertonic"
+    _write_gguf(root, "supertonic-3-orig.gguf")
+    scan = scan_audio_cpp_package_root(root)
+    candidate = scan.discoveries[0].match.candidates[0]
+    accepted = candidate.accept(
+        public_model_id="managed-narrator",
+        managed_artifact=_managed_identity(),
+    )
+
+    launch = await materialize(
+        _settings(_binary(tmp_path), [accepted]),
+        artifact_root=tmp_path / "runtime-managed",
+        port_selector=lambda: 54_322,
+        system="darwin",
+        architecture="arm64",
+    )
+
+    assert launch.expected_models[0].model_id == "managed-narrator"
+    assert launch.expected_models[0].family == "supertonic"
+    assert launch.server_json_path.is_file()
+    launch.generated_artifact.cleanup()
 
 
 @pytest.mark.asyncio
