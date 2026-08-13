@@ -887,6 +887,24 @@ async def test_discovery_maps_401_to_missing_credentials():
 
 
 @pytest.mark.asyncio
+async def test_discovery_maps_404_to_unsupported_model_listing():
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(404))
+    ) as client:
+        result = await discover_openai_compatible_models(
+            provider="openai",
+            provider_list_key="OpenAI",
+            endpoint="https://api.openai.com/v1",
+            api_key="sk-test",
+            client=client,
+        )
+
+    assert result.status == "unsupported"
+    assert result.error is not None
+    assert result.error.kind == "unsupported_endpoint"
+
+
+@pytest.mark.asyncio
 async def test_discovery_maps_500_to_request_failed():
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(500))

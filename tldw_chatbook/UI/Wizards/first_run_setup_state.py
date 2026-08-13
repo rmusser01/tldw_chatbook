@@ -51,7 +51,7 @@ _MAX_MODEL_CHARS = 120
 _MAX_CREDENTIAL_CHARS = 8192
 _MAX_IDENTITY_COUNTER = 2**63 - 1
 _SECRET_FIELD_TOKENS = ("api_key", "credential", "password", "token", "secret")
-_CREDENTIAL_SOURCES = frozenset({"none", "draft", "environment"})
+_CREDENTIAL_SOURCES = frozenset({"none", "draft", "environment", "stored"})
 _ENDPOINT_REQUIRED_PROVIDER_KEYS = frozenset(
     {"custom", "custom_2", "llama_cpp", "local_llamacpp"}
 )
@@ -60,7 +60,7 @@ _ENV_VAR_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 
 _PLACEHOLDER_MARKERS = ("<", ">")
 
-FirstRunCredentialSource = Literal["none", "draft", "environment"]
+FirstRunCredentialSource = Literal["none", "draft", "environment", "stored"]
 FirstRunSummaryAction = Literal[
     "start_chatting", "review_provider", "explore_home", "review_settings"
 ]
@@ -96,7 +96,7 @@ class ProviderCredentialDraft(_CredentialValueOwner):
             for character in value
         ):
             raise ValueError("Credential value is invalid.")
-        if source == "none" and value:
+        if source in {"none", "stored"} and value:
             raise ValueError("Credential value conflicts with its source.")
         if source == "environment" and _ENV_VAR_PATTERN.fullmatch(value) is None:
             raise ValueError("Credential environment variable is invalid.")
@@ -216,8 +216,15 @@ def build_first_run_model_discovery_key(
     if type(provider_draft) is not FirstRunProviderDraft:
         raise ValueError("Provider draft is invalid.")
     provider_key = _first_run_provider_owner_key(provider_draft.provider)
-    resolution = resolve_provider_endpoint(provider_key, provider_draft.endpoint)
-    identity = canonical_connection_identity(provider_key, provider_draft.endpoint)
+    endpoint = provider_draft.endpoint
+    if not endpoint:
+        from tldw_chatbook.Chat.console_provider_endpoints import (
+            builtin_provider_endpoint,
+        )
+
+        endpoint = builtin_provider_endpoint(provider_key) or ""
+    resolution = resolve_provider_endpoint(provider_key, endpoint)
+    identity = canonical_connection_identity(provider_key, endpoint)
     if resolution.errors or identity is None:
         raise ValueError("Provider endpoint is invalid.")
     return FirstRunModelDiscoveryKey(

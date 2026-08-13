@@ -770,7 +770,8 @@ class TestFirstRunProviderContracts:
     @pytest.mark.parametrize(
         ("source", "value", "revision"),
         [
-            ("stored", "", 0),
+            ("saved", "", 0),
+            ("stored", "must-not-carry-a-secret", 0),
             ("draft", "secret", -1),
             ("draft", "secret", True),
             ("draft", "secret", 2**63),
@@ -887,7 +888,7 @@ class TestFirstRunProviderContracts:
                 ]
             },
             {"connection_identity": ("custom", "https://example.test/v1/models")},
-            {"credential_source": "stored"},
+            {"credential_source": "saved"},
             {"credential_revision": True},
             {"credential_revision": 2**63},
         ],

@@ -741,17 +741,17 @@ def _model_discovery_ui_outcome(result: object) -> tuple[list[str], str, str]:
     if type(result) is not ModelDiscoveryResult:
         raise ValueError("Model discovery result is invalid.")
     if result.status == "success":
-        return list(_model_ids_from_discovery_result(result)), "available", ""
+        models = list(_model_ids_from_discovery_result(result))
+        return models, "available" if models else "empty", ""
     if result.status == "unsupported" or (
-        result.error is not None
-        and result.error.kind in {"unsupported_endpoint", "invalid_response"}
+        result.error is not None and result.error.kind == "unsupported_endpoint"
     ):
         return [], "listing_unavailable", ""
-    category = (
-        "authentication"
-        if result.error is not None and result.error.kind == "missing_credentials"
-        else "request failed"
-    )
+    error_kind = result.error.kind if result.error is not None else ""
+    category = {
+        "invalid_response": "invalid response",
+        "missing_credentials": "authentication",
+    }.get(error_kind, "request failed")
     return [], "connection_failed", category
 
 
@@ -1791,7 +1791,7 @@ class ProviderStep(SetupStep):
         elif self._clear_requested:
             source, value = "draft", ""
         elif presence.inline_configured:
-            source, value = "none", ""
+            source, value = "stored", ""
         elif presence.env_var and (presence.env_var_declared or presence.env_var_set):
             source, value = "environment", presence.env_var
         else:
@@ -1916,17 +1916,7 @@ class ProviderStep(SetupStep):
         if provider_draft is None:
             return None
         try:
-            exact_draft = provider_draft
-            if not exact_draft.endpoint:
-                target = self._cloud_probe_base_url(exact_draft.provider)
-                if not target:
-                    return None
-                exact_draft = wizard_state.FirstRunProviderDraft(
-                    exact_draft.provider,
-                    target,
-                    exact_draft.credential,
-                )
-            return wizard_state.build_first_run_model_discovery_key(exact_draft)
+            return wizard_state.build_first_run_model_discovery_key(provider_draft)
         except ValueError:
             return None
 
@@ -3094,6 +3084,11 @@ class ModelStep(SetupStep):
                     owner._outcome_from_selected_discovery(provider_key, discovery_key),
                     timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
                 )
+            except TimeoutError:
+                owner.cancel_selected_discovery_handoff()
+                selected_outcome = None
+                discovery_state = "connection_failed"
+                failure_category = "timeout"
             except Exception:
                 selected_outcome = None
             if selected_outcome is not None:
@@ -3274,7 +3269,11 @@ class ModelStep(SetupStep):
             )
         else:
             await radio_set.mount(
-                SetupRadioButton("(no models found — enter one below)", disabled=True)
+                SetupRadioButton(
+                    "(no models found — enter one below)",
+                    id="setup-model-empty",
+                    disabled=True,
+                )
             )
         if not self.is_attached:
             return

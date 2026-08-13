@@ -4351,7 +4351,31 @@ async def test_provider_discovery_uses_exact_draft_settings_and_secret_free_key(
 
 
 @pytest.mark.asyncio
-async def test_mounted_clear_and_replaced_endpoint_discovery_never_uses_saved_key():
+@pytest.mark.parametrize(
+    ("provider_key", "saved_endpoint", "replacement_endpoint"),
+    [
+        (
+            "custom",
+            "https://saved.example.test/v1/chat/completions",
+            "https://replacement.example.test/v1/chat/completions",
+        ),
+        (
+            "custom_2",
+            "https://saved-two.example.test/v1/chat/completions",
+            "https://replacement-two.example.test/v1/chat/completions",
+        ),
+        (
+            "llama_cpp",
+            "http://127.0.0.1:8080",
+            "http://127.0.0.1:9090",
+        ),
+    ],
+)
+async def test_mounted_keep_and_clear_are_distinct_exact_auth_decisions(
+    provider_key: str,
+    saved_endpoint: str,
+    replacement_endpoint: str,
+):
     from tldw_chatbook.LLM_Provider_Catalog.llm_provider_catalog_scope_service import (
         LLMProviderCatalogScopeService,
     )
@@ -4371,14 +4395,14 @@ async def test_mounted_clear_and_replaced_endpoint_discovery_never_uses_saved_ke
 
     async def record_discovery(**kwargs):
         requests.append(kwargs)
-        return _typed_model_discovery_result("custom", "keyless-model")
+        return _typed_model_discovery_result(provider_key, "keyless-model")
 
     wizard = _make_wizard()
     wizard.app_instance.app_config = {
-        "providers": {"custom": []},
+        "providers": {provider_key: []},
         "api_settings": {
-            "custom": {
-                "api_url": "https://saved.example.test/v1/chat/completions",
+            provider_key: {
+                "api_url": saved_endpoint,
                 "api_key": saved_canary,
                 "api_key_env_var": "WIZARD_CUSTOM_API_KEY",
             }
@@ -4386,7 +4410,7 @@ async def test_mounted_clear_and_replaced_endpoint_discovery_never_uses_saved_ke
     }
     shared_cache = ModelDiscoveryCache()
     local_service = LocalLLMProviderCatalogService(
-        provider_catalog_loader=lambda: {"custom": []},
+        provider_catalog_loader=lambda: {provider_key: []},
         settings_loader=lambda: wizard.app_instance.app_config,
         discovery_cache=shared_cache,
         discovery_client=record_discovery,
@@ -4410,15 +4434,25 @@ async def test_mounted_clear_and_replaced_endpoint_discovery_never_uses_saved_ke
         container.show_step(provider_index)
         provider_step = container.steps[provider_index]
         assert isinstance(provider_step, ProviderStep)
-        provider_step.select_provider("custom")
-        await pilot.pause(0.1)
+        provider_step.select_provider(provider_key)
+        provider_step._on_keep()
+        for _ in range(20):
+            if requests and provider_step._selected_provider_models:
+                break
+            await pilot.pause(0.05)
+        assert requests
+        assert requests[-1]["api_key"] == saved_canary
         prior_keys = set(provider_step._selected_provider_models)
         assert prior_keys
+        [kept_key] = prior_keys
+        assert kept_key.credential_source == "stored"
+        assert saved_canary not in repr(kept_key)
+        assert environment_canary not in repr(kept_key)
 
         provider_step.query_one("#setup-provider-key-clear", Button).press()
         provider_step.query_one(
             "#setup-provider-endpoint", Input
-        ).value = "https://replacement.example.test/v1/chat/completions"
+        ).value = replacement_endpoint
         requests.clear()
         await pilot.pause(0.2)
         await container._advance()
@@ -4435,6 +4469,7 @@ async def test_mounted_clear_and_replaced_endpoint_discovery_never_uses_saved_ke
         assert draft is not None
         key = build_first_run_model_discovery_key(draft)
         assert key.credential_revision > 0
+        assert key.credential_source == "draft"
         assert key not in prior_keys
         assert key in container._first_run_selected_provider_models
         model_step = container.steps[model_index]
@@ -4446,6 +4481,88 @@ async def test_mounted_clear_and_replaced_endpoint_discovery_never_uses_saved_ke
             )
         ]
         assert rendered_model_ids == ["keyless-model"]
+
+
+@pytest.mark.asyncio
+async def test_mounted_openai_builtin_endpoint_handoff_uses_one_exact_env_request(
+    monkeypatch,
+):
+    from tldw_chatbook.LLM_Provider_Catalog.llm_provider_catalog_scope_service import (
+        LLMProviderCatalogScopeService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import (
+        ModelDiscoveryCache,
+    )
+
+    environment_canary = "wizard-openai-env-canary-never-store"
+    monkeypatch.setenv("OPENAI_API_KEY", environment_canary)
+    requests: list[dict[str, object]] = []
+
+    async def record_discovery(**kwargs):
+        requests.append(kwargs)
+        return _typed_model_discovery_result("openai", "gpt-live-exact")
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "providers": {"OpenAI": ["curated-must-not-replace-live"]},
+        "api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}},
+    }
+    shared_cache = ModelDiscoveryCache()
+    local_service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {"OpenAI": []},
+        settings_loader=lambda: wizard.app_instance.app_config,
+        discovery_cache=shared_cache,
+        discovery_client=record_discovery,
+        environ={"OPENAI_API_KEY": environment_canary},
+    )
+    wizard.app_instance.llm_provider_catalog_scope_service = (
+        LLMProviderCatalogScopeService(local_service=local_service, server_service=None)
+    )
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("openai")
+        for _ in range(20):
+            if provider_step._selected_discovery_state == "complete":
+                break
+            await pilot.pause(0.05)
+        assert provider_step._selected_discovery_state == "complete"
+        provider_discovery_key = provider_step._selected_discovery_key
+        assert provider_discovery_key is not None
+        assert provider_discovery_key.connection_identity[1] == (
+            "https://api.openai.com/v1/chat/completions"
+        )
+
+        await container._advance()
+        for _ in range(20):
+            if list(container.steps[model_index].query("#setup-model-option-0")):
+                break
+            await pilot.pause(0.05)
+
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        row = model_step.query_one("#setup-model-option-0", RadioButton)
+        assert getattr(row, "_model_id", None) == "gpt-live-exact"
+        assert model_step._shown_for_discovery_key == provider_discovery_key
+        assert len(requests) == 1
+        assert requests[0]["endpoint"] == (
+            "https://api.openai.com/v1/chat/completions"
+        )
+        assert requests[0]["api_key"] == environment_canary
+        assert shared_cache.snapshot_count == 0
+        assert environment_canary not in repr(provider_discovery_key)
 
 
 @pytest.mark.asyncio
@@ -4735,8 +4852,8 @@ async def test_provider_step_blocks_unset_declared_environment_source():
 @pytest.mark.parametrize(
     ("inline_key", "environment", "expected_source", "expected_ready"),
     [
-        ("inline-secret", {}, "none", True),
-        ("inline-secret", {"PRIVATE_OPENAI_KEY": "environment-secret"}, "none", True),
+        ("inline-secret", {}, "stored", True),
+        ("inline-secret", {"PRIVATE_OPENAI_KEY": "environment-secret"}, "stored", True),
         (None, {}, None, False),
         (None, {"PRIVATE_OPENAI_KEY": "environment-secret"}, "environment", True),
     ],
@@ -5461,7 +5578,7 @@ async def test_provider_step_keep_preserves_existing_key_without_note():
         assert ok, error
         draft = _staged_provider_draft(wizard)
         assert draft.provider == "openai"
-        assert draft.credential.source == "none"
+        assert draft.credential.source == "stored"
         assert not hasattr(draft.credential, "value")
         wizard.note_key_entered.assert_not_called()
 
@@ -6325,6 +6442,17 @@ async def test_model_listing_unavailable_is_disabled_and_manual_entry_remains_en
                 provider="custom",
                 provider_list_key="custom",
                 endpoint_fingerprint="safe-fingerprint",
+                status="success",
+                models=(),
+            ),
+            "#setup-model-empty",
+            "(no models found — enter one below)",
+        ),
+        (
+            ModelDiscoveryResult(
+                provider="custom",
+                provider_list_key="custom",
+                endpoint_fingerprint="safe-fingerprint",
                 status="unsupported",
                 error=ModelDiscoveryError(
                     kind="unsupported_endpoint",
@@ -6455,6 +6583,145 @@ async def test_mounted_provider_handoff_preserves_typed_discovery_outcome(
             )
             row = model_step.query_one("#setup-model-option-0", RadioButton)
             assert getattr(row, "_model_id", None) == "retry-exact-model"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response_kind", "expected_error_kind", "status_selector", "expected_copy"),
+    [
+        (
+            "404",
+            "unsupported_endpoint",
+            "#setup-model-listing-unavailable",
+            "Model listing unavailable; enter the model ID used by this endpoint.",
+        ),
+        (
+            "500",
+            "request_failed",
+            "#setup-model-connection-failed",
+            "Connection failed (request failed). Retry or enter a model ID below.",
+        ),
+        (
+            "malformed",
+            "invalid_response",
+            "#setup-model-connection-failed",
+            "Connection failed (invalid response). Retry or enter a model ID below.",
+        ),
+    ],
+)
+async def test_mounted_real_transport_preserves_404_server_and_payload_categories(
+    monkeypatch,
+    response_kind: str,
+    expected_error_kind: str,
+    status_selector: str,
+    expected_copy: str,
+):
+    import httpx
+
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.LLM_Provider_Catalog.llm_provider_catalog_scope_service import (
+        LLMProviderCatalogScopeService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import (
+        ModelDiscoveryCache,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        discover_openai_compatible_models,
+    )
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_providers_and_models",
+        lambda: {"custom": ["curated-must-not-appear"]},
+    )
+    transport_requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        transport_requests.append(request)
+        if response_kind == "404":
+            return httpx.Response(404)
+        if response_kind == "500":
+            return httpx.Response(500)
+        return httpx.Response(200, json={"data": "not-a-list"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+
+        async def real_discovery(**kwargs):
+            return await discover_openai_compatible_models(**kwargs, client=client)
+
+        wizard = _make_wizard()
+        wizard.app_instance.app_config = {
+            "providers": {"custom": []},
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://transport.example.test/v1/chat/completions"
+                }
+            },
+        }
+        shared_cache = ModelDiscoveryCache()
+        local_service = LocalLLMProviderCatalogService(
+            provider_catalog_loader=lambda: {"custom": []},
+            settings_loader=lambda: wizard.app_instance.app_config,
+            discovery_cache=shared_cache,
+            discovery_client=real_discovery,
+            environ={},
+        )
+        wizard.app_instance.llm_provider_catalog_scope_service = (
+            LLMProviderCatalogScopeService(
+                local_service=local_service,
+                server_service=None,
+            )
+        )
+        app = _HostApp(wizard)
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            container.select_track(TRACK_QUICK)
+            provider_index = container._step_index_for_id(STEP_PROVIDER)
+            model_index = container._step_index_for_id(STEP_MODEL)
+            assert provider_index is not None and model_index is not None
+            container.show_step(provider_index)
+            provider_step = container.steps[provider_index]
+            assert isinstance(provider_step, ProviderStep)
+            provider_step.select_provider("custom")
+            for _ in range(20):
+                if provider_step._selected_provider_outcomes:
+                    break
+                await pilot.pause(0.05)
+            assert provider_step._selected_provider_outcomes
+
+            await container._advance()
+            model_step = container.steps[model_index]
+            assert isinstance(model_step, ModelStep)
+            for _ in range(20):
+                if list(model_step.query(status_selector)):
+                    break
+                await pilot.pause(0.05)
+
+            row = model_step.query_one(status_selector, RadioButton)
+            assert row.disabled
+            assert str(row.label) == expected_copy
+            assert getattr(row, "_model_id", None) is None
+            assert "curated-must-not-appear" not in app.export_screenshot()
+            manual = model_step.query_one("#setup-model-custom", Input)
+            assert not manual.disabled and manual.focusable
+            [outcome] = provider_step._selected_provider_outcomes.values()
+            assert outcome.error is not None
+            assert outcome.error.kind == expected_error_kind
+            assert transport_requests
+            assert all(
+                str(request.url) == "https://transport.example.test/v1/models"
+                for request in transport_requests
+            )
+            assert all(
+                "Authorization" not in request.headers
+                for request in transport_requests
+            )
+            assert shared_cache.snapshot_count == 0
 
 
 @pytest.mark.asyncio
@@ -6646,6 +6913,107 @@ async def test_model_external_unmount_fences_late_discovery_without_widget_acces
         assert not step.is_attached
         assert step._model_load_generation > generation
         assert step.selected_model_id == ""
+
+
+@pytest.mark.asyncio
+async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_retry(
+    monkeypatch,
+):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    import tldw_chatbook.config as config_module
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    monkeypatch.setattr(wizard_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_providers_and_models",
+        lambda: {"custom": ["curated-timeout-must-not-appear"]},
+    )
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    release_late_result = asyncio.Event()
+    late_result_returned = asyncio.Event()
+    asyncio.get_running_loop().call_later(3, release_late_result.set)
+
+    async def cancellation_resistant_discovery(**_kwargs):
+        started.set()
+        while not release_late_result.is_set():
+            try:
+                await release_late_result.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                continue
+        late_result_returned.set()
+        return _typed_model_discovery_result("custom", "late-timeout-model")
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "custom": {"api_url": "https://timeout.example.test/v1/chat/completions"}
+        }
+    }
+    scope_service = MagicMock(
+        discover_models=AsyncMock(side_effect=cancellation_resistant_discovery)
+    )
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        await asyncio.wait_for(started.wait(), timeout=2)
+
+        await container._advance()
+        assert container.current_step == model_index
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        for _ in range(30):
+            if list(model_step.query("#setup-model-connection-failed")):
+                break
+            await pilot.pause(0.05)
+
+        if not list(model_step.query("#setup-model-connection-failed")):
+            release_late_result.set()
+            await asyncio.wait_for(late_result_returned.wait(), timeout=2)
+            pytest.fail("Model owner timeout did not render bounded failure")
+        status = model_step.query_one(
+            "#setup-model-connection-failed", RadioButton
+        )
+        assert str(status.label) == (
+            "Connection failed (timeout). Retry or enter a model ID below."
+        )
+        assert status.disabled
+        assert cancelled.is_set()
+        assert provider_step._selected_discovery_state == "cancelled"
+        assert "curated-timeout-must-not-appear" not in app.export_screenshot()
+        manual = model_step.query_one("#setup-model-custom", Input)
+        retry = model_step.query_one("#setup-model-retry", Button)
+        assert not manual.disabled and manual.focusable
+        assert "hidden" not in retry.classes
+
+        release_late_result.set()
+        await asyncio.wait_for(late_result_returned.wait(), timeout=2)
+        await pilot.pause(0.1)
+
+        assert provider_step._selected_provider_models == {}
+        assert provider_step._selected_provider_outcomes == {}
+        assert container._first_run_selected_provider_models == {}
+        assert container._first_run_selected_provider_outcomes == {}
+        status = model_step.query_one(
+            "#setup-model-connection-failed", RadioButton
+        )
+        assert "timeout" in str(status.label)
+        assert "late-timeout-model" not in app.export_screenshot()
 
 
 @pytest.mark.asyncio

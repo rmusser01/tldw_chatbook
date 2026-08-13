@@ -706,6 +706,18 @@ async def discover_openai_compatible_models(
                             "Check the API key configured for this provider.",
                         ),
                     )
+                if exc.response.status_code == 404:
+                    return None, ModelDiscoveryResult(
+                        provider=provider,
+                        provider_list_key=provider_list_key,
+                        endpoint_fingerprint=endpoint_fingerprint,
+                        status="unsupported",
+                        error=_discovery_error(
+                            "unsupported_endpoint",
+                            "The models endpoint is unavailable.",
+                            "Enter the model ID used by this endpoint.",
+                        ),
+                    )
                 return None, ModelDiscoveryResult(
                     provider=provider,
                     provider_list_key=provider_list_key,
