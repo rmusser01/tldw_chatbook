@@ -19,6 +19,11 @@ _OWNED_KEYS = {
 }
 
 
+def is_console_speech_destination(value: object) -> bool:
+    """Return whether value is one canonical Console TTS destination digest."""
+    return type(value) is str and _DESTINATION_PATTERN.fullmatch(value) is not None
+
+
 class ConsoleSpeechPreferencesVersionError(ValueError):
     """Durable speech preferences belong to a newer application version."""
 
@@ -37,7 +42,7 @@ class ConsoleSpeechPreferences:
             raise ValueError("auto_speak must be an exact boolean.")
         if type(self.paused) is not bool:
             raise ValueError("paused must be an exact boolean.")
-        if self.consent_destination is not None and not _DESTINATION_PATTERN.fullmatch(
+        if self.consent_destination is not None and not is_console_speech_destination(
             self.consent_destination
         ):
             raise ValueError(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from enum import Enum
 
@@ -10,9 +9,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
-
-_DESTINATION_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
+from tldw_chatbook.Chat.console_speech_preferences import (
+    ConsoleSpeechPreferences,
+    is_console_speech_destination,
+)
 
 
 class AutoSpeakDisposition(str, Enum):
@@ -55,14 +55,6 @@ def decide_auto_speak(
     if preferences.paused:
         return AutoSpeakDisposition.PAUSED
 
-    destination = context.destination_fingerprint
-    if (
-        type(destination) is not str
-        or not _DESTINATION_PATTERN.fullmatch(destination)
-        or preferences.consent_destination != destination
-    ):
-        return AutoSpeakDisposition.NEEDS_CONSENT
-
     if (
         type(session_id) is not str
         or not session_id
@@ -74,6 +66,13 @@ def decide_auto_speak(
 
     if context.hands_free_active is not False:
         return AutoSpeakDisposition.HANDSFREE_OWNS
+
+    destination = context.destination_fingerprint
+    if (
+        not is_console_speech_destination(destination)
+        or preferences.consent_destination != destination
+    ):
+        return AutoSpeakDisposition.NEEDS_CONSENT
     return AutoSpeakDisposition.SPEAK
 
 

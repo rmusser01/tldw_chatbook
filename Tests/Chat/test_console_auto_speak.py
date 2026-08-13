@@ -257,7 +257,7 @@ def test_message_ineligibility_precedes_every_context_state() -> None:
             None,
             "other-session",
             True,
-            AutoSpeakDisposition.NEEDS_CONSENT,
+            AutoSpeakDisposition.BACKGROUND,
         ),
         (
             ConsoleSpeechPreferences(
@@ -329,6 +329,51 @@ def test_malformed_current_destination_requires_consent(destination: object) -> 
         session_id=SESSION_ID,
         context=_context(destination_fingerprint=destination),
     ) is AutoSpeakDisposition.NEEDS_CONSENT
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [None, OTHER_DESTINATION, "", "sha256:" + "A" * 64, 42],
+)
+def test_background_reply_precedes_destination_consent(
+    destination: object,
+) -> None:
+    assert decide_auto_speak(
+        _message(),
+        session_id=SESSION_ID,
+        context=_context(
+            destination_fingerprint=destination,
+            active_session_id="other-session",
+        ),
+    ) is AutoSpeakDisposition.BACKGROUND
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [None, OTHER_DESTINATION, "", "sha256:" + "A" * 64, 42],
+)
+def test_active_hands_free_precedes_destination_consent(
+    destination: object,
+) -> None:
+    assert decide_auto_speak(
+        _message(),
+        session_id=SESSION_ID,
+        context=_context(
+            destination_fingerprint=destination,
+            hands_free_active=True,
+        ),
+    ) is AutoSpeakDisposition.HANDSFREE_OWNS
+
+
+def test_malformed_hands_free_precedes_destination_consent_fail_closed() -> None:
+    assert decide_auto_speak(
+        _message(),
+        session_id=SESSION_ID,
+        context=_context(
+            destination_fingerprint=None,
+            hands_free_active="unknown",
+        ),
+    ) is AutoSpeakDisposition.HANDSFREE_OWNS
 
 
 @pytest.mark.parametrize(

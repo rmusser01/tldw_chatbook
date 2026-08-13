@@ -10,6 +10,49 @@ import pytest
 DESTINATION = "sha256:" + "a" * 64
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (DESTINATION, True),
+        ("sha256:" + "0" * 64, True),
+        (None, False),
+        ("", False),
+        ("sha256:" + "A" * 64, False),
+        ("sha256:" + "a" * 63, False),
+        ("sha256:" + "a" * 65, False),
+        ("sha256:" + "g" * 64, False),
+        (42, False),
+    ],
+)
+def test_console_speech_destination_validator_is_exact(value, expected):
+    speech = _speech_module()
+
+    assert speech.is_console_speech_destination(value) is expected
+
+
+@pytest.mark.parametrize(
+    "destination",
+    ["", "sha256:" + "A" * 64, "sha256:" + "a" * 63, 42],
+)
+def test_preferences_model_uses_the_canonical_destination_boundary(destination):
+    speech = _speech_module()
+
+    assert speech.is_console_speech_destination(destination) is False
+    with pytest.raises(ValueError, match="canonical SHA-256"):
+        speech.ConsoleSpeechPreferences(consent_destination=destination)
+
+
+def test_preferences_model_accepts_the_canonical_destination_boundary():
+    speech = _speech_module()
+
+    assert speech.is_console_speech_destination(DESTINATION) is True
+    assert (
+        speech.ConsoleSpeechPreferences(consent_destination=DESTINATION)
+        .consent_destination
+        == DESTINATION
+    )
+
+
 def _speech_module():
     return importlib.import_module("tldw_chatbook.Chat.console_speech_preferences")
 
