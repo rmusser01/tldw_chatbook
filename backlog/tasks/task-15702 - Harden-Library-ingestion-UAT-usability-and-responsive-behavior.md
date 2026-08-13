@@ -57,6 +57,7 @@ Implemented the complete ingestion UAT remediation without changing storage or s
 - Clear removes stale preflight panels in place and suppresses its programmatic empty-value echo, eliminating the remount and late-message windows that swallowed immediate typing.
 - A docked review bar keeps forecast, consent/readiness copy, and Start together; it hides after submission so activity receipts own the viewport. Metadata fields now have persistent labels in a compact row.
 - Footer fitting preserves the ordered workflow prefix at narrow widths; Retry is advertised only when its real gate is open. Default option-panel titles are concise and queue batch headers use `active` plus exact per-state tallies.
+- Independent pre-PR review found and resolved two integration gaps: Clear now preserves visibility and keyboard reachability of the always-valid generic options panel, and the legacy Retry-shortcut test now covers the contextual no-snapshot/active/settled contract.
 - Rebuilt the modular stylesheet and updated the Library import guide.
 
 Evidence: 218 ingest-state tests passed (one Windows symlink-privilege case deliberately excluded); eight standalone mounted interaction/geometry checks passed, including repeated Clear/type races; focused Ruff passed with only the repository's pre-existing F402/E721 classes ignored; py_compile and `git diff --check` passed. The real-shell UAT capture completed at 120x40 and 80x24 for idle, mixed-preflight, and active-queue states; Browse focus geometry remained identical on the entry/preflight frames.

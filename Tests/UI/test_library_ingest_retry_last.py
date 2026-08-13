@@ -207,11 +207,33 @@ def test_check_action_gates_retry_last_to_ingest_with_a_snapshot():
     assert screen.check_action("library_ingest_retry_last", ()) is False
 
 
-def test_ingest_shortcut_set_advertises_the_retry_key():
-    """AC#2: the shared footer/F1 set carries the key."""
+def test_ingest_shortcuts_advertise_retry_only_when_the_queue_is_settled():
+    """Footer/F1 expose Retry only while the shared availability gate is open."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        LibraryIngestLastSubmission,
+    )
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
-    assert ("r", "retry last batch") in LibraryScreen.LIBRARY_INGEST_SHORTCUTS
+    app = _build_test_app()
+    registry = LibraryIngestJobRegistry()
+    app.library_ingest_jobs = registry
+    screen = LibraryScreen(app)
+
+    assert ("r", "retry") not in screen._library_ingest_shortcuts_for_current_state()
+
+    screen._library_ingest_last_submission = LibraryIngestLastSubmission(
+        source="/tmp/talk.mp3"
+    )
+    registry.restore([_job(state=IngestJobState.PARSING)], next_id=2)
+    assert ("r", "retry") not in screen._library_ingest_shortcuts_for_current_state()
+
+    registry.restore(
+        [_job(state=IngestJobState.FAILED, error="boom", finished_at=101.0)],
+        next_id=2,
+    )
+    shortcuts = screen._library_ingest_shortcuts_for_current_state()
+    assert ("r", "retry") in shortcuts
+    assert shortcuts.index(("r", "retry")) < shortcuts.index(("/", "search"))
 
 
 # --- pilot: restore + fresh preflight + identity --------------------------------

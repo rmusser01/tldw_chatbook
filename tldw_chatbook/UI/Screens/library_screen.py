@@ -20652,11 +20652,16 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             canvas = None
         if canvas is not None:
+            cleared_groups = set(
+                self._build_library_ingest_state().type_groups
+            )
             for panel in canvas.query(Collapsible):
-                if (panel.id or "").startswith("type-group-"):
-                    panel.display = False
+                panel_id = panel.id or ""
+                if panel_id.startswith("type-group-"):
+                    group = panel_id[len("type-group-"):]
+                    panel.display = group in cleared_groups
             for bulk in canvas.query(".library-ingest-options-bulk"):
-                bulk.display = False
+                bulk.display = len(cleared_groups) > 1
         self._update_library_ingest_dynamic_regions(False)
 
     @on(Button.Pressed, "#library-ingest-retry-last")
