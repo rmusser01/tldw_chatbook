@@ -21,6 +21,7 @@ class ChatSyncIntentRecord:
     provider_continuation_json: str | None
     message_version: int
     payload_hash: str
+    base_payload_hash: str | None
 
     def __repr__(self) -> str:
         return (
@@ -113,6 +114,7 @@ class ChatSyncV2OutboxProducer:
             content=source_record.content,
             parent_message_id=source_record.parent_message_id,
             provider_continuation_json=source_record.provider_continuation_json,
+            base_version=source_record.base_payload_hash,
             entity_version=source_record.message_version,
         )
         if envelope.payload_hash != source_record.payload_hash:

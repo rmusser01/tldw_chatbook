@@ -12861,6 +12861,13 @@ UPDATE db_schema_version
                 envelope_payload["provider_continuation_json"] = private_json
             if canonical_payload_hash(envelope_payload) != payload_hash:
                 return None
+            base_payload_hash = self._previous_committed_chat_payload_hash(
+                conn,
+                message_id=message_id,
+                conversation_id=row["conversation_id"],
+                role=role,
+                message_version=message_version,
+            )
             return ChatSyncIntentRecord(
                 conversation_id=row["conversation_id"],
                 message_id=row["id"],
@@ -12870,9 +12877,77 @@ UPDATE db_schema_version
                 provider_continuation_json=private_json,
                 message_version=message_version,
                 payload_hash=payload_hash,
+                base_payload_hash=base_payload_hash,
             )
         except (ContinuationValidationError, json.JSONDecodeError, sqlite3.Error):
             return None
+
+    @staticmethod
+    def _previous_committed_chat_payload_hash(
+        conn: sqlite3.Connection,
+        *,
+        message_id: str,
+        conversation_id: str,
+        role: str,
+        message_version: int,
+    ) -> str | None:
+        """Return the immediate prior committed whole-record hash, if provable."""
+        from tldw_chatbook.Chat.provider_continuation import (
+            dump_provider_continuation_json,
+            parse_provider_continuation_json,
+        )
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        if message_version <= 1:
+            return None
+        rows = conn.execute(
+            """
+            SELECT operation, payload
+              FROM sync_log
+             WHERE entity = 'messages'
+               AND entity_id = ?
+               AND version = ?
+             ORDER BY change_id
+            """,
+            (message_id, message_version - 1),
+        ).fetchall()
+        if len(rows) != 1:
+            return None
+        operation = rows[0]["operation"]
+        payload = json.loads(rows[0]["payload"])
+        if type(payload) is not dict:
+            return None
+        if operation == "delete":
+            if (
+                payload.get("id") != message_id
+                or payload.get("version") != message_version - 1
+                or payload.get("deleted") != 1
+            ):
+                return None
+            return canonical_payload_hash({"deleted": True})
+        if operation not in {"create", "update"}:
+            return None
+        if (
+            payload.get("id") != message_id
+            or payload.get("conversation_id") != conversation_id
+            or payload.get("version") != message_version - 1
+            or payload.get("deleted") != 0
+            or type(payload.get("content")) is not str
+        ):
+            return None
+        private_json = payload.get("provider_continuation_json")
+        if private_json is not None:
+            if role != "assistant" or type(private_json) is not str:
+                return None
+            private_json = dump_provider_continuation_json(
+                parse_provider_continuation_json(private_json)
+            )
+            if private_json != payload.get("provider_continuation_json"):
+                return None
+        base_payload = {"content": payload["content"], "role": role}
+        if private_json is not None:
+            base_payload["provider_continuation_json"] = private_json
+        return canonical_payload_hash(base_payload)
 
     def read_committed_chat_delete_intent(
         self,
@@ -12969,6 +13044,101 @@ UPDATE db_schema_version
             )
         except (ContinuationValidationError, json.JSONDecodeError, sqlite3.Error):
             return None
+
+    def list_current_committed_chat_sync_intents(
+        self, conversation_id: str
+    ) -> List[Dict[str, Any]]:
+        """List exact current Chat intents for one restored conversation."""
+        from tldw_chatbook.Chat.provider_continuation import (
+            ContinuationValidationError,
+            dump_provider_continuation_json,
+            parse_provider_continuation_json,
+        )
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        if type(conversation_id) is not str or not conversation_id:
+            return []
+        conn = self.get_connection()
+        if conn.in_transaction:
+            return []
+        try:
+            rows = conn.execute(
+                """
+                SELECT m.id, m.conversation_id, m.role, m.content,
+                       m.provider_continuation_json, m.deleted, m.version,
+                       intent.operation
+                  FROM messages AS m
+                  JOIN conversations AS c
+                    ON c.id = m.conversation_id AND c.deleted = 0
+                  JOIN sync_log AS intent
+                    ON intent.entity = 'messages'
+                   AND intent.entity_id = m.id
+                   AND intent.version = m.version
+                 WHERE m.conversation_id = ?
+                   AND (
+                       (m.deleted = 1 AND intent.operation = 'delete') OR
+                       (m.deleted = 0 AND intent.operation IN ('create', 'update'))
+                   )
+                   AND 1 = (
+                       SELECT COUNT(*)
+                         FROM sync_log AS duplicate
+                        WHERE duplicate.entity = 'messages'
+                          AND duplicate.entity_id = m.id
+                          AND duplicate.version = m.version
+                   )
+                 ORDER BY m.timestamp, m.id
+                """,
+                (conversation_id,),
+            ).fetchall()
+            intents: List[Dict[str, Any]] = []
+            for row in rows:
+                message_id = row["id"]
+                message_version = row["version"]
+                if row["deleted"]:
+                    payload_hash = canonical_payload_hash({"deleted": True})
+                    source = self.read_committed_chat_delete_intent(
+                        message_id=message_id,
+                        message_version=message_version,
+                        payload_hash=payload_hash,
+                    )
+                    operation = "delete"
+                else:
+                    role = row["role"]
+                    content = row["content"]
+                    if type(role) is not str or type(content) is not str:
+                        continue
+                    private_json = row["provider_continuation_json"]
+                    if private_json is not None:
+                        if role != "assistant" or type(private_json) is not str:
+                            continue
+                        private_json = dump_provider_continuation_json(
+                            parse_provider_continuation_json(private_json)
+                        )
+                        if private_json != row["provider_continuation_json"]:
+                            continue
+                    payload = {"content": content, "role": role}
+                    if private_json is not None:
+                        payload["provider_continuation_json"] = private_json
+                    payload_hash = canonical_payload_hash(payload)
+                    source = self.read_committed_chat_sync_intent(
+                        message_id=message_id,
+                        message_version=message_version,
+                        payload_hash=payload_hash,
+                    )
+                    operation = "upsert"
+                if source is None or source.conversation_id != conversation_id:
+                    continue
+                intents.append(
+                    {
+                        "message_id": message_id,
+                        "message_version": message_version,
+                        "operation": operation,
+                        "payload_hash": payload_hash,
+                    }
+                )
+            return intents
+        except (ContinuationValidationError, json.JSONDecodeError, sqlite3.Error):
+            return []
 
     def get_sync_log_entries(
         self,

@@ -259,6 +259,155 @@ def test_clear_and_later_edit_project_distinct_whole_message_versions(tmp_path) 
         db.close_connection()
 
 
+def test_restore_reconciles_committed_visible_clear_after_projection_failure(
+    tmp_path,
+) -> None:
+    db, message_id, first_hash = _source_message(tmp_path)
+    restarted_db = None
+    try:
+        row = db.get_message_by_id(message_id)
+        conversation_id = row["conversation_id"]
+        dataset_key = generate_dataset_key()
+        repo = _configured_repo(tmp_path / "clear-restart-sync-state.db")
+        producer = ChatSyncV2OutboxProducer(
+            state_repository=repo,
+            dataset_keys={"dataset-1": dataset_key},
+            source=db,
+        )
+        scope = {
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": "workspace-1",
+        }
+        first = producer.reconcile_chat_message_intent(
+            **scope,
+            message_id=message_id,
+            message_version=1,
+            payload_hash=first_hash,
+        )
+        remote = _RemoteChatStore()
+        applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=remote)
+        first_envelope = SyncV2Envelope.model_validate(
+            first["outbox_entry"]["envelope"]
+        )
+        assert applier.apply(first_envelope) == {"status": "applied"}
+
+        db.update_provider_continuation(
+            message_id=message_id,
+            expected_message_version=1,
+            provider_continuation_json=None,
+        )
+        db.close_connection()
+        restarted_db = CharactersRAGDB(db.db_path, "clear-restart")
+        restarted_producer = ChatSyncV2OutboxProducer(
+            state_repository=repo,
+            dataset_keys={"dataset-1": dataset_key},
+            source=restarted_db,
+        )
+        ConsoleChatStore(
+            persistence=ChatPersistenceService(restarted_db),
+            sync_v2_chat_producer=restarted_producer,
+            sync_v2_server_profile_id="server-a",
+            sync_v2_authenticated_principal_id="user-a",
+            sync_v2_workspace_scope="workspace-1",
+        ).restore_persisted_session(
+            title="Restarted clear",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=[],
+            active_leaf_persisted_id=message_id,
+        )
+
+        entries = repo.list_sync_v2_outbox_entries(
+            **scope, dataset_id="dataset-1"
+        )
+        assert [entry["envelope"]["entity_version"] for entry in entries] == [1, 2]
+        clear_envelope = SyncV2Envelope.model_validate(entries[-1]["envelope"])
+        assert clear_envelope.base_version == first_hash
+        assert applier.apply(clear_envelope) == {"status": "applied"}
+        stable_key = first_envelope.stable_key
+        assert stable_key is not None
+        assert remote.messages[stable_key] == {
+            "content": "visible answer",
+            "role": "assistant",
+        }
+    finally:
+        if restarted_db is not None:
+            restarted_db.close_connection()
+        else:
+            db.close_connection()
+
+
+def test_restore_reconciles_committed_delete_after_projection_failure(tmp_path) -> None:
+    db, message_id, first_hash = _source_message(tmp_path)
+    restarted_db = None
+    try:
+        row = db.get_message_by_id(message_id)
+        conversation_id = row["conversation_id"]
+        dataset_key = generate_dataset_key()
+        repo = _configured_repo(tmp_path / "delete-restart-sync-state.db")
+        producer = ChatSyncV2OutboxProducer(
+            state_repository=repo,
+            dataset_keys={"dataset-1": dataset_key},
+            source=db,
+        )
+        scope = {
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": "workspace-1",
+        }
+        first = producer.reconcile_chat_message_intent(
+            **scope,
+            message_id=message_id,
+            message_version=1,
+            payload_hash=first_hash,
+        )
+        remote = _RemoteChatStore()
+        applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=remote)
+        first_envelope = SyncV2Envelope.model_validate(
+            first["outbox_entry"]["envelope"]
+        )
+        assert applier.apply(first_envelope) == {"status": "applied"}
+
+        db.soft_delete_message_subtree(message_id, expected_version=1)
+        db.close_connection()
+        restarted_db = CharactersRAGDB(db.db_path, "delete-restart")
+        restarted_producer = ChatSyncV2OutboxProducer(
+            state_repository=repo,
+            dataset_keys={"dataset-1": dataset_key},
+            source=restarted_db,
+        )
+        ConsoleChatStore(
+            persistence=ChatPersistenceService(restarted_db),
+            sync_v2_chat_producer=restarted_producer,
+            sync_v2_server_profile_id="server-a",
+            sync_v2_authenticated_principal_id="user-a",
+            sync_v2_workspace_scope="workspace-1",
+        ).restore_persisted_session(
+            title="Restarted delete",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=[],
+            active_leaf_persisted_id=None,
+        )
+
+        entries = repo.list_sync_v2_outbox_entries(
+            **scope, dataset_id="dataset-1"
+        )
+        assert [entry["envelope"]["entity_version"] for entry in entries] == [1, 2]
+        delete_envelope = SyncV2Envelope.model_validate(entries[-1]["envelope"])
+        assert applier.apply(delete_envelope) == {"status": "applied"}
+        stable_key = first_envelope.stable_key
+        assert stable_key is not None
+        assert stable_key not in remote.messages
+        assert remote.hashes[stable_key] == canonical_payload_hash({"deleted": True})
+    finally:
+        if restarted_db is not None:
+            restarted_db.close_connection()
+        else:
+            db.close_connection()
+
+
 def test_visible_edit_keeps_checkpoint_on_its_exact_new_message_version(
     tmp_path,
 ) -> None:

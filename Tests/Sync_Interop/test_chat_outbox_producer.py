@@ -230,6 +230,7 @@ def test_chachanotes_source_reads_only_exact_committed_message_intent(tmp_path) 
         assert source.role == "assistant"
         assert source.content == "visible answer"
         assert source.provider_continuation_json == canonical_private
+        assert source.base_payload_hash is None
         assert canary not in repr(source)
         assert (
             db.read_committed_chat_sync_intent(
@@ -470,6 +471,7 @@ def test_reconcile_same_payload_later_version_gets_distinct_outbox_entry(
         assert entries[1]["status"] == "pending"
         assert entries[1]["attempt_count"] == 0
         assert entries[1]["envelope"]["entity_version"] == 2
+        assert entries[1]["envelope"]["base_version"] == payload_hash
         assert _decrypt_payload(
             entries[0]["envelope"]["payload_ciphertext"], dataset_key
         ) == _decrypt_payload(entries[1]["envelope"]["payload_ciphertext"], dataset_key)

@@ -807,7 +807,9 @@ class ConsoleChatStore:
             restored_nodes,
             active_leaf_persisted_id=active_leaf_persisted_id,
         )
-        self._reconcile_restored_provider_continuations(session.id)
+        self._reconcile_restored_chat_sync_intents(
+            session.id, str(persisted_conversation_id)
+        )
         self._hydrate_generation_metadata_from_persistence(session.id)
         self._bump_payload_revision(session.id)
         return session
@@ -872,39 +874,73 @@ class ConsoleChatStore:
             )
         return nodes
 
-    def _reconcile_restored_provider_continuations(self, session_id: str) -> None:
-        """Project retained unbridged continuation intents during normal restore."""
+    def _reconcile_restored_chat_sync_intents(
+        self, session_id: str, conversation_id: str
+    ) -> None:
+        """Project exact current unbridged Chat intents during normal restore."""
         if (
             self.sync_v2_server_profile_id is None
             or self.sync_v2_chat_producer is None
         ):
             return
-        for message in self._nodes_by_session.get(session_id, {}).values():
-            checkpoint = message.provider_continuation
-            message_id = message.persisted_message_id
-            message_version = message.provider_continuation_message_version
+        database = getattr(self.persistence, "db", None) if self.persistence else None
+        enumerate_intents = getattr(
+            database, "list_current_committed_chat_sync_intents", None
+        )
+        if not callable(enumerate_intents):
+            return
+        try:
+            intents = enumerate_intents(conversation_id)
+        except Exception:
+            logger.warning("Console continuation sync reconciliation was unavailable.")
+            return
+        producer = self.sync_v2_chat_producer
+        for intent in intents:
+            if not isinstance(intent, Mapping):
+                continue
+            operation = intent.get("operation")
+            message_id = intent.get("message_id")
+            message_version = intent.get("message_version")
+            payload_hash = intent.get("payload_hash")
             if (
-                not isinstance(checkpoint, ProviderContinuationCheckpoint)
-                or message_id is None
+                operation not in {"upsert", "delete"}
+                or type(message_id) is not str
                 or type(message_version) is not int
+                or type(payload_hash) is not str
             ):
                 continue
-            private_json = dump_provider_continuation_json(checkpoint)
-            if private_json is None:
-                continue
-            result = self.ensure_provider_continuation_durable(
-                message_id=message_id,
-                message_version=message_version,
-                payload_hash=canonical_payload_hash(
-                    {
-                        "content": message.content,
-                        "provider_continuation_json": private_json,
-                        "role": message.role.value,
-                    }
-                ),
+            reconcile = getattr(
+                producer,
+                "reconcile_chat_message_delete_intent"
+                if operation == "delete"
+                else "reconcile_chat_message_intent",
+                None,
             )
-            if not result.ready:
-                message.provider_continuation_warning = result.reason
+            if not callable(reconcile):
+                continue
+            try:
+                result = reconcile(
+                    server_profile_id=self.sync_v2_server_profile_id,
+                    authenticated_principal_id=(
+                        self.sync_v2_authenticated_principal_id
+                    ),
+                    workspace_scope=self.sync_v2_workspace_scope,
+                    message_id=message_id,
+                    message_version=message_version,
+                    payload_hash=payload_hash,
+                )
+            except Exception:
+                logger.bind(message_id=message_id).exception(
+                    "Failed to reconcile restored Chat sync intent"
+                )
+                continue
+            if not isinstance(result, Mapping) or result.get("status") != "enqueued":
+                for message in self._nodes_by_session.get(session_id, {}).values():
+                    if message.persisted_message_id == message_id:
+                        message.provider_continuation_warning = (
+                            "Portable continuation reconciliation is pending."
+                        )
+                        break
 
     def _hydrate_generation_metadata_from_persistence(self, session_id: str) -> None:
         """Batch-fetch and apply generation-metadata sidecar rows on resume.
