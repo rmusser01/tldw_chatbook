@@ -167,6 +167,16 @@ def _assert_solid_border(widget) -> None:
     assert border.left[0] == "solid"
 
 
+def _painted_region_rows(screen, region) -> list[str]:
+    """Return non-empty text rows painted inside an exact screen region."""
+    strips = list(screen._compositor.render_strips())
+    return [
+        text
+        for y in range(region.y, region.bottom)
+        if (text := strips[y].crop(region.x, region.right).text.strip())
+    ]
+
+
 @pytest.mark.parametrize("density", ("normal", "compact"))
 @pytest.mark.asyncio
 async def test_console_workbench_normal_and_compact_snapshots(density: str) -> None:
@@ -224,6 +234,9 @@ async def test_task_15705_console_collapsed_inspector_rail_visual_parity_sweep(
             transcript = screen.query_one("#console-transcript-region")
 
             assert inspector_handle.display is True
+            assert _painted_region_rows(screen, inspector_button.region) == ["Inspect"]
+            assert inspector_button.label == "Inspect"
+            assert inspector_button.tooltip == "Open Inspector rail"
             assert workspace.content_region.contains_region(inspector_handle.region), (
                 f"Inspector handle escapes workspace at {size}: "
                 f"handle={inspector_handle.region}, "
@@ -287,10 +300,6 @@ async def test_task_15705_console_collapsed_inspector_rail_visual_parity_sweep(
                 simplify=True,
             )
             _assert_svg_healthy(svg)
-            rendered_text = unescape(
-                "".join(re.findall(r"<text[^>]*>([^<]*)</text>", svg))
-            ).replace("\xa0", " ")
-            assert "Inspector" in rendered_text
 
 
 @pytest.mark.asyncio

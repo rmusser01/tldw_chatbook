@@ -346,13 +346,13 @@ async def test_console_handle_abbreviates_right_side_badges(badge, expected):
 
 
 @pytest.mark.asyncio
-async def test_console_handle_renames_the_inspector_label_on_the_right():
+async def test_console_handle_abbreviates_the_inspector_label_on_the_right():
     app = _HandleHarness(
         _console_handle(side="right", label=CONSOLE_RAIL_INSPECTOR_LABEL)
     )
     async with app.run_test(size=(40, 12)) as pilot:
         await pilot.pause()
-        assert str(app.query_one("#console-rail-open", Button).label) == "Inspector"
+        assert str(app.query_one("#console-rail-open", Button).label) == "Inspect"
 
 
 @pytest.mark.asyncio
