@@ -1431,6 +1431,31 @@ class ConsoleChatController:
         #: user and read by nobody. This slot is what makes the difference
         #: readable (`unattributed_fleet_tokens`) instead of silent.
         self._post_turn_usage_watch: dict[str, tuple[Any, Any, int]] = {}
+        #: PR3a-2 Task 3 (tasks 15660/15667): per ORIGINATING ASSISTANT
+        #: MESSAGE, the turn's signals object + resolution + the ``partial``
+        #: flag its own attach used -- what the last-child-settled fold
+        #: recomputes from. Keyed by message (not session) because a later
+        #: turn in the same session REPLACES the session watch above while
+        #: an earlier turn's survivor is still billing into ITS OWN signals
+        #: object. Recorded by ``_watch_post_turn_usage`` only when the
+        #: bridge says the conversation is still owed a drain
+        #: (``has_unsettled_children``); popped by the fold, so entries
+        #: never outlive the drain that consumes them. Money over memory on
+        #: every ambiguity: a broken/absent check records anyway.
+        self._fleet_usage_reattach_sources: dict[str, tuple[Any, Any, bool]] = {}
+        #: The loop ``_attach_stream_usage`` normally runs on (the app's
+        #: asyncio loop -- every turn-end attach happens there), captured
+        #: at watch time. The drain consumer fires on the CHILD's thread,
+        #: possibly after the Console screen is gone; it hops here so the
+        #: store mutation always runs on the thread that owns the store.
+        #: The app loop outlives the screen, so the hop works after
+        #: teardown too (proven by the teardown test in
+        #: ``test_fleet_usage_reattach.py``).
+        self._usage_reattach_loop: asyncio.AbstractEventLoop | None = None
+        # Register the fold as a fan-out consumer NOW, next to bridge
+        # attachment -- never from `run_reply` (bridge-lifetime registry;
+        # see `FleetDrainFanout.register` for why).
+        self._register_fleet_usage_reattach(agent_bridge)
         #: task-2154.16 (FB-05): UI-thread callback invoked DIRECTLY (same
         #: main-loop guarantee as ``notify_run_outcome`` above) from
         #: ``_set_run_state``'s once-guarded transition INTO ``FAILED`` for
@@ -2826,6 +2851,10 @@ class ConsoleChatController:
         """
         self._agent_runtime_enabled = enabled
         self._agent_bridge = bridge
+        # PR3a-2 Task 3: a refreshed bridge is a fresh fan-out registry --
+        # re-register the usage fold on it (replace-by-name makes calling
+        # this with the SAME bridge a safe no-op).
+        self._register_fleet_usage_reattach(bridge)
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing native Console session."""
@@ -8666,34 +8695,194 @@ class ConsoleChatController:
         session_id: str,
         stream_signals: ConsoleProviderStreamSignals | None,
         resolution: Any,
+        *,
+        assistant_message_id: str | None = None,
+        partial: bool = False,
     ) -> None:
         """Remember where this turn's billing stopped (PR3a-1 Task 6b, F3).
 
         Called immediately after the turn's ONE usage attach. Everything
         appended to ``stream_signals`` from here on is a surviving fleet
-        child's spend: real money, on a message nobody attaches to again.
+        child's spend: real money, on a message nobody attaches to again --
+        until the conversation's fleet DRAINS.
 
-        NOT the full fix, deliberately. Re-attaching when the last child of
-        a turn finishes needs a "last child done" signal the bridge does not
-        emit, and PR 3a-2 builds exactly that signal for auto-wake; building
-        it twice is waste. **The re-attach itself is already safe**:
-        ``_attach_stream_usage`` recomputes the TOTAL from all payloads and
-        ``ConsoleChatStore.set_message_usage`` REPLACES rather than adds
-        (and persists immediately for an already-terminal message), so
-        calling it a second time with the same signals object is idempotent
-        -- 3a-2 inherits a safe path and does not need to re-derive that.
-        Until then the spend is at least VISIBLE, via
-        ``unattributed_fleet_tokens`` -> the cost chip's "Sub-agents: N tok
-        (not priced)" line.
+        Two consumers read what this records (PR3a-2 Task 3 closed the
+        3a-1 "observable, not fixed" gap):
+
+        - ``unattributed_fleet_tokens`` (the chip's "Sub-agents: N tok
+          (not priced)" line) reads the per-SESSION watch -- spend billed
+          since the attach, zeroed again when the fold below runs;
+        - ``_reattach_fleet_usage`` (the ``FleetDrained`` fan-out consumer)
+          reads the per-MESSAGE source recorded here and re-attaches the
+          whole turn (recompute-all + REPLACE -- idempotent, pinned by
+          ``test_re_attaching_the_same_signals_is_idempotent``), carrying
+          the same ``partial`` flag this turn's own attach used.
+
+        The per-message source is recorded only when the bridge reports the
+        conversation still OWES a drain (``has_unsettled_children``): a
+        turn whose children all settled within the turn -- or that never
+        had any -- would otherwise retain its signals object until
+        teardown with no drain ever coming to pop it. On any ambiguity
+        (no such seam on the bridge, or a raising check) the source is
+        recorded anyway: money over memory.
+
+        Args:
+            session_id: The session whose turn just attached usage.
+            stream_signals: The turn's signals object; ``None`` clears the
+                session watch.
+            resolution: The turn's provider resolution (provider/model for
+                payload normalization).
+            assistant_message_id: The turn's originating assistant message
+                -- the row the drain fold re-attaches to. ``None`` (the
+                legacy shape) records no re-attach source.
+            partial: The flag the turn's own attach used; the fold reuses
+                it so a stopped turn's record stays partial.
         """
         if stream_signals is None:
             self._post_turn_usage_watch.pop(session_id, None)
             return
+        try:
+            # The thread running this IS the one that owns the store (every
+            # caller is an async controller method); remember its loop so
+            # the drain consumer -- a child's thread, maybe post-teardown --
+            # can hop back onto it.
+            self._usage_reattach_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass  # sync test harness: the consumer then runs inline
         self._post_turn_usage_watch[session_id] = (
             stream_signals,
             resolution,
             len(self._usage_payloads(stream_signals)),
         )
+        if assistant_message_id is None:
+            return
+        bridge = self._agent_bridge
+        if bridge is None:
+            # No bridge -> no fleet -> nothing can ever drain: recording a
+            # source would be a straight leak.
+            return
+        checker = getattr(bridge, "has_unsettled_children", None)
+        if callable(checker):
+            try:
+                if not checker(self._agent_conversation_id(session_id)):
+                    return
+            except Exception:  # noqa: BLE001 -- money over memory: keep the source
+                logger.opt(exception=True).debug(
+                    "has_unsettled_children raised; recording re-attach source anyway"
+                )
+        self._fleet_usage_reattach_sources[assistant_message_id] = (
+            stream_signals,
+            resolution,
+            partial,
+        )
+
+    def _register_fleet_usage_reattach(self, bridge: Any) -> None:
+        """Register the last-child-settled usage fold on this bridge.
+
+        PR3a-2 Task 3 (tasks 15660/15667): one bridge-lifetime fan-out
+        consumer, registered next to bridge attachment (constructor and
+        ``update_agent_runtime``) -- never from ``run_reply``, per
+        ``FleetDrainFanout.register``'s contract. Tolerates a bridge
+        without the seam (older fakes) and no bridge at all.
+
+        Args:
+            bridge: The Console agent bridge to register on, or ``None``.
+        """
+        if bridge is None:
+            return
+        register = getattr(bridge, "on_fleet_drained", None)
+        if callable(register):
+            register("usage-reattach", self._on_fleet_drained_reattach_usage)
+
+    def _on_fleet_drained_reattach_usage(self, event: Any) -> None:
+        """``FleetDrained`` consumer: hop off the child's thread and fold.
+
+        Runs under the fan-out's consumer contract: the CHILD's own daemon
+        thread, possibly after the Console screen (and this controller's
+        owner) are gone. The store is single-threaded, so the actual fold
+        is scheduled onto the loop captured at watch time -- the app loop,
+        which outlives the screen -- via ``call_soon_threadsafe``. With no
+        loop ever captured (sync harnesses), or the loop already closed
+        (app exit while a child settles: the last chance to record real
+        money), the fold runs inline instead; every path is wrapped so
+        nothing propagates back into the fan-out.
+
+        Args:
+            event: The ``FleetDrained`` event.
+        """
+        loop = self._usage_reattach_loop
+        if loop is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(
+                    self._reattach_fleet_usage_guarded, event
+                )
+                return
+            except RuntimeError:
+                pass  # closed between the check and the call: fall through
+        self._reattach_fleet_usage_guarded(event)
+
+    def _reattach_fleet_usage_guarded(self, event: Any) -> None:
+        """Never-raise wrapper: a ``call_soon_threadsafe`` callback that
+        raised would land in the loop's exception handler, and an inline
+        call would propagate into the fan-out's per-consumer catch --
+        neither may happen for a best-effort cost figure."""
+        try:
+            self._reattach_fleet_usage(event)
+        except Exception:  # noqa: BLE001 -- a dropped fold is a missing figure, not a broken run
+            logger.opt(exception=True).warning(
+                "fleet usage re-attach failed for conversation {conversation_id}",
+                conversation_id=getattr(event, "conversation_id", "?"),
+            )
+
+    def _reattach_fleet_usage(self, event: Any) -> None:
+        """Fold every drained turn's full spend back onto its own message.
+
+        PR3a-2 Task 3 (tasks 15660/15667). For each distinct originating
+        assistant message in the drain: recompute the turn's TOTAL from
+        ALL of its signals' payloads -- the turn's own calls plus
+        everything its children (survivors included; ``error``/
+        ``cancelled`` children's partial spend is still real spend) billed
+        since -- and REPLACE the stored usage, with the same ``partial``
+        flag the turn's own attach used. Then sync the session watch's
+        attached-count so ``unattributed_fleet_tokens`` falls back to
+        zero, and pop the source: after a drain no child of that turn
+        exists to bill into its signals again, so a second delivery of the
+        same event finds nothing and is a no-op (15660 AC#2's end-to-end
+        idempotence; the attach itself is idempotent besides).
+
+        A child whose turn recorded no source (a within-turn drain firing
+        before the finalize, or ``run_id is None`` for a child that died
+        pre-``create_run``) is skipped: the turn's own attach covers
+        everything billed up to it.
+
+        Args:
+            event: The ``FleetDrained`` event to fold.
+        """
+        processed: set[str] = set()
+        for child in getattr(event, "children", ()) or ():
+            message_id = getattr(child, "assistant_message_id", None)
+            if not message_id or message_id in processed:
+                continue
+            processed.add(message_id)
+            source = self._fleet_usage_reattach_sources.pop(message_id, None)
+            if source is None:
+                continue
+            stream_signals, resolution, partial = source
+            self._attach_stream_usage(
+                message_id, stream_signals, resolution, partial=partial
+            )
+            session_id = getattr(child, "session_id", None)
+            watch = (
+                self._post_turn_usage_watch.get(session_id)
+                if session_id
+                else None
+            )
+            if watch is not None and watch[0] is stream_signals:
+                self._post_turn_usage_watch[session_id] = (
+                    stream_signals,
+                    watch[1],
+                    len(self._usage_payloads(stream_signals)),
+                )
 
     def unattributed_fleet_tokens(self, session_id: str) -> int:
         """Tokens this session billed AFTER its turn's usage was attached.
@@ -8702,7 +8891,11 @@ class ConsoleChatController:
         into the same ``ConsoleProviderStreamSignals``; the agent path
         attaches usage once, the instant ``run_reply`` returns. This is the
         difference -- spend the user was charged for that the message row
-        and its cost figure do not include.
+        and its cost figure do not include YET: when the conversation's
+        fleet drains, ``_reattach_fleet_usage`` folds it onto the message
+        row and re-baselines the watch, so this reads non-zero only in the
+        window between a survivor's billing and its last sibling settling
+        (PR3a-2 Task 3, tasks 15660/15667).
 
         Read by ``ChatScreen._build_console_cost_state`` and folded into the
         chip's unpriced sub-agent token line, so the money is named rather
@@ -9618,8 +9811,16 @@ class ConsoleChatController:
                 )
                 # PR3a-1 Task 6b (audit F3): a Stop ends the TURN, not its
                 # surviving children -- so this branch needs the same
-                # post-turn watch the normal finalizer sets.
-                self._watch_post_turn_usage(session_id, stream_signals, resolution)
+                # post-turn watch the normal finalizer sets. PR3a-2 Task 3:
+                # message + partial flag ride along so the drain fold can
+                # re-attach to this row with the same (partial) semantics.
+                self._watch_post_turn_usage(
+                    session_id,
+                    stream_signals,
+                    resolution,
+                    assistant_message_id=assistant_message_id,
+                    partial=True,
+                )
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id, visible_copy="Response stopped."
@@ -9765,16 +9966,25 @@ class ConsoleChatController:
         # provider calls it did make, but its output side is incomplete.
         # A no-op when the run captured no usage at all (best-effort: absent
         # usage must never fail a send).
+        attach_partial = stopped_now or getattr(outcome, "status", None) != RUN_DONE
         self._attach_stream_usage(
             assistant_message_id,
             stream_signals,
             resolution,
-            partial=stopped_now or getattr(outcome, "status", None) != RUN_DONE,
+            partial=attach_partial,
         )
         # PR3a-1 Task 6b (audit F3): mark where THIS turn's billing stopped,
         # so a surviving child's later provider calls are readable rather
-        # than silently dropped -- see `_watch_post_turn_usage`.
-        self._watch_post_turn_usage(session_id, stream_signals, resolution)
+        # than silently dropped -- see `_watch_post_turn_usage`. PR3a-2
+        # Task 3: message + partial flag ride along so the drain fold can
+        # re-attach to this row with the same semantics.
+        self._watch_post_turn_usage(
+            session_id,
+            stream_signals,
+            resolution,
+            assistant_message_id=assistant_message_id,
+            partial=attach_partial,
+        )
         if stopped_now:
             # The stopped message was already persisted by
             # `mark_message_stopped` (`_persist_existing_message`), so its

@@ -3507,6 +3507,28 @@ class ConsoleAgentBridge:
         with self._change_window_lock:
             return self._live_child_counts.get(conversation_id, 0)
 
+    def has_unsettled_children(self, conversation_id: str) -> bool:
+        """True while this conversation is still owed a drain (PR3a-2 Task 3).
+
+        Reads the drain-paired UNSETTLED counter, not the scope-exit live
+        counter: between a child's scope exit and its settle hook the live
+        count already reads 0 while the drain has not fired yet, so a
+        caller deciding "will a ``FleetDrained`` still come for this
+        conversation?" must ask the counter the drain itself unwinds.
+        Used by the controller's usage re-attach to record a turn's
+        signals object only when a drain will later pop it -- a turn owing
+        no drain would otherwise retain that object until teardown.
+
+        Args:
+            conversation_id: The conversation to check.
+
+        Returns:
+            True when at least one fleet child of this conversation has
+            entered its run scope and not yet reached its settle hook.
+        """
+        with self._change_window_lock:
+            return self._unsettled_child_counts.get(conversation_id, 0) > 0
+
     def on_fleet_drained(
         self, name: str, consumer: Callable[[FleetDrained], None]
     ) -> None:

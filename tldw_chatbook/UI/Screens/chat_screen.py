@@ -8496,12 +8496,15 @@ class ChatScreen(BaseAppScreen):
             fleet_tokens = self._agent._console_agent_fleet_token_total()
             # PR3a-1 Task 6b (audit F3): plus whatever a SURVIVING child
             # billed after its turn's usage was attached to the assistant
-            # message. That spend is real and the message row does not
-            # include it (re-attaching needs the "last child done" signal PR
-            # 3a-2 builds); folding it in here at least names the money on
-            # the chip's own unpriced sub-agent line instead of dropping it
-            # silently. No double count: `unattributed_fleet_tokens` counts
-            # ONLY payloads closed out after the attach, and a live handle's
+            # message. PR3a-2 Task 3 (tasks 15660/15667): that spend is now
+            # INTERIM, not lost -- when the conversation's last fleet child
+            # settles, the controller's "usage-reattach" drain consumer
+            # folds the whole turn (survivors included) back onto the
+            # message's own usage row and this line falls to zero. Until
+            # that drain, the money is named here on the chip's unpriced
+            # sub-agent line. No double count: `unattributed_fleet_tokens`
+            # counts ONLY payloads closed out after the latest attach (the
+            # fold resets its watermark), and a live handle's
             # `FleetHandle.total_tokens` -- what `_console_agent_fleet_token_
             # total` sums -- is 0 until it finishes, by which point it has
             # left `fleet_snapshot`.

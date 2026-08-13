@@ -242,6 +242,13 @@ at — an unpriced count was chosen over either fabricating a dollar amount
 or discounting the primary transcript's own already-priced total just
 because a fleet ran underneath it.
 
+When the **last child of a conversation's fleet finishes**, the whole
+turn's provider-reported usage — the reply's own calls plus everything its
+sub-agents billed, survivors included — is re-attached to the originating
+assistant message's own usage row, saved with the conversation, and the
+chip's unpriced sub-agent line falls back to zero. Until that moment a
+survivor's post-turn spend shows on the chip line only.
+
 **Known gaps** (filed, not fixed):
 - Historical/resumed rows never show elapsed time. The timestamps exist in
   the run database, but the code path that rebuilds a resumed row doesn't
@@ -340,11 +347,16 @@ first's genuinely-running rows.
 
 **Honest limits of the current release:**
 
-- A survivor's token spend reaches the **cost chip only**. Hover it and
-  the tooltip breaks the figure out as `Sub-agents: N tok (not priced)`,
-  and it is folded into the chip's own token total. It is *not* on the
-  assistant message's own usage row and *not* in conversation exports, and
-  it is remembered only for as long as the Console screen stays open.
+- A survivor's token spend reaches the cost chip's `Sub-agents: N tok
+  (not priced)` line **while some child of the conversation is still
+  running**. Once the last child finishes, the spend is folded into the
+  assistant message's own usage row, saved with the conversation (it
+  survives closing and reopening Console), and included in the JSON
+  conversation export's per-message `usage` records. Two limits remain:
+  quitting the **app** before the last child finishes loses whatever a
+  survivor billed after its turn — that remainder is recorded nowhere
+  durable — and the plain-text conversation export contains no token
+  figures at all.
 - Nothing wakes the supervisor when the last child finishes, and nothing
   notifies you from another tab or screen.
 
