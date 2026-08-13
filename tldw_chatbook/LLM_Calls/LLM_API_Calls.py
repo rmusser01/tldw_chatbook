@@ -47,6 +47,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatConfigurationError,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
+from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
 from tldw_chatbook.config import (
     get_cli_setting,
     get_runtime_config_snapshot,
@@ -5212,6 +5213,10 @@ def chat_with_moonshot(
     custom_prompt_arg: Optional[str] = None,
     api_base_url: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
+    provider_continuations: Tuple[ProviderContinuationCheckpoint, ...] = (),
+    request_timeout: Optional[float] = None,
+    request_retries: Optional[int] = None,
+    request_retry_delay: Optional[float] = None,
 ):
     """Compatibility wrapper for the strict first-class Moonshot adapter."""
     started_at = time.time()
@@ -5239,6 +5244,10 @@ def chat_with_moonshot(
             custom_prompt_arg=custom_prompt_arg,
             api_base_url=api_base_url,
             reasoning_effort=reasoning_effort,
+            provider_continuations=provider_continuations,
+            request_timeout=request_timeout,
+            request_retries=request_retries,
+            request_retry_delay=request_retry_delay,
         )
     except Exception as exc:
         log_counter(
@@ -5279,6 +5288,10 @@ def chat_with_zai(
     response_format: Optional[Dict[str, Any]] = None,
     user: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
+    provider_continuations: Tuple[ProviderContinuationCheckpoint, ...] = (),
+    request_timeout: Optional[float] = None,
+    request_retries: Optional[int] = None,
+    request_retry_delay: Optional[float] = None,
 ):
     """Compatibility wrapper for the strict first-class Z.ai adapter."""
     started_at = time.time()
@@ -5304,6 +5317,10 @@ def chat_with_zai(
             response_format=response_format,
             user=user,
             reasoning_effort=reasoning_effort,
+            provider_continuations=provider_continuations,
+            request_timeout=request_timeout,
+            request_retries=request_retries,
+            request_retry_delay=request_retry_delay,
         )
     except Exception as exc:
         log_counter(

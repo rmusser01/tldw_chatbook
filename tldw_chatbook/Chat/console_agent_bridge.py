@@ -68,13 +68,19 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
+from tldw_chatbook.Chat.console_prepared_request import (
+    CONTINUATION_OWNER_KEY,
+    build_console_request,
+)
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderCallSignals,
     ConsoleProviderGateway,
     ConsoleProviderStreamSignals,
     ProviderToolCalls,
+    ProviderTurnMetadata,
 )
 from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationOwnerGroup,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
 )
@@ -1349,6 +1355,24 @@ def _openai_usage_from_provider_call(
     return usage
 
 
+class _StreamingProviderResponse(dict[str, Any]):
+    """OpenAI-shaped public response plus one private typed continuation."""
+
+    def __init__(
+        self,
+        value: Mapping[str, Any],
+        metadata: ProviderTurnMetadata | None,
+    ) -> None:
+        super().__init__(value)
+        self._provider_continuation = (
+            metadata.provider_continuation if metadata is not None else None
+        )
+
+    @property
+    def provider_continuation(self) -> ProviderContinuationCheckpoint | None:
+        return self._provider_continuation
+
+
 class _StreamingModelAdapter:
     """chat_call-compatible adapter that streams every PRIMARY turn live.
 
@@ -1540,12 +1564,14 @@ class _StreamingModelAdapter:
         api_endpoint=None,
         streaming=False,
         tools=None,
+        continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
         **_ignored,
     ) -> dict:
         is_subagent = self._is_subagent(messages_payload)
         gate = StreamGate()
         any_streamed = False
         native_calls: list[dict] = []
+        terminal_metadata: ProviderTurnMetadata | None = None
         call_signals: ConsoleProviderCallSignals | None = None
         gateway_signals: (
             ConsoleProviderStreamSignals | ConsoleProviderCallSignals | None
@@ -1558,7 +1584,7 @@ class _StreamingModelAdapter:
             gateway_signals = call_signals
 
         async def _consume() -> None:
-            nonlocal any_streamed
+            nonlocal any_streamed, terminal_metadata
             # Forwarding `tools=` only when it is non-None (rather than
             # always passing the keyword, even as None) keeps every
             # pre-Task-5 gateway fake elsewhere in the test suite — whose
@@ -1572,7 +1598,28 @@ class _StreamingModelAdapter:
             dispatch_messages = messages_payload
             stream_kwargs = {"tools": tools} if tools is not None else {}
             prepare_request = getattr(self._gateway, "prepare_chat_request", None)
-            if self._continuation_sidecar and callable(prepare_request):
+            if continuation_groups and callable(prepare_request):
+                if self._continuation_target is None or not self._continuation_owner_key:
+                    raise ValueError("Provider continuation request is not pinned.")
+                owner_ids = {group.owner_message_id for group in continuation_groups}
+                semantic_messages: list[dict[str, Any]] = []
+                for message in messages_payload:
+                    row = dict(message)
+                    owner_id = row.pop(self._continuation_owner_key, None)
+                    if type(owner_id) is str and owner_id in owner_ids:
+                        row[CONTINUATION_OWNER_KEY] = owner_id
+                    semantic_messages.append(row)
+                dispatch_messages = prepare_request(
+                    self._resolution,
+                    build_console_request(
+                        semantic_messages,
+                        tools=tools or (),
+                        continuation_groups=continuation_groups,
+                    ),
+                    continuation_target=self._continuation_target,
+                )
+                stream_kwargs.pop("tools", None)
+            elif self._continuation_sidecar and callable(prepare_request):
                 dispatch_messages = prepare_request(
                     self._resolution,
                     messages_payload,
@@ -1587,11 +1634,17 @@ class _StreamingModelAdapter:
             async for chunk in self._gateway.stream_chat(
                 self._resolution, dispatch_messages, **stream_kwargs
             ):
+                if terminal_metadata is not None:
+                    raise ValueError("Provider terminal metadata must be final.")
                 if isinstance(chunk, ProviderToolCalls):
                     # Plan-B contract: structured deltas never hit the
                     # transcript — captured here, surfaced only through the
                     # returned message dict's `tool_calls`.
                     native_calls.extend(chunk.tool_calls)
+                    if chunk.metadata is not None:
+                        if not isinstance(chunk.metadata, ProviderTurnMetadata):
+                            raise ValueError("Provider terminal metadata is malformed.")
+                        terminal_metadata = chunk.metadata
                     continue
                 visible = gate.feed(chunk)
                 if visible and not is_subagent:
@@ -1655,15 +1708,23 @@ class _StreamingModelAdapter:
         if native_calls:
             message["tool_calls"] = native_calls
         response: dict[str, Any] = {"choices": [{"message": message}]}
-        if call_signals is not None:
+        usage_payload = (
+            terminal_metadata.usage if terminal_metadata is not None else None
+        )
+        usage = _openai_usage_from_provider_call(
+            usage_payload,
+            provider=self._resolution.provider,
+            model=self._resolution.model or model or "",
+        )
+        if usage is None and call_signals is not None:
             usage = _openai_usage_from_provider_call(
                 call_signals.usage_snapshot(),
                 provider=self._resolution.provider,
                 model=self._resolution.model or model or "",
             )
-            if usage is not None:
-                response["usage"] = usage
-        return response
+        if usage is not None:
+            response["usage"] = usage
+        return _StreamingProviderResponse(response, terminal_metadata)
 
     @staticmethod
     def _is_subagent(messages_payload) -> bool:

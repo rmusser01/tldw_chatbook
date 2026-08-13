@@ -10,6 +10,7 @@ import threading
 import weakref
 from collections.abc import Iterator, Mapping
 from contextvars import copy_context
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from types import GeneratorType, MappingProxyType
 from typing import Any, AsyncIterator, Callable, Literal, cast
@@ -53,6 +54,7 @@ from tldw_chatbook.Chat.console_history_budget import (
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationConflictError,
     ContinuationRestoreTarget,
+    ProviderContinuationCheckpoint,
     validate_continuation_restore,
 )
 from tldw_chatbook.Chat.console_provider_support import (
@@ -65,6 +67,7 @@ from tldw_chatbook.LLM_Calls.qwencloud import (
     normalize_qwencloud_api_mode,
     normalize_qwencloud_base_url,
 )
+from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatTurn
 from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
@@ -475,6 +478,9 @@ class ConsoleProviderResolution:
     prompt_caching: bool | None = None
     api_mode: str | None = None
     continuation_protocol: str | None = None
+    request_timeout: float | None = None
+    request_retries: int | None = None
+    request_retry_delay: float | None = None
 
 
 def _freeze_auxiliary_value(value: Any) -> Any:
@@ -606,8 +612,23 @@ class _QueueItem:
         return cls("done")
 
     @classmethod
-    def native_tool_calls(cls, calls: tuple) -> "_QueueItem":
-        return cls("tool_calls", payload=calls)
+    def native_tool_calls(
+        cls,
+        calls: tuple[dict, ...],
+        metadata: ProviderTurnMetadata | None = None,
+    ) -> "_QueueItem":
+        return cls("tool_calls", payload=ProviderToolCalls(calls, metadata=metadata))
+
+
+@dataclass(frozen=True)
+class ProviderTurnMetadata:
+    """Typed terminal state for one completed provider call."""
+
+    finish_reason: str
+    provider_continuation: ProviderContinuationCheckpoint | None = field(
+        default=None, repr=False
+    )
+    usage: Mapping[str, Any] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -618,6 +639,29 @@ class ProviderToolCalls:
     streaming fragments already merged."""
 
     tool_calls: tuple[dict, ...]
+    metadata: ProviderTurnMetadata | None = field(default=None, repr=False)
+
+
+def _provider_turn_metadata(response: Any) -> ProviderTurnMetadata | None:
+    """Read one provider-local terminal turn after clean exhaustion."""
+
+    try:
+        turn = response.terminal_turn
+    except AttributeError:
+        return None
+    if not isinstance(turn, HostedChatTurn):
+        raise ChatProviderError("Provider terminal metadata is malformed.")
+    candidate = getattr(response, "provider_continuation", None)
+    if candidate is not None and not isinstance(
+        candidate, ProviderContinuationCheckpoint
+    ):
+        raise ChatProviderError("Provider continuation metadata is malformed.")
+    usage = deepcopy(turn.usage) if isinstance(turn.usage, Mapping) else None
+    return ProviderTurnMetadata(
+        finish_reason=turn.finish_reason,
+        provider_continuation=candidate,
+        usage=usage,
+    )
 
 
 _PRESERVED_FRAGMENT_EXTRAS = frozenset(
@@ -1666,6 +1710,31 @@ class ConsoleProviderGateway:
             if identity.execution_key == "deepseek"
             else None
         )
+        request_timeout: float | None = None
+        request_retries: int | None = None
+        request_retry_delay: float | None = None
+        if identity.execution_key in {"moonshot", "zai"}:
+            try:
+                (
+                    request_timeout,
+                    request_retries,
+                    request_retry_delay,
+                ) = _hosted_transport_policy(
+                    provider_settings,
+                    provider=identity.execution_key,
+                )
+            except ChatConfigurationError:
+                return self._blocked_resolution(
+                    selection,
+                    provider=selection.provider,
+                    model=model,
+                    visible_copy=(
+                        f"{selection.provider} blocked: invalid timeout or retry "
+                        "settings. Correct the provider transport policy in Settings."
+                    ),
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                )
 
         return ConsoleProviderResolution(
             provider=selection.provider,
@@ -1679,6 +1748,9 @@ class ConsoleProviderGateway:
             prompt_caching=prompt_caching,
             api_mode=api_mode,
             continuation_protocol=continuation_protocol,
+            request_timeout=request_timeout,
+            request_retries=request_retries,
+            request_retry_delay=request_retry_delay,
             temperature=selection.temperature,
             top_p=selection.top_p,
             min_p=selection.min_p,
@@ -2192,6 +2264,7 @@ class ConsoleProviderGateway:
             try:
                 kwargs = self._chat_api_kwargs_from_prepared(resolution, request)
                 response = self._chat_api_call(**kwargs)
+                provider_response = response
                 accumulator = _ToolCallAccumulator() if request.tools else None
                 if accumulator is not None:
                     response = _tee_tool_calls(response, accumulator)
@@ -2215,10 +2288,13 @@ class ConsoleProviderGateway:
                     if text:
                         emitted_content = True
                     enqueue(_QueueItem.content(text))
+                if stop_event.is_set():
+                    return
                 if accumulator is not None:
                     calls = accumulator.calls()
-                    if calls:
-                        enqueue(_QueueItem.native_tool_calls(calls))
+                    metadata = _provider_turn_metadata(provider_response)
+                    if calls or metadata is not None:
+                        enqueue(_QueueItem.native_tool_calls(calls, metadata))
                     elif not emitted_content:
                         # PR #648 review Minor 1: the turn produced NEITHER
                         # visible content NOR tool-calls. On the fence path
@@ -2278,7 +2354,7 @@ class ConsoleProviderGateway:
                         else 502,
                     )
                 if item.kind == "tool_calls":
-                    yield ProviderToolCalls(tuple(item.payload))
+                    yield cast(ProviderToolCalls, item.payload)
                     continue
                 if item.text:
                     yield item.text
@@ -2398,6 +2474,15 @@ class ConsoleProviderGateway:
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key in {"moonshot", "zai"}:
+            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["request_timeout"] = resolution.request_timeout
+            kwargs["request_retries"] = resolution.request_retries
+            kwargs["request_retry_delay"] = resolution.request_retry_delay
+            if request.continuation_groups:
+                kwargs["provider_continuations"] = [
+                    group.checkpoint for group in request.continuation_groups
+                ]
         elif resolution.execution_key == "anthropic":
             kwargs["api_base_url"] = resolution.base_url or None
         elif (
@@ -2774,6 +2859,31 @@ def _provider_settings(
 ) -> Mapping[str, object]:
     api_settings = _mapping_value(app_config, "api_settings")
     return provider_settings_for_key(api_settings, provider_key)
+
+
+def _hosted_transport_policy(
+    settings: Mapping[str, object],
+    *,
+    provider: str,
+) -> tuple[float, int, float]:
+    delay_default = 1.0 if provider == "moonshot" else 5.0
+    timeout = settings.get("timeout", 90.0)
+    retries = settings.get("retries", 3)
+    retry_delay = settings.get("retry_delay", delay_default)
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not math.isfinite(float(timeout))
+        or timeout <= 0
+        or type(retries) is not int
+        or retries < 0
+        or isinstance(retry_delay, bool)
+        or not isinstance(retry_delay, (int, float))
+        or not math.isfinite(float(retry_delay))
+        or retry_delay < 0
+    ):
+        raise ChatConfigurationError("Hosted provider transport policy is invalid.")
+    return float(timeout), retries, float(retry_delay)
 
 
 def _first_string(*values: object) -> str | None:

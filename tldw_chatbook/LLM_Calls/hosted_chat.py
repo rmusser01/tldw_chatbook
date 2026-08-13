@@ -80,7 +80,7 @@ class HostedChatTurn:
 
     text: str
     tool_calls: tuple[dict[str, Any], ...]
-    assistant_message: dict[str, Any] | None
+    assistant_message: dict[str, Any] | None = field(repr=False)
     finish_reason: str
     reasoning_content: str | None = field(default=None, repr=False)
     usage: dict[str, Any] | None = field(default=None, repr=False)

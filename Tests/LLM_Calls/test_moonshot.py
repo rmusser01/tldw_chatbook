@@ -498,13 +498,16 @@ def test_chat_with_moonshot_joins_resolution_payload_transport_and_response(
                 "message": {
                     "role": "assistant",
                     "content": "Answer",
-                    "reasoning_content": "PRIVATE-REASONING",
                 },
                 "finish_reason": "stop",
             }
         ],
         "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
     }
+    assert result.provider_continuation is not None
+    assert result.provider_continuation.rounds[-1].reasoning_blocks == (
+        "PRIVATE-REASONING",
+    )
 
 
 def test_chat_with_moonshot_maps_malformed_success_to_provider_error(

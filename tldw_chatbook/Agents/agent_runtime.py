@@ -275,6 +275,13 @@ class LoopDeps:
     load_schemas: Callable[[list], list]
     should_cancel: Callable[[], bool]
     clock: Callable[[], float]
+    call_model_with_continuation: (
+        Callable[
+            [list, tuple, ProviderContinuationCheckpoint | None],
+            ModelTurn,
+        ]
+        | None
+    ) = None
     on_step: Callable[[AgentStep], None] = lambda step: None
     # Optional pre-dispatch batch-review hook (P5 Task 4): the generic seam
     # the MCP approval flow (Task 6) rides on. When set, called ONCE per
@@ -893,7 +900,15 @@ def run_agent_loop(
             turn = ModelTurn(tool_calls=tuple(calls))
         else:
             restored_calls = None
-            turn = deps.call_model(messages, tuple(active))
+            turn = (
+                deps.call_model_with_continuation(
+                    messages,
+                    tuple(active),
+                    continuation_checkpoint,
+                )
+                if deps.call_model_with_continuation is not None
+                else deps.call_model(messages, tuple(active))
+            )
             model_turns += 1
             total_tokens += turn.tokens
             calls = list(turn.tool_calls)

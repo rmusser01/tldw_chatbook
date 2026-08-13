@@ -17,8 +17,12 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
 )
 from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationCall,
+    ContinuationRound,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
+    dump_provider_continuation_json,
+    parse_provider_continuation_json,
     validate_continuation_restore,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat import (
@@ -89,8 +93,16 @@ class MoonshotFinishPolicy:
 class MoonshotStream(Iterator[dict[str, Any]]):
     """Expose visible Moonshot chunks while retaining private terminal reasoning."""
 
-    def __init__(self, stream: HostedChatStream) -> None:
+    def __init__(
+        self,
+        stream: HostedChatStream,
+        *,
+        resolution: MoonshotResolution | None = None,
+        provider_continuations: Sequence[ProviderContinuationCheckpoint] = (),
+    ) -> None:
         self._stream = stream
+        self._resolution = resolution
+        self._provider_continuations = tuple(provider_continuations)
 
     def __iter__(self) -> MoonshotStream:
         return self
@@ -107,9 +119,43 @@ class MoonshotStream(Iterator[dict[str, Any]]):
         """Return private terminal state after clean stream exhaustion."""
         return self._stream.terminal_turn
 
+    @property
+    def provider_continuation(self) -> ProviderContinuationCheckpoint | None:
+        """Return a canonical candidate only after clean stream exhaustion."""
+        if self._resolution is None:
+            raise HostedChatProtocolError("Moonshot stream metadata is incomplete.")
+        return _moonshot_continuation_candidate(
+            self.terminal_turn,
+            resolution=self._resolution,
+            provider_continuations=self._provider_continuations,
+        )
+
     def close(self) -> None:
         """Close the owned response/session pair."""
         self._stream.close()
+
+
+class MoonshotResponse(dict[str, Any]):
+    """Public response mapping with private terminal state kept out of repr."""
+
+    def __init__(
+        self,
+        value: Mapping[str, Any],
+        *,
+        terminal_turn: HostedChatTurn,
+        provider_continuation: ProviderContinuationCheckpoint | None,
+    ) -> None:
+        super().__init__(value)
+        self._terminal_turn = terminal_turn
+        self._provider_continuation = provider_continuation
+
+    @property
+    def terminal_turn(self) -> HostedChatTurn:
+        return self._terminal_turn
+
+    @property
+    def provider_continuation(self) -> ProviderContinuationCheckpoint | None:
+        return self._provider_continuation
 
 
 _FINISH_POLICY = MoonshotFinishPolicy()
@@ -137,6 +183,9 @@ def chat_with_moonshot(
     api_base_url: str | None = None,
     reasoning_effort: str | None = None,
     provider_continuations: Sequence[ProviderContinuationCheckpoint] = (),
+    request_timeout: float | None = None,
+    request_retries: int | None = None,
+    request_retry_delay: float | None = None,
 ) -> dict[str, Any] | MoonshotStream:
     """Send one Moonshot Chat-Completions request through the hosted boundary."""
     del custom_prompt_arg
@@ -144,6 +193,9 @@ def chat_with_moonshot(
         explicit_api_key=api_key,
         explicit_base_url=api_base_url,
         explicit_model=model,
+        explicit_timeout=request_timeout,
+        explicit_retries=request_retries,
+        explicit_retry_delay=request_retry_delay,
     )
     payload = build_moonshot_chat_payload(
         resolution=resolution,
@@ -186,14 +238,28 @@ def chat_with_moonshot(
             status_code=502,
         ) from None
     if isinstance(result, HostedChatStream):
-        return MoonshotStream(result)
-    return _moonshot_turn_response(result)
+        return MoonshotStream(
+            result,
+            resolution=resolution,
+            provider_continuations=provider_continuations,
+        )
+    return _moonshot_turn_response(
+        result,
+        resolution=resolution,
+        provider_continuations=provider_continuations,
+    )
 
 
-def _moonshot_turn_response(turn: HostedChatTurn) -> dict[str, Any]:
+def _moonshot_turn_response(
+    turn: HostedChatTurn,
+    *,
+    resolution: MoonshotResolution,
+    provider_continuations: Sequence[ProviderContinuationCheckpoint],
+) -> MoonshotResponse:
     message = deepcopy(turn.assistant_message)
     if message is None:
         raise HostedChatProtocolError("Moonshot response message is incomplete.")
+    message.pop("reasoning_content", None)
     response: dict[str, Any] = {
         "choices": [
             {
@@ -205,7 +271,98 @@ def _moonshot_turn_response(turn: HostedChatTurn) -> dict[str, Any]:
     }
     if turn.usage is not None:
         response["usage"] = deepcopy(turn.usage)
-    return response
+    return MoonshotResponse(
+        response,
+        terminal_turn=turn,
+        provider_continuation=_moonshot_continuation_candidate(
+            turn,
+            resolution=resolution,
+            provider_continuations=provider_continuations,
+        ),
+    )
+
+
+def _moonshot_continuation_candidate(
+    turn: HostedChatTurn,
+    *,
+    resolution: MoonshotResolution,
+    provider_continuations: Sequence[ProviderContinuationCheckpoint],
+) -> ProviderContinuationCheckpoint | None:
+    active = tuple(
+        checkpoint
+        for checkpoint in provider_continuations
+        if checkpoint.state == "active"
+    )
+    if len(active) > 1:
+        raise HostedChatProtocolError("Moonshot continuation state is ambiguous.")
+    current = active[0] if active else None
+    if turn.tool_calls:
+        round_ = ContinuationRound(
+            assistant_content=turn.text,
+            reasoning_blocks=(turn.reasoning_content,)
+            if turn.reasoning_content is not None
+            else (),
+            calls=tuple(
+                ContinuationCall(
+                    call_id=cast(str, call["id"]),
+                    name=cast(str, call["function"]["name"]),
+                    arguments=cast(str, call["function"]["arguments"]),
+                    state="pending",
+                )
+                for call in turn.tool_calls
+            ),
+        )
+        candidate = ProviderContinuationCheckpoint(
+            schema_version=1,
+            checkpoint_revision=(current.checkpoint_revision + 1 if current else 1),
+            provider="moonshot",
+            protocol="chat_completions",
+            model=resolution.model,
+            api_base_url=resolution.base_url,
+            state="active",
+            rounds=((*current.rounds, round_) if current else (round_,)),
+        )
+    elif current is not None:
+        rounds = current.rounds
+        if resolution.model == _DEFAULT_MODEL:
+            rounds = (
+                *rounds,
+                ContinuationRound(
+                    assistant_content=turn.text,
+                    reasoning_blocks=(turn.reasoning_content or "",),
+                    calls=(),
+                ),
+            )
+        candidate = ProviderContinuationCheckpoint(
+            schema_version=1,
+            checkpoint_revision=current.checkpoint_revision + 1,
+            provider="moonshot",
+            protocol="chat_completions",
+            model=resolution.model,
+            api_base_url=resolution.base_url,
+            state="complete",
+            rounds=rounds,
+        )
+    elif resolution.model == _DEFAULT_MODEL and turn.reasoning_content:
+        candidate = ProviderContinuationCheckpoint(
+            schema_version=1,
+            checkpoint_revision=1,
+            provider="moonshot",
+            protocol="chat_completions",
+            model=resolution.model,
+            api_base_url=resolution.base_url,
+            state="complete",
+            rounds=(
+                ContinuationRound(
+                    assistant_content=turn.text,
+                    reasoning_blocks=(turn.reasoning_content,),
+                    calls=(),
+                ),
+            ),
+        )
+    else:
+        return None
+    return parse_provider_continuation_json(dump_provider_continuation_json(candidate))
 
 
 def _configuration_error(message: str) -> ChatConfigurationError:
@@ -221,6 +378,9 @@ def resolve_moonshot_request(
     explicit_api_key: object = None,
     explicit_base_url: object = None,
     explicit_model: object = None,
+    explicit_timeout: object = None,
+    explicit_retries: object = None,
+    explicit_retry_delay: object = None,
     app_config: Mapping[str, Any] | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> MoonshotResolution:
@@ -257,6 +417,13 @@ def resolve_moonshot_request(
             "Moonshot api_settings.moonshot must be a configuration table."
         )
     settings = cast(Mapping[str, object], api_settings.get("moonshot", {}))
+    transport_settings = dict(settings)
+    if explicit_timeout is not None:
+        transport_settings["timeout"] = explicit_timeout
+    if explicit_retries is not None:
+        transport_settings["retries"] = explicit_retries
+    if explicit_retry_delay is not None:
+        transport_settings["retry_delay"] = explicit_retry_delay
     environment = os.environ if environ is None else environ
 
     api_key = _resolve_api_key(explicit_api_key, settings, environment)
@@ -268,9 +435,9 @@ def resolve_moonshot_request(
         "model",
     )
     base_url = _resolve_base_url(explicit_base_url, settings)
-    timeout = _positive_number(settings, "timeout", 90.0)
-    retries = _nonnegative_integer(settings, "retries", 3)
-    retry_delay = _nonnegative_number(settings, "retry_delay", 1.0)
+    timeout = _positive_number(transport_settings, "timeout", 90.0)
+    retries = _nonnegative_integer(transport_settings, "retries", 3)
+    retry_delay = _nonnegative_number(transport_settings, "retry_delay", 1.0)
     streaming = settings.get("streaming", True)
     if type(streaming) is not bool:
         raise _configuration_error("Moonshot streaming must be a boolean.")
