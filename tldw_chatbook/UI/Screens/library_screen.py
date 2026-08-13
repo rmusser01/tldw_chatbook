@@ -3431,6 +3431,14 @@ class LibraryScreen(BaseAppScreen):
         # the handle here lets ``_arm_library_list_entry_focus`` cancel any
         # prior timer before scheduling a new one -- see both methods.
         self._library_list_entry_focus_timer: Timer | None = None
+        # task-15459: seed from the app-scoped snapshot cache now, pre-mount,
+        # so a warm revisit's FIRST ``compose_content`` already renders real
+        # data instead of the loading placeholder -- see
+        # ``_seed_local_source_snapshot_from_cache``'s docstring for why this
+        # alone is not sufficient (``restore_state`` seeds again, below,
+        # once the restored selection is known) and ``on_mount``'s for the
+        # fallback this replaces for the common case.
+        self._seed_local_source_snapshot_from_cache()
 
     def _library_footer_shortcuts_for_current_state(
         self,
@@ -5298,15 +5306,22 @@ class LibraryScreen(BaseAppScreen):
     def on_mount(self) -> None:
         """Populate the Library on entry, rendering instantly from cache.
 
-        Arms the snapshot-timeout failsafe, then (166) if the app-scoped
-        snapshot cache holds a recent result (within
-        ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``) applies it synchronously so a
-        returning visit paints immediately instead of showing the loading
-        placeholder, and unconditionally kicks
-        ``_refresh_local_source_snapshot`` to reconcile against the DB. Also
-        seeds the ingest registry listener and runs any deferred deep-link
-        loads (collections / note editor / media viewer) that
-        ``apply_navigation_context`` could not run before mount.
+        Arms the snapshot-timeout failsafe, then (166) -- unless
+        ``__init__``/``restore_state`` already seeded ``_local_source_
+        records`` from the app-scoped snapshot cache before this screen was
+        even mounted (task-15459; see
+        ``_seed_local_source_snapshot_from_cache``, which sets
+        ``_library_loaded`` True on a hit) -- re-checks that same cache and,
+        if it holds a recent result (within
+        ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``), applies it synchronously so
+        a returning visit paints immediately instead of showing the loading
+        placeholder. Either way, unconditionally kicks
+        ``_refresh_local_source_snapshot`` to reconcile against the DB
+        (``_apply_local_source_snapshot`` only recomposes again there if
+        the reconciled data actually differs from what is already
+        rendered). Also seeds the ingest registry listener and runs any
+        deferred deep-link loads (collections / note editor / media viewer)
+        that ``apply_navigation_context`` could not run before mount.
         """
         self._register_footer_shortcuts()
         # No super().on_mount(): the dispatcher already invokes
@@ -5317,39 +5332,45 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             self._apply_source_snapshot_timeout,
         )
-        cached_snapshot = getattr(
-            self.app_instance, "_library_source_snapshot_cache", None
-        )
-        cached_stamp = getattr(
-            self.app_instance, "_library_source_snapshot_cache_stamp", None
-        )
-        if (
-            cached_snapshot is not None
-            and cached_stamp is not None
-            and time.monotonic() - cached_stamp < LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS
-        ):
-            # Instant-then-reconcile: paint the previous visit's snapshot
-            # synchronously (this screen instance is brand new, so nothing
-            # else has populated `_local_source_records` yet) so a
-            # returning visit never shows the loading placeholder, then
-            # still kick the real refresh below -- its completion re-applies
-            # fresh data and refreshes the cache, so this can't drift more
-            # than one refresh cycle stale.
-            self._apply_local_source_snapshot(*cached_snapshot)
-            # `_apply_local_source_snapshot`'s own `self.is_mounted`-guarded
-            # `refresh(recompose=True)` is a no-op here: Textual only flips
-            # `_is_mounted` True in the `finally` clause AFTER the Mount
-            # event finishes dispatching (see
-            # `MessagePump._pre_process`) -- i.e. strictly after this very
-            # `on_mount` call returns -- so without an explicit recompose
-            # here the cached attrs above would be set correctly but the
-            # already-composed (stale, pre-cache) DOM would never actually
-            # repaint. `Widget.refresh(recompose=True)` itself has no such
-            # guard (it just schedules `_check_recompose` via
-            # `call_next`), so calling it directly is safe mid-mount and is
-            # what actually makes the cached snapshot visible at first
-            # paint.
-            self.refresh(recompose=True)
+        if not self._library_loaded:
+            # task-15459: only reached when the pre-mount seed above found
+            # no fresh-enough cache to apply (cache miss, or the TTL
+            # expired in the window between construction and mount) --
+            # `_library_loaded` is set True by NOTHING else before this
+            # point (see its only other setter, `_apply_local_source_
+            # snapshot`), so this is a reliable "did the seed already
+            # apply" signal, not a proxy that could go stale.
+            cached_snapshot = getattr(
+                self.app_instance, "_library_source_snapshot_cache", None
+            )
+            cached_stamp = getattr(
+                self.app_instance, "_library_source_snapshot_cache_stamp", None
+            )
+            if (
+                cached_snapshot is not None
+                and cached_stamp is not None
+                and time.monotonic() - cached_stamp < LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS
+            ):
+                # Instant-then-reconcile: paint the previous visit's snapshot
+                # synchronously so a returning visit never shows the loading
+                # placeholder, then still kick the real refresh below -- its
+                # completion re-applies fresh data and refreshes the cache,
+                # so this can't drift more than one refresh cycle stale.
+                self._apply_local_source_snapshot(*cached_snapshot)
+                # `_apply_local_source_snapshot`'s own `self.is_mounted`-guarded
+                # `refresh(recompose=True)` is a no-op here: Textual only flips
+                # `_is_mounted` True in the `finally` clause AFTER the Mount
+                # event finishes dispatching (see
+                # `MessagePump._pre_process`) -- i.e. strictly after this very
+                # `on_mount` call returns -- so without an explicit recompose
+                # here the cached attrs above would be set correctly but the
+                # already-composed (stale, pre-cache) DOM would never actually
+                # repaint. `Widget.refresh(recompose=True)` itself has no such
+                # guard (it just schedules `_check_recompose` via
+                # `call_next`), so calling it directly is safe mid-mount and is
+                # what actually makes the cached snapshot visible at first
+                # paint.
+                self.refresh(recompose=True)
         self._refresh_local_source_snapshot()
         if (
             self._library_selected_row_id
@@ -5718,6 +5739,53 @@ class LibraryScreen(BaseAppScreen):
             and not isinstance(last_export_at, bool)
             else None
         )
+        # task-15459: re-seed from the cache now that ``_selected_
+        # conversation_id`` above reflects the RESTORED id, not ``__init__``'s
+        # empty default -- ``_apply_local_source_snapshot``'s carry-forward
+        # (``_carry_selected_conversation_into_snapshot``) needs the real id
+        # to know whether a not-on-the-cached-page selected conversation
+        # must be prepended. Safe to call unconditionally: a cache miss here
+        # is a no-op, and a hit is idempotent pre-mount attribute assignment
+        # (see the method's own docstring).
+        self._seed_local_source_snapshot_from_cache()
+
+    def _seed_local_source_snapshot_from_cache(self) -> None:
+        """Apply the app-scoped snapshot cache before this screen mounts.
+
+        Called from both ``__init__`` and ``restore_state`` (task-15459) --
+        the app calls both on a freshly constructed, not-yet-mounted
+        instance before ``switch_screen`` mounts it (see ``restore_state``'s
+        own docstring), so seeding here is what lets a warm revisit's FIRST
+        ``compose_content`` already render the previous visit's data instead
+        of the "Loading…" placeholder -- rather than composing once with
+        that placeholder and then being forced into an immediate second,
+        explicit ``refresh(recompose=True)`` from ``on_mount`` to correct it
+        (that fallback still exists there, for the cache-miss/expired case
+        this seed does not cover).
+
+        Mirrors ``on_mount``'s own freshness check
+        (``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``) so a stale cache is never
+        instant-applied here either.
+
+        Safe to call this early: ``_apply_local_source_snapshot`` only
+        touches the DOM (recompose / rail sync) when ``self.is_mounted`` is
+        True, which is never the case at either call site, so a hit is a
+        pure attribute assignment with no recompose or widget-query side
+        effects.
+        """
+        cached_snapshot = getattr(
+            self.app_instance, "_library_source_snapshot_cache", None
+        )
+        cached_stamp = getattr(
+            self.app_instance, "_library_source_snapshot_cache_stamp", None
+        )
+        if (
+            cached_snapshot is None
+            or cached_stamp is None
+            or time.monotonic() - cached_stamp >= LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS
+        ):
+            return
+        self._apply_local_source_snapshot(*cached_snapshot)
 
     def _file_notes_active(self) -> bool:
         """Return whether the retained File Notes workspace owns the canvas."""
@@ -6502,16 +6570,34 @@ class LibraryScreen(BaseAppScreen):
         study_counts: dict[str, int | None] | None = None,
     ) -> None:
         records = self._carry_selected_conversation_into_snapshot(records)
+        study_counts = (
+            study_counts
+            if study_counts is not None
+            else {"study_decks": None, "flashcards_due": None, "quizzes": None}
+        )
+        # task-15459: detect whether this snapshot actually differs from
+        # what is already rendered -- typically the pre-mount cache seed
+        # (``_seed_local_source_snapshot_from_cache``) being confirmed
+        # verbatim by this same visit's reconcile fetch -- so the recompose
+        # below can be skipped entirely on that common warm-revisit case
+        # instead of repainting an identical screen. ``not self._library_
+        # loaded`` always counts as a change even if the incoming records
+        # happen to be all-empty: the screen is still showing the "Loading…"
+        # placeholder in that case, which DOES need a recompose to clear.
+        unchanged = self._library_loaded and (
+            records == self._local_source_records
+            and counts == self._local_source_counts
+            and total_known == self._local_source_total_known
+            and lookup_error == self._library_lookup_error
+            and recovery_state == self._library_lookup_recovery_state
+            and study_counts == self._library_study_counts
+        )
         self._local_source_records = records
         self._local_source_counts = counts
         self._local_source_total_known = total_known
         self._library_lookup_error = lookup_error
         self._library_lookup_recovery_state = recovery_state
-        self._library_study_counts = (
-            study_counts
-            if study_counts is not None
-            else {"study_decks": None, "flashcards_due": None, "quizzes": None}
-        )
+        self._library_study_counts = study_counts
         self._library_loaded = True
         self._invalidate_library_workspace_depth_state()
         if self.is_mounted and not self._file_notes_active():
@@ -6557,6 +6643,17 @@ class LibraryScreen(BaseAppScreen):
                 )
                 if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
                     self._sync_library_rag_scope_toggle_and_run_gate_widgets()
+                return
+            if unchanged and not self._library_notes_pending_focus_waits_for_snapshot:
+                # task-15459: the in-memory snapshot above is already
+                # up to date and nothing on screen needs to change --
+                # update-in-place, no recompose. The pending-focus-wait
+                # carve-out matters because that flag's own release
+                # (``_release_library_notes_focus_after_snapshot``) is only
+                # ever armed from inside the recompose branch below (see
+                # ``action_library_note_editor_back``'s docstring): skipping
+                # the recompose while the flag is armed would strand it set
+                # forever, since nothing else clears it.
                 return
             self.refresh(recompose=True)
             if self._library_notes_pending_focus_waits_for_snapshot:

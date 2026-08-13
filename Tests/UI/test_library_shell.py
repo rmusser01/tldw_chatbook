@@ -6815,6 +6815,200 @@ async def test_library_shell_error_snapshot_is_not_cached_for_instant_apply(
 
 
 @pytest.mark.asyncio
+async def test_library_shell_repeat_visit_composes_exactly_once_when_data_is_unchanged(
+    monkeypatch,
+):
+    """task-15459: a warm revisit's FIRST ``compose_content`` must already
+    render the cached snapshot -- no second, explicit ``on_mount``
+    recompose to correct a stale pre-cache first paint -- and the
+    reconcile fetch confirming the SAME data must not force a further
+    recompose either.
+
+    Counts raw ``compose_content`` invocations (not just ``refresh(
+    recompose=True)`` calls, see ``_spy_screen_recomposes`` in
+    ``test_library_selection_updates.py`` for that narrower spy) so the
+    initial, mount-time compose is included in the tally -- that is the
+    metric the audit's "warm visits compose 2-3x" claim
+    (Docs/Design/2026-08-11-input-latency-audit.md) was actually about.
+
+    Mirrors ``test_library_shell_repeat_visit_renders_cached_snapshot_
+    before_refresh_resolves``'s gated-fetch rig above, plus a compose-
+    counting spy installed only for the SECOND (warm) visit.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    calls = {"count": 0}
+    gate = threading.Event()
+    original_list_snapshot = LibraryScreen._list_local_source_snapshot
+
+    async def _gated_list_snapshot(self):
+        calls["count"] += 1
+        if calls["count"] > 1:
+            await asyncio.to_thread(gate.wait, _GATED_RELEASE_TIMEOUT_SECONDS)
+        return await original_list_snapshot(self)
+
+    monkeypatch.setattr(
+        LibraryScreen, "_list_local_source_snapshot", _gated_list_snapshot
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        first_screen = _active_library_screen(host)
+        await _wait_for_library_shell(first_screen, pilot)
+        assert getattr(app, "_library_source_snapshot_cache", None) is not None
+
+        await host.pop_screen()
+        await pilot.pause()
+
+        # Install the compose spy, plus an apply-completion spy, only now --
+        # the first (cold) visit's composes/applies are not part of this
+        # metric. `apply_calls` records EVERY `_apply_local_source_snapshot`
+        # call against `second_screen` once it exists: the first is always
+        # `__init__`'s pre-mount cache seed, so waiting for a SECOND entry
+        # is a reliable "the reconcile fetch has landed" signal, unlike
+        # polling `_library_loaded` (already True from the seed) or the
+        # compose count itself (which is exactly what is under test, and
+        # must not be used to decide when to stop waiting for it).
+        compose_calls: list = []
+        original_compose = LibraryScreen.compose_content
+
+        def _counting_compose(self):
+            compose_calls.append(self)
+            return original_compose(self)
+
+        monkeypatch.setattr(LibraryScreen, "compose_content", _counting_compose)
+
+        apply_calls: list = []
+        original_apply = LibraryScreen._apply_local_source_snapshot
+
+        def _counting_apply(self, *args, **kwargs):
+            apply_calls.append(self)
+            return original_apply(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            LibraryScreen, "_apply_local_source_snapshot", _counting_apply
+        )
+
+        second_screen = LibraryScreen(app)
+        await host.push_screen(second_screen)
+
+        try:
+            # Give the mount + any recompose Textual schedules a moment to
+            # settle, all strictly BEFORE the gated reconcile fetch could
+            # possibly resolve.
+            await pilot.pause()
+            await pilot.pause()
+
+            visible = _visible_text(second_screen)
+            assert "Conversations (2)" in visible
+            assert apply_calls == [second_screen], (
+                "expected exactly the __init__ pre-mount cache seed to have "
+                f"applied so far, got {len(apply_calls)} apply(s)"
+            )
+            assert len(compose_calls) == 1, (
+                "warm revisit composed "
+                f"{len(compose_calls)} times before the reconcile fetch "
+                "resolved; expected exactly 1 (cache seeded pre-mount)"
+            )
+        finally:
+            gate.set()
+
+        # Let the gated reconcile fetch land -- wait for its OWN apply
+        # (the second entry against `second_screen`), wall-clock bounded
+        # per this file's established polling convention.
+        deadline = time.monotonic() + _GATED_RELEASE_TIMEOUT_SECONDS
+        while len(apply_calls) < 2 and time.monotonic() < deadline:
+            await pilot.pause(0.02)
+        assert len(apply_calls) >= 2, "reconcile fetch's apply never landed"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(compose_calls) == 1, (
+            "reconcile fetch confirming unchanged data still forced a "
+            f"recompose ({len(compose_calls)} total)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_init_seeds_local_source_snapshot_from_cache():
+    """task-15459: ``__init__`` alone (before any mount, before
+    ``restore_state``) applies a fresh app-scoped cache -- ``_library_
+    loaded`` flips True and ``_local_source_records`` reflects the cache
+    on a plain ``LibraryScreen(app)`` construction with no Pilot involved.
+    This is the mechanism that lets the FIRST ``compose_content`` on a
+    warm revisit already render real data.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        first_screen = _active_library_screen(host)
+        await _wait_for_library_shell(first_screen, pilot)
+        assert getattr(app, "_library_source_snapshot_cache", None) is not None
+
+        # A brand-new, never-mounted instance: `__init__` alone must
+        # already have seeded it.
+        unmounted_screen = LibraryScreen(app)
+        assert unmounted_screen._library_loaded is True
+        conversation_ids = {
+            unmounted_screen._source_record_id(record)
+            for record in unmounted_screen._local_source_records["conversations"]
+        }
+        assert conversation_ids == {"chat-1", "chat-2"}
+
+
+@pytest.mark.asyncio
+async def test_library_shell_restore_state_seeds_local_source_snapshot_from_cache():
+    """task-15459: ``restore_state`` seeds from the app-scoped cache too --
+    not only ``__init__`` -- because it runs AFTER the restored
+    ``_selected_conversation_id`` is known, which ``_apply_local_source_
+    snapshot``'s carry-forward (``_carry_selected_conversation_into_
+    snapshot``) needs to correctly preserve an out-of-page selection.
+
+    Isolated from ``__init__``'s own seed by constructing the screen
+    BEFORE any cache exists (a guaranteed no-op there), THEN seeding the
+    app-scoped cache and calling ``restore_state`` directly -- no Pilot
+    mount involved, so this is restore_state's seed and only its seed.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+
+    assert getattr(app, "_library_source_snapshot_cache", None) is None
+    screen = LibraryScreen(app)
+    assert screen._library_loaded is False
+
+    # Populate the cache the same shape a real successful refresh leaves
+    # (see `_refresh_local_source_snapshot`'s own cache write).
+    app._library_source_snapshot_cache = (
+        {
+            "notes": (),
+            "media": (),
+            "conversations": tuple(_two_conversations()),
+            "prompts": (None, ()),
+            "skills": (None, {"available_skills": [], "blocked_skills": []}),
+        },
+        {"notes": 0, "media": 0, "conversations": 2},
+        {"notes": True, "media": True, "conversations": True},
+        None,
+        None,
+        {"study_decks": None, "flashcards_due": None, "quizzes": None},
+    )
+    app._library_source_snapshot_cache_stamp = time.monotonic()
+
+    screen.restore_state({"selected_conversation_id": "chat-2"})
+
+    assert screen._library_loaded is True
+    assert screen._selected_conversation_id == "chat-2"
+    conversation_ids = [
+        screen._source_record_id(record)
+        for record in screen._local_source_records["conversations"]
+    ]
+    assert conversation_ids == ["chat-1", "chat-2"]
+
+
+@pytest.mark.asyncio
 async def test_library_shell_details_toggle_persists():
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
