@@ -62,12 +62,14 @@ a "replaced-on-transition" job is always safe to hand out to callers, too.
 from __future__ import annotations
 
 import json
+import os
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Iterable, Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 from loguru import logger
 
@@ -109,6 +111,108 @@ class IngestJobState(str, Enum):
     #: server-origin job reaches this today: the server reports it for a
     #: job the user cancelled.
     CANCELLED = "cancelled"
+
+
+ACTIVE_INGEST_STATES: frozenset[IngestJobState] = frozenset(
+    {
+        IngestJobState.QUEUED,
+        IngestJobState.PARSING,
+        IngestJobState.WRITING,
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveIngestSourceKey:
+    """Canonical identity for a source while it has active ingest work."""
+
+    origin: str
+    canonical_source: str
+
+
+def normalize_active_ingest_source(
+    source: str,
+    *,
+    origin: str,
+) -> ActiveIngestSourceKey:
+    """Return a conservative, lexical active-ingest identity for ``source``.
+
+    Local paths follow the host platform's case policy. HTTP(S) URLs normalize
+    only scheme, host, default port, absent path, and fragment.
+    """
+    normalized_origin = str(origin).strip().lower()
+    if normalized_origin not in {"local", "server"}:
+        raise ValueError("origin must be 'local' or 'server'")
+    value = str(source).strip()
+    if not value:
+        raise ValueError("source must not be blank")
+
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() in {"http", "https"}:
+        canonical = _normalize_active_ingest_url(parsed)
+    else:
+        expanded = os.path.expanduser(value)
+        canonical = os.path.normcase(os.path.abspath(os.path.normpath(expanded)))
+    return ActiveIngestSourceKey(normalized_origin, canonical)
+
+
+def _normalize_active_ingest_url(parsed: Any) -> str:
+    """Render only the URL equivalences safe for source admission."""
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError("http(s) source requires a host")
+    rendered_host = f"[{host}]" if ":" in host else host
+    raw_userinfo = (
+        f"{parsed.netloc.rsplit('@', 1)[0]}@" if "@" in parsed.netloc else ""
+    )
+    port = parsed.port
+    if port is not None and not (
+        (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    ):
+        rendered_host = f"{rendered_host}:{port}"
+    return urlunsplit(
+        (scheme, f"{raw_userinfo}{rendered_host}", parsed.path or "/", parsed.query, "")
+    )
+
+
+def _active_source_key_or_none(
+    source: str,
+    *,
+    origin: str,
+) -> ActiveIngestSourceKey | None:
+    """Return an active-source key, treating malformed sources as non-matches."""
+    try:
+        return normalize_active_ingest_source(source, origin=origin)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+ACTIVE_INGEST_REF_LIMIT = 1000
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveIngestJobRef:
+    """Privacy-safe reference to an active ingest job."""
+
+    job_id: str
+    state: IngestJobState
+
+
+class ActiveIngestSubmissionRefused(RuntimeError):
+    """Raised when a submission matches active work without exposing paths."""
+
+    def __init__(self, matches: Iterable[ActiveIngestJobRef]) -> None:
+        materialized = tuple(matches)
+        self.match_count = len(materialized)
+        self.matches = materialized[:ACTIVE_INGEST_REF_LIMIT]
+        super().__init__(f"Active ingest admission refused ({self.match_count} matches).")
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(match_count={self.match_count}, "
+            f"states={tuple(ref.state.value for ref in self.matches)!r})"
+        )
 
 
 #: States a job never leaves. Kept as one definition so "is this finished?"
@@ -1184,6 +1288,39 @@ class LibraryIngestJobRegistry:
         return removed
 
     # -- reads -----------------------------------------------------
+
+    def find_active_source_matches(
+        self,
+        sources: Iterable[str],
+        *,
+        origin: str,
+    ) -> tuple[LibraryIngestJob, ...]:
+        """Return visible active jobs matching any supplied source.
+
+        Results retain the registry's internal insertion order and are fresh
+        copies, preserving the registry's copy-on-read contract.
+        """
+        keys = {
+            key
+            for source in sources
+            if (key := _active_source_key_or_none(source, origin=origin)) is not None
+        }
+        if not keys:
+            return ()
+        matches: list[LibraryIngestJob] = []
+        for job in self._jobs:
+            if (
+                job.superseded
+                or job.dismissed
+                or job.state not in ACTIVE_INGEST_STATES
+            ):
+                continue
+            job_key = _active_source_key_or_none(
+                job.source_path, origin=job.origin
+            )
+            if job_key in keys:
+                matches.append(_copy_job(job))
+        return tuple(matches)
 
     def jobs(self) -> tuple[LibraryIngestJob, ...]:
         """Return an immutable, newest-first snapshot of all visible jobs.

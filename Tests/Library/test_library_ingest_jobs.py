@@ -5,11 +5,130 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
+import pytest
 
+from tldw_chatbook.Library import library_ingest_jobs
 from tldw_chatbook.Library.library_ingest_jobs import (
+    ACTIVE_INGEST_REF_LIMIT,
+    ActiveIngestJobRef,
+    ActiveIngestSubmissionRefused,
     IngestJobState,
     LibraryIngestJobRegistry,
+    normalize_active_ingest_source,
 )
+
+
+def test_active_source_key_normalizes_relative_dot_segments_and_case(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        library_ingest_jobs.os.path,
+        "normcase",
+        lambda value: value.replace("/", "\\").lower(),
+    )
+
+    relative = normalize_active_ingest_source(
+        ".\\Folder\\..\\Folder\\NOTE.txt", origin="local"
+    )
+    absolute = normalize_active_ingest_source(
+        str(tmp_path / "folder" / "note.TXT"), origin="local"
+    )
+
+    assert relative == absolute
+    assert relative.origin == "local"
+
+
+def test_active_source_key_preserves_case_when_platform_normcase_does(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(library_ingest_jobs.os.path, "normcase", lambda value: value)
+
+    upper = normalize_active_ingest_source("Note.txt", origin="local")
+    lower = normalize_active_ingest_source("note.txt", origin="local")
+
+    assert upper != lower
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("HTTPS://Example.COM", "https://example.com/"),
+        ("http://example.com:80/a#one", "http://EXAMPLE.com/a#two"),
+        ("https://example.com:443/a?q=1", "https://example.com/a?q=1"),
+    ],
+)
+def test_active_source_key_normalizes_only_safe_url_equivalences(left, right):
+    assert normalize_active_ingest_source(
+        left, origin="server"
+    ) == normalize_active_ingest_source(right, origin="server")
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("https://example.com/A", "https://example.com/a"),
+        ("https://example.com/a?x=1&y=2", "https://example.com/a?y=2&x=1"),
+        ("https://example.com/a%2Fb", "https://example.com/a/b"),
+        ("https://example.com:444/a", "https://example.com/a"),
+    ],
+)
+def test_active_source_key_preserves_meaningful_url_distinctions(left, right):
+    assert normalize_active_ingest_source(
+        left, origin="server"
+    ) != normalize_active_ingest_source(right, origin="server")
+
+
+def test_find_active_source_matches_filters_state_origin_and_visibility(tmp_path):
+    registry = LibraryIngestJobRegistry()
+    source = str(tmp_path / "a.txt")
+    queued = registry.submit(source_path=source, origin="local")
+    parsing = registry.submit(source_path=source, origin="local")
+    registry.mark_parsing(parsing.job_id)
+    writing = registry.submit(source_path=source, origin="local")
+    registry.mark_parsing(writing.job_id)
+    registry.mark_writing(writing.job_id)
+    terminal = registry.submit(source_path=source, origin="local")
+    registry.mark_parsing(terminal.job_id)
+    registry.mark_writing(terminal.job_id)
+    registry.mark_done(terminal.job_id, media_id=1)
+    registry.submit(source_path=source, origin="server")
+
+    matches = registry.find_active_source_matches([source], origin="local")
+
+    assert [job.job_id for job in matches] == [
+        queued.job_id,
+        parsing.job_id,
+        writing.job_id,
+    ]
+    matches[0].source_path = "mutated"
+    assert registry.get_job(queued.job_id).source_path == source
+
+
+def test_find_active_source_matches_deduplicates_candidate_keys(tmp_path):
+    registry = LibraryIngestJobRegistry()
+    source = str(tmp_path / "a.txt")
+    job = registry.submit(source_path=source)
+
+    matches = registry.find_active_source_matches(
+        [source, str(tmp_path / "." / "a.txt")], origin="local"
+    )
+
+    assert [item.job_id for item in matches] == [job.job_id]
+
+
+def test_active_ingest_refusal_exposes_only_bounded_safe_refs():
+    refs = tuple(
+        ActiveIngestJobRef(f"ingest-job-{index}", IngestJobState.QUEUED)
+        for index in range(ACTIVE_INGEST_REF_LIMIT + 2)
+    )
+    refusal = ActiveIngestSubmissionRefused(refs)
+
+    assert len(refusal.matches) == ACTIVE_INGEST_REF_LIMIT
+    assert "ingest-job-1" not in str(refusal)
+    assert "source_path" not in repr(refusal)
+    assert set(vars(refusal)) == {"matches", "match_count"}
 
 
 def test_submit_assigns_sequential_ids_and_queued_state() -> None:
