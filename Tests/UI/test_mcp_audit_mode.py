@@ -6,6 +6,10 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, DataTable, Input, Select
 
 import tldw_chatbook
@@ -105,7 +109,7 @@ def _entry(
     }
 
 
-class AuditModeApp(App):
+class AuditModeApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.events: list[object] = []
@@ -587,7 +591,7 @@ async def test_row_selection_posts_entry_selected_with_synthetic_index():
 # collapse to 0x0 under the real app stylesheet's global widget rules) ------
 
 
-class AuditModeAppWithBundledCSS(App):
+class AuditModeAppWithBundledCSS(ConsolidatedCSSApp):
     """Mirrors `ToolsModeAppWithBundledCSS`/`PermissionsModeAppWithBundledCSS`
     -- loads the real generated bundle as CSS_PATH so the table and filter
     bar contest their actual CSS priority battle exactly as they do in the

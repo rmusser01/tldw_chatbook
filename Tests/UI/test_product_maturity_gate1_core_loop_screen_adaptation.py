@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
+
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import (
@@ -85,7 +87,10 @@ async def _wait_for_visible_text(
     )
 
 
-class ConsoleHarness(App[None]):
+class ConsoleHarness(ConsolidatedCSSApp):
+    # Hosts the real ChatScreen, so it needs the consolidated widget CSS the
+    # real app loads (TASK-15450) -- otherwise every widget whose DEFAULT_CSS
+    # moved into the generated sheets mounts unstyled here.
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance

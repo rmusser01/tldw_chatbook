@@ -17,6 +17,10 @@ from unittest.mock import patch
 
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App
 from textual.widgets import Button
 
@@ -69,7 +73,7 @@ _LAB_SCREENS_FLAT_COMPOSE = tuple(
 )
 
 
-class _StripHarness(App[None]):
+class _StripHarness(ConsolidatedCSSApp):
     """Bare harness mounting only the strip; records navigation requests."""
 
     def __init__(self, active_route: str):
@@ -112,7 +116,7 @@ async def test_evals_composes_mode_strip_under_destination_header_via_real_app()
     call outside a running app."""
     from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 
-    class _EvalsHarness(App[None]):
+    class _EvalsHarness(ConsolidatedCSSApp):
         def __init__(self, app_instance):
             super().__init__()
             self._app_instance = app_instance
@@ -147,7 +151,7 @@ async def test_llm_composes_mode_strip_under_destination_header_via_real_app():
     present."""
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 
-    class _LLMHarness(App[None]):
+    class _LLMHarness(ConsolidatedCSSApp):
         def __init__(self, app_instance):
             super().__init__()
             self._app_instance = app_instance
@@ -343,7 +347,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 
 
-class _BundledStripHarness(App[None]):
+class _BundledStripHarness(ConsolidatedCSSApp):
     """Mount the strip with the production stylesheet.
 
     The bundle is required: the bug under test lives in the bundle's global

@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static
 
 import tldw_chatbook
@@ -44,7 +48,7 @@ def _tool(
     )
 
 
-class ToolsModeApp(App):
+class ToolsModeApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.events: list[object] = []
@@ -799,7 +803,7 @@ def test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle() ->
         )
 
 
-class ToolsModeAppWithBundledCSS(App):
+class ToolsModeAppWithBundledCSS(ConsolidatedCSSApp):
     """Same harness as `ToolsModeApp` above but with the real bundled
     stylesheet loaded, so the filter-server Select contests its actual CSS
     priority battle against `_conversations.tcss`'s global
