@@ -5297,6 +5297,15 @@ async def test_settings_provider_category_renders_catalog_select_with_visible_va
         assert "llama.cpp" in _visible_text(screen)
 
 
+# task-15510 was pinned here as a strict xfail: navigation preselect applied
+# the provider, which itself marked Providers & Models dirty, and the DEFERRED
+# `_apply_navigation_provider_context` then hit its unsaved-changes guard and
+# returned without writing the model. task-15475 changed when that callback
+# runs -- `_after_category_panes` fires it as soon as the rebuilt detail pane
+# exists, before the preselect's own `Select.Changed` has been dispatched and
+# marked the category dirty -- so the model now lands. A genuine pre-existing
+# user draft is still protected: that dirty mark predates the navigation. The
+# strict xfail did its job (it flipped loudly); the test is a live pin again.
 @pytest.mark.asyncio
 async def test_settings_navigation_context_can_preselect_provider_category_target():
     app = _build_test_app()
@@ -9402,9 +9411,14 @@ def test_settings_screen_resume_skips_refresh_while_manual_sync_run_in_flight(mo
 
 @pytest.mark.asyncio
 async def test_settings_overview_disclosures_stay_expanded_across_sync_row_recompose():
-    """task-1369 (review): sync rows are recompose=True reactives, so any row
-    change rebuilds the Overview Collapsibles. An expanded disclosure must
-    stay expanded -- the user expands it precisely to watch a sync run."""
+    """An expanded Overview disclosure survives a sync-row change -- the user
+    expands it precisely to watch a sync run.
+
+    task-1369 (review) pinned this when the sync rows were `recompose=True`
+    reactives that rebuilt the Collapsibles and had to restore their state.
+    task-15475 made the rows their own region, so the Collapsibles are not
+    rebuilt at all: the property is now structural, and this test asserts
+    that stronger fact (same widget instances) alongside the outcome."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -9420,8 +9434,7 @@ async def test_settings_overview_disclosures_stay_expanded_across_sync_row_recom
         ownership_details.collapsed = False
         await pilot.pause()
 
-        # A sync-row state change (e.g. the confirm callback's "running"
-        # rows) triggers a full recompose.
+        # A sync-row state change (e.g. the confirm callback's "running" rows).
         screen.manual_sync_rows = (
             ("Manual sync status", "running"),
             ("Manual sync result", "Manual Sync is running after explicit user request."),
@@ -9430,14 +9443,19 @@ async def test_settings_overview_disclosures_stay_expanded_across_sync_row_recom
         await pilot.pause()
         await pilot.pause()
 
-        # The recompose destroyed and recreated both Collapsibles.
         rebuilt_sync = screen.query_one("#settings-overview-sync-details", Collapsible)
         rebuilt_ownership = screen.query_one(
             "#settings-overview-ownership-details", Collapsible
         )
-        assert rebuilt_sync is not sync_details
+        assert rebuilt_sync is sync_details, (
+            "the sync rows own their own region now; the Collapsible around "
+            "them must not be rebuilt"
+        )
+        assert rebuilt_ownership is ownership_details
         assert rebuilt_sync.collapsed is False
         assert rebuilt_ownership.collapsed is False
+        # ...and the rows themselves did update.
+        assert "running" in _visible_text(screen)
 
 
 @pytest.mark.asyncio

@@ -470,6 +470,11 @@ class EvalsScreen(LabScreen):
         Returns:
             None.
         """
+        # Same protection the whole-screen recompose gave (task-627): a widget
+        # about to be torn down -- the detail pane is full of `Input`s -- must
+        # not be left holding the mouse capture, or every click app-wide is
+        # silently swallowed from then on.
+        self.release_mouse_capture_for_teardown()
         async with self.batch():
             if rail_dirty:
                 await self._replace_region("#lab-rail", list(self.compose_lab_rail()))
@@ -486,6 +491,9 @@ class EvalsScreen(LabScreen):
             await self._replace_region(
                 "#lab-inspector", list(self.compose_lab_inspector())
             )
+        # A MouseDown already queued on a child's pump can capture that child
+        # DURING the removal drain, after the release above.
+        self.sweep_stale_mouse_capture()
         if not self.is_mounted:
             return
         # Same notification the frame's own deferred body mount fires, so a
