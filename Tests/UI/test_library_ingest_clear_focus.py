@@ -26,7 +26,7 @@ own both the focus and the character.
 """
 
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Button, Collapsible, Input
 
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
@@ -38,7 +38,6 @@ from Tests.UI.test_library_shell import (
     _active_library_screen,
     _seed_conversations,
     _two_conversations,
-    _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_selector,
 )
@@ -260,3 +259,51 @@ async def test_typing_into_the_pre_recompose_field_after_clear_survives(
             path_input.value = ""
             screen._library_ingest_form.path = ""
             await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_clear_keeps_generic_options_reachable_for_next_generic_path(
+    monkeypatch,
+):
+    """Clear must not strand the always-valid generic options panel hidden.
+
+    A generic-only result after Clear has the same structural group set as
+    the cleared state, so no later recompose will repair a panel that Clear
+    incorrectly hid.
+    """
+    _neutralize_background_preflight(monkeypatch)
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _enter_ingest_mode(screen, pilot)
+        await _stage_warning_preflight(screen, pilot)
+
+        await pilot.click("#library-ingest-clear-path")
+        await pilot.pause()
+
+        generic_path = "/tmp/next-note.txt"
+        form = screen._library_ingest_form
+        form.path = generic_path
+        form.preflight = PreflightResult(
+            type_groups={"generic": [generic_path]},
+            warnings=[],
+            errors=[],
+            total_size=128,
+            truncated=False,
+            total_files=1,
+        )
+        form.preflight_checking = False
+        screen._update_library_ingest_dynamic_regions()
+        await pilot.pause()
+
+        panel = screen.query_one("#type-group-generic", Collapsible)
+        assert panel.display is True
+        title = screen.query_one("#type-group-generic CollapsibleTitle")
+        assert title.can_focus
+        title.focus()
+        await pilot.pause()
+        assert title.has_focus

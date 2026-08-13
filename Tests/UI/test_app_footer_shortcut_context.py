@@ -356,6 +356,35 @@ async def test_footer_compacts_globals_before_dropping_screen_hints_when_narrow(
 
 
 @pytest.mark.asyncio
+async def test_footer_keeps_primary_ingest_and_recovery_hints_at_80_columns():
+    """TASK-15702: narrow fitting preserves the ordered workflow prefix."""
+
+    class TestApp(App):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+    async with app.run_test(size=(80, 12)) as pilot:
+        footer = app.query_one("#footer", AppFooterStatus)
+        footer.set_workbench_shortcuts(
+            source="library",
+            shortcuts=(
+                ("enter", "start"),
+                ("esc", "back"),
+                ("r", "retry"),
+                ("/", "search"),
+                ("F6", "next pane"),
+            ),
+        )
+        await pilot.pause()
+        rendered = _rendered_footer_text(footer)
+        assert "enter start" in rendered, rendered
+        assert "esc back" in rendered, rendered
+        assert "r retry" in rendered, rendered
+        assert not rendered.startswith("…"), rendered
+
+
+@pytest.mark.asyncio
 async def test_footer_control_reproduces_the_historical_ellipsis_drop():
     """Control case: confirms the 100-column width used above genuinely
     REACHES the new compact-globals intermediate step (LIB-18) -- i.e.
@@ -434,8 +463,8 @@ async def test_footer_screen_supplied_f6_hint_survives_at_170_cols():
 async def test_footer_screen_supplied_f6_hint_survives_at_100_cols():
     """task-2860's actual reported bug, reproduced directly: at the live
     100-column Library repro width, the compact-globals step (LIB-18)
-    renders ``GLOBAL_HINTS_COMPACT``, which never mentions F6 at all --
-    before the fix, the context's own F6 hint had ALSO already been
+    historically omitted F6 entirely; before the fix, the context's own
+    F6 hint had ALSO already been
     stripped by ``_RESERVED_GLOBAL_KEYS``, so the key vanished from the
     footer entirely (advertised nowhere, though the binding still worked).
     The fix renders the context unfiltered, so F6 survives here even

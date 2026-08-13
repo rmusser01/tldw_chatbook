@@ -1,10 +1,11 @@
 ---
 id: TASK-14828
-title: >-
-  Start sits below the fold because the ingest form is long
-status: To Do
-assignee: []
+title: Start sits below the fold because the ingest form is long
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-08-10 22:40'
+updated_date: '2026-08-12 21:12'
 labels:
   - library
   - ingest
@@ -26,9 +27,28 @@ Worth considering together rather than trimming blindly: whether the metadata tr
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] #1 With a realistic multi-type selection and warnings present, Start and its forecast/consent lines are reachable without scrolling at a supported terminal size, measured in a harness carrying the real shell chrome
-- [ ] #2 `Tests/UI/test_library_ingest_structural.py::test_start_still_needs_scrolling_at_52_rows` is replaced by its positive counterpart (that test fails once this lands — it is the signal)
-- [ ] #3 task-14822's AC#2 is re-ticked on the new evidence
+- [x] #1 With a realistic multi-type selection and warnings present, Start and its forecast/consent lines are reachable without scrolling at a supported terminal size, measured in a harness carrying the real shell chrome
+- [x] #2 `Tests/UI/test_library_ingest_structural.py::test_start_still_needs_scrolling_at_52_rows` is replaced by its positive counterpart (that test fails once this lands — it is the signal)
+- [x] #3 task-14822's AC#2 is re-ticked on the new evidence
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: N/A
+Reason: This resolves a bounded layout defect within the existing Ingest canvas and Library shell.
+
+1. Pin the forecast, consent copy, and Start decision as one viewport-owned region.
+2. Reduce metadata height and verify the real shipped-shell geometry.
+3. Replace the negative regression with a positive visibility contract.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Completed under TASK-15702. The forecast, gate/consent copy, and Start now live in a docked review bar and the metadata trio is a compact, persistently labeled row. The former negative 235x52 shipped-shell test is now test_start_and_forecast_are_visible_without_scrolling_at_52_rows, and the same behavior is visible in the 80x24 mixed-preflight capture. The review bar hides after submit so it does not compete with queue activity.
+
+ADR required: no. This is a bounded layout correction within the existing Ingest canvas and Library shell.
+<!-- SECTION:NOTES:END -->

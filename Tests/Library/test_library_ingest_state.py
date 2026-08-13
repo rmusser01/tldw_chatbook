@@ -2297,6 +2297,29 @@ def test_queue_groups_batches_with_headers_and_latest_line():
     assert state.latest_batch_line == "Latest run: 1 done · 1 skipped"
 
 
+def test_active_batch_header_uses_exact_states_without_running_synonym():
+    jobs = (
+        _job(
+            job_id="ingest-job-1",
+            state=IngestJobState.QUEUED,
+            source_path="/data/folder/a.txt",
+            batch_id="local-active",
+        ),
+        _job(
+            job_id="ingest-job-2",
+            state=IngestJobState.DONE,
+            source_path="/data/folder/b.txt",
+            batch_id="local-active",
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    header = state.queue_groups[0].header_line
+    assert "active" in header
+    assert "1 queued" in header
+    assert "1 done" in header
+    assert "running" not in header
+
+
 def test_single_file_submission_reads_naturally_without_header():
     """(task-2221) A batchless single job renders exactly as before: one
     bare group, no header, no latest-batch line."""

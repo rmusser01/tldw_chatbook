@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-10 21:00'
-updated_date: '2026-08-10 21:42'
+updated_date: '2026-08-12 21:12'
 labels:
   - library
   - ingest
@@ -36,7 +36,7 @@ P2 of the 2026-08-10 re-critique — consistency defects accumulated across the 
 <!-- AC:BEGIN -->
 - [ ] #1 One install-command form is used wherever a missing dependency is reported
 - [ ] #2 Retry affordances share one vocabulary across row, batch and footer
-- [ ] #3 The queue describes an in-flight job with one word across tally, batch header and row
+- [x] #3 The queue describes an in-flight job with one word across tally, batch header and row
 - [ ] #4 The supported-format list has one wording, from one source
 - [x] #5 Picker column headers align with the values they label
 - [ ] #6 A failure detail reads as a complete sentence regardless of basename stripping
@@ -120,4 +120,6 @@ Files touched: ``Third_Party/textual_fspicker/base_dialog.py``,
 ``Tests/UI/test_fspicker_listing_columns.py``,
 ``Tests/UI/test_library_ingest_canvas.py``,
 ``Docs/User_Guide/library/import-and-export.md``.
+
+TASK-15702 follow-up: the remaining queue-vocabulary drift is resolved. Batch headers now use the neutral phase label active and enumerate the actual queued, parsing, and writing states instead of appending a second derived N running tally. Rows and queue totals keep those exact state names.
 <!-- SECTION:NOTES:END -->

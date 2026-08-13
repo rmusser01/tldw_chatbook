@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-10 21:00'
-updated_date: '2026-08-10 21:42'
+updated_date: '2026-08-12 21:12'
 labels:
   - library
   - ingest
@@ -171,6 +171,8 @@ guard fails both G5 tests.
 Files (this round): ``Widgets/Library/library_ingest_canvas.py``,
 ``Tests/UI/test_library_ingest_canvas.py``,
 ``Tests/UI/test_library_ingest_structural.py``.
+
+TASK-15702 / TASK-14828 final evidence: the docked review bar keeps Start and its forecast/consent lines visible in the real 235x52 Library shell and in the 80x24 mixed-preflight capture. AC #2 remains checked on positive shipped-shell evidence rather than the earlier component-only measurement.
 <!-- SECTION:NOTES:END -->
 
 ## AC#2 re-scope (coordinator, review round)

@@ -430,11 +430,9 @@ async def test_type_group_panels_render_for_detected_groups():
                 "#type-group-generic", Collapsible
             )
             assert "PDF documents" in str(pdf_panel.title)
-            # (task-3305) The receipt shows the display label, never the token.
-            assert "PDF engine: PyMuPDF4LLM (Markdown)" in str(pdf_panel.title)
-            assert "pymupdf4llm" not in str(pdf_panel.title)
+            assert str(pdf_panel.title) == "PDF documents"
             assert "Plain text & HTML" in str(generic_panel.title)
-            assert "Chunk size: 1000" in str(generic_panel.title)
+            assert str(generic_panel.title) == "Plain text & HTML"
 
             scope = pilot.app.query_one(
                 "#type-group-pdf .type-group-scope", Static
@@ -2215,8 +2213,7 @@ async def test_option_panel_title_reads_as_plain_language():
 
     assert "pdf_engine=" not in title
     assert "ocr=False" not in title
-    assert "PDF engine: PyMuPDF4LLM (Markdown)" in title
-    assert "pymupdf4llm" not in title
+    assert title == "PDF documents"
     # (task-14825 #7) "Enable OCR" is gated by the chosen PDF engine, so the
     # control reads "— needs the docext engine". Advertising its value in
     # the title told the user they had a setting they cannot change, so it
@@ -2982,11 +2979,26 @@ async def test_collapsed_title_caps_pairs_and_skips_empty_values():
         "empty value must be skipped, not rendered dangling"
     )
     assert ": ," not in title
-    label, _, pairs_text = title.partition(" — ")
-    assert label == "Audio & video"
-    parts = pairs_text.split(", ")
-    assert parts[-1] == "…", f"omitted pairs need an ellipsis: {title!r}"
-    assert len(parts) <= 4, f"more than 3 pairs rendered: {title!r}"
+    assert title == "Audio & video"
+
+
+@pytest.mark.asyncio
+async def test_metadata_fields_keep_persistent_labels_after_values_are_entered():
+    """TASK-15702: populated metadata remains identifiable without placeholders."""
+    state = build_library_ingest_state((), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        expected = {
+            "title": "Title (optional)",
+            "author": "Author (optional)",
+            "keywords": "Keywords (optional)",
+        }
+        for name, copy in expected.items():
+            field = pilot.app.query_one(f"#library-ingest-{name}", Input)
+            field.value = f"filled {name}"
+            label = pilot.app.query_one(f"#library-ingest-{name}-label", Static)
+            assert str(label.renderable) == copy
+            assert label.region.y < field.region.y
 
 
 @pytest.mark.asyncio

@@ -60,15 +60,21 @@ In server mode the **Export** rail row is disabled, with the tooltip
   belong to a machine that is not doing the work, so installing them
   would not change the run.
 - **Options** — "Expand all" / "Collapse all", then one fold per detected
-  content type, titled with its current settings (for example "Plain text
-  & HTML — Analyze after import: off, Chunk content: on, …"). Word/Office
+  content type. An untouched fold uses only its short type name; after you
+  change a setting, its title becomes a concise receipt of those changes.
+  Word/Office
   documents (.doc/.docx/.odt/.rtf) get their own fold; the Plain text &
   HTML fold's Analyze/Chunk/Encoding options still apply to them as the
   always-present base. Each fold ends with "Reset to defaults".
-- **Metadata** — "Title (optional)", "Author (optional)", "Keywords,
-  comma-separated (optional)". These apply to everything in the import.
+- **Metadata** — three persistently labeled fields: "Title (optional)",
+  "Author (optional)", and "Keywords (optional)". Example/default guidance
+  remains in the placeholders while the labels survive entered values.
+  These apply to everything in the import.
 - **Start** — a forecast line, a quiet gate line ("Enter a file path or
-  URL to start.") and the "Start import" button. The forecast is one
+  URL to start.") and the "Start import" button, kept together in a pinned
+  review bar so a long pre-check cannot push the decision below the fold.
+  After submission the blank review bar hides so Queue activity gets the
+  viewport. The forecast is one
   sentence of counts for the staged selection — "2 will import · 1 will
   skip · 4 will fail (3 need tooling, 1 empty)" — and it counts a file
   whose type needs tooling you don't have as a failure, not an import,
@@ -105,7 +111,9 @@ In server mode the **Export** rail row is disabled, with the tooltip
   self-contradicted whenever every listed job was already done or
   failed), one line per job with action buttons underneath,
   "Clear finished", and a collapsed "Recent imports" fold listing the
-  last finished jobs. Empty state: "No import jobs yet."
+  last finished jobs. Batch headers use `active` plus exact state counts
+  (`1 queued · 1 done · 1 failed`) rather than adding a contradictory
+  `running` synonym. Empty state: "No import jobs yet."
   Pressing "Start import" scrolls the Queue heading into view, so the
   freshly queued rows are the first thing you see after a submit.
 - **Fold indicator** — while the form is taller than the pane, a pinned
@@ -236,8 +244,10 @@ of the session ("Retry this batch") when the queue has settled — inside a
 text field it stays a letter. **Escape** first backs out of a pending
 "Press Start again" confirm (staying on the form), otherwise returns you
 to the Library landing (a half-filled form is kept, same as switching
-rail rows). The footer and F1 list the same set while the form is open:
-`enter start import`, `r retry last batch`, `esc back to hub`.
+rail rows). At narrow widths the navigation rail collapses to its reachable
+**Nav** handle so the form keeps working width. The footer preserves primary
+and recovery actions first, and F1 lists the same state-derived set:
+`enter start`, `esc back`, and, when available, `r retry`.
 
 The Export form has no screen-specific shortcuts. **Escape** also closes
 the Parakeet install dialog. Global keys live in the

@@ -207,11 +207,74 @@ def test_check_action_gates_retry_last_to_ingest_with_a_snapshot():
     assert screen.check_action("library_ingest_retry_last", ()) is False
 
 
-def test_ingest_shortcut_set_advertises_the_retry_key():
-    """AC#2: the shared footer/F1 set carries the key."""
+def test_ingest_shortcuts_advertise_retry_only_when_the_queue_is_settled():
+    """Footer/F1 expose Retry only while the shared availability gate is open."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        LibraryIngestLastSubmission,
+    )
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
-    assert ("r", "retry last batch") in LibraryScreen.LIBRARY_INGEST_SHORTCUTS
+    app = _build_test_app()
+    registry = LibraryIngestJobRegistry()
+    app.library_ingest_jobs = registry
+    screen = LibraryScreen(app)
+
+    assert ("r", "retry") not in screen._library_ingest_shortcuts_for_current_state()
+
+    screen._library_ingest_last_submission = LibraryIngestLastSubmission(
+        source="/tmp/talk.mp3"
+    )
+    registry.restore([_job(state=IngestJobState.PARSING)], next_id=2)
+    assert ("r", "retry") not in screen._library_ingest_shortcuts_for_current_state()
+
+    registry.restore(
+        [_job(state=IngestJobState.FAILED, error="boom", finished_at=101.0)],
+        next_id=2,
+    )
+    shortcuts = screen._library_ingest_shortcuts_for_current_state()
+    assert ("r", "retry") in shortcuts
+    assert shortcuts.index(("r", "retry")) < shortcuts.index(("/", "search"))
+
+
+@pytest.mark.asyncio
+async def test_registry_ticks_only_reflow_footer_when_retry_availability_changes(
+    monkeypatch,
+):
+    """Identical registry ticks are footer no-ops; Retry transitions reflow once."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        LibraryIngestLastSubmission,
+    )
+    from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+
+    app = _pilot_app()
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _ingest_screen(host, pilot)
+        footer = screen.query_one(AppFooterStatus)
+        real_set_shortcuts = footer.set_workbench_shortcuts
+        registrations: list[tuple[str, tuple]] = []
+
+        def record_registration(*, source: str, shortcuts: tuple) -> None:
+            registrations.append((source, shortcuts))
+            real_set_shortcuts(source=source, shortcuts=shortcuts)
+
+        monkeypatch.setattr(
+            footer, "set_workbench_shortcuts", record_registration
+        )
+
+        screen._handle_library_ingest_registry_changed()
+        screen._handle_library_ingest_registry_changed()
+        assert registrations == []
+
+        screen._library_ingest_last_submission = LibraryIngestLastSubmission(
+            source="/tmp/talk.mp3"
+        )
+        screen._handle_library_ingest_registry_changed()
+        assert len(registrations) == 1
+        assert ("r", "retry") in registrations[0][1]
+
+        screen._handle_library_ingest_registry_changed()
+        assert len(registrations) == 1
 
 
 # --- pilot: restore + fresh preflight + identity --------------------------------
