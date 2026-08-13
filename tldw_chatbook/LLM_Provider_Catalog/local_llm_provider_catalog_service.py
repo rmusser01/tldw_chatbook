@@ -466,6 +466,7 @@ class LocalLLMProviderCatalogService:
         *,
         provider: str,
         staged_settings: Mapping[str, Any] | None = None,
+        use_shared_cache: bool = True,
     ) -> ModelDiscoveryResult:
         """Discover OpenAI-compatible models from a configured provider endpoint."""
         self._enforce("llm.catalog.models.discover.local")
@@ -584,7 +585,7 @@ class LocalLLMProviderCatalogService:
             endpoint=endpoint,
             api_key=api_key,
         )
-        if result.status == "success":
+        if use_shared_cache and result.status == "success":
             self.discovery_cache.replace(
                 provider_list_key,
                 result.endpoint_fingerprint or fingerprint_endpoint(endpoint),

@@ -4326,6 +4326,7 @@ async def test_provider_discovery_uses_exact_draft_settings_and_secret_free_key(
 
         call = scope_service.discover_models.await_args
         assert call.kwargs["provider"] == "custom"
+        assert call.kwargs["use_shared_cache"] is False
         assert call.kwargs["staged_settings"] == {
             "api_settings": {
                 "custom": {
@@ -4357,11 +4358,15 @@ async def test_mounted_clear_and_replaced_endpoint_discovery_never_uses_saved_ke
     from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
         LocalLLMProviderCatalogService,
     )
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import (
+        ModelDiscoveryCache,
+    )
     from tldw_chatbook.UI.Wizards.first_run_setup_state import (
         build_first_run_model_discovery_key,
     )
 
     saved_canary = "wizard-saved-key-canary-never-send"
+    environment_canary = "wizard-environment-key-canary-never-send"
     requests: list[dict[str, object]] = []
 
     async def record_discovery(**kwargs):
@@ -4375,14 +4380,17 @@ async def test_mounted_clear_and_replaced_endpoint_discovery_never_uses_saved_ke
             "custom": {
                 "api_url": "https://saved.example.test/v1/chat/completions",
                 "api_key": saved_canary,
+                "api_key_env_var": "WIZARD_CUSTOM_API_KEY",
             }
         },
     }
+    shared_cache = ModelDiscoveryCache()
     local_service = LocalLLMProviderCatalogService(
         provider_catalog_loader=lambda: {"custom": []},
         settings_loader=lambda: wizard.app_instance.app_config,
+        discovery_cache=shared_cache,
         discovery_client=record_discovery,
-        environ={},
+        environ={"WIZARD_CUSTOM_API_KEY": environment_canary},
     )
     wizard.app_instance.llm_provider_catalog_scope_service = (
         LLMProviderCatalogScopeService(
@@ -4420,12 +4428,24 @@ async def test_mounted_clear_and_replaced_endpoint_discovery_never_uses_saved_ke
         assert requests
         assert all(request["api_key"] is None for request in requests)
         assert saved_canary not in repr(requests)
+        assert environment_canary not in repr(requests)
+        assert shared_cache.snapshot_count == 0
+        assert shared_cache.model_count == 0
         draft = container.staged_provider_draft
         assert draft is not None
         key = build_first_run_model_discovery_key(draft)
         assert key.credential_revision > 0
         assert key not in prior_keys
         assert key in container._first_run_selected_provider_models
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        rendered_model_ids = [
+            str(getattr(button, "_model_id", button.label))
+            for button in model_step.query_one("#setup-model-choice", RadioSet).query(
+                RadioButton
+            )
+        ]
+        assert rendered_model_ids == ["keyless-model"]
 
 
 @pytest.mark.asyncio
@@ -6076,6 +6096,7 @@ async def test_model_step_uses_exact_provider_draft_with_scope_service():
         assert scope_service.discover_models.await_args.kwargs == {
             "mode": "local",
             "provider": "custom",
+            "use_shared_cache": False,
             "staged_settings": {
                 "api_settings": {
                     "custom": {
@@ -6632,7 +6653,16 @@ async def test_mounted_provider_handoff_is_fenced_after_model_navigation_and_unm
     monkeypatch,
 ):
     import asyncio
-    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.LLM_Provider_Catalog.llm_provider_catalog_scope_service import (
+        LLMProviderCatalogScopeService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import (
+        ModelDiscoveryCache,
+    )
 
     navigation_phase = False
     started = asyncio.Event()
@@ -6640,7 +6670,10 @@ async def test_mounted_provider_handoff_is_fenced_after_model_navigation_and_unm
     release_late_result = asyncio.Event()
     late_result_returned = asyncio.Event()
 
-    async def discover_models(**_kwargs):
+    discovery_requests: list[dict[str, object]] = []
+
+    async def discover_models(**kwargs):
+        discovery_requests.append(kwargs)
         started.set()
         try:
             await asyncio.Event().wait()
@@ -6658,12 +6691,24 @@ async def test_mounted_provider_handoff_is_fenced_after_model_navigation_and_unm
 
     wizard = _make_wizard()
     wizard.app_instance.app_config = {
+        "providers": {"custom": []},
         "api_settings": {
             "custom": {"api_url": "https://slow.example.test/v1/chat/completions"}
         }
     }
-    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
-        discover_models=AsyncMock(side_effect=discover_models)
+    shared_cache = ModelDiscoveryCache()
+    local_service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {"custom": []},
+        settings_loader=lambda: wizard.app_instance.app_config,
+        discovery_cache=shared_cache,
+        discovery_client=discover_models,
+        environ={},
+    )
+    wizard.app_instance.llm_provider_catalog_scope_service = (
+        LLMProviderCatalogScopeService(
+            local_service=local_service,
+            server_service=None,
+        )
     )
     app = _HostApp(wizard)
 
@@ -6712,6 +6757,10 @@ async def test_mounted_provider_handoff_is_fenced_after_model_navigation_and_unm
 
         assert not provider_step.is_attached
         assert detached_widget_accesses == []
+        assert discovery_requests
+        assert shared_cache.snapshot_count == 0
+        assert shared_cache.model_count == 0
+        assert shared_cache.list() == ()
         assert provider_step._selected_provider_models == {}
         assert provider_step._selected_provider_outcomes == {}
         assert container._first_run_selected_provider_models == {}

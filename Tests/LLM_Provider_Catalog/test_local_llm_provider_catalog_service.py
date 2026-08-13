@@ -695,6 +695,47 @@ async def test_local_llm_provider_catalog_service_uses_known_provider_default_en
 
 
 @pytest.mark.asyncio
+async def test_local_model_discovery_can_skip_shared_cache_without_changing_default():
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import (
+        ModelDiscoveryCache,
+    )
+
+    async def discover_models(**kwargs):
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint=fingerprint_endpoint(kwargs["endpoint"]),
+            status="success",
+        )
+
+    discovery_cache = ModelDiscoveryCache()
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=_providers,
+        settings_loader=lambda: {
+            "providers": _providers(),
+            "api_settings": {"openai": {"api_key": "sk-test"}},
+        },
+        discovery_cache=discovery_cache,
+        discovery_client=discover_models,
+    )
+
+    isolated_result = await service.discover_models(
+        provider="OpenAI",
+        use_shared_cache=False,
+    )
+
+    assert isolated_result.status == "success"
+    assert discovery_cache.snapshot_count == 0
+    assert discovery_cache.model_count == 0
+
+    default_result = await service.discover_models(provider="OpenAI")
+
+    assert default_result.status == "success"
+    assert discovery_cache.snapshot_count == 1
+    assert service.has_discovered_model_snapshot(provider="OpenAI") is True
+
+
+@pytest.mark.asyncio
 async def test_local_llm_provider_catalog_service_rejects_placeholder_key_and_uses_env_var():
     discovery_calls = []
 

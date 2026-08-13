@@ -2075,6 +2075,7 @@ class ProviderStep(SetupStep):
                             staged_settings=self._discovery_staged_settings(
                                 provider_draft, discovery_key
                             ),
+                            use_shared_cache=False,
                         ),
                         timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
                     )
@@ -3144,6 +3145,7 @@ class ModelStep(SetupStep):
                         staged_settings=_first_run_discovery_staged_settings(
                             provider_draft, discovery_key
                         ),
+                        use_shared_cache=False,
                     )
 
         if discover is not None:
