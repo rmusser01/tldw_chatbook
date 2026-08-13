@@ -10,12 +10,15 @@ tooltip, badge vocabulary, and open/collapse behavior.
 ## Current behavior and root cause
 
 `DestinationRailHandle` gives collapsed handles a full-height, bordered,
-panel-background base treatment. Two right-side overrides undo that treatment:
+panel-background base treatment. Three Inspector-side overrides undo that
+treatment:
 
 - `.console-rail-handle-right` changes the container to an auto-height,
   three-to-six-row transparent block with no border.
 - `DestinationRailHandle.compose()` and
   `.console-rail-handle-button-right` fix the right-side button at three rows.
+- `ChatScreen.compose_content()` frames `#console-inspector-rail-handle` with
+  `variant="quiet"`, which writes a borderless inline frame that outranks TCSS.
 
 The open Inspector rail is not involved. The mismatch belongs entirely to the
 collapsed handle.
@@ -46,11 +49,13 @@ interaction/design decision from visual parity with the Context rail.
 ## Design
 
 The existing `ConsoleRailHandle` and `DestinationRailHandle` boundaries stay
-unchanged. The right-side modifier continues to own right-specific geometry,
-but it will no longer opt out of the base handle's full-height background and
-border. The right-side button will use flexible remaining height instead of a
-fixed three-row height so an optional badge can remain visible without
-overflow.
+unchanged. `ConsoleRailHandle` adds an Inspector-specific class when its side
+is `right`; the new class carries the full-height panel geometry so the shared
+`.console-rail-handle-right` behavior used by Lab and Personas is unchanged.
+The Console Inspector button uses flexible remaining height instead of a fixed
+three-row height so an optional badge keeps its natural row at the bottom
+without overlap. The Console compose call uses the normal solid frame instead
+of the quiet frame, matching the existing Context handle's frame.
 
 No ids, messages, state builders, persistence keys, rail widths, responsive
 thresholds, labels, tooltips, or badge abbreviations change. The open Inspector
@@ -61,26 +66,33 @@ stylesheet must be rebuilt with the repository CSS generator.
 
 ## Verification
 
-Add a mounted handle regression that fails against the current implementation
-and proves:
+Add a mounted handle regression in a harness that loads the production
+`tldw_cli_modular.tcss` bundle. It must fail against the current implementation
+and prove:
 
-- left and right collapsed handles occupy the full harness height;
-- the right label's button consumes the available height and centers content;
-- the right handle has a non-transparent panel background and visible border;
-- an optional Inspector badge remains mounted within the handle bounds.
+- left and right collapsed handles occupy the exact harness content height;
+- the right label's button height equals the handle content height minus the
+  badge height and uses `content-align: center middle`;
+- the right handle has a non-transparent panel background and a solid border;
+- deterministic unbadged and `3 approvals` states both render correctly;
+- the badge's visible `3 appr` text does not overlap the button and its bottom
+  and right edges stay within the handle content bounds.
+
+Update the existing Console decomposition assertion from a quiet/no-border
+Inspector handle to a solid/all-edge frame. Add a non-Console right-handle
+assertion proving the Lab/Personas shared default remains compact and quiet.
 
 Then run the focused destination/Console rail tests, CSS build integrity check,
 and a live Console render at representative terminal widths. The visual check
-must inspect both an unbadged handle and a state with a badge if the harness can
-produce one deterministically.
+must inspect both the deterministic unbadged and badged Inspector states.
 
 ## ADR check
 
 ADR required: no
 
-ADR path: N/A
+ADR path: backlog/decisions/017-console-left-rail-usability.md
 
-Reason: This is a reversible presentation refinement inside an existing
-widget and stylesheet boundary. It changes no storage, state ownership,
-service contract, security boundary, dependency, or long-lived application
-structure. ADR-017's text-only Console rail visual language remains in force.
+Reason: Existing ADR-017 applies. This is a reversible presentation refinement
+inside its established text-only Console rail visual language and introduces
+no new architectural decision, storage, state ownership, service contract,
+security boundary, dependency, or long-lived application structure.
