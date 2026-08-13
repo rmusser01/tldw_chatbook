@@ -5,6 +5,7 @@ import asyncio
 from Tests.UI.background_signals import wait_for_background_signal
 import json
 import sys
+import wave
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -284,6 +285,9 @@ class _ActionProfileService:
         self.preview_preset_calls: list[
             tuple[LoadedTTSProfile, TTSProfileAvailability]
         ] = []
+        self.sample_evidence_calls: list[
+            tuple[LoadedTTSProfile, STTSGeneratedAudio]
+        ] = []
         self.assignment_total = 0
         self.create_error: BaseException | None = None
         self.update_error: BaseException | None = None
@@ -378,6 +382,27 @@ class _ActionProfileService:
             options=profile.options,
             availability=availability.state,
         )
+
+    def record_sample_evidence(
+        self,
+        loaded: LoadedTTSProfile,
+        artifact: STTSGeneratedAudio,
+    ) -> None:
+        self.sample_evidence_calls.append((loaded, artifact))
+        selection = artifact.requested_selection
+        profile = loaded.profile
+        if (
+            type(selection) is TTSRequestedSelectionSnapshot
+            and artifact.path.is_file()
+            and selection.provider_id == profile.provider_id
+            and selection.model_id == profile.model_id
+            and selection.voice_id == profile.voice_id
+            and selection.response_format == profile.response_format
+            and selection.speed == profile.speed
+            and dict(selection.options) == dict(profile.options)
+        ):
+            self.availability_state = "available"
+            self.availability_recovery = "none"
 
 
 class _PendingAvailabilityActionProfileService(_ActionProfileService):
@@ -575,6 +600,42 @@ async def test_profile_library_routes_projected_dependency_recovery_exactly(
 
 def _table_cell(table: DataTable[Any], row: int, column: int) -> str:
     return str(table.get_row_at(row)[column])
+
+
+def _playable_profile_artifact(
+    tmp_path: Path,
+    profile: TTSGenerationProfile,
+    *,
+    model_id: str | None = None,
+    operation_id: str = "profile-test-operation",
+) -> STTSGeneratedAudio:
+    path = tmp_path / f"{operation_id}.wav"
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16_000)
+        output.writeframes(b"\x00\x00" * 160)
+    requested_model = profile.model_id if model_id is None else model_id
+    selection = TTSRequestedSelectionSnapshot(
+        provider_id=profile.provider_id,
+        model_id=requested_model,
+        voice_id=profile.voice_id,
+        response_format=profile.response_format,
+        speed=profile.speed,
+        options=profile.options,
+        configuration_revision=1,
+    )
+    return STTSGeneratedAudio(
+        path=path,
+        provider_id=profile.provider_id,
+        model_id=requested_model,
+        voice_id=profile.voice_id,
+        source_text="Profile verification sample",
+        operation_id=operation_id,
+        audio_format=profile.response_format,
+        content_type="audio/wav",
+        requested_selection=selection,
+    )
 
 
 def _visible_content_rows(widget: Widget) -> tuple[str, ...]:
@@ -964,12 +1025,12 @@ async def test_repository_page_renders_before_availability_and_selection_arms_ac
         await pilot.pause()
 
         for selector in (
-            "#stts-profile-preview-btn",
             "#stts-profile-edit-btn",
             "#stts-profile-duplicate-btn",
             "#stts-profile-delete-btn",
         ):
             assert not app.query_one(selector, Button).disabled
+        assert app.query_one("#stts-profile-preview-btn", Button).disabled
 
         assert table.row_count <= 50
         service.availability_future.set_result(
@@ -1029,7 +1090,7 @@ async def test_voice_profile_actions_fit_and_remain_keyboard_reachable_at_80x24(
     ("availability_state", "expected_recovery"),
     [
         ("unavailable", "Unavailable — Refresh, then Edit."),
-        ("unverified", "Unverified — Refresh and retry."),
+        ("unverified", "Needs test — Open in Playground."),
     ],
 )
 @pytest.mark.asyncio
@@ -1055,12 +1116,10 @@ async def test_profile_recovery_copy_is_visible_at_80x24(
 
 
 @pytest.mark.asyncio
-async def test_unverified_legacy_profile_never_offers_a_refresh_it_cannot_perform() -> (
+async def test_unverified_legacy_profile_offers_an_exact_playground_test() -> (
     None
 ):
-    """Legacy providers skip capability preflight, so Refresh cannot change
-    "unverified" -- ADR-031 forbids a control that claims a recovery it can
-    never perform. The row must say why instead of instructing a retry."""
+    """A provider without catalog authority needs sample evidence, not Ready."""
 
     legacy = replace(
         _profile(0),
@@ -1082,36 +1141,34 @@ async def test_unverified_legacy_profile_never_offers_a_refresh_it_cannot_perfor
 
         rows = _visible_content_rows(status)
         assert rows == (
-            "No catalog check — the exact selection is used as-is.",
+            "Needs test — Open in Playground.",
             "Selected: Voice 00",
             "openai / tts-1 / alloy",
         )
         assert "refresh" not in rows[0].casefold()
-        assert "retry" not in rows[0].casefold()
         assert "unverified" not in rows[0].casefold()
+        assert app.query_one("#stts-profile-preview-btn", Button).label.plain == (
+            "Test in Playground"
+        )
 
 
 @pytest.mark.parametrize(
     ("provider_id", "state", "recovery_action", "expected_cell"),
     [
-        ("openai", "unverified", "none", "No catalog check"),
-        ("audio_cpp", "unverified", "refresh", "Unverified"),
-        ("audio_cpp", "available", "none", "Available"),
+        ("openai", "unverified", "none", "Needs test"),
+        ("audio_cpp", "unverified", "refresh", "Needs test"),
+        ("audio_cpp", "available", "none", "Verified"),
         ("audio_cpp", "unavailable", "edit", "Unavailable"),
     ],
 )
 @pytest.mark.asyncio
-async def test_availability_cell_tells_no_catalog_check_story_for_legacy_permanent_unverified(
+async def test_availability_cell_uses_the_three_truthful_profile_states(
     provider_id: str,
     state: str,
     recovery_action: str,
     expected_cell: str,
 ) -> None:
-    """The DataTable "Availability" cell must never show the raw word
-    "Unverified" for a provider whose unverified state is permanent
-    (`recovery_action == "none"`) -- it must tell the honest no-catalog-check
-    story instead. audio_cpp's transient unverified/available/unavailable
-    renderings are unchanged."""
+    """Library rows map service evidence to the user-facing status contract."""
 
     profile = replace(_profile(0), provider_id=provider_id)
     service = _ActionProfileService(
@@ -1131,7 +1188,7 @@ async def test_availability_cell_tells_no_catalog_check_story_for_legacy_permane
 
 
 @pytest.mark.asyncio
-async def test_publish_page_also_renders_no_catalog_check_from_preserved_legacy_availability() -> (
+async def test_publish_page_preserves_needs_test_during_same_page_refresh() -> (
     None
 ):
     """The availability cell is filled at two sites -- `_publish_page` (from
@@ -1163,7 +1220,7 @@ async def test_publish_page_also_renders_no_catalog_check_from_preserved_legacy_
         )
         await pilot.pause()
         table = app.query_one("#stts-profile-table", DataTable)
-        assert _table_cell(table, 0, 3) == "No catalog check"
+        assert _table_cell(table, 0, 3) == "Needs test"
 
         app.query_one("#stts-profile-refresh-btn", Button).press()
         await pilot.pause()
@@ -1174,7 +1231,7 @@ async def test_publish_page_also_renders_no_catalog_check_from_preserved_legacy_
         # The second availability observation has not resolved yet -- this
         # cell can only have come from `_publish_page`'s direct render of
         # the preserved availability, not from `_publish_availability`.
-        assert _table_cell(table, 0, 3) == "No catalog check"
+        assert _table_cell(table, 0, 3) == "Needs test"
 
 
 @pytest.mark.asyncio
@@ -1492,7 +1549,7 @@ async def test_cancellation_resistant_availability_keeps_one_cleanup_and_drains_
             service.availability_futures[2].set_result(_availability(latest_page))
             await _wait_until(
                 pilot,
-                lambda: _table_cell(table, 0, 3) == "Available",
+                lambda: _table_cell(table, 0, 3) == "Verified",
             )
 
             assert _table_cell(table, 0, 0) == "Voice 02"
@@ -1509,7 +1566,7 @@ async def test_cancellation_resistant_availability_keeps_one_cleanup_and_drains_
             assert library._active_page_task is None
             assert library._retained_cleanup_task is None
             assert _table_cell(table, 0, 0) == "Voice 02"
-            assert _table_cell(table, 0, 3) == "Available"
+        assert _table_cell(table, 0, 3) == "Verified"
     finally:
         loop.set_exception_handler(previous_handler)
 
@@ -1592,7 +1649,7 @@ async def test_availability_revisions_cannot_regress_the_rendered_page() -> None
         )
         await pilot.pause()
         table = app.query_one("#stts-profile-table", DataTable)
-        assert _table_cell(table, 0, 3) == "Available"
+        assert _table_cell(table, 0, 3) == "Verified"
 
         app.query_one("#stts-profile-refresh-btn", Button).press()
         await pilot.pause()
@@ -1608,7 +1665,7 @@ async def test_availability_revisions_cannot_regress_the_rendered_page() -> None
             )
         )
         await pilot.pause(0.05)
-        assert _table_cell(table, 0, 3) == "Available"
+        assert _table_cell(table, 0, 3) == "Verified"
 
         app.query_one("#stts-profile-refresh-btn", Button).press()
         await pilot.pause()
@@ -1624,7 +1681,7 @@ async def test_availability_revisions_cannot_regress_the_rendered_page() -> None
             )
         )
         await pilot.pause(0.05)
-        assert _table_cell(table, 0, 3) == "Available"
+        assert _table_cell(table, 0, 3) == "Verified"
 
         app.query_one("#stts-profile-refresh-btn", Button).press()
         await pilot.pause()
@@ -1685,27 +1742,187 @@ async def test_preview_posts_the_exact_loaded_profile_and_current_availability()
             lambda: str(selected.profile.profile_id) in library._row_availability,
         )
 
-        await pilot.click("#stts-profile-preview-btn")
-        await _wait_until(pilot, lambda: len(app.preview_messages) == 1)
-
-        message = app.preview_messages[0]
-        assert isinstance(
-            message,
-            profile_library_module.ProfilePreviewRequested,
+        app.query_one("#stts-profile-preview-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: app.query_one(STTSWindow).current_view == "playground",
         )
+        preset = app.query_one(SpeechPlaygroundPane)._profile_preset
+        assert type(preset) is TTSPlaygroundSelectionPreset
         current_availability = library._row_availability[
             str(selected.profile.profile_id)
         ]
         assert service.preview_preset_calls == [(selected, current_availability)]
         assert (
-            message.preset.model_id,
-            message.preset.voice_id,
-            message.preset.availability,
+            preset.model_id,
+            preset.voice_id,
+            preset.availability,
         ) == (
             selected.profile.model_id,
             selected.profile.voice_id,
             current_availability.state,
         )
+        assert preset.profile_id == selected.profile.profile_id
+        assert preset.repository_generation == selected.repository_generation
+        assert preset.profile_revision == selected.profile.revision
+        assert "endpoint" not in repr(preset).casefold()
+        assert "credential" not in repr(preset).casefold()
+
+
+@pytest.mark.asyncio
+async def test_unavailable_profile_disables_playground_action_with_clear_recovery() -> (
+    None
+):
+    service = _ActionProfileService(
+        _profile(0),
+        availability_state="unavailable",
+    )
+    app = _ActionHost(service)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _select_action_profile(app, pilot)
+        action = app.query_one("#stts-profile-preview-btn", Button)
+
+        assert action.disabled
+        assert "Unavailable" in str(action.label)
+        assert _status_copy(app).startswith("Unavailable — Refresh, then Edit.")
+
+
+@pytest.mark.asyncio
+async def test_matching_profile_sample_records_evidence_and_enables_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(
+        profile,
+        availability_state="unverified",
+        availability_recovery="none",
+    )
+    app = _ActionHost(service)
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda self, *args, **kwargs: None,
+    )
+
+    async with app.run_test(size=(140, 50)) as pilot:
+        await _select_action_profile(app, pilot)
+        app.query_one("#stts-profile-preview-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: app.query_one(STTSWindow).current_view == "playground",
+        )
+        pane = app.query_one(SpeechPlaygroundPane)
+        await _wait_until(pilot, lambda: len(pane.query("#audio-play-btn")) == 1)
+        artifact = _playable_profile_artifact(tmp_path, profile)
+        pane._generation_operation_id = artifact.operation_id
+        pane._generation_complete(artifact)
+        await _wait_until(pilot, lambda: service.availability_state == "available")
+        await _wait_until(
+            pilot,
+            lambda: not app.query_one("#audio-save-profile-btn", Button).disabled,
+        )
+
+        assert service.sample_evidence_calls == [
+            (
+                LoadedTTSProfile(repository_generation=11, profile=profile),
+                artifact,
+            )
+        ]
+        assert "Verified" in str(
+            app.query_one("#tts-profile-preview-status", Static).render()
+        )
+
+
+@pytest.mark.asyncio
+async def test_different_profile_sample_cannot_enable_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(
+        profile,
+        availability_state="unverified",
+        availability_recovery="none",
+    )
+    app = _ActionHost(service)
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda self, *args, **kwargs: None,
+    )
+
+    async with app.run_test(size=(140, 50)) as pilot:
+        await _select_action_profile(app, pilot)
+        app.query_one("#stts-profile-preview-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: app.query_one(STTSWindow).current_view == "playground",
+        )
+        pane = app.query_one(SpeechPlaygroundPane)
+        await _wait_until(pilot, lambda: len(pane.query("#audio-play-btn")) == 1)
+        artifact = _playable_profile_artifact(
+            tmp_path,
+            profile,
+            model_id="different/model",
+        )
+        pane._generation_operation_id = artifact.operation_id
+        pane._generation_complete(artifact)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.query_one("#audio-save-profile-btn", Button).disabled
+        assert "Needs test" in str(
+            app.query_one("#tts-profile-preview-status", Static).render()
+        )
+
+
+@pytest.mark.asyncio
+async def test_same_page_refresh_preserves_selected_profile_focus_and_scroll() -> None:
+    profiles = tuple(_profile(index) for index in range(50))
+    service = _ControlledProfileService(profiles)
+    service.availability_future = asyncio.get_running_loop().create_future()
+    service.availability_future.set_result(
+        TTSProfileAvailabilitySnapshot(
+            repository_generation=service.page.repository_generation,
+            configuration_revision=1,
+            catalog_revision=1,
+            profiles=tuple(
+                TTSProfileAvailability(
+                    profile_id=profile.profile_id,
+                    state="unverified",
+                    recovery_action="refresh",
+                )
+                for profile in profiles
+            ),
+        )
+    )
+    app = _STTSHost(service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _open_stts_view(app, pilot, "profiles")
+        await _wait_until(pilot, lambda: len(service.availability_calls) == 1)
+        library = app.query_one(STTSProfileLibrary)
+        table = app.query_one("#stts-profile-table", DataTable)
+        table.focus()
+        table.move_cursor(row=35)
+        table.action_select_cursor()
+        table.scroll_to(y=35, animate=False)
+        await pilot.pause()
+        selected_id = library._selected_profile.profile.profile_id
+        scroll_y = table.scroll_offset.y
+
+        app.query_one("#stts-profile-refresh-btn", Button).press()
+        await _wait_until(pilot, lambda: len(service.list_calls) == 2)
+        await _wait_until(pilot, lambda: len(service.availability_calls) == 2)
+        await pilot.pause()
+
+        assert library._selected_profile is not None
+        assert library._selected_profile.profile.profile_id == selected_id
+        assert table.cursor_row == 35
+        assert table.scroll_offset.y == scroll_y
+        assert app.focused is table
 
 
 @pytest.mark.asyncio
@@ -1745,7 +1962,7 @@ async def test_stts_window_consumes_exact_profile_preview_once_on_playground_rem
             lambda: str(selected.profile.profile_id) in library._row_availability,
         )
 
-        await pilot.click("#stts-profile-preview-btn")
+        app.query_one("#stts-profile-preview-btn", Button).press()
         await _wait_until(
             pilot,
             lambda: app.query_one(STTSWindow).current_view == "playground",
@@ -1758,6 +1975,7 @@ async def test_stts_window_consumes_exact_profile_preview_once_on_playground_rem
         assert first_playground._profile_preset.voice_id == "missing/exact-voice"
         assert window._pending_playground_preset is None
 
+        await pilot.pause(0.1)
         await _open_stts_view(app, pilot, "settings")
         await _open_stts_view(app, pilot, "playground")
         second_playground = app.query_one(SpeechPlaygroundPane)
@@ -1776,7 +1994,8 @@ async def test_exact_preview_at_80x24_focuses_playground_with_visible_recovery_b
             model_id="missing/exact-model",
             voice_id="missing/exact-voice",
         ),
-        availability_state="unavailable",
+        availability_state="unverified",
+        availability_recovery="none",
     )
     app = _ActionHost(service)
 
@@ -1821,8 +2040,8 @@ async def test_exact_preview_at_80x24_focuses_playground_with_visible_recovery_b
 
         assert app.focused is text_input
         assert banner.display is True
-        assert "unavailable" in copy.lower()
-        assert "Edit" in copy
+        assert "Needs test" in copy
+        assert "exact sample" in copy
         assert banner.region.height > 0
         assert app.screen.region.contains_region(banner.region)
 

@@ -39,6 +39,7 @@ from textual.message import Message
 from tldw_chatbook.TTS import (
     AudioCppRuntimeObservation,
     CanonicalTTSCloneReference,
+    STTSGeneratedAudio,
     STTSPlaygroundCloneSnapshot,
     TTSPlaygroundSelectionPreset,
     TTSPreferencesSnapshot,
@@ -373,6 +374,13 @@ class SpeechPlaygroundPane(
         self._seed_session_control_snapshot()
         self.init_playback_state()
         self.init_profile_state(profile_preset)
+
+    def _generation_complete(self, artifact: Any) -> None:
+        """Retain exact profile-test provenance before playback sanitizes it."""
+
+        if type(artifact) is STTSGeneratedAudio:
+            self._retain_profile_generation_artifact(artifact)
+        super()._generation_complete(artifact)
 
     def _seed_session_control_snapshot(self) -> None:
         """Restore bounded process-local axes after an internal Lab view switch."""
@@ -1163,6 +1171,7 @@ class SpeechPlaygroundPane(
             return
         row.update_defaults(self.axis_defaults)
         row.update_values(self.axis_values)
+        self._mark_profile_test_axes()
 
     # NOTE (task-15476): there used to be a second handler here,
     # `on_text_area_changed`, matched by Textual's implicit
@@ -2398,6 +2407,8 @@ class SpeechPlaygroundPane(
 
     def _on_generation_result(self, artifact: Any) -> None:
         """Project Retry/ready state only for the guided sample now in flight."""
+
+        self._handle_profile_generation_result(artifact)
 
         if self._audio_cpp_sample_state != "generating":
             return

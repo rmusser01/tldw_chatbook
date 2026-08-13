@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from textual.app import App, ComposeResult
@@ -2144,6 +2145,55 @@ async def test_a_user_edit_updates_the_marker(
         )
         assert chip.has_class("speech-chip-override")
         assert pane.axis_values.get("tts-speed-input") == "1.7"
+
+
+@pytest.mark.asyncio
+async def test_profile_test_preset_marks_exact_axes_as_profile_sourced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda self, *args, **kwargs: None,
+    )
+    preset = replace(
+        _profile_preset(
+            provider_id="openai",
+            model_id="pocket-tts",
+            voice_id="alba",
+            availability="unverified",
+        ),
+        profile_id=UUID(int=91),
+        repository_generation=7,
+        profile_revision=3,
+    )
+    defaults = {
+        "tts-provider-select": "audio_cpp",
+        "tts-model-select": "default-model",
+        "tts-voice-select": "default-voice",
+        "tts-format-select": "mp3",
+        "tts-speed-input": "1.5",
+    }
+    app = _AxisHarness(profile_preset=preset, axis_defaults=defaults)
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        for axis in (
+            "tts-provider-select",
+            "tts-model-select",
+            "tts-voice-select",
+            "tts-format-select",
+            "tts-speed-input",
+        ):
+            label = app.query_one(f"#{axis_chip_id(axis)}", Static)
+            assert "Profile test selection" in str(label.tooltip)
+        banner = str(
+            app.query_one("#tts-profile-preview-status", Static).render()
+        )
+        assert "Testing voice profile" in banner
+        assert "Needs test" in banner
 
 
 #: (provider_id, model_id, voice_id) for the two provider classes this

@@ -15,10 +15,11 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, Protocol, cast
 from uuid import UUID
+from weakref import ReferenceType, ref
 
 from rich.text import Text
 from textual import on
@@ -173,7 +174,10 @@ _PROFILE_UNVERIFIED_COPY = (
     "The exact profile selection could not be verified. Refresh and retry "
     "without changing persisted values."
 )
-_PROFILE_NO_CATALOG_CHECK_COPY = "No catalog check"
+_PROFILE_VERIFIED_COPY = "Verified"
+_PROFILE_NEEDS_TEST_COPY = "Needs test"
+_PROFILE_UNAVAILABLE_STATUS_COPY = "Unavailable"
+_PROFILE_TEST_CONTEXT_LIMIT = 256
 #: Copy shown when the generated audio predates the current settings, so
 #: saving it as a profile would record something the user did not hear.
 #: Kept verbatim from `STTS_Window` / `speech_profile_mixin`, which define
@@ -245,6 +249,12 @@ class _ProfileService(Protocol):
         loaded: LoadedTTSProfile,
         availability: TTSProfileAvailability,
     ) -> TTSPlaygroundSelectionPreset: ...
+
+    def record_sample_evidence(
+        self,
+        loaded: LoadedTTSProfile,
+        artifact: STTSGeneratedAudio,
+    ) -> None: ...
 
 
 ProfileServiceLoader = Callable[[], Awaitable[_ProfileService | None]]
@@ -380,6 +390,93 @@ class _PageRequest:
     offset: int
 
 
+@dataclass(frozen=True, slots=True)
+class _ProfileTestContext:
+    """Process-local authority for one exact, non-secret profile test."""
+
+    service: _ProfileService
+    loaded: LoadedTTSProfile
+    library: ReferenceType[STTSProfileLibrary]
+
+
+_PROFILE_TEST_CONTEXTS: dict[tuple[UUID, int, int], _ProfileTestContext] = {}
+
+
+def _profile_test_key(
+    preset: TTSPlaygroundSelectionPreset,
+) -> tuple[UUID, int, int] | None:
+    identity = (
+        preset.profile_id,
+        preset.repository_generation,
+        preset.profile_revision,
+    )
+    if not all(value is not None for value in identity):
+        return None
+    profile_id, repository_generation, profile_revision = identity
+    assert isinstance(profile_id, UUID)
+    assert isinstance(repository_generation, int)
+    assert isinstance(profile_revision, int)
+    return profile_id, repository_generation, profile_revision
+
+
+def _preset_matches_loaded(
+    preset: TTSPlaygroundSelectionPreset,
+    loaded: LoadedTTSProfile,
+) -> bool:
+    profile = loaded.profile
+    return all(
+        source == expected
+        for source, expected in (
+            (preset.profile_id, profile.profile_id),
+            (preset.repository_generation, loaded.repository_generation),
+            (preset.profile_revision, profile.revision),
+            (preset.provider_id, profile.provider_id),
+            (preset.model_id, profile.model_id),
+            (preset.voice_id, profile.voice_id),
+            (preset.response_format, profile.response_format),
+            (preset.speed, profile.speed),
+            (dict(preset.options), dict(profile.options)),
+        )
+    )
+
+
+def _remember_profile_test_context(
+    service: _ProfileService,
+    loaded: LoadedTTSProfile,
+    preset: TTSPlaygroundSelectionPreset,
+    library: STTSProfileLibrary,
+) -> TTSPlaygroundSelectionPreset:
+    """Attach exact repository identity and retain bounded process authority."""
+
+    profile = loaded.profile
+    exact = replace(
+        preset,
+        profile_id=profile.profile_id,
+        repository_generation=loaded.repository_generation,
+        profile_revision=profile.revision,
+    )
+    if not _preset_matches_loaded(exact, loaded):
+        raise ValueError("Profile test preset does not match the selected profile")
+    key = _profile_test_key(exact)
+    assert key is not None
+    _PROFILE_TEST_CONTEXTS[key] = _ProfileTestContext(service, loaded, ref(library))
+    while len(_PROFILE_TEST_CONTEXTS) > _PROFILE_TEST_CONTEXT_LIMIT:
+        _PROFILE_TEST_CONTEXTS.pop(next(iter(_PROFILE_TEST_CONTEXTS)))
+    return exact
+
+
+def _resolve_profile_test_context(
+    preset: TTSPlaygroundSelectionPreset,
+) -> _ProfileTestContext | None:
+    key = _profile_test_key(preset)
+    if key is None:
+        return None
+    context = _PROFILE_TEST_CONTEXTS.get(key)
+    if context is None or not _preset_matches_loaded(preset, context.loaded):
+        return None
+    return context
+
+
 class ProfilePreviewRequested(Message):
     """Request a one-shot exact Playground preview without synthesizing."""
 
@@ -409,13 +506,14 @@ def _availability_cell_text(availability: TTSProfileAvailability | None) -> str:
         return "Checking"
     if availability.dependency.display:
         return availability.dependency.display
+    status = {
+        "available": _PROFILE_VERIFIED_COPY,
+        "unverified": _PROFILE_NEEDS_TEST_COPY,
+        "unavailable": _PROFILE_UNAVAILABLE_STATUS_COPY,
+    }[availability.state]
     if availability.dependency.advisory_display:
-        return (
-            f"{availability.state.title()} · {availability.dependency.advisory_display}"
-        )
-    if availability.state == "unverified" and availability.recovery_action == "none":
-        return _PROFILE_NO_CATALOG_CHECK_COPY
-    return availability.state.title()
+        return f"{status} · {availability.dependency.advisory_display}"
+    return status
 
 
 def profile_action_error_copy(error: BaseException) -> str:
@@ -1420,6 +1518,7 @@ class STTSProfileLibrary(Widget):
         self._loaded_rows: dict[str, LoadedTTSProfile] = {}
         self._row_availability: dict[str, TTSProfileAvailability] = {}
         self._selected_profile: LoadedTTSProfile | None = None
+        self._refresh_continuity: tuple[str, int, int, int, str | None] | None = None
         self._retained_editor_draft: _RetainedEditorDraft | None = None
         self._active_modal: _OwnedProfileModal | None = None
         self._search: str | None = None
@@ -1578,6 +1677,19 @@ class STTSProfileLibrary(Widget):
     ) -> None:
         if not self._live:
             return
+        same_page = search == self._search and max(0, offset) == self._offset
+        if same_page and self._selected_profile is not None:
+            table = self.query_one("#stts-profile-table", DataTable)
+            focused = self.app.focused
+            self._refresh_continuity = (
+                str(self._selected_profile.profile.profile_id),
+                table.cursor_row,
+                table.scroll_offset.x,
+                table.scroll_offset.y,
+                None if focused is None else focused.id,
+            )
+        else:
+            self._refresh_continuity = None
         self._request_id += 1
         self._search = search
         self._offset = max(0, offset)
@@ -1587,7 +1699,8 @@ class STTSProfileLibrary(Widget):
             search=self._search,
             offset=self._offset,
         )
-        self._selected_profile = None
+        if not same_page:
+            self._selected_profile = None
         self._sync_selected_actions()
         self._set_status(_PROFILE_LOADING_COPY)
         task = self._active_page_task
@@ -1841,6 +1954,8 @@ class STTSProfileLibrary(Widget):
         table.clear(columns=False)
         self._loaded_rows.clear()
         self._row_availability = previous_availability
+        continuity = self._refresh_continuity
+        self._refresh_continuity = None
         self._selected_profile = None
         self._rendered_request = request
         self._rendered_repository_generation = page.repository_generation
@@ -1874,7 +1989,22 @@ class STTSProfileLibrary(Widget):
                 key=key,
             )
 
+        if continuity is not None:
+            selected_key, cursor_row, scroll_x, scroll_y, focused_id = continuity
+            selected = self._loaded_rows.get(selected_key)
+            if selected is not None:
+                self._selected_profile = selected
+                selected_row = self._rendered_profile_ids.index(selected_key)
+                table.move_cursor(row=selected_row, animate=False)
+                table.scroll_to(x=scroll_x, y=scroll_y, animate=False)
+                if focused_id is not None:
+                    try:
+                        self.query_one(f"#{focused_id}").focus()
+                    except Exception:  # noqa: BLE001 - stale focus target is harmless
+                        table.focus()
+
         self._sync_paging()
+        self._sync_selected_actions()
         if page.profiles:
             self._set_status(
                 f"{len(page.profiles)} voice profiles loaded. "
@@ -1900,6 +2030,7 @@ class STTSProfileLibrary(Widget):
             )
         self._availability_configuration_revision = snapshot.configuration_revision
         self._availability_catalog_revision = snapshot.catalog_revision
+        self._sync_selected_actions()
         if self._selected_profile is not None:
             if self._availability_status_can_publish():
                 self._show_selected_detail()
@@ -1908,6 +2039,32 @@ class STTSProfileLibrary(Widget):
             f"{len(page.profiles)} voice profiles loaded. "
             "Availability is current for this page."
         )
+
+    def publish_profile_test_availability(
+        self,
+        loaded: LoadedTTSProfile,
+        availability: TTSProfileAvailability,
+    ) -> None:
+        """Refresh one still-current row after matching sample evidence."""
+
+        if not self._live or type(availability) is not TTSProfileAvailability:
+            return
+        key = str(loaded.profile.profile_id)
+        current = self._loaded_rows.get(key)
+        if current != loaded or availability.profile_id != loaded.profile.profile_id:
+            return
+        self._row_availability[key] = availability
+        try:
+            self.query_one("#stts-profile-table", DataTable).update_cell(
+                key,
+                self._availability_column,
+                Text(_availability_cell_text(availability)),
+            )
+        except Exception:  # noqa: BLE001 - a stale row cannot publish
+            return
+        self._sync_selected_actions()
+        if self._selected_profile == loaded:
+            self._show_selected_detail()
 
     def _clear_rows(self) -> None:
         self.query_one("#stts-profile-table", DataTable).clear(columns=False)
@@ -1960,17 +2117,34 @@ class STTSProfileLibrary(Widget):
             button.tooltip = None if action is None else action.tooltip
 
     def _sync_selected_actions(self) -> None:
-        disabled = (
+        base_disabled = (
             self._selected_profile is None or not self._rendered_request_is_current()
         )
         for selector in (
-            "#stts-profile-preview-btn",
             "#stts-profile-edit-btn",
             "#stts-profile-duplicate-btn",
             "#stts-profile-export-btn",
             "#stts-profile-delete-btn",
         ):
-            self.query_one(selector, Button).disabled = disabled
+            self.query_one(selector, Button).disabled = base_disabled
+        preview = self.query_one("#stts-profile-preview-btn", Button)
+        availability = None
+        if self._selected_profile is not None:
+            availability = self._row_availability.get(
+                str(self._selected_profile.profile.profile_id)
+            )
+        if availability is None:
+            preview.label = "Checking"
+            preview.disabled = True
+        elif availability.state == "unavailable":
+            preview.label = "Unavailable"
+            preview.disabled = True
+        elif availability.state == "unverified":
+            preview.label = "Test in Playground"
+            preview.disabled = base_disabled
+        else:
+            preview.label = "Preview"
+            preview.disabled = base_disabled
 
     def _sync_paging(self) -> None:
         rendered_offset = (
@@ -2042,15 +2216,7 @@ class STTSProfileLibrary(Widget):
         elif availability is not None and availability.state == "unavailable":
             status_line = "Unavailable — Refresh, then Edit."
         elif availability is not None and availability.state == "unverified":
-            # Follow the availability's own recovery action rather than the
-            # state alone: a legacy provider's "unverified" is permanent
-            # (no catalog to preflight), so instructing a refresh would name
-            # a control that can never change it (ADR-031).
-            status_line = (
-                "Unverified — Refresh and retry."
-                if availability.recovery_action == "refresh"
-                else "No catalog check — the exact selection is used as-is."
-            )
+            status_line = "Needs test — Open in Playground."
         else:
             status_line = f"{state}."
         if availability is not None and availability.dependency.advisory_display:
@@ -2707,6 +2873,9 @@ class STTSProfileLibrary(Widget):
                 state="unverified",
                 recovery_action="refresh",
             )
+        if availability.state == "unavailable":
+            self._show_selected_detail()
+            return
         service = self._service
         if service is None:
             self._set_status(PROFILE_STORE_UNAVAILABLE_COPY)
@@ -2717,6 +2886,11 @@ class STTSProfileLibrary(Widget):
             self._set_status(profile_action_error_copy(error))
             return
         if type(preset) is not TTSPlaygroundSelectionPreset:
+            self._set_status(PROFILE_ACTION_FAILED_COPY)
+            return
+        try:
+            preset = _remember_profile_test_context(self._service, loaded, preset, self)
+        except Exception:  # noqa: BLE001 - never expose profile-owned values
             self._set_status(PROFILE_ACTION_FAILED_COPY)
             return
         self.post_message(ProfilePreviewRequested(preset))
