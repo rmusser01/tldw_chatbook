@@ -16370,12 +16370,14 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         store = self._ensure_console_chat_store()
+        defaults = self._session._default_console_session_settings()
         store.ensure_session(
             title=self._workspace._console_initial_session_title_for_workspace(
                 store.workspace_context.active_workspace_id
             ),
             workspace_id=store.workspace_context.active_workspace_id,
-            settings=self._session._default_console_session_settings(),
+            settings=defaults,
+            canonical_settings_baseline=defaults,
         )
         self._session._ensure_active_console_session_settings()
         controller = getattr(self, "_console_chat_controller", None)

@@ -103,6 +103,62 @@ async def test_character_handoff_reuses_untouched_chat_one(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_draft_sync_initial_session_keeps_provenance_for_character_handoff(
+    monkeypatch,
+):
+    card = _roleplay_card(name="Alba")
+    screen = _character_screen(monkeypatch, card)
+    store = screen._ensure_console_chat_store()
+
+    screen._session._sync_console_session_draft()
+
+    sessions = store.sessions()
+    assert len(sessions) == 1
+    original = sessions[0]
+    assert original.canonical_settings_baseline is original.settings
+
+    assert await screen._session._start_character_console_session(
+        _start_chat_handoff(card)
+    )
+
+    sessions = store.sessions()
+    assert len(sessions) == 1
+    assert sessions[0].id == original.id
+    assert sessions[0].title == "Chat with Alba"
+
+
+@pytest.mark.asyncio
+async def test_tab_sync_initial_session_keeps_provenance_for_character_handoff(
+    monkeypatch,
+):
+    card = _roleplay_card(name="Alba")
+    screen = _character_screen(monkeypatch, card)
+    store = screen._ensure_console_chat_store()
+    surface = AsyncMock()
+    surface.sync_sessions = AsyncMock()
+    monkeypatch.setattr(screen, "query_one", lambda *_args, **_kwargs: surface)
+    monkeypatch.setattr(screen, "_maybe_show_fleet_coachmark", lambda *_args: None)
+    monkeypatch.setattr(screen, "_console_chat_controller", None)
+
+    await screen._sync_console_native_session_tabs()
+
+    sessions = store.sessions()
+    assert len(sessions) == 1
+    original = sessions[0]
+    assert original.canonical_settings_baseline is original.settings
+    surface.sync_sessions.assert_awaited_once()
+
+    assert await screen._session._start_character_console_session(
+        _start_chat_handoff(card)
+    )
+
+    sessions = store.sessions()
+    assert len(sessions) == 1
+    assert sessions[0].id == original.id
+    assert sessions[0].title == "Chat with Alba"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "worked_state",
     [

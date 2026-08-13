@@ -1879,12 +1879,14 @@ class ConsoleSessionController:
         forward into the new session, in order (TASK-339).
         """
         store = self._ensure_console_chat_store()
+        defaults = self._default_console_session_settings()
         session = store.ensure_session(
             title=self._workspace_initial_session_title(
                 store.workspace_context.active_workspace_id
             ),
             workspace_id=store.workspace_context.active_workspace_id,
-            settings=self._default_console_session_settings(),
+            settings=defaults,
+            canonical_settings_baseline=defaults,
         )
         active_session_id = session.id
         composer = self._console_composer_or_none()
