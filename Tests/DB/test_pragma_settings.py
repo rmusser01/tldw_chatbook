@@ -57,10 +57,11 @@ because it is a live application database this task missed:
   reads and writes as part of normal operation.
 
 ``DB/search_history_db.py``, ``DB/Research_DB.py``, ``DB/Writing_DB.py``,
-``DB/Mindmap_DB.py``, and ``DB/Sync_Client.py`` are dead code (no import
+``DB/Mindmap_DB.py``, and ``DB/Sync_Client.py`` were dead code (no import
 site anywhere outside their own module or the owner-policy registry) --
-task-15481 will retire them; this task's own description names them as an
-explicit skip, not a gap.
+task-15481 retired all five; this task's own description named them as an
+explicit skip, not a gap, and their absence from this file's coverage
+predates and survives that retirement unchanged.
 """
 
 from __future__ import annotations

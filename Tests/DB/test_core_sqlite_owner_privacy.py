@@ -20,7 +20,6 @@ from tldw_chatbook.DB import (
     Prompts_DB,
     RAG_Indexing_DB,
     base_db,
-    search_history_db,
 )
 
 
@@ -89,7 +88,6 @@ CORE_OWNER_CASES = (
         True,
     ),
     OwnerCase("rag_indexing", RAG_Indexing_DB, "db.rag_indexing", {}, {}, False),
-    OwnerCase("search_history", search_history_db, "db.search_history", {}, {}, False),
 )
 
 
@@ -149,10 +147,6 @@ def _patch_minimal_schema(
             "_initialize_schema",
         ),
         "rag_indexing": (RAG_Indexing_DB.RAGIndexingDB, "_initialize_schema"),
-        "search_history": (
-            search_history_db.SearchHistoryDB,
-            "_initialize_schema",
-        ),
     }[case.name]
     monkeypatch.setattr(schema_owner, method_name, initialize)
 
@@ -192,8 +186,6 @@ def _construct(
         return Library_Ingest_Jobs_DB.LibraryIngestJobsDB(target, "privacy-test")
     if case.name == "rag_indexing":
         return RAG_Indexing_DB.RAGIndexingDB(target, "privacy-test")
-    if case.name == "search_history":
-        return search_history_db.SearchHistoryDB(target, "privacy-test")
     raise AssertionError(case.name)
 
 
@@ -447,7 +439,6 @@ def test_core_owner_normalizes_relative_path_lexically(
         (CORE_OWNER_CASES[4], sqlite3.OperationalError),
         (CORE_OWNER_CASES[5], sqlite3.OperationalError),
         (CORE_OWNER_CASES[6], sqlite3.OperationalError),
-        (CORE_OWNER_CASES[7], sqlite3.OperationalError),
     ],
     ids=lambda value: value.name if isinstance(value, OwnerCase) else value.__name__,
 )

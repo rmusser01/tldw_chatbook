@@ -10255,27 +10255,6 @@ class TldwCli(
                 except Exception as e:
                     self.loguru_logger.error(f"Error cleaning up STTS handler: {e}")
 
-            # Stop subscription scheduler if it exists
-            if (
-                hasattr(self, "_subscription_scheduler")
-                and self._subscription_scheduler
-            ):
-                try:
-                    await self._subscription_scheduler.stop()
-                    self.loguru_logger.info("Subscription scheduler stopped")
-                except Exception as e:
-                    self.loguru_logger.error(
-                        f"Error stopping subscription scheduler: {e}"
-                    )
-
-            # Stop auto-sync manager if it exists
-            if hasattr(self, "_auto_sync_manager") and self._auto_sync_manager:
-                try:
-                    self._auto_sync_manager.stop()
-                    self.loguru_logger.info("Auto-sync manager stopped")
-                except Exception as e:
-                    self.loguru_logger.error(f"Error stopping auto-sync manager: {e}")
-
             # Stop the background scheduler loop cleanly.
             scheduler_loop = getattr(self, "scheduler_loop", None)
             scheduler_worker = getattr(self, "scheduler_worker", None)
