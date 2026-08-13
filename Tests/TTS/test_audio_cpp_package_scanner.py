@@ -622,21 +622,22 @@ def test_candidate_accepts_only_its_exact_managed_artifact_mapping(
 def test_repeated_managed_accepts_reuse_the_strict_offline_manifest(
     tmp_path: Path,
 ) -> None:
-    import tldw_chatbook.TTS.audio_cpp_recipes as recipes
+    import tldw_chatbook.TTS.audio_cpp_artifact_catalog as catalog
 
     root = tmp_path / "managed-package"
     root.mkdir()
     _write_gguf(root / "supertonic-3-orig.gguf")
     _, candidate = _managed_root_evidence(root)
-    recipes._artifact_manifest.cache_clear()
+    catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
     try:
         candidate.accept(managed_artifact=_managed_identity())
         candidate.accept(managed_artifact=_managed_identity())
 
-        assert recipes._artifact_manifest.cache_info().misses == 1
-        assert recipes._artifact_manifest.cache_info().hits == 1
+        cache_info = catalog._cached_audio_cpp_artifact_source_manifest.cache_info()
+        assert cache_info.misses == 1
+        assert cache_info.hits == 1
     finally:
-        recipes._artifact_manifest.cache_clear()
+        catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
 
 
 def _exception_graph_text(error: BaseException) -> str:
@@ -654,13 +655,13 @@ def test_candidate_manifest_failure_is_private_and_retryable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import tldw_chatbook.TTS.audio_cpp_recipes as recipes
+    import tldw_chatbook.TTS.audio_cpp_artifact_catalog as catalog
 
     root = tmp_path / "managed-package"
     root.mkdir()
     _write_gguf(root / "supertonic-3-orig.gguf")
     _, candidate = _managed_root_evidence(root)
-    real_loader = recipes.load_audio_cpp_artifact_source_manifest
+    real_loader = catalog.load_audio_cpp_artifact_source_manifest
     private_canary = "/private/managed/store/secret-manifest.json"
     calls = 0
 
@@ -671,8 +672,8 @@ def test_candidate_manifest_failure_is_private_and_retryable(
             raise OSError(f"cannot read {private_canary}")
         return real_loader()
 
-    recipes._artifact_manifest.cache_clear()
-    monkeypatch.setattr(recipes, "load_audio_cpp_artifact_source_manifest", fail_once)
+    catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
+    monkeypatch.setattr(catalog, "load_audio_cpp_artifact_source_manifest", fail_once)
     try:
         with pytest.raises(
             ValueError,
@@ -686,7 +687,7 @@ def test_candidate_manifest_failure_is_private_and_retryable(
         assert candidate.accept(managed_artifact=_managed_identity()).managed_artifact
         assert calls == 2
     finally:
-        recipes._artifact_manifest.cache_clear()
+        catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
 
 
 def test_managed_scanner_manifest_failure_is_private_and_retryable(
@@ -694,12 +695,12 @@ def test_managed_scanner_manifest_failure_is_private_and_retryable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
-    import tldw_chatbook.TTS.audio_cpp_recipes as recipes
+    import tldw_chatbook.TTS.audio_cpp_artifact_catalog as catalog
 
     root = tmp_path / "managed-package"
     root.mkdir()
     _write_gguf(root / "supertonic-3-orig.gguf")
-    real_loader = recipes.load_audio_cpp_artifact_source_manifest
+    real_loader = catalog.load_audio_cpp_artifact_source_manifest
     private_canary = "/private/managed/store/secret-manifest.json"
     calls = 0
 
@@ -710,8 +711,8 @@ def test_managed_scanner_manifest_failure_is_private_and_retryable(
             raise OSError(f"cannot read {private_canary}")
         return real_loader()
 
-    recipes._artifact_manifest.cache_clear()
-    monkeypatch.setattr(recipes, "load_audio_cpp_artifact_source_manifest", fail_once)
+    catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
+    monkeypatch.setattr(catalog, "load_audio_cpp_artifact_source_manifest", fail_once)
     scan_kwargs = {
         "expected_managed_artifact": _managed_identity(),
         "expected_canonical_root": str(root.resolve()),
@@ -729,7 +730,7 @@ def test_managed_scanner_manifest_failure_is_private_and_retryable(
         assert scanner.scan_audio_cpp_package_root(root, **scan_kwargs).discoveries
         assert calls == 2
     finally:
-        recipes._artifact_manifest.cache_clear()
+        catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
 
 
 @pytest.mark.parametrize(
@@ -740,21 +741,30 @@ def test_manifest_control_flow_exceptions_are_not_swallowed(
     monkeypatch: pytest.MonkeyPatch,
     control_flow: BaseException,
 ) -> None:
-    import tldw_chatbook.TTS.audio_cpp_recipes as recipes
+    import tldw_chatbook.TTS.audio_cpp_artifact_catalog as catalog
+    from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
 
     def interrupt():
         raise control_flow
 
-    recipes._artifact_manifest.cache_clear()
-    monkeypatch.setattr(recipes, "load_audio_cpp_artifact_source_manifest", interrupt)
+    recipe = AUDIO_CPP_RECIPE_REGISTRY.for_package("supertonic_3_orig")
+    identity = _managed_identity()
+    catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
+    monkeypatch.setattr(catalog, "load_audio_cpp_artifact_source_manifest", interrupt)
     try:
         with pytest.raises(type(control_flow)):
-            recipes._managed_artifact_matches_recipe(
-                recipes.AUDIO_CPP_RECIPE_REGISTRY.for_package("supertonic_3_orig"),
-                _managed_identity(),
+            catalog.audio_cpp_artifact_identity_matches_recipe(
+                recipe_id=recipe.recipe_id,
+                recipe_revision=recipe.recipe_revision,
+                package_variant=recipe.package_variant,
+                recipe_artifact_ids=recipe.model_library_artifact_ids,
+                recipe_precision=recipe.precision,
+                artifact_id=identity.artifact_id,
+                revision=identity.revision,
+                variant=identity.variant,
             )
     finally:
-        recipes._artifact_manifest.cache_clear()
+        catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
 
 
 @pytest.mark.parametrize(
@@ -852,6 +862,68 @@ def test_managed_exact_root_contract_must_be_complete_and_typed(
 
     with pytest.raises((TypeError, ValueError)):
         scanner.scan_audio_cpp_package_root(root, **kwargs)
+
+
+@pytest.mark.parametrize("raised_error", (OSError, ValueError, TypeError))
+@pytest.mark.parametrize("use_async", (False, True))
+@pytest.mark.asyncio
+async def test_hostile_managed_root_pathlike_is_normalized_without_private_context(
+    tmp_path: Path,
+    raised_error: type[Exception],
+    use_async: bool,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    private_canary = "/private/managed/store/secret-root"
+
+    class HostilePath:
+        def __fspath__(self):
+            raise raised_error(private_canary)
+
+    root = tmp_path / "managed"
+    root.mkdir()
+    kwargs = {
+        "expected_managed_artifact": _managed_identity(),
+        "expected_canonical_root": HostilePath(),
+    }
+
+    with pytest.raises(
+        TypeError,
+        match="audio.cpp managed canonical root is required",
+    ) as raised:
+        if use_async:
+            await scanner.scan_audio_cpp_package_root_async(root, **kwargs)
+        else:
+            scanner.scan_audio_cpp_package_root(root, **kwargs)
+
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert private_canary not in _exception_graph_text(raised.value)
+
+
+@pytest.mark.parametrize(
+    "control_flow",
+    (KeyboardInterrupt(), SystemExit(), asyncio.CancelledError()),
+)
+def test_hostile_managed_root_pathlike_preserves_control_flow(
+    tmp_path: Path,
+    control_flow: BaseException,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    class InterruptingPath:
+        def __fspath__(self):
+            raise control_flow
+
+    root = tmp_path / "managed"
+    root.mkdir()
+
+    with pytest.raises(type(control_flow)):
+        scanner.scan_audio_cpp_package_root(
+            root,
+            expected_managed_artifact=_managed_identity(),
+            expected_canonical_root=InterruptingPath(),
+        )
 
 
 @pytest.mark.asyncio

@@ -233,6 +233,82 @@ async def test_managed_identity_does_not_change_guided_launch_projection(
 
 
 @pytest.mark.asyncio
+async def test_managed_launch_rejects_a_new_second_exact_candidate(
+    tmp_path: Path,
+) -> None:
+    error_type, materialize = _launch_api()
+    root = tmp_path / "models" / "managed-supertonic"
+    _write_gguf(root, "supertonic-3-orig.gguf")
+    (root / "pocket-tts-english-bf16.gguf").write_bytes(
+        b"GGUF" + (3).to_bytes(4, "little")
+    )
+    candidates = scan_audio_cpp_package_root(root).discoveries[0].match.candidates
+    accepted = next(
+        candidate
+        for candidate in candidates
+        if candidate.recipe.package_variant == "supertonic_3_orig"
+    ).accept(
+        public_model_id="managed-narrator",
+        managed_artifact=_managed_identity(),
+    )
+
+    with pytest.raises(error_type) as raised:
+        await materialize(
+            _settings(_binary(tmp_path), [accepted]),
+            artifact_root=tmp_path / "runtime-managed",
+            port_selector=lambda: 54_322,
+            system="darwin",
+            architecture="arm64",
+        )
+
+    assert raised.value.code == "package_changed"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_launch_revalidation_uses_managed_contract_only_when_present(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    managed_root = tmp_path / "managed"
+    legacy_root = tmp_path / "legacy"
+    _write_gguf(managed_root, "supertonic-3-orig.gguf")
+    _write_gguf(legacy_root, "supertonic-3-orig.gguf")
+    managed = _accept(managed_root, "supertonic_3_orig", "managed").model_copy(
+        update={"managed_artifact": _managed_identity()}
+    )
+    legacy = _accept(legacy_root, "supertonic_3_orig", "legacy")
+    real_scan = launch_module.scan_audio_cpp_package_root_async
+    calls: list[dict[str, object]] = []
+
+    async def recording_scan(root, **kwargs):
+        calls.append(kwargs)
+        return await real_scan(root, **kwargs)
+
+    monkeypatch.setattr(
+        launch_module,
+        "scan_audio_cpp_package_root_async",
+        recording_scan,
+    )
+
+    recipes = await launch_module.revalidate_audio_cpp_guided_packages(
+        (managed, legacy)
+    )
+
+    assert len(recipes) == 2
+    assert calls == [
+        {
+            "expected_managed_artifact": managed.managed_artifact,
+            "expected_canonical_root": managed.canonical_root,
+        },
+        {},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_materializes_explicitly_accepted_models_from_one_ambiguous_root(
     tmp_path: Path,
 ) -> None:

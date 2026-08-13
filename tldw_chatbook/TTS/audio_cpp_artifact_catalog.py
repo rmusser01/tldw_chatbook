@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cache
 import ipaddress
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -370,6 +371,40 @@ def load_audio_cpp_artifact_source_manifest(
     return parse_audio_cpp_artifact_source_manifest(
         raw,
         expected_commit=expected_commit,
+    )
+
+
+@cache
+def _cached_audio_cpp_artifact_source_manifest() -> AudioCppArtifactSourceManifest:
+    return load_audio_cpp_artifact_source_manifest()
+
+
+def audio_cpp_artifact_identity_matches_recipe(
+    *,
+    recipe_id: str,
+    recipe_revision: int,
+    package_variant: str,
+    recipe_artifact_ids: tuple[str, ...],
+    recipe_precision: str,
+    artifact_id: str,
+    revision: str,
+    variant: str,
+) -> bool:
+    """Match scalar recipe facts to one exact pinned artifact package."""
+
+    try:
+        manifest = _cached_audio_cpp_artifact_source_manifest()
+    except (OSError, TypeError, ValueError):
+        return False
+    return bool(
+        revision == manifest.commit == AUDIO_CPP_ARTIFACT_COMMIT
+        and variant == recipe_precision
+        and recipe_artifact_ids == (artifact_id,)
+        and any(
+            package.key == (recipe_id, recipe_revision, package_variant)
+            and package.artifact_id == artifact_id
+            for package in manifest.packages
+        )
     )
 
 

@@ -310,7 +310,14 @@ async def revalidate_audio_cpp_guided_packages(
         scan_failed = False
         scan: AudioCppPackageScanResult | None = None
         try:
-            scan = await scan_audio_cpp_package_root_async(accepted.canonical_root)
+            if accepted.managed_artifact is None:
+                scan = await scan_audio_cpp_package_root_async(accepted.canonical_root)
+            else:
+                scan = await scan_audio_cpp_package_root_async(
+                    accepted.canonical_root,
+                    expected_managed_artifact=accepted.managed_artifact,
+                    expected_canonical_root=accepted.canonical_root,
+                )
         except Exception:
             scan_failed = True
         if (

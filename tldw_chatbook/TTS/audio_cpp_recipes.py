@@ -1,7 +1,7 @@
 """Sealed package recipes for guided audio.cpp setup.
 
 Recipes are inert data. Matching consumes a bounded pre-scanned description;
-this module performs no filesystem, network, process, download, or UI work.
+managed acceptance delegates exact identity validation to the offline catalog.
 """
 
 from __future__ import annotations
@@ -10,17 +10,12 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from enum import StrEnum
-from functools import cache
 from hashlib import sha256
 from pathlib import PurePosixPath, PureWindowsPath
 from types import MappingProxyType
 from uuid import uuid4
 
-from .audio_cpp_artifact_catalog import (
-    AUDIO_CPP_ARTIFACT_COMMIT,
-    AudioCppArtifactSourceManifest,
-    load_audio_cpp_artifact_source_manifest,
-)
+from .audio_cpp_artifact_catalog import audio_cpp_artifact_identity_matches_recipe
 from .audio_cpp_guided_config import (
     AudioCppAcceptedPackage,
     AudioCppBackendPreference,
@@ -515,34 +510,21 @@ def _identity(parts: tuple[str, ...]) -> str:
     return sha256("\x00".join(parts).encode("utf-8")).hexdigest()
 
 
-@cache
-def _artifact_manifest() -> AudioCppArtifactSourceManifest:
-    return load_audio_cpp_artifact_source_manifest()
-
-
 def _managed_artifact_matches_recipe(
     recipe: AudioCppPackageRecipe,
     identity: AudioCppManagedArtifactIdentity,
 ) -> bool:
-    try:
-        manifest = _artifact_manifest()
-    except (OSError, TypeError, ValueError):
+    if type(identity) is not AudioCppManagedArtifactIdentity:
         return False
-    return bool(
-        type(identity) is AudioCppManagedArtifactIdentity
-        and identity.revision == manifest.commit == AUDIO_CPP_ARTIFACT_COMMIT
-        and identity.variant == recipe.precision
-        and recipe.model_library_artifact_ids == (identity.artifact_id,)
-        and any(
-            package.key
-            == (
-                recipe.recipe_id,
-                recipe.recipe_revision,
-                recipe.package_variant,
-            )
-            and package.artifact_id == identity.artifact_id
-            for package in manifest.packages
-        )
+    return audio_cpp_artifact_identity_matches_recipe(
+        recipe_id=recipe.recipe_id,
+        recipe_revision=recipe.recipe_revision,
+        package_variant=recipe.package_variant,
+        recipe_artifact_ids=recipe.model_library_artifact_ids,
+        recipe_precision=recipe.precision,
+        artifact_id=identity.artifact_id,
+        revision=identity.revision,
+        variant=identity.variant,
     )
 
 

@@ -535,9 +535,13 @@ def _managed_expectation(
         raise ValueError("audio.cpp managed scan expectation must be complete")
     if type(expected_managed_artifact) is not AudioCppManagedArtifactIdentity:
         raise TypeError("audio.cpp managed artifact identity is required")
+    invalid_root = False
     try:
         root = os.fspath(expected_canonical_root)
-    except TypeError:
+    except (OSError, TypeError, ValueError):
+        invalid_root = True
+        root = ""
+    if invalid_root:
         raise TypeError("audio.cpp managed canonical root is required") from None
     if type(root) is not str:
         raise TypeError("audio.cpp managed canonical root is required")
