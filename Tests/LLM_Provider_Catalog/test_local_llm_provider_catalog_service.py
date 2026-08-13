@@ -530,11 +530,7 @@ async def test_qwencloud_catalog_normalization_cache_fallback_and_write_through(
     )
     ModelCatalogDiskStore(dirty_cache_path).load_into(dirty_service.discovery_cache)
     dirty_merged = dirty_service.merge_saved_and_discovered_models(provider="QwenCloud")
-    assert [entry.model_id for entry in dirty_merged] == [
-        "configured-model",
-        "cached-model",
-        "runtime-model",
-    ]
+    assert [entry.model_id for entry in dirty_merged] == ["configured-model"]
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
@@ -87,21 +88,29 @@ def test_cache_list_returns_immutable_snapshot():
     assert [m.model_id for m in listed] == ["gpt-4.1"]
 
 
-def test_cache_bounds_many_endpoint_snapshots_and_keeps_recently_used():
-    cache = ModelDiscoveryCache(max_snapshots=32, max_models=64)
-    for index in range(1000):
+def test_cache_lru_touch_keeps_old_entry_over_newer_untouched_entry():
+    cache = ModelDiscoveryCache(max_snapshots=3, max_models=3)
+    for endpoint in ("old", "middle", "newer"):
         cache.replace(
             "Custom",
-            f"endpoint-{index}",
-            (model(f"model-{index}", endpoint_fingerprint=f"endpoint-{index}"),),
+            endpoint,
+            (model(endpoint, endpoint_fingerprint=endpoint),),
         )
-        if index == 990:
-            assert cache.has_snapshot("Custom", "endpoint-990")
 
-    assert cache.snapshot_count <= 32
-    assert cache.model_count <= 64
-    assert cache.has_snapshot("Custom", "endpoint-990")
-    assert not cache.has_snapshot("Custom", "endpoint-0")
+    assert [item.model_id for item in cache.list("Custom", "old")] == ["old"]
+    cache.replace(
+        "Custom",
+        "newest",
+        (model("newest", endpoint_fingerprint="newest"),),
+    )
+
+    assert cache.has_snapshot("Custom", "old")
+    assert not cache.has_snapshot("Custom", "middle")
+    assert [item.model_id for item in cache.list("Custom")] == [
+        "newer",
+        "newest",
+        "old",
+    ]
 
 
 def test_cache_model_budget_evicts_whole_snapshots_without_partial_values():
@@ -119,23 +128,39 @@ def test_cache_model_budget_evicts_whole_snapshots_without_partial_values():
 
 def test_cache_concurrent_replace_list_and_clear_remain_bounded():
     cache = ModelDiscoveryCache(max_snapshots=20, max_models=40)
-
-    def mutate(index: int) -> None:
-        endpoint = f"endpoint-{index}"
+    for index in range(4):
         cache.replace(
-            "Custom",
-            endpoint,
-            (model(f"model-{index}", endpoint_fingerprint=endpoint),),
+            "Evict",
+            f"populated-{index}",
+            (model(f"evict-{index}", provider_list_key="Evict"),),
         )
-        cache.list("Custom", endpoint)
-        if index % 17 == 0:
-            cache.clear("Unused")
+    barrier = Barrier(9)
 
-    with ThreadPoolExecutor(max_workers=12) as executor:
-        tuple(executor.map(mutate, range(1000)))
+    def mutate(worker: int) -> None:
+        barrier.wait()
+        for index in range(100):
+            endpoint = f"endpoint-{worker}-{index}"
+            cache.replace(
+                "Custom",
+                endpoint,
+                (model(f"model-{worker}-{index}", endpoint_fingerprint=endpoint),),
+            )
+            cache.list("Custom", endpoint)
 
+    def invalidate() -> None:
+        barrier.wait()
+        cache.clear("Evict")
+
+    with ThreadPoolExecutor(max_workers=9) as executor:
+        futures = [executor.submit(mutate, worker) for worker in range(8)]
+        futures.append(executor.submit(invalidate))
+        for future in futures:
+            future.result()
+
+    assert cache.list("Evict") == ()
     assert cache.snapshot_count <= 20
     assert cache.model_count <= 40
+    assert len(cache.list("Custom")) == cache.model_count
 
 
 @pytest.mark.parametrize(
@@ -170,6 +195,35 @@ def test_cache_rejects_snapshot_over_model_budget_without_replacing_current():
             "endpoint",
             tuple(model(f"too-many-{index}") for index in range(3)),
         )
+
+    assert [item.model_id for item in cache.list("Custom", "endpoint")] == ["current"]
+
+
+def test_cache_stops_oversized_generator_at_max_plus_one_and_preserves_snapshot():
+    cache = ModelDiscoveryCache(max_models=2)
+    cache.replace("Custom", "endpoint", (model("current"),))
+    consumed = 0
+
+    def infinite_models():
+        nonlocal consumed
+        while True:
+            consumed += 1
+            yield model(f"generated-{consumed}")
+
+    with pytest.raises(ValueError, match="bounds"):
+        cache.replace("Custom", "endpoint", infinite_models())
+
+    assert consumed == 3
+    assert [item.model_id for item in cache.list("Custom", "endpoint")] == ["current"]
+
+
+@pytest.mark.parametrize("model_id", ("", "x" * 121, "unsafe\nmodel"))
+def test_cache_rejects_invalid_model_id_without_replacing_current(model_id):
+    cache = ModelDiscoveryCache()
+    cache.replace("Custom", "endpoint", (model("current"),))
+
+    with pytest.raises(ValueError, match="model snapshot"):
+        cache.replace("Custom", "endpoint", (model(model_id),))
 
     assert [item.model_id for item in cache.list("Custom", "endpoint")] == ["current"]
 

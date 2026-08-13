@@ -8,6 +8,8 @@ from threading import RLock
 
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import DiscoveredModel
 
+_MODEL_ID_MAX_CHARS = 120
+
 
 class ModelDiscoveryCache:
     """Store discovered model snapshots by provider key and endpoint fingerprint."""
@@ -43,11 +45,13 @@ class ModelDiscoveryCache:
     ) -> None:
         """Replace one provider/endpoint snapshot with immutable model results."""
         key = self._snapshot_key(provider_list_key, endpoint_fingerprint)
-        snapshot = tuple(models)
-        if any(type(item) is not DiscoveredModel for item in snapshot):
-            raise TypeError("model snapshot is invalid")
-        if len(snapshot) > self._max_models:
-            raise ValueError("model snapshot exceeds cache bounds")
+        snapshot_items: list[DiscoveredModel] = []
+        for item in models:
+            if len(snapshot_items) >= self._max_models:
+                raise ValueError("model snapshot exceeds cache bounds")
+            self._validate_model(item)
+            snapshot_items.append(item)
+        snapshot = tuple(snapshot_items)
         with self._lock:
             previous = self._models_by_provider_endpoint.pop(key, ())
             self._model_count -= len(previous)
@@ -129,3 +133,17 @@ class ModelDiscoveryCache:
             cls._required_identity(provider, 128),
             cls._required_identity(endpoint, 512),
         )
+
+    @staticmethod
+    def _validate_model(item: object) -> None:
+        if type(item) is not DiscoveredModel:
+            raise TypeError("model snapshot is invalid")
+        model_id = item.model_id
+        if (
+            type(model_id) is not str
+            or not model_id
+            or model_id != model_id.strip()
+            or len(model_id) > _MODEL_ID_MAX_CHARS
+            or not model_id.isprintable()
+        ):
+            raise ValueError("model snapshot is invalid")
