@@ -2168,17 +2168,6 @@ def _select_llamacpp_console(console: ChatScreen) -> None:
     console._sync_console_control_bar()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "task-15511: a completed non-streaming send leaves run_state at IDLE "
-    "instead of COMPLETED. Measured stable across ~0.8s of pumping, so not a "
-    "race; either the transition is missing or the send used a different "
-    "controller instance than _ensure_console_chat_controller() returns. "
-    "Passed only while the harness booted with a near-empty config "
-    "(task-15270). strict=True so a fix flips this loudly."
-    ),
-)
 @pytest.mark.asyncio
 async def test_console_native_generic_provider_send_renders_completed_message(
     monkeypatch,
@@ -11377,16 +11366,6 @@ async def test_clear_attachment_button_resyncs_composer_blocked_state(monkeypatc
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "task-15511: the inline image row appears after prep but disappears on the "
-    "first pixels -> graphics toggle, where it is asserted still present -- "
-    "likely a config-selected render mode that draws nothing instead of "
-    "falling back. Passed only while the harness booted with a near-empty "
-    "config (task-15270). strict=True so a fix flips this loudly."
-    ),
-)
 @pytest.mark.asyncio
 async def test_image_message_gets_inline_row_after_prep_and_toggle_cycles():
     app = _build_test_app()
@@ -11395,7 +11374,20 @@ async def test_image_message_gets_inline_row_after_prep_and_toggle_cycles():
     # cycle below is deterministic; leaving this on "auto" resolves from the
     # host terminal's TERM/TERM_PROGRAM env vars (see resolve_default_mode),
     # which varies across dev machines and CI.
-    app.app_config["chat"] = {"images": {"default_render_mode": "pixels"}}
+    #
+    # task-15511: the pin must land where production READS it.
+    # `_chat_images_config` prefers `COMPREHENSIVE_CONFIG_RAW` whenever the
+    # config carries one -- and the real (task-15270) harness config always
+    # does -- so writing only `app_config["chat"]` is the dead seam the
+    # 15270 triage called out by name: the pin never reached production, the
+    # ambient default resolved from the terminal overrides (graphics on this
+    # machine), and the FIRST toggle landed on hidden -- the row vanishing
+    # one step early was this test's premise being lost, not a render bug.
+    images_pin = {"images": {"default_render_mode": "pixels"}}
+    app.app_config["chat"] = dict(images_pin)
+    raw = app.app_config.get("COMPREHENSIVE_CONFIG_RAW")
+    if isinstance(raw, dict):
+        raw.setdefault("chat", {})["images"] = dict(images_pin["images"])
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
