@@ -486,6 +486,14 @@ async def test_children_settling_during_a_wake_turn_ride_the_next_wake(tmp_path)
         marks = app.conversation_local_marks_service
         marks.set_mark(session.id, ConversationLocalMarksService.FLEET_UNSEEN)
         wake = controller.fleet_wake
+        #: has_mark observed the instant wake #2's stream begins -- i.e.
+        #: AFTER wake #1's delivery commit, BEFORE #2 delivers. The mark
+        #: must still be set there: run_b is undelivered, and a cleared
+        #: badge over an undelivered completion is the exact lie the
+        #: clear-only-when-nothing-undelivered guard exists to prevent
+        #: (first-attempt survivor M4 of the mutation round: the
+        #: final-state asserts below could not see this window).
+        mark_between_wakes: list[bool] = []
 
         def mid_stream_settle():
             if len(gateway.payloads) == 1:
@@ -497,6 +505,12 @@ async def test_children_settling_during_a_wake_turn_ride_the_next_wake(tmp_path)
                 )
                 wake.on_fleet_drained(
                     _drain(session.id, _survivor(run_b, session_id=session.id))
+                )
+            elif len(gateway.payloads) == 2:
+                mark_between_wakes.append(
+                    marks.has_mark(
+                        session.id, ConversationLocalMarksService.FLEET_UNSEEN
+                    )
                 )
 
         gateway.on_stream = mid_stream_settle
@@ -512,6 +526,11 @@ async def test_children_settling_during_a_wake_turn_ride_the_next_wake(tmp_path)
         assert "first answer" in first and "second answer" not in first
         assert "second answer" in second and "first answer" not in second, (
             "wake #2 must carry ONLY what wake #1 had not delivered"
+        )
+        assert mark_between_wakes == [True], (
+            "between the wakes the mark must still point at the "
+            "undelivered second completion -- wake #1's commit may clear "
+            "it only when NOTHING undelivered remains"
         )
         # After everything delivered: mark gone, pending gone.
         assert await _settle(lambda: not wake.has_pending(session.id))
