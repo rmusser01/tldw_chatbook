@@ -66,6 +66,49 @@ from tldw_chatbook.UI.STTS_Window import (
 )
 
 
+def test_audiobook_narrator_separator_preserves_voice_and_blend_ids() -> None:
+    class _NarratorSelect:
+        id = "narrator-voice-select"
+        _options = [
+            ("Bella (US Female)", "af_bella"),
+            ("──── Voice Blends ────", "_separator"),
+            ("Duet", "blend:duet"),
+        ]
+
+        def __init__(self, value: object) -> None:
+            self.value = value
+
+    widget = AudioBookGenerationWidget()
+    narrator = _NarratorSelect("af_bella")
+
+    AudioBookGenerationWidget.on_audiobook_selects_changed(
+        widget,
+        SimpleNamespace(select=narrator, value="af_bella"),
+    )
+    narrator.value = "_separator"
+    AudioBookGenerationWidget.on_audiobook_selects_changed(
+        widget,
+        SimpleNamespace(select=narrator, value="_separator"),
+    )
+    assert narrator.value == "af_bella"
+    assert narrator.value != "Bella (US Female)"
+
+    narrator.value = "blend:duet"
+    AudioBookGenerationWidget.on_audiobook_selects_changed(
+        widget,
+        SimpleNamespace(select=narrator, value="blend:duet"),
+    )
+    assert narrator.value == "blend:duet"
+
+    fresh_widget = AudioBookGenerationWidget()
+    fresh_narrator = _NarratorSelect("_separator")
+    AudioBookGenerationWidget.on_audiobook_selects_changed(
+        fresh_widget,
+        SimpleNamespace(select=fresh_narrator, value="_separator"),
+    )
+    assert fresh_narrator.value in {Select.BLANK, None}
+
+
 def _profile(index: int) -> TTSGenerationProfile:
     timestamp = datetime(2026, 7, 27, tzinfo=UTC)
     display_name = f"Voice {index:02d}"

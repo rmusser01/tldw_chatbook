@@ -297,6 +297,7 @@ class AudioBookGenerationWidget(Widget):
         # chapters` only applies a result whose generation matches the
         # latest dispatched one.
         self._chapter_detect_generation: int = 0
+        self._last_valid_narrator_voice: str | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the AudioBook/Podcast UI.
@@ -1100,14 +1101,19 @@ class AudioBookGenerationWidget(Widget):
             if self.content_text:
                 self._estimate_cost(event.value, len(self.content_text))
         elif event.select.id == "narrator-voice-select":
-            # Validate voice selection (prevent selecting separators)
-            if not self._is_valid_voice(event.value):
-                # Find and select the first valid voice
-                voice_select = event.select
-                for value, _ in voice_select._options:
-                    if self._is_valid_voice(value):
-                        voice_select.value = value
-                        break
+            voice_select = event.select
+            available_voice_ids = tuple(
+                value
+                for _label, value in voice_select._options
+                if self._is_valid_voice(value)
+            )
+            if event.value in available_voice_ids:
+                self._last_valid_narrator_voice = event.value
+                return
+            prior = self._last_valid_narrator_voice
+            voice_select.value = (
+                prior if prior in available_voice_ids else Select.BLANK
+            )
 
     def _update_voice_options(self, provider: str) -> None:
         """Update voice options based on provider"""
@@ -1203,6 +1209,7 @@ class AudioBookGenerationWidget(Widget):
             available_voice_ids,
         )
         voice_select.value = normalized if normalized is not None else Select.BLANK
+        self._last_valid_narrator_voice = normalized
 
     def _export_audiobook(self) -> None:
         """Export the generated audiobook"""
