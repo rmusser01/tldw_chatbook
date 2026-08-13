@@ -227,15 +227,34 @@ class ConsoleTranscriptRegion(Vertical):
         transcript = self._transcript_or_none()
         if transcript is None:
             return
+        revealed = False
+        if state.selected_message_id is not None:
+            # TASK-15455: assigning the id directly bypasses `select_message`,
+            # so a selection captured before the transcript re-windowed (a
+            # session switch between capture and restore) could name a message
+            # with no mounted row. Inert whenever the id is already mounted.
+            revealed = transcript.reveal_message(state.selected_message_id)
         transcript.selected_message_id = state.selected_message_id
-        if state.anchored:
-            transcript.anchor()
+
+        def _apply_reading_position() -> None:
+            if state.anchored:
+                transcript.anchor()
+                return
+            transcript.release_anchor()
+            transcript.scroll_to(
+                y=min(state.scroll_y, float(transcript.max_scroll_y)),
+                animate=False,
+            )
+
+        if revealed:
+            # Read order matters: the offset is clamped against
+            # `max_scroll_y`, which only grows once the revealed rows are
+            # mounted. Applying it first silently drops the reader at the
+            # pre-reveal maximum instead of where they were.
+            transcript.call_later(transcript.refresh_messages)
+            transcript.call_after_refresh(_apply_reading_position)
             return
-        transcript.release_anchor()
-        transcript.scroll_to(
-            y=min(state.scroll_y, float(transcript.max_scroll_y)),
-            animate=False,
-        )
+        _apply_reading_position()
 
     def note_follow_intent(self) -> None:
         """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336).
