@@ -3204,6 +3204,7 @@ async def test_library_shell_rail_search_submit_aborts_on_note_conflict():
         )
 
         history_before = screen._library_search_history
+        await _wait_for_selector(screen, pilot, "#library-search-input")
         search_input = screen.query_one("#library-search-input", Input)
         search_input.value = "zeta"
         search_input.focus()
