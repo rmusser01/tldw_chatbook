@@ -88,6 +88,36 @@ async def test_active_query_sync_preserves_search_and_navigation_identity() -> N
 
 
 @pytest.mark.asyncio
+async def test_match_index_sync_displays_no_matches() -> None:
+    """Catch a formatter that leaves a stale match count for an empty result."""
+    app = SearchControlsHarness()
+    async with app.run_test() as pilot:
+        controls = app.query_one("#controls", LibraryMediaContentSearchControls)
+
+        controls.sync_match_index(matches=(), match_index=0)
+        await pilot.pause()
+
+        assert str(app.query_one("#library-media-content-search-status", Static).renderable) == (
+            "No matches"
+        )
+
+
+@pytest.mark.asyncio
+async def test_match_index_sync_wraps_status_index() -> None:
+    """Catch a formatter that exposes an out-of-range rather than wrapped index."""
+    app = SearchControlsHarness()
+    async with app.run_test() as pilot:
+        controls = app.query_one("#controls", LibraryMediaContentSearchControls)
+
+        controls.sync_match_index(matches=(2, 8), match_index=3)
+        await pilot.pause()
+
+        assert str(app.query_one("#library-media-content-search-status", Static).renderable) == (
+            "Match 2 of 2 matches"
+        )
+
+
+@pytest.mark.asyncio
 async def test_blank_query_sync_removes_active_search_controls() -> None:
     """Catch a blank-query transition that leaves stale controls mounted."""
     app = SearchControlsHarness()
