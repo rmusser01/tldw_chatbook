@@ -660,7 +660,6 @@ class _LibraryIngestStartConsent:
     is_folder: bool
     request_fingerprint: str = ""
     authoritative_refusal: bool = False
-    active_registry_job_ids: tuple[str, ...] = ()
 
     @property
     def owed(self) -> bool:
@@ -24201,26 +24200,32 @@ class LibraryScreen(BaseAppScreen):
             request_fingerprint=request_fingerprint,
         )
 
-    def _active_library_ingest_job_ids(self) -> tuple[str, ...]:
-        """Return stable IDs for every currently active visible ingest job."""
-        registry = self._library_ingest_registry()
-        jobs_fn = getattr(registry, "jobs", None)
-        jobs = jobs_fn() if callable(jobs_fn) else ()
-        return tuple(job.job_id for job in jobs if job.state in ACTIVE_INGEST_STATES)
-
     def _authoritative_library_ingest_consent_is_current(
         self,
         armed: _LibraryIngestStartConsent,
         pending: _LibraryIngestStartConsent,
     ) -> bool:
-        """Validate a refusal fallback without re-scanning its source."""
-        return bool(
-            armed.authoritative_refusal
-            and armed.request_fingerprint == pending.request_fingerprint
-            and pending.active_job_ids in ((), armed.active_job_ids)
-            and armed.active_registry_job_ids
-            == self._active_library_ingest_job_ids()
-        )
+        """Validate only the bounded refusal IDs without re-scanning sources."""
+        if (
+            not armed.authoritative_refusal
+            or armed.request_fingerprint != pending.request_fingerprint
+            or pending.active_job_ids not in ((), armed.active_job_ids)
+        ):
+            return False
+        registry = self._library_ingest_registry()
+        get_job = getattr(registry, "get_job", None)
+        if not callable(get_job):
+            return False
+        for job_id in armed.active_job_ids:
+            job = get_job(job_id)
+            if (
+                job is None
+                or job.superseded
+                or job.dismissed
+                or job.state not in ACTIVE_INGEST_STATES
+            ):
+                return False
+        return bool(armed.active_job_ids)
 
     def _submit_library_ingest_form(self) -> None:
         """Validate the ingest form and submit a new Library ingest job.
@@ -24569,10 +24574,17 @@ class LibraryScreen(BaseAppScreen):
                 pending.request_fingerprint
                 != confirmed_consent.request_fingerprint
             )
+            authoritative_current = (
+                self._authoritative_library_ingest_consent_is_current(
+                    confirmed_consent, pending
+                )
+            )
             membership_changed = (
                 pending.active_job_ids != confirmed_consent.active_job_ids
+                and not authoritative_current
             )
-            if request_changed or (membership_changed and pending.owed):
+            replacement_active = bool(pending.active_job_ids)
+            if request_changed or (membership_changed and replacement_active):
                 self.app_instance._ensure_parakeet_source_service().release_scope(
                     scope_id
                 )
@@ -24589,8 +24601,9 @@ class LibraryScreen(BaseAppScreen):
                 )
                 return
             if membership_changed:
-                # The confirmed match finished while preparation ran. The
-                # request may proceed, but only under the ordinary guard.
+                # The confirmed match finished while preparation ran and no
+                # replacement is visible. Tooling was part of the same
+                # consent, so proceed under the ordinary authoritative guard.
                 submit_kwargs["allow_active_duplicate"] = False
         self._library_external_submit_consent = None
         self._set_library_external_status("Queueing import…", busy=True)
@@ -24792,7 +24805,6 @@ class LibraryScreen(BaseAppScreen):
                     is_folder=False,
                     request_fingerprint=pending.request_fingerprint,
                     authoritative_refusal=True,
-                    active_registry_job_ids=self._active_library_ingest_job_ids(),
                 )
             self._library_ingest_start_consent = pending
             self._library_ingest_start_confirm_armed_at = time.monotonic()
