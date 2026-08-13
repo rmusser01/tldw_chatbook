@@ -4,7 +4,7 @@ title: Complete web_search and web_fetch Console and MCP exposure
 status: Done
 assignee: []
 created_date: '2026-08-05 05:49'
-updated_date: '2026-08-11 05:03'
+updated_date: '2026-08-12'
 labels:
   - web-tools
 dependencies: []
@@ -40,7 +40,7 @@ ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md; backlog
 Reason: ADR-032 is the canonical Console registration, permission, and egress boundary for local web tools; ADR-053 governs their optional external mcp-unified exposure. Amend and link these existing records rather than create a duplicate ADR.
 
 1. Audit TASK-1354, its original FastMCP-era spec/plan, the shipped phase-3a local-provider implementation, TASK-2828 external exposure, and later permission/config hardening.
-2. Reconcile ADR-032 and the stale TASK-1354 spec/plan with the implemented public-only redirect-safe egress policy, Ask-preserving local permission model, and ADR-053 mcp-unified bridge.
+2. Reconcile ADR-032 and the stale TASK-1354 spec/plan with the implemented split egress contract: both web tools use the Ask-preserving local permission model; `web_fetch` enforces public HTTP(S) targets and redirect-hop validation; and for each `web_search` invocation the caller/model selects one allowlisted `search_engine`, which determines the destination. The operator supplies supported per-engine credentials and configurable endpoints where available; fixed-endpoint engines remain implementation-defined; a configured Searx endpoint may be local; and `web_search` does not apply public-target validation.
 3. Run focused existing tests for Console discovery/invocation, LocalToolProvider schemas and approvals, egress and redirect blocking, configuration contracts, and optional external MCP registration/refusal.
 4. Fix only evidence-backed gaps within the reconciled acceptance criteria; otherwise avoid duplicating already-shipped production logic or tests.
 5. Run scoped static checks, self-review the exact diff, record implementation notes and verification evidence, check all acceptance criteria, and mark TASK-1354 Done.
@@ -51,7 +51,7 @@ Reason: ADR-032 is the canonical Console registration, permission, and egress bo
 <!-- SECTION:NOTES:BEGIN -->
 - Reconciled the stale FastMCP-era task, design, and plan with the implementation that actually shipped through the local-agent-tools phase work. The Console owns `local:web_search` and `local:web_fetch` through `LocalToolProvider` under ADR-032; fresh calls remain Ask and retain the kill switch, definition-hash protection, and approval flow.
 - Confirmed TASK-2828/ADR-053 provide opt-in standalone mcp-unified exposure through the same provider. `[mcp] expose_local_tools` defaults off, and external Ask fails closed because no Console approval callback exists.
-- Amended ADR-032 to record the stronger public-only egress contract: non-HTTP(S), non-public DNS answers, and every unsafe redirect hop are rejected before transport. Linked TASK-1354 from ADR-032 and ADR-053 and marked the abandoned builtin/default-Allow/domain-scoped/Playwright draft non-normative.
+- Amended ADR-032 to record the shipped split egress contract. Both tools remain permission-gated; only `web_fetch` rejects non-HTTP(S), non-public DNS answers, and unsafe redirect hops before transport. For each `web_search` call, the caller/model selects one allowlisted `search_engine`, which determines the destination. The operator supplies supported per-engine credentials and configurable endpoints where available; fixed-endpoint engines remain implementation-defined; a configured Searx endpoint may be local; and `web_search` does not apply public-target validation. Linked TASK-1354 from ADR-032 and ADR-053 and marked the abandoned builtin/default-Allow/domain-scoped/Playwright draft non-normative.
 - No production code or duplicate tests were added: the feature and its regression coverage already existed. Verification: 414 passed across web core, provider, Console integration, external MCP, egress, config, and deep-search contracts; 21 passed across Console bridge and MCP server UI integration; template probe confirmed `[tools]`, `[webfetch]`, and documented robots.txt behavior; diff checks were clean.
 - Plan deviation: implementation was already delivered by the approved phase-3a/phase-4 plans before this parent task was closed, so this pass performed the planned audit/reconciliation and verification only. No new lesson was added because `lessons-backlog-hygiene.md` already records the exact shipped-but-still-To-Do board trap.
 <!-- SECTION:NOTES:END -->

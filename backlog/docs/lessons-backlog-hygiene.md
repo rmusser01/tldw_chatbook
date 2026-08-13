@@ -347,6 +347,21 @@ committing it would put a nameless, statusless task on the board.
 
 ---
 
+## Markdown hard breaks can pass review but fail diff-check—or lose rendering when stripped
+
+**TASK-694 closeout, 2026-08-12.** The ownership design used two trailing
+spaces to render metadata and ADR fields on separate lines. The required
+`git diff --check origin/dev...HEAD` gate correctly blocked closeout on those
+spaces. Removing them made diff-check green, but also removed the Markdown
+`<br>` separation; an independent quality review caught the rendering change.
+
+**What to do.** Use bullets, blank paragraphs, or another explicit semantic
+structure for governed Markdown metadata. If whitespace cleanup touches a
+Markdown hard break, render-compare the result before calling the edit a
+no-op.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md`
