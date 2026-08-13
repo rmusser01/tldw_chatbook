@@ -5,9 +5,10 @@ Scope-aware routing for local notes, server notes, and workspace notes.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping, Sequence
 from enum import Enum
 from functools import partial
-from typing import Any, Mapping, NoReturn, Optional, Sequence
+from typing import Any, NoReturn, Optional
 
 from loguru import logger
 
@@ -90,7 +91,7 @@ class NotesScopeService:
         policy_enforcer: Any = None,
         sync_scope_service: Any = None,
         sync_v2_notes_producer: Any = None,
-        folder_repository: Any = None,
+        folder_repository: Any | None = None,
     ):
         self.local_notes_service = local_notes_service
         self.server_service = server_service
@@ -196,7 +197,7 @@ class NotesScopeService:
         parent_id: str | None,
         limit: int,
         offset: int,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> NoteFolderPage:
         """List a bounded page of direct local folder children."""
         repository = self._folder_repository_for_action(
@@ -216,7 +217,7 @@ class NotesScopeService:
         self,
         *,
         scope: ScopeType | str,
-        user_id: Optional[str],
+        user_id: str | None,
         action: str,
         operation: FolderCapabilityName,
     ) -> Any:
@@ -262,7 +263,7 @@ class NotesScopeService:
         scope: ScopeType | str,
         expanded_folder_ids: Sequence[str],
         note_limit: int,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> NoteFolderPage:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="list", operation="list"
@@ -279,7 +280,7 @@ class NotesScopeService:
         scope: ScopeType | str,
         name: str,
         parent_id: str | None,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> NoteFolder:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="create", operation="create"
@@ -297,7 +298,7 @@ class NotesScopeService:
         folder_id: str,
         name: str,
         expected_version: int,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> FolderMutationResult:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="rename"
@@ -316,7 +317,7 @@ class NotesScopeService:
         folder_id: str,
         parent_id: str | None,
         expected_version: int,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> FolderMutationResult:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="move"
@@ -334,7 +335,7 @@ class NotesScopeService:
         scope: ScopeType | str,
         folder_id: str,
         expected_version: int,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> FolderMutationResult:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="delete", operation="delete"
@@ -351,7 +352,7 @@ class NotesScopeService:
         scope: ScopeType | str,
         folder_id: str,
         expected_version: int,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> FolderMutationResult:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="restore"
@@ -368,7 +369,7 @@ class NotesScopeService:
         scope: ScopeType | str,
         folder_id: str,
         note_id: str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> NoteFolderMembership:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="membership"
@@ -386,7 +387,7 @@ class NotesScopeService:
         folder_id: str,
         note_id: str,
         expected_version: int,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> bool:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="membership"
@@ -403,7 +404,7 @@ class NotesScopeService:
         *,
         scope: ScopeType | str,
         owner_id: str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> int:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="membership"
@@ -418,7 +419,7 @@ class NotesScopeService:
         *,
         scope: ScopeType | str,
         owner_id: str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> int:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="membership"
@@ -432,7 +433,7 @@ class NotesScopeService:
         self,
         *,
         scope: ScopeType | str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> tuple[RestoredManagedMembershipReview, ...]:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="list", operation="membership"

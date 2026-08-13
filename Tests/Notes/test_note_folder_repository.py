@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from datetime import datetime, timezone
 import sqlite3
 import uuid
+from collections.abc import Iterator
+from datetime import UTC, datetime
 
 import pytest
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 import tldw_chatbook.Notes.note_folder_repository as folder_repository_module
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
     FolderCollisionError,
     FolderConflictError,
@@ -33,7 +33,7 @@ def repository(tmp_path) -> Iterator[LocalNoteFolderRepository]:
 
 
 def _timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace(
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace(
         "+00:00", "Z"
     )
 
@@ -737,29 +737,28 @@ def test_multirow_mutation_rolls_back_to_its_own_boundary_when_outer_catches(
     connection.commit()
     before = _folder_rows(repository)
 
-    with repository.db.transaction():
-        with pytest.raises(FolderValidationError):
-            if operation == "rename":
-                repository.rename_folder(
-                    root.folder_id,
-                    name="Renamed",
-                    expected_version=expected_version,
-                )
-            elif operation == "move":
-                assert destination is not None
-                repository.move_folder(
-                    root.folder_id,
-                    parent_id=destination.folder_id,
-                    expected_version=expected_version,
-                )
-            elif operation == "delete":
-                repository.soft_delete_folder(
-                    root.folder_id, expected_version=expected_version
-                )
-            else:
-                repository.restore_folder(
-                    root.folder_id, expected_version=expected_version
-                )
+    with repository.db.transaction(), pytest.raises(FolderValidationError):
+        if operation == "rename":
+            repository.rename_folder(
+                root.folder_id,
+                name="Renamed",
+                expected_version=expected_version,
+            )
+        elif operation == "move":
+            assert destination is not None
+            repository.move_folder(
+                root.folder_id,
+                parent_id=destination.folder_id,
+                expected_version=expected_version,
+            )
+        elif operation == "delete":
+            repository.soft_delete_folder(
+                root.folder_id, expected_version=expected_version
+            )
+        else:
+            repository.restore_folder(
+                root.folder_id, expected_version=expected_version
+            )
 
     assert _folder_rows(repository) == before
 
@@ -1305,9 +1304,8 @@ def test_reconcile_rolls_back_to_owned_savepoint_when_later_update_fails(
     connection.commit()
     before = _membership_rows(repository)
 
-    with repository.db.transaction():
-        with pytest.raises(FolderValidationError):
-            repository.reconcile_managed(owner_id="root-a", desired=())
+    with repository.db.transaction(), pytest.raises(FolderValidationError):
+        repository.reconcile_managed(owner_id="root-a", desired=())
 
     assert _membership_rows(repository) == before
 

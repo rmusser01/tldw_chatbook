@@ -14,7 +14,6 @@ from tldw_chatbook.Notes.note_folder_models import (
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
-
 FOLDER_OPERATIONS = [
     "list",
     "create",

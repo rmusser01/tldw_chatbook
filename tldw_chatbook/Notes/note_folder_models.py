@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Literal, Mapping
 import unicodedata
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any, Literal
 from urllib.parse import quote
-
 
 FolderOwnership = Literal["manual", "managed"]
 FolderCapabilityName = Literal[

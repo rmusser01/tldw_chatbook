@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
 import sqlite3
-from typing import Iterable, Iterator, NoReturn, Sequence
 import uuid
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from typing import NoReturn
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
@@ -21,7 +22,6 @@ from tldw_chatbook.Notes.note_folder_models import (
     join_normalized_folder_path,
     normalize_folder_name,
 )
-
 
 _FOLDER_COLUMNS = (
     "id, parent_id, name, normalized_name, path, normalized_path, version, deleted, "
@@ -877,7 +877,7 @@ class LocalNoteFolderRepository:
 
 
 def _utc_timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace(
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace(
         "+00:00", "Z"
     )
 
@@ -889,7 +889,7 @@ def _unique_deleted_folder_timestamp(cursor: sqlite3.Cursor) -> str:
         "SELECT 1 FROM note_folders WHERE deleted = 1 AND modified_at = ? LIMIT 1",
         (candidate,),
     ).fetchone() is not None:
-        parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(candidate)
         candidate = (parsed + timedelta(milliseconds=1)).isoformat(
             timespec="milliseconds"
         ).replace("+00:00", "Z")

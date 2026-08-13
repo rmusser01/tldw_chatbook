@@ -1,10 +1,11 @@
 """Contract tests for normalized Database Note folder models."""
 
-from dataclasses import FrozenInstanceError
 import unicodedata
+from dataclasses import FrozenInstanceError
 
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 
 from tldw_chatbook.Notes.note_folder_models import (
     FolderCapabilityError,

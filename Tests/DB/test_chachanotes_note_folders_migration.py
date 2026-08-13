@@ -1,13 +1,12 @@
 """ChaChaNotes V35 -> V36 local note-folder schema migration coverage."""
 
-from pathlib import Path
 import sqlite3
+from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
-
 
 EXPECTED_FOLDER_TABLES = {"note_folders", "note_folder_memberships"}
 MANAGED_OWNER_INDEX = "idx_note_folder_memberships_managed_owner"
