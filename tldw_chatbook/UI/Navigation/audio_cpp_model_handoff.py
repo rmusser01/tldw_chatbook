@@ -172,6 +172,17 @@ class AudioCppModelInstallOwner:
             raise TypeError("invalid audio.cpp install operation")
         await asyncio.shield(operation.task)
 
+    async def wait_until_idle(self) -> None:
+        """Wait until every operation active at each observation has settled."""
+
+        while self._active:
+            await asyncio.shield(
+                asyncio.gather(
+                    *(operation.task for operation in tuple(self._active)),
+                    return_exceptions=True,
+                )
+            )
+
     async def shutdown(self) -> None:
         """Seal the owner, request cancellation, and drain every operation."""
 

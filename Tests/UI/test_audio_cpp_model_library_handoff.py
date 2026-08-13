@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import FrozenInstanceError, fields
+from dataclasses import FrozenInstanceError, fields, replace
 import hashlib
 from pathlib import Path
 import threading
@@ -369,20 +369,43 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
 
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_model_curated_view import _descriptor, _registry_with
-    from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
-    from tldw_chatbook.Model_Artifacts.service import ArtifactRef, ModelArtifactService
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        AcquisitionProgress,
+        PreflightReport,
+    )
+    from tldw_chatbook.Model_Artifacts.service import (
+        ArtifactFile,
+        ArtifactRef,
+        ModelArtifactService,
+    )
     from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
     from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
 
     reference = ArtifactRef("audio-cpp-mounted", "a" * 40, "f16")
     payload = b"mounted-audio-model"
-    descriptor = _descriptor(reference, payload, consumer="audio_cpp")
+    companion = b"phoneme-companion"
+    descriptor = replace(
+        _descriptor(reference, payload, consumer="audio_cpp"),
+        files=(
+            ArtifactFile(
+                "model.bin", len(payload), hashlib.sha256(payload).hexdigest()
+            ),
+            ArtifactFile(
+                "companions/phonemes.json",
+                len(companion),
+                hashlib.sha256(companion).hexdigest(),
+            ),
+        ),
+        expected_installed_bytes=len(payload) + len(companion),
+    )
     registry = _registry_with(descriptor)
     service = ModelArtifactService(tmp_path / "store")
     source = tmp_path / "source"
     source.mkdir()
     (source / "model.bin").write_bytes(payload)
+    (source / "companions").mkdir()
+    (source / "companions/phonemes.json").write_bytes(companion)
     report = PreflightReport(
         root=reference,
         closure_fingerprint=hashlib.sha256(b"mounted-plan").hexdigest(),
@@ -397,8 +420,8 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
         sufficient_space=True,
         gating_errors=(),
     )
-    provision_started = asyncio.Event()
-    release_provision = asyncio.Event()
+    provision_started = threading.Event()
+    release_provision = threading.Event()
     provision_calls: list[bool] = []
 
     class _FixtureAcquisition:
@@ -410,8 +433,12 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
 
         async def provision(self, root, _consent, _registry, **kwargs):
             provision_calls.append(kwargs["activate"])
+            await asyncio.sleep(0.1)
+            kwargs["progress"](
+                AcquisitionProgress("fetch", root, "model.bin", 1, len(payload))
+            )
             provision_started.set()
-            await release_provision.wait()
+            await asyncio.to_thread(release_provision.wait)
             self.core.install(descriptor, source)
             return root
 
@@ -449,6 +476,15 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
         screen = LLMScreen(app)
         await app.push_screen(screen)
         screen.notify = MagicMock()
+        event_loop_thread = threading.get_ident()
+        delivery_threads: list[int] = []
+        deliver = screen._deliver_curated
+
+        def record_delivery(message):
+            delivery_threads.append(threading.get_ident())
+            deliver(message)
+
+        screen._deliver_curated = record_delivery
         assert await _wait_for(lambda: bool(screen.query(CuratedView)), pilot)
         view = screen.query_one(CuratedView)
         assert view._consumer_filter == "audio_cpp"
@@ -459,6 +495,19 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
         assert await _wait_for(
             lambda: bool(app.screen.query("#model-install-confirm")), pilot
         )
+        modal = app.screen
+        modal_text = "\n".join(
+            str(item.renderable) for item in modal.query(".model-plan-panel")
+        )
+        for artifact_file in descriptor.files:
+            assert f"Path: {artifact_file.path}" in modal_text
+            assert f"Bytes: {artifact_file.size_bytes}" in modal_text
+            assert f"SHA-256: {artifact_file.sha256}" in modal_text
+            assert (
+                f"Pinned source URL: https://example.test/{artifact_file.path}"
+                in modal_text
+            )
+        assert "Authorization" not in modal_text
         app.screen.query_one("#model-install-confirm", Button).press()
         assert await _wait_for(provision_started.is_set, pilot)
 
@@ -488,6 +537,7 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
         service.artifact_path(reference).resolve()
     )
     assert provision_calls == [False]
+    assert delivery_threads and set(delivery_threads) == {event_loop_thread}
     screen.notify.assert_called_once_with(
         "Installed — ready for review", severity="information"
     )
@@ -556,7 +606,7 @@ async def test_real_worker_cancel_on_screen_unmount_drains_before_request_releas
         screen._audio_cpp_installed_result = MagicMock(
             return_value=_result(tmp_path.resolve())
         )
-        screen._start_audio_cpp_provision()
+        screen._start_audio_cpp_operation(installed=False)
         worker = screen._model_install_worker
         assert worker is not None
         assert await asyncio.to_thread(executor_started.wait, 2)
@@ -697,6 +747,7 @@ async def test_mounted_unmount_during_blocked_audio_preflight_drains_once(
 
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_model_curated_view import _descriptor, _registry_with
+    from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
     from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
@@ -722,6 +773,20 @@ async def test_mounted_unmount_during_blocked_audio_preflight_drains_once(
     registry = _registry_with(_descriptor(reference, consumer="audio_cpp"))
     started = threading.Event()
     release = threading.Event()
+    report = PreflightReport(
+        root=reference,
+        closure_fingerprint=hashlib.sha256(b"blocked-preflight").hexdigest(),
+        entries=(),
+        download_bytes=0,
+        already_staged_bytes=0,
+        staging_overhead_bytes=0,
+        retained_bytes=0,
+        destination=Path("/managed/audio-cpp-preflight"),
+        free_bytes=1,
+        required_bytes=0,
+        sufficient_space=True,
+        gating_errors=(),
+    )
 
     async with app.run_test(size=(120, 40)) as pilot:
         screen = LLMScreen(app)
@@ -735,19 +800,32 @@ async def test_mounted_unmount_during_blocked_audio_preflight_drains_once(
         screen.notify = MagicMock()
 
         async def blocked_preflight(_reference):
-            def block():
-                started.set()
-                assert release.wait(3)
-                return MagicMock(root=reference)
-
-            return await asyncio.to_thread(block)
+            started.set()
+            assert release.wait(3)
+            return report
 
         screen._preflight_curated = blocked_preflight
+        heartbeat = threading.Event()
+        heartbeat_seen_before_release: list[bool] = []
+
+        async def beat() -> None:
+            await asyncio.sleep(0.01)
+            heartbeat.set()
+
+        def release_after_observation() -> None:
+            heartbeat_seen_before_release.append(heartbeat.is_set())
+
+        timer = threading.Timer(0.2, release_after_observation)
+        timer.start()
+        beat_task = asyncio.create_task(beat())
         screen._start_audio_cpp_preflight()
         worker = screen._model_install_worker
         assert worker is not None
-        assert await asyncio.to_thread(started.wait, 2)
+        await beat_task
+        timer.join()
+        assert started.is_set()
         assert app.audio_cpp_model_install_owner.active_count == 1
+        assert heartbeat_seen_before_release == [True]
 
         await app.switch_screen(Screen())
         release.set()
@@ -822,7 +900,7 @@ async def test_mounted_unmount_with_audio_consent_pending_invalidates_generation
         screen._model_install_reference = reference
         screen._model_install_service = MagicMock()
         screen._model_install_registry = registry
-        screen._model_install_sources = {}
+        screen._model_install_sources = {reference: registry.sources(reference)}
         screen._preflight_curated = AsyncMock(return_value=report)
         screen._provision_curated = AsyncMock()
         screen.notify = MagicMock()
@@ -848,6 +926,87 @@ async def test_mounted_unmount_with_audio_consent_pending_invalidates_generation
     assert replay is not None and replay.value == request
     screen._provision_curated.assert_not_called()
     screen.notify.assert_not_called()
+    assert (
+        app.pending_handoffs.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT)
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_rapid_away_back_reclaims_request_after_old_operation_drains(
+    monkeypatch,
+) -> None:
+    from textual.screen import Screen
+
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_model_curated_view import _descriptor, _registry_with
+    from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+    from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+
+    monkeypatch.setattr(
+        LLMManagementWindow,
+        "_ollama_api_available",
+        lambda _self: asyncio.sleep(0, result=False),
+    )
+    app = _build_test_app()
+    request = AudioCppModelLibraryRequest("rapid-return", 14)
+    app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
+    reference = ArtifactRef("audio-cpp-rapid", "f" * 40, "f16")
+    registry = _registry_with(_descriptor(reference, consumer="audio_cpp"))
+    report = PreflightReport(
+        root=reference,
+        closure_fingerprint=hashlib.sha256(b"rapid").hexdigest(),
+        entries=(),
+        download_bytes=0,
+        already_staged_bytes=0,
+        staging_overhead_bytes=0,
+        retained_bytes=0,
+        destination=Path("/managed/audio-cpp-rapid"),
+        free_bytes=1,
+        required_bytes=0,
+        sufficient_space=True,
+        gating_errors=(),
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        old = LLMScreen(app)
+        await app.push_screen(old)
+        old._model_install_kind = "curated"
+        old._model_install_reference = reference
+        old._model_install_service = MagicMock()
+        old._model_install_registry = registry
+        old._model_install_sources = {reference: registry.sources(reference)}
+        old._model_install_pending_report = report
+
+        async def blocked_provision(_report, cancel_event=None):
+            started.set()
+            await asyncio.to_thread(release.wait)
+            raise asyncio.CancelledError
+
+        old._provision_curated = blocked_provision
+        old._start_audio_cpp_operation(installed=False)
+        assert await asyncio.to_thread(started.wait, 2)
+
+        await app.switch_screen(Screen())
+        replacement = LLMScreen(app)
+        await app.push_screen(replacement)
+        assert replacement._audio_cpp_model_request_claim is None
+        release.set()
+        assert await _wait_for(
+            lambda: app.audio_cpp_model_install_owner.active_count == 0, pilot
+        )
+        assert await _wait_for(
+            lambda: replacement._audio_cpp_model_request_claim is not None, pilot
+        )
+        reclaimed = replacement._audio_cpp_model_request_claim
+
+    assert reclaimed is not None and reclaimed.value == request
+    replay = app.pending_handoffs.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST)
+    assert replay is not None and replay.value == request
     assert (
         app.pending_handoffs.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT)
         is None

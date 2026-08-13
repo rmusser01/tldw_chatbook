@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 
-import asyncio
 import threading
 from unittest.mock import AsyncMock, MagicMock
 
@@ -438,85 +437,6 @@ def test_detached_audio_cpp_failure_releases_request_and_settles_lifecycle():
     screen.notify.assert_called_once_with(
         "Model installation was cancelled.", severity="error"
     )
-
-
-@pytest.mark.parametrize(
-    ("failure_type", "expected_error"),
-    [
-        (RuntimeError, None),
-        (asyncio.CancelledError, "Model installation was cancelled."),
-    ],
-)
-def test_audio_cpp_worker_routes_provision_failure_to_terminal_owner(
-    monkeypatch, failure_type, expected_error
-):
-    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
-    from tldw_chatbook.UI.Screens import llm_screen as module
-
-    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
-    fake_app = MagicMock()
-    fake_app.call_from_thread = MagicMock()
-    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
-    screen = module.LLMScreen.__new__(module.LLMScreen)
-    screen._model_install_pending_report = MagicMock(root=reference)
-    screen._model_install_registry = MagicMock()
-    screen._model_install_registry.descriptor.return_value.consumer = "audio_cpp"
-
-    async def fail_provision(_report):
-        raise failure_type("private failure")
-
-    screen._provision_curated = fail_provision
-
-    module.LLMScreen._run_curated_provision.__wrapped__(screen)
-
-    callback, result, error = fake_app.call_from_thread.call_args.args
-    assert callback.__func__ is module.LLMScreen._apply_audio_cpp_provision_result
-    assert result is None
-    if expected_error is None:
-        assert error != "private failure"
-    else:
-        assert error == expected_error
-    fake_app._ensure_parakeet_source_service.assert_not_called()
-
-
-def test_audio_cpp_worker_success_skips_parakeet_preference(monkeypatch):
-    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
-        parakeet_reference,
-    )
-    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
-    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
-        AudioCppModelLibraryResult,
-    )
-    from tldw_chatbook.UI.Screens import llm_screen as module
-
-    reference = parakeet_reference(PARAKEET_V2_MODEL, "int8")
-    result = AudioCppModelLibraryResult(
-        token="request-token",
-        draft_revision=4,
-        artifact_id=reference.artifact_id,
-        revision=reference.revision,
-        variant=reference.variant,
-        canonical_root="/managed/audio-cpp-model",
-    )
-    fake_app = MagicMock()
-    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
-    screen = module.LLMScreen.__new__(module.LLMScreen)
-    screen._model_install_pending_report = MagicMock(root=reference)
-    screen._model_install_registry = MagicMock()
-    screen._model_install_registry.descriptor.return_value.consumer = "audio_cpp"
-    screen._audio_cpp_installed_result = MagicMock(return_value=result)
-
-    async def provision(_report):
-        return reference
-
-    screen._provision_curated = provision
-
-    module.LLMScreen._run_curated_provision.__wrapped__(screen)
-
-    fake_app.call_from_thread.assert_called_once_with(
-        screen._apply_audio_cpp_provision_result, result, None
-    )
-    fake_app._ensure_parakeet_source_service.assert_not_called()
 
 
 @pytest.mark.asyncio

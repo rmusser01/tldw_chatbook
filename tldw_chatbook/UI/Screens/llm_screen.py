@@ -252,6 +252,7 @@ class LLMScreen(LabScreen):
         self._audio_cpp_operation_expects_return = False
         self._audio_cpp_consent_future: asyncio.Future[bool] | None = None
         self._audio_cpp_consent_modal: ModelInstallModal | None = None
+        self._audio_cpp_reclaim_worker: Worker | None = None
         #: The reference, service, and (curated-only) registry/source map
         #: the currently running (or about-to-run) curated install needs
         #: -- captured once from the posted ``CuratedView.InstallRequested``
@@ -296,6 +297,28 @@ class LLMScreen(LabScreen):
         )
         if claim is not None and type(claim.value) is AudioCppModelLibraryRequest:
             self._audio_cpp_model_request_claim = claim
+        elif self._audio_cpp_install_owner().active_count:
+            self._audio_cpp_reclaim_worker = self._reclaim_audio_cpp_request()
+
+    @work(group="audio_cpp_request_reclaim", exit_on_error=False)
+    async def _reclaim_audio_cpp_request(self) -> None:
+        """Retry one request claim after the prior app-owned operation settles."""
+
+        await self._audio_cpp_install_owner().wait_until_idle()
+        if not self.is_attached or self._audio_cpp_model_request_claim is not None:
+            return
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return
+        claim = cast(PendingHandoffStore, store).claim(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST
+        )
+        if claim is None or type(claim.value) is not AudioCppModelLibraryRequest:
+            return
+        self._audio_cpp_model_request_claim = claim
+        view = self._curated_view()
+        if view is not None:
+            view.set_consumer_filter("audio_cpp", allow_installed_return=True)
 
     def _current_server_rows(self) -> tuple[LabServerRow, ...]:
         """Return server liveness, shared across one refresh pass.
@@ -1628,7 +1651,22 @@ class LLMScreen(LabScreen):
         def deliver(progress: "AcquisitionProgress") -> None:
             if cancel_event is not None and cancel_event.is_set():
                 raise asyncio.CancelledError
-            self._deliver_curated(InstallProgressed(progress))
+            message = InstallProgressed(progress)
+            if cancel_event is None:
+                self._deliver_curated(message)
+            else:
+
+                def deliver_current() -> None:
+                    operation = self._audio_cpp_model_install_operation
+                    if (
+                        operation is not None
+                        and operation.cancel_event is cancel_event
+                        and not cancel_event.is_set()
+                        and self.is_attached
+                    ):
+                        self._deliver_curated(message)
+
+                self.app.call_from_thread(deliver_current)
 
         kwargs: dict[str, object] = {
             "sources": self._model_install_sources,
@@ -1716,7 +1754,9 @@ class LLMScreen(LabScreen):
             if include_preflight:
                 if reference is None:
                     raise RuntimeError("audio.cpp install request is unavailable")
-                active_report = await self._preflight_curated(reference)
+                active_report = await asyncio.to_thread(
+                    lambda: asyncio.run(self._preflight_curated(reference))
+                )
                 if cancel_event.is_set() or not self.is_attached:
                     raise asyncio.CancelledError
                 assert operation is not None
@@ -1732,9 +1772,10 @@ class LLMScreen(LabScreen):
                 self._deliver_curated(InstallStatusChanged(reference, active=True))
             if active_report is None:
                 raise RuntimeError("audio.cpp install plan is unavailable")
-            provisioned = await self._provision_curated(
-                active_report,
-                cancel_event,
+            provisioned = await asyncio.to_thread(
+                lambda: asyncio.run(
+                    self._provision_curated(active_report, cancel_event)
+                )
             )
             return await asyncio.to_thread(
                 self._audio_cpp_installed_result, provisioned
@@ -1770,11 +1811,6 @@ class LLMScreen(LabScreen):
 
         self._start_audio_cpp_operation(installed=False, include_preflight=True)
 
-    def _start_audio_cpp_provision(self) -> None:
-        """Start durable install-only audio.cpp provisioning."""
-
-        self._start_audio_cpp_operation(installed=False)
-
     async def _await_audio_cpp_consent(
         self,
         operation: AudioCppModelInstallOperation,
@@ -1796,7 +1832,11 @@ class LLMScreen(LabScreen):
         self._model_install_pending_report = report
         future = asyncio.get_running_loop().create_future()
         self._audio_cpp_consent_future = future
-        modal = ModelInstallModal(report, model_label=descriptor.model_id)
+        modal = ModelInstallModal(
+            report,
+            model_label=descriptor.model_id,
+            selected_file_details=self._audio_cpp_selected_file_details(report),
+        )
         self._audio_cpp_consent_modal = modal
         self.app.push_screen(
             modal,
@@ -1820,6 +1860,24 @@ class LLMScreen(LabScreen):
         ):
             raise asyncio.CancelledError
         return future.result()
+
+    def _audio_cpp_selected_file_details(
+        self,
+        report: "PreflightReport",
+    ) -> tuple[tuple[str, int, str, str], ...]:
+        """Return exact immutable file facts for the reviewed closure."""
+
+        registry = self._model_install_registry
+        sources = self._model_install_sources
+        if registry is None or sources is None:
+            raise RuntimeError("audio.cpp source review state is unavailable")
+        references = tuple(entry.ref for entry in report.entries) or (report.root,)
+        return tuple(
+            (artifact_file.path, artifact_file.size_bytes, artifact_file.sha256, source)
+            for reference in references
+            for artifact_file in registry.descriptor(reference).files
+            for source in (sources[reference][artifact_file.path],)
+        )
 
     def _resolve_audio_cpp_consent(
         self,
@@ -1916,34 +1974,6 @@ class LLMScreen(LabScreen):
         self._model_install_kind = None
 
     @work(thread=True, group="llm_curated_install", exit_on_error=False)
-    def _run_curated_installed_return(self) -> None:
-        """Return an already-installed audio.cpp root without provisioning."""
-
-        app = self.app
-        reference = self._model_install_reference
-        if reference is None:
-            app.call_from_thread(
-                self._apply_audio_cpp_provision_result,
-                None,
-                "No installed package is available; choose it again.",
-            )
-            return
-        try:
-            result = self._audio_cpp_installed_result(reference)
-        except Exception as exc:
-            logger.opt(exception=True).error(
-                "Installed audio.cpp package return failed; error_type={}",
-                type(exc).__name__,
-            )
-            app.call_from_thread(
-                self._apply_audio_cpp_provision_result,
-                None,
-                install_failure_message(exc, model_label=reference.artifact_id),
-            )
-            return
-        app.call_from_thread(self._apply_audio_cpp_provision_result, result, None)
-
-    @work(thread=True, group="llm_curated_install", exit_on_error=False)
     def _run_curated_provision(self) -> None:
         """Provision the consented plan off the Textual event loop.
 
@@ -1978,46 +2008,7 @@ class LLMScreen(LabScreen):
                 if isinstance(exc, asyncio.CancelledError)
                 else install_failure_message(exc, model_label=artifact_id)
             )
-            registry = self._model_install_registry
-            try:
-                descriptor = registry.descriptor(root) if registry is not None else None
-            except (AttributeError, KeyError, TypeError, ValueError):
-                descriptor = None
-            if descriptor is not None and descriptor.consumer == "audio_cpp":
-                app.call_from_thread(
-                    self._apply_audio_cpp_provision_result,
-                    None,
-                    error,
-                )
-            else:
-                app.call_from_thread(self._apply_curated_provision_result, error)
-            return
-        registry = self._model_install_registry
-        try:
-            descriptor = (
-                registry.descriptor(reference) if registry is not None else None
-            )
-        except (KeyError, TypeError, ValueError):
-            descriptor = None
-        if descriptor is not None and descriptor.consumer == "audio_cpp":
-            try:
-                result = self._audio_cpp_installed_result(reference)
-            except Exception as exc:
-                logger.opt(exception=True).error(
-                    "Installed audio.cpp package verification failed; error_type={}",
-                    type(exc).__name__,
-                )
-                app.call_from_thread(
-                    self._apply_audio_cpp_provision_result,
-                    None,
-                    install_failure_message(exc, model_label=reference.artifact_id),
-                )
-                return
-            app.call_from_thread(
-                self._apply_audio_cpp_provision_result,
-                result,
-                None,
-            )
+            app.call_from_thread(self._apply_curated_provision_result, error)
             return
         key = self._external_key_for_reference(reference)
         if key is None:
@@ -2173,6 +2164,9 @@ class LLMScreen(LabScreen):
         self._audio_cpp_consent_modal = None
         if modal is not None and modal.is_attached:
             modal.dismiss(False)
+        reclaim_worker = self._audio_cpp_reclaim_worker
+        if reclaim_worker is not None and not reclaim_worker.is_finished:
+            reclaim_worker.cancel()
         worker = self._external_selection_worker
         if worker is not None and not worker.is_finished:
             worker.cancel()
