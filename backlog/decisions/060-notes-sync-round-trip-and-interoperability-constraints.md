@@ -1,6 +1,6 @@
 # ADR-060: Notes Sync Round-trip and Interoperability Constraints
 
-Status: Proposed
+Status: Accepted
 Date: 2026-08-12
 Related Design: [Notes Folder Import and Lasting Sync](../../Docs/superpowers/specs/2026-08-12-notes-folder-import-sync-design.md)
 Amends: [ADR-059](059-notes-folder-import-and-device-local-sync-ownership.md)

@@ -1,7 +1,7 @@
 # Notes Folder Import and Lasting Sync — Design
 
 Date: 2026-08-12
-Status: Approved design; safety revision pending written-spec review
+Status: Approved written specification (ready for slice planning)
 ADRs:
 [ADR-059](../../../backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md),
 [ADR-060](../../../backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md)
