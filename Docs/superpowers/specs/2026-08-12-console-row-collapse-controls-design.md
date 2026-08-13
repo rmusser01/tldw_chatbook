@@ -18,6 +18,8 @@ the far left of their collapsed rows.
 - Collapsed: render `Status ▴` at the far left, followed by muted `Status hidden`
   copy.
 - Activating `Status ▾` collapses the row without discarding status state.
+- After collapse, keyboard focus moves to `Status ▴` so the same control remains
+  immediately reversible.
 - Activating `Status ▴` expands the row and restores keyboard focus to the
   collapse control.
 
@@ -67,6 +69,8 @@ control; it does not attempt to reclaim the row vertically.
 - Geometry assertions prove `Status ▴` and composer `Expand ▴` are left of their
   respective status copy, and that conditional composer `Stop` remains visible
   at the right when active.
+- Existing composer geometry expectations are updated from the former
+  right-aligned restore order to the approved left-aligned order.
 - Existing composer-collapse, Console workbench, chip-interaction, and compact
   viewport tests remain green.
 - A live Textual render is inspected at representative narrow and wide terminal
