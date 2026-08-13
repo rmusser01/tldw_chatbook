@@ -103,7 +103,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone"),
         "optional",
-        "either",
+        "optional_reference_only",
         "dramabox-q8_0.gguf",
         "gguf",
         "q8_0",
@@ -246,7 +246,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone"),
         "optional",
-        "either",
+        "optional_reference_only",
         "irodori-tts-500m-v3-f16.gguf",
         "gguf",
         "f16",
@@ -257,7 +257,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone"),
         "optional",
-        "either",
+        "optional_reference_only",
         "irodori-tts-500m-v3-q8_0.gguf",
         "gguf",
         "q8_0",
@@ -268,7 +268,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone", "design"),
         "optional",
-        "either",
+        "optional_reference_only",
         "irodori-tts-600m-v3-voicedesign-f16.gguf",
         "gguf",
         "f16",
@@ -279,7 +279,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone", "design"),
         "optional",
-        "either",
+        "optional_reference_only",
         "irodori-tts-600m-v3-voicedesign-q8_0.gguf",
         "gguf",
         "q8_0",
@@ -290,7 +290,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone", "design"),
         "optional",
-        "either",
+        "optional_reference_only",
         "irodori-tts-v4-small-f16.gguf",
         "gguf",
         "f16",
@@ -301,7 +301,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone", "design"),
         "optional",
-        "either",
+        "optional_reference_only",
         "irodori-tts-v4-small-q8_0.gguf",
         "gguf",
         "q8_0",
@@ -312,7 +312,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone"),
         "optional",
-        "either",
+        "optional_reference_only",
         "moss-tts-local-v1.5-bf16.gguf",
         "gguf",
         "bf16",
@@ -323,7 +323,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone"),
         "optional",
-        "either",
+        "optional_reference_only",
         "moss-tts-local-v1.5-q8_0.gguf",
         "gguf",
         "q8_0",
@@ -334,7 +334,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone"),
         "optional",
-        "either",
+        "optional_reference_only",
         "moss-tts-nano-100m-bf16.gguf",
         "gguf",
         "bf16",
@@ -345,7 +345,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone"),
         "optional",
-        "either",
+        "optional_reference_only",
         "moss-tts-nano-100m-q8_0.gguf",
         "gguf",
         "q8_0",
@@ -356,7 +356,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone", "design"),
         "optional",
-        "either",
+        "optional_reference_only",
         "omnivoice-bf16.gguf",
         "gguf",
         "bf16",
@@ -367,7 +367,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone", "design"),
         "optional",
-        "either",
+        "optional_reference_only",
         "omnivoice-f16.gguf",
         "gguf",
         "f16",
@@ -378,7 +378,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone", "design"),
         "optional",
-        "either",
+        "optional_reference_only",
         "omnivoice-q8_0.gguf",
         "gguf",
         "q8_0",
@@ -397,7 +397,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone", "design"),
         "optional",
-        "either",
+        "optional_reference_only",
         None,
         "safetensors",
         "native",
@@ -408,7 +408,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone"),
         "optional",
-        "either",
+        "optional_reference_only",
         "Text to audio (TTS)/Llama-OuteTTS-1.0-1B_Q8.gguf",
         "gguf",
         "q8_0",
@@ -485,7 +485,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone"),
         "optional",
-        "either",
+        "optional_reference_only",
         "vibevoice-1.5b-bf16.gguf",
         "gguf",
         "bf16",
@@ -496,7 +496,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone"),
         "optional",
-        "either",
+        "optional_reference_only",
         "vibevoice-1.5b-q8_0.gguf",
         "gguf",
         "q8_0",
@@ -507,7 +507,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone"),
         "optional",
-        "either",
+        "optional_reference_only",
         "model.gguf",
         "gguf",
         "q8_0",
@@ -518,7 +518,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone", "design"),
         "optional",
-        "either",
+        "optional_reference_only",
         "voxcpm2-bf16.gguf",
         "gguf",
         "bf16",
@@ -529,7 +529,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone", "design"),
         "optional",
-        "either",
+        "optional_reference_only",
         "voxcpm2-orig.gguf",
         "gguf",
         "orig",
@@ -540,7 +540,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone", "design"),
         "optional",
-        "either",
+        "optional_reference_only",
         "voxcpm2-q8_0.gguf",
         "gguf",
         "q8_0",
@@ -558,7 +558,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts", "clone", "design"),
         "optional",
-        "either",
+        "optional_reference_only",
         None,
         "safetensors",
         "native",
@@ -763,12 +763,49 @@ def test_vibevoice_and_vevo_reference_contracts_follow_pinned_routes() -> None:
         recipe = registry.for_package(variant)
         assert recipe.capabilities == ("tts", "clone")
         assert recipe.reference_requirement.value == "optional"
-        assert recipe.voice_reference_policy.value == "either"
+        assert recipe.voice_reference_policy.value == "optional_reference_only"
     for variant in ("vevo2_q8_0", "vevo2_f16", "vevo2_orig"):
         recipe = registry.for_package(variant)
         assert recipe.capabilities == ("tts", "clone")
         assert recipe.reference_requirement.value == "required"
         assert recipe.voice_reference_policy.value == "reference_only"
+
+
+@pytest.mark.parametrize(
+    "package_variant",
+    (
+        "vibevoice_1_5b_q8_0",
+        "vibevoice_1_5b_bf16",
+        "voxcpm2_q8_0",
+        "voxcpm2_bf16",
+        "voxcpm2_orig",
+        "voxcpm2_safetensors",
+    ),
+)
+@pytest.mark.parametrize(
+    ("has_voice", "has_reference", "accepted"),
+    (
+        (False, False, True),
+        (False, True, True),
+        (True, False, False),
+        (True, True, False),
+    ),
+)
+def test_optional_reference_only_recipes_admit_exact_combinations(
+    package_variant: str,
+    has_voice: bool,
+    has_reference: bool,
+    accepted: bool,
+) -> None:
+    recipe = _api()["AUDIO_CPP_RECIPE_REGISTRY"].for_package(package_variant)
+
+    assert (
+        recipe.admits_voice_reference(
+            has_voice=has_voice,
+            has_reference=has_reference,
+        )
+        is accepted
+    )
 
 
 @pytest.mark.parametrize(

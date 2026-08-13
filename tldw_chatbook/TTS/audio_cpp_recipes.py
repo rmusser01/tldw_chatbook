@@ -98,6 +98,7 @@ class AudioCppVoiceReferencePolicy(StrEnum):
 
     NATIVE_ONLY = "native_only"
     REFERENCE_ONLY = "reference_only"
+    OPTIONAL_REFERENCE_ONLY = "optional_reference_only"
     EITHER = "either"
     BOTH_REQUIRED_COMBINED = "both_required_combined"
 
@@ -328,6 +329,10 @@ class AudioCppPackageRecipe:
                 AudioCppReferenceRequirement.REQUIRED,
                 True,
             ),
+            AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY: (
+                AudioCppReferenceRequirement.OPTIONAL,
+                True,
+            ),
             AudioCppVoiceReferencePolicy.EITHER: (
                 AudioCppReferenceRequirement.OPTIONAL,
                 True,
@@ -378,6 +383,11 @@ class AudioCppPackageRecipe:
             return not has_reference
         if self.voice_reference_policy is AudioCppVoiceReferencePolicy.REFERENCE_ONLY:
             return has_reference and not has_voice
+        if (
+            self.voice_reference_policy
+            is AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY
+        ):
+            return not has_voice
         if self.voice_reference_policy is AudioCppVoiceReferencePolicy.EITHER:
             return not (has_voice and has_reference)
         return has_voice and has_reference
@@ -956,6 +966,35 @@ _INITIAL_RECIPES = (
 )
 
 
+_ADDITIONAL_OPTIONAL_VOICE_POLICIES = {
+    "dramabox_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "vibevoice_1_5b_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "vibevoice_1_5b_bf16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "moss_tts_nano_100m_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "moss_tts_nano_100m_bf16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "fish_audio_s2_pro_q8_0": AudioCppVoiceReferencePolicy.EITHER,
+    "fish_audio_s2_pro_bf16": AudioCppVoiceReferencePolicy.EITHER,
+    "omnivoice_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "omnivoice_bf16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "omnivoice_f16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "omnivoice_safetensors": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "voxcpm2_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "voxcpm2_bf16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "voxcpm2_orig": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "voxcpm2_safetensors": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "irodori_tts_v4_small_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "irodori_tts_v4_small_f16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "irodori_tts_600m_v3_voicedesign_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "irodori_tts_600m_v3_voicedesign_f16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "irodori_tts_500m_v3_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "irodori_tts_500m_v3_f16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "moss_tts_local_v1_5_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "moss_tts_local_v1_5_bf16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "outetts_1_0_1b_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "vietneu_tts_v3_turbo_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+}
+
+
 _ADDITIONAL_GGUF_VARIANTS = (
     # family, variant, display name, precision, relative model path, capabilities,
     # reference requirement, projected task
@@ -1343,6 +1382,7 @@ _ADDITIONAL_RECIPES = (
             required_files=(_gguf_file(model_path),),
             model_relative_path=model_path,
             reference_requirement=reference_requirement,
+            voice_reference_policy=_ADDITIONAL_OPTIONAL_VOICE_POLICIES.get(variant),
             task=task,
         )
         for (
@@ -1374,6 +1414,9 @@ _ADDITIONAL_RECIPES = (
         ),
         model_relative_path=None,
         reference_requirement=AudioCppReferenceRequirement.OPTIONAL,
+        voice_reference_policy=_ADDITIONAL_OPTIONAL_VOICE_POLICIES[
+            "omnivoice_safetensors"
+        ],
     ),
     _recipe(
         family="voxcpm2",
@@ -1392,6 +1435,9 @@ _ADDITIONAL_RECIPES = (
         ),
         model_relative_path=None,
         reference_requirement=AudioCppReferenceRequirement.OPTIONAL,
+        voice_reference_policy=_ADDITIONAL_OPTIONAL_VOICE_POLICIES[
+            "voxcpm2_safetensors"
+        ],
     ),
     _recipe(
         family="index_tts2",
