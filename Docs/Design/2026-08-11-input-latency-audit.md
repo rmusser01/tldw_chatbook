@@ -96,6 +96,13 @@ per keystroke → **15458**. Warm visits compose 2–3× → **15459**.
 **15460**. Section click = 2+ whole-screen rebuilds; tree click = 4 recomposes; z/Z/[/] rebuilds all
 four regions → **15461**. Heaviest never-profiled screen → **15462** (profile first — the
 defer-past-first-paint series proved hidden-widget weight predicts nothing when sync/DB-bound).
+**15462 is now done and this line's numbers are superseded** — see its Investigation Notes. After
+15460/15461/15463/15464, live push is **0.50 s, not 0.89 s** (−44%); the screen is widget-bound, only
+**3% of its tree is hidden** (no deferral possible), and one whole push runs **13 loop-thread sqlite
+statements / ~10 ms of application code**. With an empty feed the screen pushes in 200 ms — the median
+of every other screen — so its entire excess is the 224 widgets of the 100-item article feed
+(`_ArticleRow`/`_DayHeader` each wrap a `Static`). `compose`'s inline `resolve_latest_follow_item()`,
+flagged above, measures 0.1–0.3 ms and is retired as a concern.
 SubscriptionsDB rebuilt per op + scheduler due-checks run sqlite + `ET.fromstring` inline on the loop,
 enabled by default on any tab → **15463**. Items feed selects `content` for list rows and sorts the whole
 table on a computed datetime → **15464**.

@@ -3545,3 +3545,37 @@ absolute count, first make it deterministic in PRODUCTION (here: the guard),
 then pin it — a total that is only stable on one OS is evidence about the OS.
 And treat a count that differs from the notes' recorded value as a defect
 report until proven otherwise: the number was right, the code was wrong.
+## When a screen really is widget-bound, COUNT widgets — a wall-clock A/B can't resolve the change (task-15462, 2026-08-13)
+
+**What happened.** Profiling the Watchlists push turned up a genuine piece of waste: the
+screen's `region_layout` reactive defaults to "nothing collapsed" while the shipped
+first-run default collapses the RIGHT_RAIL, so every visit composes the expanded
+Inspector rail and `on_mount` immediately swaps it for the one-line collapsed header. A
+prototype removing the swap was measured against dev the obvious way — run the probe
+process on dev, then run it with the fix, compare medians. It reported **35% faster**.
+
+That number was an artifact. Re-run with the two arms interleaved *inside a single app
+run* and ABBA-ordered (so monotonic machine drift cancels instead of favouring whichever
+arm is measured second), the same change came out at **median delta −1 ms, faster in 6 of
+12 pairs**. Repeated identical configurations on this machine ranged **360–925 ms within
+one run** — the noise floor swallows anything under roughly 30%.
+
+The noise-free measurement had been available all along and agreed with the paired
+result: instrumenting the swap showed it discards **13 widgets** and mounts 1. A
+dose-response sweep (feed page 0/24/60/100 items → 86/170/260/344 widgets →
+200/218/244/342 ms) put the screen's cost at **~0.55 ms per widget**, so 13 widgets is
+5–10 ms of a ~450 ms push — 1–2%, exactly what the paired A/B failed to detect.
+
+**What to do.** Establish whether the screen is widget-bound *first* (survey + a
+dose-response sweep over something that varies the widget count). If it is, size every
+candidate lever by the widgets it removes and use wall clock only to confirm a prediction
+big enough to clear the noise floor. If you must A/B by wall clock, interleave the arms
+within one process and alternate their order; a fixed dev-then-fix ordering across
+processes measures drift as effect.
+
+This is the mirror of the defer-past-first-paint lesson, not a contradiction of it.
+There, widget count *over*-predicted, because Schedules and Console were sync/DB-bound and
+their hidden mass cost nothing to skip. Watchlists is genuinely widget-bound — 13 sqlite
+statements and ~10 ms of application code for a whole push, everything else Textual's
+per-widget CSS apply and mount. The rule is the same in both cases: find out what the
+screen is bound by before choosing what to count.
