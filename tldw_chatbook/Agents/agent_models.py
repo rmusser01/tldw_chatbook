@@ -11,7 +11,12 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Literal, TypeAlias
+
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationResult,
+    ProviderContinuationCheckpoint,
+)
 
 RUN_RUNNING = "running"
 RUN_DONE = "done"
@@ -149,6 +154,60 @@ class ToolResult:
 
 
 @dataclass(frozen=True)
+class ContinuationEventContext:
+    """Durable owner and run identity for one continuation lineage."""
+
+    owner_message_id: str | None
+    run_id: str
+    agent_kind: Literal["primary", "subagent", "fleet"]
+    durability: Literal["persistent", "ephemeral"]
+
+
+@dataclass(frozen=True)
+class ToolBatchReady:
+    """A complete canonical call batch is ready for durable creation/update."""
+
+    context: ContinuationEventContext
+    checkpoint: ProviderContinuationCheckpoint
+    expected_checkpoint_revision: int | None
+
+
+@dataclass(frozen=True)
+class ToolCallExecuting:
+    """One call is about to cross its dispatch boundary."""
+
+    context: ContinuationEventContext
+    call_id: str
+    expected_checkpoint_revision: int
+
+
+@dataclass(frozen=True)
+class ToolCallFinished:
+    """One exact provider-bound result is ready for durable storage."""
+
+    context: ContinuationEventContext
+    call_id: str
+    expected_checkpoint_revision: int
+    target_state: Literal["completed", "failed"]
+    result: ContinuationResult
+
+
+@dataclass(frozen=True)
+class FinalContinuation:
+    """A tool-free final answer and complete checkpoint are ready together."""
+
+    context: ContinuationEventContext
+    checkpoint: ProviderContinuationCheckpoint
+    expected_checkpoint_revision: int | None
+    assistant_content: str
+
+
+ProviderContinuationEvent: TypeAlias = (
+    ToolBatchReady | ToolCallExecuting | ToolCallFinished | FinalContinuation
+)
+
+
+@dataclass(frozen=True)
 class ModelTurn:
     """One provider response: raw text plus any native tool calls.
 
@@ -163,6 +222,7 @@ class ModelTurn:
     tool_calls: tuple[ToolCall, ...] = ()
     assistant_message: dict | None = None
     tokens: int = 0
+    provider_continuation: ProviderContinuationCheckpoint | None = None
 
 
 @dataclass(frozen=True)

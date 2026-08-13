@@ -17,7 +17,7 @@ import threading
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Callable, Protocol
+from typing import Callable, Literal, Protocol, cast
 
 from loguru import logger
 
@@ -38,7 +38,9 @@ from .agent_models import (
     AgentConfig,
     AgentDefinition,
     AgentStep,
+    ContinuationEventContext,
     ModelTurn,
+    ProviderContinuationEvent,
     RunOutcome,
     SkillFileBindings,
     ToolCall,
@@ -55,6 +57,7 @@ from .agent_models import (
     # invoking the parameter's value (None/str) instead.
     definition_fingerprint as compute_definition_fingerprint,
 )
+from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
 from .agent_runtime import LoopDeps, render_tool_protocol, run_agent_loop
 from .fleet_coordinator import FleetCoordinator, FleetHandle
 from .native_tools import (
@@ -545,6 +548,8 @@ class AgentService:
         revoke_approvals: Callable[[str], object] | None = None,
         child_model_scope: Callable[[], "contextlib.AbstractContextManager"]
         | None = None,
+        persist_provider_continuation: Callable[[ProviderContinuationEvent], None]
+        | None = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -692,6 +697,7 @@ class AgentService:
         # construction, and a second loop would only cost a second HTTP
         # client for no reachable benefit.
         self._child_model_scope = child_model_scope or contextlib.nullcontext
+        self.persist_provider_continuation = persist_provider_continuation
         # Per-TURN fleet state, all owned by the primary run's thread (a
         # child never spawns -- contain_child_budget zeroes max_subagents,
         # PR3a-1 Task 5's replacement for clamp_child_budget), so no lock
@@ -1248,6 +1254,11 @@ class AgentService:
         definition_fingerprint: str | None = None,
         on_run_id: Callable[[str], None] | None = None,
         run_log_writer: "RunLogWriter | None" = None,
+        continuation_owner_message_id: str | None = None,
+        continuation_durability: Literal["persistent", "ephemeral"] = "persistent",
+        continuation_agent_kind: Literal["primary", "subagent", "fleet"] | None = None,
+        restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
+        resume_provider_continuation: bool = False,
     ) -> tuple[str, RunOutcome]:
         # PR3a-1 Task 3 -- THE WRITER THIS RUN RECORDS THROUGH, resolved
         # ONCE, here, and closed over by every log closure below instead of
@@ -1689,6 +1700,7 @@ class AgentService:
                 definition_fingerprint=(
                     compute_definition_fingerprint(resolved) if resolved else None
                 ),
+                continuation_durability=continuation_durability,
                 # PR3a-1 Task 3: THIS run tree's writer, captured here on
                 # the PARENT's thread rather than looked up later from the
                 # child's. A child that outlives the turn (Task 2) may not
@@ -1773,6 +1785,7 @@ class AgentService:
             # and the end-of-turn settle both set it to unwind stragglers
             # without cancelling the parent.
             child_cancel = threading.Event()
+            child_kwargs["continuation_agent_kind"] = "fleet"
             self._fleet_cancels[handle.handle_id] = child_cancel
             my_handle_ids.append(handle.handle_id)
 
@@ -2722,7 +2735,22 @@ class AgentService:
             wait_agents=wait_agents if fleet_active else None,
             check_agents=check_agents if fleet_active else None,
             on_record=on_record,
+            continuation_context=ContinuationEventContext(
+                owner_message_id=continuation_owner_message_id,
+                run_id=run_id,
+                agent_kind=(
+                    continuation_agent_kind
+                    if continuation_agent_kind is not None
+                    else cast(
+                        Literal["primary", "subagent"],
+                        agent_kind,
+                    )
+                ),
+                durability=continuation_durability,
+            ),
         )
+        if self.persist_provider_continuation is not None:
+            deps.persist_provider_continuation = self.persist_provider_continuation
         try:
             # PR2a Task 7: bind THIS run as the dispatching run for the
             # whole loop, on the loop's own thread.
@@ -2753,7 +2781,14 @@ class AgentService:
             # resets in its own `finally`), and a threaded child simply
             # sets its own value on its own thread.
             with use_run_id(run_id):
-                outcome = run_agent_loop(config, messages, active, deps)
+                outcome = run_agent_loop(
+                    config,
+                    messages,
+                    active,
+                    deps,
+                    restore_provider_continuation=restore_provider_continuation,
+                    resume_provider_continuation=resume_provider_continuation,
+                )
         except Exception as exc:  # noqa: BLE001 — a run never raises out
             from tldw_chatbook.Chat.provider_failures import describe_stream_failure
 
@@ -2785,6 +2820,10 @@ class AgentService:
         should_cancel: Callable[[], bool] = lambda: False,
         supersede_run_id: str | None = None,
         assistant_message_id: str | None = None,
+        continuation_owner_message_id: str | None = None,
+        continuation_durability: Literal["persistent", "ephemeral"] = "persistent",
+        restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
+        resume_provider_continuation: bool = False,
     ) -> tuple[str, RunOutcome]:
         """Run one primary-agent turn (and any sub-agents it spawns).
 
@@ -2816,6 +2855,15 @@ class AgentService:
                 persisted id via ``AgentRunsDB.set_run_assistant_message_id``
                 once the reply completes (that later write is what resume's
                 marker anchoring reads).
+            continuation_owner_message_id: Preallocated assistant owner for
+                provider-continuation events. Falls back to
+                ``assistant_message_id`` when omitted.
+            continuation_durability: Whether continuation must persist or is
+                explicitly non-resumable in memory.
+            restore_provider_continuation: Already-validated canonical state
+                to load without automatic execution.
+            resume_provider_continuation: Explicitly resume pending restored
+                calls through fresh review when ``True``.
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
@@ -2922,6 +2970,14 @@ class AgentService:
             task=None,
             parent_run_id=None,
             assistant_message_id=assistant_message_id,
+            continuation_owner_message_id=(
+                continuation_owner_message_id
+                if continuation_owner_message_id is not None
+                else assistant_message_id
+            ),
+            continuation_durability=continuation_durability,
+            restore_provider_continuation=restore_provider_continuation,
+            resume_provider_continuation=resume_provider_continuation,
         )
         # Settle the children that must not outlive this turn. Must happen
         # BEFORE the manifest is written and the writer closed below: a

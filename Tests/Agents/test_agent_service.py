@@ -18,11 +18,17 @@ from tldw_chatbook.Agents.agent_models import (
     WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     AgentDefinition,
+    ContinuationEventContext,
     RunBudget,
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
     definition_fingerprint,
+)
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationCall,
+    ContinuationRound,
+    ProviderContinuationCheckpoint,
 )
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_service import (
@@ -441,6 +447,75 @@ def test_plain_answer_persists_done_run(db):
     assert run["status"] == "done" and run["result"] == "Tokyo."
     assert run["agent_kind"] == "primary"
     assert all(s["created_at"] for s in run["steps"])
+
+
+def test_service_wires_exact_continuation_context_callback_and_resume_input(
+    db, monkeypatch
+):
+    captured = {}
+    checkpoint = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="deepseek",
+        protocol="responses",
+        model="deepseek-v4-flash",
+        api_base_url="https://api.deepseek.com/v1",
+        state="active",
+        rounds=(
+            ContinuationRound(
+                assistant_content="",
+                reasoning_blocks=("private",),
+                calls=(
+                    ContinuationCall(
+                        "call-1",
+                        "calculator",
+                        '{"expression":"2+2"}',
+                        "pending",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    def persist(event):
+        raise AssertionError("not called by this wiring-only test")
+
+    def fake_loop(config, messages, active, deps, **kwargs):
+        captured["context"] = deps.continuation_context
+        captured["callback"] = deps.persist_provider_continuation
+        captured.update(kwargs)
+        return agent_service.RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+
+    monkeypatch.setattr(agent_service, "run_agent_loop", fake_loop)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=ScriptedChat(["unused"]),
+        persist_provider_continuation=persist,
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="conversation",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="openai",
+        continuation_owner_message_id="assistant-owner",
+        continuation_durability="ephemeral",
+        restore_provider_continuation=checkpoint,
+        resume_provider_continuation=True,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert captured["context"] == ContinuationEventContext(
+        owner_message_id="assistant-owner",
+        run_id=run_id,
+        agent_kind="primary",
+        durability="ephemeral",
+    )
+    assert captured["callback"] is persist
+    assert captured["restore_provider_continuation"] is checkpoint
+    assert captured["resume_provider_continuation"] is True
 
 
 def test_system_message_carries_protocol_and_user_prompt(db):
