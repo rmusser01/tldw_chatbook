@@ -1254,7 +1254,8 @@ def test_run_log_eviction_keeps_or_evicts_message_and_continuation_together() ->
     )
 
 
-def test_run_log_eviction_never_logs_private_counter_failures() -> None:
+def test_run_log_eviction_fails_closed_without_logging_private_counter_failures(
+) -> None:
     payload = [
         {"role": "system", "content": "sys"},
         {"role": "user", "content": "task"},
@@ -1268,23 +1269,29 @@ def test_run_log_eviction_never_logs_private_counter_failures() -> None:
         raise ValueError("PRIVATE-COUNTER-FAILURE-CANARY")
 
     try:
-        result = bound_history_for_send(
-            payload,
-            model="m",
-            provider="deepseek",
-            native=True,
-            enabled=True,
-            response_reservation=0,
-            window=540,
-            count_fn=fail_count,
-            min_recent_rounds=1,
-            continuation_groups=(group,),
-        )
+        with pytest.raises(
+            RuntimeError,
+            match="provider continuation history could not be bounded",
+        ):
+            bound_history_for_send(
+                payload,
+                model="m",
+                provider="deepseek",
+                native=True,
+                enabled=True,
+                response_reservation=0,
+                window=540,
+                count_fn=fail_count,
+                min_recent_rounds=1,
+                continuation_groups=(group,),
+            )
     finally:
         loguru_logger.remove(handler)
 
-    assert result is payload
-    assert "PRIVATE-COUNTER-FAILURE-CANARY" not in "".join(map(str, logged))
+    diagnostic = "".join(map(str, logged))
+    assert "category=ValueError" in diagnostic
+    assert "trace=" in diagnostic
+    assert "PRIVATE-COUNTER-FAILURE-CANARY" not in diagnostic
 
 
 def test_agent_service_run_turn_budgets_private_sidecar_on_real_send(

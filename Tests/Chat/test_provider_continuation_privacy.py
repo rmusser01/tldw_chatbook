@@ -520,6 +520,26 @@ def test_exported_json_bounded_reader_checks_actual_bytes(monkeypatch) -> None:
         database.close_connection()
 
 
+def test_import_failure_log_has_safe_operation_context_without_payload() -> None:
+    diagnostics = io.StringIO()
+    sink_id = character_chat_module.logger.add(diagnostics, format="{message}")
+    database = CharactersRAGDB(":memory:", "json-import-log-context")
+    try:
+        assert load_chat_history_from_file_and_save_to_db(
+            database,
+            io.BytesIO(b'{"api_key":"PRIVATE-IMPORT-LOG-CANARY"'),
+        ) == (None, None)
+    finally:
+        character_chat_module.logger.remove(sink_id)
+        database.close_connection()
+
+    diagnostic = diagnostics.getvalue()
+    assert "operation=chat_history_import" in diagnostic
+    assert "source=stream" in diagnostic
+    assert "category=JSONDecodeError" in diagnostic
+    assert "PRIVATE-IMPORT-LOG-CANARY" not in diagnostic
+
+
 def test_search_and_fts_never_project_private_continuation(
     tmp_path: Path, chachanotes_template_db: Path
 ) -> None:

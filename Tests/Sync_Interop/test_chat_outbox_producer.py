@@ -252,6 +252,143 @@ def test_chachanotes_source_reads_only_exact_committed_message_intent(tmp_path) 
         db.close_connection()
 
 
+def test_chachanotes_source_read_uses_database_transaction(
+    tmp_path, monkeypatch
+) -> None:
+    private_json = _provider_continuation_json()
+    db = CharactersRAGDB(tmp_path / "source-transaction.db", client_id="sync-source")
+    try:
+        conversation_id = db.add_conversation({"title": "Source transaction"})
+        message_id = "assistant-source-transaction"
+        db.create_assistant_with_continuation(
+            message_id=message_id,
+            conversation_id=conversation_id,
+            parent_message_id=None,
+            content="visible answer",
+            provider_continuation_json=private_json,
+        )
+        canonical_private = dump_provider_continuation_json(
+            parse_provider_continuation_json(private_json)
+        )
+        payload_hash = canonical_payload_hash(
+            {
+                "content": "visible answer",
+                "provider_continuation_json": canonical_private,
+                "role": "assistant",
+            }
+        )
+        real_transaction = db.transaction
+        transaction_calls = 0
+
+        def recording_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return real_transaction()
+
+        monkeypatch.setattr(db, "transaction", recording_transaction)
+
+        assert (
+            db.read_committed_chat_sync_intent(
+                message_id=message_id,
+                message_version=1,
+                payload_hash=payload_hash,
+            )
+            is not None
+        )
+        assert transaction_calls == 1
+    finally:
+        db.close_connection()
+
+
+def test_message_tombstone_read_uses_database_transaction(tmp_path, monkeypatch) -> None:
+    db = CharactersRAGDB(
+        tmp_path / "tombstone-transaction.db", client_id="sync-source"
+    )
+    try:
+        conversation_id = db.add_conversation({"title": "Tombstone transaction"})
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": "delete me",
+            }
+        )
+        assert message_id is not None
+        assert db.soft_delete_message(str(message_id), expected_version=1)
+        real_transaction = db.transaction
+        transaction_calls = 0
+
+        def recording_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return real_transaction()
+
+        monkeypatch.setattr(db, "transaction", recording_transaction)
+
+        assert db.get_message_tombstones([str(message_id)]) == [
+            {
+                "message_id": str(message_id),
+                "conversation_id": conversation_id,
+                "version": 2,
+            }
+        ]
+        assert transaction_calls == 1
+    finally:
+        db.close_connection()
+
+
+def test_delete_source_and_current_intent_list_use_database_transactions(
+    tmp_path, monkeypatch
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / "delete-source-transaction.db", client_id="sync-source"
+    )
+    try:
+        conversation_id = db.add_conversation({"title": "Delete source transaction"})
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": "delete me",
+            }
+        )
+        assert message_id is not None
+        assert db.soft_delete_message(str(message_id), expected_version=1)
+        real_transaction = db.transaction
+        transaction_calls = 0
+
+        def recording_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return real_transaction()
+
+        monkeypatch.setattr(db, "transaction", recording_transaction)
+        deleted_hash = canonical_payload_hash({"deleted": True})
+
+        assert (
+            db.read_committed_chat_delete_intent(
+                message_id=str(message_id),
+                message_version=2,
+                payload_hash=deleted_hash,
+            )
+            is not None
+        )
+        intents = db.list_current_committed_chat_sync_intents(conversation_id)
+
+        assert intents == [
+            {
+                "message_id": str(message_id),
+                "message_version": 2,
+                "operation": "delete",
+                "payload_hash": deleted_hash,
+            }
+        ]
+        assert transaction_calls >= 3
+    finally:
+        db.close_connection()
+
 def test_chachanotes_source_rejects_uncommitted_ambiguous_and_deleted_intents(
     tmp_path,
 ) -> None:

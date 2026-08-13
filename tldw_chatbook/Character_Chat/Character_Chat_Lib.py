@@ -3124,6 +3124,13 @@ def load_chat_history_from_file_and_save_to_db(
         error, JSON parsing error, character not found in DB, DB error).
     """
     filename_for_log = "chat_log_stream"
+    source_kind = (
+        "path"
+        if isinstance(file_path_or_obj, str)
+        else "stream"
+        if hasattr(file_path_or_obj, "read")
+        else "unknown"
+    )
     try:
         content_str: str
         if isinstance(file_path_or_obj, str):
@@ -3407,14 +3414,28 @@ def load_chat_history_from_file_and_save_to_db(
         return new_conv_id, character_id_from_db
 
     except json.JSONDecodeError:
-        logger.error("Error decoding imported chat history JSON.")
+        logger.error(
+            "Chat history import failed (operation=chat_history_import, "
+            "source={}, category=JSONDecodeError).",
+            source_kind,
+        )
     except ValueError:
-        logger.error("Invalid imported chat history data.")
+        logger.error(
+            "Chat history import failed (operation=chat_history_import, "
+            "source={}, category=ValueError).",
+            source_kind,
+        )
     except CharactersRAGDBError:
-        logger.error("Database error during chat history import.")
+        logger.error(
+            "Chat history import failed (operation=chat_history_import, "
+            "source={}, category=CharactersRAGDBError).",
+            source_kind,
+        )
     except Exception as e:
         logger.error(
-            "Unexpected error importing chat history (category={}).",
+            "Chat history import failed (operation=chat_history_import, "
+            "source={}, category={}).",
+            source_kind,
             type(e).__name__,
         )
 

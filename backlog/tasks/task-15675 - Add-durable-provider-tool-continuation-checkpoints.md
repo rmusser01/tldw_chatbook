@@ -100,6 +100,13 @@ provider/runtime side-effect boundary. ADR-063 records the approved contract.
   broad testing. It has no terminal summary, was not restarted, and is not used
   as passing evidence; the user directed closeout from directly related tests
   only.
+- Qodo follow-up made continuation-aware eviction fail closed with a sanitized
+  frame trace, added safe import operation/source/category context, and routed
+  continuation sync/tombstone reads through the shared transaction boundary
+  with complete public docstrings. The focused review matrix passed `79 tests`.
+  Qodo's persistence-hook compatibility suggestion was declined: ADR-063
+  requires persistent conversations to fail closed before tool side effects,
+  while explicitly ephemeral contexts already remain non-resumable.
 - Static evidence: the rebase-resolution Python files pass Ruff lint and
   compileall, the changed migration test passes Ruff format, and diff checks
   pass. Whole-file Ruff formatting still reports three large legacy production

@@ -49,6 +49,7 @@ model least likely to win that bet.
 
 from __future__ import annotations
 
+import traceback
 from typing import Any, Callable
 
 from loguru import logger
@@ -415,12 +416,15 @@ def bound_history_for_send(
         when the task instruction cannot be unambiguously located (see
         ``_task_row_index`` -- a wrong pin is worse than no eviction, so
         this degrades exactly like a failure rather than guessing), when
-        nothing needed dropping, or when trimming itself failed; otherwise
-        a NEW list with the oldest whole rounds removed and a synthetic
-        note in their place. Never raises: any failure degrades to sending
-        the full history for this turn, logged at warning -- eviction is a
-        context optimisation, never load-bearing for the run's correctness
-        (task-1272: "must never raise into an agent run").
+        nothing needed dropping, or when ordinary visible-only trimming
+        failed; otherwise a NEW list with the oldest whole rounds removed
+        and a synthetic note in their place.
+
+    Raises:
+        RuntimeError: Continuation-aware trimming failed. Private history is
+            load-bearing for an exact provider request, so this path fails
+            closed rather than sending an unbounded payload. Visible-only
+            eviction retains task-1272's legacy non-raising fallback.
     """
     if not enabled:
         return payload
@@ -528,13 +532,23 @@ def bound_history_for_send(
         )
         result.insert(insert_at, _synthetic_note(bound.dropped_turns))
         return result
-    except Exception:  # noqa: BLE001 -- eviction must never abort a run
+    except Exception as exc:  # noqa: BLE001 -- boundary must fail safely
         if continuation_groups:
+            safe_error = RuntimeError(
+                "provider continuation history could not be bounded"
+            )
+            safe_trace = " > ".join(
+                f"{frame.name}:{frame.lineno}"
+                for frame in traceback.extract_tb(exc.__traceback__)
+            )
             logger.warning(
-                "run-log eviction failed for continuation history; sending full history"
+                "run-log eviction failed for continuation history; refusing "
+                "the provider request (category={}, trace={})",
+                type(exc).__name__,
+                safe_trace,
             )
-        else:
-            logger.opt(exception=True).warning(
-                "run-log eviction failed for this turn; sending full history"
-            )
+            raise safe_error from None
+        logger.opt(exception=True).warning(
+            "run-log eviction failed for this turn; sending full history"
+        )
         return payload

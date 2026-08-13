@@ -10048,16 +10048,24 @@ UPDATE db_schema_version
     def get_message_tombstones(
         self, message_ids: Sequence[str]
     ) -> List[Dict[str, Any]]:
-        """Return committed tombstone identities and versions for exact IDs."""
+        """Return committed tombstone identities and versions for exact IDs.
+
+        Args:
+            message_ids: Message IDs to inspect.
+
+        Returns:
+            Committed tombstone identity, conversation, and version mappings.
+        """
         ids = [message_id for message_id in message_ids if message_id]
         if not ids:
             return []
         placeholders = ",".join("?" for _ in ids)
-        rows = self.get_connection().execute(
-            f"SELECT id, conversation_id, version FROM messages "
-            f"WHERE deleted = 1 AND id IN ({placeholders})",
-            tuple(ids),
-        ).fetchall()
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"SELECT id, conversation_id, version FROM messages "
+                f"WHERE deleted = 1 AND id IN ({placeholders})",
+                tuple(ids),
+            ).fetchall()
         return [
             {
                 "message_id": row["id"],
@@ -12767,7 +12775,17 @@ UPDATE db_schema_version
         message_version: int,
         payload_hash: str,
     ) -> "ChatSyncIntentRecord | None":
-        """Return one exact committed message intent without exposing private data."""
+        """Return one exact committed message intent without exposing private data.
+
+        Args:
+            message_id: Exact message owner ID.
+            message_version: Exact committed message version.
+            payload_hash: Expected canonical whole-message payload hash.
+
+        Returns:
+            The validated committed source record, or ``None`` when the
+            source proof is absent, ambiguous, invalid, or uncommitted.
+        """
         from tldw_chatbook.Chat.provider_continuation import (
             ContinuationValidationError,
             dump_provider_continuation_json,
@@ -12791,8 +12809,7 @@ UPDATE db_schema_version
         if conn.in_transaction:
             return None
         try:
-            rows = conn.execute(
-                """
+            query = """
                 SELECT m.id, m.conversation_id, m.parent_message_id, m.sender,
                        m.role, m.content, m.image_mime_type,
                        m.provider_continuation_json, m.timestamp, m.ranking,
@@ -12805,12 +12822,22 @@ UPDATE db_schema_version
                    AND intent.version = m.version
                  WHERE m.id = ? AND m.version = ?
                  ORDER BY intent.change_id
-                """,
-                (message_id, message_version),
-            ).fetchall()
-            if len(rows) != 1:
-                return None
-            row = rows[0]
+                """
+            with self.transaction() as conn:
+                rows = conn.execute(
+                    query,
+                    (message_id, message_version),
+                ).fetchall()
+                if len(rows) != 1:
+                    return None
+                row = rows[0]
+                base_payload_hash = self._previous_committed_chat_payload_hash(
+                    conn,
+                    message_id=message_id,
+                    conversation_id=row["conversation_id"],
+                    role=row["role"],
+                    message_version=message_version,
+                )
             if row["deleted"] or row["operation"] not in {"create", "update"}:
                 return None
             intent_payload = json.loads(row["payload"])
@@ -12861,13 +12888,6 @@ UPDATE db_schema_version
                 envelope_payload["provider_continuation_json"] = private_json
             if canonical_payload_hash(envelope_payload) != payload_hash:
                 return None
-            base_payload_hash = self._previous_committed_chat_payload_hash(
-                conn,
-                message_id=message_id,
-                conversation_id=row["conversation_id"],
-                role=role,
-                message_version=message_version,
-            )
             return ChatSyncIntentRecord(
                 conversation_id=row["conversation_id"],
                 message_id=row["id"],
@@ -12956,7 +12976,17 @@ UPDATE db_schema_version
         message_version: int,
         payload_hash: str,
     ) -> "ChatSyncDeleteIntentRecord | None":
-        """Return one exact committed message tombstone intent."""
+        """Return one exact committed message tombstone intent.
+
+        Args:
+            message_id: Exact tombstoned message ID.
+            message_version: Exact committed tombstone version.
+            payload_hash: Expected canonical delete payload hash.
+
+        Returns:
+            The validated committed delete source, or ``None`` when its
+            proof is absent, ambiguous, invalid, or uncommitted.
+        """
         from tldw_chatbook.Chat.provider_continuation import (
             ContinuationValidationError,
             dump_provider_continuation_json,
@@ -12980,8 +13010,7 @@ UPDATE db_schema_version
         if conn.in_transaction:
             return None
         try:
-            rows = conn.execute(
-                """
+            query = """
                 SELECT m.id, m.conversation_id, m.deleted, m.version,
                        m.last_modified, m.client_id, m.role, m.content,
                        m.provider_continuation_json,
@@ -12993,12 +13022,15 @@ UPDATE db_schema_version
                    AND intent.version = m.version
                  WHERE m.id = ? AND m.version = ?
                  ORDER BY intent.change_id
-                """,
-                (message_id, message_version),
-            ).fetchall()
-            if len(rows) != 1:
-                return None
-            row = rows[0]
+                """
+            with self.transaction() as conn:
+                rows = conn.execute(
+                    query,
+                    (message_id, message_version),
+                ).fetchall()
+                if len(rows) != 1:
+                    return None
+                row = rows[0]
             if not row["deleted"] or row["operation"] != "delete":
                 return None
             intent_payload = json.loads(row["payload"])
@@ -13048,7 +13080,16 @@ UPDATE db_schema_version
     def list_current_committed_chat_sync_intents(
         self, conversation_id: str
     ) -> List[Dict[str, Any]]:
-        """List exact current Chat intents for one restored conversation."""
+        """List exact current Chat intents for one restored conversation.
+
+        Args:
+            conversation_id: Restored conversation whose current message
+                intents should be reconciled.
+
+        Returns:
+            Validated current intent descriptors safe to pass to the
+            idempotent Chat Sync-v2 reconcilers.
+        """
         from tldw_chatbook.Chat.provider_continuation import (
             ContinuationValidationError,
             dump_provider_continuation_json,
@@ -13062,8 +13103,7 @@ UPDATE db_schema_version
         if conn.in_transaction:
             return []
         try:
-            rows = conn.execute(
-                """
+            query = """
                 SELECT m.id, m.conversation_id, m.role, m.content,
                        m.provider_continuation_json, m.deleted, m.version,
                        intent.operation
@@ -13087,9 +13127,12 @@ UPDATE db_schema_version
                           AND duplicate.version = m.version
                    )
                  ORDER BY m.timestamp, m.id
-                """,
-                (conversation_id,),
-            ).fetchall()
+                """
+            with self.transaction() as conn:
+                rows = conn.execute(
+                    query,
+                    (conversation_id,),
+                ).fetchall()
             intents: List[Dict[str, Any]] = []
             for row in rows:
                 message_id = row["id"]
