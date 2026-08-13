@@ -70,15 +70,18 @@ Detailed plan: `Docs/superpowers/plans/2026-08-12-library-conversations-paginati
   170x48, covering row 20 scrolling, first/middle/final pages, oldest-row filtering,
   and clearing back to page 1. Evidence:
   `/tmp/tldw-task15703-live.ZWehQn/evidence/live-verification.txt`.
-- Replayed the feature onto current `dev` without the old-base command/footer guard
-  maintenance, which is not present on this branch. Removed five existing lint
-  artifacts exposed by the clean-base check and hardened seven async UI
-  assertions/polls to wait for mounted widgets instead of racing Textual
-  recomposition.
-- Fresh clean-base verification passed: 28 focused state/visibility tests, 20
-  focused conversation UI tests, all 557 `Tests/Library` tests, all 268
-  `Tests/UI/test_library_shell.py` tests, Ruff, and `git diff --check`. Final review
-  found no Critical, Important, or Minor feature issues. No generalized lesson entry
-  was added because the only test trap encountered is already documented in
-  `lessons-testing-evidence.md`.
+- Replayed the feature onto fetched `origin/dev` at `040295847`, preserving the
+  newer compose-once Library behavior and omitting unrelated maintenance from the
+  older local base. Hardened the feature's async UI assertions/polls to wait for
+  mounted widgets instead of racing Textual recomposition.
+- Remote-base verification passed for Ruff, `git diff --check`, 30 focused
+  state/visibility tests, 21 focused conversation UI tests, and the destination
+  conversation contract. The broader Library run completed with 1917 passed, 1
+  skipped, and 2 unrelated failures; the broader Library shell run completed with
+  579 passed and 5 unrelated failures. Every failure was reproduced with the exact
+  test selection on an untouched detached `origin/dev` worktree, covering existing
+  ingest-capability/logging drift plus note, ingest-placeholder, and settings-reset
+  UI drift. Final review found no Critical, Important, or Minor feature issues. No
+  generalized lesson entry was added because the only test trap encountered is
+  already documented in `lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->
