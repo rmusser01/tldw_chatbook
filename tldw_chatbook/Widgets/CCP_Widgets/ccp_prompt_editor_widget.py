@@ -12,10 +12,17 @@ from textual.widgets import Static, Label, Input, TextArea, Button, Select, Swit
 from textual.reactive import reactive
 from textual import on
 from textual.message import Message
+from textual.timer import Timer
 from textual.validation import Length
 
 
 logger = logger.bind(module="CCPPromptEditorWidget")
+
+#: Debounce for the prompt-content `TextArea` -- mirrors the picker/filter
+#: family's 0.2 s shape (`console_prompt_picker_modal.py`). Each settle
+#: rebuilds the preview `Static` from the full prompt text, which should
+#: not happen on every keystroke (task-15476).
+PREVIEW_DEBOUNCE_SECONDS = 0.2
 
 
 # ========== Messages ==========
@@ -378,6 +385,7 @@ class CCPPromptEditorWidget(Container):
         self._system_toggle: Optional[Switch] = None
         self._preview_area: Optional[Static] = None
         self._test_result_area: Optional[Static] = None
+        self._preview_debounce_timer: Optional[Timer] = None
 
         logger.debug("CCPPromptEditorWidget initialized")
 
@@ -875,7 +883,15 @@ class CCPPromptEditorWidget(Container):
 
     @on(TextArea.Changed, "#ccp-prompt-content")
     async def handle_prompt_content_changed(self, event: TextArea.Changed) -> None:
-        """Handle prompt content changes."""
+        """Handle prompt content changes (debounced -- task-15476)."""
+        if self._preview_debounce_timer is not None:
+            self._preview_debounce_timer.stop()
+        self._preview_debounce_timer = self.set_timer(
+            PREVIEW_DEBOUNCE_SECONDS, self._apply_preview_debounced
+        )
+
+    def _apply_preview_debounced(self) -> None:
+        self._preview_debounce_timer = None
         self._update_preview()
 
     @on(Switch.Changed, "#ccp-prompt-system-toggle")

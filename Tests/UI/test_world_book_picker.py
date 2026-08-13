@@ -47,7 +47,13 @@ def test_filter_then_select():
     ]
     picker, listing = _picker(books)
 
-    picker._filter(SimpleNamespace(value="beta", stop=Mock()))
+    # task-15476: `_filter` itself now only arms a debounce `Timer`, which
+    # requires a running Textual message pump this synchronous, unmounted
+    # unit test never provides. `_apply_filter_debounced` is where the
+    # actual filter-then-populate logic this test exercises now lives; the
+    # debounce mechanics themselves are covered by a dedicated test
+    # (`test_console_character_picker_debounce.py`) that runs a real App.
+    picker._apply_filter_debounced("beta")
     listing.index = 0
 
     assert picker._selected_id() == 20

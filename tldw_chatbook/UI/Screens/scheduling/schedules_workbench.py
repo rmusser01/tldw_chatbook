@@ -12,6 +12,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.timer import Timer
 from textual.widgets import Button, DataTable, Input, Static, TabbedContent, TabPane
 
 from ...Navigation.base_app_screen import BaseAppScreen
@@ -50,6 +51,11 @@ logger = logger.bind(module="SchedulesWorkbench")
 
 SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH = 120
 
+#: Debounce for the queue filter `Input` -- mirrors the console picker
+#: family's 0.2 s shape (`console_prompt_picker_modal.py`). A full render
+#: pass clears and rebuilds the whole `DataTable` (task-15476).
+QUEUE_FILTER_DEBOUNCE_SECONDS = 0.2
+
 
 class SchedulesWorkbench(BaseAppScreen):
     """Main workbench for managing scheduled runs, reminders, and jobs."""
@@ -84,6 +90,11 @@ class SchedulesWorkbench(BaseAppScreen):
         self._tasks: list[ReminderTask | ScheduledTask] = []
         self._visible_tasks: list[ReminderTask | ScheduledTask] = []
         self._filter_text = ""
+        self._filter_debounce_timer: Timer | None = None
+        # task-15476: the task id currently shown in the detail/inspector
+        # panes, tracked independently of row index so a filter keystroke
+        # can restore the same selection instead of always jumping to row 0.
+        self._selected_task_id: str | None = None
         self._marked_ids: set[str] = set()
         self._sync_running = False
         self._current_console_follow_item = None
@@ -230,7 +241,14 @@ class SchedulesWorkbench(BaseAppScreen):
         await self._refresh_console_context()
 
     def _render_table(self) -> None:
-        """Rebuild the queue rows from the current tasks + filter text."""
+        """Rebuild the queue rows from the current tasks + filter text.
+
+        Restores the previously selected task's row (by id) when it is
+        still visible after the filter narrows, instead of always jumping
+        the detail/inspector panes back to row 0 (task-15476): a filter
+        keystroke must not discard what the user was looking at.
+        """
+        previous_selected_id = self._selected_task_id
         text = self._filter_text.strip().lower()
         self._visible_tasks = [
             task
@@ -257,8 +275,17 @@ class SchedulesWorkbench(BaseAppScreen):
             table.add_row(*row)
 
         if rows:
-            self._update_detail_for_index(0)
+            target_index = 0
+            if previous_selected_id is not None:
+                for index, task in enumerate(self._visible_tasks):
+                    if task.id == previous_selected_id:
+                        target_index = index
+                        break
+            if table.row_count:
+                table.move_cursor(row=target_index)
+            self._update_detail_for_index(target_index)
         else:
+            self._selected_task_id = None
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(
                 None, queue_empty=not self._tasks
             )
@@ -274,8 +301,20 @@ class SchedulesWorkbench(BaseAppScreen):
 
     @on(Input.Changed, "#scheduling-queue-filter")
     def _on_queue_filter_changed(self, event: Input.Changed) -> None:
-        """Filter the queue rows by title substring."""
+        """Filter the queue rows by title substring (debounced).
+
+        A settled render clears and rebuilds the whole `DataTable`, so it
+        must not run on every keystroke (task-15476).
+        """
         self._filter_text = event.value
+        if self._filter_debounce_timer is not None:
+            self._filter_debounce_timer.stop()
+        self._filter_debounce_timer = self.set_timer(
+            QUEUE_FILTER_DEBOUNCE_SECONDS, self._apply_queue_filter_debounced
+        )
+
+    def _apply_queue_filter_debounced(self) -> None:
+        self._filter_debounce_timer = None
         self._render_table()
 
     @on(DataTable.RowHighlighted)
@@ -286,6 +325,7 @@ class SchedulesWorkbench(BaseAppScreen):
     def _update_detail_for_index(self, index: int) -> None:
         """Render task details in the detail and inspector panes."""
         if not (0 <= index < len(self._visible_tasks)):
+            self._selected_task_id = None
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(
                 None, queue_empty=not self._tasks
             )
@@ -293,6 +333,7 @@ class SchedulesWorkbench(BaseAppScreen):
             return
 
         task = self._visible_tasks[index]
+        self._selected_task_id = task.id
         self.query_one("#scheduling-task-detail", TaskDetail).set_task(task)
         self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
 

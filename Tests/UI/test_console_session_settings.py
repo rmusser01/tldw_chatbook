@@ -38,6 +38,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
 from tldw_chatbook.UI.Screens import provider_model_resolution
 from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS,
     MODAL_BODY_MIN_HEIGHT,
     MODAL_CONTROL_HEIGHT,
     MODEL_DISCOVER_BUTTON_ID,
@@ -2666,8 +2667,10 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
             "#console-settings-provider-model-section"
         )
         model_input.value = ""
-        app.screen._sync_readiness_display()
-        await pilot.pause()
+        # Debounced (task-15476): let the production `Input.Changed`
+        # handler settle instead of forcing `_sync_readiness_display()`
+        # directly, which raced the (now-delayed) handler-driven update.
+        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.1)
 
         assert model_input.value == ""
         assert picker.value is None
