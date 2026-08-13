@@ -841,8 +841,9 @@ async def test_handle_console_message_action_routes_speak_stop_to_tts_playback_e
     assert isinstance(event, TTSPlaybackEvent)
     assert event.action == "stop"
     assert event.message_id == message.id
+    event.report_outcome(True)
     assert screen._console_speaking_message_id is None
-    screen._sync_native_console_chat_ui.assert_awaited()
+    await asyncio.sleep(0)
     assert len(notified) == 1
     assert notified[0][0][0] == "Stopped speaking."
 
@@ -911,6 +912,53 @@ async def test_handle_console_message_action_speak_stop_does_not_clear_other_mes
     assert handled is True
     assert screen._console_speaking_message_id == message_b.id
     assert notified == []
+
+
+@pytest.mark.asyncio
+async def test_failed_speech_clears_on_any_next_message_action():
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Copy me.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    screen._console_speech_states[message.id] = "failed"
+    copied: list[str] = []
+    screen.app_instance.copy_to_clipboard = copied.append
+    button = Button("copy", id=f"console-message-action-copy-{message.id}")
+
+    assert await screen.handle_console_message_action(Button.Pressed(button)) is True
+
+    assert copied == ["Copy me."]
+    assert screen._console_speech_states == {}
+
+
+@pytest.mark.asyncio
+async def test_rejected_stop_post_does_not_claim_stopped():
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Speaking.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    screen._console_speaking_message_id = message.id
+    screen._console_speech_states[message.id] = "playing"
+    screen.app_instance.post_message = lambda *_args, **_kwargs: False
+    notified: list[tuple[tuple, dict]] = []
+    screen.app_instance.notify = lambda *args, **kwargs: notified.append((args, kwargs))
+    button = Button("stop", id=f"console-message-action-speak-stop-{message.id}")
+
+    assert await screen.handle_console_message_action(Button.Pressed(button)) is True
+
+    assert screen._console_speech_states[message.id] == "failed"
+    assert screen._console_speaking_message_id is None
+    assert not any(args and args[0] == "Stopped speaking." for args, _ in notified)
 
 
 # --- F5 (task-9 review): /generate-image dispatch gate in a temporary chat --

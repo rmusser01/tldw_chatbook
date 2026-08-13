@@ -8860,8 +8860,11 @@ class TldwCli(
     async def handle_tts_complete_event(self, event: TTSCompleteEvent) -> None:
         """Handle TTS generation completion."""
         self.loguru_logger.info(f"TTS complete for message {event.message_id}")
+        playback_lifecycle = getattr(event, "playback_lifecycle", None)
 
         if event.error:
+            if playback_lifecycle is not None:
+                playback_lifecycle.report("failed")
             self.notify(f"TTS failed: {event.error}", severity="error")
             # Update widget state back to idle on error
             try:
@@ -8889,22 +8892,23 @@ class TldwCli(
             # `_console_speaking_message_id`, not from a legacy widget — on
             # failure it must be cleared too, or the row keeps "⏹ Stop
             # speech" with no speech to stop (TASK-15422).
-            for screen in reversed(tuple(getattr(self, "screen_stack", ()))):
-                if (
-                    getattr(screen, "_console_speaking_message_id", None)
-                    == event.message_id
-                ):
-                    screen._console_speaking_message_id = None
-                    sync = getattr(screen, "_sync_native_console_chat_ui", None)
-                    if callable(sync):
-                        try:
-                            await sync()
-                        except Exception:
-                            self.loguru_logger.error(
-                                "Console speak-state resync failed after a "
-                                "TTS error"
-                            )
-                    break
+            if playback_lifecycle is None:
+                for screen in reversed(tuple(getattr(self, "screen_stack", ()))):
+                    if (
+                        getattr(screen, "_console_speaking_message_id", None)
+                        == event.message_id
+                    ):
+                        screen._console_speaking_message_id = None
+                        sync = getattr(screen, "_sync_native_console_chat_ui", None)
+                        if callable(sync):
+                            try:
+                                await sync()
+                            except Exception:
+                                self.loguru_logger.error(
+                                    "Console speak-state resync failed after a "
+                                    "TTS error"
+                                )
+                        break
             if event.global_override_token is not None:
                 self.run_worker(
                     self._offer_tts_global_override(event.global_override_token),
@@ -8913,6 +8917,11 @@ class TldwCli(
         else:
             # Update widget state to ready with audio file
             if event.audio_file and event.audio_file.exists():
+                if (
+                    playback_lifecycle is not None
+                    and not playback_lifecycle.is_current()
+                ):
+                    return
                 try:
                     widget_found = False
                     if event.message_id:
@@ -8953,12 +8962,25 @@ class TldwCli(
                         # which has no per-message playback control), so
                         # there is nothing for the user to click - play the
                         # generated audio immediately instead of going silent.
-                        self.post_message(
-                            TTSPlaybackEvent(action="play", message_id=event.message_id)
+                        accepted = self.post_message(
+                            TTSPlaybackEvent(
+                                action="play",
+                                message_id=event.message_id,
+                                playback_lifecycle=playback_lifecycle,
+                            )
                         )
+                        if accepted is False and playback_lifecycle is not None:
+                            playback_lifecycle.report("failed")
                 except Exception as e:
+                    if playback_lifecycle is not None:
+                        playback_lifecycle.report("failed")
                     self.loguru_logger.error(f"Error playing audio: {e}")
                     self.notify("Failed to play audio", severity="error")
+            elif (
+                playback_lifecycle is not None
+                and playback_lifecycle.state == "generating"
+            ):
+                playback_lifecycle.report("failed")
 
             # Remove TTS generating class from message
             try:
@@ -9024,9 +9046,21 @@ class TldwCli(
     @on(TTSPlaybackEvent)
     async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
         """Handle TTS playback control."""
-        handler = await self._ensure_tts_handler()
-        if handler:
-            await handler.handle_tts_playback(event)
+        try:
+            handler = await self._ensure_tts_handler()
+            if handler:
+                await handler.handle_tts_playback(event)
+            else:
+                event.report_outcome(False)
+                if event.playback_lifecycle is not None:
+                    event.playback_lifecycle.report("failed")
+        except asyncio.CancelledError:
+            event.report_outcome(False)
+            raise
+        except Exception:
+            event.report_outcome(False)
+            if event.playback_lifecycle is not None:
+                event.playback_lifecycle.report("failed")
 
     @on(STTSPlaygroundGenerateEvent)
     async def handle_stts_playground_generate_event(

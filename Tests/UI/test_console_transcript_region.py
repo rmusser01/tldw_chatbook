@@ -335,8 +335,8 @@ async def test_completed_assistant_headers_always_show_one_speech_action():
         transcript = app.query_one(ConsoleTranscript)
 
         assert transcript.selected_message_id is None
-        assert len(app.query("#console-message-action-speak-speech-a")) == 1
-        assert len(app.query("#console-message-action-speak-speech-b")) == 1
+        assert len(app.query("#console-message-speech-action-speech-a")) == 1
+        assert len(app.query("#console-message-speech-action-speech-b")) == 1
 
         transcript.select_message("speech-a")
         await pilot.pause()
@@ -345,9 +345,8 @@ async def test_completed_assistant_headers_always_show_one_speech_action():
         action_ids = {child.id for child in action_row.children}
         assert "console-message-action-copy-speech-a" in action_ids
         assert "console-message-action-edit-speech-a" in action_ids
-        assert "console-message-action-speak-speech-a" not in action_ids
-        assert "console-message-action-speak-stop-speech-a" not in action_ids
-        assert len(app.query("#console-message-action-speak-speech-a")) == 1
+        assert "console-message-speech-action-speech-a" not in action_ids
+        assert len(app.query("#console-message-speech-action-speech-a")) == 1
 
 
 @pytest.mark.asyncio
@@ -357,31 +356,36 @@ async def test_message_header_tracks_speech_lifecycle_without_recreating_row():
         await _wait_for_selector(app, pilot, "#console-message-speech-a")
         transcript = app.query_one(ConsoleTranscript)
         row = app.query_one("#console-message-speech-a", ConsoleMarkdownMessage)
+        action = app.query_one("#console-message-speech-action-speech-a", Button)
+        action.focus()
+        await pilot.pause()
+        assert action.has_focus
 
         assert transcript.set_speech_state("speech-a", "generating") is True
         await pilot.pause()
-        generating = app.query_one(
-            "#console-message-action-speak-stop-speech-a", Button
-        )
+        action = app.query_one("#console-message-speech-action-speech-a", Button)
         assert app.query_one("#console-message-speech-a") is row
-        assert generating.disabled is True
+        assert action.disabled is True
         assert _speech_status(transcript, "speech-a") == "Generating"
 
         assert transcript.set_speech_state("speech-a", "playing") is True
         await pilot.pause()
-        playing = app.query_one("#console-message-action-speak-stop-speech-a", Button)
+        playing = app.query_one("#console-message-speech-action-speech-a", Button)
         assert app.query_one("#console-message-speech-a") is row
+        assert playing is action
         assert playing.disabled is False
+        assert playing.has_focus
         assert _speech_status(transcript, "speech-a") == "Playing"
 
         assert transcript.set_speech_state("speech-a", "stopped") is True
         await pilot.pause()
-        assert len(app.query("#console-message-action-speak-speech-a")) == 1
+        stopped = app.query_one("#console-message-speech-action-speech-a", Button)
+        assert stopped is action
         assert _speech_status(transcript, "speech-a") == "Stopped"
 
         assert transcript.set_speech_state("speech-a", "playing") is False
         await pilot.pause()
-        assert len(app.query("#console-message-action-speak-speech-a")) == 1
+        assert app.query_one("#console-message-speech-action-speech-a", Button) is action
         assert _speech_status(transcript, "speech-a") == "Stopped"
 
 
@@ -398,7 +402,7 @@ async def test_new_active_speech_stops_prior_header_and_failure_clears_on_select
         await pilot.pause()
 
         assert _speech_status(transcript, "speech-a") == "Stopped"
-        assert len(app.query("#console-message-action-speak-speech-a")) == 1
+        assert len(app.query("#console-message-speech-action-speech-a")) == 1
         assert _speech_status(transcript, "speech-b") == "Generating"
 
         assert transcript.set_speech_state("speech-b", "failed") is True

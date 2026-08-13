@@ -15043,6 +15043,7 @@ class ChatScreen(BaseAppScreen):
         # raise, and a raised exception must not strand an unpersisted
         # toggle-then-quit.
         await self._flush_sidebar_state_now()
+        self._message.invalidate_console_speech_context()
         self._console_auto_speak.unmount()
         registry = self._h3_image_edit_registry()
         store = self._console_chat_store
@@ -15335,6 +15336,7 @@ class ChatScreen(BaseAppScreen):
         active_session_id = (
             str(active_session_id) if active_session_id is not None else ""
         )
+        self._message.invalidate_console_speech_context()
         store.restore_state(
             sessions=restored_sessions,
             messages_by_session=restored_messages_by_session,
@@ -16271,6 +16273,7 @@ class ChatScreen(BaseAppScreen):
         self._record_ui_worker_started("console-sync")
         try:
             store = self._console_chat_store
+            self._message.reconcile_console_speech_context()
             if store is not None:
                 live_session_ids = {session.id for session in store.sessions()}
                 registry = self._h3_image_edit_registry()

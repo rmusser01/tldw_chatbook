@@ -51,6 +51,7 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSGlobalOverrideDecisionEvent,
     TTSMessageSpeechRequestEvent,
     TTSPlaybackEvent,
+    TTSPlaybackLifecycle,
     TTSProgressEvent,
 )
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
@@ -101,7 +102,6 @@ class _FakeApp:
 
     async def _offer_tts_global_override(self, token: str) -> None:
         await TldwCli._offer_tts_global_override(self, token)
-
 
 class ProgressHost(App[None]):
     """Real Textual app exposing the DOMQuery used by the progress handler."""
@@ -159,6 +159,105 @@ async def test_app_routes_snapshot_event_without_logging_private_snapshot_data()
     rendered_logs = repr(fake_app.loguru_logger.method_calls)
     assert "PRIVATE_RESPONSE_TEXT" not in rendered_logs
     assert "PRIVATE_AUTHORITY" not in rendered_logs
+
+
+@pytest.mark.asyncio
+async def test_real_handler_supersedes_spawned_generation_and_discards_a(
+    tmp_path, monkeypatch
+) -> None:
+    current_request = 1
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+    never_release = asyncio.Event()
+    posted: list[object] = []
+    paths = [tmp_path / "a.mp3", tmp_path / "b.mp3"]
+
+    def response(started: asyncio.Event) -> TTSAudioResponse:
+        async def chunks():
+            yield b"a" * (64 * 1024)
+            started.set()
+            await never_release.wait()
+
+        return TTSAudioResponse(
+            provider_id="openai",
+            model_id="tts-model",
+            audio_format="mp3",
+            content_type="audio/mpeg",
+            byte_stream=chunks(),
+        )
+
+    service = MagicMock()
+    service.preferences_snapshot.return_value = SimpleNamespace(
+        provider_id="openai",
+        speed=1.0,
+    )
+    service.synthesize_default = AsyncMock(
+        side_effect=[response(first_started), response(second_started)]
+    )
+    handler = TTSEventHandler()
+    handler._tts_service = service
+    handler._create_tts_artifact = MagicMock(side_effect=paths)
+
+    async def capture(message: object) -> bool:
+        posted.append(message)
+        return True
+
+    handler._post_tts_message = capture
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events.sink_available",
+        lambda: False,
+    )
+    first_outcomes: list[bool] = []
+    first_lifecycle = TTSPlaybackLifecycle(
+        message_id="message-a",
+        request_id=1,
+        validator=lambda: current_request == 1,
+        callback=lambda _state: None,
+    )
+    second_lifecycle = TTSPlaybackLifecycle(
+        message_id="message-b",
+        request_id=2,
+        validator=lambda: current_request == 2,
+        callback=lambda _state: None,
+    )
+
+    try:
+        await handler._admit_tts_generation(
+            text="First.",
+            message_id="message-a",
+            voice=None,
+            resolution=None,
+            outcome_callback=first_outcomes.append,
+            playback_lifecycle=first_lifecycle,
+        )
+        await asyncio.wait_for(first_started.wait(), timeout=1.0)
+        assert paths[0].exists()
+
+        current_request = 2
+        await handler._admit_tts_generation(
+            text="Second.",
+            message_id="message-b",
+            voice=None,
+            resolution=None,
+            playback_lifecycle=second_lifecycle,
+        )
+        await asyncio.wait_for(second_started.wait(), timeout=1.0)
+
+        assert first_outcomes == [True]
+        assert not paths[0].exists()
+        assert "message-a" not in handler._audio_files
+        assert not any(
+            isinstance(message, (TTSCompleteEvent, TTSPlaybackEvent))
+            and message.message_id == "message-a"
+            for message in posted
+        )
+        assert handler._console_generation_owner.lifecycle is second_lifecycle
+        assert handler._console_generation_owner.task.done() is False
+    finally:
+        current_request = 3
+        for task in tuple(handler._active_tasks):
+            task.cancel()
+        await asyncio.gather(*tuple(handler._active_tasks), return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -561,9 +660,7 @@ class _SpeechRequestControllerStub:
     _begin_console_speech_presentation = (
         ConsoleMessageController._begin_console_speech_presentation
     )
-    _settle_console_speech_presentation = (
-        ConsoleMessageController._settle_console_speech_presentation
-    )
+    _settle_console_speech_presentation = ConsoleMessageController._settle_console_speech_presentation
     _schedule_console_speech_state_sync = (
         ConsoleMessageController._schedule_console_speech_state_sync
     )
@@ -579,7 +676,10 @@ class _SpeechRequestControllerStub:
             self.app_instance.post_message.return_value = post_result
         self._console_speaking_message_id = None
         self._console_speech_states: dict[str, str] = {}
-        self._console_speech_epochs: dict[str, int] = {}
+        self._console_speech_request_generation = 0
+        self._console_speech_lifetime_generation = 0
+        self._console_speech_owner = None
+        self._console_speech_pending_stop = None
         self.syncs = 0
 
     def _ensure_console_chat_store(self) -> ConsoleChatStore:
@@ -633,7 +733,7 @@ async def test_console_speech_unexpected_snapshot_issue_failure_settles_once() -
 
 
 @pytest.mark.asyncio
-async def test_console_speech_request_reports_generating_then_playing() -> None:
+async def test_console_speech_request_waits_for_playback_start() -> None:
     store = ConsoleChatStore()
     session = store.create_session()
     message = store.append_message(
@@ -654,6 +754,9 @@ async def test_console_speech_request_reports_generating_then_playing() -> None:
     event.report_outcome(True)
     await asyncio.sleep(0)
 
+    assert controller._console_speech_states == {message.id: "generating"}
+    event.playback_lifecycle.report("playing")
+    await asyncio.sleep(0)
     assert controller._console_speech_states == {message.id: "playing"}
     assert controller._console_speaking_message_id == message.id
 
@@ -679,8 +782,504 @@ async def test_stale_speech_outcome_cannot_replace_newer_request_state() -> None
     assert controller._console_speech_states[message.id] == "generating"
 
     second.report_outcome(True)
+    second.playback_lifecycle.report("playing")
     await asyncio.sleep(0)
     assert controller._console_speech_states[message.id] == "playing"
+
+
+@pytest.mark.asyncio
+async def test_generation_success_waits_for_authoritative_playback_lifecycle() -> None:
+    """Synthesis delivery is not proof that the audio device started."""
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Ready.",
+    )
+    controller = _SpeechRequestControllerStub(store, True)
+
+    assert await ConsoleMessageController.request_console_message_speech(
+        controller, message.id
+    )
+    request = controller.app_instance.post_message.call_args.args[0]
+
+    request.report_outcome(True)
+    await asyncio.sleep(0)
+    assert controller._console_speech_states == {message.id: "generating"}
+
+    assert request.playback_lifecycle.report("playing") is True
+    await asyncio.sleep(0)
+    assert controller._console_speech_states == {message.id: "playing"}
+
+    assert request.playback_lifecycle.report("stopped") is True
+    await asyncio.sleep(0)
+    assert controller._console_speech_states == {message.id: "stopped"}
+    assert controller._console_speaking_message_id is None
+
+
+@pytest.mark.asyncio
+async def test_completion_rejected_before_playback_reports_failed(tmp_path) -> None:
+    """A full artifact cannot claim Playing when the Play post is rejected."""
+    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+        TTSPlaybackLifecycle,
+    )
+
+    states: list[str] = []
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="message-1",
+        request_id=1,
+        validator=lambda: True,
+        callback=states.append,
+    )
+    artifact = tmp_path / "reply.wav"
+    artifact.write_bytes(b"RIFF")
+    app = _FakeApp()
+    app.post_message = MagicMock(return_value=False)
+
+    await TldwCli.handle_tts_complete_event(
+        app,
+        TTSCompleteEvent(
+            message_id="message-1",
+            audio_file=artifact,
+            playback_lifecycle=lifecycle,
+        ),
+    )
+
+    assert states == ["failed"]
+
+
+@pytest.mark.asyncio
+async def test_missing_completion_artifact_reports_failed(tmp_path) -> None:
+    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+        TTSPlaybackLifecycle,
+    )
+
+    states: list[str] = []
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="message-1",
+        request_id=1,
+        validator=lambda: True,
+        callback=states.append,
+    )
+    app = _FakeApp()
+
+    await TldwCli.handle_tts_complete_event(
+        app,
+        TTSCompleteEvent(
+            message_id="message-1",
+            audio_file=tmp_path / "missing.wav",
+            playback_lifecycle=lifecycle,
+        ),
+    )
+
+    assert states == ["failed"]
+    assert not any(isinstance(item, TTSPlaybackEvent) for item in app.posted)
+
+
+@pytest.mark.asyncio
+async def test_superseding_request_fences_old_completion_and_posts_stop() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    first = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="First."
+    )
+    second = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="Second."
+    )
+    controller = _SpeechRequestControllerStub(store, True)
+
+    await ConsoleMessageController.request_console_message_speech(controller, first.id)
+    first_request = controller.app_instance.post_message.call_args.args[0]
+    first_request.playback_lifecycle.report("playing")
+    await asyncio.sleep(0)
+
+    await ConsoleMessageController.request_console_message_speech(controller, second.id)
+    posted = [call.args[0] for call in controller.app_instance.post_message.call_args_list]
+
+    assert isinstance(posted[-2], TTSPlaybackEvent)
+    assert posted[-2].action == "stop"
+    assert posted[-2].message_id == first.id
+    assert isinstance(posted[-1], TTSMessageSpeechRequestEvent)
+    assert posted[-1].message_id == second.id
+    assert first_request.playback_lifecycle.is_current() is False
+
+    app = _FakeApp()
+    artifact = MagicMock()
+    artifact.exists.return_value = True
+    await TldwCli.handle_tts_complete_event(
+        app,
+        TTSCompleteEvent(
+            message_id=first.id,
+            audio_file=artifact,
+            playback_lifecycle=first_request.playback_lifecycle,
+        ),
+    )
+    assert not any(isinstance(item, TTSPlaybackEvent) for item in app.posted)
+
+
+@pytest.mark.asyncio
+async def test_superseded_generation_settles_external_outcome_once() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    first = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="First."
+    )
+    second = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="Second."
+    )
+    controller = _SpeechRequestControllerStub(store, True)
+    outcomes: list[bool] = []
+
+    await ConsoleMessageController.request_console_message_speech(
+        controller,
+        first.id,
+        outcome_callback=outcomes.append,
+    )
+    first_request = controller.app_instance.post_message.call_args.args[0]
+
+    await ConsoleMessageController.request_console_message_speech(controller, second.id)
+    first_request.report_outcome(True)
+    await asyncio.sleep(0)
+
+    assert outcomes == [True]
+    assert controller._console_speaking_message_id == second.id
+    assert controller._console_speech_states[second.id] == "generating"
+
+
+@pytest.mark.asyncio
+async def test_session_switch_and_restore_same_id_invalidate_playback_owner() -> None:
+    store = ConsoleChatStore()
+    first_session = store.create_session()
+    message = store.append_message(
+        first_session.id, role=ConsoleMessageRole.ASSISTANT, content="Old."
+    )
+    second_session = store.create_session()
+    store.switch_session(first_session.id)
+    controller = _SpeechRequestControllerStub(store, True)
+
+    await ConsoleMessageController.request_console_message_speech(controller, message.id)
+    request = controller.app_instance.post_message.call_args.args[0]
+    store.switch_session(second_session.id)
+    assert request.playback_lifecycle.is_current() is False
+
+    replacement_session = type(first_session)(id=first_session.id, title="Restored")
+    replacement_message = type(message)(
+        id=message.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Replacement.",
+        status="complete",
+    )
+    store.restore_state(
+        sessions=[replacement_session],
+        messages_by_session={replacement_session.id: [replacement_message]},
+        active_session_id=replacement_session.id,
+    )
+    assert request.playback_lifecycle.is_current() is False
+
+
+@pytest.mark.asyncio
+async def test_screen_lifetime_invalidation_rejects_late_playback() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="Ready."
+    )
+    controller = _SpeechRequestControllerStub(store, True)
+
+    await ConsoleMessageController.request_console_message_speech(controller, message.id)
+    request = controller.app_instance.post_message.call_args.args[0]
+    ConsoleMessageController.invalidate_console_speech_context(controller)
+
+    assert request.playback_lifecycle.is_current() is False
+    assert controller._console_speaking_message_id is None
+
+
+@pytest.mark.asyncio
+async def test_ownership_state_remains_bounded_across_many_requests() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    controller = _SpeechRequestControllerStub(store, True)
+
+    for index in range(10_000):
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=f"Ready {index}.",
+        )
+        await ConsoleMessageController.request_console_message_speech(
+            controller, message.id
+        )
+
+    assert not hasattr(controller, "_console_speech_epochs")
+    assert len(controller._console_speech_states) <= 2
+    assert controller._console_speech_request_generation == 10_000
+
+
+def test_legacy_playback_monitor_reports_real_start_and_natural_finish(tmp_path) -> None:
+    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+        _play_legacy_clip_and_await_completion,
+    )
+    from tldw_chatbook.TTS.audio_player import PlaybackState
+
+    artifact = tmp_path / "reply.wav"
+    artifact.write_bytes(b"RIFF")
+    player = MagicMock()
+    player.play.return_value = True
+    player.get_current_file.return_value = artifact
+    player.get_state.return_value = PlaybackState.FINISHED
+    started: list[bool] = []
+
+    finished = _play_legacy_clip_and_await_completion(
+        player,
+        artifact,
+        timeout_seconds=1.0,
+        poll_interval_seconds=0.0,
+        on_started=lambda: started.append(True),
+    )
+
+    assert finished is True
+    assert started == [True]
+
+
+@pytest.mark.asyncio
+async def test_playback_handler_reports_start_then_natural_stop(
+    tmp_path, monkeypatch
+) -> None:
+    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+        TTSPlaybackLifecycle,
+    )
+
+    artifact = tmp_path / "reply.wav"
+    artifact.write_bytes(b"RIFF")
+    states: list[str] = []
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="message-1",
+        request_id=1,
+        validator=lambda: True,
+        callback=states.append,
+    )
+    handler = TTSEventHandler()
+    handler._audio_files["message-1"] = artifact
+
+    def finish(_player, _path, **kwargs):
+        kwargs["on_started"]()
+        return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events._play_legacy_clip_and_await_completion",
+        finish,
+    )
+
+    await handler.handle_tts_playback(
+        TTSPlaybackEvent(
+            action="play",
+            message_id="message-1",
+            playback_lifecycle=lifecycle,
+        )
+    )
+    task = handler._active_file_playback_task
+    assert task is not None
+    await task
+
+    assert states == ["playing", "stopped"]
+    assert handler._active_file_playback_task is None
+
+
+@pytest.mark.asyncio
+async def test_playback_handler_reports_player_start_failure(
+    tmp_path, monkeypatch
+) -> None:
+    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+        TTSPlaybackLifecycle,
+    )
+
+    artifact = tmp_path / "reply.wav"
+    artifact.write_bytes(b"RIFF")
+    states: list[str] = []
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="message-1",
+        request_id=1,
+        validator=lambda: True,
+        callback=states.append,
+    )
+    handler = TTSEventHandler()
+    handler._audio_files["message-1"] = artifact
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events._play_legacy_clip_and_await_completion",
+        lambda *_args, **_kwargs: False,
+    )
+
+    await handler.handle_tts_playback(
+        TTSPlaybackEvent(
+            action="play",
+            message_id="message-1",
+            playback_lifecycle=lifecycle,
+        )
+    )
+    await handler._active_file_playback_task
+
+    assert states == ["failed"]
+
+
+@pytest.mark.asyncio
+async def test_playback_handler_rejected_stop_reports_failed(
+    tmp_path, monkeypatch
+) -> None:
+    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+        TTSPlaybackLifecycle,
+    )
+
+    artifact = tmp_path / "reply.wav"
+    artifact.write_bytes(b"RIFF")
+    states: list[str] = []
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="message-1",
+        request_id=1,
+        validator=lambda: True,
+        callback=states.append,
+    )
+    lifecycle.report("playing")
+    states.clear()
+    handler = TTSEventHandler()
+    handler._last_played = ("message-1", artifact)
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events.stop_audio_playback_if_current",
+        lambda _path: False,
+    )
+
+    await handler.handle_tts_playback(
+        TTSPlaybackEvent(
+            action="stop",
+            message_id="message-1",
+            playback_lifecycle=lifecycle,
+        )
+    )
+
+    assert states == ["failed"]
+
+
+@pytest.mark.asyncio
+async def test_streaming_playback_reports_device_start_then_natural_drain(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Audio.streaming_sink import (
+        PumpResult,
+        SinkDrained,
+        SinkStarted,
+    )
+    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+        TTSPlaybackLifecycle,
+    )
+
+    class _Sink:
+        def __init__(self, *, on_event, **_kwargs):
+            self.on_event = on_event
+            self.state = "idle"
+
+        def open(self, _sample_rate, _channels):
+            self.state = "open"
+
+        def stop(self):
+            self.state = "stopped"
+
+    async def fake_pump(sink, *_args, **_kwargs):
+        sink.on_event(SinkStarted())
+        sink.on_event(SinkDrained())
+        sink.state = "stopped"
+        return PumpResult(outcome="drained", bytes_fed=4)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events.StreamingPcmSink",
+        _Sink,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events.pump",
+        fake_pump,
+    )
+    states: list[str] = []
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="message-1",
+        request_id=1,
+        validator=lambda: True,
+        callback=states.append,
+    )
+    handler = TTSEventHandler()
+    handler._post_tts_message = AsyncMock(return_value=True)
+
+    async def chunks():
+        yield b"1234"
+
+    outcome = await handler._stream_response_via_sink(
+        SimpleNamespace(
+            sample_rate=24_000,
+            channels=1,
+            skip_bytes=0,
+            data_bytes=None,
+        ),
+        chunks(),
+        message_id="message-1",
+        playback_lifecycle=lifecycle,
+    )
+
+    assert outcome == "success"
+    assert states == ["playing", "stopped"]
+
+
+@pytest.mark.asyncio
+async def test_streaming_playback_cancellation_releases_exact_owner(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Audio.streaming_sink import SinkStarted
+
+    class _Sink:
+        def __init__(self, *, on_event, **_kwargs):
+            self.on_event = on_event
+            self.state = "idle"
+
+        def open(self, _sample_rate, _channels):
+            self.state = "open"
+
+        def stop(self):
+            self.state = "stopped"
+
+    async def cancelled_pump(sink, *_args, **_kwargs):
+        sink.on_event(SinkStarted())
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events.StreamingPcmSink",
+        _Sink,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events.pump",
+        cancelled_pump,
+    )
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="message-1",
+        request_id=1,
+        validator=lambda: True,
+        callback=lambda _state: None,
+    )
+    handler = TTSEventHandler()
+
+    async def chunks():
+        yield b"1234"
+
+    with pytest.raises(asyncio.CancelledError):
+        await handler._stream_response_via_sink(
+            SimpleNamespace(
+                sample_rate=24_000,
+                channels=1,
+                skip_bytes=0,
+                data_bytes=None,
+            ),
+            chunks(),
+            message_id="message-1",
+            playback_lifecycle=lifecycle,
+        )
+
+    assert handler._active_stream_playback_owner is None
 
 
 @pytest.mark.asyncio

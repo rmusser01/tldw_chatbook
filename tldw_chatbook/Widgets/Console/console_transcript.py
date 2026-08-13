@@ -1069,11 +1069,14 @@ class ConsoleMessageHeader(Horizontal):
         )
         action = Button(
             speech.action.label,
-            id=f"console-message-action-{speech.action.action_id}-{self._message.id}",
+            id=f"console-message-speech-action-{self._message.id}",
             classes="console-message-speech-action",
             compact=True,
             disabled=not speech.action.enabled,
         )
+        action.console_action_id = speech.action.action_id
+        action.console_message_id = self._message.id
+        action.console_restore_focus = False
         action.tooltip = speech.action.disabled_reason or _ACTION_TOOLTIPS.get(
             speech.action.action_id
         )
@@ -1091,23 +1094,19 @@ class ConsoleMessageHeader(Horizontal):
         speech_state: ConsoleSpeechPresentationState,
     ) -> None:
         """Update copy/state in place, recomposing only the fixed control slot."""
-        prior_action_id = (
-            self._speech.action.action_id if self._speech.action is not None else None
-        )
+        prior_has_action = self._speech.action is not None
         self._message = message
         self._presentation = presentation
         self._speech_state = speech_state
         self._speech = resolve_console_header_speech(message, speech_state)
-        next_action_id = (
-            self._speech.action.action_id if self._speech.action is not None else None
-        )
+        next_has_action = self._speech.action is not None
         try:
             speaker = self.query_one(".console-transcript-speaker-label", Static)
         except NoMatches:
             return
         speaker.set_classes(" ".join(_speaker_label_classes(presentation)))
         speaker.update(self._speaker_copy())
-        if prior_action_id != next_action_id:
+        if prior_has_action != next_has_action:
             self.refresh(recompose=True)
             return
         if self._speech.action is None:
@@ -1119,10 +1118,19 @@ class ConsoleMessageHeader(Horizontal):
             self.refresh(recompose=True)
             return
         status.update(self._speech.status_label)
+        had_focus = action.has_focus
+        if had_focus and not self._speech.action.enabled:
+            action.console_restore_focus = True
+        action.label = self._speech.action.label
+        action.console_action_id = self._speech.action.action_id
+        action.console_message_id = self._message.id
         action.disabled = not self._speech.action.enabled
         action.tooltip = self._speech.action.disabled_reason or _ACTION_TOOLTIPS.get(
             self._speech.action.action_id
         )
+        if self._speech.action.enabled and action.console_restore_focus:
+            action.console_restore_focus = False
+            self.call_after_refresh(action.focus)
 
 
 class ConsoleMarkdownMessage(Vertical):
@@ -2894,7 +2902,17 @@ class ConsoleTranscript(VerticalScroll):
         try:
             button = self.query_one(selector, Button)
         except NoMatches:
-            return False
+            if action_id not in {"speak", "speak-stop"}:
+                return False
+            try:
+                button = self.query_one(
+                    f"#console-message-speech-action-{message_id}",
+                    Button,
+                )
+            except NoMatches:
+                return False
+            if getattr(button, "console_action_id", None) != action_id:
+                return False
         button.press()
         return True
 
