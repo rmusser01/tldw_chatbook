@@ -1328,6 +1328,35 @@ def test_empty_urls_fail_outside_exact_local_provenance(
         descriptor(**overrides)
 
 
+@pytest.mark.parametrize(
+    "field,value",
+    (
+        ("source_url", None),
+        ("source_url", False),
+        ("source_url", 0),
+        ("license_url", None),
+        ("license_url", False),
+        ("license_url", 0),
+    ),
+)
+def test_local_integrity_descriptor_rejects_falsey_nonstring_urls(
+    field: str,
+    value: object,
+) -> None:
+    urls: dict[str, object] = {
+        "source_url": "",
+        "license_url": "",
+    }
+    urls[field] = value
+
+    with pytest.raises(ArtifactDescriptorValidationError, match=field):
+        descriptor(
+            license_id="unknown",
+            provenance=(ProvenanceClass.LOCAL_INTEGRITY_RECORDED,),
+            **urls,
+        )
+
+
 def test_descriptor_accepts_valid_url_with_ipv6_hostname() -> None:
     item = descriptor(
         source_url="https://[2001:db8::1]/model",

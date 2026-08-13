@@ -558,6 +558,10 @@ class ArtifactDescriptor:
         for field_name in _DESCRIPTOR_STRING_FIELDS:
             _validate_nonempty_text(field_name, getattr(self, field_name))
         local_only = self.provenance == (ProvenanceClass.LOCAL_INTEGRITY_RECORDED,)
+        if type(self.source_url) is not str:
+            raise ArtifactDescriptorValidationError(
+                "source_url must be a non-empty canonical string"
+            )
         if self.source_url:
             _validate_url("source_url", self.source_url)
         elif not local_only:
@@ -565,6 +569,10 @@ class ArtifactDescriptor:
                 "source_url may be empty only for local integrity provenance"
             )
 
+        if type(self.license_url) is not str:
+            raise ArtifactDescriptorValidationError(
+                "license_url must be a non-empty canonical string"
+            )
         if self.license_url:
             _validate_url("license_url", self.license_url)
         elif not (local_only and self.license_id == "unknown"):

@@ -201,13 +201,99 @@ async def test_uninstalled_local_integrity_descriptor_cannot_enter_download_plan
         free_bytes_probe=lambda _path: 10**12,
     )
 
-    with pytest.raises(CatalogError, match="source URL"):
+    with pytest.raises(CatalogError, match="local integrity"):
         await acquisition.preflight(
             local.reference, DictCatalog({local.reference: local})
         )
 
     assert probe_called is False
     assert fetch_called is False
+
+
+@pytest.mark.asyncio
+async def test_uninstalled_local_integrity_descriptor_rejects_source_map_before_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A source map cannot make a local descriptor acquisition-eligible."""
+    from tldw_chatbook.Model_Artifacts import acquisition as acquisition_module
+
+    local = make_descriptor(
+        source_url="",
+        license_id="unknown",
+        license_url="",
+        provenance=(ProvenanceClass.LOCAL_INTEGRITY_RECORDED,),
+    )
+    probe_called = False
+    fetch_called = False
+
+    async def unexpected_probe(*_args: object, **_kwargs: object) -> list[str]:
+        nonlocal probe_called
+        probe_called = True
+        return []
+
+    async def unexpected_fetch(*_args: object, **_kwargs: object) -> object:
+        nonlocal fetch_called
+        fetch_called = True
+        raise AssertionError("local artifact must not be fetched")
+
+    monkeypatch.setattr(ArtifactAcquisitionService, "_probe_gating", unexpected_probe)
+    monkeypatch.setattr(acquisition_module, "stream_fetch", unexpected_fetch)
+    core = ModelArtifactService(tmp_path / "managed")
+    acquisition = ArtifactAcquisitionService(
+        core,
+        free_bytes_probe=lambda _path: 10**12,
+    )
+
+    with pytest.raises(CatalogError, match="local integrity"):
+        await acquisition.preflight(
+            local.reference,
+            DictCatalog({local.reference: local}),
+            sources={local.reference: {"model.onnx": "https://example.test/model"}},
+        )
+
+    assert probe_called is False
+    assert fetch_called is False
+
+
+@pytest.mark.asyncio
+async def test_installed_local_integrity_descriptor_remains_inventory_resolvable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An installed local descriptor has no acquisition source requirement."""
+    local = make_descriptor(
+        source_url="",
+        license_id="unknown",
+        license_url="",
+        provenance=(ProvenanceClass.LOCAL_INTEGRITY_RECORDED,),
+    )
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "model.onnx").write_bytes(b"x")
+    core = ModelArtifactService(tmp_path / "managed")
+    core.install(local, source)
+    acquisition = ArtifactAcquisitionService(
+        core,
+        free_bytes_probe=lambda _path: 10**12,
+    )
+
+    probe_targets: list[object] = []
+
+    async def record_probe(_service: object, targets: object) -> list[str]:
+        probe_targets.extend(targets)  # type: ignore[arg-type]
+        return []
+
+    monkeypatch.setattr(ArtifactAcquisitionService, "_probe_gating", record_probe)
+
+    report = await acquisition.preflight(
+        local.reference,
+        DictCatalog({local.reference: local}),
+    )
+
+    assert report.entries[0].already_installed is True
+    assert report.download_bytes == 0
+    assert probe_targets == []
 
 
 def _report(**overrides: object) -> PreflightReport:
