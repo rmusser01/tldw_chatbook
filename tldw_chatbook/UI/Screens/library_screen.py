@@ -422,10 +422,11 @@ if TYPE_CHECKING:
 
 
 logger = logger.bind(module="LibraryScreen")
+LIBRARY_CONVERSATION_PAGE_SIZE = 20
 LIBRARY_SOURCE_PAGE_SIZES = {
     "notes": 100,
     "media": 50,
-    "conversations": 50,
+    "conversations": LIBRARY_CONVERSATION_PAGE_SIZE,
 }
 # task-4025: one fetch page for the media Trash view. Deliberately larger
 # than the media list's snapshot page (trash is browsed rarely and only to
@@ -2798,6 +2799,16 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id: str = ""
         self._library_navigation_context_generation: int = 0
         self._library_conversation_query: str = ""
+        self._library_conversation_page_records: tuple[Mapping[str, Any], ...] = ()
+        self._library_conversation_page = 1
+        self._library_conversation_page_size = LIBRARY_CONVERSATION_PAGE_SIZE
+        self._library_conversation_total = 0
+        self._library_conversation_total_known = True
+        self._library_conversation_has_more = False
+        self._library_conversation_page_loaded = False
+        self._library_conversation_loading = False
+        self._library_conversation_error = ""
+        self._library_conversation_request_generation = 0
         self._library_conversations_select_mode: bool = False
         self._library_conversations_row_selection = RowSelection("conversations")
         self._library_media_type_filter: str = "All"
@@ -5601,14 +5612,15 @@ class LibraryScreen(BaseAppScreen):
         degrades to the list view below rather than rendering a permanent
         loading placeholder.
 
-        The four per-pane filter/sort values restored below are read by the
+        The per-pane filter/sort values restored below are read by the
         canvas builders at mount time (``_build_library_media_state``,
         the notes canvas branch of ``compose_content``,
         ``_build_library_conversations_state``) -- setting them here, before
-        ``switch_screen`` mounts this instance, is all that is needed for
-        the first paint to already reflect them; no on_mount re-kick is
-        required (unlike a fetched detail). The conversations query is
-        user text re-sanitized through ``_safe_text`` here too -- it was
+        ``switch_screen`` mounts this instance, makes the first paint reflect
+        them. A restored conversation query is then reissued once by the real
+        source refresh so it searches the complete dataset rather than the
+        cached first-page sample. The conversations query is user text
+        re-sanitized through ``_safe_text`` here too -- it was
         already sanitized once when the user submitted it
         (``handle_library_conversations_filter_submitted``), but a saved-
         state dict is not statically typed, so this is defense against a
@@ -6500,6 +6512,16 @@ class LibraryScreen(BaseAppScreen):
         self._apply_local_source_snapshot(
             records, counts, total_known, lookup_error, recovery_state, study_counts
         )
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+            and self._library_conversation_query
+            and not self._library_conversation_page_loaded
+            and self._library_conversation_request_generation == 0
+        ):
+            self._start_library_conversation_page_request(
+                1,
+                self._library_conversation_query,
+            )
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS:
             # Task 5: this snapshot includes the skills entry the list view
             # reads (``_build_library_skills_state``) -- re-check the trust
@@ -6645,6 +6667,33 @@ class LibraryScreen(BaseAppScreen):
         study_counts: dict[str, int | None] | None = None,
     ) -> None:
         records = self._carry_selected_conversation_into_snapshot(records)
+        conversation_records = tuple(records.get("conversations", ()))
+        if (
+            lookup_error is None
+            and not self._library_conversation_page_loaded
+            and not self._library_conversation_query
+        ):
+            self._library_conversation_page_records = conversation_records
+            self._library_conversation_page = 1
+            self._library_conversation_total = max(
+                0, int(counts.get("conversations", 0))
+            )
+            self._library_conversation_total_known = bool(
+                total_known.get("conversations", True)
+            )
+            self._library_conversation_has_more = (
+                len(conversation_records) < self._library_conversation_total
+                if self._library_conversation_total_known
+                else False
+            )
+            self._library_conversation_page_loaded = True
+        elif lookup_error is not None and not self._library_conversation_page_loaded:
+            self._library_conversation_total_known = False
+            self._library_conversation_has_more = False
+            self._library_conversation_loading = False
+            self._library_conversation_error = (
+                "Couldn't load conversations. Submit the filter to try again."
+            )
         study_counts = (
             study_counts
             if study_counts is not None
@@ -7437,6 +7486,13 @@ class LibraryScreen(BaseAppScreen):
         ]
 
     def _conversation_records(self) -> tuple[Mapping[str, Any], ...]:
+        if (
+            self._library_conversation_page_loaded
+            or self._library_conversation_query
+            or self._library_conversation_loading
+            or self._library_conversation_error
+        ):
+            return tuple(self._library_conversation_page_records)
         return tuple(self._local_source_records.get("conversations", ()))
 
     def _conversation_record_id(self, record: Mapping[str, Any], index: int) -> str:
@@ -8431,7 +8487,11 @@ class LibraryScreen(BaseAppScreen):
                         classes="destination-purpose",
                         markup=False,
                     )
-                elif is_local_snapshot_canvas and self._library_lookup_error:
+                elif (
+                    is_local_snapshot_canvas
+                    and self._library_lookup_error
+                    and shell.canvas_kind != "conversations"
+                ):
                     yield Static(
                         self._library_lookup_error,
                         id="library-canvas-error",
@@ -9030,12 +9090,139 @@ class LibraryScreen(BaseAppScreen):
             selected_id=self._selected_conversation_id,
             select_mode=self._library_conversations_select_mode,
             selected_ids=self._library_conversations_row_selection.ids,
+            page=self._library_conversation_page,
+            page_size=self._library_conversation_page_size,
+            total_count=self._library_conversation_total,
+            total_known=self._library_conversation_total_known,
+            has_more=self._library_conversation_has_more,
+            loading=self._library_conversation_loading,
+            error_copy=self._library_conversation_error,
         )
         if self._library_conversations_select_mode:
             self._library_conversations_row_selection.reconcile(
                 r.conversation_id for r in state.rows
             )
         return state
+
+    def _start_library_conversation_page_request(
+        self, page: int, query: str, *, refocus_filter: bool = False
+    ) -> None:
+        """Start one generation-guarded conversation page request."""
+        self._library_conversation_request_generation += 1
+        generation = self._library_conversation_request_generation
+        normalized_query = self._safe_text(query, max_length=200)
+        self._library_conversation_query = normalized_query
+        self._library_conversation_loading = True
+        self._library_conversation_error = ""
+        self._library_conversations_select_mode = False
+        self._library_conversations_row_selection.clear()
+        _sync_library_canvas(self, "conversations")
+        if refocus_filter:
+            self._refocus_library_conversations_filter_after_sync()
+        self.run_worker(
+            self._load_library_conversation_page(
+                page,
+                normalized_query,
+                generation,
+                refocus_filter=refocus_filter,
+            ),
+            exclusive=True,
+            group="library_conversation_page",
+        )
+
+    async def _load_library_conversation_page(
+        self,
+        page: int,
+        query: str,
+        generation: int,
+        *,
+        refocus_filter: bool = False,
+    ) -> None:
+        """Load a complete service-backed page, discarding stale results."""
+        service = getattr(self.app_instance, "chat_conversation_scope_service", None)
+        list_conversations = getattr(service, "list_conversations", None)
+        if not callable(list_conversations):
+            if generation == self._library_conversation_request_generation:
+                self._library_conversation_loading = False
+                self._library_conversation_error = (
+                    "Couldn't load conversations. Try Previous, Next, or submit "
+                    "the filter again."
+                )
+                _sync_library_canvas(self, "conversations")
+                if refocus_filter:
+                    self._refocus_library_conversations_filter_after_sync()
+            return
+
+        requested_page = max(1, int(page))
+        normalized_query = self._safe_text(query, max_length=200)
+        try:
+            result = await self._run_library_service_call(
+                list_conversations,
+                mode="local",
+                scope_type="all",
+                query=normalized_query or None,
+                limit=LIBRARY_CONVERSATION_PAGE_SIZE,
+                offset=(requested_page - 1) * LIBRARY_CONVERSATION_PAGE_SIZE,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            if generation != self._library_conversation_request_generation:
+                return
+            logger.opt(exception=True).warning(
+                "Failed to load Library conversations page."
+            )
+            self._library_conversation_loading = False
+            self._library_conversation_error = (
+                "Couldn't load conversations. Try Previous, Next, or submit "
+                "the filter again."
+            )
+            _sync_library_canvas(self, "conversations")
+            if refocus_filter:
+                self._refocus_library_conversations_filter_after_sync()
+            return
+
+        if generation != self._library_conversation_request_generation:
+            return
+
+        records, total, total_known = self._response_records_and_count(result)
+        pagination = result.get("pagination") if isinstance(result, Mapping) else None
+        explicit_has_more = (
+            bool(pagination.get("has_more"))
+            if isinstance(pagination, Mapping)
+            else False
+        )
+        has_more = (
+            (requested_page - 1) * LIBRARY_CONVERSATION_PAGE_SIZE + len(records) < total
+            if total_known
+            else explicit_has_more
+        )
+        page_count = max(
+            1,
+            (total + LIBRARY_CONVERSATION_PAGE_SIZE - 1)
+            // LIBRARY_CONVERSATION_PAGE_SIZE,
+        )
+        if total_known and requested_page > page_count:
+            await self._load_library_conversation_page(
+                page_count,
+                normalized_query,
+                generation,
+                refocus_filter=refocus_filter,
+            )
+            return
+
+        self._library_conversation_page_records = records
+        self._library_conversation_page = requested_page
+        self._library_conversation_total = total
+        self._library_conversation_total_known = total_known
+        self._library_conversation_has_more = has_more
+        self._library_conversation_page_loaded = True
+        self._library_conversation_query = normalized_query
+        self._library_conversation_loading = False
+        self._library_conversation_error = ""
+        self._selected_conversation_id = ""
+        _sync_library_canvas(self, "conversations")
+        if refocus_filter:
+            self._refocus_library_conversations_filter_after_sync()
 
     def _build_library_media_state(self) -> LibraryMediaCanvasState:
         """Build the media canvas display state from local records."""
@@ -26728,25 +26915,40 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_conversations_filter_submitted(
         self, event: Input.Submitted
     ) -> None:
-        """Filter the conversations canvas from its in-canvas filter box.
-
-        This is client-side substring filtering over the already-loaded
-        conversations snapshot (up to ``LIBRARY_SOURCE_PAGE_SIZES["conversations"]``
-        records) -- the same behavior the rail-top search box used to
-        provide before it was rewired to feed the Search canvas. A
-        service-backed FTS filter over the full conversation set (not just
-        the loaded snapshot) is a tracked follow-up.
+        """Search all conversations from the in-canvas filter box.
 
         Args:
             event: Input submit event emitted by the conversations canvas's
                 filter box.
         """
         event.stop()
-        self._library_conversation_query = self._safe_text(event.value, max_length=200)
-        self._library_conversations_select_mode = False
-        self._library_conversations_row_selection.clear()
-        self.refresh(recompose=True)
-        self.call_after_refresh(self._focus_library_conversations_filter)
+        query = self._safe_text(event.value, max_length=200)
+        self._start_library_conversation_page_request(1, query, refocus_filter=True)
+
+    @on(Button.Pressed, "#library-conversations-previous")
+    def handle_library_conversations_previous(self, event: Button.Pressed) -> None:
+        """Load the preceding complete conversation page."""
+        event.stop()
+        if self._library_conversation_loading or self._library_conversation_page <= 1:
+            return
+        self._start_library_conversation_page_request(
+            self._library_conversation_page - 1,
+            self._library_conversation_query,
+        )
+
+    @on(Button.Pressed, "#library-conversations-next")
+    def handle_library_conversations_next(self, event: Button.Pressed) -> None:
+        """Load the following complete conversation page."""
+        event.stop()
+        if (
+            self._library_conversation_loading
+            or not self._library_conversation_has_more
+        ):
+            return
+        self._start_library_conversation_page_request(
+            self._library_conversation_page + 1,
+            self._library_conversation_query,
+        )
 
     def _focus_library_conversations_filter(self) -> None:
         """Re-focus the conversations filter box after a submit-triggered recompose.
@@ -26760,6 +26962,17 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-conversations-filter", Input).focus()
         except (NoMatches, QueryError):
             pass
+
+    def _refocus_library_conversations_filter_after_sync(self) -> None:
+        """Focus the remounted filter after its canvas-scoped recompose."""
+        try:
+            canvas = self.query_one(
+                "#library-conversations-canvas", LibraryConversationsCanvas
+            )
+        except (NoMatches, QueryError):
+            self.call_after_refresh(self._focus_library_conversations_filter)
+            return
+        canvas.call_after_refresh(self._focus_library_conversations_filter)
 
     async def _sync_collections_panel(
         self,
@@ -27800,10 +28013,11 @@ class LibraryScreen(BaseAppScreen):
                 if callable(notify):
                     notify("Conversation is unavailable.", severity="warning")
                 return
-            self._local_source_records["conversations"] = (
+            self._library_conversation_page_records = (
                 fetched,
-                *self._local_source_records.get("conversations", ()),
-            )
+                *self._conversation_records(),
+            )[:LIBRARY_CONVERSATION_PAGE_SIZE]
+            self._library_conversation_page_loaded = True
         self._selected_conversation_id = record_id
         # Opening a specific conversation must show it even if an in-canvas
         # filter would otherwise hide it -- handle_library_rail_row's own
