@@ -90,6 +90,7 @@ from textual.command import Hit, Hits, Provider
 from functools import partial
 from pathlib import Path
 
+from tldw_chatbook.css import build_css
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 # from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
@@ -5062,8 +5063,19 @@ class TldwCli(
 
     # Product name shown in the terminal title (legacy "tldw CLI" retired).
     TITLE = "tldw chatbook"
-    # CSS file path
-    CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
+    # CSS file paths, read in order. The screen/modal CSS lifted out of Python
+    # (TASK-15450) brackets the bundle: the scope-prefixed stream first, so it
+    # loses the specificity ties that writing the scope selector out created,
+    # and the self stream last, where Textual used to append a screen's `CSS` on
+    # first open. They stay separate files, not bundle modules, because Textual
+    # accumulates `$variable` definitions per source and several of these blocks
+    # carry local `$ds-*` fallbacks that would otherwise clobber the real design
+    # tokens for the rest of the bundle. See css/build_css.py.
+    CSS_PATH = [
+        str(Path(__file__).parent / "css" / build_css.SCREEN_CSS_SCOPED_FILENAME),
+        str(Path(__file__).parent / "css/tldw_cli_modular.tcss"),
+        str(Path(__file__).parent / "css" / build_css.SCREEN_CSS_SELF_FILENAME),
+    ]
 
     def _get_default_css(self) -> list[tuple[tuple[str, str], str, int, str]]:
         """Add the consolidated widget-defaults stylesheet as one CSS source.
@@ -5077,27 +5089,42 @@ class TldwCli(
         ``BUNDLED_CSS`` declarations by ``build_css.py``, and is registered here
         as a single source.
 
-        It is prepended to the stack (rather than set as a plain ``DEFAULT_CSS``
-        class attribute) for two reasons: the file is read at app start, so a
-        boot-time CSS rebuild is picked up by the same run, and the source stays
-        unscoped with tie-breaker 0 -- the cascade position each class's own
-        ``DEFAULT_CSS`` had, with the scope prefixes baked into the selectors.
+        The sheets are added here (rather than as a plain ``DEFAULT_CSS`` class
+        attribute) for two reasons: they are read at app start, so a boot-time
+        CSS rebuild is picked up by the same run, and each needs its own
+        tie-breaker. Selectors that already named their own widget keep
+        tie-breaker 0, the cascade position their class's ``DEFAULT_CSS`` had.
+        Selectors that gained a written-out scope prefix cost one specificity
+        point more than Textual's injected one, so they take a tie-breaker below
+        every other default-CSS source and lose the ties that shift created --
+        which are exactly the ties they used to lose outright. See
+        ``css/widget_css.py`` for the derivation.
 
         Returns:
             The default-CSS stack, widget defaults first.
         """
         css_stack = super()._get_default_css()
-        widget_defaults = Path(__file__).parent / "css/widget_defaults.tcss"
-        try:
-            css = widget_defaults.read_text(encoding="utf-8")
-        except OSError as exc:
-            # Never fatal: the app still runs, just with unstyled widgets whose
-            # CSS was consolidated. Loud, because that is a build/packaging bug.
-            loguru_logger.error(
-                f"Could not read consolidated widget CSS {widget_defaults}: {exc}"
-            )
-            return css_stack
-        css_stack.insert(0, ((str(widget_defaults), "widget_defaults.tcss"), css, 0, ""))
+        css_dir = Path(__file__).parent / "css"
+        sheets = (
+            (build_css.WIDGET_DEFAULTS_SELF_FILENAME, 0),
+            (
+                build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
+                build_css.SCOPED_DEFAULTS_TIE_BREAKER,
+            ),
+        )
+        for index, (filename, tie_breaker) in enumerate(sheets):
+            path = css_dir / filename
+            try:
+                css = path.read_text(encoding="utf-8")
+            except OSError as exc:
+                # Never fatal: the app still runs, just with unstyled widgets
+                # whose CSS was consolidated. Loud, because that is a
+                # build/packaging bug, not a user-facing condition.
+                loguru_logger.error(
+                    f"Could not read consolidated widget CSS {path}: {exc}"
+                )
+                continue
+            css_stack.insert(index, ((str(path), filename), css, tie_breaker, ""))
         return css_stack
     # Shell destination hotkey layer: Ctrl+1..Ctrl+9 then Ctrl+0, zipped against
     # SHELL_DESTINATION_ORDER, plus F7/F8/F9 for the remaining destinations

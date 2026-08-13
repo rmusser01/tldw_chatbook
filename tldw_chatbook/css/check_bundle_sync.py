@@ -85,18 +85,27 @@ def main() -> int:
     """
     css_dir = Path(__file__).parent
     committed = (css_dir / "tldw_cli_modular.tcss").read_text(encoding="utf-8")
-    defaults_path = css_dir / _build_css.WIDGET_DEFAULTS_FILENAME
-    committed_defaults = (
-        defaults_path.read_text(encoding="utf-8") if defaults_path.is_file() else None
+    defaults_names = (
+        _build_css.WIDGET_DEFAULTS_SELF_FILENAME,
+        _build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
+        _build_css.SCREEN_CSS_SELF_FILENAME,
+        _build_css.SCREEN_CSS_SCOPED_FILENAME,
     )
+    committed_defaults = [
+        (css_dir / name).read_text(encoding="utf-8")
+        if (css_dir / name).is_file()
+        else None
+        for name in defaults_names
+    ]
     with tempfile.TemporaryDirectory() as tmp:
         rebuilt_path = Path(tmp) / "rebuilt.tcss"
-        rebuilt_defaults_path = Path(tmp) / _build_css.WIDGET_DEFAULTS_FILENAME
+        rebuilt_defaults_paths = [Path(tmp) / name for name in defaults_names]
         try:
             # build_css narrates each module; silence it so CI logs stay clean.
             with contextlib.redirect_stdout(io.StringIO()):
                 _build_css.build_css(css_dir, rebuilt_path)
-                _build_css.build_widget_defaults(css_dir, rebuilt_defaults_path)
+                _build_css.build_widget_defaults(css_dir, *rebuilt_defaults_paths[:2])
+                _build_css.build_screen_css(css_dir, *rebuilt_defaults_paths[2:])
         except FileNotFoundError as exc:
             # A declared module was removed without updating the manifest -- a
             # desync worth failing on, but reported clearly rather than as a
@@ -112,7 +121,9 @@ def main() -> int:
             print(f"::error::CSS bundle could not be rebuilt: {exc}")
             return 1
         rebuilt = rebuilt_path.read_text(encoding="utf-8")
-        rebuilt_defaults = rebuilt_defaults_path.read_text(encoding="utf-8")
+        rebuilt_defaults = [
+            path.read_text(encoding="utf-8") for path in rebuilt_defaults_paths
+        ]
 
     failed = False
     drifted = drifted_modules(committed, rebuilt)
@@ -128,16 +139,19 @@ def main() -> int:
         for module in drifted:
             print(f"::error::drifted module: {module}")
 
-    if _strip_timestamp(committed_defaults or "") == _strip_timestamp(rebuilt_defaults):
-        print("Widget defaults stylesheet reproduces from its Python sources.")
-    else:
-        failed = True
-        print(
-            "::error::widget_defaults.tcss is out of sync with the BUNDLED_CSS "
-            "declarations in the Python sources. Run "
-            "`python tldw_chatbook/css/build_css.py` and commit the regenerated "
-            f"{_build_css.WIDGET_DEFAULTS_FILENAME}."
-        )
+    for name, committed_text, rebuilt_text in zip(
+        defaults_names, committed_defaults, rebuilt_defaults
+    ):
+        if committed_text == rebuilt_text:
+            print(f"{name} reproduces from its Python sources.")
+        else:
+            failed = True
+            print(
+                f"::error::{name} is out of sync with the BUNDLED_CSS declarations "
+                "in the Python sources. Run "
+                "`python tldw_chatbook/css/build_css.py` and commit the "
+                f"regenerated {name}."
+            )
     return 1 if failed else 0
 
 

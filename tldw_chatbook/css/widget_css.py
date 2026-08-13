@@ -28,15 +28,36 @@ selector of a class's CSS with that class's own type name unless the selector
 already starts with it (``textual/css/parse.py`` ``parse_rule_set``).  We bake
 that prefix into the text, so the generated sheets can be loaded unscoped.
 
-The one intentional difference: Textual's injected scope selector carries
-specificity ``(0, 0, 0)`` while a written type selector carries ``(0, 0, 1)``,
-so every rewritten rule gains ``+1`` in the lowest-order specificity component.
-That shift is uniform across the rewritten rules and only ever raises them
-against *other* widgets' ``DEFAULT_CSS`` (which they already outranked via the
-tie-breaker) -- never against the app bundle, which sits in a strictly higher
-origin tier.  ``Tests/UI/test_widget_css_consolidation.py`` pins this by parsing
-both forms with Textual's own parser and asserting the rules are identical
-apart from that documented delta.
+There is one unavoidable wrinkle, and handling it is why each tier produces
+*two* sheets rather than one.  Textual's **injected** scope selector carries
+specificity ``(0, 0, 0)``, while the same type name **written out** carries
+``(0, 0, 1)``, so every rewritten selector gains ``+1`` in the lowest-order
+specificity component.  That is not cosmetic: measured on the real app, the nav
+buttons' ``MainNavigationBar .nav-button`` rule (0,1,0) used to *lose* to
+Textual's own ``Button.-style-default`` (0,1,1) and the naive rewrite tied it,
+flipping 179 nodes' computed styles across the destination tour.
+
+The fix is exact rather than approximate.  Selectors split into two streams:
+
+* **self** -- selectors Textual would *not* have prefixed (they already start
+  with the class's own type name).  Unchanged text, unchanged specificity.
+* **scoped** -- selectors that gain the prefix, and therefore the ``+1``.
+
+A rewritten rule ties another rule exactly when it used to sit one point below
+it, i.e. exactly when it used to lose.  So the scoped stream only has to lose
+every tie it now finds itself in, which is arranged per tier:
+
+* widget defaults: the scoped sheet is registered with a tie-breaker below every
+  other default-CSS source (Textual's own are ``-(MRO depth)``), so it loses
+  ties on the tie-breaker.
+* app CSS (screens): the scoped sheet is concatenated near the *top* of the
+  bundle and the self sheet at the very *bottom*, so the scoped rules lose ties
+  on source order while the self rules keep winning them as they did when
+  Textual appended a screen's ``CSS`` at first open.
+
+``Tests/UI/test_widget_css_consolidation.py`` pins the whole scheme by parsing
+both forms with Textual's own parser and asserting the rules match, and the
+empirical check is a full computed-style diff of every node on every screen.
 
 Stdlib-only, so the CSS guard can run without the app's dependencies.
 """
@@ -143,69 +164,101 @@ def _scope_one_selector(selector: str, scope: str) -> str:
     return f"{selector[:lead]}{scope} {selector[lead:]}"
 
 
-def scope_css(css: str, scope: str) -> str:
-    """Bake Textual's ``SCOPED_CSS`` selector prefixing into CSS text.
+def split_scoped_css(
+    css: str, scope: str, *, scope_every_selector: bool = False
+) -> tuple[str, str]:
+    """Bake Textual's ``SCOPED_CSS`` prefixing into CSS text, split by stream.
 
     Only top-level selectors are rewritten; nested rule sets are left alone,
     matching Textual, which recurses into nested rules with an empty scope.
+
+    A rule whose selector list mixes both kinds (``MyWidget, .other {…}``) is
+    emitted into both streams, each keeping the selectors that belong to it and
+    both keeping the declaration body.
 
     Args:
         css: The CSS as written in the class body.
         scope: Type name to scope the CSS to (the declaring class's name).
 
     Returns:
-        Equivalent CSS that needs no ``scope`` argument when parsed.
+        ``(self_css, scoped_css)`` -- the selectors Textual would have left
+        alone, and the ones it would have prefixed (here written out).  Either
+        may be empty. Neither needs a ``scope`` argument when parsed.
 
     Raises:
-        ValueError: If the CSS has unbalanced braces, which would silently
-            mis-scope the remainder of the sheet.
+        ValueError: If the CSS has unbalanced braces or an unterminated string,
+            which would silently mis-scope the remainder of the sheet.
     """
-    out: list[str] = []
+    streams: tuple[list[str], list[str]] = ([], [])  # (self, scoped)
+    # Selectors for the rule currently being read, per stream.
+    heads: list[list[str]] = [[], []]
+    body: list[str] = []
     pending: list[str] = []  # text since the last top-level '}' (or the start)
     depth = 0
     quote: str | None = None
     index = 0
     length = len(css)
 
+    def sink() -> list[str]:
+        """Where raw characters go right now."""
+        return body if depth else pending
+
+    def flush_rule() -> None:
+        """Emit the finished rule into whichever streams claimed a selector."""
+        text = "".join(body)
+        for stream, head in zip(streams, heads):
+            if head:
+                stream.append(",".join(head))
+                stream.append(text)
+        heads[0].clear()
+        heads[1].clear()
+        body.clear()
+
     while index < length:
         char = css[index]
-        pair = css[index : index + 2]
 
         if quote is not None:
-            (out if depth else pending).append(char)
+            sink().append(char)
             if char == quote:
                 quote = None
             index += 1
             continue
 
-        if pair == "/*":
+        if css[index : index + 2] == "/*":
             end = css.find("*/", index + 2)
             end = length if end == -1 else end + 2
-            (out if depth else pending).append(css[index:end])
+            sink().append(css[index:end])
             index = end
             continue
 
         if char in "\"'":
             quote = char
-            (out if depth else pending).append(char)
+            sink().append(char)
             index += 1
             continue
 
         if char == "{":
             if depth == 0:
-                # `pending` is trivia (comments/blank lines) plus the selector
-                # list.  Only the selector list is rewritten.
+                # `pending` is trivia (comments, blank lines, and top-level
+                # `$variable:` declarations) plus the selector list.  Trivia goes
+                # to both streams so variables stay defined in each sheet.
                 text = "".join(pending)
                 pending = []
                 split_at = _selector_start(text)
                 trivia, selectors = text[:split_at], text[split_at:]
-                out.append(trivia)
+                streams[0].append(trivia)
+                streams[1].append(trivia)
                 # Textual scopes only the FINAL selector of a comma-separated
                 # list -- see `_scope_one_selector`'s note.  Reproduce that.
                 parts = _split_top_level(selectors)
-                parts[-1] = _scope_one_selector(parts[-1], scope)
-                out.append(",".join(parts))
-            out.append(char)
+                for position, part in enumerate(parts):
+                    if not part.strip():
+                        continue  # stray comma; contributes no selector
+                    is_last = position == len(parts) - 1
+                    prefix = scope_every_selector or is_last
+                    scoped = _scope_one_selector(part, scope) if prefix else part
+                    heads[0 if scoped == part else 1].append(scoped)
+            body.append(char)
             depth += 1
             index += 1
             continue
@@ -214,19 +267,23 @@ def scope_css(css: str, scope: str) -> str:
             depth -= 1
             if depth < 0:
                 raise ValueError(f"unbalanced '}}' in CSS scoped to {scope!r}")
-            out.append(char)
+            body.append(char)
+            if depth == 0:
+                flush_rule()
             index += 1
             continue
 
-        (out if depth else pending).append(char)
+        sink().append(char)
         index += 1
 
     if depth != 0:
         raise ValueError(f"unbalanced '{{' in CSS scoped to {scope!r}")
     if quote is not None:
         raise ValueError(f"unterminated string in CSS scoped to {scope!r}")
-    out.append("".join(pending))
-    return "".join(out)
+    trailing = "".join(pending)
+    streams[0].append(trailing)
+    streams[1].append(trailing)
+    return "".join(streams[0]), "".join(streams[1])
 
 
 def _selector_start(text: str) -> int:
@@ -346,33 +403,45 @@ def iter_blocks(package_root: Path, attr: str) -> list[BundledBlock]:
     return blocks
 
 
-def render_stylesheet(blocks: list[BundledBlock], title: str) -> str:
-    """Render collected blocks as one generated stylesheet.
+def render_stylesheets(
+    blocks: list[BundledBlock], title: str, *, scope_every_selector: bool = False
+) -> tuple[str, str]:
+    """Render collected blocks as the two generated stylesheets.
 
     Args:
         blocks: Blocks to render, already in their final cascade order.
-        title: Human-readable description for the generated header.
+        title: Human-readable description for the generated headers.
+        scope_every_selector: Scope every selector of a comma-separated list
+            rather than reproducing Textual's last-selector-only quirk.
 
     Returns:
-        The stylesheet text.
+        ``(self_sheet, scoped_sheet)`` -- see :func:`split_scoped_css` for what
+        separates them and the module docstring for why they must stay apart.
     """
-    parts = [
-        "/* ========================================\n"
-        " * GENERATED FILE - DO NOT EDIT DIRECTLY\n"
-        " * ========================================\n"
-        f" * {title}\n"
-        " *\n"
-        " * Generated by tldw_chatbook/css/build_css.py from the class-level\n"
-        f" * {WIDGET_ATTR}/{SCREEN_ATTR} declarations in the Python sources.\n"
-        " * Edit those declarations, then re-run build_css.py.\n"
-        " * ======================================== */\n"
-    ]
-    for block in blocks:
-        parts.append(
-            f"\n/* ===== WIDGET: {block.class_name} ({block.module}) ===== */\n"
+
+    def header(stream: str) -> str:
+        return (
+            "/* ========================================\n"
+            " * GENERATED FILE - DO NOT EDIT DIRECTLY\n"
+            " * ========================================\n"
+            f" * {title} -- {stream} selectors\n"
+            " *\n"
+            " * Generated by tldw_chatbook/css/build_css.py from the class-level\n"
+            f" * {WIDGET_ATTR}/{SCREEN_ATTR} declarations in the Python sources.\n"
+            " * Edit those declarations, then re-run build_css.py.\n"
+            " * ======================================== */\n"
         )
-        scoped = scope_css(block.css, block.class_name)
-        parts.append(scoped)
-        if not scoped.endswith("\n"):
-            parts.append("\n")
-    return "".join(parts)
+
+    rendered = [header("self"), header("scoped")]
+    for block in blocks:
+        banner = f"\n/* ===== WIDGET: {block.class_name} ({block.module}) ===== */\n"
+        split = split_scoped_css(
+            block.css, block.class_name, scope_every_selector=scope_every_selector
+        )
+        for stream, text in enumerate(split):
+            if not text.strip():
+                continue
+            rendered[stream] += banner + text
+            if not text.endswith("\n"):
+                rendered[stream] += "\n"
+    return rendered[0], rendered[1]

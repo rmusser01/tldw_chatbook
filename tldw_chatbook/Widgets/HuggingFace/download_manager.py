@@ -60,7 +60,11 @@ class DownloadManager(Container):
         border: solid $primary;
     }
     
-    DownloadManager .header {
+    /* `Container` is named explicitly so this outranks the enclosing
+       `HuggingFaceModelBrowser .header` rule, which matches this same node.
+       The two were an exact specificity tie, so which one won depended on
+       which widget happened to mount first (TASK-15450). */
+    DownloadManager Container.header {
         height: 3;
         padding: 1;
         background: $boost;
