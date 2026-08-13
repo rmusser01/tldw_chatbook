@@ -6,7 +6,7 @@ from typing import Any
 
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_shell_state import (
@@ -172,8 +172,7 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
         status.display = bool(status_text)
         yield status
 
-        conversation_list = Vertical(id="library-conversations-list")
-        conversation_list.styles.height = "auto"
+        conversation_list = VerticalScroll(id="library-conversations-list")
         with conversation_list:
             for index, row in enumerate(self.canvas.rows):
                 if select_mode:
@@ -201,6 +200,29 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                 button.styles.height = 2
                 button.styles.min_height = 2
                 yield button
+
+        with Horizontal(id="library-conversations-pager", classes="ds-toolbar"):
+            previous = Button(
+                "Previous",
+                id="library-conversations-previous",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            previous.disabled = self.canvas.previous_disabled
+            yield previous
+            yield Static(
+                f"{self.canvas.range_copy} · {self.canvas.page_copy}",
+                id="library-conversations-page-status",
+                markup=False,
+            )
+            next_page = Button(
+                "Next",
+                id="library-conversations-next",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            next_page.disabled = self.canvas.next_disabled
+            yield next_page
 
         preview = Vertical(id="library-conversation-preview")
         preview.styles.height = "auto"

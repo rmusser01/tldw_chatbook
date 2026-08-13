@@ -1163,6 +1163,36 @@ ConsoleRunLogModal {
     background: $ds-surface-panel;
 }
 
+#library-conversations-canvas {
+    height: 100%;
+    min-height: 0;
+}
+
+#library-conversations-list {
+    height: 1fr;
+    min-height: 4;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+#library-conversations-pager {
+    height: 3;
+    min-height: 3;
+    align: center middle;
+}
+
+#library-conversations-page-status {
+    width: auto;
+    height: 3;
+    content-align: center middle;
+    color: $ds-text-muted;
+}
+
 .library-rail-empty-copy {
     color: $ds-text-muted;
     padding: 0 1;

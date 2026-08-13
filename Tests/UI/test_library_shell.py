@@ -97,6 +97,13 @@ from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
+from tldw_chatbook.Widgets.Library.library_conversations_canvas import (
+    LibraryConversationsCanvas,
+)
+from tldw_chatbook.Library.library_conversations_state import (
+    LibraryConversationRow,
+    LibraryConversationsCanvasState,
+)
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
     LibraryMediaContentSearchControls,
@@ -319,6 +326,67 @@ class LibraryHarness(App):
     def on_navigate_to_screen(self, message) -> None:
         self.seen_routes.append(message.screen_name)
         self.seen_contexts.append(dict(message.screen_context or {}))
+
+
+class _ConversationCanvasHarness(App):
+    """Mount the conversations canvas with the production stylesheet."""
+
+    CSS_PATH = LibraryHarness.CSS_PATH
+
+    def __init__(self, canvas: LibraryConversationsCanvasState) -> None:
+        super().__init__()
+        self.canvas = canvas
+
+    def compose(self) -> ComposeResult:
+        yield LibraryConversationsCanvas(
+            self.canvas,
+            id="library-conversations-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_canvas_scrolls_current_page_while_pager_stays_fixed():
+    """A full page scrolls at 100x30 while its pager remains a canvas sibling."""
+    canvas = LibraryConversationsCanvasState(
+        rows=tuple(
+            LibraryConversationRow(
+                conversation_id=str(index),
+                title=f"Conversation {index}",
+                secondary="1 message",
+                selected=index == 0,
+            )
+            for index in range(1, 21)
+        ),
+        status_copy="",
+        empty_copy="",
+        selected_id="1",
+        preview_lines=("Conversation 1", "Messages: 1", "Updated: now"),
+        query="",
+        range_copy="1-20 of 20",
+        page_copy="Page 1 of 1",
+        previous_disabled=True,
+        next_disabled=True,
+    )
+    app = _ConversationCanvasHarness(canvas)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        scroll = app.query_one("#library-conversations-list", VerticalScroll)
+        pager = app.query_one("#library-conversations-pager")
+        previous = app.query_one("#library-conversations-previous", Button)
+        next_page = app.query_one("#library-conversations-next", Button)
+        status = app.query_one("#library-conversations-page-status", Static)
+
+        assert scroll.max_scroll_y > 0
+        assert previous.disabled is True
+        assert next_page.disabled is True
+        assert str(status.renderable) == "1-20 of 20 · Page 1 of 1"
+        assert pager.parent is scroll.parent
+        assert pager.parent is not scroll
+
+        last_row = app.query_one("#library-conversation-row-19", Button)
+        last_row.focus()
+        await pilot.pause()
+        assert scroll.scroll_y > 0
 
 
 def _active_library_screen(host: LibraryHarness):
