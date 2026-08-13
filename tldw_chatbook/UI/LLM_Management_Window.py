@@ -615,6 +615,7 @@ class LLMManagementWindow(Container):
                 legacy_dir=legacy_dir,
                 on_root_activated=source_service.on_root_activated,
                 may_delete=source_service.may_delete,
+                recycle_idle=self.app_instance._recycle_idle_local_stt_reference,
                 id="installed-models-view",
             )
         )

@@ -53,6 +53,8 @@ def _require_nonempty_text(field_name: str, value: str) -> None:
 
 def _canonical_dependency_refs(
     references: tuple[tuple[str, str, str], ...],
+    *,
+    field_name: str = "managed_dependency_refs",
 ) -> tuple[tuple[str, str, str], ...]:
     if type(references) is not tuple or any(
         type(reference) is not tuple
@@ -63,7 +65,7 @@ def _canonical_dependency_refs(
         )
         for reference in references
     ):
-        raise ValueError("managed_dependency_refs must contain three-string tuples")
+        raise ValueError(f"{field_name} must contain three-string tuples")
     return tuple(sorted(set(references)))
 
 
@@ -314,11 +316,20 @@ class ExecutorResident:
     generation: int
     attempt_id: str
     identity: ModelIdentity
+    managed_lease_refs: tuple[tuple[str, str, str], ...] = ()
 
     def __post_init__(self) -> None:
         _require_generation_and_attempt(self.generation, self.attempt_id)
         if type(self.identity) is not ModelIdentity:
             raise TypeError("identity must be a ModelIdentity")
+        object.__setattr__(
+            self,
+            "managed_lease_refs",
+            _canonical_dependency_refs(
+                self.managed_lease_refs,
+                field_name="managed_lease_refs",
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,6 +489,7 @@ class LocalSTTExecutor:
         self._terminal_guard: _AttemptTerminalGuard | None = None
         self._resident_identity: ModelIdentity | None = None
         self._resident_dependency_refs: tuple[tuple[str, str, str], ...] = ()
+        self._resident_lease_refs: tuple[tuple[str, str, str], ...] = ()
         self._unhealthy_identity: ModelIdentity | None = None
         self._latest_phase: WorkerPhase | None = None
         self._completed_jobs = 0
@@ -660,6 +672,35 @@ class LocalSTTExecutor:
 
         return self._retirement_complete.wait(timeout)
 
+    def recycle_idle_managed_reference(
+        self,
+        reference: tuple[str, str, str],
+    ) -> bool:
+        """Retire an idle resident that leases one exact managed artifact.
+
+        Args:
+            reference: Canonical artifact ID, revision, and variant.
+
+        Returns:
+            True only when a matching idle generation is proven retired.
+        """
+
+        canonical = _canonical_dependency_refs(
+            (reference,),
+            field_name="reference",
+        )[0]
+        with self._lock:
+            if (
+                self._closed
+                or self._unavailable
+                or self._busy
+                or self._retiring
+                or self._resident_identity is None
+                or canonical not in self._resident_lease_refs
+            ):
+                return False
+            return self._retire_idle_worker_locked()
+
     def clear_unhealthy_identity(self, identity: ModelIdentity) -> bool:
         """Clear the one session-local unhealthy identity for explicit retry."""
 
@@ -679,6 +720,7 @@ class LocalSTTExecutor:
                 self._clear_active_locked()
                 detached = self._detach_worker_locked()
                 self._resident_dependency_refs = ()
+                self._resident_lease_refs = ()
             retirement = self._retirement_thread
         if detached is not None:
             self._terminate_detached(detached, update_state=False)
@@ -769,6 +811,7 @@ class LocalSTTExecutor:
         self._scratch_path = scratch_path
         self._resident_identity = None
         self._resident_dependency_refs = ()
+        self._resident_lease_refs = ()
         self._completed_jobs = 0
         reader = threading.Thread(
             target=self._reader_loop,
@@ -818,6 +861,7 @@ class LocalSTTExecutor:
                     return
                 self._resident_identity = envelope.identity
                 self._resident_dependency_refs = request.managed_dependency_refs
+                self._resident_lease_refs = envelope.managed_lease_refs
             elif type(envelope) in {ExecutorResult, ExecutorFailure}:
                 if not self._matches_active(envelope):
                     return
@@ -1034,6 +1078,7 @@ class LocalSTTExecutor:
         self._reader_thread = None
         self._resident_identity = None
         self._resident_dependency_refs = ()
+        self._resident_lease_refs = ()
         self._completed_jobs = 0
         return detached
 

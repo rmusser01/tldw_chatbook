@@ -56,6 +56,7 @@ class _ResidentRuntime:
     managed_store_root: Path | None
     managed_artifact_ref: tuple[str, str, str] | None
     managed_dependency_refs: tuple[tuple[str, str, str], ...]
+    managed_lease_refs: tuple[tuple[str, str, str], ...]
     lease: Any | None = None
     reported: bool = False
 
@@ -316,6 +317,18 @@ def _load_resident(
         if lease is not None:
             lease.close()
         raise
+    if handle is None:
+        managed_lease_refs = ()
+    elif request.managed_artifact_ref is not None:
+        managed_lease_refs = tuple(
+            (reference.artifact_id, reference.revision, reference.variant)
+            for reference in handle.closure
+        )
+    else:
+        managed_lease_refs = tuple(
+            (reference.artifact_id, reference.revision, reference.variant)
+            for reference in handle.references
+        )
     return _ResidentRuntime(
         identity=request.identity,
         provider=provider,
@@ -329,6 +342,7 @@ def _load_resident(
         ),
         managed_artifact_ref=request.managed_artifact_ref,
         managed_dependency_refs=request.managed_dependency_refs,
+        managed_lease_refs=managed_lease_refs,
         lease=lease,
     )
 
@@ -860,6 +874,7 @@ def _run_executor_worker(
                             generation,
                             request.attempt_id,
                             request.identity,
+                            resident.managed_lease_refs,
                         )
                     )
                     resident.reported = True
