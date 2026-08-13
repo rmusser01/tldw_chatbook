@@ -1100,10 +1100,14 @@ def test_compose_wake_notice_labels_fences_and_truncates():
 
 
 def test_compose_wake_notice_splits_the_total_budget_evenly():
-    """Five 4000-char results must be shortened fairly to the 16000-char
-    total (wait_agents' own discipline), not cut mid-notice downstream."""
+    """Five over-cap results must be shortened FAIRLY to the 16000-char
+    total (wait_agents' own discipline), not cut mid-notice downstream.
+    Bodies are 5000 chars each -- over BOTH the per-child cap and the
+    even share -- so the split provably engages (the first version of
+    this test used 3000-char bodies under every cap and could not kill a
+    truncation-removed mutant)."""
     rows = [
-        {"id": f"run-{i}", "status": "done", "result": ("r%d " % i) * 1000}
+        {"id": f"run-{i}", "status": "done", "result": ("r%d " % i) * 1250}
         for i in range(5)
     ]
     notice = compose_wake_notice(rows)
@@ -1113,6 +1117,9 @@ def test_compose_wake_notice_splits_the_total_budget_evenly():
     assert len(notice) <= budget.max_tool_result_chars + 1500, (
         "the combined notice must respect the total result budget "
         "(small constant slack for the wrapper text)"
+    )
+    assert notice.count("truncated to share") == 5, (
+        "every over-share child is shortened, none silently dropped"
     )
     for i in range(5):
         assert f"[run-{i}]" in notice, "every child still appears"
