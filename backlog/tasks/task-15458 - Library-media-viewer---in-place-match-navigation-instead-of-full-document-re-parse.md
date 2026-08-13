@@ -259,17 +259,38 @@ observations and all four Markdown observations retained one identity, with
 `markdown_update_count=1` for initial construction only; navigation performed
 zero Markdown updates.
 
-The installed `C:\Python312\Scripts\ruff.exe` again reported only the eight
-attributed unchanged-line baseline findings (one `F401` and seven `E721`) on the
-complete task surface, and that surface passed when only those two pre-existing
-rule classes were excluded. `git diff --check origin/dev...HEAD` passed. The
-previous full-suite Windows collection evidence remains applicable because the
-layout correction cannot affect collection: the run stopped after 225.85
-seconds on baseline `signal.SIGSTOP`/`SIGCONT` and `fcntl` incompatibilities in
-two files byte-identical to `origin/dev`. No redundant full-suite rerun was
-performed. Cache-permission, pytest-asyncio loop-scope, SQLite privacy,
-optional-dependency, and missing mapping warnings remain environment/baseline
-warnings.
+The broad/static evidence is reproducible with these literal commands:
+
+```powershell
+& 'C:\Python312\Scripts\ruff.exe' check tldw_chatbook/Widgets/Library/library_media_content.py tldw_chatbook/Widgets/Library/library_media_viewer.py tldw_chatbook/UI/Screens/library_screen.py tldw_chatbook/Widgets/Media/media_viewer_panel.py Tests/network_guard.py Tests/test_network_guard.py Tests/Library/test_library_media_content.py Tests/UI/test_library_shell.py Tests/UI/test_media_viewer_content_search_debounce.py --output-format concise
+# 8 attributed unchanged-line baseline findings: 1 F401 and 7 E721
+
+& 'C:\Python312\Scripts\ruff.exe' check tldw_chatbook/Widgets/Library/library_media_content.py tldw_chatbook/Widgets/Library/library_media_viewer.py tldw_chatbook/UI/Screens/library_screen.py tldw_chatbook/Widgets/Media/media_viewer_panel.py Tests/network_guard.py Tests/test_network_guard.py Tests/Library/test_library_media_content.py Tests/UI/test_library_shell.py Tests/UI/test_media_viewer_content_search_debounce.py --ignore E721,F401
+# All checks passed
+
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest -q
+# Collection stopped after 225.85 seconds on the two Windows baseline errors below
+
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/Media_Playback/test_player_pipeline.py Tests/TTS/test_profile_reference_materialization.py -q
+# Reproduced in 0.68 seconds: unavailable signal.SIGSTOP/SIGCONT and fcntl
+
+git -c safe.directory='C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task-15458-media-viewer-inplace' rev-parse origin/dev:Tests/Media_Playback/test_player_pipeline.py
+git -c safe.directory='C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task-15458-media-viewer-inplace' hash-object Tests/Media_Playback/test_player_pipeline.py
+# Both: d8333dc722565ba4afeaced66e797b30f3729c25
+
+git -c safe.directory='C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task-15458-media-viewer-inplace' rev-parse origin/dev:Tests/TTS/test_profile_reference_materialization.py
+git -c safe.directory='C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task-15458-media-viewer-inplace' hash-object Tests/TTS/test_profile_reference_materialization.py
+# Both: 0dd418c8d4c48ca713529d71e0bb173ef4eded88
+
+git -c safe.directory='C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task-15458-media-viewer-inplace' diff --check origin/dev...HEAD
+# Passed
+```
+
+The previous full-suite Windows collection evidence remains applicable because
+the layout correction cannot affect collection. No redundant full-suite rerun
+was performed after that correction. Cache-permission, pytest-asyncio
+loop-scope, SQLite privacy, optional-dependency, and missing mapping warnings
+remain environment/baseline warnings.
 
 #### Final rendered keyboard UAT
 
