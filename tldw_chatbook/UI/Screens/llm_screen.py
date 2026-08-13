@@ -39,6 +39,16 @@ from ...Widgets.ModelArtifacts import (
     InstallStatusChanged,
     ModelInstallModal,
 )
+from ..Navigation.audio_cpp_model_handoff import (
+    AudioCppModelLibraryRequest,
+    AudioCppModelLibraryResult,
+)
+from ..Navigation.pending_handoff_store import (
+    HandoffChannel,
+    HandoffClaim,
+    HandoffValueError,
+    PendingHandoffStore,
+)
 from ..Lab_Modules.lab_server_status import (
     LAB_SERVER_SOURCES,
     LabServerRow,
@@ -253,10 +263,23 @@ class LLMScreen(LabScreen):
         self._model_install_catalog: "ResolvedRemoteCatalog | None" = None
         self._model_install_candidate: "RemoteGGUFCandidate | None" = None
         self._model_install_credential_resolver: "CredentialResolver | None" = None
+        self._audio_cpp_model_request_claim: (
+            HandoffClaim[AudioCppModelLibraryRequest] | None
+        ) = None
         #: Server rows snapshotted for the duration of one
         #: ``refresh_lab_status`` pass; None outside one. See
         #: :meth:`_current_server_rows`.
         self._server_rows_snapshot: tuple[LabServerRow, ...] | None = None
+
+    def on_mount(self) -> None:
+        """Claim an optional Settings-owned audio.cpp Model Library request."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return
+        claim = store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST)
+        if claim is not None and type(claim.value) is AudioCppModelLibraryRequest:
+            self._audio_cpp_model_request_claim = claim
 
     def _current_server_rows(self) -> tuple[LabServerRow, ...]:
         """Return server liveness, shared across one refresh pass.
@@ -1420,6 +1443,7 @@ class LLMScreen(LabScreen):
             return
         if (
             not isinstance(event.reference, ArtifactRef)
+            or type(event.already_installed) is not bool
             or event.service is None
             or event.registry is None
             or event.sources is None
@@ -1439,6 +1463,21 @@ class LLMScreen(LabScreen):
         self._model_install_service = event.service
         self._model_install_registry = event.registry
         self._model_install_sources = event.sources
+        if event.already_installed:
+            try:
+                descriptor = event.registry.descriptor(event.reference)
+            except (KeyError, TypeError, ValueError):
+                descriptor = None
+            if descriptor is None or descriptor.consumer != "audio_cpp":
+                self.notify(
+                    "Could not use the installed package: invalid request.",
+                    severity="error",
+                )
+                self._clear_curated_install_state()
+                return
+            self._deliver_curated(InstallStatusChanged(event.reference, active=True))
+            self._model_install_worker = self._run_curated_installed_return()
+            return
         self._model_install_worker = self._run_curated_preflight()
 
     async def _preflight_curated(self, reference: ArtifactRef):
@@ -1523,8 +1562,13 @@ class LLMScreen(LabScreen):
             self.notify(error or "Model preflight failed.", severity="error")
             self._clear_curated_install_state()
             return
+        registry = self._model_install_registry
+        if registry is None:
+            self.notify("Model preflight state is unavailable.", severity="error")
+            self._clear_curated_install_state()
+            return
         self._model_install_pending_report = report
-        descriptor = self._model_install_registry.descriptor(report.root)
+        descriptor = registry.descriptor(report.root)
         self.app.push_screen(
             ModelInstallModal(report, model_label=descriptor.model_id),
             self._confirm_curated_install,
@@ -1557,13 +1601,75 @@ class LLMScreen(LabScreen):
         def deliver(progress: "AcquisitionProgress") -> None:
             self._deliver_curated(InstallProgressed(progress))
 
+        kwargs: dict[str, object] = {
+            "sources": self._model_install_sources,
+            "progress": deliver,
+        }
+        registry = self._model_install_registry
+        if registry is None:
+            raise RuntimeError("curated model registry is unavailable")
+        descriptor = registry.descriptor(report.root)
+        if descriptor.consumer == "audio_cpp":
+            kwargs["activate"] = False
         return await acquisition.provision(
             report.root,
             report.grant(),
-            self._model_install_registry,
-            sources=self._model_install_sources,
-            progress=deliver,
+            registry,
+            **kwargs,
         )
+
+    def _audio_cpp_installed_result(
+        self,
+        reference: ArtifactRef,
+    ) -> AudioCppModelLibraryResult | None:
+        """Lease and verify one exact installed root, then detach its return."""
+
+        service = self._model_install_service
+        if service is None:
+            raise RuntimeError("model artifact service is unavailable")
+        with service.acquire_installed_root(reference) as leased:
+            paths = dict(leased.handle.paths)
+            canonical_root = paths[reference]
+            claim = self._audio_cpp_model_request_claim
+            if claim is None:
+                return None
+            request = claim.value
+            return AudioCppModelLibraryResult(
+                token=request.token,
+                draft_revision=request.draft_revision,
+                artifact_id=reference.artifact_id,
+                revision=reference.revision,
+                variant=reference.variant,
+                canonical_root=str(canonical_root),
+            )
+
+    @work(thread=True, group="llm_curated_install", exit_on_error=False)
+    def _run_curated_installed_return(self) -> None:
+        """Return an already-installed audio.cpp root without provisioning."""
+
+        app = self.app
+        reference = self._model_install_reference
+        if reference is None:
+            app.call_from_thread(
+                self._apply_audio_cpp_provision_result,
+                None,
+                "No installed package is available; choose it again.",
+            )
+            return
+        try:
+            result = self._audio_cpp_installed_result(reference)
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                "Installed audio.cpp package return failed; error_type={}",
+                type(exc).__name__,
+            )
+            app.call_from_thread(
+                self._apply_audio_cpp_provision_result,
+                None,
+                install_failure_message(exc, model_label=reference.artifact_id),
+            )
+            return
+        app.call_from_thread(self._apply_audio_cpp_provision_result, result, None)
 
     @work(thread=True, group="llm_curated_install", exit_on_error=False)
     def _run_curated_provision(self) -> None:
@@ -1588,16 +1694,57 @@ class LLMScreen(LabScreen):
             reference = asyncio.run(
                 self._provision_curated(report)
             )  # policy-exception: worker-thread loop
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             root = getattr(report, "root", None)
             artifact_id = getattr(root, "artifact_id", "unknown")
             logger.error(
                 "Curated model installation failed; error_type={}",
                 type(exc).__name__,
             )
+            error = (
+                "Model installation was cancelled."
+                if isinstance(exc, asyncio.CancelledError)
+                else install_failure_message(exc, model_label=artifact_id)
+            )
+            registry = self._model_install_registry
+            try:
+                descriptor = registry.descriptor(root) if registry is not None else None
+            except (AttributeError, KeyError, TypeError, ValueError):
+                descriptor = None
+            if descriptor is not None and descriptor.consumer == "audio_cpp":
+                app.call_from_thread(
+                    self._apply_audio_cpp_provision_result,
+                    None,
+                    error,
+                )
+            else:
+                app.call_from_thread(self._apply_curated_provision_result, error)
+            return
+        registry = self._model_install_registry
+        try:
+            descriptor = (
+                registry.descriptor(reference) if registry is not None else None
+            )
+        except (KeyError, TypeError, ValueError):
+            descriptor = None
+        if descriptor is not None and descriptor.consumer == "audio_cpp":
+            try:
+                result = self._audio_cpp_installed_result(reference)
+            except Exception as exc:
+                logger.opt(exception=True).error(
+                    "Installed audio.cpp package verification failed; error_type={}",
+                    type(exc).__name__,
+                )
+                app.call_from_thread(
+                    self._apply_audio_cpp_provision_result,
+                    None,
+                    install_failure_message(exc, model_label=reference.artifact_id),
+                )
+                return
             app.call_from_thread(
-                self._apply_curated_provision_result,
-                install_failure_message(exc, model_label=artifact_id),
+                self._apply_audio_cpp_provision_result,
+                result,
+                None,
             )
             return
         key = self._external_key_for_reference(reference)
@@ -1628,6 +1775,38 @@ class LLMScreen(LabScreen):
         self._model_install_pending_report = None
         self._finish_curated_provision(error, succeeded=error is None)
 
+    def _apply_audio_cpp_provision_result(
+        self,
+        result: AudioCppModelLibraryResult | None,
+        error: str | None,
+    ) -> None:
+        """Stage one exact installed result and settle its request once."""
+
+        self._model_install_worker = None
+        self._model_install_pending_report = None
+        claim = self._audio_cpp_model_request_claim
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if error is None and result is not None and claim is not None:
+            try:
+                if type(store) is not PendingHandoffStore:
+                    raise HandoffValueError("handoff store is unavailable")
+                if not store.acknowledge(claim):
+                    raise HandoffValueError("handoff request is no longer current")
+                store.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT, result)
+            except HandoffValueError:
+                error = "Model installed, but it could not be returned for review."
+            else:
+                self._audio_cpp_model_request_claim = None
+        if error is not None and not self.is_attached and claim is not None:
+            if type(store) is PendingHandoffStore:
+                store.release(claim)
+            self._audio_cpp_model_request_claim = None
+        self._finish_curated_provision(
+            error,
+            succeeded=error is None,
+            success_message="Installed — ready for review",
+        )
+
     def _apply_curated_preference_result(
         self,
         reference: ArtifactRef,
@@ -1647,6 +1826,7 @@ class LLMScreen(LabScreen):
         error: str | None,
         *,
         succeeded: bool,
+        success_message: str = "Model installed and activated.",
     ) -> None:
         """Deliver one terminal curated lifecycle result and clear state."""
 
@@ -1654,7 +1834,7 @@ class LLMScreen(LabScreen):
         if error is not None:
             self.notify(error, severity="error")
         else:
-            self.notify("Model installed and activated.", severity="information")
+            self.notify(success_message, severity="information")
         if reference is not None:
             self._deliver_curated(
                 InstallStatusChanged(reference, active=False, succeeded=succeeded)
@@ -1679,6 +1859,15 @@ class LLMScreen(LabScreen):
         if token is not None and token not in self._external_commit_tokens:
             self._release_external_scope(token)
         self._external_selection_token = None
+        claim = self._audio_cpp_model_request_claim
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if (
+            claim is not None
+            and not self._install_in_progress()
+            and type(store) is PendingHandoffStore
+        ):
+            store.release(claim)
+            self._audio_cpp_model_request_claim = None
 
     def _clear_curated_install_state(self) -> None:
         """Reset this screen's own bookkeeping after a request that never
@@ -2180,6 +2369,12 @@ class LLMScreen(LabScreen):
         ordered second chance. `_hydrate_model_install_progress` is
         idempotent and internally guarded, so running both is safe.
         """
+        view = self._curated_view()
+        if view is not None and self._audio_cpp_model_request_claim is not None:
+            view.set_consumer_filter("audio_cpp")
+            view.ensure_loaded()
+            if self.llm_window is not None:
+                self.llm_window.active_view = "curated"
         if self._model_install_active:
             self._hydrate_model_install_progress()
         self._hydrate_external_status()

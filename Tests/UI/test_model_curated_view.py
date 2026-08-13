@@ -79,14 +79,19 @@ def _artifact_file(content: bytes, path: str = "model.bin") -> ArtifactFile:
     return ArtifactFile(path, len(content), hashlib.sha256(content).hexdigest())
 
 
-def _descriptor(reference: ArtifactRef, content: bytes = b"payload") -> ArtifactDescriptor:
+def _descriptor(
+    reference: ArtifactRef,
+    content: bytes = b"payload",
+    *,
+    consumer: str = "stt",
+) -> ArtifactDescriptor:
     files = (_artifact_file(content),)
     return ArtifactDescriptor(
         reference=reference,
         model_id=f"example/{reference.artifact_id}",
         role=ArtifactRole.ROOT,
         format=ArtifactFormat.GGUF,
-        consumer="stt",
+        consumer=consumer,
         model_family=reference.artifact_id,
         upstream_repository=f"example/{reference.artifact_id}",
         upstream_revision="main",
@@ -497,3 +502,81 @@ async def test_non_parakeet_root_has_no_use_from_disk_action(tmp_path: Path) -> 
         view.ensure_loaded()
         assert await _wait_until(lambda: view._loaded, pilot=pilot)
         assert not app.query(".curated-use-from-disk")
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_mode_filters_catalog_and_exposes_joined_recipe_facts(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+
+    audio_descriptor, audio_sources = audio_cpp_curated_entries()[0]
+    ordinary = _descriptor(ArtifactRef("ordinary-model", "a" * 40, "int8"))
+    registry = _registry_with(ordinary)
+    registry.register(audio_descriptor, sources=audio_sources)
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _ViewApp(view)
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        text = _all_text(app)
+        assert ordinary.model_id not in text
+        assert audio_descriptor.model_id in text
+        assert audio_descriptor.model_family in text
+        assert "Speech tasks:" in text
+        assert "Compatibility:" in text
+        assert "Required package files:" in text
+        assert "audiocpp_server is not included" in text
+
+
+@pytest.mark.asyncio
+async def test_installed_audio_cpp_row_uses_shared_install_message_for_return(
+    tmp_path: Path,
+) -> None:
+    descriptor = _descriptor(
+        ArtifactRef("audio-cpp-model", "a" * 40, "f16"),
+        b"audio-package",
+        consumer="audio_cpp",
+    )
+    registry = _registry_with(descriptor)
+    service = ModelArtifactService(tmp_path / "store")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "model.bin").write_bytes(b"audio-package")
+    service.install(descriptor, source)
+    view = CuratedView(
+        service_factory=lambda: service,
+        registry_factory=lambda: registry,
+    )
+    view.set_consumer_filter("audio_cpp")
+
+    class _CapturingApp(App[None]):
+        def __init__(self) -> None:
+            self.requests: list[CuratedView.InstallRequested] = []
+            super().__init__()
+
+        def compose(self) -> ComposeResult:
+            yield view
+
+        @on(CuratedView.InstallRequested)
+        def _capture(self, event: CuratedView.InstallRequested) -> None:
+            self.requests.append(event)
+
+    app = _CapturingApp()
+    async with app.run_test() as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        button = _install_buttons(app)[0]
+        assert str(button.label) == "Use installed package"
+        assert button.disabled is False
+        button.press()
+        await pilot.pause()
+
+    assert len(app.requests) == 1
+    assert app.requests[0].reference == descriptor.reference
+    assert app.requests[0].already_installed is True

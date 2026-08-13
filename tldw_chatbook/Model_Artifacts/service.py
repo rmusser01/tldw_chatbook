@@ -280,6 +280,10 @@ class ArtifactNotReadyError(ArtifactStateError):
     """Raised when no valid readiness record exists for an artifact."""
 
 
+class ArtifactNotInstalledError(ArtifactStateError):
+    """Raised when an exact managed artifact root is not installed."""
+
+
 class ArtifactRole(str, Enum):
     """An artifact's position in a dependency closure."""
 
@@ -2204,6 +2208,59 @@ class ModelArtifactService:
                 closure=record.closure,
                 closure_fingerprint=record.closure_fingerprint,
                 paths=paths,
+            )
+            return LeasedArtifactHandle(handle, lease_set)
+        except BaseException as error:
+            try:
+                lease_set.release()
+            except BaseException as cleanup_error:
+                error.add_note(f"lease rollback cleanup failed: {cleanup_error!r}")
+                for note in getattr(cleanup_error, "__notes__", ()):
+                    error.add_note(note)
+            raise
+
+    def acquire_installed_root(
+        self,
+        reference: ArtifactRef,
+    ) -> LeasedArtifactHandle:
+        """Verify and lease one exact installed ROOT without derived state."""
+
+        if type(reference) is not ArtifactRef:
+            raise TypeError("reference must be an ArtifactRef")
+        self._assert_managed_path(self._locks_path)
+        lease_set = ArtifactOperationLeaseSet(
+            self._locks_path,
+            (reference.lease_key(),),
+            LeaseMode.SHARED,
+            timeout_seconds=self._lease_timeout_seconds,
+        )
+        try:
+            lease_set.acquire()
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire installed artifact root lease"
+            ) from error
+        try:
+            path = self.artifact_path(reference)
+            self._assert_managed_path(path, allow_missing=True)
+            try:
+                path.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                raise ArtifactNotInstalledError(
+                    "exact artifact root is not installed"
+                ) from None
+            except OSError as error:
+                raise ArtifactStateError(
+                    "failed to inspect exact installed artifact root"
+                ) from error
+            self._verify_installed(reference, ArtifactRole.ROOT)
+            canonical_root = path.resolve(strict=True)
+            self._assert_managed_path(canonical_root)
+            handle = ArtifactHandle(
+                root=reference,
+                closure=(reference,),
+                closure_fingerprint=closure_fingerprint(reference, ()),
+                paths=((reference, canonical_root),),
             )
             return LeasedArtifactHandle(handle, lease_set)
         except BaseException as error:

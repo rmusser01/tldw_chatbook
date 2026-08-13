@@ -77,6 +77,7 @@ def test_package_exports_the_complete_public_artifact_api() -> None:
         "ArtifactLeaseKey",
         "ArtifactLeaseTimeoutError",
         "ArtifactNotReadyError",
+        "ArtifactNotInstalledError",
         "ArtifactOperationLease",
         "ArtifactOperationLeaseSet",
         "ArtifactPathError",
@@ -4722,6 +4723,125 @@ def test_acquire_dependencies_rejects_invalid_reference_collections(
         service.acquire_dependencies((object(),))  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="at least one"):
         service.acquire_dependencies(())
+
+
+def test_acquire_installed_root_verifies_exact_root_without_derived_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, final = installed_artifact(tmp_path)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("inactive root acquisition must not use derived state")
+
+    monkeypatch.setattr(service, "_read_readiness", forbidden)
+    monkeypatch.setattr(service, "_try_read_readiness", forbidden)
+    monkeypatch.setattr(service, "_write_readiness", forbidden)
+    monkeypatch.setattr(service, "_read_active", forbidden)
+
+    with service.acquire_installed_root(item.reference) as leased:
+        assert isinstance(leased, service_module.LeasedArtifactHandle)
+        assert leased.handle.root == item.reference
+        assert leased.handle.closure == (item.reference,)
+        assert leased.handle.paths == ((item.reference, final.resolve()),)
+        assert leased.handle.lease_keys == (item.reference.lease_key(),)
+        with pytest.raises(service_module.ArtifactInUseError):
+            contender.delete(item.reference)
+
+    assert service.readiness_path(item.reference).exists() is False
+    assert service.active_path(item.reference.artifact_id).exists() is False
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        ("absent", "ArtifactNotInstalledError"),
+        ("dependency", "ArtifactDependencyError"),
+        ("corrupt", "ArtifactIntegrityError"),
+    ],
+)
+def test_acquire_installed_root_keeps_absent_role_and_corruption_distinct(
+    tmp_path: Path,
+    failure: str,
+    expected: str,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    reference = ref("audio-cpp-model", "a" * 40, "f16")
+    if failure != "absent":
+        role = ArtifactRole.DEPENDENCY if failure == "dependency" else ArtifactRole.ROOT
+        item = descriptor(
+            reference=reference,
+            role=role,
+            format=ArtifactFormat.GGUF,
+            consumer="audio_cpp",
+            precision="f16",
+            files=(artifact_file(b"payload", "model.gguf"),),
+        )
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "model.gguf").write_bytes(b"payload")
+        service.install(item, source)
+        if failure == "corrupt":
+            (service.artifact_path(reference) / "model.gguf").write_bytes(b"changed")
+
+    error_type = getattr(service_module, expected)
+    with pytest.raises(error_type) as caught:
+        service.acquire_installed_root(reference)
+
+    assert str(tmp_path) not in str(caught.value)
+    assert not service.readiness_path(reference).exists()
+    assert not service.active_path(reference.artifact_id).exists()
+
+
+def test_acquire_installed_root_contention_is_not_reported_as_absent(
+    tmp_path: Path,
+) -> None:
+    service, item, _source = install_inputs(tmp_path)
+    service = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.0,
+    )
+    source = tmp_path / "source"
+    service.install(item, source)
+    lease = service_module.ArtifactOperationLease(
+        service.locks_path,
+        item.reference.lease_key(),
+        service_module.LeaseMode.EXCLUSIVE,
+        timeout_seconds=0.0,
+    )
+    lease.acquire()
+    try:
+        with pytest.raises(service_module.ArtifactStateError) as caught:
+            service.acquire_installed_root(item.reference)
+        assert not isinstance(caught.value, service_module.ArtifactNotInstalledError)
+    finally:
+        lease.release()
+
+
+def test_acquire_installed_root_base_exception_releases_shared_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _final = installed_artifact(tmp_path)
+
+    def interrupt(*_args: object, **_kwargs: object) -> None:
+        raise KeyboardInterrupt("cancelled")
+
+    monkeypatch.setattr(service, "_verify_installed", interrupt)
+    with pytest.raises(KeyboardInterrupt, match="cancelled"):
+        service.acquire_installed_root(item.reference)
+
+    with service_module.ArtifactOperationLease(
+        service.locks_path,
+        item.reference.lease_key(),
+        service_module.LeaseMode.EXCLUSIVE,
+        timeout_seconds=0.0,
+    ):
+        pass
 
 
 def test_closed_leased_handle_cannot_be_reentered(tmp_path: Path) -> None:

@@ -13,6 +13,10 @@ from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Prompt_Management.prompt_variables import (
     PromptVariableApplication,
 )
+from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+    AudioCppModelLibraryRequest,
+    AudioCppModelLibraryResult,
+)
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     ConsoleFirstChatIntent,
     ConsoleProviderIntent,
@@ -799,6 +803,38 @@ def test_remaining_channels_have_independent_revisions_and_claims() -> None:
         )
     }
     assert all(claim is not None and claim.revision == 1 for claim in claims.values())
+
+
+def test_audio_cpp_channels_detach_and_keep_foreign_claims_independent() -> None:
+    store = PendingHandoffStore()
+    request = AudioCppModelLibraryRequest("request-token", 3)
+    result = AudioCppModelLibraryResult(
+        "request-token",
+        3,
+        "audio-cpp-model",
+        "a" * 40,
+        "f16",
+        "/managed/audio-cpp-model",
+    )
+    store.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
+    store.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT, result)
+
+    request_claim = store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST)
+    result_claim = store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT)
+
+    assert request_claim is not None
+    assert result_claim is not None
+    assert request_claim.value == request
+    assert request_claim.value is not request
+    assert result_claim.value == result
+    assert result_claim.value is not result
+    assert store.acknowledge(request_claim) is True
+    assert store.acknowledge(request_claim) is False
+    assert store.release(result_claim) is True
+    replay = store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT)
+    assert replay is not None
+    assert replay.value == result
+    assert store.acknowledge(replay) is True
 
 
 @pytest.mark.parametrize(

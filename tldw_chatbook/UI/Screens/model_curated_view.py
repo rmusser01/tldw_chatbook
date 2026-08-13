@@ -84,6 +84,7 @@ class CuratedView(Widget):
             service: ModelArtifactService,
             registry: CuratedRegistry,
             sources: dict[ArtifactRef, dict[str, str]],
+            already_installed: bool = False,
         ) -> None:
             """Carry everything the host screen needs to preflight/provision.
 
@@ -104,6 +105,7 @@ class CuratedView(Widget):
             """
             super().__init__()
             self.reference = reference
+            self.already_installed = already_installed
             self.service = service
             self.registry = registry
             self.sources = sources
@@ -182,6 +184,7 @@ class CuratedView(Widget):
         self._load_error: str | None = None
         self._operation_reference: ArtifactRef | None = None
         self._progress: "AcquisitionProgress | None" = None
+        self._consumer_filter: str | None = None
         super().__init__(id=id)
 
     def compose(self) -> ComposeResult:
@@ -208,13 +211,22 @@ class CuratedView(Widget):
     def _row_widget(self, row: CuratedRow) -> Vertical:
         """Build one curated model row."""
         descriptor = row.descriptor
+        audio_cpp = descriptor.consumer == "audio_cpp"
         install = Button(
-            "Installed" if row.installed else "Review and install…",
+            (
+                "Use installed package"
+                if row.installed and audio_cpp
+                else "Installed"
+                if row.installed
+                else "Review and install…"
+            ),
             classes="curated-install",
             variant="primary",
-            disabled=row.installed or self._operation_reference is not None,
+            disabled=(row.installed and not audio_cpp)
+            or self._operation_reference is not None,
         )
         install.reference = descriptor.reference
+        install.already_installed = row.installed
         actions = [install]
         if self._external_key(descriptor.reference) is not None:
             use_from_disk = Button(
@@ -225,7 +237,7 @@ class CuratedView(Widget):
             )
             use_from_disk.reference = descriptor.reference
             actions.append(use_from_disk)
-        return Vertical(
+        details: list[Widget] = [
             Static(descriptor.model_id, classes="curated-model-title", markup=False),
             Static(
                 f"{descriptor.model_family} · {descriptor.precision} · "
@@ -243,9 +255,93 @@ class CuratedView(Widget):
                 classes="curated-model-muted",
                 markup=False,
             ),
-            Horizontal(*actions, classes="curated-actions"),
-            classes="curated-model-row",
+        ]
+        if audio_cpp:
+            details.extend(self._audio_cpp_facts(descriptor))
+        details.append(Horizontal(*actions, classes="curated-actions"))
+        return Vertical(*details, classes="curated-model-row")
+
+    @staticmethod
+    def _audio_cpp_facts(descriptor: ArtifactDescriptor) -> tuple[Static, ...]:
+        """Project joined recipe facts for one reviewed audio.cpp descriptor."""
+
+        from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+
+        recipe = next(
+            (
+                item
+                for item in AUDIO_CPP_RECIPE_REGISTRY.recipes
+                if descriptor.reference.artifact_id in item.model_library_artifact_ids
+            ),
+            None,
         )
+        if recipe is None:
+            return (
+                Static(
+                    "Model package only — audiocpp_server is not included",
+                    classes="curated-model-muted",
+                    markup=False,
+                ),
+            )
+        tasks = ", ".join(
+            capability.upper()
+            for capability in recipe.capabilities
+            if capability in {"tts", "clone"}
+        )
+        compatibility = ", ".join(
+            f"{evidence.system}/{evidence.architecture}/{evidence.backend.value}:"
+            f" {evidence.state.value}"
+            for evidence in recipe.backend_evidence
+        )
+        required = ", ".join(item.relative_path for item in recipe.required_files)
+        model_path = recipe.projection.model_relative_path
+        companions = (
+            ", ".join(
+                item.relative_path
+                for item in (*recipe.required_files, *recipe.optional_files)
+                if item.relative_path != model_path
+            )
+            or "None"
+        )
+        return (
+            Static(f"Speech tasks: {tasks}", markup=False),
+            Static(
+                f"Recipe variant: {recipe.package_variant}",
+                classes="curated-model-muted",
+                markup=False,
+            ),
+            Static(
+                f"Compatibility: {recipe.audio_cpp_release} · {compatibility}",
+                classes="curated-model-muted",
+                markup=False,
+            ),
+            Static(
+                f"Required package files: {required}",
+                classes="curated-model-muted",
+                markup=False,
+            ),
+            Static(
+                f"Companion files: {companions}",
+                classes="curated-model-muted",
+                markup=False,
+            ),
+            Static(
+                "Model package only — audiocpp_server is not included",
+                classes="curated-model-muted",
+                markup=False,
+            ),
+        )
+
+    def set_consumer_filter(self, consumer: str | None) -> None:
+        """Select the optional audio.cpp presentation context."""
+
+        if consumer not in (None, "audio_cpp"):
+            raise ValueError("unsupported curated consumer filter")
+        if consumer == self._consumer_filter:
+            return
+        self._consumer_filter = consumer
+        if self._loaded:
+            self.ensure_loaded(force=True)
 
     @staticmethod
     def _external_key(reference: ArtifactRef) -> ParakeetSourceKey | None:
@@ -296,6 +392,10 @@ class CuratedView(Widget):
                 CuratedRow(descriptor, descriptor.reference in installed_refs)
                 for descriptor in registry.list()
                 if descriptor.role is ArtifactRole.ROOT
+                and (
+                    self._consumer_filter is None
+                    or descriptor.consumer == self._consumer_filter
+                )
             )
         except Exception:
             self.app.call_from_thread(
@@ -327,13 +427,20 @@ class CuratedView(Widget):
         """Post an install intent; never call preflight/provision here."""
         event.stop()
         reference = getattr(event.button, "reference", None)
-        if not isinstance(reference, ArtifactRef) or self._operation_reference is not None:
+        if (
+            not isinstance(reference, ArtifactRef)
+            or self._operation_reference is not None
+        ):
+            return
+        already_installed = getattr(event.button, "already_installed", False)
+        if type(already_installed) is not bool:
             return
         self._operation_reference = reference
         self.refresh(recompose=True)
         self.post_message(
             self.InstallRequested(
                 reference,
+                already_installed=already_installed,
                 service=self._service_for_worker(),
                 registry=self._registry_for_worker(),
                 sources=self._source_map(),
