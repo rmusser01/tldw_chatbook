@@ -46,6 +46,10 @@ not previewed. The fix wave retains ADR-065 and replaces that Boolean with the
 privacy-safe exact duplicate-consent scope above. TDD must cover added/removed or
 changed folder members between presses, a newly active match absent from stale
 preflight, and an identical warning list whose tooling affected count changes.
+The scope also records whether its bounded active-ID references are complete and
+must fail closed when they are not. Any Boolean-override snippets in the original
+task steps below describe the superseded RED/first implementation, not the final
+public coordinator interface.
 At least one regression must drive the real screen state machine into the real
 app coordinator rather than asserting either boundary in isolation.
 

@@ -218,6 +218,7 @@ from tldw_chatbook.Library.web_clip_request import (
     is_web_clip_source,
 )
 from tldw_chatbook.Library.library_ingest_jobs import (
+    ActiveIngestConsentScope,
     ActiveIngestJobRef,
     ActiveIngestSubmissionRefused,
     DEFAULT_CHUNK_SIZE,
@@ -225,6 +226,8 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
     LibraryIngestJobRegistry,
+    build_active_ingest_consent_scope,
+    normalize_active_ingest_source,
 )
 from tldw_chatbook.Library.library_local_rag_search_service import (
     LibraryLocalRagSearchService,
@@ -2198,7 +2201,7 @@ class LibraryIngestQueueMixin:
         chunk_enabled: bool = False,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         batch_id: str | None = None,
-        allow_active_duplicate: bool = False,
+        active_duplicate_consent: ActiveIngestConsentScope | None = None,
     ) -> LibraryIngestJob:
         """Submit a new Library ingest job and top up the parse pool.
 
@@ -2222,8 +2225,8 @@ class LibraryIngestQueueMixin:
             perform_analysis: Whether to run post-ingest analysis.
             chunk_enabled: Whether to chunk the ingested content.
             chunk_size: Requested chunk size when ``chunk_enabled``.
-            allow_active_duplicate: Whether an explicitly confirmed submission
-                may proceed despite matching active work from the same backend.
+            active_duplicate_consent: Exact candidate and active-membership scope
+                captured by an explicitly confirmed submission.
 
         Returns:
             The newly created job: ``QUEUED`` normally, or immediately
@@ -2238,9 +2241,36 @@ class LibraryIngestQueueMixin:
         matches = self.library_ingest_jobs.find_active_source_matches(
             sources, origin=backend
         )
-        if matches and not allow_active_duplicate:
+        matched_source_keys = set()
+        for job in matches:
+            try:
+                matched_source_keys.add(
+                    normalize_active_ingest_source(job.source_path, origin=backend)
+                )
+            except (TypeError, ValueError, OSError):
+                continue
+        current_consent = build_active_ingest_consent_scope(
+            sources,
+            origin=backend,
+            active_job_ids=(job.job_id for job in matches),
+            active_source_count=len(matched_source_keys),
+        )
+        candidates_changed = active_duplicate_consent is not None and (
+            active_duplicate_consent.origin != current_consent.origin
+            or active_duplicate_consent.candidate_digest
+            != current_consent.candidate_digest
+            or active_duplicate_consent.candidate_count
+            != current_consent.candidate_count
+        )
+        matches_covered = (
+            active_duplicate_consent is not None
+            and active_duplicate_consent.covers(current_consent)
+        )
+        if candidates_changed or (matches and not matches_covered):
             raise ActiveIngestSubmissionRefused(
-                ActiveIngestJobRef(job.job_id, job.state) for job in matches
+                (ActiveIngestJobRef(job.job_id, job.state) for job in matches),
+                consent_scope=current_consent,
+                candidate_changed=candidates_changed,
             )
 
         normalized_options = ingest_options or {}

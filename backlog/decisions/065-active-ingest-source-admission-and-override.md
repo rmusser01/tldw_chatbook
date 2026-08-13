@@ -29,6 +29,8 @@ candidate identity is exact and every current active match is covered. Expected
 refusal carries that privacy-safe scope plus bounded job ID/state references so a
 late authoritative refusal can re-arm without exposing paths. The override is
 explicit, reason-specific, one-shot, and never persisted.
+If the bounded active-ID list is incomplete, the scope records that fact and
+cannot authorize an override; truncation is therefore fail-closed.
 
 ## Context
 

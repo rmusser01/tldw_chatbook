@@ -16,12 +16,14 @@ from textual.app import App
 
 from tldw_chatbook.Library.ingest_capabilities import get_capabilities
 from tldw_chatbook.Library.library_ingest_jobs import (
+    ActiveIngestConsentScope,
     ActiveIngestJobRef,
     ActiveIngestSubmissionRefused,
     DEFAULT_CHUNK_SIZE,
     IngestJobState,
     LibraryIngestJob,
     LibraryIngestJobRegistry,
+    build_active_ingest_consent_scope,
 )
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef
@@ -2341,7 +2343,13 @@ def test_confirmed_folder_routes_every_member_once_without_reentry(
     paths = [folder / "a.txt", folder / "b.txt"]
     for path in paths:
         path.write_text(path.stem)
-    app.library_ingest_jobs.submit(source_path=str(paths[1]))
+    active = app.library_ingest_jobs.submit(source_path=str(paths[1]))
+    consent_scope = build_active_ingest_consent_scope(
+        [str(path) for path in paths],
+        origin="local",
+        active_job_ids=(active.job_id,),
+        active_source_count=1,
+    )
     resolve_backend = MagicMock(wraps=app._resolve_ingest_backend)
     expand_source = MagicMock(wraps=app._expand_library_ingest_source)
     monkeypatch.setattr(app, "_resolve_ingest_backend", resolve_backend)
@@ -2356,7 +2364,7 @@ def test_confirmed_folder_routes_every_member_once_without_reentry(
     monkeypatch.setattr(app, "_submit_library_ingest_job_admitted", record)
 
     app.submit_library_ingest_job(
-        source_path=str(folder), allow_active_duplicate=True
+        source_path=str(folder), active_duplicate_consent=consent_scope
     )
 
     resolve_backend.assert_called_once_with()
@@ -2375,6 +2383,106 @@ def test_confirmed_folder_routes_every_member_once_without_reentry(
     assert resolve_backend.call_count == 2
     assert expand_source.call_count == 2
     assert len(admitted_calls) == admitted_count
+
+
+@pytest.mark.parametrize("mutation", ["added", "removed", "changed"])
+def test_folder_candidate_mutation_refuses_stale_consent_before_any_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    app = _minimal_app(media_db="present")
+    folder = tmp_path / "batch"
+    folder.mkdir()
+    paths = [folder / "a.txt", folder / "b.txt"]
+    for path in paths:
+        path.write_text(path.stem)
+    active = app.library_ingest_jobs.submit(source_path=str(paths[1]))
+    consent_scope = build_active_ingest_consent_scope(
+        [str(path) for path in paths],
+        origin="local",
+        active_job_ids=(active.job_id,),
+        active_source_count=1,
+    )
+    if mutation == "added":
+        (folder / "c.txt").write_text("c")
+    elif mutation == "removed":
+        paths[0].unlink()
+    else:
+        paths[0].rename(folder / "renamed.txt")
+    admitted = MagicMock()
+    monkeypatch.setattr(app, "_submit_library_ingest_job_admitted", admitted)
+
+    with pytest.raises(ActiveIngestSubmissionRefused) as caught:
+        app.submit_library_ingest_job(
+            source_path=str(folder),
+            active_duplicate_consent=consent_scope,
+        )
+
+    assert caught.value.candidate_changed is True
+    assert isinstance(caught.value.consent_scope, ActiveIngestConsentScope)
+    assert caught.value.consent_scope != consent_scope
+    admitted.assert_not_called()
+
+
+def test_new_active_match_absent_from_consent_refuses_before_any_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _minimal_app(media_db="present")
+    folder = tmp_path / "batch"
+    folder.mkdir()
+    paths = [folder / "a.txt", folder / "b.txt"]
+    for path in paths:
+        path.write_text(path.stem)
+    first = app.library_ingest_jobs.submit(source_path=str(paths[0]))
+    consent_scope = build_active_ingest_consent_scope(
+        [str(path) for path in paths],
+        origin="local",
+        active_job_ids=(first.job_id,),
+        active_source_count=1,
+    )
+    second = app.library_ingest_jobs.submit(source_path=str(paths[1]))
+    admitted = MagicMock()
+    monkeypatch.setattr(app, "_submit_library_ingest_job_admitted", admitted)
+
+    with pytest.raises(ActiveIngestSubmissionRefused) as caught:
+        app.submit_library_ingest_job(
+            source_path=str(folder),
+            active_duplicate_consent=consent_scope,
+        )
+
+    assert caught.value.candidate_changed is False
+    assert caught.value.consent_scope.active_job_ids == (
+        first.job_id,
+        second.job_id,
+    )
+    admitted.assert_not_called()
+
+
+def test_consent_scope_allows_matching_job_to_finish_before_second_press(
+    tmp_path: Path,
+) -> None:
+    app = _minimal_app(media_db="present")
+    source = tmp_path / "a.txt"
+    source.write_text("body")
+    active = app.library_ingest_jobs.submit(source_path=str(source))
+    consent_scope = build_active_ingest_consent_scope(
+        [str(source)],
+        origin="local",
+        active_job_ids=(active.job_id,),
+        active_source_count=1,
+    )
+    app.library_ingest_jobs.mark_parsing(active.job_id)
+    app.library_ingest_jobs.mark_writing(active.job_id)
+    app.library_ingest_jobs.mark_done(active.job_id, media_id=1)
+
+    submitted = app.submit_library_ingest_job(
+        source_path=str(source),
+        active_duplicate_consent=consent_scope,
+    )
+
+    assert submitted.job_id != active.job_id
 
 
 def test_direct_refusal_is_privacy_safe_and_starts_no_work(

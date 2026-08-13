@@ -61,6 +61,7 @@ a "replaced-on-transition" job is always safe to hand out to callers, too.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -199,18 +200,90 @@ class ActiveIngestJobRef:
     state: IngestJobState
 
 
+@dataclass(frozen=True, slots=True)
+class ActiveIngestConsentScope:
+    """Privacy-safe identity of the exact admission snapshot consented to."""
+
+    origin: str
+    candidate_digest: str
+    candidate_count: int
+    active_job_ids: tuple[str, ...]
+    active_job_count: int
+    active_job_ids_complete: bool
+    active_source_count: int
+
+    def covers(self, current: "ActiveIngestConsentScope") -> bool:
+        """Return whether ``current`` is within this exact consent scope."""
+        return (
+            self.origin == current.origin
+            and self.candidate_digest == current.candidate_digest
+            and self.candidate_count == current.candidate_count
+            and self.active_job_ids_complete
+            and current.active_job_ids_complete
+            and set(current.active_job_ids).issubset(self.active_job_ids)
+        )
+
+
+def build_active_ingest_consent_scope(
+    sources: Iterable[str],
+    *,
+    origin: str,
+    active_job_ids: Iterable[str] = (),
+    active_source_count: int = 0,
+) -> ActiveIngestConsentScope:
+    """Build an opaque deterministic identity for candidates and active jobs."""
+    keys = sorted(
+        {
+            key
+            for source in sources
+            if (key := _active_source_key_or_none(source, origin=origin)) is not None
+        },
+        key=lambda key: (key.origin, key.canonical_source),
+    )
+    payload = json.dumps(
+        [(key.origin, key.canonical_source) for key in keys],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    normalized_origin = str(origin).strip().lower()
+    normalized_active_job_ids = tuple(
+        dict.fromkeys(str(job_id) for job_id in active_job_ids)
+    )
+    return ActiveIngestConsentScope(
+        origin=normalized_origin,
+        candidate_digest=hashlib.sha256(payload).hexdigest(),
+        candidate_count=len(keys),
+        active_job_ids=normalized_active_job_ids[:ACTIVE_INGEST_REF_LIMIT],
+        active_job_count=len(normalized_active_job_ids),
+        active_job_ids_complete=(
+            len(normalized_active_job_ids) <= ACTIVE_INGEST_REF_LIMIT
+        ),
+        active_source_count=max(0, int(active_source_count)),
+    )
+
+
 class ActiveIngestSubmissionRefused(RuntimeError):
     """Raised when a submission matches active work without exposing paths."""
 
-    def __init__(self, matches: Iterable[ActiveIngestJobRef]) -> None:
+    def __init__(
+        self,
+        matches: Iterable[ActiveIngestJobRef],
+        *,
+        consent_scope: ActiveIngestConsentScope | None = None,
+        candidate_changed: bool = False,
+    ) -> None:
         materialized = tuple(matches)
         self.match_count = len(materialized)
         self.matches = materialized[:ACTIVE_INGEST_REF_LIMIT]
+        self.consent_scope = consent_scope
+        self.candidate_changed = bool(candidate_changed)
         super().__init__(f"Active ingest admission refused ({self.match_count} matches).")
 
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}(match_count={self.match_count}, "
+            f"candidate_changed={self.candidate_changed!r}, "
+            f"candidate_count={getattr(self.consent_scope, 'candidate_count', 0)!r}, "
             f"states={tuple(ref.state.value for ref in self.matches)!r})"
         )
 

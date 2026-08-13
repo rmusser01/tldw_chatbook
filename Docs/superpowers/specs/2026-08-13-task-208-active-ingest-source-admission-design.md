@@ -39,7 +39,9 @@ the app repeats the check immediately before local queue creation or remote
 submission. A one-shot immutable duplicate-consent scope carries the second
 press. It contains a deterministic digest/count for the exact canonical
 candidate set and the stable active job IDs the user consented to; it contains
-no source paths.
+no source paths. Active-ID references stay bounded; if that bound would truncate
+membership, the scope records its total count and incomplete status and the app
+refuses the override rather than authorizing unseen matches.
 
 This approach gives the UI enough information to be honest while retaining an
 authoritative non-UI guard for every entry point. It adds no database schema,
@@ -140,7 +142,7 @@ the authoritative admission operation:
 5. if matches exist and the supplied scope does not cover the exact candidate
    identity and every current active match, raise a typed expected refusal
    containing bounded `(job_id, state)` references plus the opaque candidate
-   digest/count needed for late-refusal re-arming;
+   digest/count and active-ID completeness needed for late-refusal re-arming;
 6. consume the one-shot admission decision once; and
 7. route the single source, or every expanded folder member, through a private
    already-admitted child seam that cannot re-run or partially re-enter the

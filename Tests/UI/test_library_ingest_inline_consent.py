@@ -26,6 +26,7 @@ from textual.widgets import Input, Static
 
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import (
+    ActiveIngestConsentScope,
     ActiveIngestJobRef,
     ActiveIngestSubmissionRefused,
     IngestJobState,
@@ -266,7 +267,8 @@ def test_active_duplicate_second_press_passes_one_shot_override(tmp_path):
     screen._submit_library_ingest_form()
 
     kwargs = screen.app_instance.submit_library_ingest_job.call_args.kwargs
-    assert kwargs["allow_active_duplicate"] is True
+    assert isinstance(kwargs["active_duplicate_consent"], ActiveIngestConsentScope)
+    assert kwargs["active_duplicate_consent"].active_job_ids == (job.job_id,)
     assert screen._library_ingest_start_consent is None
 
 
@@ -327,6 +329,38 @@ def test_warning_change_changes_active_consent_fingerprint(tmp_path):
     assert after != before
 
 
+def test_identical_warning_text_with_changed_affected_count_rearms_consent(
+    tmp_path,
+):
+    screen = _minimal_library_screen()
+    first = tmp_path / "first.pdf"
+    second = tmp_path / "second.pdf"
+    first.write_text("first")
+    second.write_text("second")
+    form = screen._library_ingest_form
+    form.path = str(tmp_path)
+    form.preflight = _preflight(
+        type_groups={"pdf": [str(first)], "generic": [str(second)]},
+        warnings=[dict(_WARNING)],
+        total_files=2,
+    )
+    before = screen._current_library_ingest_start_consent(str(tmp_path))
+
+    form.preflight = _preflight(
+        type_groups={"pdf": [str(first), str(second)]},
+        warnings=[dict(_WARNING)],
+        total_files=2,
+    )
+    after = screen._current_library_ingest_start_consent(str(tmp_path))
+
+    assert before.admission_scope.candidate_digest == (
+        after.admission_scope.candidate_digest
+    )
+    assert before.tooling_affected_count == 1
+    assert after.tooling_affected_count == 2
+    assert before.fingerprint != after.fingerprint
+
+
 def test_active_membership_change_requires_fresh_second_press(tmp_path):
     screen = _minimal_library_screen()
     source = _stage_plain_file(screen, tmp_path)
@@ -385,9 +419,9 @@ def test_combined_tooling_and_active_warning_takes_two_presses(tmp_path):
     assert screen.app_instance.submit_library_ingest_job.call_count == 1
     assert (
         screen.app_instance.submit_library_ingest_job.call_args.kwargs[
-            "allow_active_duplicate"
+            "active_duplicate_consent"
         ]
-        is True
+        is not None
     )
 
 
@@ -468,9 +502,9 @@ def test_late_refusal_fallback_single_file_can_be_confirmed(tmp_path):
     assert screen.app_instance.submit_library_ingest_job.call_count == 2
     assert (
         screen.app_instance.submit_library_ingest_job.call_args.kwargs[
-            "allow_active_duplicate"
+            "active_duplicate_consent"
         ]
-        is True
+        is not None
     )
 
 
@@ -501,9 +535,9 @@ def test_late_refusal_fallback_folder_can_be_confirmed(tmp_path):
     assert screen.app_instance.submit_library_ingest_job.call_count == 2
     assert (
         screen.app_instance.submit_library_ingest_job.call_args.kwargs[
-            "allow_active_duplicate"
+            "active_duplicate_consent"
         ]
-        is True
+        is not None
     )
 
 
@@ -601,9 +635,9 @@ def test_external_authoritative_fallback_second_preparation_queues_override(
     assert screen.app_instance.submit_library_ingest_job.call_count == 2
     assert (
         screen.app_instance.submit_library_ingest_job.call_args.kwargs[
-            "allow_active_duplicate"
+            "active_duplicate_consent"
         ]
-        is True
+        is not None
     )
     assert screen._library_ingest_form.path == ""
     assert screen._library_ingest_start_consent is None
@@ -638,9 +672,9 @@ def test_unrelated_active_job_churn_preserves_authoritative_fallback(tmp_path):
 
     assert (
         screen.app_instance.submit_library_ingest_job.call_args.kwargs[
-            "allow_active_duplicate"
+            "active_duplicate_consent"
         ]
-        is True
+        is not None
     )
 
 
@@ -684,9 +718,9 @@ def test_authoritative_fallback_matching_membership_change_requires_new_consent(
     assert screen.app_instance.submit_library_ingest_job.call_count == 2
     assert (
         screen.app_instance.submit_library_ingest_job.call_args.kwargs[
-            "allow_active_duplicate"
+            "active_duplicate_consent"
         ]
-        is False
+        is None
     )
     if terminal == "done":
         assert screen._library_ingest_start_consent is None
@@ -717,9 +751,9 @@ def test_combined_external_confirm_survives_matching_job_finishing(tmp_path):
     screen.app_instance.submit_library_ingest_job.assert_called_once()
     assert (
         screen.app_instance.submit_library_ingest_job.call_args.kwargs[
-            "allow_active_duplicate"
+            "active_duplicate_consent"
         ]
-        is False
+        is None
     )
     assert screen._library_ingest_start_consent is None
     service = screen.app_instance._ensure_parakeet_source_service.return_value

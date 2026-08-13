@@ -47,6 +47,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
     LibraryIngestJobRegistry,
+    build_active_ingest_consent_scope,
 )
 from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestCanvasState,
@@ -1065,8 +1066,12 @@ async def test_active_confirm_update_preserves_start_input_focus_cursor_and_scro
 
         screen._library_ingest_start_consent = _LibraryIngestStartConsent(
             fingerprint="active-test",
-            active_job_ids=("ingest-job-1",),
-            active_source_count=1,
+            admission_scope=build_active_ingest_consent_scope(
+                [str(tmp_path / "active.txt")],
+                origin="local",
+                active_job_ids=("ingest-job-1",),
+                active_source_count=1,
+            ),
             tooling_affected_count=0,
             is_folder=False,
         )

@@ -105,9 +105,11 @@ from ...Widgets.Library.library_ingest_canvas import (
 )
 from ...Library.library_ingest_jobs import (
     ACTIVE_INGEST_STATES,
+    ActiveIngestConsentScope,
     ActiveIngestSubmissionRefused,
     IngestJobState,
     LibraryIngestJob,
+    build_active_ingest_consent_scope,
     count_duplicate_done_jobs,
     normalize_active_ingest_source,
 )
@@ -654,20 +656,35 @@ class _LibraryIngestStartConsent:
     """Immutable identity of the submission a second Start may authorize."""
 
     fingerprint: str
-    active_job_ids: tuple[str, ...]
-    active_source_count: int
+    admission_scope: ActiveIngestConsentScope
     tooling_affected_count: int
     is_folder: bool
     request_fingerprint: str = ""
+    consent_context_fingerprint: str = ""
     authoritative_refusal: bool = False
+    candidate_changed: bool = False
+
+    @property
+    def active_job_ids(self) -> tuple[str, ...]:
+        return self.admission_scope.active_job_ids
+
+    @property
+    def active_source_count(self) -> int:
+        return self.admission_scope.active_source_count
 
     @property
     def owed(self) -> bool:
-        return bool(self.active_job_ids or self.tooling_affected_count)
+        return bool(
+            self.active_job_ids
+            or self.tooling_affected_count
+            or self.candidate_changed
+        )
 
     @property
     def allows_active_duplicate(self) -> bool:
-        return bool(self.active_job_ids)
+        return bool(
+            self.active_job_ids and self.admission_scope.active_job_ids_complete
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -12437,6 +12454,8 @@ class LibraryScreen(BaseAppScreen):
                 if consent.active_source_count
                 else "Import active. Start again to queue a duplicate."
             )
+        elif consent is not None and consent.candidate_changed:
+            start_confirm_line = "Selection changed. Start again to queue."
         return build_library_ingest_state(
             jobs,
             form=form,
@@ -24173,6 +24192,12 @@ class LibraryScreen(BaseAppScreen):
             "options": self._build_ingest_options_snapshot(),
             "warnings": form.preflight.warnings if form.preflight else [],
         }
+        admission_scope = build_active_ingest_consent_scope(
+            preview_sources,
+            origin=backend,
+            active_job_ids=active_job_ids,
+            active_source_count=len(matched_source_keys),
+        )
         request_fingerprint = json.dumps(
             request_payload,
             sort_keys=True,
@@ -24182,8 +24207,30 @@ class LibraryScreen(BaseAppScreen):
         )
         fingerprint_payload = {
             **request_payload,
-            "active_job_ids": active_job_ids,
+            "candidate_digest": admission_scope.candidate_digest,
+            "candidate_count": admission_scope.candidate_count,
+            "tooling_affected_count": tooling_affected_count,
+            "active_job_ids": admission_scope.active_job_ids,
+            "active_job_count": admission_scope.active_job_count,
+            "active_job_ids_complete": admission_scope.active_job_ids_complete,
         }
+        consent_context_payload = {
+            key: value
+            for key, value in fingerprint_payload.items()
+            if key
+            not in {
+                "active_job_ids",
+                "active_job_count",
+                "active_job_ids_complete",
+            }
+        }
+        consent_context_fingerprint = json.dumps(
+            consent_context_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            default=str,
+        )
         fingerprint = json.dumps(
             fingerprint_payload,
             sort_keys=True,
@@ -24193,11 +24240,11 @@ class LibraryScreen(BaseAppScreen):
         )
         return _LibraryIngestStartConsent(
             fingerprint=fingerprint,
-            active_job_ids=active_job_ids,
-            active_source_count=len(matched_source_keys),
+            admission_scope=admission_scope,
             tooling_affected_count=tooling_affected_count,
             is_folder=is_folder,
             request_fingerprint=request_fingerprint,
+            consent_context_fingerprint=consent_context_fingerprint,
         )
 
     def _authoritative_library_ingest_consent_is_current(
@@ -24208,9 +24255,13 @@ class LibraryScreen(BaseAppScreen):
         """Validate only the bounded refusal IDs without re-scanning sources."""
         if (
             not armed.authoritative_refusal
-            or armed.request_fingerprint != pending.request_fingerprint
-            or pending.active_job_ids not in ((), armed.active_job_ids)
+            or armed.consent_context_fingerprint
+            != pending.consent_context_fingerprint
         ):
+            return False
+        if armed.candidate_changed and not armed.active_job_ids:
+            return True
+        if pending.active_job_ids not in ((), armed.active_job_ids):
             return False
         registry = self._library_ingest_registry()
         get_job = getattr(registry, "get_job", None)
@@ -24298,17 +24349,21 @@ class LibraryScreen(BaseAppScreen):
                 < self._START_CONFIRM_DEAD_ZONE_SECONDS
             ):
                 return
-            allow_active_duplicate = armed.allows_active_duplicate
-            confirmed_consent = armed if allow_active_duplicate else None
+            duplicate_consent = (
+                armed.admission_scope
+                if armed.allows_active_duplicate or armed.candidate_changed
+                else None
+            )
+            confirmed_consent = armed if duplicate_consent is not None else None
             self._disarm_library_ingest_start_confirm()
         else:
-            allow_active_duplicate = False
+            duplicate_consent = None
             confirmed_consent = None
             if armed is not None:
                 self._disarm_library_ingest_start_confirm()
         self._do_submit_ingest(
             submitted_source,
-            allow_active_duplicate=allow_active_duplicate,
+            active_duplicate_consent=duplicate_consent,
             confirmed_consent=confirmed_consent,
         )
 
@@ -24316,7 +24371,7 @@ class LibraryScreen(BaseAppScreen):
         self,
         submitted_source: str,
         *,
-        allow_active_duplicate: bool = False,
+        active_duplicate_consent: ActiveIngestConsentScope | None = None,
         confirmed_consent: _LibraryIngestStartConsent | None = None,
     ) -> None:
         """Perform the actual Library ingest job submission."""
@@ -24335,7 +24390,7 @@ class LibraryScreen(BaseAppScreen):
             perform_analysis=form.analyze,
             chunk_enabled=form.chunk,
             chunk_size=clamp_chunk_size(form.chunk_size),
-            allow_active_duplicate=allow_active_duplicate,
+            active_duplicate_consent=active_duplicate_consent,
         )
         audio_options = snapshot.get("audio_video", {})
         resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
@@ -24571,8 +24626,8 @@ class LibraryScreen(BaseAppScreen):
             submitted_source = str(submit_kwargs.get("source_path") or "")
             pending = self._current_library_ingest_start_consent(submitted_source)
             request_changed = (
-                pending.request_fingerprint
-                != confirmed_consent.request_fingerprint
+                pending.consent_context_fingerprint
+                != confirmed_consent.consent_context_fingerprint
             )
             authoritative_current = (
                 self._authoritative_library_ingest_consent_is_current(
@@ -24604,7 +24659,7 @@ class LibraryScreen(BaseAppScreen):
                 # The confirmed match finished while preparation ran and no
                 # replacement is visible. Tooling was part of the same
                 # consent, so proceed under the ordinary authoritative guard.
-                submit_kwargs["allow_active_duplicate"] = False
+                submit_kwargs["active_duplicate_consent"] = None
         self._library_external_submit_consent = None
         self._set_library_external_status("Queueing import…", busy=True)
         self._enqueue_library_ingest_snapshot(
@@ -24781,31 +24836,42 @@ class LibraryScreen(BaseAppScreen):
 
             submitted_source = str(submit_kwargs.get("source_path") or "")
             pending = self._current_library_ingest_start_consent(submitted_source)
-            refused_job_ids = tuple(ref.job_id for ref in refusal.matches)
-            if pending.active_job_ids != refused_job_ids:
+            refused_scope = refusal.consent_scope
+            if refused_scope is None:
                 # The authoritative guard can win a race after the preview.
                 # Retain only stable IDs; a preview that cannot reconstruct
                 # sources gets the safe generic duplicate copy.
-                try:
-                    payload = json.loads(pending.fingerprint)
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    payload = {"request": pending.fingerprint}
-                payload["active_job_ids"] = refused_job_ids
-                pending = _LibraryIngestStartConsent(
-                    fingerprint=json.dumps(
-                        payload,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                        ensure_ascii=False,
-                        default=str,
-                    ),
-                    active_job_ids=refused_job_ids,
+                refused_scope = build_active_ingest_consent_scope(
+                    [submitted_source],
+                    origin=pending.admission_scope.origin,
+                    active_job_ids=(ref.job_id for ref in refusal.matches),
                     active_source_count=0,
-                    tooling_affected_count=pending.tooling_affected_count,
-                    is_folder=False,
-                    request_fingerprint=pending.request_fingerprint,
-                    authoritative_refusal=True,
                 )
+            payload = {
+                "request": pending.request_fingerprint,
+                "candidate_digest": refused_scope.candidate_digest,
+                "candidate_count": refused_scope.candidate_count,
+                "tooling_affected_count": pending.tooling_affected_count,
+                "active_job_ids": refused_scope.active_job_ids,
+                "active_job_count": refused_scope.active_job_count,
+                "active_job_ids_complete": refused_scope.active_job_ids_complete,
+            }
+            pending = _LibraryIngestStartConsent(
+                fingerprint=json.dumps(
+                    payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                admission_scope=refused_scope,
+                tooling_affected_count=pending.tooling_affected_count,
+                is_folder=refused_scope.candidate_count > 1,
+                request_fingerprint=pending.request_fingerprint,
+                consent_context_fingerprint=pending.consent_context_fingerprint,
+                authoritative_refusal=True,
+                candidate_changed=refusal.candidate_changed,
+            )
             self._library_ingest_start_consent = pending
             self._library_ingest_start_confirm_armed_at = time.monotonic()
             self._update_library_ingest_gate(self._build_library_ingest_state())
