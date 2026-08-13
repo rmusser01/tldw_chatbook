@@ -20,12 +20,15 @@ REQUIRED_NODES = (
     "Tests/Model_Artifacts/test_service.py::test_import_finalizing_is_point_of_no_return",
     "Tests/Model_Artifacts/test_service.py::test_reconcile_removes_only_abandoned_import_stage",
     "Tests/Model_Artifacts/test_service.py::test_concurrent_identical_imports_converge_on_one_manifest",
+    "Tests/Model_Artifacts/test_service.py::test_import_local_gguf_preserves_retryable_lease_timeout",
     "Tests/UI/test_model_installed_view.py::test_tldwcli_css_finish_slice_restores_terminal_import_focus",
     "Tests/UI/test_model_installed_view.py::test_import_progress_updates_without_replacing_focused_cancel",
     "Tests/UI/test_model_installed_view.py::test_physical_cancel_sets_service_probe_and_preserves_source",
+    "Tests/UI/test_model_installed_view.py::test_attached_queued_cancel_settles_without_entering_service",
     "Tests/UI/test_model_installed_view.py::test_finalizing_disables_cancel_before_promotion",
     "Tests/UI/test_model_installed_view.py::test_activation_failure_keeps_installed_row_and_offers_activate",
     "Tests/UI/test_model_installed_view.py::test_import_failure_logs_only_stable_category_and_never_selected_path",
+    "Tests/UI/test_model_installed_view.py::test_real_import_lease_timeout_offers_busy_retry_without_publication",
     "Tests/UI/test_model_installed_view.py::test_import_lane_disables_every_lifecycle_action_at_80_columns",
 )
 EXPECTED_OSES = ("ubuntu-latest", "macos-latest", "windows-latest")
@@ -34,9 +37,11 @@ ASYNC_EVIDENCE_FUNCTIONS = {
         "test_tldwcli_css_finish_slice_restores_terminal_import_focus",
         "test_import_progress_updates_without_replacing_focused_cancel",
         "test_physical_cancel_sets_service_probe_and_preserves_source",
+        "test_attached_queued_cancel_settles_without_entering_service",
         "test_finalizing_disables_cancel_before_promotion",
         "test_activation_failure_keeps_installed_row_and_offers_activate",
         "test_import_failure_logs_only_stable_category_and_never_selected_path",
+        "test_real_import_lease_timeout_offers_busy_retry_without_publication",
         "test_import_lane_disables_every_lifecycle_action_at_80_columns",
     },
 }
