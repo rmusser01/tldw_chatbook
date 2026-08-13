@@ -43,8 +43,10 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
+    ComposerDraftSnapshot,
     ComposerTransactionValidationError,
     _DraftHistorySnapshot,
+    _snapshot_fingerprint,
 )
 
 # ---------------------------------------------------------------------------
@@ -235,6 +237,53 @@ def test_export_restore_history_preserves_current_and_undo_structured_paste_stat
     snapshot = restored.capture_draft_snapshot()
     assert [segment.text for segment in snapshot.segments] == [first, "\n", second]
     assert snapshot.segments[1].generated_boundary is True
+
+
+def _snapshot_with_orphaned_generated_boundary() -> ComposerDraftSnapshot:
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text("A" * 80)
+    composer.insert_pasted_text("B" * 90)
+    snapshot = composer.capture_draft_snapshot()
+    orphaned_segments = snapshot.segments[1:]
+    cursor_index = sum(len(segment.text) for segment in orphaned_segments)
+    fingerprint = _snapshot_fingerprint(
+        segments=orphaned_segments,
+        cursor_index=cursor_index,
+        selection=None,
+        edit_serial=snapshot.edit_serial,
+        generation=snapshot.generation,
+    )
+    return replace(
+        snapshot,
+        segments=orphaned_segments,
+        cursor_index=cursor_index,
+        selection=None,
+        fingerprint=fingerprint,
+    )
+
+
+def test_restore_snapshot_rejects_orphaned_generated_boundary():
+    forged = _snapshot_with_orphaned_generated_boundary()
+    composer = ConsoleComposerBar()
+
+    with pytest.raises(ComposerTransactionValidationError, match="generated boundary"):
+        composer.restore_snapshot(forged)
+
+
+def test_restore_history_discards_orphaned_generated_boundary_entry():
+    forged = _snapshot_with_orphaned_generated_boundary()
+    entry = _DraftHistorySnapshot(
+        text="".join(segment.text for segment in forged.segments),
+        cursor_index=forged.cursor_index,
+        segments=forged.segments,
+    )
+    composer = ConsoleComposerBar()
+    composer.load_draft("safe")
+
+    composer.restore_undo_history(([entry], []))
+
+    assert composer.undo() is False
+    assert composer.draft_text() == "safe"
 
 
 @pytest.mark.asyncio

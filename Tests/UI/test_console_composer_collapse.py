@@ -1,6 +1,7 @@
 """Mounted regressions for the collapsible Console composer."""
 
 import inspect
+from itertools import pairwise
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
@@ -200,6 +201,39 @@ def test_embedded_line_breaks_separate_collapsed_tokens_in_display_without_rewri
     )
 
 
+@pytest.mark.parametrize("line_break", ["\n", "\r\n"])
+@pytest.mark.parametrize("position", ["first", "second", "middle"])
+def test_all_line_break_paste_keeps_adjacent_display_labels_separated(
+    line_break: str,
+    position: str,
+):
+    all_breaks = line_break * 30
+    first = "A" * 60
+    second = "B" * 70
+    payloads = {
+        "first": [all_breaks, second],
+        "second": [first, all_breaks],
+        "middle": [first, all_breaks, second],
+    }[position]
+    composer = ConsoleComposerBar(paste_collapse_threshold=20)
+
+    for payload in payloads:
+        composer.insert_pasted_text(payload)
+
+    display = composer._display_draft_text()
+    labels = [_paste_token(payload) for payload in payloads]
+    assert composer.draft_text() == "".join(payloads)
+    assert display.count("Pasted text |") == len(payloads)
+    for left_label, right_label in pairwise(labels):
+        left_end = display.index(left_label) + len(left_label)
+        right_start = display.index(right_label, left_end)
+        assert line_break in display[left_end:right_start]
+    leading, trailing = composer._paste_edge_line_breaks(all_breaks)
+    assert leading
+    assert trailing
+    assert leading + trailing == all_breaks
+
+
 def test_inserting_collapsed_paste_before_existing_block_adds_right_boundary():
     first = "A" * 80
     second = "B" * 90
@@ -262,6 +296,73 @@ def test_file_and_collapsed_paste_never_gain_a_generated_boundary(file_first: bo
         segment.generated_boundary
         for segment in composer.capture_draft_snapshot().segments
     )
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+@pytest.mark.parametrize("insertion_kind", ["small_paste", "file", "literal"])
+def test_insertion_next_to_generated_boundary_removes_orphan_separator(
+    side: str,
+    insertion_kind: str,
+):
+    first = "A" * 80
+    second = "B" * 90
+    inserted = "small" if insertion_kind == "small_paste" else "inserted"
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+    boundary_display_index = len(_paste_token(first))
+    if side == "right":
+        boundary_display_index += 1
+    composer.position_cursor_from_display_index(boundary_display_index)
+
+    if insertion_kind == "small_paste":
+        composer.insert_pasted_text(inserted)
+    elif insertion_kind == "file":
+        composer.insert_file_segment(inserted, label="inserted.txt")
+    else:
+        composer.insert_text(inserted)
+
+    assert composer.draft_text() == first + inserted + second
+    assert not any(
+        segment.generated_boundary
+        for segment in composer.capture_draft_snapshot().segments
+    )
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+@pytest.mark.parametrize("insertion_kind", ["small_paste", "file", "literal"])
+def test_insertion_next_to_user_authored_newline_preserves_it(
+    side: str,
+    insertion_kind: str,
+):
+    first = "A" * 80
+    second = "B" * 90
+    inserted = "small" if insertion_kind == "small_paste" else "inserted"
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_text("\n")
+    composer.insert_pasted_text(second)
+    boundary_display_index = len(_paste_token(first))
+    if side == "right":
+        boundary_display_index += 1
+    composer.position_cursor_from_display_index(boundary_display_index)
+
+    if insertion_kind == "small_paste":
+        composer.insert_pasted_text(inserted)
+    elif insertion_kind == "file":
+        composer.insert_file_segment(inserted, label="inserted.txt")
+    else:
+        composer.insert_text(inserted)
+
+    expected = (
+        first + inserted + "\n" + second
+        if side == "left"
+        else first + "\n" + inserted + second
+    )
+    assert composer.draft_text() == expected
+    snapshot = composer.capture_draft_snapshot()
+    assert "\n" in "".join(segment.text for segment in snapshot.segments)
+    assert all(not segment.generated_boundary for segment in snapshot.segments)
 
 
 def test_generic_history_collapsed_literal_is_not_a_paste_block_boundary():

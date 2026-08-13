@@ -762,6 +762,12 @@ class ConsoleComposerBar(Horizontal):
                 raise ComposerTransactionValidationError(
                     "Composer snapshot paste-block ownership is invalid."
                 )
+        if not ConsoleComposerBar._snapshot_generated_boundaries_are_owned(
+            snapshot.segments
+        ):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot generated boundary is orphaned."
+            )
 
         draft_length = sum(len(segment.text) for segment in snapshot.segments)
         if (
@@ -872,6 +878,34 @@ class ConsoleComposerBar(Horizontal):
             for segment in self._segments
         )
 
+    @staticmethod
+    def _snapshot_segment_is_paste_block(
+        segment: ComposerDraftSegmentSnapshot,
+    ) -> bool:
+        """Return whether an immutable segment owns paste-block semantics."""
+        return (
+            segment.origin == "paste"
+            and segment.paste_block
+            and segment.collapse_state in {"collapsed", "confirm", "expanded"}
+        )
+
+    @classmethod
+    def _snapshot_generated_boundaries_are_owned(
+        cls,
+        segments: tuple[ComposerDraftSegmentSnapshot, ...],
+    ) -> bool:
+        """Return whether every generated newline joins two paste blocks."""
+        return all(
+            not segment.generated_boundary
+            or (
+                index > 0
+                and index + 1 < len(segments)
+                and cls._snapshot_segment_is_paste_block(segments[index - 1])
+                and cls._snapshot_segment_is_paste_block(segments[index + 1])
+            )
+            for index, segment in enumerate(segments)
+        )
+
     @classmethod
     def _history_entry_is_valid(cls, entry: object) -> bool:
         """Return whether one internal/exported history entry is safe to restore."""
@@ -912,7 +946,7 @@ class ConsoleComposerBar(Horizontal):
                 or segment.paste_block
             ):
                 return False
-        return True
+        return cls._snapshot_generated_boundaries_are_owned(entry.segments)
 
     def capture_transaction_checkpoint(self) -> ComposerTransactionCheckpoint:
         """Capture draft and undo state for coordinated rollback.
@@ -1436,6 +1470,14 @@ class ConsoleComposerBar(Horizontal):
         """Return non-overlapping LF/CRLF runs at a paste block's edges."""
         leading_match = re.match(r"(?:(?:\r\n)|\n)+", text)
         leading = leading_match.group(0) if leading_match else ""
+        if leading == text and leading:
+            first_break_length = 2 if leading.startswith("\r\n") else 1
+            if len(leading) > first_break_length:
+                return (
+                    leading[:first_break_length],
+                    leading[first_break_length:],
+                )
+            return "", leading
         remaining = text[len(leading) :]
         trailing_match = re.search(r"(?:(?:\r\n)|\n)+$", remaining)
         trailing = trailing_match.group(0) if trailing_match else ""
@@ -2546,6 +2588,11 @@ class ConsoleComposerBar(Horizontal):
             return
         segment_index, offset = self._locate_canonical(self._cursor_index)
         segment = self._segments[segment_index]
+        if segment.generated_boundary:
+            insertion_index = segment_index if offset == 0 else segment_index + 1
+            self._segments.insert(insertion_index, _DraftSegment(text))
+            self._cursor_index += len(text)
+            return
         if segment.origin == "literal" and segment.collapse_state in {
             "literal",
             "expanded",
@@ -2562,6 +2609,7 @@ class ConsoleComposerBar(Horizontal):
                 right_index < len(self._segments)
                 and self._segments[right_index].origin == "literal"
                 and self._segments[right_index].collapse_state == "literal"
+                and not self._segments[right_index].generated_boundary
             ):
                 self._segments[right_index].text = (
                     text + self._segments[right_index].text
@@ -2578,6 +2626,7 @@ class ConsoleComposerBar(Horizontal):
                 left_index >= 0
                 and self._segments[left_index].origin == "literal"
                 and self._segments[left_index].collapse_state == "literal"
+                and not self._segments[left_index].generated_boundary
             ):
                 self._segments[left_index].text += text
                 self._segments[left_index].generated_boundary = False
@@ -3601,6 +3650,7 @@ class ConsoleComposerBar(Horizontal):
                     collapse_state="literal",
                 )
             )
+            self._prune_orphaned_generated_boundaries()
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -3655,6 +3705,7 @@ class ConsoleComposerBar(Horizontal):
                 label=label,
             )
         )
+        self._prune_orphaned_generated_boundaries()
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
