@@ -42,3 +42,15 @@ behavior.
 - ADR required: yes.
 - ADR path: `backlog/decisions/065-active-ingest-source-admission-and-override.md`.
 - Reason: TASK-208 establishes a durable idempotency scope, canonical source identity, batch admission rule, cross-module contract, and explicit override policy while rejecting persistent uniqueness and historical content hashing.
+
+## Implementation Plan
+
+- Detailed plan: `Docs/superpowers/plans/2026-08-13-task-208-active-ingest-source-admission.md`.
+- ADR required: yes.
+- ADR path: `backlog/decisions/065-active-ingest-source-admission-and-override.md`.
+- Reason: ADR-065 is accepted and directly governs the active-state scope, lexical identity, app-boundary authority, atomic folder admission, privacy-safe refusal, and one-shot override implemented by this plan; no additional ADR is required.
+
+1. Add and verify the pure canonical source key, active-state registry query, and bounded privacy-safe refusal references.
+2. Refactor submission into one authoritative outer admission check plus a private already-admitted child seam, preserving Local/Server routing and atomic folder behavior.
+3. Extend the existing inline two-press Start grammar with stable request fingerprints, reason-specific override forwarding, late-refusal recovery, and external-scope release.
+4. Prove the exact warning copy through painted `72x18` compositor tests, update the Library user guide, run the affected regression/static matrix, and complete task/ADR hygiene.
