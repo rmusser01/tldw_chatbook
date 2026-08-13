@@ -7151,13 +7151,9 @@ def _error_source_snapshot():
 
 @pytest.mark.asyncio
 async def test_library_shell_snapshot_cache_is_isolated_from_live_record_mutation():
-    """The app-scoped snapshot cache must hold COPIES, not the live records
-    dict (Qodo review). ``_apply_local_source_snapshot`` aliases
-    ``self._local_source_records = records``, and later in-place key
-    reassignments (a media edit does ``self._local_source_records["media"]
-    = ...``) would otherwise mutate the cached dict too -- corrupting the
-    next visit's instant-apply. Mutating the live records after a snapshot is
-    cached must leave the cache untouched.
+    """The app-scoped snapshot cache must detach nested records from the
+    live source snapshot. A later in-place record edit must not corrupt the
+    next visit's seed.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -7170,14 +7166,16 @@ async def test_library_shell_snapshot_cache_is_isolated_from_live_record_mutatio
         cached = getattr(app, "_library_source_snapshot_cache", None)
         assert cached is not None, "a successful snapshot should have been cached"
         cached_records = cached[0]
-        # The cached dict must not be the same object the live view holds.
+        # Neither the records map nor its individual records may alias the
+        # live view, which is allowed to mutate records in place.
         assert cached_records is not screen._local_source_records
+        live_conversation = screen._local_source_records["conversations"][0]
+        cached_conversation = cached_records["conversations"][0]
+        assert cached_conversation is not live_conversation
 
-        sentinel = ({"id": "sentinel-mutation"},)
-        screen._local_source_records["media"] = sentinel
+        live_conversation["title"] = "sentinel mutation"
 
-        # The cache still holds the pre-mutation records.
-        assert app._library_source_snapshot_cache[0]["media"] is not sentinel
+        assert cached_conversation["title"] != "sentinel mutation"
 
 
 @pytest.mark.asyncio
