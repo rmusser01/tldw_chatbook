@@ -2,7 +2,7 @@
 
 **Task:** TASK-15459
 **Date:** 2026-08-13
-**Status:** Written spec under review
+**Status:** Approved for implementation planning
 
 ## Context
 
