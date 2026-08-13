@@ -903,7 +903,7 @@ async def test_stale_completion_discards_real_cached_artifact_and_settles(
         callback=states.append,
     )
     handler = TTSEventHandler()
-    handler._audio_files["message-1"] = artifact
+    await handler._cache_audio_file("message-1", artifact, lifecycle)
     app = _FakeApp()
     app._tts_handler = handler
 
@@ -918,6 +918,7 @@ async def test_stale_completion_discards_real_cached_artifact_and_settles(
 
     assert not artifact.exists()
     assert "message-1" not in handler._audio_files
+    assert "message-1" not in handler._audio_file_owners
     assert states == ["stopped"]
     assert not any(isinstance(item, TTSPlaybackEvent) for item in app.posted)
 
@@ -1520,6 +1521,219 @@ async def test_lifecycleless_message_stop_cannot_touch_owned_same_message(
 
 
 @pytest.mark.asyncio
+async def test_lifecycleless_stop_preserves_owned_artifact_before_play_reserves_owner(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    async def chunks():
+        yield b"audio"
+
+    artifact = tmp_path / "pre-play.mp3"
+    response = TTSAudioResponse(
+        provider_id="openai",
+        model_id="tts-model",
+        audio_format="mp3",
+        content_type="audio/mpeg",
+        byte_stream=chunks(),
+    )
+    service = MagicMock()
+    service.preferences_snapshot.return_value = SimpleNamespace(
+        provider_id="openai",
+        speed=1.0,
+    )
+    service.synthesize_default = AsyncMock(return_value=response)
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="pre-play-window",
+        request_id=1,
+        validator=lambda: True,
+        callback=lambda _state: None,
+    )
+    handler = TTSEventHandler()
+    handler._tts_service = service
+    handler._create_tts_artifact = MagicMock(return_value=artifact)
+    observed: dict[str, object] = {}
+
+    async def intercept(message: object) -> bool:
+        if (
+            isinstance(message, TTSProgressEvent)
+            and message.status == "Audio generation complete"
+        ):
+            outcomes: list[bool] = []
+            await handler.handle_tts_playback(
+                TTSPlaybackEvent(
+                    action="stop",
+                    message_id=lifecycle.message_id,
+                    outcome_callback=outcomes.append,
+                )
+            )
+            observed.update(
+                outcomes=outcomes,
+                artifact_exists=artifact.exists(),
+                cached=handler._audio_files.get(lifecycle.message_id),
+                cached_owner=getattr(handler, "_audio_file_owners", {}).get(
+                    lifecycle.message_id
+                ),
+                generation_owner=handler._console_generation_owner,
+                file_owner=handler._active_file_playback_owner,
+            )
+        return True
+
+    handler._post_tts_message = intercept
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events.sink_available",
+        lambda: False,
+    )
+
+    await handler._admit_tts_generation(
+        text="Reply.",
+        message_id=lifecycle.message_id,
+        voice=None,
+        resolution=None,
+        playback_lifecycle=lifecycle,
+    )
+    generation_owner = handler._console_generation_owner
+    assert generation_owner is not None
+    assert generation_owner.task is not None
+    await generation_owner.task
+
+    assert observed["outcomes"] == [False]
+    assert observed["artifact_exists"] is True
+    assert observed["cached"] == artifact
+    assert observed["cached_owner"] is lifecycle
+    assert observed["generation_owner"] is generation_owner
+    assert observed["file_owner"] is None
+
+
+@pytest.mark.asyncio
+async def test_artifact_owner_metadata_tracks_replacement_discard_and_cleanup(
+    tmp_path,
+) -> None:
+    old_artifact = tmp_path / "old.wav"
+    new_artifact = tmp_path / "new.wav"
+    old_artifact.write_bytes(b"old")
+    new_artifact.write_bytes(b"new")
+    old_owner = TTSPlaybackLifecycle(
+        message_id="same-message",
+        request_id=1,
+        validator=lambda: True,
+        callback=lambda _state: None,
+    )
+    new_owner = TTSPlaybackLifecycle(
+        message_id="same-message",
+        request_id=2,
+        validator=lambda: True,
+        callback=lambda _state: None,
+    )
+    handler = TTSEventHandler()
+
+    await handler._cache_audio_file("same-message", old_artifact, old_owner)
+    await handler._cache_audio_file("same-message", new_artifact, new_owner)
+
+    assert handler._audio_files == {"same-message": new_artifact}
+    assert handler._audio_file_owners == {"same-message": new_owner}
+
+    await handler._discard_tts_artifact(
+        "same-message",
+        old_artifact,
+        artifact_owner=old_owner,
+    )
+
+    assert old_artifact.exists() is False
+    assert new_artifact.read_bytes() == b"new"
+    assert handler._audio_files == {"same-message": new_artifact}
+    assert handler._audio_file_owners == {"same-message": new_owner}
+
+    await handler._cleanup_audio_file(
+        "same-message",
+        artifact_owner=new_owner,
+    )
+
+    assert new_artifact.exists() is False
+    assert handler._audio_files == {}
+    assert handler._audio_file_owners == {}
+
+
+@pytest.mark.asyncio
+async def test_missing_owned_play_artifact_clears_path_and_owner_metadata(
+    tmp_path,
+) -> None:
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="missing-owned",
+        request_id=1,
+        validator=lambda: True,
+        callback=lambda _state: None,
+    )
+    missing_artifact = tmp_path / "missing.wav"
+    handler = TTSEventHandler()
+    await handler._cache_audio_file(
+        lifecycle.message_id,
+        missing_artifact,
+        lifecycle,
+    )
+
+    await handler.handle_tts_playback(
+        TTSPlaybackEvent(
+            action="play",
+            message_id=lifecycle.message_id,
+            playback_lifecycle=lifecycle,
+        )
+    )
+
+    assert lifecycle.state == "failed"
+    assert lifecycle.message_id not in handler._audio_files
+    assert lifecycle.message_id not in handler._audio_file_owners
+
+
+@pytest.mark.asyncio
+async def test_mismatched_owned_play_does_not_displace_cached_owner(tmp_path) -> None:
+    artifact = tmp_path / "newer.wav"
+    artifact.write_bytes(b"newer")
+    cached_owner = TTSPlaybackLifecycle(
+        message_id="same-message",
+        request_id=2,
+        validator=lambda: True,
+        callback=lambda _state: None,
+    )
+    stale_owner = TTSPlaybackLifecycle(
+        message_id="same-message",
+        request_id=1,
+        validator=lambda: True,
+        callback=lambda _state: None,
+    )
+    cached_owner.report("playing")
+    stop_requested = __import__("threading").Event()
+    handler = TTSEventHandler()
+    await handler._cache_audio_file(
+        cached_owner.message_id,
+        artifact,
+        cached_owner,
+    )
+    handler._active_file_playback_owner = cached_owner
+    handler._active_file_playback_stop = (
+        cached_owner.message_id,
+        stop_requested,
+    )
+    outcomes: list[bool] = []
+
+    await handler.handle_tts_playback(
+        TTSPlaybackEvent(
+            action="play",
+            message_id=stale_owner.message_id,
+            playback_lifecycle=stale_owner,
+            outcome_callback=outcomes.append,
+        )
+    )
+
+    assert outcomes == [False]
+    assert cached_owner.state == "playing"
+    assert stale_owner.state == "failed"
+    assert stop_requested.is_set() is False
+    assert handler._active_file_playback_owner is cached_owner
+    assert handler._audio_files[cached_owner.message_id] == artifact
+    assert handler._audio_file_owners[cached_owner.message_id] is cached_owner
+
+
+@pytest.mark.asyncio
 async def test_rejected_same_id_stop_preserves_owned_cached_artifact(tmp_path) -> None:
     artifact = tmp_path / "newer.wav"
     artifact.write_bytes(b"RIFF-newer")
@@ -1533,6 +1747,7 @@ async def test_rejected_same_id_stop_preserves_owned_cached_artifact(tmp_path) -
     stop_requested = __import__("threading").Event()
     handler = TTSEventHandler()
     handler._audio_files[lifecycle.message_id] = artifact
+    handler._audio_file_owners[lifecycle.message_id] = lifecycle
     handler._active_file_playback_owner = lifecycle
     handler._active_file_playback_stop = (lifecycle.message_id, stop_requested)
     handler._last_played = (lifecycle.message_id, artifact)
@@ -1579,6 +1794,7 @@ async def test_exact_file_stop_exception_retains_owner_for_successful_retry(
     playback_started.set()
     handler = TTSEventHandler()
     handler._audio_files[lifecycle.message_id] = artifact
+    handler._audio_file_owners[lifecycle.message_id] = lifecycle
     handler._active_file_playback_owner = lifecycle
     handler._active_file_playback_stop = (lifecycle.message_id, stop_requested)
     handler._active_file_playback_started = playback_started
@@ -1641,6 +1857,7 @@ async def test_exact_file_stop_exception_retains_owner_for_successful_retry(
     assert handler._active_file_playback_started is None
     assert handler._last_played is None
     assert lifecycle.message_id not in handler._audio_files
+    assert lifecycle.message_id not in handler._audio_file_owners
     assert artifact.exists() is False
 
 
