@@ -361,15 +361,21 @@ class AudioBookGenerationWidget(Widget):
                     yield Label("Narrator Voice:", classes="form-label")
                     yield Select(
                         options=[
-                            ("alloy", "Alloy"),
-                            ("echo", "Echo"),
-                            ("fable", "Fable"),
-                            ("onyx", "Onyx"),
-                            ("nova", "Nova"),
-                            ("shimmer", "Shimmer"),
+                            ("Alloy", "alloy"),
+                            ("Echo", "echo"),
+                            ("Fable", "fable"),
+                            ("Onyx", "onyx"),
+                            ("Nova", "nova"),
+                            ("Shimmer", "shimmer"),
                         ],
                         id="narrator-voice-select",
                     )
+                yield Static(
+                    "Voice Blends",
+                    id="audiobook-voice-blends-label",
+                    classes="hidden",
+                    markup=False,
+                )
 
                 with Horizontal(classes="form-row"):
                     yield Label("Enable Multi-voice:", classes="form-label")
@@ -1118,6 +1124,8 @@ class AudioBookGenerationWidget(Widget):
     def _update_voice_options(self, provider: str) -> None:
         """Update voice options based on provider"""
         voice_select = self.query_one("#narrator-voice-select", Select)
+        blend_group = self.query_one("#audiobook-voice-blends-label", Static)
+        blend_group.add_class("hidden")
 
         if provider == "openai":
             voice_select.set_options(
@@ -1161,11 +1169,7 @@ class AudioBookGenerationWidget(Widget):
                     with open(blend_file, "r") as f:
                         blends = json.load(f)
                         if blends:
-                            # Add separator
-                            voice_options.append(
-                                ("──── Voice Blends ────", "_separator")
-                            )
-                            # Add each blend
+                            blend_group.remove_class("hidden")
                             for blend_name, blend_data in blends.items():
                                 display_name = f"🎭 {blend_name}"
                                 if blend_data.get("description"):
@@ -1533,6 +1537,8 @@ class STTSWindow(Container):
         self._profile_focus_restore_token: int | None = None
         self._profile_focus_restore_baseline = None
         self._voice_tool_origin: tuple[str, str | None] | None = None
+        self._voice_tool_back_in_progress = False
+        self._voice_tool_navigation_token = 0
         # Bounded, process-local Playground axes survive only internal Lab
         # view switches. They are never written to global or Studio settings.
         self._playground_axis_values: dict[str, str] = dict(
@@ -1698,6 +1704,12 @@ class STTSWindow(Container):
             or type(navigation_target) is not SpeechTTSNavigationTarget
         ):
             raise ValueError("invalid Speech navigation target")
+        if (
+            self.current_view in {"profiles", "blends"}
+            and view != self.current_view
+            and self._voice_tool_origin is not None
+        ):
+            self._invalidate_voice_tool_navigation()
         if view == "playground":
             if self._pending_profile_context_token != profile_context_token:
                 _retire_profile_test_context(self._pending_profile_context_token)
@@ -1725,12 +1737,27 @@ class STTSWindow(Container):
         profile_preset: TTSPlaygroundSelectionPreset | None = None,
         profile_context_token: UUID | None = None,
         navigation_target: SpeechTTSNavigationTarget | None = None,
+        voice_tool_back_token: int | None = None,
     ) -> bool:
         """Select a view after resolving any dirty Studio preference draft."""
 
         if view != "settings" and not await self.confirm_studio_preferences_leave():
             return False
-        if self.current_view == "profiles" and view != "profiles":
+        if (
+            voice_tool_back_token is not None
+            and voice_tool_back_token != self._voice_tool_navigation_token
+        ):
+            return False
+        current_view = self.current_view
+        reset_current_tool = (
+            voice_tool_back_token is None
+            and current_view in {"profiles", "blends"}
+        )
+        if reset_current_tool:
+            self._invalidate_voice_tool_navigation()
+        if current_view == "profiles" and (
+            view != "profiles" or reset_current_tool
+        ):
             try:
                 content = self.query_one(".stts-content", Container)
             except QueryError:
@@ -1743,6 +1770,8 @@ class STTSWindow(Container):
             profile_context_token=profile_context_token,
             navigation_target=navigation_target,
         )
+        if reset_current_tool and view == current_view:
+            self._mount_view(view, force=True)
         return True
 
     async def confirm_studio_preferences_leave(self) -> bool:
@@ -2161,9 +2190,15 @@ class STTSWindow(Container):
         origin: tuple[str, str | None],
     ) -> None:
         prior_origin = self._voice_tool_origin
+        self._voice_tool_navigation_token += 1
+        token = self._voice_tool_navigation_token
+        self._voice_tool_back_in_progress = False
         self._voice_tool_origin = origin
         if not await self.request_view(destination.view):
-            if self._voice_tool_origin == origin:
+            if (
+                token == self._voice_tool_navigation_token
+                and self._voice_tool_origin == origin
+            ):
                 self._voice_tool_origin = prior_origin
 
     @on(SpeechDestinationBackRequested)
@@ -2174,13 +2209,20 @@ class STTSWindow(Container):
         """Return to the originating view and restore its action focus."""
 
         message.stop()
+        if self._voice_tool_back_in_progress:
+            return
         origin = self._voice_tool_origin
-        self._voice_tool_origin = None
-        view, focus_id = origin or ("playground", None)
+        if origin is None:
+            return
+        self._voice_tool_back_in_progress = True
+        self._voice_tool_navigation_token += 1
+        token = self._voice_tool_navigation_token
+        self._set_voice_tool_back_disabled(True)
+        view, focus_id = origin
         if view in {"profiles", "blends"} or view not in STTS_VIEW_KEYS:
             view, focus_id = "playground", None
         self.run_worker(
-            self._return_to_speech_origin(view, focus_id),
+            self._return_to_speech_origin(view, focus_id, origin, token),
             group="speech-voice-tool-navigation",
             exclusive=True,
             exit_on_error=False,
@@ -2190,11 +2232,50 @@ class STTSWindow(Container):
         self,
         view: str,
         focus_id: str | None,
+        origin: tuple[str, str | None],
+        token: int,
     ) -> None:
-        if not await self.request_view(view):
+        self._voice_tool_origin = None
+        try:
+            navigated = await self.request_view(
+                view,
+                voice_tool_back_token=token,
+            )
+        except asyncio.CancelledError:
+            if token == self._voice_tool_navigation_token:
+                self._voice_tool_origin = origin
+                self._voice_tool_back_in_progress = False
+                self._set_voice_tool_back_disabled(False)
+            raise
+        except Exception:
+            if token == self._voice_tool_navigation_token:
+                self._voice_tool_origin = origin
+                self._voice_tool_back_in_progress = False
+                self._set_voice_tool_back_disabled(False)
+            logger.exception("Could not return to the originating Speech view")
+            return
+        if token != self._voice_tool_navigation_token:
+            return
+        self._voice_tool_back_in_progress = False
+        if not navigated:
+            self._voice_tool_origin = origin
+            self._set_voice_tool_back_disabled(False)
             return
         if focus_id is not None:
             self.call_after_refresh(self._restore_destination_focus, focus_id)
+
+    def _invalidate_voice_tool_navigation(self) -> None:
+        """Discard origin and any in-flight Back ownership."""
+
+        self._voice_tool_navigation_token += 1
+        self._voice_tool_origin = None
+        self._voice_tool_back_in_progress = False
+
+    def _set_voice_tool_back_disabled(self, disabled: bool) -> None:
+        try:
+            self.query_one("#speech-destination-back", Button).disabled = disabled
+        except QueryError:
+            return
 
     def _restore_destination_focus(self, focus_id: str, attempts: int = 4) -> None:
         try:

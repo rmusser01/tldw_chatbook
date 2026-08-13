@@ -120,9 +120,6 @@ VOICE_BLEND_ACTIONS: tuple[WorkbenchAction, ...] = (
     ),
 )
 
-# Kept as a source-compatible alias for extensions importing the old symbol.
-VOICE_PROFILE_ACTIONS = VOICE_DESTINATION_ACTIONS
-
 LeaveChoice = Literal["save", "discard", "cancel"]
 
 

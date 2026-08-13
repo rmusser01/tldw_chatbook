@@ -48,6 +48,7 @@ from tldw_chatbook.UI import STTS_Window as stts_window_module
 from tldw_chatbook.UI import stts_profile_library as profile_library_module
 from tldw_chatbook.UI.Dictation_Window_Improved import ImprovedDictationWindow
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+from tldw_chatbook.UI.Speech.speech_settings_mixin import SpeechSettingsMixin
 from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
 from tldw_chatbook.UI.stts_profile_library import (
     PROFILE_STORE_UNAVAILABLE_COPY,
@@ -1012,6 +1013,103 @@ async def test_voice_profiles_view_mounts_focused_library_without_hiding_other_v
             SpeechPlaygroundPane,
         )
         assert app.query_one("#tts-generate-btn", Button)
+
+
+@pytest.mark.asyncio
+async def test_audiobook_kokoro_blend_group_is_not_a_keyboard_select_option(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _OptionalAudioBookWidget(Widget):
+        pass
+
+    class _AudioBookHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield AudioBookGenerationWidget()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "tldw_chatbook.Widgets.TTS.chapter_editor_widget",
+        SimpleNamespace(ChapterEditorWidget=_OptionalAudioBookWidget),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "tldw_chatbook.Widgets.TTS.character_voice_widget",
+        SimpleNamespace(CharacterVoiceWidget=_OptionalAudioBookWidget),
+    )
+    blend_file = tmp_path / "voice-blends.json"
+    blend_file.write_text(
+        json.dumps({"duet": {"description": "Two voices"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(stts_window_module, "kokoro_ui_blend_file", lambda: blend_file)
+    app = _AudioBookHost()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        widget = app.query_one(AudioBookGenerationWidget)
+        widget._update_voice_options("kokoro")
+        narrator = app.query_one("#narrator-voice-select", Select)
+        option_values = tuple(value for _label, value in narrator._options)
+        assert "_separator" not in option_values
+        assert "blend:duet" in option_values
+        grouping = app.query_one("#audiobook-voice-blends-label", Static)
+        assert grouping.display
+        assert str(grouping.render()) == "Voice Blends"
+
+        narrator.focus()
+        await pilot.press("enter")
+        await pilot.press("end")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert narrator.value == "blend:duet"
+        assert narrator.value != "_separator"
+
+
+@pytest.mark.asyncio
+async def test_legacy_default_voice_select_has_no_keyboard_separator(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _DefaultVoiceWidget(SpeechSettingsMixin, Widget):
+        def __init__(self) -> None:
+            super().__init__()
+            self.init_settings_state()
+
+        def compose(self) -> ComposeResult:
+            yield Select(
+                [("Alloy", "alloy")],
+                id="default-voice-select",
+                allow_blank=False,
+            )
+
+    class _DefaultVoiceHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield _DefaultVoiceWidget()
+
+    blend_file = tmp_path / "voice-blends.json"
+    blend_file.write_text(
+        json.dumps({"duet": {"description": "Two voices"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Speech.speech_settings_mixin.kokoro_ui_blend_file",
+        lambda: blend_file,
+    )
+    app = _DefaultVoiceHost()
+
+    async with app.run_test() as pilot:
+        widget = app.query_one(_DefaultVoiceWidget)
+        widget._update_default_voice_options("kokoro")
+        voice = app.query_one("#default-voice-select", Select)
+        option_values = tuple(value for _label, value in voice._options)
+        assert "_separator" not in option_values
+        assert "blend:duet" in option_values
+
+        voice.focus()
+        await pilot.press("enter")
+        await pilot.press("end")
+        await pilot.press("enter")
+        assert voice.value == "blend:duet"
 
 
 @pytest.mark.asyncio

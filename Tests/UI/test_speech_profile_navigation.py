@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import struct
 import wave
 from collections.abc import Iterable
@@ -25,8 +26,8 @@ from tldw_chatbook.TTS import (
 )
 from tldw_chatbook.TTS.adapter_types import TTSNativeCapabilitySnapshot
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
-from tldw_chatbook.UI import stts_profile_library as profile_library_module
 from tldw_chatbook.UI import STTS_Window as stts_window_module
+from tldw_chatbook.UI import stts_profile_library as profile_library_module
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import (
     OpenVoiceProfilesRequested,
@@ -447,6 +448,102 @@ async def test_voice_blends_opens_kokoro_tool_and_returns_to_origin() -> None:
                 and getattr(app.focused, "id", None) == "voice-blends"
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_main_navigation_clears_voice_tool_origin_before_reopen() -> None:
+    app = _SpeechHost({"view": "settings"})
+    screen = app.screen_under_test
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _wait_until(pilot, lambda: len(screen.query("#voice-profiles")) == 1)
+        screen.query_one("#voice-profiles", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: screen.stts_window.current_view == "profiles",
+        )
+        assert screen.stts_window._voice_tool_origin is not None
+        assert len(screen.query("#speech-destination-back")) == 1
+
+        screen.query_one("#lab-speech-row-playground", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: screen.stts_window.current_view == "playground",
+        )
+        assert screen.stts_window._voice_tool_origin is None
+
+        screen.query_one("#lab-speech-row-profiles", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.stts_window.current_view == "profiles"
+                and len(screen.query(STTSProfileLibrary)) == 1
+            ),
+        )
+        assert not screen.query("#speech-destination-back")
+
+
+@pytest.mark.asyncio
+async def test_voice_tool_back_is_single_flight_and_recovers_after_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _SpeechHost({"view": "settings"})
+    screen = app.screen_under_test
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _wait_until(pilot, lambda: len(screen.query("#voice-blends")) == 1)
+        screen.query_one("#voice-blends", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: screen.stts_window.current_view == "blends",
+        )
+        window = screen.stts_window
+        origin = window._voice_tool_origin
+        assert origin is not None
+        back = screen.query_one("#speech-destination-back", Button)
+        gate = asyncio.Event()
+        requests: list[tuple[str, dict[str, object]]] = []
+
+        async def delayed_request(view: str, **kwargs: object) -> bool:
+            requests.append((view, kwargs))
+            await gate.wait()
+            return True
+
+        monkeypatch.setattr(window, "request_view", delayed_request)
+        first = SimpleNamespace(stop=Mock())
+        second = SimpleNamespace(stop=Mock())
+        window.on_speech_destination_back_requested(first)
+        window.on_speech_destination_back_requested(second)
+        await pilot.pause()
+
+        assert len(requests) == 1
+        assert window._voice_tool_back_in_progress is True
+        assert back.disabled is True
+        gate.set()
+        await _wait_until(pilot, lambda: not window._voice_tool_back_in_progress)
+        assert window._voice_tool_origin is None
+
+        window._voice_tool_origin = origin
+        back.disabled = False
+
+        async def failed_request(_view: str, **_kwargs: object) -> bool:
+            return False
+
+        monkeypatch.setattr(window, "request_view", failed_request)
+        window.on_speech_destination_back_requested(SimpleNamespace(stop=Mock()))
+        await _wait_until(pilot, lambda: not window._voice_tool_back_in_progress)
+        assert window._voice_tool_origin == origin
+        assert back.disabled is False
+
+        async def raised_request(_view: str, **_kwargs: object) -> bool:
+            raise RuntimeError("navigation failed")
+
+        monkeypatch.setattr(window, "request_view", raised_request)
+        window.on_speech_destination_back_requested(SimpleNamespace(stop=Mock()))
+        await pilot.pause()
+        assert window._voice_tool_origin == origin
+        assert window._voice_tool_back_in_progress is False
+        assert back.disabled is False
 
 
 @pytest.mark.asyncio

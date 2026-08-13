@@ -18,8 +18,10 @@ from tldw_chatbook.UI.Speech.speech_settings_contracts import (
 )
 from tldw_chatbook.UI.Speech.speech_settings_pane import (
     STUDIO_ACTIONS,
-    VOICE_PROFILE_ACTIONS,
+    VOICE_BLEND_ACTIONS,
+    VOICE_DESTINATION_ACTIONS,
     SpeechSettingsPane,
+    VoiceBlendsPane,
 )
 
 STUDIO_SELECTION_CONTROLS = {
@@ -63,9 +65,38 @@ async def test_every_supported_studio_setting_and_action_is_mounted() -> None:
         STUDIO_SELECTION_CONTROLS
         | STUDIO_OPTION_CONTROLS
         | {action.id for action in STUDIO_ACTIONS}
-        | {action.id for action in VOICE_PROFILE_ACTIONS}
+        | {action.id for action in VOICE_DESTINATION_ACTIONS}
     )
     assert not required - mounted
+
+
+def test_voice_action_constants_keep_destinations_separate_from_blend_operations() -> None:
+    from tldw_chatbook.UI.Speech import speech_settings_pane
+
+    assert not hasattr(speech_settings_pane, "VOICE_PROFILE_ACTIONS")
+    assert {action.id for action in VOICE_DESTINATION_ACTIONS} == {
+        "voice-profiles",
+        "voice-blends",
+    }
+    assert {action.id for action in VOICE_BLEND_ACTIONS} == {
+        "add-voice-blend-btn",
+        "import-blends-btn",
+        "export-blends-btn",
+    }
+
+
+@pytest.mark.asyncio
+async def test_voice_blends_pane_mounts_every_blend_operation() -> None:
+    class _BlendHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield VoiceBlendsPane()
+
+    app = _BlendHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert not {
+            action.id for action in VOICE_BLEND_ACTIONS
+        } - {widget.id for widget in app.query("*") if widget.id}
 
 
 def test_control_inventory_matches_the_request_option_contract() -> None:

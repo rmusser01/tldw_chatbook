@@ -552,11 +552,6 @@ class SpeechSettingsMixin:
                     with open(blend_file, "r") as f:
                         blends = json.load(f)
                         if blends:
-                            # Add separator
-                            voice_options.append(
-                                ("──── Voice Blends ────", "_separator")
-                            )
-                            # Add each blend
                             for blend_name, blend_data in blends.items():
                                 display_name = f"🎭 {blend_name}"
                                 if blend_data.get("description"):
@@ -571,7 +566,7 @@ class SpeechSettingsMixin:
 
             voice_select.set_options(voice_options)
 
-            # Find first valid voice option (skip separators)
+            # Keep rejecting obsolete separator values from persisted settings.
             valid_voice = None
             for _, value in voice_options:
                 if self._is_valid_voice(value):
