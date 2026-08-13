@@ -319,12 +319,21 @@ def _minimal_v24(path: Path) -> None:
                 character_id INTEGER,
                 assistant_kind TEXT,
                 assistant_id TEXT,
-                runtime_backend TEXT NOT NULL DEFAULT 'local'
+                runtime_backend TEXT NOT NULL DEFAULT 'local',
+                metadata TEXT,
+                deleted INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE messages(
                 id TEXT PRIMARY KEY,
                 conversation_id TEXT NOT NULL
-                    REFERENCES conversations(id) ON DELETE CASCADE
+                    REFERENCES conversations(id) ON DELETE CASCADE,
+                deleted INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE notes(
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                deleted INTEGER NOT NULL DEFAULT 0
             );
             """
         )
@@ -336,9 +345,7 @@ def _minimal_v26(path: Path) -> None:
     _minimal_v24(path)
     with sqlite3.connect(path) as connection:
         connection.executescript(CharactersRAGDB._MIGRATE_V24_TO_V25_SQL)
-        connection.execute(
-            "ALTER TABLE conversations ADD COLUMN context_summary TEXT"
-        )
+        connection.execute("ALTER TABLE conversations ADD COLUMN context_summary TEXT")
         connection.execute(
             "ALTER TABLE conversations ADD COLUMN summary_boundary_message_id TEXT"
         )
@@ -852,9 +859,7 @@ def test_citation_failure_after_dev_migrations_leaves_clean_v26(
         assert "message_generation_metadata" in _table_names(connection)
         conversation_columns = {
             row[1]
-            for row in connection.execute(
-                "PRAGMA table_info(conversations)"
-            ).fetchall()
+            for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
         }
         assert {"context_summary", "summary_boundary_message_id"} <= (
             conversation_columns

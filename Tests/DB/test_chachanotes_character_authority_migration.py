@@ -110,6 +110,12 @@ def _identity_only_v28_database(
                 context_name TEXT,
                 local_authority_id
             );
+            CREATE TABLE notes(
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                deleted INTEGER NOT NULL DEFAULT 0
+            );
             """
         )
         connection.executemany(
@@ -311,13 +317,17 @@ def test_v27_migration_rolls_back_column_backfill_and_version_on_late_failure(
         assert _conversation_columns(connection) == before_columns
 
     migrated = CharactersRAGDB(path, client_id="migration-test")
-    row = migrated.get_connection().execute(
-        """
+    row = (
+        migrated.get_connection()
+        .execute(
+            """
         SELECT assistant_authority_id
         FROM conversations
         WHERE id = 'local-proven'
         """
-    ).fetchone()
+        )
+        .fetchone()
+    )
     assert row["assistant_authority_id"] == expected_authority
 
 
@@ -412,9 +422,9 @@ def test_local_character_create_read_and_list_infer_same_database_authority(
     assert row["character_id"] == 1
     assert row["assistant_id"] == "1"
     assert row["assistant_authority_id"] == authority_id
-    listed = {
-        item["id"]: item for item in db.list_all_active_conversations()
-    }[conversation_id]
+    listed = {item["id"]: item for item in db.list_all_active_conversations()}[
+        conversation_id
+    ]
     assert listed["assistant_authority_id"] == authority_id
     searched = db.search_conversations_page("Local Character")[0][0]
     assert searched["assistant_authority_id"] == authority_id
