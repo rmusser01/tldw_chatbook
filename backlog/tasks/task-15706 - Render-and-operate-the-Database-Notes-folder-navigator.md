@@ -1,7 +1,7 @@
 ---
 id: TASK-15706
 title: Render and operate the Database Notes folder navigator
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-13 01:43'
 labels:
@@ -43,3 +43,17 @@ Expose the local folder foundation in Library Database Notes as a lazy hierarchi
 - [ ] ADR-059 and ADR-060 are linked from the implementation plan and notes.
 - [ ] A rendered-frame self-review confirms hierarchy and status remain legible at 60×20 without color.
 - [ ] The task is set to Done only after all requirements above are complete.
+
+## Implementation Plan
+
+ADR required: no
+ADR paths: `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`, `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
+Reason: this task implements the folder UI, placement identity, ownership, and service boundaries already accepted by those ADRs; it does not introduce a new architectural choice.
+
+1. Add a Textual-independent folder-tree projection that consumes bounded `NoteFolderPage` batches, preserves placement-aware identities, produces breadcrumbs and Unfiled rows, distinguishes managed/inactive-managed placements without relying on color, and reconciles expansion/selection/focus by stable identity.
+2. Add focused unit tests for hierarchy, duplicate placements, generated-owner ancestor collapsing, manual duplicates, paging metadata, semantic labels, and stable state reconciliation; observe each test fail before implementing its behavior.
+3. Extend `LibraryNotesCanvas` with a keyboard-operable lazy navigator plus compact folder action surfaces. Keep note buttons compatible with the existing editor/select handlers while carrying a separate placement identity and breadcrumb.
+4. Add screen-owned async loading and mutation orchestration through `NotesScopeService`, including stale-result guards, bounded batch reads, file-backed off-loop behavior, thread-safe in-memory test handling, and actionable capability/error states.
+5. Wire create, rename, move, remove, restore, move-note, and add-placement actions. Protect managed/inactive-managed placements from manual detachment or destructive folder actions, and refresh without losing surviving expansion, placement focus, note selection, or editor identity.
+6. Add widget, screen, host-routing, accessibility, compact 60x20 rendered-frame, performance, and regression tests for Database Notes and File Notes. Correct the pre-existing multiselect fixture only if the touched handler requires it.
+7. Run focused and broader Library/Notes suites, static checks, a real file-backed smoke path, and live TUI restart verification. Review the rendered 60x20 frame without color, document evidence and trade-offs, link ADR-059/060 in Implementation Notes, check every criterion, and only then set TASK-15706 to Done.
