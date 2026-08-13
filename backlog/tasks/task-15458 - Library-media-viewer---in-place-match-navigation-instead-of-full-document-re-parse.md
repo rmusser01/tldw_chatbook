@@ -325,3 +325,69 @@ as the only deviation. The existing testing-evidence lesson already covers the
 model-state-versus-painted-frame trap, so no duplicate lesson was added. With
 the Windows full-suite baseline limitation explicitly attributed, all
 task-scoped Definition of Done items are complete and the task is Done.
+
+### macOS re-verification (2026-08-13) and the open-path double-parse it found
+
+Re-verified this task's shipped behavior at dev `ebf56a763` — the first run of
+its evidence on macOS, and the first since task-15457's Library reconciliation
+merged on top of it (#1581 landed after #1586, touching `library_screen.py`).
+
+The in-place conversion itself held: with the recorder scoped to the click, the
+submit/Next/Prev sequence performs ZERO Markdown parses, keeps one viewer, one
+Markdown, one status and both nav buttons, and retains focus. The legacy Media
+panel's 250 ms generation-guarded debounce and the removed `update("")`
+pre-parse also hold.
+
+One test was red on macOS, deterministically (3/3):
+`test_library_shell_media_viewer_inplace_large_document_latency_and_parse_proxy`
+asserted a whole-session total of one `Markdown.update` and observed two. It
+was reporting a real defect rather than a platform quirk. Opening a media item
+issues two whole-screen recomposes — the "Loading media…" one at click time and
+the detail worker's arrival one — and Textual's `recompose()` awaits child
+teardown BEFORE calling `compose()`. A worker landing inside that await is
+already picked up by the in-flight compose, so the arrival recompose parses the
+same 49 KB / 2,000-line document a second time. Windows lost that race the
+other way (the two refreshes coalesced), which is why the original evidence
+recorded one parse.
+
+Fix: `_refresh_library_media_detail` no longer recomposes unconditionally. It
+defers one message via `call_next` to
+`_recompose_library_media_detail_if_unrendered`, which skips the recompose only
+when the composed viewer already rendered the exact current detail Mapping
+(identity, recorded in `compose_content`; reset wherever
+`_library_media_detail` is cleared, so a cached Mapping can never strand the
+viewer on its loading line). Any other state — no detail, list view, a detail
+no compose has rendered — still recomposes.
+
+Open-click A/B on the 49 KB fixture, same process, three pairs: 922.970 /
+914.755 / 935.161 ms with 2 parses before, 710.736 / 730.087 / 841.238 ms with
+1 parse after. The match-navigation median on this hardware is 112.672 ms
+(compare the pre-conversion 1091.689 ms recorded above).
+
+Tests added to `Tests/UI/test_library_shell.py`:
+
+- `..._detail_arrival_does_not_reparse_rendered_detail` — born red
+  (`AttributeError: no attribute '_library_media_composed_detail'`); pins both
+  directions of the guard (skips for an already-rendered detail, still
+  recomposes when the compose has not rendered it).
+- `..._inplace_navigation_holds_at_compact_size` — 80x24 companion to the
+  existing 170x48 chrome test. At that size the nav row sits below the fold
+  until focused (the viewer scrolls it into view; verified reachable), so this
+  pins identity, focus, the advancing status text and zero reparse rather than
+  a painted row.
+
+Mutation evidence: disabling the guard's condition fails both the new arrival
+pin and the latency pin; restoring `self.refresh(recompose=True)` in
+`_advance_library_media_content_match` fails the new compact test at the viewer
+identity assertion.
+
+Not fixed here, recorded instead: at 80x24 the viewer's search status and
+Prev/Next sit below the visible fold until focused. That is the viewer's
+overall vertical density, not the in-place conversion (the controls container
+is `height: auto` and the stack order is unchanged), and needs a layout
+decision rather than a perf change.
+
+Ruff on the touched files reports only the pre-existing `F401` in
+`test_library_shell.py`. Lesson recorded in
+`backlog/docs/lessons-testing-evidence.md` ("An absolute event-count pin
+records which side of a race the author's machine won").

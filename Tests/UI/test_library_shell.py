@@ -4943,7 +4943,122 @@ async def test_library_shell_media_viewer_inplace_large_document_latency_and_par
         assert screen.query_one("#library-media-viewer") is viewer_before
         assert set(observed_viewer_ids) == {id(viewer_before)}
         assert unique_markdown_ids == {id(markdown_before)}
+        # Opening the item parses the document exactly once. Before
+        # task-15458's arrival guard this was two on macOS (deterministically,
+        # 3/3 runs): the open-time "Loading media…" recompose was still
+        # awaiting its own child teardown when the detail worker landed, so
+        # that compose already rendered the document AND the worker's
+        # unconditional second recompose parsed all 49 KB again. Windows
+        # happened to win the race the other way, which is exactly why this
+        # count must be pinned rather than observed.
         assert markdown_updates == [id(markdown_before)]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_detail_arrival_does_not_reparse_rendered_detail(
+    monkeypatch,
+):
+    """Catch the media-detail worker reparsing a document the compose already rendered."""
+    markdown_updates: list[int] = []
+    original_update = Markdown.update
+
+    def recording_update(markdown_widget: Markdown, source: str):
+        markdown_updates.append(id(markdown_widget))
+        return original_update(markdown_widget, source)
+
+    monkeypatch.setattr(Markdown, "update", recording_update)
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_large_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+        markdown_before = screen.query_one(
+            "#library-media-viewer-content-markdown", Markdown
+        )
+        viewer_before = screen.query_one("#library-media-viewer", LibraryMediaViewer)
+
+        # The composed viewer records the exact detail it rendered.
+        assert screen._library_media_composed_detail is screen._library_media_detail
+
+        # A detail arrival for the detail already on screen must not recompose.
+        parses_before = len(markdown_updates)
+        screen._recompose_library_media_detail_if_unrendered()
+        await pilot.pause()
+        await pilot.pause()
+        assert len(markdown_updates) == parses_before
+        assert screen.query_one("#library-media-viewer") is viewer_before
+        assert (
+            screen.query_one("#library-media-viewer-content-markdown")
+            is markdown_before
+        )
+
+        # ...and the guard still recomposes when the compose has NOT yet
+        # rendered the current detail, so it can never strand the viewer on
+        # its loading line.
+        screen._library_media_composed_detail = None
+        screen._recompose_library_media_detail_if_unrendered()
+        await pilot.pause()
+        await pilot.pause()
+        assert len(markdown_updates) == parses_before + 1
+        assert screen.query_one("#library-media-viewer") is not viewer_before
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_inplace_navigation_holds_at_compact_size(
+    monkeypatch,
+):
+    """Catch match navigation degrading at a compact 80x24 terminal."""
+    markdown_updates: list[int] = []
+    original_update = Markdown.update
+
+    def recording_update(markdown_widget: Markdown, source: str):
+        markdown_updates.append(id(markdown_widget))
+        return original_update(markdown_widget, source)
+
+    monkeypatch.setattr(Markdown, "update", recording_update)
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_large_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+        await _submit_content_search_query(screen, pilot, "budget")
+
+        viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
+        markdown = screen.query_one(
+            "#library-media-viewer-content-markdown", Markdown
+        )
+        status = screen.query_one("#library-media-content-search-status", Static)
+        next_button = screen.query_one("#library-media-content-search-next", Button)
+        body = screen.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        )
+        assert status.region.bottom <= body.region.y
+        assert str(status.render()) == "Match 1 of 101 matches"
+
+        parses_before_navigation = len(markdown_updates)
+        next_button.focus()
+        next_button.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        # At 80x24 the whole viewer scrolls (the nav row sits below the fold
+        # until focused), so this pins the model-and-focus contract rather
+        # than a painted row: identity held, focus held, status advanced, and
+        # no reparse -- the same guarantees the 170x48 chrome test proves
+        # visually.
+        assert screen.query_one("#library-media-viewer") is viewer
+        assert screen.query_one("#library-media-viewer-content-markdown") is markdown
+        assert screen.query_one("#library-media-content-search-next") is next_button
+        assert screen.query_one("#library-media-content-search-status") is status
+        assert screen.focused is next_button
+        assert str(status.render()) == "Match 2 of 101 matches"
+        assert len(markdown_updates) == parses_before_navigation
 
 
 @pytest.mark.asyncio

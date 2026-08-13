@@ -3515,3 +3515,33 @@ can be satisfied by a different code path.** Neutering the sync-rows region rebu
 left all six evidence tests green, because the assertion read a summary `Static` that
 another path keeps current. Assert on the widgets ONLY the mechanism under test
 writes, then mutation-check by neutering that mechanism.
+
+## An absolute event-count pin records which side of a race the author's machine won (TASK-15458, 2026-08-13)
+
+**Incident.** Task-15458's perf pin asserted `markdown_updates ==
+[id(markdown_before)]` — "opening the media item parses the document exactly
+once". It was written and verified on Windows, where it passed. On macOS it
+failed 3/3 with `markdown_update_count=2`, and it had been red on `dev` from
+the moment it merged. The count was not flaky, and it was not a platform quirk
+of the test: it was reporting a real defect that the authoring machine happened
+to hide. Opening a media item issues two `refresh(recompose=True)` calls — the
+"Loading media…" one at click time, and one when the detail worker resolves.
+Textual's `recompose()` awaits child teardown BEFORE it calls `compose()`, so a
+worker landing inside that await gets picked up by the in-flight compose, and
+the worker's own recompose then parses the whole 49 KB / 2,000-line document a
+SECOND time. Windows lost that race the other way (both refreshes coalesced
+into one recompose), so the same production code produced 1 there and 2 here.
+A/B on the open click: 922/914/935 ms and 2 parses with the arrival recompose
+unconditional, 710/730/841 ms and 1 parse with an identity guard on the
+already-composed detail.
+
+**What to do.** An absolute count over a window that spans a scheduling race
+pins your machine's timing, not the contract. Two habits fix it. First, scope
+the count to the interaction the claim is about — the sibling test in the same
+file already did this (`parse_count_before_navigation = len(markdown_updates)`,
+then assert no growth across the click), and it was green on both platforms
+because the delta cannot absorb an unrelated race. Second, when you do want an
+absolute count, first make it deterministic in PRODUCTION (here: the guard),
+then pin it — a total that is only stable on one OS is evidence about the OS.
+And treat a count that differs from the notes' recorded value as a defect
+report until proven otherwise: the number was right, the code was wrong.
