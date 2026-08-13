@@ -1685,6 +1685,29 @@ def test_import_local_gguf_promotes_path_private_full_digest_artifact(
     assert payload_writes[0] != source.resolve()
 
 
+def test_import_local_gguf_coalesces_large_copy_progress(tmp_path: Path) -> None:
+    source = tmp_path / "large.gguf"
+    source.write_bytes(make_gguf(architecture="llama", name="Large", file_type=7))
+    logical_size = 65 * 1024 * 1024 + 17
+    with source.open("r+b") as source_file:
+        source_file.truncate(logical_size)
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    events: list[service_module.LocalGGUFImportProgress] = []
+
+    service.import_local_gguf(source, progress=events.append)
+
+    copy_events = [event for event in events if event.phase == "copy"]
+    assert copy_events[0].bytes_done == 0
+    assert copy_events[-1].bytes_done == logical_size
+    assert all(event.bytes_total == logical_size for event in copy_events)
+    assert len(copy_events) <= 4
+    assert [event.phase for event in events[-3:]] == [
+        "inspect",
+        "verify",
+        "finalize",
+    ]
+
+
 def test_import_cancel_during_copy_removes_only_its_stage(tmp_path: Path) -> None:
     service = service_module.ModelArtifactService(tmp_path / "store")
     prior_source = tmp_path / "prior.gguf"
@@ -1707,17 +1730,17 @@ def test_import_cancel_during_copy_removes_only_its_stage(tmp_path: Path) -> Non
     )
     source.write_bytes(payload)
     source_before = source.stat()
-    cancel_requested = threading.Event()
     saw_partial_stage = False
 
-    def observe_copy(progress: service_module.LocalGGUFImportProgress) -> None:
+    def cancel_after_partial_copy() -> bool:
         nonlocal saw_partial_stage
-        if progress.phase != "copy" or progress.bytes_done >= len(payload):
-            return
         staged = tuple(service.staging_path.glob("install-*/model.gguf"))
+        if not staged:
+            return False
         assert len(staged) == 1
-        saw_partial_stage = staged[0].stat().st_size == progress.bytes_done
-        cancel_requested.set()
+        copied = staged[0].stat().st_size
+        saw_partial_stage = 0 < copied < len(payload)
+        return saw_partial_stage
 
     with pytest.raises(
         service_module.ArtifactStateError,
@@ -1725,8 +1748,7 @@ def test_import_cancel_during_copy_removes_only_its_stage(tmp_path: Path) -> Non
     ) as caught:
         service.import_local_gguf(
             source,
-            cancelled=cancel_requested.is_set,
-            progress=observe_copy,
+            cancelled=cancel_after_partial_copy,
         )
 
     assert saw_partial_stage is True

@@ -122,6 +122,7 @@ _READINESS_KEYS = frozenset(
     {"schema_version", "root", "closure", "closure_fingerprint"}
 )
 _LOCAL_COPY_CHUNK_BYTES = 1024 * 1024
+_LOCAL_COPY_PROGRESS_BYTES = 64 * _LOCAL_COPY_CHUNK_BYTES
 
 
 def _never_cancelled() -> bool:
@@ -3210,7 +3211,8 @@ class ModelArtifactService:
         Args:
             source_file: User-owned regular GGUF selected for import.
             cancelled: Optional caller-thread-safe cancellation probe.
-            progress: Synchronous path-private progress callback.
+            progress: Synchronous path-private progress callback. Exceptions raised
+                by the callback propagate to the caller.
 
         Returns:
             The exact managed reference and whether it already existed.
@@ -3238,11 +3240,31 @@ class ModelArtifactService:
             with open_local_gguf(source_file) as opened, open(target, "xb") as output:
                 digest = hashlib.sha256()
                 copied = 0
+                last_progress = 0
+                progress(
+                    LocalGGUFImportProgress(
+                        "copy",
+                        "model.gguf",
+                        copied,
+                        opened.identity.size_bytes,
+                    )
+                )
                 while chunk := opened.handle.read(_LOCAL_COPY_CHUNK_BYTES):
                     _raise_if_install_cancelled(cancelled)
                     output.write(chunk)
                     digest.update(chunk)
                     copied += len(chunk)
+                    if copied - last_progress >= _LOCAL_COPY_PROGRESS_BYTES:
+                        progress(
+                            LocalGGUFImportProgress(
+                                "copy",
+                                "model.gguf",
+                                copied,
+                                opened.identity.size_bytes,
+                            )
+                        )
+                        last_progress = copied
+                if copied != last_progress:
                     progress(
                         LocalGGUFImportProgress(
                             "copy",
