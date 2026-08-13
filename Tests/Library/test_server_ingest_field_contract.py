@@ -60,6 +60,17 @@ def test_fixture_records_where_it_came_from():
     assert payload["declared_form_fields"], "fixture must list the server's fields"
 
 
+def test_fixture_captures_each_shared_generic_server_field():
+    """The captured endpoint contract accepts every shared Server projection."""
+    assert {
+        "overwrite_existing",
+        "custom_prompt",
+        "system_prompt",
+        "generate_embeddings",
+        "keep_original_file",
+    } <= _declared_fields()
+
+
 @pytest.mark.parametrize(
     "source",
     [

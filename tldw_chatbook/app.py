@@ -2587,8 +2587,11 @@ class LibraryIngestQueueMixin:
           ``analysis_skipped_reason`` so the job records WHY analysis is
           absent instead of silently dropping it.
 
-        The Library queue never sets ``custom_prompt``/``system_prompt``/
-        ``metadata``, so they're simply absent (``None`` inside the worker's
+        ``custom_prompt`` and ``system_prompt`` are copied from the generic
+        snapshot only when analysis is requested. They remain in the job
+        snapshot while analysis is off, but parser options omit them so stale
+        instructions cannot reach a backend that will not execute analysis.
+        ``metadata`` remains absent (``None`` inside the worker's
         ``options.get(...)`` reads).
         """
         opts = job.ingest_options or {}
@@ -2596,7 +2599,8 @@ class LibraryIngestQueueMixin:
 
         # Resolve a flat option map from the generic group and the detected
         # type-specific group, with type-specific values taking precedence.
-        flat_opts: dict[str, Any] = dict(opts.get("generic", {}))
+        generic_opts: dict[str, Any] = dict(opts.get("generic", {}))
+        flat_opts: dict[str, Any] = dict(generic_opts)
         flat_opts.update(opts.get(group, {}) or {})
 
         def _as_int(value: Any, fallback: int) -> int:
@@ -2616,6 +2620,22 @@ class LibraryIngestQueueMixin:
             "author": job.author or None,
             "keywords": list(job.keywords) or None,
             "perform_analysis": perform_analysis,
+            # These generic fields intentionally travel independently of the
+            # detected type-group branch. The downstream local overwrite/RAG
+            # behavior is owned by later work; this seam only makes the form
+            # snapshot honest for consumers that already read these options.
+            "overwrite_existing": bool(
+                generic_opts.get(
+                    "overwrite_existing",
+                    generic_option_default("overwrite_existing", False),
+                )
+            ),
+            "generate_embeddings": bool(
+                generic_opts.get(
+                    "generate_embeddings",
+                    generic_option_default("generate_embeddings", True),
+                )
+            ),
             "encoding": flat_opts.get("encoding"),
             "chunk_options": (
                 {
@@ -2632,6 +2652,15 @@ class LibraryIngestQueueMixin:
         }
 
         if perform_analysis:
+            # Prompts remain in the persisted generic snapshot while analysis
+            # is off, but parser options must not carry instructions no
+            # backend will execute.
+            options["custom_prompt"] = generic_opts.get(
+                "custom_prompt", generic_option_default("custom_prompt", "")
+            )
+            options["system_prompt"] = generic_opts.get(
+                "system_prompt", generic_option_default("system_prompt", "")
+            )
             resolution = resolve_ingest_analysis_provider(
                 getattr(self, "app_config", None)
             )

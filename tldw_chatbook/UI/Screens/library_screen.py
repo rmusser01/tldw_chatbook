@@ -22483,6 +22483,12 @@ class LibraryScreen(BaseAppScreen):
                 )
             except (TypeError, ValueError):
                 generic.pop("chunk_overlap")  # fall back to the schema default
+        # Preserve a complete generic form state in every job snapshot. The
+        # generic capability schema owns these defaults, including the
+        # server-only ``keep_original_file`` value; backend projection decides
+        # whether a snapshot value can reach a particular ingest path.
+        for field in get_capabilities("generic").fields:
+            generic.setdefault(field.name, field.default)
         # (task-3303 xhigh review round 2, F11) The ebook chunk-method is
         # scheme IDENTITY, so every NEW snapshot must carry it explicitly
         # even when untouched: the job-option builder treats an ABSENT
