@@ -95,6 +95,9 @@ UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response 
 NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
+_CUSTOM_CREDENTIAL_DECISION_PROVIDERS = frozenset(
+    {"custom-openai-api", "custom-openai-api-2"}
+)
 MAX_AUXILIARY_OUTPUT_TOKENS = 16_384
 """Application hard ceiling for one auxiliary completion's output allowance."""
 PROVIDER_ERROR_MODEL_ID_MAX_CHARS = 256
@@ -2103,6 +2106,8 @@ class ConsoleProviderGateway:
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
+            kwargs["api_key_resolved"] = True
         return {key: value for key, value in kwargs.items() if value is not None}
 
     async def stream_chat(
@@ -2491,6 +2496,8 @@ class ConsoleProviderGateway:
             "mistralai",
         }:
             kwargs["api_base_url"] = resolution.base_url or None
+            if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
+                kwargs["api_key_resolved"] = True
         elif (
             resolution.execution_key == "openai" and request.response_format is not None
         ):
@@ -2573,6 +2580,8 @@ class ConsoleProviderGateway:
             # Pinning the resolved base keeps that pair intact, including the
             # custom aliases and distinct mistral config owners.
             kwargs["api_base_url"] = resolution.base_url or None
+            if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
+                kwargs["api_key_resolved"] = True
         return {key: value for key, value in kwargs.items() if value is not None}
 
     @staticmethod

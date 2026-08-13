@@ -4002,6 +4002,31 @@ def test_all_primary_custom_kwargs_paths_forward_resolved_chat_url(
     )
 
 
+@pytest.mark.parametrize("execution_key", ["custom-openai-api", "custom-openai-api-2"])
+def test_all_primary_custom_kwargs_paths_preserve_explicit_keyless_decision(
+    execution_key: str,
+) -> None:
+    resolution = ConsoleProviderResolution(
+        provider=execution_key,
+        base_url=f"https://{execution_key}.example.test/proxy/v1/chat/completions",
+        model="custom-model",
+        ready=True,
+        execution_key=execution_key,
+        api_key=None,
+        streaming=False,
+    )
+    messages = [{"role": "user", "content": "hi"}]
+    gateway = ConsoleProviderGateway()
+    prepared = gateway.prepare_chat_request(resolution, messages)
+
+    for kwargs in (
+        gateway._chat_api_kwargs(resolution, messages),
+        gateway._chat_api_kwargs_from_prepared(resolution, prepared),
+    ):
+        assert "api_key" not in kwargs
+        assert kwargs["api_key_resolved"] is True
+
+
 def test_chat_api_kwargs_omits_api_base_url_for_unpinned_provider() -> None:
     """Providers without an established pin keep their existing kwargs."""
     resolution = ConsoleProviderResolution(
@@ -4314,7 +4339,8 @@ async def test_console_send_keeps_each_mistral_credential_on_its_own_endpoint(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("legacy_present", [True, False])
+@pytest.mark.parametrize("builder", ["primary", "prepared"])
+@pytest.mark.parametrize("legacy_variant", ["stale_credential", "keyless", "absent"])
 @pytest.mark.parametrize(
     ("provider", "owner", "configured_endpoint", "expected_chat_url"),
     [
@@ -4334,7 +4360,8 @@ async def test_console_send_keeps_each_mistral_credential_on_its_own_endpoint(
 )
 async def test_console_send_keeps_custom_endpoint_and_credential_paired(
     monkeypatch,
-    legacy_present: bool,
+    builder: str,
+    legacy_variant: str,
     provider: str,
     owner: str,
     configured_endpoint: str,
@@ -4361,20 +4388,21 @@ async def test_console_send_keeps_custom_endpoint_and_credential_paired(
         {
             "api_settings": {
                 "custom": {
-                    "api_key": "legacy-credential",
                     "api_url": legacy_endpoint,
                     "model": "legacy-model",
-                }
+                },
             },
             "custom_openai_api_2": {
-                "api_key": "legacy-credential",
                 "api_ip": legacy_endpoint,
                 "model": "legacy-model",
             },
         }
-        if legacy_present
+        if legacy_variant != "absent"
         else {}
     )
+    if legacy_variant == "stale_credential":
+        legacy_values["api_settings"]["custom"]["api_key"] = "stale-credential"
+        legacy_values["custom_openai_api_2"]["api_key"] = "stale-credential"
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
         LLM_API_Calls_Local.requests,
@@ -4392,6 +4420,13 @@ async def test_console_send_keeps_custom_endpoint_and_credential_paired(
         lambda: legacy_values,
     )
     gateway = ConsoleProviderGateway(config_provider=lambda: config, environ={})
+    if builder == "primary":
+        gateway._chat_api_kwargs_from_prepared = lambda resolution, request: (
+            gateway._chat_api_kwargs(
+                resolution,
+                [dict(message) for message in request.messages_payload],
+            )
+        )
 
     resolution = await gateway.resolve_for_send(
         ConsoleProviderSelection(provider=provider, streaming=False)
@@ -4408,6 +4443,117 @@ async def test_console_send_keeps_custom_endpoint_and_credential_paired(
 
     assert calls == [(expected_chat_url, f"Bearer {owner_credential}")]
     assert legacy_endpoint not in {url for url, _credential in calls}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("builder", ["primary", "prepared"])
+@pytest.mark.parametrize("legacy_credential", ["stale-legacy-credential", None])
+@pytest.mark.parametrize(
+    ("provider", "owner", "configured_endpoint", "expected_chat_url"),
+    [
+        (
+            "Custom OpenAI API",
+            "custom",
+            "https://keyless-custom.example.test/proxy",
+            "https://keyless-custom.example.test/proxy/v1/chat/completions",
+        ),
+        (
+            "custom_openai_api_2",
+            "custom_2",
+            "https://keyless-custom-2.example.test/proxy/v1/chat/completions",
+            "https://keyless-custom-2.example.test/proxy/v1/chat/completions",
+        ),
+    ],
+)
+async def test_console_keyless_custom_send_never_falls_back_to_legacy_credential(
+    monkeypatch,
+    caplog,
+    builder: str,
+    legacy_credential: str | None,
+    provider: str,
+    owner: str,
+    configured_endpoint: str,
+    expected_chat_url: str,
+) -> None:
+    from tldw_chatbook.Chat import Chat_Functions
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local
+
+    class RuntimeConfigSnapshotStub:
+        def __init__(self, values) -> None:
+            self.values = values
+
+    config = {
+        "api_settings": {
+            owner: {
+                "api_url": configured_endpoint,
+                "model": f"{owner}-model",
+            }
+        }
+    }
+    legacy_endpoint = "https://legacy-fallback.example.test/v1/chat/completions"
+    legacy_values = {
+        "api_settings": {
+            "custom": {"api_url": legacy_endpoint, "model": "legacy-model"}
+        },
+        "custom_openai_api_2": {
+            "api_ip": legacy_endpoint,
+            "model": "legacy-model",
+        },
+    }
+    if legacy_credential is not None:
+        legacy_values["api_settings"]["custom"]["api_key"] = legacy_credential
+        legacy_values["custom_openai_api_2"]["api_key"] = legacy_credential
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        LLM_API_Calls_Local.requests,
+        "Session",
+        lambda: _CapturedCustomSession(calls),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls_Local,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshotStub(legacy_values),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls_Local,
+        "load_settings",
+        lambda: legacy_values,
+    )
+    gateway = ConsoleProviderGateway(config_provider=lambda: config, environ={})
+    if builder == "primary":
+        gateway._chat_api_kwargs_from_prepared = lambda resolution, request: (
+            gateway._chat_api_kwargs(
+                resolution,
+                [dict(message) for message in request.messages_payload],
+            )
+        )
+
+    loguru_messages: list[str] = []
+    sink_id = Chat_Functions.logger.add(
+        lambda message: loguru_messages.append(str(message)),
+        level="DEBUG",
+    )
+    try:
+        resolution = await gateway.resolve_for_send(
+            ConsoleProviderSelection(provider=provider, streaming=False)
+        )
+        assert resolution.ready is True
+        assert resolution.api_key is None
+        assert [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": "hello"}],
+            )
+        ] == ["ok"]
+    finally:
+        Chat_Functions.logger.remove(sink_id)
+
+    assert calls == [(expected_chat_url, "")]
+    if legacy_credential is not None:
+        assert legacy_credential not in repr(calls)
+        assert legacy_credential not in caplog.text
+        assert legacy_credential not in "".join(loguru_messages)
 
 
 @pytest.mark.asyncio

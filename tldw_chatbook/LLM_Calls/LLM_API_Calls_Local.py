@@ -1790,6 +1790,7 @@ def chat_with_ollama(
 def chat_with_custom_openai(
     input_data: List[Dict[str, Any]],
     api_key: Optional[str] = None,
+    api_key_resolved: bool | None = None,
     custom_prompt_arg: Optional[str] = None,  # Mapped from 'prompt'
     temp: Optional[float] = None,  # Mapped from generic 'temp'
     system_message: Optional[str] = None,
@@ -1828,7 +1829,7 @@ def chat_with_custom_openai(
             provider="ollama",
             message="Ollama API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
-    current_api_key = api_key or cfg.get("api_key")
+    current_api_key = api_key if api_key_resolved else api_key or cfg.get("api_key")
     current_model = model or cfg.get("model")
     if not current_model:
         raise ChatConfigurationError(
@@ -1934,6 +1935,7 @@ def chat_with_custom_openai(
 def chat_with_custom_openai_2(
     input_data: List[Dict[str, Any]],
     api_key: Optional[str] = None,
+    api_key_resolved: bool | None = None,
     custom_prompt_arg: Optional[str] = None,  # Mapped from 'prompt'
     temp: Optional[float] = None,  # Mapped from generic 'temp'
     system_message: Optional[str] = None,
@@ -1968,8 +1970,8 @@ def chat_with_custom_openai_2(
             provider=cfg_section, message=f"{cfg_section} API URL (api_ip) required."
         )
 
-    current_api_key = api_key or cfg.get("api_key")
-    if not current_api_key:
+    current_api_key = api_key if api_key_resolved else api_key or cfg.get("api_key")
+    if not current_api_key and not api_key_resolved:
         raise ChatConfigurationError(
             provider=cfg_section, message=f"{cfg_section} API Key required."
         )
