@@ -862,6 +862,100 @@ class TestFirstRunProviderContracts:
         }
 
     @pytest.mark.parametrize(
+        ("provider", "settings", "expected_discovery", "expected_identity"),
+        [
+            (
+                "moonshot",
+                {"api_region": "china"},
+                "https://api.moonshot.cn/v1/chat/completions",
+                "https://api.moonshot.cn/v1/chat/completions",
+            ),
+            (
+                "moonshot",
+                {"api_region": "global"},
+                "https://api.moonshot.ai/v1/chat/completions",
+                "https://api.moonshot.ai/v1/chat/completions",
+            ),
+            (
+                "huggingface",
+                {"use_router_url_format": "true"},
+                "https://router.huggingface.co/v1/chat/completions",
+                "https://router.huggingface.co/v1/chat/completions",
+            ),
+            (
+                "huggingface",
+                {"use_router_url_format": "false"},
+                "https://api-inference.huggingface.co/v1/chat/completions",
+                "https://api-inference.huggingface.co/v1/chat/completions",
+            ),
+        ],
+    )
+    def test_settings_aware_builtin_endpoint_is_pinned_separately_from_editable_value(
+        self,
+        provider,
+        settings,
+        expected_discovery,
+        expected_identity,
+    ):
+        resolved = setup_state.resolve_first_run_provider_draft(
+            _first_run_provider_draft(provider=provider, endpoint=""),
+            {"api_settings": {provider: settings}},
+        )
+
+        key = setup_state.build_first_run_model_discovery_key(resolved)
+
+        assert resolved.endpoint == ""
+        assert resolved.discovery_endpoint == expected_discovery
+        assert key.connection_identity == (provider, expected_identity)
+        mutation = setup_state.build_first_run_provider_commit(
+            resolved,
+            "model-id",
+            {"api_settings": {provider: settings}},
+        )
+        provider_values = mutation.section_values[f"api_settings.{provider}"]
+        assert not any(
+            endpoint_key in provider_values
+            for endpoint_key in ("api_url", "api_base_url", "base_url", "endpoint")
+        )
+
+    def test_settings_change_replaces_builtin_discovery_identity_without_editing_url(
+        self,
+    ):
+        draft = _first_run_provider_draft(provider="moonshot", endpoint="")
+        china = setup_state.resolve_first_run_provider_draft(
+            draft,
+            {"api_settings": {"moonshot": {"api_region": "china"}}},
+        )
+        default = setup_state.resolve_first_run_provider_draft(
+            china,
+            {"api_settings": {"moonshot": {"api_region": "global"}}},
+        )
+
+        assert china.endpoint == default.endpoint == ""
+        assert china.discovery_endpoint != default.discovery_endpoint
+        assert (
+            setup_state.build_first_run_model_discovery_key(china)
+            != setup_state.build_first_run_model_discovery_key(default)
+        )
+
+    def test_static_openai_builtin_discovery_identity_remains_supported(self):
+        draft = setup_state.resolve_first_run_provider_draft(
+            _first_run_provider_draft(provider="openai", endpoint=""),
+            {"api_settings": {"openai": {}}},
+        )
+
+        assert draft.endpoint == ""
+        assert draft.discovery_endpoint == (
+            "https://api.openai.com/v1/chat/completions"
+        )
+        assert setup_state.build_first_run_model_discovery_key(
+            draft
+        ).connection_identity == (
+            "openai",
+            "https://api.openai.com/v1/chat/completions",
+        )
+
+    @pytest.mark.parametrize(
         "endpoint",
         [
             "",

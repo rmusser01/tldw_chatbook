@@ -122,6 +122,31 @@ def effective_provider_endpoint(
     return builtin_provider_endpoint(provider_key, provider_settings)
 
 
+def effective_provider_discovery_endpoint(
+    provider_key: str,
+    selected_endpoint: str | None,
+    provider_settings: Mapping[str, object],
+) -> str | None:
+    """Resolve the settings-aware OpenAI-compatible model-listing base."""
+
+    endpoint = effective_provider_endpoint(
+        provider_key,
+        selected_endpoint,
+        provider_settings,
+    )
+    if endpoint is None or provider_key != "huggingface":
+        return endpoint
+    if not _huggingface_router_mode(provider_settings):
+        return endpoint
+    try:
+        parsed = urlparse(endpoint)
+    except ValueError:
+        return endpoint
+    if (parsed.hostname or "").lower() != "router.huggingface.co":
+        return endpoint
+    return urlunparse((parsed.scheme, parsed.netloc, "/v1", "", "", ""))
+
+
 def builtin_provider_endpoint(
     provider_key: str,
     provider_settings: Mapping[str, object] | None = None,

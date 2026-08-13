@@ -4566,6 +4566,272 @@ async def test_mounted_openai_builtin_endpoint_handoff_uses_one_exact_env_reques
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "provider_key",
+        "provider_list_key",
+        "endpoint_settings",
+        "expected_discovery_endpoint",
+        "expected_models_url",
+        "expected_identity_url",
+    ),
+    [
+        (
+            "moonshot",
+            "Moonshot",
+            {"api_region": "china"},
+            "https://api.moonshot.cn/v1/chat/completions",
+            "https://api.moonshot.cn/v1/models",
+            "https://api.moonshot.cn/v1/chat/completions",
+        ),
+        (
+            "moonshot",
+            "Moonshot",
+            {"api_region": "global"},
+            "https://api.moonshot.ai/v1/chat/completions",
+            "https://api.moonshot.ai/v1/models",
+            "https://api.moonshot.ai/v1/chat/completions",
+        ),
+        (
+            "huggingface",
+            "HuggingFace",
+            {"use_router_url_format": "true"},
+            "https://router.huggingface.co/v1/chat/completions",
+            "https://router.huggingface.co/v1/models",
+            "https://router.huggingface.co/v1/chat/completions",
+        ),
+        (
+            "huggingface",
+            "HuggingFace",
+            {"use_router_url_format": "false"},
+            "https://api-inference.huggingface.co/v1/chat/completions",
+            "https://api-inference.huggingface.co/v1/models",
+            "https://api-inference.huggingface.co/v1/chat/completions",
+        ),
+    ],
+)
+async def test_mounted_settings_aware_builtin_discovery_uses_exact_runtime_host_once(
+    provider_key: str,
+    provider_list_key: str,
+    endpoint_settings: dict[str, str],
+    expected_discovery_endpoint: str,
+    expected_models_url: str,
+    expected_identity_url: str,
+):
+    from copy import deepcopy
+
+    import httpx
+
+    from tldw_chatbook.LLM_Provider_Catalog.llm_provider_catalog_scope_service import (
+        LLMProviderCatalogScopeService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import (
+        ModelDiscoveryCache,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        discover_openai_compatible_models,
+    )
+
+    credential_canary = f"{provider_key}-settings-aware-credential-canary"
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": [{"id": "runtime-model"}]})
+
+    wizard = _make_wizard()
+    provider_settings = {
+        **endpoint_settings,
+        "api_key": credential_canary,
+    }
+    wizard.app_instance.app_config = {
+        "providers": {provider_list_key: ["curated-must-not-appear"]},
+        "api_settings": {provider_key: provider_settings},
+    }
+    before = deepcopy(wizard.app_instance.app_config)
+    shared_cache = ModelDiscoveryCache()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+
+        async def real_discovery(**kwargs):
+            return await discover_openai_compatible_models(**kwargs, client=client)
+
+        local_service = LocalLLMProviderCatalogService(
+            provider_catalog_loader=lambda: {provider_list_key: []},
+            settings_loader=lambda: wizard.app_instance.app_config,
+            discovery_cache=shared_cache,
+            discovery_client=real_discovery,
+            environ={},
+        )
+        wizard.app_instance.llm_provider_catalog_scope_service = (
+            LLMProviderCatalogScopeService(
+                local_service=local_service,
+                server_service=None,
+            )
+        )
+        app = _HostApp(wizard)
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            container.select_track(TRACK_QUICK)
+            provider_index = container._step_index_for_id(STEP_PROVIDER)
+            model_index = container._step_index_for_id(STEP_MODEL)
+            assert provider_index is not None and model_index is not None
+            container.show_step(provider_index)
+            provider_step = container.steps[provider_index]
+            assert isinstance(provider_step, ProviderStep)
+            provider_step.select_provider(provider_key)
+            for _ in range(30):
+                if provider_step._selected_discovery_state == "complete":
+                    break
+                await pilot.pause(0.05)
+
+            assert provider_step._selected_discovery_state == "complete"
+            key = provider_step._selected_discovery_key
+            assert key is not None
+            assert key.connection_identity == (provider_key, expected_identity_url)
+            assert key.credential_source == "stored"
+            assert credential_canary not in repr(key)
+
+            await container._advance()
+            for _ in range(20):
+                if list(container.steps[model_index].query("#setup-model-option-0")):
+                    break
+                await pilot.pause(0.05)
+
+            draft = container.staged_provider_draft
+            assert draft is not None
+            assert draft.endpoint == ""
+            assert draft.discovery_endpoint == expected_discovery_endpoint
+            model_step = container.steps[model_index]
+            row = model_step.query_one("#setup-model-option-0", RadioButton)
+            assert getattr(row, "_model_id", None) == "runtime-model"
+            assert len(requests) == 1
+            assert str(requests[0].url) == expected_models_url
+            assert requests[0].headers["Authorization"] == (
+                f"Bearer {credential_canary}"
+            )
+            assert requests[0].url.host == httpx.URL(expected_models_url).host
+            assert shared_cache.snapshot_count == 0
+            assert wizard.app_instance.app_config["api_settings"] == before[
+                "api_settings"
+            ]
+
+
+@pytest.mark.asyncio
+async def test_mounted_builtin_settings_change_fences_prior_discovery_identity():
+    import asyncio
+
+    import httpx
+
+    from tldw_chatbook.LLM_Provider_Catalog.llm_provider_catalog_scope_service import (
+        LLMProviderCatalogScopeService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        discover_openai_compatible_models,
+    )
+
+    china_started = asyncio.Event()
+    release_china = asyncio.Event()
+    requests: list[httpx.Request] = []
+    asyncio.get_running_loop().call_later(3, release_china.set)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.host == "api.moonshot.cn":
+            china_started.set()
+            while not release_china.is_set():
+                try:
+                    await release_china.wait()
+                except asyncio.CancelledError:
+                    continue
+            return httpx.Response(200, json={"data": [{"id": "stale-china"}]})
+        return httpx.Response(200, json={"data": [{"id": "current-global"}]})
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "providers": {"Moonshot": []},
+        "api_settings": {
+            "moonshot": {
+                "api_region": "china",
+                "api_key": "moonshot-settings-change-canary",
+            }
+        },
+    }
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+
+        async def real_discovery(**kwargs):
+            return await discover_openai_compatible_models(**kwargs, client=client)
+
+        local_service = LocalLLMProviderCatalogService(
+            provider_catalog_loader=lambda: {"Moonshot": []},
+            settings_loader=lambda: wizard.app_instance.app_config,
+            discovery_client=real_discovery,
+            environ={},
+        )
+        wizard.app_instance.llm_provider_catalog_scope_service = (
+            LLMProviderCatalogScopeService(
+                local_service=local_service,
+                server_service=None,
+            )
+        )
+        app = _HostApp(wizard)
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            provider_index = container._step_index_for_id(STEP_PROVIDER)
+            welcome_index = container._step_index_for_id(STEP_WELCOME)
+            assert provider_index is not None and welcome_index is not None
+            container.show_step(provider_index)
+            provider_step = container.steps[provider_index]
+            assert isinstance(provider_step, ProviderStep)
+            provider_step.select_provider("moonshot")
+            await asyncio.wait_for(china_started.wait(), timeout=2)
+            stale_key = provider_step._selected_discovery_key
+            assert stale_key is not None
+
+            container.show_step(welcome_index)
+            wizard.app_instance.app_config["api_settings"]["moonshot"][
+                "api_region"
+            ] = "global"
+            container.show_step(provider_index)
+            for _ in range(30):
+                if provider_step._selected_provider_models:
+                    break
+                await pilot.pause(0.05)
+
+            current_key = provider_step._selected_discovery_key
+            assert current_key is not None and current_key != stale_key
+            assert current_key.connection_identity[1].startswith(
+                "https://api.moonshot.ai/"
+            )
+            assert provider_step._selected_provider_models == {
+                current_key: ("current-global",)
+            }
+
+            release_china.set()
+            await pilot.pause(0.2)
+            assert stale_key not in provider_step._selected_provider_models
+            assert stale_key not in provider_step._selected_provider_outcomes
+            assert provider_step._selected_provider_models == {
+                current_key: ("current-global",)
+            }
+            assert [request.url.host for request in requests].count(
+                "api.moonshot.cn"
+            ) == 1
+            assert [request.url.host for request in requests].count(
+                "api.moonshot.ai"
+            ) == 1
+
+
+@pytest.mark.asyncio
 async def test_open_wizard_uses_rotated_environment_key_for_next_test(monkeypatch):
     import os
     from unittest.mock import AsyncMock

@@ -763,7 +763,11 @@ def _first_run_discovery_staged_settings(
 
     from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
 
-    endpoint = provider_draft.endpoint or discovery_key.connection_identity[1]
+    endpoint = (
+        provider_draft.discovery_endpoint
+        or provider_draft.endpoint
+        or discovery_key.connection_identity[1]
+    )
     settings = {provider_endpoint_key(discovery_key.provider_key): endpoint}
     credential = provider_draft.credential
     credential_value = wizard_state._credential_value_for_boundary(credential)
@@ -6770,7 +6774,11 @@ class SetupWizardContainer(WizardContainer):
 
         if type(left) is not wizard_state.FirstRunProviderDraft:
             return False
-        if left.provider != right.provider or left.endpoint != right.endpoint:
+        if (
+            left.provider != right.provider
+            or left.endpoint != right.endpoint
+            or left.discovery_endpoint != right.discovery_endpoint
+        ):
             return False
         left_credential = left.credential
         right_credential = right.credential

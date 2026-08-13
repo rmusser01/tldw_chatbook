@@ -143,6 +143,7 @@ class FirstRunProviderDraft:
     provider: str
     endpoint: str
     credential: ProviderCredentialDraft = field(repr=False)
+    discovery_endpoint: str = field(default="", repr=False)
 
     def __post_init__(self) -> None:
         if (
@@ -159,6 +160,12 @@ class FirstRunProviderDraft:
             or _contains_unsafe_text(self.endpoint)
         ):
             raise ValueError("Endpoint is invalid.")
+        if (
+            type(self.discovery_endpoint) is not str
+            or len(self.discovery_endpoint) > _MAX_ENDPOINT_CHARS
+            or _contains_unsafe_text(self.discovery_endpoint)
+        ):
+            raise ValueError("Discovery endpoint is invalid.")
         if type(self.credential) is not ProviderCredentialDraft:
             raise ValueError("Credential draft is invalid.")
 
@@ -216,7 +223,7 @@ def build_first_run_model_discovery_key(
     if type(provider_draft) is not FirstRunProviderDraft:
         raise ValueError("Provider draft is invalid.")
     provider_key = _first_run_provider_owner_key(provider_draft.provider)
-    endpoint = provider_draft.endpoint
+    endpoint = provider_draft.discovery_endpoint or provider_draft.endpoint
     if not endpoint:
         from tldw_chatbook.Chat.console_provider_endpoints import (
             builtin_provider_endpoint,
@@ -300,7 +307,10 @@ def resolve_first_run_provider_draft(
 ) -> FirstRunProviderDraft:
     """Resolve an untouched endpoint without turning blank into implicit clear."""
 
-    from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        effective_provider_discovery_endpoint,
+        first_configured_endpoint,
+    )
     from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
 
     if type(provider_draft) is not FirstRunProviderDraft:
@@ -308,21 +318,36 @@ def resolve_first_run_provider_draft(
     config = _validate_first_run_app_config(app_config, provider_draft.provider)
     endpoint = provider_draft.endpoint.strip()
     owner_key = _first_run_provider_owner_key(provider_draft.provider)
+    provider_settings = _first_run_provider_settings(
+        config, provider_draft.provider
+    )
     if not endpoint:
-        endpoint = (
-            first_configured_endpoint(
-                _first_run_provider_settings(config, provider_draft.provider)
-            )
-            or ""
-        )
+        endpoint = first_configured_endpoint(provider_settings) or ""
     if endpoint:
         resolution = resolve_provider_endpoint(owner_key, endpoint)
         if resolution.errors or resolution.persisted_endpoint is None:
             raise ValueError("Provider endpoint is invalid.")
-        return replace(provider_draft, endpoint=resolution.persisted_endpoint)
+        endpoint = resolution.persisted_endpoint
     if owner_key in _ENDPOINT_REQUIRED_PROVIDER_KEYS:
-        raise ValueError("Provider endpoint is required.")
-    return provider_draft
+        if not endpoint:
+            raise ValueError("Provider endpoint is required.")
+    discovery_endpoint = effective_provider_discovery_endpoint(
+        owner_key,
+        endpoint or None,
+        provider_settings,
+    )
+    if discovery_endpoint:
+        discovery_resolution = resolve_provider_endpoint(
+            owner_key, discovery_endpoint
+        )
+        if discovery_resolution.errors or discovery_resolution.chat_url is None:
+            raise ValueError("Provider discovery endpoint is invalid.")
+        discovery_endpoint = discovery_resolution.chat_url
+    return replace(
+        provider_draft,
+        endpoint=endpoint,
+        discovery_endpoint=discovery_endpoint or "",
+    )
 
 
 def validate_first_run_model_id(model_id: object) -> str:
