@@ -3666,6 +3666,9 @@ class ModelStep(SetupStep):
         if ok:
             self.selected_model_id = model_id
             self._selection_discovery_key = self._current_discovery_key()
+            if provenance == "manual":
+                self._manual_decision_active = False
+                self._selection_config_precondition = None
         elif (
             getattr(
                 getattr(self.wizard, "_provider_last_config_result", None),

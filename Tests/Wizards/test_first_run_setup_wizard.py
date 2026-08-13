@@ -5155,6 +5155,8 @@ async def test_mounted_selection_precondition_allows_current_relevant_config(
         authoritative = config_module.get_atomic_config_snapshot().values
         assert container.provider_setup_committed
         assert authoritative["chat_defaults"]["model"] == "selection-current-model"
+        assert model_step._model_id_from_custom_input is False
+        assert model_step._selection_config_precondition is not None
         if change_kind == "unrelated":
             assert authoritative["general"]["users_name"] == (
                 "selection-unrelated-change"
@@ -5266,6 +5268,113 @@ async def test_mounted_manual_typing_captures_config_once_per_decision(monkeypat
 
     assert model_step is not None
     assert model_step._selection_config_precondition is None
+
+
+@pytest.mark.asyncio
+async def test_mounted_successful_manual_save_ends_decision_before_back_edit(
+    monkeypatch,
+):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook import config as config_module
+
+    endpoint = "https://manual-resave.example/v1/chat/completions"
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {
+            "api_settings.custom": {
+                "api_url": endpoint,
+                "api_key": "manual-resave-stored-canary",
+            }
+        }
+    ).fully_applied
+    capture_calls = []
+    original_capture = SetupWizardContainer.capture_provider_config_precondition
+
+    def counted_capture(discovery_key):
+        capture_calls.append(discovery_key)
+        return original_capture(discovery_key)
+
+    monkeypatch.setattr(
+        SetupWizardContainer,
+        "capture_provider_config_precondition",
+        staticmethod(counted_capture),
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "custom": {
+                "api_url": endpoint,
+                "api_key": "manual-resave-stored-canary",
+            }
+        }
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(
+            return_value=_typed_model_discovery_result(
+                "custom", "manual-resave-discovered-model"
+            )
+        )
+    )
+
+    async with _HostApp(wizard).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        voice_index = container._step_index_for_id(STEP_VOICE)
+        assert provider_index is not None
+        assert model_index is not None
+        assert voice_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        await container._advance()
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        manual = model_step.query_one("#setup-model-custom", Input)
+        baseline = len(capture_calls)
+        for value in ("m", "manual", "manual-one"):
+            manual.value = value
+            await pilot.pause()
+        assert len(capture_calls) == baseline + 1
+
+        await container._advance()
+        assert container.current_step == voice_index
+        assert container.provider_setup_committed
+        assert model_step._manual_decision_active is False
+        assert model_step._selection_config_precondition is None
+        first_save_captures = len(capture_calls)
+
+        container.action_back()
+        await pilot.pause()
+        assert container.current_step == model_index
+        assert manual.value == "manual-one"
+        assert len(capture_calls) == first_save_captures
+
+        for value in ("manual-t", "manual-two"):
+            manual.value = value
+            await pilot.pause()
+        assert len(capture_calls) == first_save_captures + 1
+        assert model_step._selection_discovery_key == (
+            provider_step._model_discovery_key(
+                provider_step._effective_provider_draft()
+            )
+        )
+        assert provider_step._sync_live_credential_revision() is False
+        assert model_step._selection_discovery_key == (
+            provider_step._model_discovery_key(
+                provider_step._effective_provider_draft()
+            )
+        )
+        await container._advance()
+
+        authoritative = config_module.get_atomic_config_snapshot().values
+        assert container.current_step == voice_index
+        assert container.provider_setup_committed
+        assert container.committed_provider_model == "manual-two"
+        assert authoritative["chat_defaults"]["model"] == "manual-two"
 
 
 @pytest.mark.asyncio
