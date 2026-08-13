@@ -202,3 +202,11 @@ headroom table beside the scoped 5/7-at-rank-9 note it already carries.
 5. The sweep machinery's row definitions (CONSTRUCTION_STRATEGIES) —
    adding the prefix row without disturbing the four existing rows'
    meaning; SHIPPED_CONTROL_CENSUS stays 20.
+
+---
+
+**Outcome addendum (2026-08-13):** the re-run's rule selected `prefix` on
+the tie-break; the owner ruled `and_then_prefix` ships (stability ruling,
+dimension the tie-break predates; measurement-identical qualifiers).
+Decision record in `config.py`, `Tests/RAG_Eval/README.md`, and
+task-15700's Implementation Notes.

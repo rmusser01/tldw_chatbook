@@ -97,3 +97,13 @@
 - **Placeholder scan:** clean; the winner is computed (T3), the arc's point.
 - **Type consistency:** `_fts5_primary_form` (T1) consumed by T1's partition + T2's counter; `FTS_MATCH_PREFIX`/construction names (T2) = T3's row names (`prefix`, `and_pfx`); `CONSTRUCTION_STRATEGIES` 6 rows (T2) = T3's matrix.
 - **Open risk, named:** the prefix probe's exact join semantics (T2 Step 1 reads it FIRST — the 3-rescue lead is only valid for the probed form).
+
+---
+
+**Outcome addendum (2026-08-13, post-execution):** the sweep ran as planned;
+the rule's tie-break selected `prefix` (240 vs 460 statements over the
+measurement-identical qualifiers). **The owner ruled `and_then_prefix` ships**
+(standing stability-over-quick-wins ruling, applied to the structural
+self-displacement dimension the tie-break predates) — disclosed at every
+outcome-recording site. The shipped default is the ruling's choice, not the
+tie-break's.

@@ -294,7 +294,7 @@ search-and-rag.md` carries the same three results and the same bound, stamped
 at `db73f0953`.
 
 Full tables, the rule line by line, and the reports:
-`.superpowers/sdd/2026-08-13-rag-keyword-leg-tiered-merge/task-{1,2,3,4,5}-report.md`.
+`.superpowers/sdd/2026-08-13-rag-keyword-leg-tiered-merge/task-{1,2,3,4,5}-report.md` (session-local artifacts, not in the repo; the substantive tables are duplicated in this file and in Tests/RAG_Eval/README.md).
 Harness record: `Tests/RAG_Eval/README.md` ("The fifth arc, and the re-stamp
 that did NOT happen").
 

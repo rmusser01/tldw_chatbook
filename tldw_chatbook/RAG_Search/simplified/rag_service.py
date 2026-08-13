@@ -3739,8 +3739,12 @@ class RAGService:
         returns.
 
         Returns:
-            ``FTS_MATCH_OR`` under the ``or`` construction, otherwise
-            ``FTS_MATCH_AND``.
+            The construction's primary form from
+            ``FTS_MATCH_FORMS_BY_CONSTRUCTION`` — ``FTS_MATCH_OR`` under
+            ``or``, ``FTS_MATCH_PREFIX`` under ``prefix``, and
+            ``FTS_MATCH_AND`` under every AND-primary construction
+            (including the shipped ``and_then_prefix``). Enumerating the
+            table here went stale once already; the table is the truth.
         """
         return self._fts5_match_forms()[0]
 
