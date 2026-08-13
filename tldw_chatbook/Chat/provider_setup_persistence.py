@@ -9,6 +9,7 @@ import re
 import secrets
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field
 from threading import RLock
 from types import MappingProxyType
@@ -614,6 +615,19 @@ def capture_expected_provider_setup_state(
     return bind_provider_setup_precondition(precondition, identity=identity)
 
 
+def provider_setup_expected_state_matches_snapshot(
+    expected_state: ExpectedProviderSetupState,
+    snapshot: AtomicConfigSnapshot,
+) -> bool:
+    """Compare one secret-free expected state with an authoritative snapshot."""
+
+    if type(expected_state) is not ExpectedProviderSetupState:
+        raise ValueError("Provider setup expected state is invalid.")
+    if type(snapshot) is not AtomicConfigSnapshot:
+        raise ValueError("Provider setup config snapshot is invalid.")
+    return expected_state._matches_snapshot(snapshot)
+
+
 def capture_provider_setup_precondition(
     snapshot: AtomicConfigSnapshot,
     *,
@@ -693,6 +707,62 @@ class ProviderSetupMutation:
             f"section_keys={set_keys!r}, delete_keys={dict(self.delete_keys)!r}, "
             f"semantic_identity={self.semantic_identity!r})"
         )
+
+
+def project_provider_setup_expected_state(
+    snapshot: AtomicConfigSnapshot,
+    *,
+    mutation: ProviderSetupMutation,
+    identity: ProviderSetupWriteIdentity,
+) -> ExpectedProviderSetupState:
+    """Project the exact validated mutation into a secret-free postcondition."""
+
+    if type(snapshot) is not AtomicConfigSnapshot:
+        raise ValueError("Provider setup config snapshot is invalid.")
+    if type(mutation) is not ProviderSetupMutation:
+        raise ValueError("Provider setup mutation is invalid.")
+    if type(identity) is not ProviderSetupWriteIdentity:
+        raise ValueError("Provider setup write identity is invalid.")
+    _validate_provider_setup_mutation(
+        mutation,
+        require_issued=True,
+        validate_credentials=True,
+    )
+
+    projected = deepcopy(dict(snapshot.values))
+    for section, keys in mutation.delete_keys.items():
+        current: object = projected
+        default_current: object = DEFAULT_CONFIG_FROM_TOML
+        for part in section.split("."):
+            if not isinstance(current, dict):
+                current = None
+                break
+            current = current.get(part)
+            default_current = (
+                default_current.get(part)
+                if isinstance(default_current, Mapping)
+                else None
+            )
+        if isinstance(current, dict):
+            for key in keys:
+                if isinstance(default_current, Mapping) and key in default_current:
+                    current[key] = deepcopy(default_current[key])
+                else:
+                    current.pop(key, None)
+    for section, values in mutation.section_values.items():
+        current = projected
+        for part in section.split("."):
+            child = current.get(part)
+            if not isinstance(child, dict):
+                child = {}
+                current[part] = child
+            current = child
+        current.update(values)
+
+    return capture_expected_provider_setup_state(
+        AtomicConfigSnapshot(snapshot.generation, projected),
+        identity=identity,
+    )
 
 
 def resolve_remembered_provider_model(

@@ -1566,12 +1566,33 @@ async def test_slow_exact_discovery_crosses_provider_to_model_without_restart():
 
 
 @pytest.mark.asyncio
-async def test_unchanged_provider_model_backtrack_keeps_live_radio_and_one_writer():
+async def test_unchanged_provider_model_backtrack_keeps_live_radio_and_one_writer(
+    monkeypatch,
+):
     from unittest.mock import AsyncMock
 
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat import provider_setup_persistence as persistence_module
+
+    endpoint = "https://stable.example.test/v1"
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {"api_settings.custom": {"api_url": endpoint}}
+    ).fully_applied
+    writes = []
+    real_persist = persistence_module.persist_provider_setup
+
+    def counted_persist(mutation):
+        writes.append(mutation.section_values["chat_defaults"]["model"])
+        return real_persist(mutation)
+
+    monkeypatch.setattr(
+        persistence_module,
+        "persist_provider_setup",
+        counted_persist,
+    )
     wizard = _make_wizard()
     wizard.app_instance.app_config = {
-        "api_settings": {"custom": {"api_url": "https://stable.example.test/v1"}}
+        "api_settings": {"custom": {"api_url": endpoint}}
     }
     scope_service = MagicMock()
     scope_service.discover_models = AsyncMock(
@@ -1583,21 +1604,6 @@ async def test_unchanged_provider_model_backtrack_keeps_live_radio_and_one_write
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         container = wizard.query_one(SetupWizardContainer)
-        writes = []
-
-        async def commit_config(
-            settings,
-            *,
-            delete_keys=None,
-            after_write=None,
-            provider_setup_mutation=None,
-        ):
-            if provider_setup_mutation is not None:
-                writes.append(settings["chat_defaults"]["model"])
-                container._mirror_into_app_config(settings, delete_keys)
-            return True
-
-        container.commit_config = commit_config
         container.select_track(TRACK_QUICK)
         provider_index = container._step_index_for_id(STEP_PROVIDER)
         model_index = container._step_index_for_id(STEP_MODEL)
@@ -1636,6 +1642,10 @@ async def test_unchanged_provider_model_backtrack_keeps_live_radio_and_one_write
         assert container.current_step == voice_index
         assert writes == ["stable-radio-model"]
         assert model_step.selected_model_id == "stable-radio-model"
+        assert persistence_module.provider_setup_expected_state_matches_snapshot(
+            container._committed_provider_expected_state,
+            config_module.get_atomic_config_snapshot(),
+        )
 
         container.show_step(provider_index)
         await container._advance()
@@ -1648,6 +1658,10 @@ async def test_unchanged_provider_model_backtrack_keeps_live_radio_and_one_write
         assert pressed.value is True
         assert getattr(pressed, "_model_id", "") == "stable-radio-model"
         assert model_step._effective_model_id() == "stable-radio-model"
+        assert persistence_module.provider_setup_expected_state_matches_snapshot(
+            container._committed_provider_expected_state,
+            config_module.get_atomic_config_snapshot(),
+        )
 
         await container._advance()
         assert container.current_step == voice_index
@@ -5277,6 +5291,7 @@ async def test_mounted_successful_manual_save_ends_decision_before_back_edit(
     from unittest.mock import AsyncMock
 
     from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat import provider_setup_persistence as persistence_module
 
     endpoint = "https://manual-resave.example/v1/chat/completions"
     assert config_module.apply_settings_mutation_to_cli_config(
@@ -5298,6 +5313,18 @@ async def test_mounted_successful_manual_save_ends_decision_before_back_edit(
         SetupWizardContainer,
         "capture_provider_config_precondition",
         staticmethod(counted_capture),
+    )
+    setup_writes = []
+    real_persist = persistence_module.persist_provider_setup
+
+    def counted_persist(mutation):
+        setup_writes.append(mutation)
+        return real_persist(mutation)
+
+    monkeypatch.setattr(
+        persistence_module,
+        "persist_provider_setup",
+        counted_persist,
     )
     wizard = _make_wizard()
     wizard.app_instance.app_config = {
@@ -5346,6 +5373,27 @@ async def test_mounted_successful_manual_save_ends_decision_before_back_edit(
         assert model_step._manual_decision_active is False
         assert model_step._selection_config_precondition is None
         first_save_captures = len(capture_calls)
+        assert len(setup_writes) == 1
+
+        container.action_back()
+        await pilot.pause()
+        assert container.current_step == model_index
+        assert manual.value == "manual-one"
+        assert len(capture_calls) == first_save_captures
+
+        assert config_module.apply_settings_mutation_to_cli_config(
+            {"general": {"users_name": "manual-resave-unrelated"}}
+        ).fully_applied
+        await container._advance()
+        assert container.current_step == voice_index
+        assert len(setup_writes) == 1
+        assert len(capture_calls) == first_save_captures
+        assert (
+            config_module.get_atomic_config_snapshot().values["general"][
+                "users_name"
+            ]
+            == "manual-resave-unrelated"
+        )
 
         container.action_back()
         await pilot.pause()
@@ -5375,6 +5423,168 @@ async def test_mounted_successful_manual_save_ends_decision_before_back_edit(
         assert container.provider_setup_committed
         assert container.committed_provider_model == "manual-two"
         assert authoritative["chat_defaults"]["model"] == "manual-two"
+        assert len(setup_writes) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change_kind",
+    ["provider", "endpoint", "runtime", "credential", "model"],
+)
+async def test_mounted_unchanged_manual_next_rejects_relevant_external_change(
+    monkeypatch,
+    change_kind,
+):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat import provider_setup_persistence as persistence_module
+
+    provider_key = "moonshot" if change_kind == "runtime" else "custom"
+    if provider_key == "moonshot":
+        provider_settings = {
+            "api_region": "china",
+            "api_base_url": "https://api.moonshot.cn/v1",
+            "api_key": "manual-idempotent-key-a",
+        }
+    else:
+        provider_settings = {
+            "api_url": "https://manual-idempotent-a.example/v1/chat/completions",
+            "api_key": "manual-idempotent-key-a",
+        }
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {f"api_settings.{provider_key}": provider_settings}
+    ).fully_applied
+
+    capture_calls = []
+    original_capture = SetupWizardContainer.capture_provider_config_precondition
+
+    def counted_capture(discovery_key):
+        capture_calls.append(discovery_key)
+        return original_capture(discovery_key)
+
+    monkeypatch.setattr(
+        SetupWizardContainer,
+        "capture_provider_config_precondition",
+        staticmethod(counted_capture),
+    )
+    setup_writes = []
+    real_persist = persistence_module.persist_provider_setup
+
+    def counted_persist(mutation):
+        setup_writes.append(mutation)
+        return real_persist(mutation)
+
+    monkeypatch.setattr(
+        persistence_module,
+        "persist_provider_setup",
+        counted_persist,
+    )
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {provider_key: dict(provider_settings)}
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(
+            return_value=_typed_model_discovery_result(
+                provider_key, "manual-idempotent-discovered"
+            )
+        )
+    )
+
+    async with _HostApp(wizard).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        voice_index = container._step_index_for_id(STEP_VOICE)
+        assert provider_index is not None
+        assert model_index is not None
+        assert voice_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider(provider_key)
+        await container._advance()
+
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        manual = model_step.query_one("#setup-model-custom", Input)
+        manual.value = "manual-idempotent-model"
+        await pilot.pause()
+        await container._advance()
+        assert container.current_step == voice_index
+        assert len(setup_writes) == 1
+        first_save_captures = len(capture_calls)
+
+        container.action_back()
+        await pilot.pause()
+        assert container.current_step == model_index
+        if change_kind == "provider":
+            external_values = {"chat_defaults": {"provider": "openai"}}
+        elif change_kind == "endpoint":
+            external_values = {
+                "api_settings.custom": {
+                    "api_url": (
+                        "https://manual-idempotent-b.example/v1/chat/completions"
+                    )
+                }
+            }
+        elif change_kind == "runtime":
+            external_values = {
+                "api_settings.moonshot": {
+                    "api_region": "global",
+                    "api_base_url": "https://api.moonshot.ai/v1",
+                }
+            }
+        elif change_kind == "credential":
+            external_values = {
+                "api_settings.custom": {"api_key": "manual-idempotent-key-b"}
+            }
+        else:
+            external_values = {
+                "chat_defaults": {"model": "external-model-change"}
+            }
+        assert config_module.apply_settings_mutation_to_cli_config(
+            external_values
+        ).fully_applied
+
+        await container._advance()
+
+        assert container.current_step == model_index
+        assert len(setup_writes) == 1
+        assert len(capture_calls) == first_save_captures
+        result = container._provider_last_config_result
+        assert getattr(result, "conflict_reason", None) == "identity_changed"
+        assert model_step.selected_model_id == ""
+        assert model_step._selection_discovery_key is None
+        error = str(model_step.query_one(".setup-step-error", Static).renderable)
+        assert "connection settings changed" in error.lower()
+        rendered = pilot.app.export_screenshot()
+        assert "manual-idempotent-key-a" not in rendered
+        assert "manual-idempotent-key-b" not in rendered
+
+        authoritative = config_module.get_atomic_config_snapshot().values
+        if change_kind == "provider":
+            assert authoritative["chat_defaults"]["provider"] == "openai"
+        elif change_kind == "endpoint":
+            assert authoritative["api_settings"]["custom"]["api_url"].startswith(
+                "https://manual-idempotent-b.example"
+            )
+        elif change_kind == "runtime":
+            assert authoritative["api_settings"]["moonshot"]["api_region"] == (
+                "global"
+            )
+        elif change_kind == "credential":
+            assert authoritative["api_settings"]["custom"]["api_key"] == (
+                "manual-idempotent-key-b"
+            )
+        else:
+            assert authoritative["chat_defaults"]["model"] == (
+                "external-model-change"
+            )
 
 
 @pytest.mark.asyncio

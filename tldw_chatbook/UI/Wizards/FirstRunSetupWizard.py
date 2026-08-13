@@ -3641,11 +3641,24 @@ class ModelStep(SetupStep):
         provenance: Literal["discovered", "manual"] = (
             "manual" if self._model_id_from_custom_input else "discovered"
         )
+        can_validate = getattr(
+            self.wizard,
+            "can_validate_committed_provider_setup",
+            None,
+        )
         if (
             callable(
                 getattr(self.wizard, "capture_provider_config_precondition", None)
             )
             and self._selection_config_precondition is None
+            and not (
+                callable(can_validate)
+                and can_validate(
+                    model_id,
+                    discovery_key=selection_key,
+                    model_provenance=provenance,
+                )
+            )
         ):
             return (
                 False,
@@ -6795,6 +6808,7 @@ class SetupWizardContainer(WizardContainer):
         self._staged_provider_draft: wizard_state.FirstRunProviderDraft | None = None
         self._provider_setup_committed = False
         self._committed_provider_model = ""
+        self._committed_provider_expected_state: object | None = None
         self._provider_stage_generation = 0
         self._provider_commit_generation = 0
         self._provider_commit_lock = asyncio.Lock()
@@ -6977,6 +6991,7 @@ class SetupWizardContainer(WizardContainer):
         self._staged_provider_draft = None
         self._provider_setup_committed = False
         self._committed_provider_model = ""
+        self._committed_provider_expected_state = None
         self._first_run_selected_provider_models = {}
         self._first_run_selected_provider_outcomes = {}
         self._first_run_provider_config_preconditions = {}
@@ -7033,7 +7048,41 @@ class SetupWizardContainer(WizardContainer):
         self._staged_provider_draft = provider_draft
         self._provider_setup_committed = False
         self._committed_provider_model = ""
+        self._committed_provider_expected_state = None
         return True
+
+    def can_validate_committed_provider_setup(
+        self,
+        model_id: str,
+        *,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey | None,
+        model_provenance: Literal["discovered", "manual"],
+    ) -> bool:
+        """Return whether Next can validate an already committed model decision."""
+
+        from tldw_chatbook.Chat.provider_setup_persistence import (
+            ExpectedProviderSetupState,
+        )
+
+        expected_state = self._committed_provider_expected_state
+        if (
+            type(model_id) is not str
+            or type(discovery_key) is not wizard_state.FirstRunModelDiscoveryKey
+            or model_provenance not in {"discovered", "manual"}
+            or type(expected_state) is not ExpectedProviderSetupState
+            or not self._provider_setup_committed
+            or self._committed_provider_model != model_id.strip()
+        ):
+            return False
+        identity = expected_state.identity
+        return bool(
+            identity.provider_key == discovery_key.provider_key
+            and identity.connection_identity == discovery_key.connection_identity
+            and identity.credential_source == discovery_key.credential_source
+            and identity.credential_revision == discovery_key.credential_revision
+            and identity.model_id == model_id.strip()
+            and identity.model_provenance == model_provenance
+        )
 
     @staticmethod
     def capture_provider_config_precondition(
@@ -7113,6 +7162,7 @@ class SetupWizardContainer(WizardContainer):
         normalized_model = model_id.strip()
         owner = getattr(self, "_first_run_provider_discovery_owner", None)
         changed_draft: wizard_state.FirstRunProviderDraft | None = None
+        committed_validation: tuple[object, int] | None = None
         async with self._provider_commit_lock:
             if isinstance(owner, ProviderStep) and owner.is_mounted:
                 owner._sync_live_credential_revision()
@@ -7151,45 +7201,124 @@ class SetupWizardContainer(WizardContainer):
                     self._provider_setup_committed
                     and self._committed_provider_model == normalized_model
                 ):
-                    return True
-                identity = (
-                    self._provider_stage_generation,
-                    normalized_model,
-                    expected_key,
-                    model_provenance,
-                    config_precondition,
-                )
-                active_task = self._provider_commit_task
-                if (
-                    active_task is not None
-                    and not active_task.done()
-                    and identity == self._provider_commit_identity
-                ):
-                    operation = active_task
-                else:
-                    if self._provider_commit_write_started:
+                    if not self.can_validate_committed_provider_setup(
+                        normalized_model,
+                        discovery_key=expected_key,
+                        model_provenance=model_provenance,
+                    ):
                         return False
-                    self._provider_commit_generation += 1
-                    lease = self._provider_commit_generation
-                    operation = asyncio.create_task(
-                        self._run_provider_setup_commit(
-                            provider_draft,
-                            normalized_model,
-                            expected_key,
-                            model_provenance,
-                            config_precondition,
-                            self._provider_stage_generation,
-                            lease,
-                        )
+                    committed_validation = (
+                        self._committed_provider_expected_state,
+                        self._provider_stage_generation,
                     )
-                    operation.add_done_callback(self._provider_commit_finished)
-                    self._provider_commit_task = operation
-                    self._provider_commit_identity = identity
+                    operation = None
+                else:
+                    identity = (
+                        self._provider_stage_generation,
+                        normalized_model,
+                        expected_key,
+                        model_provenance,
+                        config_precondition,
+                    )
+                    active_task = self._provider_commit_task
+                    if (
+                        active_task is not None
+                        and not active_task.done()
+                        and identity == self._provider_commit_identity
+                    ):
+                        operation = active_task
+                    else:
+                        if self._provider_commit_write_started:
+                            return False
+                        self._provider_commit_generation += 1
+                        lease = self._provider_commit_generation
+                        operation = asyncio.create_task(
+                            self._run_provider_setup_commit(
+                                provider_draft,
+                                normalized_model,
+                                expected_key,
+                                model_provenance,
+                                config_precondition,
+                                self._provider_stage_generation,
+                                lease,
+                            )
+                        )
+                        operation.add_done_callback(self._provider_commit_finished)
+                        self._provider_commit_task = operation
+                        self._provider_commit_identity = identity
         if changed_draft is not None and isinstance(owner, ProviderStep):
             self._refresh_changed_provider_identity(owner, changed_draft)
             return False
+        if committed_validation is not None:
+            expected_state, stage_generation = committed_validation
+            return await self._validate_committed_provider_setup(
+                expected_state,
+                stage_generation=stage_generation,
+                owner=owner,
+            )
         assert operation is not None
         return await asyncio.shield(operation)
+
+    async def _validate_committed_provider_setup(
+        self,
+        expected_state: object,
+        *,
+        stage_generation: int,
+        owner: object,
+    ) -> bool:
+        """Validate a committed no-op against one authoritative config read."""
+
+        from tldw_chatbook.Chat.provider_setup_persistence import (
+            ExpectedProviderSetupState,
+            provider_setup_expected_state_matches_snapshot,
+        )
+        from tldw_chatbook.config import (
+            ConfigMutationResult,
+            get_atomic_config_snapshot,
+        )
+
+        if type(expected_state) is not ExpectedProviderSetupState:
+            return False
+        try:
+            snapshot = await asyncio.to_thread(get_atomic_config_snapshot)
+            matches = provider_setup_expected_state_matches_snapshot(
+                expected_state,
+                snapshot,
+            )
+        except (TypeError, ValueError):
+            self._provider_last_config_result = ConfigMutationResult(
+                False,
+                False,
+                "before_replace",
+            )
+            return False
+
+        async with self._provider_commit_lock:
+            if (
+                self._provider_ui_detached
+                or stage_generation != self._provider_stage_generation
+                or expected_state is not self._committed_provider_expected_state
+                or not self._provider_setup_committed
+            ):
+                return False
+            if matches:
+                return True
+            self._provider_last_config_result = ConfigMutationResult(
+                False,
+                False,
+                None,
+                conflict=True,
+                conflict_reason="identity_changed",
+            )
+            self._provider_setup_committed = False
+            self._committed_provider_model = ""
+            self._committed_provider_expected_state = None
+
+        if isinstance(owner, ProviderStep) and owner.is_mounted:
+            current_draft = owner._effective_provider_draft()
+            if current_draft is not None:
+                self._refresh_changed_provider_identity(owner, current_draft)
+        return False
 
     def _provider_commit_finished(self, task: asyncio.Task[bool]) -> None:
         """Consume a detached result when its awaiting caller was cancelled."""
@@ -7259,7 +7388,7 @@ class SetupWizardContainer(WizardContainer):
                             model_id,
                             config_snapshot.values,
                         )
-                        self._bind_provider_write_expectation(
+                        committed_expected_state = self._bind_provider_write_expectation(
                             mutation,
                             config_snapshot=config_snapshot,
                             discovery_key=discovery_key,
@@ -7304,6 +7433,7 @@ class SetupWizardContainer(WizardContainer):
             if not self._provider_cleanup_requested:
                 self._provider_setup_committed = True
                 self._committed_provider_model = model_id
+                self._committed_provider_expected_state = committed_expected_state
             return True
         except asyncio.CancelledError:
             raise
@@ -7327,7 +7457,7 @@ class SetupWizardContainer(WizardContainer):
         model_id: str,
         model_provenance: Literal["discovered", "manual"],
         config_precondition: object | None,
-    ) -> None:
+    ) -> object:
         """Bind a secret-free CAS token to the issued atomic setup mutation."""
 
         from tldw_chatbook.Chat.provider_setup_persistence import (
@@ -7336,6 +7466,7 @@ class SetupWizardContainer(WizardContainer):
             bind_provider_setup_precondition,
             bind_provider_setup_write_expectation,
             capture_expected_provider_setup_state,
+            project_provider_setup_expected_state,
         )
 
         expected_identity = ProviderSetupWriteIdentity(
@@ -7363,6 +7494,11 @@ class SetupWizardContainer(WizardContainer):
             guard=self._provider_write_guard,
             expectation=expectation,
             expected_state=expected_state,
+        )
+        return project_provider_setup_expected_state(
+            config_snapshot,
+            mutation=mutation,
+            identity=expected_identity,
         )
 
     def compose(self) -> ComposeResult:

@@ -140,6 +140,90 @@ def test_provider_setup_precondition_allows_unrelated_locked_change():
     assert expected._matches_snapshot(unrelated) is True
 
 
+def test_provider_setup_postcondition_projects_exact_atomic_mutation():
+    before = config_module.AtomicConfigSnapshot(
+        11,
+        {
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://before.example/v1/chat/completions",
+                    "api_key": "postcondition-key-a",
+                    "model": "before-model",
+                }
+            },
+            "chat_defaults": {"provider": "custom", "model": "before-model"},
+            "general": {"users_name": "Unchanged"},
+        },
+    )
+    draft = _draft(
+        provider="custom",
+        endpoint="https://after.example/v1/chat/completions",
+        model="after-model",
+        credential_source="draft",
+        credential_revision=12,
+        credential_value="postcondition-key-b",
+    )
+    mutation = build_provider_setup_mutation(draft, before.values)
+    identity = persistence_module.ProviderSetupWriteIdentity(
+        provider_key="custom",
+        connection_identity=persistence_module.canonical_connection_identity(
+            "custom", "https://after.example/v1/chat/completions"
+        ),
+        credential_source="stored",
+        credential_revision=12,
+        model_id="after-model",
+        model_provenance="manual",
+    )
+
+    expected = persistence_module.project_provider_setup_expected_state(
+        before,
+        mutation=mutation,
+        identity=identity,
+    )
+    after = config_module.AtomicConfigSnapshot(
+        12,
+        {
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://after.example/v1/chat/completions",
+                    "api_key": "postcondition-key-b",
+                    "model": "after-model",
+                }
+            },
+            "chat_defaults": {"provider": "custom", "model": "after-model"},
+            "provider_setup": {"confirmed": {"custom": True}},
+            "general": {"users_name": "Unchanged"},
+        },
+    )
+    unrelated = config_module.AtomicConfigSnapshot(
+        13,
+        {
+            **after.values,
+            "general": {"users_name": "Changed"},
+        },
+    )
+    changed_credential = config_module.AtomicConfigSnapshot(
+        14,
+        {
+            **after.values,
+            "api_settings": {
+                "custom": {
+                    **after.values["api_settings"]["custom"],
+                    "api_key": "postcondition-key-c",
+                }
+            },
+        },
+    )
+
+    assert expected._matches_snapshot(after) is True
+    assert expected._matches_snapshot(unrelated) is True
+    assert expected._matches_snapshot(changed_credential) is False
+    rendered = repr(expected)
+    assert "postcondition-key-a" not in rendered
+    assert "postcondition-key-b" not in rendered
+    assert "postcondition-key-c" not in rendered
+
+
 def test_provider_setup_precondition_repr_never_exposes_credential():
     canary = "selection-precondition-secret-canary"
     snapshot = config_module.AtomicConfigSnapshot(
