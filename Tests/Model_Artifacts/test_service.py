@@ -1685,6 +1685,40 @@ def test_import_local_gguf_promotes_path_private_full_digest_artifact(
     assert payload_writes[0] != source.resolve()
 
 
+def test_import_local_gguf_preserves_retryable_lease_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Lease contention stays typed and path-private for UI recovery."""
+    source = tmp_path / "PRIVATE-LEASE-TIMEOUT.gguf"
+    payload = make_gguf(architecture="llama", name="Busy", file_type=7)
+    source.write_bytes(payload)
+    before = source.stat()
+    service = service_module.ModelArtifactService(tmp_path / "store")
+
+    def time_out_lease(_lease) -> None:
+        raise service_module.ArtifactLeaseTimeoutError(
+            "timed out acquiring exclusive lease for install-staging"
+        )
+
+    monkeypatch.setattr(
+        service_module._leases.ArtifactOperationLease,
+        "acquire",
+        time_out_lease,
+    )
+
+    with pytest.raises(service_module.ArtifactLeaseTimeoutError) as caught:
+        service.import_local_gguf(source)
+
+    assert type(caught.value) is service_module.ArtifactLeaseTimeoutError
+    assert str(source) not in str(caught.value)
+    assert source.name not in str(caught.value)
+    assert source.read_bytes() == payload
+    assert source.stat().st_mtime_ns == before.st_mtime_ns
+    assert tuple(service.artifacts_path.rglob("manifest.json")) == ()
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
 def test_import_local_gguf_coalesces_large_copy_progress(tmp_path: Path) -> None:
     source = tmp_path / "large.gguf"
     source.write_bytes(make_gguf(architecture="llama", name="Large", file_type=7))

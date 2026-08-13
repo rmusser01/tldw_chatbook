@@ -3219,6 +3219,7 @@ class ModelArtifactService:
 
         Raises:
             TypeError: An argument has the wrong public API type.
+            ArtifactLeaseTimeoutError: A managed writer lease remains busy.
             ArtifactError: Managed staging, verification, or promotion fails.
             GGUFError: The source path or staged GGUF structure is invalid.
         """
@@ -3299,6 +3300,8 @@ class ModelArtifactService:
                 staging = None
             return LocalGGUFImportResult(descriptor.reference, already_installed)
         except ArtifactError:
+            raise
+        except ArtifactLeaseTimeoutError:
             raise
         except ArtifactLeaseError as error:
             raise ArtifactStateError(

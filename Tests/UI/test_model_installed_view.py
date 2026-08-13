@@ -2002,6 +2002,87 @@ async def test_import_failure_logs_only_stable_category_and_never_selected_path(
     assert str(source) not in rendered
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
+@pytest.mark.asyncio
+async def test_real_import_lease_timeout_offers_busy_retry_without_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real service timeout reaches exact path-private mounted recovery."""
+    from Tests.Model_Artifacts.gguf_test_helpers import make_gguf
+    from tldw_chatbook.Model_Artifacts import service as service_module
+    from tldw_chatbook.UI.Screens import model_installed_view as module
+
+    source = tmp_path / "PRIVATE-BUSY-SOURCE.gguf"
+    payload = make_gguf(architecture="llama", name="Busy", file_type=7)
+    source.write_bytes(payload)
+    before = source.stat()
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    raw_lock_detail = f"PRIVATE-LOCK-DETAIL for {source}"
+
+    def time_out_lease(_lease) -> None:
+        raise service_module.ArtifactLeaseTimeoutError(raw_lock_detail)
+
+    monkeypatch.setattr(
+        service_module._leases.ArtifactOperationLease,
+        "acquire",
+        time_out_lease,
+    )
+    lane_changes: list[bool] = []
+    view = module.InstalledView(
+        service_factory=lambda: service,
+        legacy_dir=tmp_path,
+        on_import_lane_changed=lane_changes.append,
+    )
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _StyledInstalledApp(view)
+    logs: list[str] = []
+    sink_id = module.logger.add(lambda message: logs.append(str(message)))
+
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            view._begin_import(source)
+            await _wait_until(pilot, lambda: not view._import_active)
+            await _wait_until(
+                pilot,
+                lambda: len(view.query("#installed-gguf-import-retry")) == 1,
+            )
+
+            expected = "The managed model store is busy. Retry shortly."
+            rendered = _rendered_static_text(view)
+            notices = [item.message for item in app._notifications]
+            assert expected in rendered
+            assert expected in notices
+            assert (
+                view.query_one("#installed-gguf-import-retry", Button).disabled is False
+            )
+            assert (
+                view.query_one("#installed-gguf-import-choose", Button).disabled
+                is False
+            )
+            assert view._import_lane_owned is False
+            assert lane_changes == [True, False]
+            for selector in (
+                "#installed-models-refresh",
+                "#installed-models-repair",
+                "#installed-models-import-gguf",
+                ".model-import",
+            ):
+                assert view.query_one(selector, Button).disabled is False
+            combined_ui = rendered + " ".join(notices) + "".join(logs)
+            assert str(source) not in combined_ui
+            assert raw_lock_detail not in combined_ui
+    finally:
+        module.logger.remove(sink_id)
+
+    assert source.read_bytes() == payload
+    assert source.stat().st_mtime_ns == before.st_mtime_ns
+    assert tuple(service.artifacts_path.rglob("manifest.json")) == ()
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
 @pytest.mark.asyncio
 async def test_cancelled_and_failed_import_offer_retry_and_choose_another(
     tmp_path: Path,
