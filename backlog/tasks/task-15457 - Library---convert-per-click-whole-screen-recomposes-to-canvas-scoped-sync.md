@@ -51,8 +51,8 @@ Reason: this task applies the existing Library screen/rail/canvas ownership and 
 
 A second session implemented this task independently on branch
 `task/15457-library-recompose` while the codex implementation above landed on
-dev as `976dbafcb`. Reconciled by semantic rebase onto `origin/dev`
-(`61f6ae575`), reading each dev commit before resolving. Outcome:
+dev as `976dbafcb`. Reconciled by semantic rebase onto `origin/dev` at `74c8cf7043`, reading each
+dev commit before resolving. Outcome:
 
 **Superseded by `976dbafcb` — dropped, no hunk kept.** The conversions
 themselves: notes select strip, notes sort/filter strips, notes-sync toggles,
@@ -85,10 +85,20 @@ port and green after:
    `LIBRARY_NOTES_COMPACT_BREAKPOINT`. Restored on the same follow-up, but
    deferred via `call_after_refresh` — run inline the new children are not laid
    out, max scroll is still 0 and `scroll_to` clamps the offset away.
-4. Neither footer tier was re-derived: the Notes tier branches on select mode
-   and sort-strip visibility, and the shared choice-strip tier advertises its
-   own keys while a media/prompts/skills/export strip is open. Both now refresh
-   at the one sync choke point.
+4. **Not a reproduced defect — hardening that was probed and then REMOVED.**
+   A footer re-derivation was added at the sync choke point on the theory that
+   neither footer tier survives a targeted sync. It does not reproduce red on
+   dev. Probed by disabling both branches: the Notes select-mode footer and the
+   media type-strip footer both stayed current, because dev's
+   `LibraryScreen.refresh` calls `_apply_library_notes_footer_context()` on
+   EVERY refresh (not only `recompose=True`), and every footer-flipping sync
+   has a focus follow-up whose `set_focus`/`scroll_visible` triggers one — the
+   call chain was traced (`refresh <- _restore_library_notes_focus_identity <-
+   _restore_library_notes_after_targeted_sync`). The branch is gone rather than
+   kept unfalsifiable; the coupling it would have guarded is listed under
+   Residuals below. The earlier claim that this reproduced red was wrong: the
+   test written for it passes with the mechanism disabled, i.e. it was never
+   discriminating.
 
 Also ported: `PostRecomposeCallback` skips its callback when
 `Widget.recompose` early-returns on a detached/pruning widget, and
@@ -100,3 +110,51 @@ Evidence lives in `Tests/UI/test_library_canvas_sync_defects.py` (7 tests),
 kept separate from dev's `test_library_canvas_scoped_sync.py` rather than
 merged into it: the two files pin different things — that the conversions
 happen, and that they do not lose selection, focus, scroll, or footer.
+
+### Reconciliation: residuals, counting method, and what is actually closed
+
+**Focus is closed, including the transition.** The first pass of this
+reconciliation left the notes row→editor path still stranding focus outside the
+canvas, and the task file read as if focus were done. It is now genuinely
+closed, by three changes rather than one, because that path is a DOUBLE canvas
+sync (list → loading → editor):
+
+* `PostRecomposeCallback` re-queues its follow-up when `_recompose_required` is
+  re-armed during a recompose — Textual's own signal that a second `sync_state`
+  landed while this one was still awaiting `mount_all`. Without it the
+  follow-up ran against the loading children (traced: `still_queued=True` on the
+  loading pass, fired on the editor pass).
+* the default notes focus restore is installed only for IN-SURFACE syncs
+  (mounted mode == synced mode). On a transition the capture is worthless: the
+  handlers flip the notes view *before* calling the sync, so
+  `_capture_library_notes_focus_identity` already reports the destination region
+  with an empty semantic role, and restoring it resolved to a fallback target —
+  measured landing spot, the rail row.
+* every remaining `call_after_refresh` follow-up on a canvas sync is now a
+  `then=`: the notes editor arm + editor identity, and the skills and prompts
+  `_arm_*` calls. Arming is dirty-tracking, not cosmetics — a lost follow-up
+  leaves the editor unarmed. **Zero `call_after_refresh` follow-ups remain on a
+  canvas sync.**
+
+**Residual (recorded, not closed): footer honesty is coupled to focus.** Both
+footer tiers stay current only because a focus follow-up triggers a screen
+refresh and dev's `refresh` override re-derives the footer unconditionally. A
+future footer-flipping sync with no follow-up would go stale silently, and no
+test would catch it — the invariant test in
+`test_library_canvas_sync_defects.py` is a regression net, not a discriminating
+probe (it passes with the mechanism disabled, which is why the explicit branch
+was removed rather than kept).
+
+**Counting method.** This branch reports 122 whole-screen recompose sites in
+`library_screen.py`, counting `self.refresh(recompose=True)` +
+`await self.recompose()` + the module-level helpers' `screen.refresh(...)`
+fallbacks, on non-comment lines. Dev's notes report 102; that number is **not
+reproducible with this measure** and the two should not be compared — the
+difference is method, not regression. Whoever cares about the headline should
+pick one script and re-run it over both trees.
+
+**Also carried from the parallel branch:** `RecomposeCaptureGuard` was added to
+`LibraryNotesCanvas`, which dev's version does not carry — a canvas that
+recomposes itself bypasses `BaseAppScreen.refresh`'s mouse-capture release, and
+this canvas mounts `Input`/`TextArea` children where a stale capture is exactly
+the app-wide click-dispatch failure that guard exists for.
