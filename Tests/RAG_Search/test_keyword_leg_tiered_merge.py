@@ -37,11 +37,18 @@ Five properties, each with the mutation that reds it:
   `and_then_prefix` -- the composition whose whole case rests on this
   tiering holding for a form the incident never involved.
 * **(b) All-primary byte-identity.** When no sub-leg fell back -- which is
-  EVERY sub-leg under the shipped `and_stopword_trim`, under the legacy
-  `and`, under `or` and under TASK-15700's `prefix` -- the merged list is
-  the SAME OBJECTS IN THE SAME ORDER a single unpartitioned
-  `interleave_rankings` produces. Compared by object identity against the
-  real gathered rankings, so this is byte identity and not a re-derivation.
+  every sub-leg under a construction that HAS no fallback form: the legacy
+  `and`, the former default `and_stopword_trim`, `or`, and TASK-15700's
+  `prefix` -- the merged list is the SAME OBJECTS IN THE SAME ORDER a
+  single unpartitioned `interleave_rankings` produces. Compared by object
+  identity against the real gathered rankings, so this is byte identity and
+  not a re-derivation.
+
+  **Note what this case is NOT, since 2026-08-13:** it is no longer the
+  default path. The shipped `and_then_prefix` defines a fallback, so a
+  default search can and does populate tier 2, and the partition is live
+  rather than a latent no-op. This property now covers the fallback-less
+  constructions specifically; property (a) covers the shipped one.
   Reds if the tier order is inverted -- for a construction that HAS a
   fallback; under an all-primary one tier 2 is empty and the inversion is a
   provable no-op (Task 1's mutation note, and the reason the prefix

@@ -687,9 +687,17 @@ def test_an_invalid_construction_warns_once_and_behaves_as_and():
     to the shipped behaviour", which was the same thing when `and` shipped.
     It is not any more — the fail-safe deliberately stays on the pre-arc
     full AND (the most conservative construction, the one that never widens
-    a query) while the shipped default is `and_stopword_trim`. The
-    assertion below is unchanged and is what pins that: an invalid value
-    emits `'"notes" "about" "the" "vendor"'`, NOT the trimmed default.
+    a query) while the default moves. The assertion below is unchanged and
+    is what pins that: an invalid value emits
+    `'"notes" "about" "the" "vendor"'`, and never a widened form.
+
+    RE-DISCLOSED (2026-08-13, TASK-15700 Task 4): the default moved a second
+    time, to `and_then_prefix`. Note the assertion is now byte-identical to
+    the shipped default's PRIMARY — the fail-safe and the default's primary
+    are the same full AND — so what this pin still discriminates is the
+    FALLBACK: an unrecognized value must emit no second expression at all,
+    where the shipped default emits `'"notes"* "vendor"*'`. That is asserted
+    explicitly below rather than left implied by the primary alone.
     """
     service = _make_service(construction="or_of_ands_probably")
 

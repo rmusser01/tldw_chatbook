@@ -368,17 +368,49 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
         assert fusion["fts_rank"] is not None
 
 
-#: The keyword-leg census the SHIPPED construction scores, and the two ids
-#: TASK-15700's flip bought over the outgoing `and_stopword_trim` (which
-#: scored 21). Named rather than counted: a bare `== 23` would stay green if
-#: the leg swapped one hit for another, which is exactly the failure the
-#: sweep's `lost` column exists to catch.
-SHIPPED_LEG_CENSUS = 23
+#: The EXACT census hit-set the SHIPPED construction scores — all 23 ids,
+#: not a count and not a sample. A bare `== 23`, or a spot-check of the two
+#: gained ids, would both stay green if the leg swapped one hit for another;
+#: that silent-swap failure is precisely what the sweep's `lost` column
+#: exists to catch, and a set equality is the only assertion that catches it
+#: here. Derived from a real census run at the shipped default (TASK-15700
+#: Task 4), not transcribed from a report.
+SHIPPED_LEG_CENSUS_IDS = frozenset({
+    "kw-ashgrove-pump",
+    "kw-drayton-conveyor",
+    "kw-fennimore-changeover",
+    "kw-halcyon-ledger",
+    "kw-larkspur-turbine",
+    "kw-marlstone-kiln",
+    "kw-nimbus-rollback",
+    "kw-obsidian-spindle",
+    "kw-pellucid-gauge",
+    "kw-plant-maintenance-record",
+    "kw-quillon-mast",
+    "kw-thimble-relay",
+    "kw-verdigris-coating",
+    "kw-zephyr-asset-tag",
+    "kw-zephyr-flywheel",
+    "pm-vendor-chaser",
+    "sc-duty-board-notice",
+    "sc-intake-screen-survey",
+    "sc-meter-box-key",
+    "sc-pump-chamber-inspection",
+    "sc-sample-point-sign",
+    "sc-storm-overflow-record",
+    "sc-valve-pit-access",
+})
+SHIPPED_LEG_CENSUS = len(SHIPPED_LEG_CENSUS_IDS)
 SHIPPED_LEG_CENSUS_SCOREABLE = 53
 #: The residual bound AC#7 owns: golden queries the leg returns NOTHING for.
 SHIPPED_LEG_ZERO_ROW = 36
-#: Gained vs the construction that shipped 2026-08-11 -> 2026-08-13.
+#: Gained vs the construction that shipped 2026-08-11 -> 2026-08-13. A
+#: SUBSET of the set above, called out by name because these two ids are
+#: what the 2026-08-13 flip actually bought.
 PREFIX_FALLBACK_GAINED_IDS = frozenset({"kw-quillon-mast", "kw-thimble-relay"})
+#: The vector-blind fixture — hard constraint (a) at the LEG level, where
+#: the sweep measured it. Also a member of the set above.
+VECTOR_BLIND_FIXTURE_ID = "kw-plant-maintenance-record"
 
 
 def test_the_shipped_construction_scores_the_census_the_owner_ruling_bought(
@@ -403,8 +435,11 @@ def test_the_shipped_construction_scores_the_census_the_owner_ruling_bought(
     structural, and its price is statements, neither of which a census can
     see.
 
-    Reverting the default to `and_stopword_trim` reds this at 21 and names
-    the two ids it lost.
+    Reverting the default to `and_stopword_trim` reds the hit-set assertion
+    FIRST, naming the construction it actually found and the exact ids that
+    went missing (`kw-quillon-mast`, `kw-thimble-relay`) — the ordering is
+    deliberate, because a bare "the default is not `and_then_prefix`" says
+    what changed without saying what it cost.
     """
     from Tests.RAG_Eval.harness.fusion_sweep import keyword_leg_census
     from Tests.RAG_Eval.harness.goldenset import load_fixtures
@@ -426,6 +461,25 @@ def test_the_shipped_construction_scores_the_census_the_owner_ruling_bought(
               f"{census.hits}/{census.scoreable}, "
               f"{len(census.zero_row_queries)} zero-row of {census.queries}")
 
+    # THE HIT-SET, asserted FIRST and as a set EQUALITY. Ordered ahead of
+    # the construction guard on purpose: a revert must red with the ids it
+    # COST, not merely with the name that changed. Set equality (not `<=`,
+    # not a count) is what closes the silent-swap hole — a leg that traded
+    # one hit for another keeps `census.hits == 23` and would sail past any
+    # weaker form of this assertion.
+    hit_set = set(census.hit_queries)
+    lost = SHIPPED_LEG_CENSUS_IDS - hit_set
+    gained = hit_set - SHIPPED_LEG_CENSUS_IDS
+    assert hit_set == SHIPPED_LEG_CENSUS_IDS, (
+        f"the keyword leg's census hit-set moved under {construction!r}: "
+        f"lost {sorted(lost) or '-'}, gained {sorted(gained) or '-'} "
+        f"({census.hits} hits, was {SHIPPED_LEG_CENSUS}). If the default "
+        "reverted, the two lost ids are what the 2026-08-13 flip bought; if "
+        "it did not, the leg changed under a fixed construction and the "
+        "sweep needs re-running."
+    )
+    # ...and only then the guard, which explains why the number above is
+    # meaningful at all.
     assert construction == "and_then_prefix", (
         f"the shipped default is {construction!r}; this census was measured "
         "for `and_then_prefix` and means nothing under another construction"
@@ -434,14 +488,15 @@ def test_the_shipped_construction_scores_the_census_the_owner_ruling_bought(
         SHIPPED_LEG_CENSUS,
         SHIPPED_LEG_CENSUS_SCOREABLE,
     ), f"census moved: {census.hits}/{census.scoreable}"
-    assert PREFIX_FALLBACK_GAINED_IDS <= set(census.hit_queries), (
+    # The two ids the flip bought, named separately from the set above so a
+    # future edit to the set cannot quietly drop them without saying so.
+    assert PREFIX_FALLBACK_GAINED_IDS <= hit_set, (
         "the leg lost one of the two ids the 2026-08-13 flip bought "
-        f"({sorted(PREFIX_FALLBACK_GAINED_IDS)}); it answers "
-        f"{sorted(census.hit_queries)}"
+        f"({sorted(PREFIX_FALLBACK_GAINED_IDS)})"
     )
     # The vector-blind fixture's own leg row — hard constraint (a) at the
     # LEG level, where the sweep measured it.
-    assert "kw-plant-maintenance-record" in census.hit_queries, (
+    assert VECTOR_BLIND_FIXTURE_ID in hit_set, (
         "the vector-blind fixture left the keyword leg's top-10; its hybrid "
         "rescue is the constraint that disqualified `or` outright"
     )

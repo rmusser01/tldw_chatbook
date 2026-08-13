@@ -1663,9 +1663,10 @@ class RAGService:
         # path or acquiring a connection -- no FTS5 call, no DB touch.
         # TASK-15400: read the ACTIVE construction's primary expression, so
         # the `or` construction's all-stopword emptiness short-circuits here
-        # too. Under `and` this is `_escape_fts5_query` verbatim; under the
-        # shipped `and_stopword_trim` an all-stopword query falls back to
-        # that same full AND, so neither can short-circuit on emptiness.
+        # too. Under `and` -- and so under the shipped `and_then_prefix`,
+        # whose primary IS that full AND -- an all-stopword query still
+        # produces a non-empty expression, so neither short-circuits on
+        # emptiness; only the widening PRIMARIES (`or`, `prefix`) can.
         if not self._fts5_match_expressions(query)[0]:
             logger.debug(
                 "Keyword search query has no FTS5-searchable tokens after "
@@ -3185,9 +3186,10 @@ class RAGService:
         prefix FALLBACK runs over a strict SUBSET of it (content tokens
         only; see ``_fts5_match_expressions``), so a row matched by the
         fallback carries citations evidencing the full typed query while the
-        match itself needed only some of its tokens. Verified NOT a behavioural regression: the
-        spans themselves are unchanged, and a row that matched is guaranteed
-        to carry the content tokens the MATCH required, so a matched row's
+        match itself needed only some of its tokens. Verified NOT a
+        behavioural regression: the spans themselves are unchanged, and a
+        row that matched is guaranteed to carry the content tokens the
+        MATCH required, so a matched row's
         citations are never missing evidence for the match. Locating the raw
         query as one contiguous substring instead (what this did before)
         assumed phrase semantics the keyword leg no longer has, so every
@@ -3306,9 +3308,12 @@ class RAGService:
 
         Both MATCH construction and citation building start from this ONE
         list. ``_fts5_match_expressions`` builds the MATCH expression from it
-        -- the full list under ``and``, but a content-token SUBSET under
-        ``and_stopword_trim`` and ``or`` (see that method) -- while
-        ``_keyword_citation_spans`` always locates the citation spans from
+        -- the full list under ``and`` (and so for the shipped
+        ``and_then_prefix``'s PRIMARY), a content-token SUBSET under
+        ``and_stopword_trim``, ``or`` and ``prefix``, and that same subset in
+        the fallbacks of ``and_then_or`` and ``and_then_prefix``, which is
+        where the subset case arises on the default path (see that method)
+        -- while ``_keyword_citation_spans`` always locates the spans from
         the FULL list, so a matched row's citations can cite tokens the
         MATCH itself did not require. They used to tokenize independently
         (per-token quoting on one side, a raw whole-query substring lookup on
@@ -3601,11 +3606,17 @@ class RAGService:
     def _is_fts5_stopword(token: str) -> bool:
         """Whether a raw query token is a function word.
 
-        Consulted by every construction except the full AND (``and``, the
-        pre-TASK-15400 one) -- so it runs on the SHIPPED default path, the
-        content-token AND (``and_stopword_trim``), on the content-token OR
-        (``or`` / ``and_then_or``'s fallback), and on the content-token
-        PREFIX form (``prefix`` / ``and_then_prefix``'s fallback, TASK-15700).
+        Consulted by every FORM except the full AND (``and``, the
+        pre-TASK-15400 one) -- so it runs on the content-token AND
+        (``and_stopword_trim``), on the content-token OR (``or`` /
+        ``and_then_or``'s fallback), and on the content-token PREFIX form
+        (``prefix`` / ``and_then_prefix``'s fallback, TASK-15700).
+
+        On the SHIPPED default path (``and_then_prefix`` since 2026-08-13)
+        that means it is consulted only for sub-legs whose PRIMARY returned
+        zero rows: the default's primary is the full AND, which never
+        consults it. Under the previous default (``and_stopword_trim``) it
+        ran on every search instead.
 
         The prefix form is where trimming matters MOST: ``"the"*`` matches
         "the", "then", "there", "their", "these" -- nearly a whole corpus --
@@ -3966,8 +3977,9 @@ class RAGService:
         list ``_fts5_query_tokens`` returns for the query (not necessarily
         the subset ``_fts5_match_expressions`` required for the MATCH itself
         when a widening form ran -- under the shipped ``and_then_prefix``
-        that is its prefix fallback; see that method). A token is matched as its alphanumeric runs separated by
-        non-alphanumerics ("Obsidian-3" -> ``Obsidian`` then ``3``), which is
+        that is its prefix fallback; see that method). A token is matched as
+        its alphanumeric runs separated by non-alphanumerics
+        ("Obsidian-3" -> ``Obsidian`` then ``3``), which is
         how FTS5 reads a quoted token: a phrase over the runs, adjacency
         required.
 

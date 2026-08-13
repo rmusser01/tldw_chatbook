@@ -58,8 +58,9 @@ type except prompts. `keyword_leg_census` therefore calls the engine's
 `_keyword_search` directly, once per golden query, and counts the queries
 whose target lands in the leg's own top-k. That is the number the spec's
 decision rule maximizes: the control (pre-arc `and`) scores 20 over the 53
-non-negative queries, and the shipped `and_stopword_trim` construction the
-rule picked scores 21.
+non-negative queries, TASK-15400's winner `and_stopword_trim` scores 21, and
+the construction shipped since 2026-08-13 (`and_then_prefix`, by owner
+ruling over the rule's tie-break — see `SearchConfig`) scores 23.
 
 *The control row self-checks before anything else runs — and it is not a
 cache alarm.* Be precise about what that check can and cannot see, because
@@ -357,10 +358,12 @@ ALPHA_COMBO_STRATEGIES: tuple[Strategy, ...] = (
 
 #: The construction sweep's control row — the arc's BEFORE state, named
 #: after the construction rather than "control" so the table reads as what
-#: it is. This was the SHIPPED construction when the sweep ran; since
-#: TASK-15400 landed (2026-08-12) the shipped default is
-#: `and_stopword_trim` and this row is the pre-arc baseline every other row
-#: is read against. It must NOT be re-pointed at the new default: doing so
+#: it is. This was the SHIPPED construction when the sweep ran; the default
+#: has since moved twice (TASK-15400 to `and_stopword_trim`, 2026-08-12;
+#: TASK-15700 to `and_then_prefix`, 2026-08-13), and this row is the pre-arc
+#: baseline every other row is read against under BOTH matrices — which is
+#: exactly why it is pinned to a construction rather than to "whatever
+#: ships". It must NOT be re-pointed at the current default: doing so
 #: would delete the baseline the matrix is compared to and silently collapse
 #: rows 1 and 2 into one measurement.
 CONSTRUCTION_CONTROL_NAME = "and"
@@ -1514,8 +1517,8 @@ def run_fusion_sweep(
         control_name: Which row the report's `control()` resolves to. The
             construction matrix names its control after the PRE-ARC
             construction (`and`, the arc's BEFORE state) rather than
-            "control" — it is not the shipped construction, which is
-            `and_stopword_trim`.
+            "control" — it is deliberately NOT whichever construction
+            currently ships (`and_then_prefix` since 2026-08-13).
         instrument: Record TASK-15400's per-row instrumentation (the
             keyword-leg census and the negative composition). Off for the
             fusion matrix, which never measured either.
