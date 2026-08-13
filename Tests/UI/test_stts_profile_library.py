@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+
+from Tests.UI.background_signals import wait_for_background_signal
 import json
 import sys
 from dataclasses import replace
@@ -3877,7 +3879,9 @@ async def test_unmount_racing_existing_invalidation_joins_once_and_releases_task
         library._voice_bundle_service = bundle_service
         library._active_bundle_handle = handle
         cleanup = asyncio.create_task(library._invalidate_bundle_handle(handle))
-        await started.wait()
+        await wait_for_background_signal(
+            started, cleanup, what="the bundle invalidation starting"
+        )
 
         async def _remove_library() -> None:
             await library.remove()
@@ -3910,7 +3914,9 @@ async def test_completed_invalidation_cannot_clear_a_replacement_task() -> None:
         library, _loaded = await _select_action_profile(app, pilot)
         library._voice_bundle_service = bundle_service
         cleanup = asyncio.create_task(library._invalidate_bundle_handle(handle))
-        await started.wait()
+        await wait_for_background_signal(
+            started, cleanup, what="the bundle invalidation starting"
+        )
         original = library._bundle_invalidation_tasks[handle]
         replacement = asyncio.create_task(asyncio.sleep(60))
         library._bundle_invalidation_tasks[handle] = replacement
@@ -3994,7 +4000,9 @@ async def test_cancelled_handle_cleanup_joins_without_masking_cancellation() -> 
         library, _loaded = await _select_action_profile(app, pilot)
         library._voice_bundle_service = bundle_service
         cleanup = asyncio.create_task(library._invalidate_bundle_handle(handle))
-        await started.wait()
+        await wait_for_background_signal(
+            started, cleanup, what="the bundle invalidation starting"
+        )
         cleanup.cancel()
         release.set()
 

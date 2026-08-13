@@ -27,6 +27,7 @@ from textual.widgets import (
     TextArea,
 )
 
+from Tests.UI.background_signals import wait_for_background_signal
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
@@ -2148,7 +2149,11 @@ async def test_external_vad_worker_cancellation_reaches_underlying_install(
             _vad_only_report(tmp_path),
         )
     )
-    await entered.wait()
+    await wait_for_background_signal(
+        entered,
+        task,
+        what="the external VAD provision entering the underlying install",
+    )
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
