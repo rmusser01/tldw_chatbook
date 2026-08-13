@@ -41,14 +41,21 @@ The delivery contract (every piece is load-bearing):
 
 - **Exactly-once, coalesced.** The in-memory pending registry (spec
   invariant 3: events are the hot path) holds every undelivered settle
-  per conversation; the durable ``FLEET_UNSEEN`` mark is the undelivered
-  bit that survives restart. One wake bundles ALL of a conversation's
+  per conversation; durability is TWO-layered: the per-run
+  ``agent_runs.wake_delivered_at`` ledger
+  (``AgentRunsDB.undelivered_wake_runs`` / ``mark_wake_delivered``) is
+  the exact delivered/undelivered bit, and the conversation-level
+  ``FLEET_UNSEEN`` mark is the cheap staging trigger + indicator the
+  badge/mount-claim key off. One wake bundles ALL of a conversation's
   undelivered completions. Delivered state is committed ONLY after the
-  wake turn was actually accepted: the delivered run ids leave the
-  registry and -- only when nothing undelivered remains -- the mark is
-  cleared through the named seam (``clear_fleet_unseen_completion``).
-  A refused wake changes nothing (retried later); a child settling
-  DURING a wake turn joins the registry and rides the NEXT wake.
+  wake turn was actually accepted: the delivered runs are stamped in the
+  ledger (first-writer-wins), their ids leave the registry, and -- only
+  when nothing undelivered remains -- the mark is cleared through the
+  named seam (``clear_fleet_unseen_completion``). A refused wake
+  changes nothing (retried later); a child settling DURING a wake turn
+  joins the registry and rides the NEXT wake; a pending entry whose run
+  the ledger already shows delivered (a redelivered drain after a
+  restart mid-commit) is dropped at compose time, never re-announced.
 
 - **User wins ties.** A wake defers whenever
   ``controller.wake_user_priority_probe`` reports a user claim -- the
@@ -68,7 +75,7 @@ The delivery contract (every piece is load-bearing):
   mark IS the staged wake: the next Console mount calls
   ``seed_from_marks`` BEFORE the first tab sync can view-clear the
   active conversation's mark, reconstructing the undelivered set from
-  ``agent_runs`` (``undelivered_survivor_runs``). Deliveries are
+  the ledger (``AgentRunsDB.undelivered_wake_runs``). Deliveries are
   serialized -- one wake in flight at a time, app-wide.
 
 - **No new authority.** A woken turn is a normal turn under every
@@ -86,16 +93,11 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
-from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from loguru import logger
 
-from tldw_chatbook.Agents.agent_models import (
-    RUN_SUPERSEDED,
-    TERMINAL_RUN_STATUSES,
-    RunBudget,
-)
+from tldw_chatbook.Agents.agent_models import RunBudget
 from tldw_chatbook.Agents.agent_service import (
     AUTOWAKE_ENABLED_KEY,
     DEFAULT_AUTOWAKE_ENABLED,
@@ -142,25 +144,6 @@ WAKE_NOTICE_TRAILER = (
     "You may act on these results now, or wait for the user's next "
     "message."
 )
-
-#: Backward slop applied to the mark's ``created_at`` when reconstructing
-#: the undelivered set from ``agent_runs`` at mount-claim: the child's
-#: terminal write lands on the same thread strictly BEFORE the mark write,
-#: so the drain's own runs sit fractionally EARLIER than the mark.
-_MARK_CREATED_SLOP_SECONDS = 5.0
-
-
-def _parse_iso(value: Any) -> datetime | None:
-    """Parse either timestamp dialect in play (marks ``+00:00``->``Z``,
-    agent_runs ``%fZ``), returning ``None`` for junk."""
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
 
 def _fenced(text: str) -> str:
     """Fence ``text`` with more backticks than any run it contains, so a
@@ -259,87 +242,6 @@ def compose_wake_notice(
             WAKE_NOTICE_TRAILER,
         ]
     )
-
-
-def undelivered_survivor_runs(
-    runs_db: Any,
-    conversation_id: str,
-    mark_created_at: str | None,
-    *,
-    limit: int = 50,
-) -> list[dict]:
-    """Reconstruct a marked conversation's undelivered survivor runs from
-    ``agent_runs`` alone (the mount-claim path; nothing in-memory
-    survived).
-
-    Two filters, both stated inferences with their boundaries:
-
-    - **survivor, not within-turn**: a child's terminal ``updated_at`` at
-      or after its parent primary run's own terminal ``updated_at``. A
-      within-turn child settles strictly before its parent's terminal
-      write by turn mechanics; the ``>=`` keeps the restart-reconcile
-      case, where one sweep stamps parent and child together. Boundary: a
-      parent later re-stamped by ``supersede_run_tree`` (user retried the
-      turn) moves its ``updated_at`` forward and can shadow a genuine
-      pre-supersede survivor here -- that survivor's live drain already
-      delivered (or toasted) it, so the miss is bounded to the
-      staged-claim path and accepted.
-    - **undelivered, not already handed over**: terminal ``updated_at``
-      no earlier than the mark's stable ``created_at`` (minus
-      ``_MARK_CREATED_SLOP_SECONDS`` -- the drain's own terminal writes
-      land fractionally BEFORE the mark's). An earlier wake's delivery
-      cleared the mark, so anything older than the current mark's birth
-      was delivered under a previous one.
-
-    Args:
-        runs_db: The ``AgentRunsDB`` (or compatible double).
-        conversation_id: The marked conversation.
-        mark_created_at: The ``FLEET_UNSEEN`` mark row's ``created_at``;
-            ``None`` applies no since-when bound (best effort).
-        limit: Newest-runs window to inspect.
-
-    Returns:
-        Matching run row dicts, oldest first (reading order).
-    """
-    try:
-        rows = runs_db.list_runs(
-            conversation_id, agent_kind="subagent", limit=limit
-        )
-    except Exception:  # noqa: BLE001 -- a claim must never break a mount
-        logger.opt(exception=True).warning(
-            "undelivered-survivor listing failed for {conversation_id}",
-            conversation_id=conversation_id,
-        )
-        return []
-    threshold = _parse_iso(mark_created_at)
-    if threshold is not None:
-        threshold -= timedelta(seconds=_MARK_CREATED_SLOP_SECONDS)
-    parents: dict[str, Any] = {}
-    matched: list[dict] = []
-    for row in rows:
-        status = str(row.get("status") or "")
-        if status not in TERMINAL_RUN_STATUSES or status == RUN_SUPERSEDED:
-            continue
-        settled_at = _parse_iso(row.get("updated_at"))
-        if settled_at is None:
-            continue
-        if threshold is not None and settled_at < threshold:
-            continue
-        parent_id = str(row.get("parent_run_id") or "")
-        if not parent_id:
-            continue
-        if parent_id not in parents:
-            try:
-                parents[parent_id] = runs_db.get_run(parent_id)
-            except Exception:  # noqa: BLE001
-                parents[parent_id] = None
-        parent = parents[parent_id]
-        parent_at = _parse_iso((parent or {}).get("updated_at"))
-        if parent_at is None or settled_at < parent_at:
-            continue
-        matched.append(row)
-    matched.reverse()  # list_runs is newest-first; deliver oldest first
-    return matched
 
 
 _WAKE_AUTHORIZATION_KEY = object()
@@ -594,11 +496,14 @@ class ConsoleFleetWakeCoordinator:
 
         ``submit_draft`` returns only once the turn has fully run, so
         ``accepted`` here is strictly after real acceptance -- never
-        "merely scheduled". On acceptance the delivered ids leave the
-        registry, and the durable mark is cleared through the named seam
-        ONLY when nothing undelivered remains for the conversation (a
-        child that settled during this very turn keeps the mark alive and
-        rides the next wake). A refusal or raise commits nothing.
+        "merely scheduled". On acceptance the delivered runs are stamped
+        in the durable per-run ledger (``mark_wake_delivered``,
+        first-writer-wins -- exactly-once across restart), their ids
+        leave the registry, and the durable mark is cleared through the
+        named seam ONLY when nothing undelivered remains for the
+        conversation (a child that settled during this very turn keeps
+        the mark alive and rides the next wake). A refusal or raise
+        commits nothing.
         """
         from tldw_chatbook.Chat.console_chat_models import (
             ConsoleSubmissionOrigin,
@@ -621,6 +526,18 @@ class ConsoleFleetWakeCoordinator:
         finally:
             self._delivering = None
         if accepted:
+            runs_db = self._runs_db()
+            stamp = getattr(runs_db, "mark_wake_delivered", None)
+            if callable(stamp):
+                try:
+                    stamp(delivered_run_ids)
+                except Exception:  # noqa: BLE001 -- a lost stamp risks one
+                    # re-announce at a later claim, never a lost result.
+                    logger.opt(exception=True).warning(
+                        "wake delivery ledger stamp failed for "
+                        "{conversation_id}",
+                        conversation_id=conversation_id,
+                    )
             with self._registry_lock:
                 bucket = self._pending.get(conversation_id)
                 if bucket is not None:
@@ -636,14 +553,19 @@ class ConsoleFleetWakeCoordinator:
     # -- mount claim ----------------------------------------------------------
 
     def seed_from_marks(self) -> int:
-        """Reconstruct pending state from durable marks (mount claim).
+        """Reconstruct pending state from the durable layers (mount claim).
 
         MUST run before the first tab sync of a fresh Console mount: the
         view-clear fires on the first sync whose ACTIVE session carries
         the mark (Task 4's stated ordering hazard), and this read is what
-        turns the mark into a deliverable pending set first. Honours the
-        kill switch itself (the second fire point): OFF seeds nothing and
-        the marks keep driving the indicator only.
+        turns the mark into a deliverable pending set first. The mark
+        names WHICH conversations to claim; the per-run
+        ``wake_delivered_at`` ledger (``AgentRunsDB.undelivered_wake_
+        runs``) is the exact definition of WHAT is still owed -- an
+        earlier wake's deliveries are stamped there and never
+        re-announced, however the timestamps interleave. Honours the kill
+        switch itself (the second fire point): OFF seeds nothing and the
+        marks keep driving the indicator only.
 
         Returns:
             How many conversations gained pending completions.
@@ -653,7 +575,8 @@ class ConsoleFleetWakeCoordinator:
         app = self._app
         service = getattr(app, "conversation_local_marks_service", None)
         runs_db = self._runs_db()
-        if service is None or runs_db is None:
+        undelivered = getattr(runs_db, "undelivered_wake_runs", None)
+        if service is None or not callable(undelivered):
             return 0
         try:
             marked = service.list_marked_conversation_ids(service.FLEET_UNSEEN)
@@ -663,14 +586,13 @@ class ConsoleFleetWakeCoordinator:
         seeded = 0
         for conversation_id in marked:
             try:
-                mark = service.get_mark(conversation_id, service.FLEET_UNSEEN)
+                rows = undelivered(conversation_id)
             except Exception:  # noqa: BLE001
+                logger.opt(exception=True).warning(
+                    "wake ledger read failed for {conversation_id}",
+                    conversation_id=conversation_id,
+                )
                 continue
-            if mark is None:
-                continue
-            rows = undelivered_survivor_runs(
-                runs_db, conversation_id, mark.created_at
-            )
             if not rows:
                 continue
             with self._registry_lock:
@@ -710,9 +632,13 @@ class ConsoleFleetWakeCoordinator:
     ) -> list[dict]:
         """Read the pending runs' rows; synthesize an honest stand-in for
         a row that cannot be read (a wiped runs DB must not strand the
-        pending entry forever)."""
+        pending entry forever). A run the durable ledger already shows
+        wake-delivered (a redelivered drain, or a restart racing the
+        in-memory commit) is DROPPED -- from the returned rows AND from
+        the registry -- rather than re-announced."""
         runs_db = self._runs_db()
         rows: list[dict] = []
+        stale: list[str] = []
         for run_id, status in bucket.items():
             row = None
             if runs_db is not None:
@@ -720,10 +646,21 @@ class ConsoleFleetWakeCoordinator:
                     row = runs_db.get_run(run_id)
                 except Exception:  # noqa: BLE001
                     row = None
+            if row is not None and row.get("wake_delivered_at"):
+                stale.append(run_id)
+                continue
             rows.append(
                 row
                 if row is not None
                 else {"id": run_id, "status": status, "result": None}
             )
+        if stale:
+            with self._registry_lock:
+                pending_bucket = self._pending.get(conversation_id)
+                if pending_bucket is not None:
+                    for run_id in stale:
+                        pending_bucket.pop(run_id, None)
+                    if not pending_bucket:
+                        self._pending.pop(conversation_id, None)
         rows.sort(key=lambda r: str(r.get("updated_at") or ""))
         return rows

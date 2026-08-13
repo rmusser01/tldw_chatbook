@@ -72,7 +72,6 @@ from tldw_chatbook.Chat.console_fleet_wake import (
     AgentWakeAuthorization,
     ConsoleFleetWakeCoordinator,
     compose_wake_notice,
-    undelivered_survivor_runs,
 )
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
@@ -316,11 +315,21 @@ async def test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice(
         # Never the composer's business.
         assert accepted_hook_calls == []
 
-        # Delivered: mark cleared through the named seam, pending drained.
+        # Delivered: mark cleared through the named seam, pending drained,
+        # and the durable per-run ledger stamped (exactly-once survives a
+        # restart because THIS row, not memory, is the delivered bit).
         assert not app.conversation_local_marks_service.has_mark(
             session.id, ConversationLocalMarksService.FLEET_UNSEEN
         )
         assert not controller.fleet_wake.has_pending(session.id)
+        stamped = [
+            run
+            for run in db.list_runs(session.id, agent_kind="subagent")
+            if run.get("wake_delivered_at")
+        ]
+        assert len(stamped) == 1, (
+            "the accepted wake must stamp its delivered run in the ledger"
+        )
     finally:
         chacha.close()
 
@@ -446,6 +455,9 @@ async def test_a_refused_wake_loses_nothing_and_is_retried(tmp_path):
             "a not-ready provider must refuse the wake before any stream"
         )
         assert wake.has_pending(session.id), "a refused wake keeps its pending bit"
+        assert not runs_db.get_run(run_id).get("wake_delivered_at"), (
+            "a refused wake must never stamp the durable delivered ledger"
+        )
         assert app.conversation_local_marks_service.has_mark(
             session.id, ConversationLocalMarksService.FLEET_UNSEEN
         ), "a refused wake must not clear the durable mark"
@@ -463,6 +475,9 @@ async def test_a_refused_wake_loses_nothing_and_is_retried(tmp_path):
         assert not app.conversation_local_marks_service.has_mark(
             session.id, ConversationLocalMarksService.FLEET_UNSEEN
         ), "delivery must clear the mark through the named seam"
+        assert runs_db.get_run(run_id).get("wake_delivered_at"), (
+            "the retried delivery must stamp the ledger"
+        )
     finally:
         chacha.close()
 
@@ -853,9 +868,10 @@ async def test_mount_claim_delivers_a_marked_conversations_result_from_the_db(
     tmp_path,
 ):
     """The second reproduced red, green: nothing in memory survived (the
-    settle happened with Console closed); the mark + agent_runs rows
-    reconstruct the wake. Within-turn children and survivors delivered
-    before the mark's birth stay excluded."""
+    settle happened with Console closed); the mark names the conversation
+    and the durable per-run ``wake_delivered_at`` ledger defines what is
+    still owed. Within-turn children and survivors an earlier wake
+    already stamped stay excluded."""
     chacha, app, runs_db, store, session, gateway, bridge, controller = (
         _controller_rig(tmp_path)
     )
@@ -873,30 +889,18 @@ async def test_mount_claim_delivers_a_marked_conversations_result_from_the_db(
         )
         runs_db.set_status(within_id, "done", "the within-turn answer")
         runs_db.set_status(parent_id, "done", "turn final")
-        # A survivor delivered under an EARLIER mark: a GENUINE survivor
-        # by the parent rule (its own parent's terminal write predates it)
-        # whose settle predates this mark's created_at -- so ONLY the mark
-        # bound can exclude it, which is exactly the pin.
-        old_parent_id = runs_db.create_run(
-            conversation_id=conversation_id, agent_kind="primary"
-        )
-        runs_db.set_status(old_parent_id, "done", "old turn final")
+        # A survivor an EARLIER wake already carried: a genuine survivor
+        # by every timing rule -- ONLY its ledger stamp can exclude it,
+        # which is exactly the pin (a timestamp rule against the mark
+        # could never recover this, per the ledger commit's own record).
         old_id = runs_db.create_run(
             conversation_id=conversation_id,
             agent_kind="subagent",
             task="old job",
-            parent_run_id=old_parent_id,
+            parent_run_id=parent_id,
         )
         runs_db.set_status(old_id, "done", "the already-delivered answer")
-        with runs_db.connection() as conn:
-            conn.execute(
-                "UPDATE agent_runs SET updated_at = ? WHERE id = ?",
-                ("2020-01-01T00:00:10.000000Z", old_parent_id),
-            )
-            conn.execute(
-                "UPDATE agent_runs SET updated_at = ? WHERE id = ?",
-                ("2020-01-01T00:00:20.000000Z", old_id),
-            )
+        assert runs_db.mark_wake_delivered([old_id]) == 1
         app.conversation_local_marks_service.set_mark(
             conversation_id, ConversationLocalMarksService.FLEET_UNSEEN
         )
@@ -921,7 +925,7 @@ async def test_mount_claim_delivers_a_marked_conversations_result_from_the_db(
             "a within-turn child was already delivered by its own turn"
         )
         assert "the already-delivered answer" not in notice, (
-            "a survivor from before this mark's birth was already delivered"
+            "a ledger-stamped survivor was already carried by an earlier wake"
         )
         assert await _settle(
             lambda: not app.conversation_local_marks_service.has_mark(
@@ -932,40 +936,47 @@ async def test_mount_claim_delivers_a_marked_conversations_result_from_the_db(
         chacha.close()
 
 
-def test_undelivered_survivor_runs_classifies_by_parent_and_mark(tmp_path):
-    """Unit pins for the reconstruction rule's four boundaries."""
-    runs_db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    conv = "conv-rule"
-    parent_id = runs_db.create_run(conversation_id=conv, agent_kind="primary")
-    within_id = runs_db.create_run(
-        conversation_id=conv, agent_kind="subagent", parent_run_id=parent_id
+@pytest.mark.asyncio
+async def test_a_pending_run_the_ledger_shows_delivered_is_dropped_not_reannounced(
+    tmp_path,
+):
+    """The restart-race belt: the drain re-delivers (or a mount seeds) a
+    run some earlier wake already stamped in the durable ledger. Compose
+    drops it -- from the notice AND from the registry -- instead of
+    announcing the same result twice."""
+    chacha, app, runs_db, store, session, gateway, bridge, controller = (
+        _controller_rig(tmp_path)
     )
-    runs_db.set_status(within_id, "done", "within")
-    runs_db.set_status(parent_id, "done", "final")
-    survivor_id = runs_db.create_run(
-        conversation_id=conv, agent_kind="subagent", parent_run_id=parent_id
-    )
-    runs_db.set_status(survivor_id, "error", "late failure")
-    orphanless_id = runs_db.create_run(
-        conversation_id=conv, agent_kind="subagent", parent_run_id=None
-    )
-    runs_db.set_status(orphanless_id, "done", "no parent")
-    running_id = runs_db.create_run(
-        conversation_id=conv, agent_kind="subagent", parent_run_id=parent_id
-    )  # still running: not terminal, never bundled
-
-    rows = undelivered_survivor_runs(runs_db, conv, None)
-    ids = [row["id"] for row in rows]
-    assert survivor_id in ids, "a post-parent terminal child is a survivor"
-    assert within_id not in ids, "a pre-parent terminal child is within-turn"
-    assert orphanless_id not in ids, "an unclassifiable (parentless) row is skipped"
-    assert running_id not in ids, "a non-terminal row is never bundled"
-
-    # The mark boundary: a threshold after the survivor's settle excludes it.
-    rows = undelivered_survivor_runs(
-        runs_db, conv, "2099-01-01T00:00:00.000000Z"
-    )
-    assert rows == []
+    try:
+        parent_id, delivered_id = _terminal_subagent_run(
+            runs_db, session.id, result="already announced"
+        )
+        assert runs_db.mark_wake_delivered([delivered_id]) == 1
+        _, fresh_id = _terminal_subagent_run(
+            runs_db,
+            session.id,
+            parent_id=parent_id,
+            result="genuinely new",
+        )
+        wake = controller.fleet_wake
+        wake.on_fleet_drained(
+            _drain(
+                session.id,
+                _survivor(delivered_id, session_id=session.id),
+                _survivor(fresh_id, session_id=session.id),
+            )
+        )
+        assert await _settle(lambda: gateway.payloads)
+        notice = gateway.payloads[0][-1]["content"]
+        assert "genuinely new" in notice
+        assert "already announced" not in notice, (
+            "a ledger-stamped run must never be re-announced"
+        )
+        assert await _settle(lambda: not wake.has_pending(session.id)), (
+            "the stale entry must leave the registry, not strand it"
+        )
+    finally:
+        chacha.close()
 
 
 # ---------------------------------------------------------------------------
