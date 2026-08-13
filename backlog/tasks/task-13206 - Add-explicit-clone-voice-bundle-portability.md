@@ -1,10 +1,10 @@
 ---
 id: TASK-13206
 title: Add explicit clone voice bundle portability
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-09 17:39'
-updated_date: '2026-08-11 22:06'
+updated_date: '2026-08-13 07:33'
 labels:
   - tts
   - audio-cpp
@@ -19,8 +19,10 @@ references:
   - backlog/decisions/051-private-tts-clone-reference-assets.md
 documentation:
   - Docs/superpowers/specs/2026-08-09-audio-cpp-guided-model-setup-design.md
-  - Docs/superpowers/specs/2026-08-11-audio-cpp-clone-voice-bundle-portability-design.md
-  - Docs/superpowers/plans/2026-08-11-task-13206-clone-voice-bundle-portability.md
+  - >-
+    Docs/superpowers/specs/2026-08-11-audio-cpp-clone-voice-bundle-portability-design.md
+  - >-
+    Docs/superpowers/plans/2026-08-11-task-13206-clone-voice-bundle-portability.md
 priority: high
 ---
 
@@ -32,22 +34,23 @@ Add explicit warning-gated export and hostile-input-safe import for portable clo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Ordinary profile export keeps reference-free profiles on wire v1 and exports reference-bearing profiles as sanitized wire v2 with an explicit reference-omitted marker and no audio, transcript, local-oracle digest, path, assignment, endpoint, generated config, or private runtime state.
-- [ ] #2 Explicit voice-bundle export requires a plaintext/sensitive-data warning and creates only the versioned allowlisted ZIP entries manifest.json, profile.json, reference.wav, and reference.txt with bounded metadata, exact sizes, and canonical SHA-256 checksums.
-- [ ] #3 Bundle data contains the sanitized profile selection and generic user declaration only—never model weights, character/persona data, assignments, defaults, credentials, origins, recipe code, process state, or unnecessary timestamps.
-- [ ] #4 Import validates the unchanged source archive before storage and rejects encryption, duplicate or normalized-name collisions, absolute/traversal/separator paths, symlinks/special files, unknown or missing entries, unsupported compression, size/count/ratio limit breaches, malformed content, and checksum mismatch.
-- [ ] #5 Validation and extraction use a bounded owner-private staging directory without trusting archive paths, clean up on every terminal path, and describe checksums only as byte integrity rather than authenticity, speaker identity, signature, or consent proof.
-- [ ] #6 Import displays exact UUID, name, recipe, and model dependency conflicts for explicit user resolution; it never overwrites, assigns, changes a default, or retargets automatically, and may store a valid unresolved bundle only as inactive Needs compatible model.
-- [ ] #7 Hostile-archive, source-mutation, quota, collision, old-reader, missing-model, cleanup, privacy, and deterministic round-trip tests pass, and manual UAT proves ordinary sanitized export versus explicit warned bundle transfer.
-- [ ] #8 The profile store advances from every supported older schema to v4 through validated private candidates with exact optional recipe provenance and retained pre-v3/pre-v4 backups; pre-publication failure leaves the active store unchanged, while the non-cancellable publication protocol completes a valid v4 store or durably restores the prior store and retains bounded recovery artifacts if total storage failure prevents both.
-- [ ] #9 Newly saved and imported clone references carry exact recipe/model requirements through availability and service-owned runtime admission; recipe/model/config mismatch blocks before provider work and post-ready generation drift blocks before private materialization or synthesis, while migrated legacy references remain usable with a visible provenance-unavailable advisory and cannot be bundled until regenerated.
-- [ ] #10 An app-owned bounded inspection service retains private single-use source authority while the UI receives only safe review facts; commit revalidates source/dependency evidence and performs exact reuse or conflict recheck plus profile/recipe/reference creation in one serialized repository transaction.
-- [ ] #11 Import/export/migration work is retained and joined across cancellation and shutdown, performs no adapter acquisition, audio.cpp launch, network, or Settings mutation during inspection, fails closed without verified owner-private containment, and exposes bounded accessible recovery without leaking private archive/reference values.
-- [ ] #12 Provenance-bearing profile edits preserve exact recipe/model invariants, bundle export never overwrites an existing destination, and inactive blockers plus provenance-unavailable advisories expose truthful immutable action projections across the profile library and assignment consumers.
+- [x] #1 Ordinary profile export keeps reference-free profiles on wire v1 and exports reference-bearing profiles as sanitized wire v2 with an explicit reference-omitted marker and no audio, transcript, local-oracle digest, path, assignment, endpoint, generated config, or private runtime state.
+- [x] #2 Explicit voice-bundle export requires a plaintext/sensitive-data warning and creates only the versioned allowlisted ZIP entries manifest.json, profile.json, reference.wav, and reference.txt with bounded metadata, exact sizes, and canonical SHA-256 checksums.
+- [x] #3 Bundle data contains the sanitized profile selection and generic user declaration only—never model weights, character/persona data, assignments, defaults, credentials, origins, recipe code, process state, or unnecessary timestamps.
+- [x] #4 Import validates the unchanged source archive before storage and rejects encryption, duplicate or normalized-name collisions, absolute/traversal/separator paths, symlinks/special files, unknown or missing entries, unsupported compression, size/count/ratio limit breaches, malformed content, and checksum mismatch.
+- [x] #5 Validation and extraction use a bounded owner-private staging directory without trusting archive paths, clean up on every terminal path, and describe checksums only as byte integrity rather than authenticity, speaker identity, signature, or consent proof.
+- [x] #6 Import displays exact UUID, name, recipe, and model dependency conflicts for explicit user resolution; it never overwrites, assigns, changes a default, or retargets automatically, and may store a valid unresolved bundle only as inactive Needs compatible model.
+- [x] #7 Hostile-archive, source-mutation, quota, collision, old-reader, missing-model, cleanup, privacy, and deterministic round-trip tests pass, and manual UAT proves ordinary sanitized export versus explicit warned bundle transfer.
+- [x] #8 The profile store advances from every supported older schema to v4 through validated private candidates with exact optional recipe provenance and retained pre-v3/pre-v4 backups; pre-publication failure leaves the active store unchanged, while the non-cancellable publication protocol completes a valid v4 store or durably restores the prior store and retains bounded recovery artifacts if total storage failure prevents both.
+- [x] #9 Newly saved and imported clone references carry exact recipe/model requirements through availability and service-owned runtime admission; recipe/model/config mismatch blocks before provider work and post-ready generation drift blocks before private materialization or synthesis, while migrated legacy references remain usable with a visible provenance-unavailable advisory and cannot be bundled until regenerated.
+- [x] #10 An app-owned bounded inspection service retains private single-use source authority while the UI receives only safe review facts; commit revalidates source/dependency evidence and performs exact reuse or conflict recheck plus profile/recipe/reference creation in one serialized repository transaction.
+- [x] #11 Import/export/migration work is retained and joined across cancellation and shutdown, performs no adapter acquisition, audio.cpp launch, network, or Settings mutation during inspection, fails closed without verified owner-private containment, and exposes bounded accessible recovery without leaking private archive/reference values.
+- [x] #12 Provenance-bearing profile edits preserve exact recipe/model invariants, bundle export never overwrites an existing destination, and inactive blockers plus provenance-unavailable advisories expose truthful immutable action projections across the profile library and assignment consumers.
 <!-- AC:END -->
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 ADR required: no new ADR
 
 ADR path: `backlog/decisions/028-character-tts-generation-profile-ownership.md`, `backlog/decisions/029-local-private-data-boundary.md`, `backlog/decisions/051-private-tts-clone-reference-assets.md`
@@ -62,9 +65,11 @@ Reason: ADR-051 already owns clone-reference storage, migration, privacy, runtim
 6. Derive pure dependency truth and enforce pre-provider, adapter-preflight, and post-ready generation gates.
 7. Extend the existing Voice Profile library and reuse inactive/advisory action truth in Personas assignment.
 8. Complete privacy/lifecycle testing, static/full verification, two-launch isolated UAT, docs, review, and closeout.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 - Implemented sanitized wire-v2 export, strict warning-gated four-entry voice
   bundles, hostile-input validation, inactive conflict recovery, exact
   dependency admission, schema-v4 migration/recovery, and service-owned
@@ -106,9 +111,12 @@ Reason: ADR-051 already owns clone-reference storage, migration, privacy, runtim
   sync, diff-check, and task-ID uniqueness all passed. Relevant inventories
   passed 88 tests; the remaining two persistent-diagnostic census failures
   reproduced on exact `f7fe006ca`.
-- Status remains **In Progress** until the fresh independent final review is
-  accepted. Acceptance criteria remain unchecked until that evidence is
-  available; the repository-wide baseline failures are explicitly delegated
-  to the follow-up work rather than hidden or relabeled.
+- Independent final review approved exact evidence HEAD `21673c09f`; all 12
+  acceptance criteria and the repository Definition of Done are supported by
+  the linked automated, static, privacy, lifecycle, migration, isolated UAT,
+  audible UAT, rebase, and exact-base classification evidence. The remaining
+  repository-wide baseline failures are preserved for follow-up rather than
+  hidden or relabeled.
 
 Detailed test-first steps, file ownership, commands, review checkpoints, and commit boundaries are in `Docs/superpowers/plans/2026-08-11-task-13206-clone-voice-bundle-portability.md`.
+<!-- SECTION:NOTES:END -->
