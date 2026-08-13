@@ -31,7 +31,7 @@ class PersonaProfileEditorWidget(Container):
     """ds-field-row form: name, description, system prompt, personality
     traits, mode, and enabled toggle."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonaProfileEditorWidget {
         width: 100%;
         height: 100%;

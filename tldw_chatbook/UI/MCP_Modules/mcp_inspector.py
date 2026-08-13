@@ -718,7 +718,7 @@ class MCPInspector(Vertical):
     # its Close button); no-op otherwise.
     BINDINGS = [Binding("escape", "close_test_panel", "Close test panel", show=False)]
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     MCPInspector {
         width: 3fr;
         min-width: 28;

@@ -325,7 +325,7 @@ def _tool_column_text(row: PermRow) -> str:
 class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Permissions mode: kill switch, matrix, policy preview."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     MCPPermissionsMode {
         width: 1fr;
         height: 100%;

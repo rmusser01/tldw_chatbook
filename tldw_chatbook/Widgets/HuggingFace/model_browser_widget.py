@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 class HuggingFaceModelBrowser(Container):
     """Main widget for browsing and downloading HuggingFace GGUF models."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     HuggingFaceModelBrowser {
         height: 100%;
         layout: vertical;

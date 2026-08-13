@@ -72,7 +72,7 @@ class DownloadRequestEvent(Message):
 class ModelCardViewer(Container):
     """Widget for viewing model details and selecting files to download."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ModelCardViewer {
         height: 1fr;
         layout: vertical;

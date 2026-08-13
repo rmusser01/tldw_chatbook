@@ -52,7 +52,7 @@ class DownloadItem:
 class DownloadManager(Container):
     """Widget for managing model downloads with progress tracking."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     DownloadManager {
         height: 1fr;
         layout: vertical;

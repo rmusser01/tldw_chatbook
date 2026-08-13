@@ -180,7 +180,7 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
     never inherited that guard).
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     MCPRail {
         width: 3fr;
         min-width: 24;

@@ -284,7 +284,7 @@ class LLMManagementWindow(Container):
         get a second, correctly-ordered chance.
         """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     LLMManagementWindow {
         layout: horizontal;
         height: 100%;

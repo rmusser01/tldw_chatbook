@@ -259,7 +259,7 @@ def _outcome_text(entry: dict[str, Any]) -> str:
 class MCPAuditMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Audit mode: execution-log table, filters, empty state."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     MCPAuditMode {
         width: 1fr;
         height: 100%;

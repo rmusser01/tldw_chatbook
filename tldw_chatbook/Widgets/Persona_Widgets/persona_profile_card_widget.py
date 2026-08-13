@@ -22,7 +22,7 @@ class PersonaProfileCardWidget(Container):
 
     # Structure only: colors come from the app stylesheet ($ds-* tokens do not
     # resolve in bare-App harnesses, so DEFAULT_CSS must not reference them).
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonaProfileCardWidget {
         width: 100%;
         height: 100%;

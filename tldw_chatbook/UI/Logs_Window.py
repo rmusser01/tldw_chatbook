@@ -111,7 +111,7 @@ def _display_message(record: LogRecord) -> str:
 class LogsWindow(Container):
     """Logs destination: filter bar, log view, status line, action bar."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     LogsWindow {
         layout: vertical;
     }

@@ -72,7 +72,7 @@ class PersonasDictionaryTryItWidget(Vertical):
         Binding("ctrl+enter", "run_preview", "Run preview", show=False, priority=True),
     ]
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasDictionaryTryItWidget {
         height: auto;
         max-height: 60%;

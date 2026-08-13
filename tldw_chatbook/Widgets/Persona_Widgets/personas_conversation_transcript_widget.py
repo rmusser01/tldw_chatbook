@@ -25,7 +25,7 @@ class PersonasConversationTranscriptWidget(Container):
     # scrollable in conversation view - focus auto-scroll then hid the action
     # buttons. 1fr resolves against the viewport MINUS the actions row, so
     # the pair exactly fills the viewport like the pre-scroll layout did.
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasConversationTranscriptWidget {
         width: 100%;
         height: 1fr;

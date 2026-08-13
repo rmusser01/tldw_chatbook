@@ -77,7 +77,7 @@ def make_progress_callback(
 class ModelInstallProgress(Widget):
     """Show the current phase and determinate transfer/hash progress."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ModelInstallProgress {
         height: auto;
     }
