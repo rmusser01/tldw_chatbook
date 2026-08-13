@@ -10,6 +10,7 @@ from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -95,12 +96,21 @@ def resolve_assistant_identity_label(
         ``Character: <value>``, ``Persona: <value>``, or the generic
         ``Assistant: General`` fallback.
     """
-    character_text = _clean(character, "")
+    character_text = sanitize_character_display_label(
+        character,
+        max_characters=180,
+    )
     if character_text:
         return f"Character: {character_text}"
 
     assistant_kind_text = _clean(assistant_kind, "").lower()
-    persona_text = _clean(assistant_name, "") or _clean(assistant_id, "")
+    persona_text = sanitize_character_display_label(
+        assistant_name,
+        max_characters=180,
+    ) or sanitize_character_display_label(
+        assistant_id,
+        max_characters=180,
+    )
     if assistant_kind_text == "persona" and persona_text:
         return f"Persona: {persona_text}"
     return "Assistant: General"

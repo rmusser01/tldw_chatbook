@@ -3326,9 +3326,9 @@ async def test_console_composer_status_renders_session_metadata_as_plain_text():
         composer.sync_session_data(
             ChatSessionData(
                 tab_id="metadata",
-                title="[red]Injected[/red]",
+                title="[red]Injected[/red]\n\tforged title",
                 runtime_backend="[blue]server[/blue]",
-                assistant_id="[green]persona[/green]",
+                assistant_id="[green]persona[/green]\n\tforged assistant",
                 scope_type="workspace",
                 workspace_id="[yellow]workspace[/yellow]",
             )
@@ -3343,6 +3343,10 @@ async def test_console_composer_status_renders_session_metadata_as_plain_text():
         assert "[blue]server[/blue]" in plain
         assert "[green]persona[/green]" in plain
         assert "[yellow]workspace[/yellow]" in plain
+        assert "\n" not in plain
+        assert "\t" not in plain
+        assert "forged title" in plain
+        assert "forged assistant" in plain
 
 
 @pytest.mark.asyncio

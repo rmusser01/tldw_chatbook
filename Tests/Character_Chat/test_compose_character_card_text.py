@@ -106,6 +106,22 @@ def test_interior_whitespace_in_a_real_value_is_untouched():
     assert out == "Example dialogue:\n<START>\n  Vex: Try me.\n\nVex: Again?"
 
 
+def test_terminal_unsafe_character_text_remains_exact_in_prompt_composition():
+    raw_name = "Nyx\n\tAdmin\x00[/bold]"
+    raw_description = "Keeps\u200b exact lore."
+
+    out = compose_character_card_text(
+        name=raw_name,
+        system_prompt="You are {{character}}.",
+        description=raw_description,
+    )
+
+    assert out == (
+        f"You are {raw_name}.\n\n"
+        f"Description: {raw_description}"
+    )
+
+
 def test_leading_and_trailing_whitespace_around_a_real_value_still_trims():
     """A real value with incidental leading/trailing whitespace around it
     (as opposed to a whitespace-ONLY value) keeps composing the same way it

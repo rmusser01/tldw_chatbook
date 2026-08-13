@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from rich.markup import escape as escape_markup
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -20,6 +22,11 @@ from tldw_chatbook.Chat.console_switcher_state import (
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
 )
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+
+
+_SWITCHER_TITLE_MAX_CHARACTERS = 500
+_SWITCHER_SUBTITLE_MAX_CHARACTERS = 500
 
 
 #: Debounce for the search `Input` -- mirrors the console picker family's
@@ -144,19 +151,27 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         else:
             buttons = []
             for index, entry in enumerate(self._entries):
+                display_title = sanitize_character_display_label(
+                    entry.title,
+                    max_characters=_SWITCHER_TITLE_MAX_CHARACTERS,
+                ) or "Untitled conversation"
+                display_subtitle = sanitize_character_display_label(
+                    entry.subtitle,
+                    max_characters=_SWITCHER_SUBTITLE_MAX_CHARACTERS,
+                )
                 label = (
-                    entry.title
-                    if not entry.subtitle
-                    else f"{entry.title}\n  {entry.subtitle}"
+                    display_title
+                    if not display_subtitle
+                    else f"{display_title}\n  {display_subtitle}"
                 )
                 button = Button(
-                    label,
+                    Text(label),
                     id=f"console-switcher-result-{index}",
                     classes="console-switcher-result",
                     compact=True,
                 )
                 button.set_class(entry.is_active, "console-switcher-result-active")
-                button.tooltip = f"Switch to {entry.title}"
+                button.tooltip = escape_markup(f"Switch to {display_title}")
                 buttons.append(button)
             await results.mount_all(buttons)
 

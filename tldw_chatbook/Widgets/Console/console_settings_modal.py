@@ -60,6 +60,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 from tldw_chatbook.model_capabilities import is_vision_capable
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 from .console_context_controls import (
@@ -2421,7 +2422,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         return "None"
 
     def _identity_current_label(self) -> str:
-        character = self._settings.character_label.strip()
+        character = sanitize_character_display_label(
+            self._settings.character_label,
+            max_characters=180,
+        )
         return f"Character: {character}" if character else "Assistant: General"
 
     @staticmethod

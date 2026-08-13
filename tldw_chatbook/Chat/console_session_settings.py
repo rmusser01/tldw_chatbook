@@ -28,6 +28,7 @@ from tldw_chatbook.Chat.provider_readiness import (
 from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 
 NATIVE_CONSOLE_PROVIDER_KEYS = DIRECT_CONSOLE_PROVIDER_KEYS
@@ -769,7 +770,10 @@ def build_console_settings_summary_state(
     elif settings.thinking_effort:
         sampling_parts.append(f"thinking {settings.thinking_effort}")
 
-    character_label = _string_value(settings.character_label)
+    character_label = sanitize_character_display_label(
+        settings.character_label,
+        max_characters=180,
+    )
     identity_row = (
         f"Character: {character_label}" if character_label else "Assistant: General"
     )

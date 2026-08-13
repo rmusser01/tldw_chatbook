@@ -134,6 +134,23 @@ def test_valid_attachment_is_returned_but_stripped_before_character_persistence(
     assert stored["extensions"] == {"unrelated/example": {"kept": True}}
 
 
+def test_terminal_unsafe_character_fields_persist_exactly_with_tts_identity(
+    db_instance: CharactersRAGDB,
+) -> None:
+    raw_name = "Nyx\n\tAdmin\x00[/bold]"
+    raw_description = "Lore\u200b stays exact."
+    card = _card(name=raw_name, attachment=_valid_attachment())
+    card["data"]["description"] = raw_description
+
+    outcome = _detailed_import()(db_instance, json.dumps(card).encode())
+
+    assert outcome is not None
+    assert outcome.portable_profile == _portable_profile()
+    stored = db_instance.get_character_card_by_id(outcome.character_id)
+    assert stored["name"] == raw_name
+    assert stored["description"] == raw_description
+
+
 def test_duplicate_name_returns_reused_outcome_without_mutating_existing_card(
     db_instance: CharactersRAGDB,
 ) -> None:

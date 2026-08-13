@@ -880,6 +880,32 @@ def test_summary_state_renders_character_or_generic_assistant_identity() -> None
     assert generic.identity_row == "Assistant: General"
 
 
+def test_summary_state_projects_character_identity_to_one_line_without_mutating_settings() -> None:
+    raw_name = "Nyx\n\tAdmin\x00[/bold]"
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        character_label=raw_name,
+    )
+
+    summary = build_console_settings_summary_state(
+        settings,
+        ConsoleSettingsContextEstimate(
+            used_tokens=12,
+            token_limit=4096,
+            label="12 / 4k",
+        ),
+        ConsoleSettingsReadiness(
+            label="Ready",
+            detail="Ready.",
+            native_send_supported=True,
+        ),
+    )
+
+    assert summary.identity_row == "Character: Nyx Admin?[/bold]"
+    assert settings.character_label == raw_name
+
+
 def test_legacy_identity_settings_helper_ignores_unknown_keys_without_mutation() -> (
     None
 ):

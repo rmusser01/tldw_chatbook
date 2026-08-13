@@ -165,6 +165,28 @@ async def test_tab_tooltip_escapes_markup_in_title() -> None:
 
 
 @pytest.mark.asyncio
+async def test_session_title_surfaces_project_control_whitespace_to_one_line() -> None:
+    app = TabStripHost()
+    raw_title = "Chat with Nyx\n\tAdmin\x00[/bold]"
+    session = ConsoleChatSession(title=raw_title, id="s1")
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        surface = app.query_one(ConsoleSessionSurface)
+        await surface.sync_sessions(sessions=[session], active_session_id="s1")
+        await pilot.pause()
+
+        tab = app.query_one("#console-session-tab-s1", Button)
+        title = app.query_one("#console-transcript-title").renderable
+        assert "\n" not in str(tab.label)
+        assert "\t" not in str(tab.label)
+        assert "Chat with Nyx Admi" in str(tab.label)
+        assert "\n" not in str(title)
+        assert "\t" not in str(title)
+        assert "Nyx Admin?[/bold]" in str(title)
+        assert session.title == raw_title
+
+
+@pytest.mark.asyncio
 async def test_middle_click_on_tab_presses_its_close_button() -> None:
     app = TabStripHost()
     async with app.run_test(size=(80, 24)) as pilot:

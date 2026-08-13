@@ -16,7 +16,11 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Static
 
-from ...UI.character_display_text import sanitize_character_display_text
+from ...UI.character_display_text import (
+    sanitize_character_display_items,
+    sanitize_character_display_label,
+    sanitize_character_display_text,
+)
 from .personas_character_tts_widget import PersonasCharacterTTSWidget
 from .personas_pane_messages import EditCharacterRequested
 
@@ -24,6 +28,7 @@ _CARD_NAME_MAX_CHARACTERS = 200
 _CARD_LONG_FIELD_MAX_CHARACTERS = 20_000
 _CARD_METADATA_MAX_CHARACTERS = 1_000
 _CARD_GREETING_PREVIEW_MAX_CHARACTERS = 5_000
+_CARD_COLLECTION_MAX_ITEMS = 50
 
 
 class PersonasCharacterCardWidget(Container):
@@ -146,13 +151,16 @@ class PersonasCharacterCardWidget(Container):
             value: object,
             *,
             max_characters: int = _CARD_LONG_FIELD_MAX_CHARACTERS,
+            single_line: bool = False,
         ) -> None:
             widget = self.query_one(f"#personas-character-card-{suffix}", Static)
             label = labels.get(suffix)
-            display_value = sanitize_character_display_text(
-                value,
-                max_characters=max_characters,
+            sanitizer = (
+                sanitize_character_display_label
+                if single_line
+                else sanitize_character_display_text
             )
+            display_value = sanitizer(value, max_characters=max_characters)
             if label is not None:
                 # Label inline with the value: "Name: Detective Sam". Rows
                 # with no value are hidden outright - a bare "Label:" line is
@@ -168,6 +176,7 @@ class PersonasCharacterCardWidget(Container):
             "name",
             record.get("name") or "Unnamed Character",
             max_characters=_CARD_NAME_MAX_CHARACTERS,
+            single_line=True,
         )
         _set("description", record.get("description") or "")
         _set("personality", record.get("personality") or "")
@@ -191,22 +200,25 @@ class PersonasCharacterCardWidget(Container):
             record.get("character_version", record.get("version", "1.0")) or "",
             max_characters=_CARD_METADATA_MAX_CHARACTERS,
         )
-        tags = record.get("tags") or []
-        tags_text = ", ".join(
-            sanitize_character_display_text(
-                tag,
-                max_characters=_CARD_METADATA_MAX_CHARACTERS,
-            )
-            for tag in tags
+        tags = sanitize_character_display_items(
+            record.get("tags"),
+            max_items=_CARD_COLLECTION_MAX_ITEMS,
+            max_item_characters=_CARD_METADATA_MAX_CHARACTERS,
+            max_total_characters=_CARD_LONG_FIELD_MAX_CHARACTERS,
+            single_line=True,
         )
+        tags_text = ", ".join(tags)
         _set(
             "tags",
             f"Tags: {tags_text}" if tags else "Tags: none",
             max_characters=_CARD_LONG_FIELD_MAX_CHARACTERS,
         )
-        greetings = [
-            greeting for greeting in (record.get("alternate_greetings") or [])
-        ]
+        greetings = sanitize_character_display_items(
+            record.get("alternate_greetings"),
+            max_items=_CARD_COLLECTION_MAX_ITEMS,
+            max_item_characters=_CARD_GREETING_PREVIEW_MAX_CHARACTERS,
+            max_total_characters=_CARD_LONG_FIELD_MAX_CHARACTERS,
+        )
         _set(
             "alt-greetings",
             f"Alternate greetings: {len(greetings)}",

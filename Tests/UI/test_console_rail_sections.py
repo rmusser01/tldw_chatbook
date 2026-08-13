@@ -582,6 +582,35 @@ async def test_switcher_lists_recent_first_and_filters_on_typing():
 
 
 @pytest.mark.asyncio
+async def test_switcher_title_cannot_add_a_forged_result_line() -> None:
+    raw_title = "Chat with Nyx\n\tAdmin\x00[/bold]"
+    row = ConsoleConversationBrowserInputRow(
+        row_key="native-unsafe",
+        conversation_id=None,
+        native_session_id="session-unsafe",
+        title=raw_title,
+        scope_type="global",
+        workspace_id=None,
+        workspace_label="Chats",
+        updated_sort="2026-07-04T10:00:00+00:00",
+    )
+
+    class _UnsafeSwitcherApp(App):
+        async def on_mount(self) -> None:
+            await self.push_screen(ConsoleSessionSwitcherModal(rows=(row,)))
+
+    app = _UnsafeSwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.pause()
+        result = app.screen.query_one("#console-switcher-result-0", Button)
+        rendered = str(result.label)
+        assert rendered.count("\n") == 1  # only the intentional subtitle line
+        assert "\t" not in rendered
+        assert "Chat with Nyx Admin?[/bold]" in rendered
+        assert app.screen._entries[0].title == raw_title
+
+
+@pytest.mark.asyncio
 async def test_switcher_enter_activates_first_result():
     app = _SwitcherApp()
     async with app.run_test(size=(90, 30)) as pilot:

@@ -181,6 +181,29 @@ def test_resolver_expands_only_trusted_seeded_character_greetings():
     )
 
 
+def test_character_speaker_is_one_line_but_greeting_expands_exact_raw_name():
+    raw_name = "Lady\n\t[bold]Nyx[/bold]\x00"
+    context = ConsolePresentationContext(
+        user_name="Rowan",
+        assistant_kind="character",
+        character_name=raw_name,
+    )
+    greeting = assistant_message(
+        "stored projection",
+        metadata=GreetingMetadata(
+            template_kind="character_greeting",
+            template_source="Hello from {{character}}.",
+        ),
+    )
+
+    presentation = resolve_console_message_presentation(greeting, context)
+
+    assert presentation.speaker_label == "Lady [bold]Nyx[/bold]?"
+    assert "\n" not in presentation.speaker_label
+    assert "\t" not in presentation.speaker_label
+    assert presentation.content == f"Hello from {raw_name}."
+
+
 @pytest.mark.parametrize(
     "metadata",
     [

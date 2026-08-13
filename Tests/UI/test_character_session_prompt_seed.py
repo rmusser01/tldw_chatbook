@@ -16,9 +16,10 @@ below, which is the whole point of the shared function.
 """
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from textual.content import Content
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -286,6 +287,30 @@ async def test_character_picker_new_chat_seeds_template_provenance(monkeypatch):
     greeting = store.messages_for_session(session.id)
     assert len(greeting) == 1
     assert greeting[0].metadata.template_source == "Hello, {{user}}."
+
+
+@pytest.mark.asyncio
+async def test_character_picker_keeps_raw_identity_but_sanitizes_notification(monkeypatch):
+    raw_name = "Nyx\n\tAdmin\x00[/bold]"
+    card = _roleplay_card(name=raw_name)
+    screen = _character_screen(monkeypatch, card)
+    monkeypatch.setattr(screen, "_fetch_character_card_for_avatar", lambda _id: card)
+    notify = MagicMock()
+    monkeypatch.setattr(screen.app_instance, "notify", notify)
+
+    await screen._apply_console_character_choice_async(
+        ConsoleCharacterChoice(character_id=7, name=raw_name, placement="new")
+    )
+
+    store = screen._ensure_console_chat_store()
+    session = store.switch_session(store.active_session_id)
+    visible_notification = Content.from_markup(notify.call_args.args[0]).plain
+    assert visible_notification == "Started a new chat with Nyx Admin?[/bold]."
+    assert "\n" not in visible_notification
+    assert "\t" not in visible_notification
+    assert session.character_name == raw_name
+    assert session.title == f"Chat with {raw_name}"
+    assert raw_name in session.settings.system_prompt
 
 
 @pytest.mark.asyncio

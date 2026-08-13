@@ -411,6 +411,23 @@ async def test_sync_tick_refreshes_avatar(console_screen_with_db):
     assert "Ada" in str(name.renderable)
 
 
+@pytest.mark.asyncio
+async def test_avatar_caption_projects_raw_character_name_to_one_line(
+    console_screen_with_db,
+):
+    _app, screen, db = console_screen_with_db
+    raw_name = "Nyx\n\tAdmin\x00[/bold]"
+    char_id = db.add_character_card({"name": raw_name})
+    _set_active_console_character(screen, char_id, raw_name)
+
+    await screen._refresh_active_character_avatar_if_scope_changed()
+
+    caption = screen.query_one("#console-character-name")
+    assert str(caption.renderable) == "Nyx Admin?[/bold]"
+    assert screen._active_character_avatar_name == raw_name
+    assert screen._session._active_native_console_session().character_name == raw_name
+
+
 # --- Whole-branch review fixes (P3c) -----------------------------------------
 
 

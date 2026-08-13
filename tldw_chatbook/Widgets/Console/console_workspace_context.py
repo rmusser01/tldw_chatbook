@@ -32,6 +32,7 @@ from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 
 class ConsoleBrowserSearchInput(Input):
@@ -163,7 +164,10 @@ def wrap_console_conversation_title(title: str, budget: int) -> tuple[str, ...]:
         still overflows two lines.
     """
     budget = max(_MIN_TITLE_WRAP_BUDGET, int(budget))
-    remaining = str(title).strip() or _UNTITLED_CONVERSATION
+    remaining = sanitize_character_display_label(
+        title,
+        max_characters=1_000,
+    ) or _UNTITLED_CONVERSATION
     lines: list[str] = []
     while remaining:
         if len(lines) == _TITLE_WRAP_MAX_LINES - 1:
@@ -1700,7 +1704,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     @staticmethod
     def _conversation_title(title: str) -> str:
         """Return a readable conversation label."""
-        return str(title).strip() or _UNTITLED_CONVERSATION
+        return sanitize_character_display_label(
+            title,
+            max_characters=1_000,
+        ) or _UNTITLED_CONVERSATION
 
     def _browser_title_budget(self) -> int:
         """Cells available to grouped-browser row text."""

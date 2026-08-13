@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 import toml
 from loguru import logger
 from rich.markup import escape as escape_markup
+from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -239,6 +240,7 @@ from ...Chat.console_fleet_attention import (
     fleet_unseen_conversation_ids,
 )
 from ...Chat.console_glyphs import GLYPH_VOICE_WORKING
+from ...UI.character_display_text import sanitize_character_display_label
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -9627,7 +9629,14 @@ class ChatScreen(BaseAppScreen):
             self._fetch_character_card_for_avatar, choice.character_id
         )
         if card is None:
-            self.app.notify(f"Could not load {choice.name}.", severity="error")
+            display_name = sanitize_character_display_label(
+                choice.name,
+                max_characters=180,
+            ) or "that character"
+            self.app.notify(
+                f"Could not load {escape_markup(display_name)}.",
+                severity="error",
+            )
             return
         # cubic PR #1153 P1: the store lives on the SCREEN behind a lazy
         # accessor -- `app_instance.console_chat_store` is always None, so
@@ -9648,6 +9657,11 @@ class ChatScreen(BaseAppScreen):
             choice.name,
             user_name=effective_name,
         )
+        display_name = sanitize_character_display_label(
+            seed.name,
+            max_characters=180,
+        ) or "that character"
+        notification_name = escape_markup(display_name)
         if choice.placement == "new":
             # cubic PR #1153 P1: the card's system prompt was computed and
             # discarded, leaving the new chat on the default prompt. Mirror
@@ -9684,7 +9698,7 @@ class ChatScreen(BaseAppScreen):
             # `_sync_native_console_chat_ui()` below never touches the
             # temporary chip (see `_sync_console_temporary_chip`).
             self._sync_console_temporary_chip()
-            self.app.notify(f"Started a new chat with {seed.name}.")
+            self.app.notify(f"Started a new chat with {notification_name}.")
         else:
             if not self._session._swap_console_session_character(
                 store,
@@ -9693,7 +9707,7 @@ class ChatScreen(BaseAppScreen):
                 global_default=global_name,
             ):
                 return
-            self.app.notify(f"This chat now uses {seed.name}.")
+            self.app.notify(f"This chat now uses {notification_name}.")
         # cubic PR #1153 P2: this refresher is async -- calling it without
         # awaiting produced a never-run coroutine (and a RuntimeWarning).
         await self._sync_native_console_chat_ui()
@@ -9914,7 +9928,13 @@ class ChatScreen(BaseAppScreen):
             )
             try:
                 self.query_one("#console-character-name", Static).update(
-                    self._active_character_avatar_name or "No character in this chat"
+                    Text(
+                        sanitize_character_display_label(
+                            self._active_character_avatar_name,
+                            max_characters=180,
+                        )
+                        or "No character in this chat"
+                    )
                 )
             except QueryError:
                 pass
@@ -9939,7 +9959,11 @@ class ChatScreen(BaseAppScreen):
         self.app.push_screen(
             ConsoleImageViewerModal(
                 pil,
-                title=self._active_character_avatar_name or "Character portrait",
+                title=sanitize_character_display_label(
+                    self._active_character_avatar_name,
+                    max_characters=180,
+                )
+                or "Character portrait",
             )
         )
 
@@ -14368,7 +14392,10 @@ class ChatScreen(BaseAppScreen):
                         )
                     )
                     character_avatar_name = (
-                        self._active_character_avatar_name
+                        sanitize_character_display_label(
+                            self._active_character_avatar_name,
+                            max_characters=180,
+                        )
                         or "No character in this chat"
                     )
 

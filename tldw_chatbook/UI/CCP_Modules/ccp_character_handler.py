@@ -7,7 +7,11 @@ from loguru import logger
 from rich.text import Text
 from textual.widgets import Input, Select, Static, TextArea
 
-from ..character_display_text import sanitize_character_display_text
+from ..character_display_text import (
+    sanitize_character_display_items,
+    sanitize_character_display_label,
+    sanitize_character_display_text,
+)
 from .ccp_messages import CharacterMessage, ViewChangeMessage
 
 if TYPE_CHECKING:
@@ -19,6 +23,9 @@ CharacterId = Union[int, str]
 _OPTION_LABEL_MAX_CHARACTERS = 200
 _STATIC_FIELD_MAX_CHARACTERS = 1_000
 _READ_ONLY_TEXT_MAX_CHARACTERS = 20_000
+_COLLECTION_MAX_ITEMS = 50
+_COLLECTION_ITEM_MAX_CHARACTERS = 1_000
+_COLLECTION_TOTAL_MAX_CHARACTERS = 20_000
 
 
 def _coerce_local_character_id(character_id: CharacterId) -> CharacterId:
@@ -392,7 +399,7 @@ class CCPCharacterHandler:
             options = [
                 (
                     Text(
-                        sanitize_character_display_text(
+                        sanitize_character_display_label(
                             char.get("name", "Unnamed"),
                             max_characters=_OPTION_LABEL_MAX_CHARACTERS,
                         )
@@ -509,7 +516,11 @@ class CCPCharacterHandler:
                 if hasattr(card_widget, "load_character"):
                     card_widget.load_character(data)
                     logger.debug(
-                        f"Displayed character card for {data.get('name', 'Unknown')}"
+                        "Displayed character card for {}",
+                        sanitize_character_display_label(
+                            data.get("name", "Unknown"),
+                            max_characters=_OPTION_LABEL_MAX_CHARACTERS,
+                        ),
                     )
                     return
             except Exception as e:
@@ -543,15 +554,25 @@ class CCPCharacterHandler:
             )
 
             # Handle alternate greetings
-            alternate_greetings = data.get("alternate_greetings", [])
-            if alternate_greetings:
-                greetings_text = "\n".join(alternate_greetings)
-                self._update_textarea(
-                    "#ccp-card-alternate-greetings-display", greetings_text
-                )
+            alternate_greetings = sanitize_character_display_items(
+                data.get("alternate_greetings"),
+                max_items=_COLLECTION_MAX_ITEMS,
+                max_item_characters=_COLLECTION_ITEM_MAX_CHARACTERS,
+                max_total_characters=_COLLECTION_TOTAL_MAX_CHARACTERS,
+            )
+            self._update_textarea(
+                "#ccp-card-alternate-greetings-display",
+                "\n".join(alternate_greetings),
+            )
 
             # Handle tags
-            tags = data.get("tags", [])
+            tags = sanitize_character_display_items(
+                data.get("tags"),
+                max_items=_COLLECTION_MAX_ITEMS,
+                max_item_characters=_COLLECTION_ITEM_MAX_CHARACTERS,
+                max_total_characters=_STATIC_FIELD_MAX_CHARACTERS,
+                single_line=True,
+            )
             self._update_field(
                 "#ccp-card-tags-display", ", ".join(tags) if tags else "None"
             )
@@ -563,7 +584,13 @@ class CCPCharacterHandler:
             )
 
             # Keywords
-            keywords = data.get("keywords", [])
+            keywords = sanitize_character_display_items(
+                data.get("keywords"),
+                max_items=_COLLECTION_MAX_ITEMS,
+                max_item_characters=_COLLECTION_ITEM_MAX_CHARACTERS,
+                max_total_characters=_STATIC_FIELD_MAX_CHARACTERS,
+                single_line=True,
+            )
             self._update_field(
                 "#ccp-card-keywords-display",
                 ", ".join(keywords) if keywords else "None",
@@ -572,7 +599,13 @@ class CCPCharacterHandler:
             # Handle image display
             self._display_character_image(data)
 
-            logger.debug(f"Displayed character card for {data.get('name', 'Unknown')}")
+            logger.debug(
+                "Displayed character card for {}",
+                sanitize_character_display_label(
+                    data.get("name", "Unknown"),
+                    max_characters=_OPTION_LABEL_MAX_CHARACTERS,
+                ),
+            )
 
         except Exception as e:
             logger.opt(exception=True).error(f"Error displaying character card: {e}")

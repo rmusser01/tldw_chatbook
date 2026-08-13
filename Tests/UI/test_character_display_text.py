@@ -16,7 +16,11 @@ from tldw_chatbook.UI.CCP_Modules import (
     ccp_character_handler as character_handler_module,
 )
 from tldw_chatbook.UI.CCP_Modules.ccp_character_handler import CCPCharacterHandler
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_text
+from tldw_chatbook.UI.character_display_text import (
+    sanitize_character_display_items,
+    sanitize_character_display_label,
+    sanitize_character_display_text,
+)
 from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterOption,
     ConsoleCharacterPickerModal,
@@ -58,6 +62,65 @@ def test_character_display_sanitizer_is_deterministic_for_weird_objects() -> Non
         sanitize_character_display_text(BrokenDisplay(), max_characters=20)
         == "<BrokenDisplay>"
     )
+
+
+def test_character_display_sanitizer_never_calls_custom_string_conversion() -> None:
+    calls: list[str] = []
+
+    class SideEffectingDisplay:
+        def __str__(self) -> str:
+            calls.append("str")
+            return "x" * 1_000_000
+
+        def __repr__(self) -> str:
+            calls.append("repr")
+            return "unsafe"
+
+    assert (
+        sanitize_character_display_text(
+            SideEffectingDisplay(),
+            max_characters=100,
+        )
+        == "<SideEffectingDisplay>"
+    )
+    assert calls == []
+
+
+def test_character_display_label_collapses_multiline_whitespace_without_merging_words() -> None:
+    raw = "  Captain\n\tRowan\u2003of  the Guard  "
+
+    assert sanitize_character_display_label(raw, max_characters=100) == (
+        "Captain Rowan of the Guard"
+    )
+
+
+def test_character_display_items_are_bounded_and_do_not_consume_custom_iterables() -> None:
+    calls: list[str] = []
+
+    class DangerousIterable:
+        def __iter__(self):
+            calls.append("iter")
+            yield from ("one", "two")
+
+    assert sanitize_character_display_items(
+        "solo",
+        max_items=3,
+        max_item_characters=20,
+        max_total_characters=40,
+    ) == ("solo",)
+    assert sanitize_character_display_items(
+        {"forged": "value"},
+        max_items=3,
+        max_item_characters=20,
+        max_total_characters=40,
+    ) == ("<dict>",)
+    assert sanitize_character_display_items(
+        DangerousIterable(),
+        max_items=3,
+        max_item_characters=20,
+        max_total_characters=40,
+    ) == ("<DangerousIterable>",)
+    assert calls == []
 
 
 def test_character_display_sanitizer_does_not_mutate_card() -> None:
@@ -163,7 +226,7 @@ async def test_ccp_character_select_renders_saved_names_as_literal_text(
     monkeypatch,
 ) -> None:
     records = [
-        {"id": 7, "name": "[/x]"},
+        {"id": 7, "name": "[/x]\n\tforged row"},
         {"id": 8, "name": "[bold]Literal[/bold]"},
     ]
     monkeypatch.setattr(
@@ -187,13 +250,13 @@ async def test_ccp_character_select_renders_saved_names_as_literal_text(
         assert select.expanded is True
         assert all(isinstance(prompt, Text) for prompt in prompts)
         assert [prompt.plain for prompt in prompts] == [
-            "[/x]",
+            "[/x] forged row",
             "[bold]Literal[/bold]",
         ]
         assert select.value == "7"
 
     assert records == [
-        {"id": 7, "name": "[/x]"},
+        {"id": 7, "name": "[/x]\n\tforged row"},
         {"id": 8, "name": "[bold]Literal[/bold]"},
     ]
     assert handler.character_list == records
@@ -201,7 +264,7 @@ async def test_ccp_character_select_renders_saved_names_as_literal_text(
 
 @pytest.mark.asyncio
 async def test_console_picker_sanitizes_only_rendered_character_text() -> None:
-    malformed_name = "A\ufffdda\x00[/red]"
+    malformed_name = "A\ufffdda\n\tAdmin\x00[/red]"
     malformed_description = "semantic\u200b description"
     option = ConsoleCharacterOption(7, malformed_name, malformed_description)
     app = App[None]()
@@ -212,13 +275,15 @@ async def test_console_picker_sanitizes_only_rendered_character_text() -> None:
         await pilot.pause()
 
         row = modal.query_one("#console-character-picker-row-7", Static)
-        assert "A?da?[/red]" in str(row.renderable)
+        assert "A?da Admin?[/red]" in str(row.renderable)
+        assert "\n" not in str(row.renderable)
+        assert "\t" not in str(row.renderable)
         assert malformed_name not in str(row.renderable)
 
         modal._select(option)
         await pilot.pause()
         hint = modal.query_one("#console-character-picker-hint", Static)
-        assert "A?da?[/red]" in str(hint.renderable)
+        assert "A?da Admin?[/red]" in str(hint.renderable)
 
         captured = []
         modal.dismiss = captured.append  # type: ignore[method-assign]
@@ -227,3 +292,63 @@ async def test_console_picker_sanitizes_only_rendered_character_text() -> None:
     assert filter_character_options((option,), "semantic") == (option,)
     assert captured[0].name == malformed_name
     assert option.description == malformed_description
+
+
+class _CCPFallbackDisplayApp(App[None]):
+    def compose(self) -> ComposeResult:
+        yield Static("", id="ccp-card-name-display", markup=False)
+        for suffix in (
+            "description",
+            "personality",
+            "scenario",
+            "first-message",
+            "creator-notes",
+            "system-prompt",
+            "post-history-instructions",
+            "alternate-greetings",
+        ):
+            yield TextArea("", id=f"ccp-card-{suffix}-display", read_only=True)
+        for suffix in ("tags", "creator", "version", "keywords"):
+            yield Static("", id=f"ccp-card-{suffix}-display", markup=False)
+
+
+@pytest.mark.asyncio
+async def test_ccp_fallback_display_handles_malformed_collection_shapes_without_mutation() -> None:
+    calls: list[str] = []
+
+    class DangerousIterable:
+        def __iter__(self):
+            calls.append("iter")
+            yield "unsafe"
+
+    source = {
+        "name": "Nyx",
+        "tags": "solo",
+        "keywords": 7,
+        "alternate_greetings": {"forged": "greeting"},
+    }
+    original = dict(source)
+    source_with_iterable = dict(source, tags=DangerousIterable())
+    app = _CCPFallbackDisplayApp()
+
+    async with app.run_test() as pilot:
+        handler = CCPCharacterHandler(_CCPWindow(app))
+        handler.current_character_data = source
+        handler._display_character_card()
+        await pilot.pause()
+
+        assert str(app.query_one("#ccp-card-tags-display", Static).renderable) == "solo"
+        assert str(app.query_one("#ccp-card-keywords-display", Static).renderable) == "7"
+        assert app.query_one(
+            "#ccp-card-alternate-greetings-display", TextArea
+        ).text == "<dict>"
+
+        handler.current_character_data = source_with_iterable
+        handler._display_character_card()
+        await pilot.pause()
+        assert str(app.query_one("#ccp-card-tags-display", Static).renderable) == (
+            "<DangerousIterable>"
+        )
+
+    assert source == original
+    assert calls == []

@@ -22,7 +22,7 @@ from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
-from ...UI.character_display_text import sanitize_character_display_text
+from ...UI.character_display_text import sanitize_character_display_label
 
 CharacterPlacement = Literal["swap", "new"]
 
@@ -229,7 +229,7 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
             current = "  (current)" if option.character_id == (
                 self._current_character_id
             ) else ""
-            display_name = sanitize_character_display_text(
+            display_name = sanitize_character_display_label(
                 option.name,
                 max_characters=CHARACTER_PICKER_NAME_MAX_CHARACTERS,
             )
@@ -248,7 +248,7 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
         self._pending = option
         placement = self.query_one("#console-character-picker-placement", Horizontal)
         placement.display = True
-        display_name = sanitize_character_display_text(
+        display_name = sanitize_character_display_label(
             option.name,
             max_characters=CHARACTER_PICKER_NAME_MAX_CHARACTERS,
         )
@@ -323,7 +323,7 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
             current = "  (current)" if option.character_id == (
                 self._current_character_id
             ) else ""
-            display_name = sanitize_character_display_text(
+            display_name = sanitize_character_display_label(
                 option.name,
                 max_characters=CHARACTER_PICKER_NAME_MAX_CHARACTERS,
             )

@@ -13,6 +13,10 @@ from textual.widgets import Static
 from tldw_chatbook.Chat.console_display_state import (
     resolve_assistant_identity_label,
 )
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+
+
+_CHAT_SHELL_LABEL_MAX_CHARACTERS = 500
 
 
 @dataclass
@@ -78,7 +82,10 @@ class ChatShellContext:
             assistant_id=getattr(session_data, "assistant_id", None),
         )
 
-        title = getattr(session_data, "title", None) or "New chat"
+        title = sanitize_character_display_label(
+            getattr(session_data, "title", None),
+            max_characters=_CHAT_SHELL_LABEL_MAX_CHARACTERS,
+        ) or "New chat"
         return cls(backend, scope, assistant, f"Session: {title}")
 
     def prioritized_segments(self, max_width: int) -> list[str]:

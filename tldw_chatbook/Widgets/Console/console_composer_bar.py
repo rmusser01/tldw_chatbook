@@ -57,6 +57,7 @@ from ...Chat.console_voice_input import (
     STATE_PREPARING,
 )
 from ...Chat.prompt_history import PromptHistory
+from ...UI.character_display_text import sanitize_character_display_label
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -4388,9 +4389,15 @@ class ConsoleComposerBar(Horizontal):
         if session_data is None:
             status = self.DEFAULT_STATUS
         else:
-            title = getattr(session_data, "title", None) or "Untitled session"
-            backend = getattr(session_data, "runtime_backend", None) or "local"
-            assistant = (
+            title = sanitize_character_display_label(
+                getattr(session_data, "title", None),
+                max_characters=500,
+            ) or "Untitled session"
+            backend = sanitize_character_display_label(
+                getattr(session_data, "runtime_backend", None),
+                max_characters=100,
+            ) or "local"
+            raw_assistant = (
                 getattr(session_data, "assistant_id", None)
                 or getattr(
                     session_data,
@@ -4399,14 +4406,21 @@ class ConsoleComposerBar(Horizontal):
                 )
                 or "General"
             )
-            workspace = getattr(session_data, "workspace_id", None) or "global"
+            assistant = sanitize_character_display_label(
+                raw_assistant,
+                max_characters=180,
+            ) or "General"
+            workspace = sanitize_character_display_label(
+                getattr(session_data, "workspace_id", None),
+                max_characters=180,
+            ) or "global"
             status = (
                 f"Active session: {title} | Backend: {backend} | "
                 f"Assistant: {assistant} | Scope: {workspace}"
             )
 
         try:
-            self.query_one("#console-composer-status", Static).update(escape(status))
+            self.query_one("#console-composer-status", Static).update(Text(status))
         except NoMatches:
             return
 
