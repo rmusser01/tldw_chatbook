@@ -2978,6 +2978,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompts_mutation_in_flight: bool = False
         self._library_prompt_mutation_status: str = ""
         self._library_prompt_delete_receipt: PromptBatchDeleteResult | None = None
+        self._library_prompt_mutation_disabled_states: dict[Widget, bool] = {}
         # Task 8b Fix wave 1 (Minor): the exact name that triggered the
         # current "name-in-use" status, captured at the moment that status
         # is set -- NOT re-derived from the live Name field at "Open
@@ -5454,6 +5455,7 @@ class LibraryScreen(BaseAppScreen):
         self._invalidate_library_prompts_browse()
         self._library_prompt_collections_controller.invalidate()
         self._clear_library_prompt_selection(announce=False)
+        self._library_prompt_mutation_disabled_states.clear()
         self._cancel_library_notes_auto_sync_timer()
         self._invalidate_library_external_submission()
         super().on_unmount()
@@ -17228,6 +17230,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "Import…" action.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         if self._library_prompts_import_open:
             return
         self._library_prompts_import_open = True
@@ -17244,6 +17248,8 @@ class LibraryScreen(BaseAppScreen):
                 "Cancel" action.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self._library_prompts_import_open = False
         self._library_prompts_import_path = ""
         self._library_prompts_import_status = ""
@@ -17264,8 +17270,12 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "Browse…" action.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
 
         async def browse_callback(selected_path: Path | None) -> None:
+            if self._library_prompts_mutation_in_flight:
+                return
             if selected_path is None:
                 return
             self._library_prompts_import_path = str(selected_path)
@@ -17284,6 +17294,8 @@ class LibraryScreen(BaseAppScreen):
             event: Input change event emitted by the Import row's path field.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self._library_prompts_import_path = event.value
 
     @on(Input.Submitted, "#library-prompts-import-path")
@@ -17297,6 +17309,8 @@ class LibraryScreen(BaseAppScreen):
                 path field.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self._start_library_prompts_import()
 
     @on(Button.Pressed, "#library-prompts-import-run")
@@ -17308,6 +17322,8 @@ class LibraryScreen(BaseAppScreen):
                 "Import" action.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self._start_library_prompts_import()
 
     def _start_library_prompts_import(self) -> Worker[None] | None:
@@ -17320,6 +17336,8 @@ class LibraryScreen(BaseAppScreen):
         every other Library form's "nothing to do yet" gate (e.g.
         ``_submit_library_ingest_form``'s blank-path notice).
         """
+        if self._library_prompts_mutation_in_flight:
+            return None
         if self._library_prompts_view != "list":
             return None
         raw_path = self._library_prompts_import_path.strip()
@@ -17347,7 +17365,8 @@ class LibraryScreen(BaseAppScreen):
         """Set and patch the Import row's one-line outcome in place."""
         self._library_prompts_import_status = text
         if (
-            not self.is_mounted
+            self._library_prompts_mutation_in_flight
+            or not self.is_mounted
             or self.app.screen is not self
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS
         ):
@@ -17389,6 +17408,8 @@ class LibraryScreen(BaseAppScreen):
             raw_path: The Import row's typed path (file or folder),
                 already known non-blank by the caller.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         try:
             validated_path = validate_path_simple(
                 Path(raw_path).expanduser(), require_exists=True
@@ -20088,12 +20109,18 @@ class LibraryScreen(BaseAppScreen):
             if self._library_prompt_delete_inflight_fingerprint == token:
                 self._library_prompt_delete_inflight_fingerprint = None
                 self._library_prompts_mutation_in_flight = False
-                if self.is_mounted and self._library_prompts_view == "list":
-                    self.refresh(recompose=True)
-                    self.call_after_refresh(
-                        self._restore_library_prompts_focus,
-                        focus_identity or "library-prompts-select",
-                    )
+                if self.is_mounted:
+                    if self._library_prompts_view == "editor":
+                        self._sync_library_prompt_mutation_presentation()
+                    else:
+                        self._library_prompt_mutation_disabled_states.clear()
+                        self.refresh(recompose=True)
+                        self.call_after_refresh(
+                            self._restore_library_prompts_focus,
+                            focus_identity or "library-prompts-select",
+                        )
+                else:
+                    self._library_prompt_mutation_disabled_states.clear()
 
     async def _await_library_prompt_mutation_call(self, awaitable: Any) -> Any:
         """Drain an admitted service task even if its Textual worker is cancelled."""
@@ -20110,27 +20137,40 @@ class LibraryScreen(BaseAppScreen):
         try:
             canvas = self.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
         except (NoMatches, QueryError):
+            if not self._library_prompts_mutation_in_flight:
+                self._library_prompt_mutation_disabled_states.clear()
             return
         canvas.mutation_in_flight = self._library_prompts_mutation_in_flight
         canvas.mutation_status = self._library_prompt_mutation_status
         if canvas.mode != "editor":
+            self._library_prompt_mutation_disabled_states.clear()
             canvas.refresh(recompose=True)
             return
-        for control in canvas.query("Input, Checkbox, Button"):
-            control.disabled = self._library_prompts_mutation_in_flight
+        controls = list(canvas.query("Input, Checkbox, Button"))
         for selector in (
             "#library-prompt-block-editor",
             "#library-prompt-history-region",
         ):
             try:
-                canvas.query_one(selector, Widget).disabled = (
-                    self._library_prompts_mutation_in_flight
-                )
+                controls.append(canvas.query_one(selector, Widget))
             except (NoMatches, QueryError):
                 pass
-        if self._library_prompts_mutation_in_flight and not canvas.query(
-            "#library-prompts-mutation-progress"
-        ):
+        if self._library_prompts_mutation_in_flight:
+            for control in controls:
+                self._library_prompt_mutation_disabled_states.setdefault(
+                    control, control.disabled
+                )
+                control.disabled = True
+        else:
+            for control, disabled in self._library_prompt_mutation_disabled_states.items():
+                if control.is_mounted:
+                    control.disabled = disabled
+            self._library_prompt_mutation_disabled_states.clear()
+
+        progress = canvas.query("#library-prompts-mutation-progress")
+        for indicator in progress:
+            indicator.display = self._library_prompts_mutation_in_flight
+        if self._library_prompts_mutation_in_flight and not progress:
             try:
                 content = canvas.query_one("#library-prompt-editor-content", Widget)
                 back = canvas.query_one("#library-prompt-back", Button)

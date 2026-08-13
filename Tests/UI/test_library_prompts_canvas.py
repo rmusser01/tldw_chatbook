@@ -4129,10 +4129,11 @@ async def test_library_prompt_editor_delete_uses_shared_batch_family_and_typed_r
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_editor_delete_bad_result_preserves_fields_and_prior_receipt(
-    tmp_path,
+@pytest.mark.parametrize("failure_kind", ["missing", "conflict", "malformed"])
+async def test_library_prompt_editor_delete_failure_restores_native_controls_and_live_fields(
+    tmp_path, failure_kind
 ):
-    """An adversarial non-DTO result cannot reset the editor or old recovery."""
+    """A failed delete restores the same live editor without recomposing it."""
     db, service = _real_prompt_scope_service(tmp_path)
     prompt_id, _uuid, _message = db.add_prompt(
         name="Keep editor", author="Original", details="editor", user_prompt="body"
@@ -4141,7 +4142,12 @@ async def test_library_prompt_editor_delete_bad_result_preserves_fields_and_prio
         name="Old recovery", author="Old", details="old", user_prompt="old"
     )
     prior_receipt = db.soft_delete_prompts((PromptBatchTarget(prior_id, 1),))
-    service.delete_prompts = AsyncMock(return_value=True)
+    if failure_kind == "missing":
+        service.delete_prompts = None
+    elif failure_kind == "conflict":
+        service.delete_prompts = AsyncMock(side_effect=ConflictError())
+    else:
+        service.delete_prompts = AsyncMock(return_value=True)
     service.delete_prompt = AsyncMock(side_effect=AssertionError("legacy delete used"))
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
@@ -4153,23 +4159,51 @@ async def test_library_prompt_editor_delete_bad_result_preserves_fields_and_prio
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
         screen._library_prompt_delete_receipt = prior_receipt
-        screen.query_one("#library-prompt-author", Input).value = "Unsaved author"
+        name_input = screen.query_one("#library-prompt-name", Input)
+        author_input = screen.query_one("#library-prompt-author", Input)
+        delete_button = screen.query_one("#library-prompt-delete", Button)
+        native_disabled = screen.query_one(
+            "#prompt-editor-apply-system", Checkbox
+        )
+        assert native_disabled.disabled is True
+        block_state = screen._library_prompt_block_state
+        name_input.cursor_position = 2
+        author_input.value = "Unsaved author"
         await pilot.pause()
-        screen.query_one("#library-prompt-delete", Button).press()
+        assert screen._library_prompt_dirty is True
+        delete_button.press()
         await pilot.pause()
         host.screen.query_one("#prompt-delete-confirm", Button).press()
         await _wait_for_prompt_mutation_settlement(screen, pilot)
 
         assert screen._library_prompts_view == "editor"
         assert screen._selected_prompt_id == prompt_id
-        assert screen.query_one("#library-prompt-author", Input).value == (
-            "Unsaved author"
-        )
+        assert screen.query_one("#library-prompt-name", Input) is name_input
+        assert name_input.cursor_position == 2
+        assert author_input.value == "Unsaved author"
+        assert screen._library_prompt_block_state is block_state
+        assert screen._library_prompt_dirty is True
         assert screen._library_prompt_delete_receipt is prior_receipt
         assert db.fetch_prompt_details(prompt_id) is not None
-        assert screen._library_prompt_status == (
-            "Could not delete this prompt. Nothing was deleted."
+        expected_status = (
+            "This prompt changed elsewhere — refresh and try again."
+            if failure_kind == "conflict"
+            else "Could not delete this prompt. Nothing was deleted."
         )
+        assert screen._library_prompt_status == expected_status
+        assert name_input.disabled is False
+        assert author_input.disabled is False
+        assert delete_button.disabled is False
+        assert native_disabled.disabled is True
+        assert not screen.query("#library-prompts-mutation-progress") or all(
+            not progress.display
+            for progress in screen.query("#library-prompts-mutation-progress")
+        )
+
+        delete_button.press()
+        await pilot.pause()
+        assert isinstance(host.screen, PromptDeleteConfirmationModal)
+        host.screen.query_one("#prompt-delete-cancel", Button).press()
 
 
 @pytest.mark.asyncio
@@ -4514,6 +4548,110 @@ async def test_library_prompt_mutation_route_vetoes_before_every_flush_or_transi
         skill_flush.assert_not_awaited()
 
         release.set()
+        await _wait_for_prompt_mutation_settlement(screen, pilot)
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_mutation_vetoes_every_import_seam(tmp_path):
+    """Queued Prompt Import handlers cannot outlive mutation admission."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Held import veto", author="A", details="held-import-veto"
+    )
+    started = threading.Event()
+    release = threading.Event()
+    original_delete = service.delete_prompts
+
+    async def held_delete(**kwargs: Any) -> PromptBatchDeleteResult:
+        started.set()
+        await asyncio.to_thread(release.wait)
+        return await original_delete(**kwargs)
+
+    service.delete_prompts = held_delete
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+
+        callbacks = []
+        original_push_screen = host.push_screen
+
+        def capture_callback(_dialog, callback=None):
+            callbacks.append(callback)
+            return None
+
+        host.push_screen = capture_callback
+        screen.handle_library_prompts_import_browse(Button.Pressed(Button()))
+        host.push_screen = original_push_screen
+        assert len(callbacks) == 1 and callbacks[0] is not None
+
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-delete-selected")
+        screen.query_one(f"#library-prompt-row-{prompt_id}", Button).press()
+        await pilot.pause()
+        screen.query_one("#library-prompts-delete-selected", Button).press()
+        await pilot.pause()
+        host.screen.query_one("#prompt-delete-confirm", Button).press()
+        for _ in range(100):
+            if started.is_set():
+                break
+            await pilot.pause(0.02)
+        assert started.is_set()
+
+        screen._library_prompts_import_open = True
+        screen._library_prompts_import_path = "original path"
+        screen._library_prompts_import_status = "original status"
+        captured_state = (
+            screen._library_prompts_import_open,
+            screen._library_prompts_import_path,
+            screen._library_prompts_import_status,
+        )
+        push_calls = []
+
+        def record_push(*args, **kwargs):
+            push_calls.append((args, kwargs))
+            return None
+
+        host.push_screen = record_push
+        try:
+            button = Button()
+            path_input = Input()
+            screen.handle_library_prompts_import(Button.Pressed(button))
+            screen.handle_library_prompts_import_cancel(Button.Pressed(button))
+            screen.handle_library_prompts_import_browse(Button.Pressed(button))
+            screen.handle_library_prompts_import_path_changed(
+                Input.Changed(path_input, "changed path")
+            )
+            screen.handle_library_prompts_import_path_submitted(
+                Input.Submitted(path_input, "submitted path")
+            )
+            screen.handle_library_prompts_import_run(Button.Pressed(button))
+            assert screen._start_library_prompts_import() is None
+            screen._apply_library_prompts_import_status("late status")
+            await callbacks[0](tmp_path / "late.json")
+            await screen._run_library_prompts_import(str(tmp_path / "missing.json"))
+
+            assert (
+                screen._library_prompts_import_open,
+                screen._library_prompts_import_path,
+                screen._library_prompts_import_status,
+            ) == captured_state
+            assert push_calls == []
+            assert not [
+                worker
+                for worker in app.workers
+                if worker.group
+                == library_screen_module._LIBRARY_PROMPTS_IMPORT_WORKER_GROUP
+                and not worker.is_finished
+            ]
+        finally:
+            host.push_screen = original_push_screen
+            release.set()
         await _wait_for_prompt_mutation_settlement(screen, pilot)
 
 
