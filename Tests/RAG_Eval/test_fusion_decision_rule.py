@@ -1014,7 +1014,7 @@ def test_the_construction_rows_ride_the_engines_own_shipped_defaults():
     DISCLOSED ORACLE FLIP (2026-08-11, TASK-15400 Task 4, sweep row
     `and_trim`): the construction was part of this equality — the control
     row's `"and"` WAS `SearchConfig`'s default. Task 4 shipped the sweep's
-    winner, so the engine now defaults to `"and_stopword_trim"` while the
+    winner, so the engine defaulted to `"and_stopword_trim"` while the
     control row deliberately stays `"and"`: the control column is the arc's
     BEFORE-state, the one `SHIPPED_CONTROL_CENSUS == 20` was measured
     against, and re-pointing it at the new default would delete the
@@ -1022,6 +1022,22 @@ def test_the_construction_rows_ride_the_engines_own_shipped_defaults():
     into the same measurement). The fusion parameters still ride the
     engine's defaults — that half is what stops the matrix drifting off the
     configuration it claims to measure.
+
+    **DISCLOSED ORACLE FLIP #2 (2026-08-13, TASK-15700 Task 4): the engine's
+    default moved again, `"and_stopword_trim"` → `"and_then_prefix"`.** The
+    control row is UNCHANGED at `"and"` for exactly the reason above — it is
+    still the pre-arc BEFORE-state both matrices are read against. What
+    changed is only the right-hand side of the last assertion, and the
+    wording of why it holds: `and_then_prefix` is **not** the re-run's
+    computed winner. The pre-registered rule, applied verbatim, tied
+    `prefix` and `and_then_prefix` at census 23 (measurement-identical on
+    every captured axis) and its tie-break — fewest extra FTS statements,
+    240 vs 460 — selected `prefix`. The OWNER RULED `and_then_prefix` ships
+    instead, applying the standing stability-over-quick-wins ruling to a
+    dimension the tie-break predates (structural immunity to intra-sub-leg
+    self-displacement, at 220 extra statements and zero measured retrieval
+    difference). This assertion therefore pins an OWNER DECISION, not a
+    measured optimum — do not "correct" it back to the rule's output.
     """
     from tldw_chatbook.RAG_Search.simplified.config import SearchConfig
 
@@ -1037,10 +1053,10 @@ def test_the_construction_rows_ride_the_engines_own_shipped_defaults():
         shipped.hybrid_alpha,
     )
     assert control.fts_match_construction == "and"
-    assert shipped.fts_match_construction == "and_stopword_trim", (
-        "the engine's default is no longer the winner Task 4 shipped; if it "
-        "moved again, the construction matrix needs re-running before this "
-        "control row means anything"
+    assert shipped.fts_match_construction == "and_then_prefix", (
+        "the engine's default is no longer the construction TASK-15700's "
+        "owner ruling shipped; if it moved again, the construction matrix "
+        "needs re-running before this control row means anything"
     )
     # ...and the winner the arc chose IS one of the swept rows, so the
     # shipped default is a construction this matrix actually measured.

@@ -218,11 +218,18 @@ FTS_MATCH_FORMS_BY_CONSTRUCTION: Dict[str, Tuple[str, Optional[str]]] = {
     FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX: (FTS_MATCH_AND, FTS_MATCH_PREFIX),
 }
 
-# A small fixed English function-word list, consulted by every construction
-# EXCEPT the full AND (`and`, the pre-TASK-15400 construction) -- so it IS
-# consulted on the shipped default path, `and_stopword_trim`'s trimmed AND,
-# on the OR form used by `or`/`and_then_or`'s fallback, and on the PREFIX
-# form used by `prefix`/`and_then_prefix`'s fallback (TASK-15700).
+# A small fixed English function-word list, consulted by every FORM except
+# the full AND (`and`, the pre-TASK-15400 construction) -- so it is consulted
+# on the trimmed AND of `and_stopword_trim`, on the OR form used by
+# `or`/`and_then_or`'s fallback, and on the PREFIX form used by
+# `prefix`/`and_then_prefix`'s fallback (TASK-15700).
+#
+# Where that lands on the SHIPPED DEFAULT is worth being exact about, since
+# 2026-08-13 shipped `and_then_prefix`: its PRIMARY is the full AND, which
+# does NOT consult this list, and its FALLBACK is the prefix form, which
+# does. So on the default path today the list is consulted only for sub-legs
+# whose primary returned zero rows -- not on every search, as it was under
+# `and_stopword_trim`.
 #
 # The PREFIX form is where this list is MOST load-bearing, by a distance. An
 # untrimmed OR admits every document containing "the"; an untrimmed prefix
@@ -236,8 +243,11 @@ FTS_MATCH_FORMS_BY_CONSTRUCTION: Dict[str, Tuple[str, Optional[str]]] = {
 # never consults it: an implicit AND over function words is harmless, and
 # TASK-15400's census measured that trimming them rescues 1 of the 40
 # zero-row golden queries (`pm-vendor-chaser`, blocked solely by "about") --
-# the +1 that made `and_stopword_trim` the sweep's winner and the shipped
-# default. Where the list is more load-bearing still is the
+# the +1 that made `and_stopword_trim` that sweep's winner and the default
+# from 2026-08-11 to 2026-08-13. (TASK-15700's re-run reaches that same
+# query through the PREFIX fallback instead, so the rescue survived the
+# flip on a different mechanism.) Where the list is more load-bearing still
+# is the
 # OR form: a raw OR of every token matches every document containing "the",
 # and bm25's IDF discounts a ubiquitous term in the RANKING but not in the
 # row COUNT, so the junk rows still enter fusion. Fixed and small on purpose
@@ -1589,8 +1599,11 @@ class RAGService:
         RANK, so before the tiering a widening sub-leg's row count could
         demote another sub-leg's untouched rank-1 row purely by source
         order -- see the merge site's comment for the measured incident.
-        Under a construction with no fallback (every shipped default to
-        date) there is exactly one tier and the order is unchanged.
+        Under a construction with no fallback there is exactly one tier and
+        the order is unchanged -- which WAS every shipped default up to
+        2026-08-13, and is no longer: ``and_then_prefix`` defines a fallback,
+        so this partition is live on the default path and the tiering is
+        load-bearing rather than a no-op waiting for a future construction.
 
         TASK-14751 narrows *which* sub-legs run without touching that
         merge. ``keyword_source_types`` names the types the caller will
@@ -3167,11 +3180,12 @@ class RAGService:
         Citation spans come from ``_keyword_citation_spans``, which reads
         the FULL token list ``_fts5_query_tokens`` returns for the query --
         every token the user typed, not necessarily the same tokens the
-        MATCH expression required. At the shipped ``and_stopword_trim``
-        construction the MATCH runs over a strict SUBSET of that list
-        (content tokens only; see ``_fts5_match_expressions``), so citations
-        evidence the full typed query while the match itself may have needed
-        only some of its tokens. Verified NOT a behavioural regression: the
+        MATCH expression required. Under the shipped ``and_then_prefix``
+        construction the PRIMARY match runs over that full list, while its
+        prefix FALLBACK runs over a strict SUBSET of it (content tokens
+        only; see ``_fts5_match_expressions``), so a row matched by the
+        fallback carries citations evidencing the full typed query while the
+        match itself needed only some of its tokens. Verified NOT a behavioural regression: the
         spans themselves are unchanged, and a row that matched is guaranteed
         to carry the content tokens the MATCH required, so a matched row's
         citations are never missing evidence for the match. Locating the raw
@@ -3361,14 +3375,24 @@ class RAGService:
         rather than run a MATCH expression that can only ever match
         nothing.
 
-        **TASK-15400 RESOLVED (2026-08-11): this full AND is no longer the
-        default join.** It is still the expression this method builds, and
-        it still ships on three live paths -- the ``and`` construction, the
-        fail-safe an unrecognized ``fts_match_construction`` degrades to,
-        and ``and_stopword_trim``'s own fallback when trimming empties the
-        query -- but ``SearchConfig.fts_match_construction`` now defaults to
-        ``and_stopword_trim``, so a default search ANDs the CONTENT tokens
+        **TASK-15400 (2026-08-11) took this full AND off the default; then
+        TASK-15700 (2026-08-13) put it back as the default's PRIMARY.** The
+        expression this method builds is now the primary form of the shipped
+        ``and_then_prefix`` construction, so a default search once again ANDs
+        EVERY token -- and widens to the content-token PREFIX form only in a
+        sub-leg whose primary returned zero rows. It also still ships on
+        three other live paths: the ``and`` construction, the fail-safe an
+        unrecognized ``fts_match_construction`` degrades to, and
+        ``and_stopword_trim``'s own fallback when trimming empties the query
         (see ``_fts5_match_expressions``).
+
+        A consequence to state rather than leave to be rediscovered: because
+        the default's primary is the FULL AND and not the trimmed one, the
+        shipped construction is **not a superset of the 2026-08-11 default
+        by construction** -- a sub-leg whose full AND returns rows never
+        seeks the trim-only hits. That it loses nothing is a MEASURED result
+        on the golden corpus (``lost`` = 0 against both the pre-arc control
+        and the outgoing default), not a structural guarantee.
 
         The arc's sweep measured all four pre-registered constructions over
         the RAG_Eval golden set at the shipped fusion parameters and applied
@@ -3443,6 +3467,87 @@ class RAGService:
           PRIMARY form (``or``, and any prefix-style primary) is something
           tiering cannot protect by construction, and still has to earn its
           cells in the sweep.
+
+        **TASK-15700's RE-RUN (2026-08-13), from its own matrix.** With the
+        merge fixed, the sweep re-ran as SIX rows at the shipped fusion
+        parameters. Cells, not prose (census of 53 non-negative golden
+        queries / rescues vs the pre-arc control / census hits LOST vs that
+        control / rescue of the vector-blind fixture):
+
+        * ``and`` 20 / 0 / 0, rescue yes -- the pre-arc control.
+        * ``and_stopword_trim`` 21 / 1 / 0, rescue yes -- the outgoing
+          default.
+        * ``or`` 28 / 9 / **1**, rescue **NO** -- disqualified on (a) AND
+          (b); the one row it loses IS the vector-blind fixture.
+        * ``and_then_or`` 29 / 9 / 0, rescue yes @ slot 10 -- **the
+          census-maximal row, DISQUALIFIED on (b)**: 8 gated cells past
+          0.02, 5 past the 0.05 fail band (paraphrase and
+          vocabulary_mismatch mrr/ndcg, overall.mrr -0.056).
+        * ``prefix`` 23 / 3 / 0, rescue yes @ slot 9 -- qualifies.
+        * ``and_then_prefix`` 23 / 3 / 0, rescue yes @ slot 9 -- qualifies.
+
+        **Why the biggest census does not ship, mechanically** (the merge
+        fix's boundary, and the reason this is a FUSION finding rather than
+        a tiering shortfall): tier 2 confines ``and_then_or``'s fallback rows
+        inside the KEYWORD LEG, but tier 2 still enters fusion, and there a
+        fallback row that ALSO carries a vector rank becomes a MERGED row
+        scoring far above any fts-only row. Measured on the fixture's own
+        query, a brand-new merged row (fts 11 + vec 13) inserts at slot 9 and
+        pushes the fixture to slot 10. Sharper still: all five regressing
+        queries have an EMPTY keyword leg under the outgoing default, so
+        every sub-leg falls back, the leg is 100% tier 2, tier 1 is empty and
+        the partition is the IDENTITY function -- Part A is structurally
+        inert on exactly the queries that disqualify the row, so no tiering
+        change could have saved it. Those 8 census points are a fusion-
+        weighting question, out of this arc's scope.
+
+        **THE DECISION, and the fact that it was overridden.** The rule was
+        applied verbatim: qualifiers {``and_stopword_trim`` 21, ``prefix``
+        23, ``and_then_prefix`` 23}; max census 23 TIED the two prefix-
+        bearing rows, which were verified measurement-identical on every
+        captured axis (all 105 gated cells unmoved, all 60 per-query hybrid
+        top-10s and all 60 keyword-leg top-10s identical, same rescued
+        queries, ``lost`` 0 both ways); and the rule's tie-break -- fewest
+        extra FTS statements, MEASURED at 240 vs 460 over the 60-query set --
+        selected **``prefix``**. **The OWNER RULED ``and_then_prefix`` ships
+        instead**, applying the standing stability-over-quick-wins ruling to
+        a dimension the tie-break predates: ``prefix`` widens as the PRIMARY
+        form, so its widened rows compete for their own sub-leg's bm25-
+        ordered, LIMITED slots BEFORE the merge is consulted and tiering
+        protects nothing (measured synthetically: 12 prefix-competitor docs
+        + 1 exact-match doc, "wombat log" at top_k=5 -- the trimmed AND finds
+        the exact doc, ``prefix`` returns 5 rows without it), while
+        ``and_then_prefix`` never widens a NON-EMPTY AND primary and confines
+        widening rows to tier 2. Price: 220 extra SQLite statements on this
+        corpus (92% of sub-legs falling back on a sparse 49-document corpus,
+        an upper bound that shrinks as a corpus densifies), wall time
+        indistinguishable, ZERO measured retrieval difference.
+        **``and_then_prefix`` is therefore NOT the rule's own output and must
+        never be described as such.**
+
+        **What the shipped flip buys, and the residual bound.** Keyword-leg
+        census 21 -> **23 of 53** (+``kw-quillon-mast``,
+        +``kw-thimble-relay``), and zero-row queries 39 -> **36 of 60**. NO
+        gated cell moves in any mode (0 of 105): both new hits are queries
+        the vector leg already ranks highly, so the gain is leg-level and
+        shows up only where the vector leg is blind, absent or scoped away.
+        The residual 36 are still blocked by absent CONTENT words.
+
+        **The vector-blind fixture, framed correctly.** Under the shipped
+        construction it holds slot **9 of 10**, exactly where the outgoing
+        default put it -- the flip does not move it. The row immediately
+        below is a **MATHEMATICAL TIE**: the fixture scores
+        ``(1-alpha)/(rrf_k+1) = 0.3/6`` and that row ``alpha/(rrf_k+9) =
+        0.7/14``, and ``0.3/6 == 0.7/14 == 1/20`` EXACTLY in rational
+        arithmetic (4 ULPs apart in IEEE-754). The fixture keeps its slot on
+        ``reciprocal_rank_fusion``'s documented ``(-score, fts_rank,
+        vector_rank)`` tie-break -- an fts_rank-1 row ahead of a row with no
+        fts_rank at all -- **not on any margin**. So the fixture sits ON the
+        alpha/rrf_k boundary, tie-broken in its favour; nothing in this arc
+        adds headroom and the shipped construction spends none. What would
+        displace it is a MERGED (fts+vector) row, which is exactly what a
+        widening PRIMARY manufactures. Fusion parameters own that margin and
+        remain out of scope.
 
         Whatever changes here, keep each token individually quoted (the
         injection property above, pinned by
@@ -3554,11 +3659,12 @@ class RAGService:
         runs on every search, and a per-call warning would bury the log.
 
         NOTE the fail-safe target is ``"and"``, the PRE-TASK-15400 full AND
-        -- deliberately NOT the shipped default (``and_stopword_trim`` since
-        2026-08-11). A bad value should land on the most conservative
-        construction the engine has, which is the one that never widens a
-        query; and it keeps this fail-safe stable if the measured default
-        moves again.
+        -- deliberately NOT the shipped default (``and_then_prefix`` since
+        2026-08-13, ``and_stopword_trim`` before that). A bad value should
+        land on the most conservative construction the engine has, which is
+        the one that never widens a query; and it keeps this fail-safe
+        stable as the measured default moves -- which it now has twice,
+        exactly the drift this note was written to survive.
 
         Returns:
             One of ``FTS_MATCH_CONSTRUCTIONS``.
@@ -3642,11 +3748,11 @@ class RAGService:
         * ``and`` (pre-TASK-15400; still the fail-safe for an unrecognized
           value) -- implicit AND over every token. Byte-identical to
           ``_escape_fts5_query``, which it delegates to.
-        * ``and_stopword_trim`` (**the shipped default since 2026-08-11**,
-          the sweep's winner) -- implicit AND over the CONTENT tokens,
-          falling back to the full AND when trimming empties the token list
-          (an empty MATCH expression is an FTS5 syntax error, not "no
-          results").
+        * ``and_stopword_trim`` (TASK-15400's measured winner; **the shipped
+          default 2026-08-11 -> 2026-08-13**) -- implicit AND over the
+          CONTENT tokens, falling back to the full AND when trimming empties
+          the token list (an empty MATCH expression is an FTS5 syntax error,
+          not "no results").
         * ``or`` -- the content tokens joined by FTS5's ``OR`` operator.
           Stopwords are trimmed here because a raw OR of every token matches
           every document containing "the"; when trimming empties the list
@@ -3673,11 +3779,18 @@ class RAGService:
           rows (``""``). It widens as a PRIMARY form, so the tiered merge
           cannot protect the untouched AND rows from it -- the sweep's matrix
           has to show what it displaces.
-        * ``and_then_prefix`` (TASK-15700) -- the AND form as primary, the
-          prefix form as the per-sub-leg zero-row fallback: the composition
-          with BOTH protections, every AND hit preserved inside a sub-leg by
+        * ``and_then_prefix`` (TASK-15700; **the shipped default since
+          2026-08-13**) -- the AND form as primary, the prefix form as the
+          per-sub-leg zero-row fallback: the composition with BOTH
+          protections, every AND hit preserved inside a sub-leg by
           construction and the widened rows confined behind the primary ones
-          by the tiered merge.
+          by the tiered merge. It ships by OWNER RULING, not as the
+          sweep's computed winner -- the pre-registered rule's tie-break
+          selected the measurement-identical ``prefix`` on statement count
+          (240 vs 460) and the owner overrode it for that structural
+          protection; ``_escape_fts5_query`` carries the full record. Note
+          its primary is the FULL AND, so unlike ``and_stopword_trim`` a
+          default search does not trim unless a sub-leg finds nothing.
 
         The OR fallback is suppressed when it cannot widen anything -- when
         both forms reduce to the same single FTS5 term -- since re-running
@@ -3852,8 +3965,8 @@ class RAGService:
         Spans are located per token, case-insensitively, from the FULL token
         list ``_fts5_query_tokens`` returns for the query (not necessarily
         the subset ``_fts5_match_expressions`` required for the MATCH itself
-        under the shipped ``and_stopword_trim`` construction -- see that
-        method). A token is matched as its alphanumeric runs separated by
+        when a widening form ran -- under the shipped ``and_then_prefix``
+        that is its prefix fallback; see that method). A token is matched as its alphanumeric runs separated by
         non-alphanumerics ("Obsidian-3" -> ``Obsidian`` then ``3``), which is
         how FTS5 reads a quoted token: a phrase over the runs, adjacency
         required.
@@ -3941,10 +4054,12 @@ class RAGService:
             List of search results
         """
         # Properly escape the query for FTS5, in whichever MATCH
-        # construction is active (TASK-15400). Under `and` this is
-        # `_escape_fts5_query` verbatim with no fallback; under the shipped
-        # `and_stopword_trim` it is the content-token AND, also with no
-        # fallback (only `and_then_or` ever returns a second expression).
+        # construction is active (TASK-15400/15700). Under `and` this is
+        # `_escape_fts5_query` verbatim with no fallback; under the SHIPPED
+        # `and_then_prefix` it is that same full AND as the primary WITH a
+        # prefix fallback, which this sub-leg runs if the primary returns
+        # zero rows. The compositions (`and_then_or`, `and_then_prefix`) are
+        # the ones that return a second expression.
         expressions = self._fts5_match_expressions(query)
 
         # Validate limit parameter

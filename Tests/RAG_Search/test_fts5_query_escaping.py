@@ -449,10 +449,10 @@ def test_user_typed_operator_words_never_become_operators(tmp_path):
 
     Unquoted, `lathe OR NOT spindle` is an FTS5 expression whose meaning is
     the user's words rearranged into boolean logic. The only operators in
-    an emitted expression are the ones the BUILDER put there: under `and`
-    the user's words stay quoted literals, and under every content-token
-    form (the shipped `and_stopword_trim` default included) they are
-    trimmed as the function words they are. All three are checked here.
+    an emitted expression are the ones the BUILDER put there: in an AND form
+    the user's words stay quoted literals, and in every content-token form
+    they are trimmed as the function words they are. Both are checked here,
+    and since 2026-08-13 the shipped default exhibits BOTH AT ONCE.
     """
     conn = _fts5_conn()
     _insert(conn, "Operator Words", "The word OR appears here, and NOT much else.")
@@ -466,26 +466,53 @@ def test_user_typed_operator_words_never_become_operators(tmp_path):
     with pytest.raises(sqlite3.OperationalError):
         _match(conn, query)
 
-    # DISCLOSED ORACLE FLIP (2026-08-11, TASK-15400 Task 4, sweep row
-    # `and_trim`): the DEFAULT construction was `and` -- which emitted
-    # '"lathe" "OR" "NOT" "spindle"' and matched NOTHING, since no document
-    # contains the literal words "OR" and "NOT" -- and is now
-    # `and_stopword_trim`, which drops both as the function words they are
-    # (`or` and `not` are in `_FTS5_STOPWORDS`) and matches the lathe log.
-    # The safety property is unchanged and if anything stronger: the only
-    # operators in the emitted expression are still the ones the BUILDER
-    # put there, and here there are none.
-    assert service._fts5_match_expressions(query)[0] == '"lathe" "spindle"'
-    assert _match(conn, '"lathe" "spindle"') == [(2,)]
+    # DISCLOSED ORACLE FLIP #2 (2026-08-13, TASK-15700 Task 4). Three states
+    # now, and the third is not a small move from the second:
+    #
+    #   * pre-15400 the default was `and`, emitting
+    #     '"lathe" "OR" "NOT" "spindle"' -- matching NOTHING, since no
+    #     document contains the literal words "OR" and "NOT";
+    #   * 2026-08-11 the default became `and_stopword_trim`, whose SINGLE
+    #     expression dropped both as the function words they are and matched
+    #     the lathe log;
+    #   * 2026-08-13 the default became `and_then_prefix` by OWNER RULING
+    #     (the pre-registered rule's tie-break selected `prefix`; the owner
+    #     overrode it for structural self-displacement immunity). Its
+    #     PRIMARY is the FULL AND again -- the untrimmed, unmatched form --
+    #     and the trimming moved into the per-sub-leg zero-row FALLBACK.
+    #
+    # So the trim did not disappear from the default; it moved one stage
+    # later, and this test now asserts the PAIR. The safety property is
+    # untouched throughout and is the reason the pair is safe to state: the
+    # only operators in either emitted expression are the ones the BUILDER
+    # put there, and in both there are none -- the user's `OR`/`NOT` survive
+    # as quoted literals in the primary and are dropped from the fallback.
+    primary, fallback = service._fts5_match_expressions(query)
+    assert primary == '"lathe" "OR" "NOT" "spindle"'
+    assert _match(conn, primary) == [], (
+        "the default's primary is the full AND; it must still match nothing "
+        "here, which is exactly what makes the fallback fire"
+    )
+    assert fallback == '"lathe"* "spindle"*'
+    assert _match(conn, fallback) == [(2,)], (
+        "the fallback is where the shipped default now finds the lathe log"
+    )
 
     # The pre-arc form, still shipped as the `and` construction and as the
-    # fail-safe for an unrecognized value -- asked for explicitly now that
-    # it is not the default. This is the state the flip moved AWAY from.
+    # fail-safe for an unrecognized value -- asked for explicitly. Since
+    # 2026-08-13 it is byte-identical to the DEFAULT's primary above, which
+    # is the flip stated as an identity rather than as prose.
     service.config.search.fts_match_construction = "and"
     assert service._fts5_match_expressions(query)[0] == (
         '"lathe" "OR" "NOT" "spindle"'
     )
     assert _match(conn, '"lathe" "OR" "NOT" "spindle"') == []
+
+    # The construction that WAS the default until 2026-08-13: one expression,
+    # trimmed, no fallback. The state the flip moved away from.
+    service.config.search.fts_match_construction = "and_stopword_trim"
+    assert service._fts5_match_expressions(query) == ('"lathe" "spindle"', None)
+    assert _match(conn, '"lathe" "spindle"') == [(2,)]
 
     service.config.search.fts_match_construction = "or"
     primary, _fallback = service._fts5_match_expressions(query)
