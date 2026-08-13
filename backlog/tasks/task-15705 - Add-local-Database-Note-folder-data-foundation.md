@@ -95,8 +95,8 @@ Detailed executable plan:
 - Post-rebase review hardened exact-folder reads and uniqueness handling around the
   shared transaction boundary, routed the isolated installed-wheel migration probe
   through central path validation, and completed Google-style API documentation.
-  A same-millisecond tombstone regression also verifies that supported Python
-  runtimes advance colliding `Z` timestamps without a parser workaround.
+  A same-millisecond tombstone regression verifies collision advancement, with
+  explicit `Z`-to-UTC-offset normalization matching the repository convention.
 - Architecture remains governed by
   `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md` and
   `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`;

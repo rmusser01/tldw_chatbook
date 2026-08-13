@@ -1022,7 +1022,10 @@ def _unique_deleted_folder_timestamp(cursor: sqlite3.Cursor) -> str:
         "SELECT 1 FROM note_folders WHERE deleted = 1 AND modified_at = ? LIMIT 1",
         (candidate,),
     ).fetchone() is not None:
-        parsed = datetime.fromisoformat(candidate)
+        normalized_candidate = (
+            f"{candidate[:-1]}+00:00" if candidate.endswith("Z") else candidate
+        )
+        parsed = datetime.fromisoformat(normalized_candidate)
         candidate = (parsed + timedelta(milliseconds=1)).isoformat(
             timespec="milliseconds"
         ).replace("+00:00", "Z")
