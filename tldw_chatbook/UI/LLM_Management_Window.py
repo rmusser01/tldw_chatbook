@@ -532,7 +532,7 @@ class LLMManagementWindow(Container):
         # longer exist at compose time (the autofill would otherwise
         # silently never fire, UX-078).
         self.call_after_refresh(self._finish_deferred_mount)
-        self.set_interval(3.0, self._update_ollama_api_state)
+        self.set_interval(3.0, self._schedule_ollama_api_state)
 
     async def _finish_deferred_mount(self) -> None:
         """Mount deferred views, then run everything that assumes them.
@@ -553,11 +553,12 @@ class LLMManagementWindow(Container):
             # Autofill the Ollama executable when it's discoverable (UX-078).
             self._autofill_ollama_path,
             # Keep the Ollama API controls gated on a live service (UX-091).
-            # task-15473: this step is now a coroutine function (it awaits
-            # the non-blocking Ollama probe) -- the others are still plain
-            # sync methods, so each result is awaited only if awaitable,
-            # preserving the per-step try/except isolation and ordering.
-            self._update_ollama_api_state,
+            # task-15473 made this step await the non-blocking Ollama
+            # probe; task-15211 then moved the await into a widget-owned
+            # worker (see _schedule_ollama_api_state) so an in-flight probe
+            # cannot outlive the screen. The step stays in this loop for
+            # its ordering slot, but it now only SCHEDULES.
+            self._schedule_ollama_api_state,
         ):
             try:
                 result = step()
@@ -649,6 +650,26 @@ class LLMManagementWindow(Container):
         from .Screens.llm_screen import _probe_local_server
 
         return await _probe_local_server()
+
+    def _schedule_ollama_api_state(self) -> None:
+        """Run the Ollama API-state refresh as a widget-owned worker.
+
+        task-15211 (sweep catch): the refresh awaits a real TCP probe of
+        127.0.0.1:11434, and a coroutine scheduled straight from the 3s
+        interval (or the deferred-mount one-shot) is NOT tied to this
+        widget's lifetime -- one already in flight when the screen unmounts
+        kept awaiting, and its socket fired during test teardown. Seven
+        Lab/LLM-screen tests hit the network guard exactly there. A worker
+        owned by this widget is cancelled at unmount, so the probe dies
+        with the screen; ``exclusive`` also collapses overlapping polls on
+        a slow probe instead of stacking them.
+        """
+        self.run_worker(
+            self._update_ollama_api_state(),
+            exclusive=True,
+            group="ollama-api-state",
+            exit_on_error=False,
+        )
 
     async def _update_ollama_api_state(self) -> None:
         """Disable API controls when no Ollama service is running.
