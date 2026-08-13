@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 import threading
 from types import SimpleNamespace
@@ -705,17 +706,43 @@ async def test_claim_authority_survives_screen_recompose_and_not_window_selectio
             window.query_one("#llamacpp-gguf-source-status", Static).render()
         )
 
+        deferred_skipped = asyncio.Event()
+
+        async def skip_deferred_finish(_replacement: LLMManagementWindow) -> None:
+            deferred_skipped.set()
+
+        monkeypatch.setattr(
+            LLMManagementWindow,
+            "_finish_deferred_mount",
+            skip_deferred_finish,
+        )
         screen.refresh(recompose=True)
-        for _ in range(8):
-            await pilot.pause()
-            if screen.llm_window is not None and screen.llm_window is not window:
-                break
+        await asyncio.wait_for(deferred_skipped.wait(), timeout=3)
         replacement = screen.query_one(LLMManagementWindow)
         assert replacement is not window
-        assert "Managed GGUF" in str(
-            replacement.query_one("#llamacpp-gguf-source-status", Static).render()
-        )
-        assert replacement.query_one("#llamacpp-gguf-source-mode", Select).disabled
+        replacement.active_view = "llama-cpp"
+        status = replacement.query_one("#llamacpp-gguf-source-status", Static)
+        status.scroll_visible(animate=False)
+        await pilot.pause()
+        assert status in app.screen._compositor.visible_widgets
+        assert str(status.render()) == "Pending authority: Managed GGUF"
+        first_frame = app.export_screenshot(simplify=True)
+        assert "Managed" in first_frame and "GGUF" in first_frame
+        for control_id in (
+            "llamacpp-start-server-button",
+            "llamacpp-gguf-source-mode",
+            "llamacpp-gguf-managed-select",
+            "llamacpp-gguf-refresh-button",
+            "llamacpp-model-path",
+            "llamacpp-browse-model-button",
+            "llamacpp-exec-path",
+            "llamacpp-browse-exec-button",
+            "llamacpp-detect-exec-button",
+        ):
+            assert replacement.query_one(f"#{control_id}").disabled, control_id
+        assert not replacement.query_one(
+            "#llamacpp-stop-server-button", Button
+        ).disabled
     finally:
         await _close_context(context)
 

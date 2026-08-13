@@ -904,7 +904,7 @@ class LLMManagementWindow(Container):
             for choice in self._managed_gguf_choices
         )
 
-    def _compose_gguf_source(self, provider: str) -> ComposeResult:
+    def _compose_gguf_source(self, provider: str, active: bool) -> ComposeResult:
         """Compose one compact, mutually-exclusive GGUF source control."""
 
         selection = self._gguf_sources[provider]
@@ -917,6 +917,7 @@ class LLMManagementWindow(Container):
                 compact=True,
                 id=f"{provider}-gguf-source-mode",
                 classes="gguf-source-mode",
+                disabled=active,
             )
 
         with Vertical(
@@ -938,12 +939,13 @@ class LLMManagementWindow(Container):
                     compact=True,
                     id=f"{provider}-gguf-managed-select",
                     classes="gguf-source-managed-select",
-                    disabled=not self._managed_gguf_choices,
+                    disabled=active or not self._managed_gguf_choices,
                 )
                 yield Button(
                     "Refresh managed models",
                     id=f"{provider}-gguf-refresh-button",
                     classes="gguf-source-refresh",
+                    disabled=active,
                 )
 
         with Vertical(
@@ -957,11 +959,13 @@ class LLMManagementWindow(Container):
                 yield Input(
                     id=f"{provider}-model-path",
                     placeholder="/path/to/external-model.gguf",
+                    disabled=active,
                 )
                 yield Button(
                     "Browse",
                     id=f"{provider}-browse-model-button",
                     classes="browse_button gguf-source-browse",
+                    disabled=active,
                     tooltip=(
                         "Choose a GGUF model file for llama.cpp."
                         if provider == "llamacpp"
@@ -991,13 +995,16 @@ class LLMManagementWindow(Container):
             )
 
         yield Static(
-            f"Selected authority: {selection.authority}",
+            self._gguf_authority_text(provider),
             id=f"{provider}-gguf-source-status",
             classes="gguf-source-status",
         )
 
     def compose(self) -> ComposeResult:
         """Compose the LLM Management UI with sidebar navigation and content area."""
+        initial_active = {
+            provider: self._server_active(provider) for provider in self.GGUF_PROVIDERS
+        }
         # Main content area
         with Container(id="llm-main-content"):
             # Llama.cpp View
@@ -1019,34 +1026,42 @@ class LLMManagementWindow(Container):
                         "Start Server",
                         id="llamacpp-start-server-button",
                         classes="action_button",
+                        disabled=initial_active["llamacpp"],
                     )
-                    yield Button(
+                    llamacpp_stop = Button(
                         "Stop Server",
                         id="llamacpp-stop-server-button",
                         classes="action_button",
                         disabled=True,
                     )
+                    llamacpp_stop.disabled = not initial_active["llamacpp"]
+                    yield llamacpp_stop
 
                 with Container(classes="input_container"):
                     yield Label("Server Executable:", classes="inline-label")
                     yield Input(
                         id="llamacpp-exec-path",
                         placeholder="e.g. /opt/llama.cpp/build/bin/server",
+                        disabled=initial_active["llamacpp"],
                     )
                     yield Button(
                         "Browse",
                         id="llamacpp-browse-exec-button",
                         classes="browse_button",
+                        disabled=initial_active["llamacpp"],
                         tooltip="Choose the llama.cpp server executable.",
                     )
                     yield Button(
                         "Detect",
                         id="llamacpp-detect-exec-button",
                         classes="browse_button detect-button",
+                        disabled=initial_active["llamacpp"],
                         tooltip="Find the llama.cpp server binary on this machine.",
                     )
 
-                yield from self._compose_gguf_source("llamacpp")
+                yield from self._compose_gguf_source(
+                    "llamacpp", initial_active["llamacpp"]
+                )
 
                 yield Label("Host:", classes="label")
                 yield Input(id="llamacpp-host", value="127.0.0.1")
@@ -1097,34 +1112,43 @@ class LLMManagementWindow(Container):
                         "Start Server",
                         id="llamafile-start-server-button",
                         classes="action_button",
+                        disabled=initial_active["llamafile"],
                     )
-                    yield Button(
+                    llamafile_stop = Button(
                         "Stop Server",
                         id="llamafile-stop-server-button",
                         classes="action_button",
                         disabled=True,
                     )
+                    llamafile_stop.disabled = not initial_active["llamafile"]
+                    yield llamafile_stop
 
 
                 with Container(classes="input_container"):
                     yield Label("Llamafile Executable (.llamafile):", classes="inline-label")
                     yield Input(
-                        id="llamafile-exec-path", placeholder="/path/to/model.llamafile"
+                        id="llamafile-exec-path",
+                        placeholder="/path/to/model.llamafile",
+                        disabled=initial_active["llamafile"],
                     )
                     yield Button(
                         "Browse",
                         id="llamafile-browse-exec-button",
                         classes="browse_button",
+                        disabled=initial_active["llamafile"],
                         tooltip="Choose the llamafile executable.",
                     )
                     yield Button(
                         "Detect",
                         id="llamafile-detect-exec-button",
                         classes="browse_button detect-button",
+                        disabled=initial_active["llamafile"],
                         tooltip="Find the llamafile executable on this machine.",
                     )
 
-                yield from self._compose_gguf_source("llamafile")
+                yield from self._compose_gguf_source(
+                    "llamafile", initial_active["llamafile"]
+                )
 
                 yield Label("Host:", classes="label")
                 yield Input(id="llamafile-host", value="127.0.0.1")
@@ -1515,6 +1539,11 @@ class LLMManagementWindow(Container):
             status = self.query_one(f"#{provider}-gguf-source-status", Static)
         except QueryError:
             return
+        status.update(self._gguf_authority_text(provider))
+
+    def _gguf_authority_text(self, provider: str) -> str:
+        """Return path-free authority text without querying mounted widgets."""
+
         if self.app_instance is None:
             claim, process = None, None
         else:
@@ -1522,26 +1551,23 @@ class LLMManagementWindow(Container):
         if claim is not None:
             phase = "Running" if process is not None else "Pending"
             authority = claim.authority or "Local process"
-            status.update(f"{phase} authority: {authority}")
-        elif (
+            return f"{phase} authority: {authority}"
+        if (
             self._managed_gguf_inventory_error
             and self._gguf_sources[provider].mode is GGUFSourceMode.MANAGED
         ):
-            status.update(
+            return (
                 "Managed GGUF inventory unavailable. Refresh managed models to retry."
             )
-        elif (
+        if (
             self._gguf_sources[provider].mode is GGUFSourceMode.MANAGED
             and self._gguf_sources[provider].managed_ref is None
         ):
-            status.update(
+            return (
                 "Selected managed GGUF is unavailable. "
                 "Choose another managed model or refresh."
             )
-        else:
-            status.update(
-                f"Selected authority: {self._gguf_sources[provider].authority}"
-            )
+        return f"Selected authority: {self._gguf_sources[provider].authority}"
 
     def _select_source_mode(self, provider: str, mode: GGUFSourceMode) -> None:
         """Switch one provider without discarding inactive selections."""
