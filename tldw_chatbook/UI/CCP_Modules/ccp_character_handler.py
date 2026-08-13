@@ -391,9 +391,11 @@ class CCPCharacterHandler:
             self.character_list = await asyncio.to_thread(fetch_all_characters)
             options = [
                 (
-                    sanitize_character_display_text(
-                        char.get("name", "Unnamed"),
-                        max_characters=_OPTION_LABEL_MAX_CHARACTERS,
+                    Text(
+                        sanitize_character_display_text(
+                            char.get("name", "Unnamed"),
+                            max_characters=_OPTION_LABEL_MAX_CHARACTERS,
+                        )
                     ),
                     str(char.get("id")),
                 )

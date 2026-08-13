@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
-import pytest
-from textual.app import App, ComposeResult
-from textual.widgets import Static, TextArea
+import importlib
+import tomllib
+from pathlib import Path
 
+import pytest
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.widgets import Select, Static, TextArea
+from textual.widgets._select import SelectOverlay
+
+from tldw_chatbook.UI.CCP_Modules import (
+    ccp_character_handler as character_handler_module,
+)
 from tldw_chatbook.UI.CCP_Modules.ccp_character_handler import CCPCharacterHandler
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_text
 from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
@@ -60,10 +69,62 @@ def test_character_display_sanitizer_does_not_mutate_card() -> None:
     assert card == {"name": "Name\ufffd", "description": "Original\x00value"}
 
 
+@pytest.mark.parametrize(
+    ("character", "expected_width"),
+    (("\x1b", -1), ("\u0301", 0), ("\u754c", 2), ("A", 1)),
+)
+def test_character_display_sanitizer_matches_public_wcwidth_classes(
+    character: str,
+    expected_width: int,
+) -> None:
+    wcwidth_module = importlib.import_module("wcwidth")
+
+    assert wcwidth_module.wcwidth(character) == expected_width
+    expected = "?" if expected_width < 0 else character
+    assert sanitize_character_display_text(character, max_characters=1) == expected
+
+
+def test_character_display_sanitizer_calls_public_wcwidth(monkeypatch) -> None:
+    wcwidth_module = importlib.import_module("wcwidth")
+    calls: list[str] = []
+
+    def negative_width(character: str) -> int:
+        calls.append(character)
+        return -1
+
+    monkeypatch.setattr(wcwidth_module, "wcwidth", negative_width)
+
+    assert sanitize_character_display_text("A", max_characters=1) == "?"
+    assert calls == ["A"]
+
+
+def test_wcwidth_is_declared_in_both_runtime_dependency_lists() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    project = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+    requirements = {
+        line.strip()
+        for line in (repo_root / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+    requirement = "wcwidth>=0.2.14,<1"
+    assert requirement in project["project"]["dependencies"]
+    assert requirement in requirements
+
+
 class _CCPDisplayApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Static("", id="ccp-card-name-display", markup=False)
         yield TextArea("", id="ccp-card-description-display", read_only=True)
+
+
+class _CCPSelectApp(App[None]):
+    def compose(self) -> ComposeResult:
+        yield Select(
+            [("Initial", "initial")],
+            id="conv-char-character-select",
+            allow_blank=False,
+        )
 
 
 class _CCPWindow:
@@ -95,6 +156,47 @@ async def test_ccp_read_only_display_sanitizes_without_changing_source_data() ->
         )
 
     assert source == {"name": "N\ufffdme", "description": "Line\x00one\nLine two"}
+
+
+@pytest.mark.asyncio
+async def test_ccp_character_select_renders_saved_names_as_literal_text(
+    monkeypatch,
+) -> None:
+    records = [
+        {"id": 7, "name": "[/x]"},
+        {"id": 8, "name": "[bold]Literal[/bold]"},
+    ]
+    monkeypatch.setattr(
+        character_handler_module,
+        "fetch_all_characters",
+        lambda: records,
+    )
+    app = _CCPSelectApp()
+
+    async with app.run_test() as pilot:
+        handler = CCPCharacterHandler(_CCPWindow(app))
+        await handler.refresh_character_list()
+        select = app.query_one("#conv-char-character-select", Select)
+
+        select.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        overlay = select.query_one(SelectOverlay)
+        prompts = [option.prompt for option in overlay.options]
+        assert select.expanded is True
+        assert all(isinstance(prompt, Text) for prompt in prompts)
+        assert [prompt.plain for prompt in prompts] == [
+            "[/x]",
+            "[bold]Literal[/bold]",
+        ]
+        assert select.value == "7"
+
+    assert records == [
+        {"id": 7, "name": "[/x]"},
+        {"id": 8, "name": "[bold]Literal[/bold]"},
+    ]
+    assert handler.character_list == records
 
 
 @pytest.mark.asyncio
