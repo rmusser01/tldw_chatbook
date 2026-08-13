@@ -244,11 +244,14 @@ async def _settle_pilot_until(
 ) -> None:
     """Pump bounded Pilot cycles until deferred Textual work reaches a condition."""
 
-    for _ in range(20):
-        await pilot.pause()
-        if predicate():
-            return
-    raise AssertionError(message)
+    try:
+        async with asyncio.timeout(3):
+            while True:
+                await pilot.pause()
+                if predicate():
+                    return
+    except TimeoutError:
+        raise AssertionError(message) from None
 
 
 @pytest.mark.asyncio
@@ -262,10 +265,10 @@ async def test_pilot_settle_waits_for_deferred_refresh_cycles() -> None:
     pilot = DelayedPilot()
     await _settle_pilot_until(
         pilot,
-        lambda: pilot.cycles == 3,
+        lambda: pilot.cycles == 21,
         message="deferred Textual work did not settle",
     )
-    assert pilot.cycles == 3
+    assert pilot.cycles == 21
 
 
 @pytest.mark.asyncio
