@@ -196,3 +196,97 @@ was re-added): 341 passed, 0 failed (339 baseline + 2 new tests this round).
 **Files changed**:
 - `tldw_chatbook/UI/STTS_Window.py`
 - `Tests/UI/test_speech_audiobook_chapter_detection.py` (new; 5 tests)
+
+## Review follow-up (round 3)
+
+Three findings from a re-review of round 2, all addressed -- see
+`Tests/UI/test_speech_audiobook_chapter_detection.py` and
+`tldw_chatbook/UI/STTS_Window.py` for the full detail; summary below.
+
+1. **Stale-result overwrite (Important).** `exclusive=True` on
+   `_detect_chapters_worker` cancels a *queued* worker in its group but
+   cannot interrupt one already executing on its OS thread
+   (`Worker.cancel()` cancels the wrapping asyncio Task, not the thread) --
+   the reviewer reproduced 3/3 a slower, superseded dispatch's
+   `call_from_thread` overwriting a newer result, realistic because the
+   three one-shot import paths have no debounce between them and detection
+   can run up to ~700ms. Fixed with a monotonically-increasing
+   `_chapter_detect_generation` id, captured in `_detect_chapters` and
+   threaded through the worker; `_apply_detected_chapters` now applies a
+   result only if its `generation` still matches the latest dispatched one
+   -- the guard runs entirely on the main thread (both the increment and
+   the check), so there is no cross-thread race on the counter itself.
+   Deliberately did NOT also add the suggested optional
+   `get_current_worker().is_cancelled` early-exit: adding it during
+   implementation caused the end-to-end reproduction test to pass even with
+   the generation guard *disabled* (mutation-tested), because in that
+   scenario the worker's own cancelled flag was already true by the time it
+   resumed -- i.e. it would have quietly masked whether the "real" guard
+   actually mattered. Left out in favor of one unambiguous correctness
+   mechanism.
+2. **Toast reset semantics.** `_last_notified_chapter_count` never reset,
+   so a genuinely new import that happened to detect the same count as a
+   previous session was silently un-toasted (reviewer reproduced). Reset
+   seam: `_import_content` -- the single dispatcher all four source types
+   (file/notes/conversation/paste) funnel through, and the app's own signal
+   that "a new bring-in-content action began" (for "paste" specifically,
+   this is what unlocks the previously-disabled content-preview box).
+   Detections re-run later within the same session with no further
+   `_import_content` call in between -- e.g. the paste box's debounced
+   re-detection -- still dedupe against each other, since this is the only
+   reset point.
+3. **Flaky gate.** The heartbeat test asserted an absolute count (`>= 10`),
+   which failed 4/6 runs under real machine load despite the fix being
+   structurally sound. Redesigned as a same-run, load-independent
+   comparison: a synchronous control arm (`ChapterDetector.detect_chapters`
+   called directly inside an `async def` wrapper with no internal `await`)
+   is *guaranteed* zero heartbeats by construction -- a coroutine with no
+   await point cannot yield, so a concurrently scheduled heartbeat task
+   cannot run even once during it, independent of machine speed -- and the
+   real threaded call only has to beat that guaranteed zero
+   (`threaded_heartbeats > sync_heartbeats`). Also reduced
+   `_make_large_book`'s chapter-header density (2000 -> 60,000 words per
+   chapter): the original density produced ~999 chapters for a 3M-word
+   book, which intermittently tripped an unrelated, pre-existing race in
+   `ChapterEditorWidget`/`Select`'s mount sequence when the chapter table
+   populated that many rows in one reactive update (observed once in a
+   full-file run, reproducible 0/4 afterward at the reduced density -- a
+   real but out-of-scope flake, not owned by this task).
+
+**Also found and worked around, out of scope:** the "Import From" `Select`
+(`#import-source-select`) is composed with `options=[(id, label), ...]`
+(e.g. `("file", "Text File")`), but Textual's `Select.options` order is
+`(renderable, value)` -- so the widget's actual `.value` is the display
+label ("Text File"), never the lowercase id `_import_content`'s
+`if import_source == "file":` branches check against. This means the
+"Import Content" button's source dispatch is non-functional today for all
+four sources, regardless of this task's changes. Not fixed here (separate,
+pre-existing bug); the round-3 dedup-reset test calls `_import_content`
+directly rather than driving it through the Select, since the reset line
+runs unconditionally before the (currently dead) branching.
+
+**Verification (round 3):**
+- Mutation-tested both new guards: disabling the generation check in
+  `_apply_detected_chapters` failed both
+  `test_apply_detected_chapters_rejects_a_stale_generation` and
+  `test_a_slower_superseded_detection_never_overwrites_a_faster_one` red;
+  disabling the `_import_content` reset failed
+  `test_notify_dedup_resets_on_a_new_import_action` red. Restored, all
+  green.
+- Ran `Tests/UI/test_speech_audiobook_chapter_detection.py` 6x consecutively
+  with `-s`: **all 6 green** (8 tests each), heartbeat-seam counts recorded
+  each run: `sync=0 threaded=24`, `sync=0 threaded=25` (x4), `sync=0
+  threaded=24` -- sync is deterministically 0 every run as designed;
+  threaded consistently clears 24-25, far above the old flaky threshold.
+- Full STTS/Speech batch (same 9 files): **344 passed**, 0 failed (341
+  baseline + 3 new tests this round).
+- `ruff check` on both changed files: all checks passed.
+
+**Files changed (round 3, on top of rounds 1-2):**
+- `tldw_chatbook/UI/STTS_Window.py` -- generation guard, `_import_content`
+  dedup reset.
+- `Tests/UI/test_speech_audiobook_chapter_detection.py` -- 3 new tests
+  (stale-generation unit test, end-to-end slow/fast dispatch test,
+  dedup-reset test), heartbeat test redesigned load-robust, `_make_large_book`
+  chapter density reduced, notify tests updated for the new `generation`
+  parameter.

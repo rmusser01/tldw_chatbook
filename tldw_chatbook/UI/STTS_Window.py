@@ -224,8 +224,18 @@ class AudioBookGenerationWidget(Widget):
         # Last chapter count a "Detected N chapters" toast was shown for
         # (task-15478 review): a debounced re-paste can re-run detection
         # several times as the user keeps typing, and every settle used to
-        # pop its own toast even when the count hadn't moved.
+        # pop its own toast even when the count hadn't moved. Reset in
+        # `_import_content` -- see that method's comment for why that's the
+        # right seam.
         self._last_notified_chapter_count: Optional[int] = None
+        # Monotonically-increasing dispatch id (task-15478 review round 2):
+        # `exclusive=True` on the detection worker cancels QUEUED workers in
+        # its group, but cannot interrupt one already running on an OS
+        # thread -- a slower, superseded dispatch can still finish after a
+        # faster, newer one and overwrite its result. `_apply_detected_
+        # chapters` only applies a result whose generation matches the
+        # latest dispatched one.
+        self._chapter_detect_generation: int = 0
 
     def compose(self) -> ComposeResult:
         """Compose the AudioBook/Podcast UI.
@@ -420,6 +430,22 @@ class AudioBookGenerationWidget(Widget):
     def _import_content(self) -> None:
         """Import content for audiobook generation"""
         import_source = self.query_one("#import-source-select", Select).value
+
+        # Every source (including "paste": this is the app's own signal
+        # that the user is about to start pasting a new document, since
+        # `_import_from_paste` is what enables and focuses the previously
+        # disabled content-preview box) is a deliberate, one-shot "bring in
+        # new content" action. Reset the notify-dedup memory here, not
+        # inside `_detect_chapters`/`_apply_detected_chapters`, so a freshly
+        # imported document that happens to detect the same chapter count
+        # as whatever the PREVIOUS session last toasted still gets its own
+        # toast (task-15478 review: this used to never reset, so a
+        # genuinely new import could go silently un-toasted). Detections
+        # re-run later within the SAME session -- e.g. the paste box's
+        # debounced re-detection as the user keeps typing after this point,
+        # with no further `_import_content` call in between -- still dedupe
+        # against each other, since this is the only reset point.
+        self._last_notified_chapter_count = None
 
         if import_source == "file":
             self._import_from_file()
@@ -758,18 +784,41 @@ class AudioBookGenerationWidget(Widget):
         The CPU-bound detection itself runs in `_detect_chapters_worker` (a
         `@work(thread=True)` method); this method only snapshots
         `content_text` and dispatches it.
+
+        `exclusive=True` on that worker only cancels a prior *queued* run in
+        the same group -- it cannot interrupt one already executing on an OS
+        thread. A stale, slower dispatch can therefore still finish and
+        marshal its result back AFTER a newer, faster one (task-15478
+        review round 2; reproduced 3/3 with two back-to-back dispatches, no
+        debounce between them, which is exactly what happens across the
+        three one-shot import paths). A monotonically-increasing generation
+        id is captured here and threaded through; `_apply_detected_chapters`
+        only applies a result whose generation still matches the latest one
+        dispatched.
         """
         if not self.content_text:
             return
-        self._detect_chapters_worker(self.content_text)
+        self._chapter_detect_generation += 1
+        generation = self._chapter_detect_generation
+        self._detect_chapters_worker(self.content_text, generation)
 
     @work(thread=True, exclusive=True, group="audiobook-chapter-detection")
-    def _detect_chapters_worker(self, content: str) -> None:
+    def _detect_chapters_worker(self, content: str, generation: int) -> None:
         """Thread: run the CPU-bound detector, then marshal the result back.
 
-        `exclusive=True` cancels any prior in-flight detection in this same
-        group -- if content changes again before a run finishes, only the
-        latest result should ever reach `_apply_detected_chapters`.
+        `exclusive=True` cancels any prior *queued* worker in this same
+        group; it does not stop one already mid-execution on its OS thread
+        (`Worker.cancel()` cannot interrupt a running thread). Deliberately
+        NOT also checking `get_current_worker().is_cancelled` here as a
+        "skip the wasted marshal" shortcut, tempting as that is: it would
+        make the one-marshal-always-arrives, `_apply_detected_chapters`
+        never-overwrites-a-newer-result contract depend on a second,
+        cross-thread-timing-sensitive mechanism whose semantics are a
+        Textual implementation detail, for a saving that only matters on
+        the rare superseded path anyway. The `generation` stamp -- checked
+        in `_apply_detected_chapters`, on the main thread, with no
+        cross-thread race since only that thread ever reads or writes it --
+        is the one real correctness guard.
         """
         try:
             from tldw_chatbook.TTS.audiobook_generator import ChapterDetector
@@ -784,14 +833,27 @@ class AudioBookGenerationWidget(Widget):
             )
             return
 
-        self.app.call_from_thread(self._apply_detected_chapters, chapters)
+        self.app.call_from_thread(
+            self._apply_detected_chapters, chapters, generation
+        )
 
-    def _apply_detected_chapters(self, chapters: List) -> None:
+    def _apply_detected_chapters(self, chapters: List, generation: int) -> None:
         """Main-thread half of chapter detection: apply results to the UI.
 
         Called via `call_from_thread` from `_detect_chapters_worker`, so it
-        must stay main-thread-only (widget queries/mutation, notify).
+        must stay main-thread-only (widget queries/mutation, notify). Only
+        applies a result if `generation` still matches the most recently
+        dispatched detection -- a superseded (stale) result is dropped
+        rather than overwriting a newer, already-applied one.
         """
+        if generation != self._chapter_detect_generation:
+            logger.debug(
+                "Dropping stale chapter-detection result "
+                f"(generation {generation}, current "
+                f"{self._chapter_detect_generation})"
+            )
+            return
+
         self.detected_chapters = chapters
 
         try:
