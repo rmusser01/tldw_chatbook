@@ -35,6 +35,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from textual.app import App
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -72,6 +73,7 @@ from tldw_chatbook.TTS.profile_service import TTSProfileService
 from tldw_chatbook.TTS.profile_types import CharacterRef, TTSProfileDraft
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.Widgets import enhanced_file_picker as efp
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 from Tests.Character_Chat.test_character_card_lenient_import import (
@@ -304,6 +306,37 @@ async def _wait_for(pilot, condition, timeout: float = 15.0, interval: float = 0
         await pilot.pause(interval)
         elapsed += interval
     raise TimeoutError("condition not met within timeout")
+
+
+async def test_first_time_character_import_picker_starts_in_documents(
+    tmp_path, monkeypatch
+):
+    """A clean profile opens character import somewhere useful and stable."""
+    home = tmp_path / "home"
+    documents = home / "Documents"
+    process_directory = tmp_path / "checkout"
+    documents.mkdir(parents=True)
+    process_directory.mkdir()
+    monkeypatch.chdir(process_directory)
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(
+        efp,
+        "get_cli_setting",
+        lambda _section, _key, default=None: default,
+    )
+    monkeypatch.setattr(efp, "save_setting_to_cli_config", lambda *_args: None)
+
+    picker = efp.EnhancedFileOpen(context="character_import")
+    app = App()
+
+    async with app.run_test(size=(60, 24)) as pilot:
+        app.push_screen(picker)
+        await pilot.pause()
+        nav_type = efp.EnhancedDirectoryNavigation
+        navigation = picker.query_one(nav_type)
+        assert picker._location == documents
+        assert navigation.location == documents
+        assert navigation.location != process_directory
 
 
 def _resolve_uat_card_path(tmp_path: Path) -> Path:

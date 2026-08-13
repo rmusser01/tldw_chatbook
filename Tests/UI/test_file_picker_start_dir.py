@@ -14,18 +14,14 @@ These tests prove:
    picker, and vice versa).
 2. A saved ``filepicker.last_dir_{context}`` value is used as the resolved
    start ``_location`` when a picker of that context opens.
-3. A context with nothing saved leaves the caller-passed ``location=``
-   untouched (i.e. the override only fires when a saved value exists).
-
-Ordering caveat (see ``EnhancedFileDialog.__init__``): a saved last-dir
-OVERRIDES a caller-passed ``location=``. The tests below therefore never
-pass a conflicting ``location=`` for a context that also has a saved value
--- that would only prove the override still happens, not test anything new.
+3. A new character import starts at Documents when available, then home,
+   and never inherits the process working directory.
+4. An explicit caller location remains authoritative even when that context
+   has a remembered directory.
 """
 
-from pathlib import Path
-
 import pytest
+from textual.app import App
 
 from tldw_chatbook.Widgets import enhanced_file_picker as efp
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
@@ -50,8 +46,14 @@ def config_store(monkeypatch):
     def fake_save(section, key, value):
         store[(section, key)] = value
 
+    def fake_save_settings(section_values):
+        for section, values in section_values.items():
+            for key, value in values.items():
+                store[(section, key)] = value
+
     monkeypatch.setattr(efp, "get_cli_setting", fake_get)
     monkeypatch.setattr(efp, "save_setting_to_cli_config", fake_save)
+    monkeypatch.setattr(efp, "save_settings_to_cli_config", fake_save_settings)
     return store
 
 
@@ -93,3 +95,74 @@ def test_context_without_saved_dir_keeps_caller_location(config_store):
     picker = EnhancedFileOpen(location="/tmp", context="brand_new_context")
 
     assert picker._location == "/tmp"
+
+
+def test_character_import_start_precedence(tmp_path):
+    home = tmp_path / "home"
+    documents = home / "Documents"
+    remembered = home / "cards"
+    documents.mkdir(parents=True)
+    remembered.mkdir()
+
+    assert (
+        efp.resolve_file_picker_start(
+            "character_import", remembered, home=home
+        )
+        == remembered
+    )
+    assert (
+        efp.resolve_file_picker_start("character_import", None, home=home)
+        == documents
+    )
+
+    documents.rmdir()
+    assert efp.resolve_file_picker_start("character_import", None, home=home) == home
+
+
+def test_character_import_ignores_invalid_remembered_directory(tmp_path):
+    home = tmp_path / "home"
+    documents = home / "Documents"
+    documents.mkdir(parents=True)
+
+    assert (
+        efp.resolve_file_picker_start(
+            "character_import", home / "missing-cards", home=home
+        )
+        == documents
+    )
+
+
+def test_explicit_location_overrides_remembered_directory(config_store, tmp_path):
+    explicit = tmp_path / "explicit"
+    remembered = tmp_path / "remembered"
+    explicit.mkdir()
+    remembered.mkdir()
+    config_store[("filepicker", "last_dir_character_import")] = str(remembered)
+
+    picker = EnhancedFileOpen(location=explicit, context="character_import")
+
+    assert picker._location == explicit
+
+
+@pytest.mark.asyncio
+async def test_character_import_selection_saves_only_selected_parent(
+    config_store, tmp_path
+):
+    selected_parent = tmp_path / "selected-parent"
+    selected_parent.mkdir()
+    selected_file = selected_parent / "character.json"
+    selected_file.write_text("{}", encoding="utf-8")
+    other_directory = tmp_path / "other-directory"
+    other_directory.mkdir()
+    picker = EnhancedFileOpen(location=other_directory, context="character_import")
+    app = App()
+
+    async with app.run_test() as pilot:
+        app.push_screen(picker)
+        await pilot.pause()
+        picker.dismiss(selected_file)
+        await pilot.pause()
+
+    assert config_store[("filepicker", "last_dir_character_import")] == str(
+        selected_parent
+    )

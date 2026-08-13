@@ -17,6 +17,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
+from textual.strip import Strip
 from textual.timer import Timer
 from textual.widgets import Button, Input, Label, ListItem, ListView, OptionList, Static
 
@@ -442,6 +443,33 @@ def _human_readable_size(size: int) -> str:
     return f"{formatted} {unit}"
 
 
+def resolve_file_picker_start(
+    context: str,
+    remembered: Path | None,
+    *,
+    home: Path,
+) -> Path:
+    """Resolve a default picker location without overriding explicit callers.
+
+    Character imports start from their own remembered directory, then the
+    user's Documents directory, then home. Other contexts retain the legacy
+    ``.`` fallback; their remembered directories continue to be independent.
+    """
+    if remembered is not None:
+        try:
+            if remembered.is_dir():
+                return remembered
+        except OSError:
+            pass
+    if context == "character_import":
+        documents = home / "Documents"
+        try:
+            return documents if documents.is_dir() else home
+        except OSError:
+            return home
+    return Path(".")
+
+
 class FormattedDirectoryEntry(DirectoryEntry):
     """Directory entry with human-readable sizes and no size for directories."""
 
@@ -456,8 +484,8 @@ class FormattedDirectoryEntry(DirectoryEntry):
         return _human_readable_size(entry_size)
 
 
-class MultiSelectDirectoryEntry(FormattedDirectoryEntry):
-    """A directory entry that renders a selection marker for multi-select."""
+class SelectableDirectoryEntry(FormattedDirectoryEntry):
+    """A directory entry with a fixed-width textual selection marker."""
 
     def __init__(self, location: Path, styles: Any, selected: bool = False) -> None:
         self.selected = selected
@@ -505,7 +533,11 @@ class MultiSelectDirectoryEntry(FormattedDirectoryEntry):
         return prompt
 
 
-class SearchableDirectoryNavigation(DirectoryNavigation):
+# Compatibility for callers and tests that imported the former name.
+MultiSelectDirectoryEntry = SelectableDirectoryEntry
+
+
+class EnhancedDirectoryNavigation(DirectoryNavigation):
     """Directory navigation that also filters by a free-text search term.
 
     The base ``DirectoryNavigation`` references ``search_filter`` in its watch
@@ -516,7 +548,7 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
     Additional enhancements:
     - Type-ahead jumping to the next entry whose name starts with the typed
       prefix.
-    - Optional multi-select rendering via :class:`MultiSelectDirectoryEntry`.
+    - Persistent selection markers for character import and multi-select.
     - Uniform activation model (task-430 AC#2): a single-click / OptionList
       ``Selected`` event only highlights (and, for a file, fills the
       filename input) -- it never auto-navigates a directory. Opening
@@ -530,6 +562,30 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
         # Enter opens the highlighted entry instead of merely selecting it.
         Binding("enter", "open_highlighted", "Open", show=False),
     ]
+
+    COMPONENT_CLASSES = {
+        "-focused",
+        "-selected",
+        "-focused-selected",
+    }
+
+    DEFAULT_CSS = """
+    EnhancedDirectoryNavigation > .-focused {
+        text-style: bold underline;
+    }
+
+    EnhancedDirectoryNavigation > .-selected {
+        background: $success 20%;
+        color: $text;
+        text-style: bold;
+    }
+
+    EnhancedDirectoryNavigation > .-focused-selected {
+        background: $success 35%;
+        color: $text;
+        text-style: bold underline;
+    }
+    """
 
     search_filter = reactive("")
     """Free-text filter applied to entry names."""
@@ -620,6 +676,69 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
         """Debounce timer callback: run the deferred repopulation."""
         self._search_debounce_timer = None
         self._repopulate_display()
+
+    def row_state_classes(self, option_index: int) -> set[str]:
+        """Return independent focus and selection classes for one option."""
+        try:
+            option = self.get_option_at_index(option_index)
+        except Exception:
+            return set()
+        if not isinstance(option, DirectoryEntry):
+            return set()
+
+        classes: set[str] = set()
+        if self.has_focus and self.highlighted == option_index:
+            classes.add("-focused")
+
+        screen = self.screen
+        selected_paths = getattr(screen, "_selected_paths", set())
+        selected_path = getattr(screen, "_selected_path", None)
+        if option.location in selected_paths or option.location == selected_path:
+            classes.add("-selected")
+        return classes
+
+    def render_line(self, y: int) -> Strip:
+        """Render an option with composable focus and selection component styles."""
+        line_number = self.scroll_offset.y + y
+        try:
+            option_index, line_offset = self._lines[line_number]
+            option = self.options[option_index]
+        except IndexError:
+            return Strip.blank(
+                self.scrollable_content_region.width,
+                self.get_visual_style("option-list--option").rich_style,
+            )
+
+        component_classes: list[str] = []
+        if option.disabled:
+            component_classes.append("option-list--option-disabled")
+        else:
+            row_classes = self.row_state_classes(option_index)
+            highlighted = self.highlighted == option_index
+            if highlighted:
+                component_classes.append("option-list--option-highlighted")
+            if "-focused" in row_classes:
+                component_classes.append("-focused")
+            if "-selected" in row_classes:
+                component_classes.append("-selected")
+            if row_classes == {"-focused", "-selected"}:
+                component_classes.append("-focused-selected")
+            if (
+                not highlighted
+                and not row_classes
+                and self._mouse_hovering_over == option_index
+            ):
+                component_classes.append("option-list--option-hover")
+
+        style = self.get_visual_style("option-list--option", *component_classes)
+        strips = self._get_option_render(option, style)
+        try:
+            return strips[line_offset]
+        except IndexError:
+            return Strip.blank(
+                self.scrollable_content_region.width,
+                self.get_visual_style("option-list--option").rich_style,
+            )
 
     def _restart_type_ahead_timer(self) -> None:
         """Reset the inactivity timeout that clears the type-ahead buffer."""
@@ -714,10 +833,17 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
         except Exception:
             pass
 
-        # Determine whether the hosting dialog is in multi-select mode.
+        # Determine which paths the hosting dialog currently marks selected.
         screen = self.screen
         multi_select = getattr(screen, "multi_select", False)
-        selected = getattr(screen, "_selected_paths", set()) if multi_select else set()
+        show_selection_marker = (
+            multi_select or getattr(screen, "context", "") == "character_import"
+        )
+        if multi_select:
+            selected = getattr(screen, "_selected_paths", set())
+        else:
+            selected_path = getattr(screen, "_selected_path", None)
+            selected = {selected_path} if selected_path is not None else set()
 
         # One pass over the entries computes both the visible options and the
         # filter-hidden count (task-15471). Previously a second full loop
@@ -748,18 +874,20 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
             if query and query not in location.name.lower():
                 continue
             display_entries.append(
-                MultiSelectDirectoryEntry(location, styles, location in selected)
-                if multi_select
+                SelectableDirectoryEntry(location, styles, location in selected)
+                if show_selection_marker
                 else FormattedDirectoryEntry(location, styles)
             )
 
         with self.app.batch_update():
             self.clear_options()
             if not self.is_root:
-                if multi_select:
-                    self.add_option(MultiSelectDirectoryEntry(self._location / "..", styles, False))
-                else:
-                    self.add_option(FormattedDirectoryEntry(self._location / "..", styles))
+                parent_entry = (
+                    SelectableDirectoryEntry(self._location / "..", styles, False)
+                    if show_selection_marker
+                    else FormattedDirectoryEntry(self._location / "..", styles)
+                )
+                self.add_option(parent_entry)
             self.add_options(self._sort(display_entries))
         self._settle_highlight()
 
@@ -820,6 +948,10 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
         """
         if getattr(event, "chain", 1) >= 2:
             self.action_open_highlighted()
+
+
+# Keep the established public name while exposing the clearer state-owning name.
+SearchableDirectoryNavigation = EnhancedDirectoryNavigation
 
 
 class EnhancedFileDialog(BaseFileDialog):
@@ -1032,13 +1164,13 @@ class EnhancedFileDialog(BaseFileDialog):
         display: none;
     }
 
-    EnhancedFileDialog SearchableDirectoryNavigation > .option-list--option-highlighted {
+    EnhancedFileDialog EnhancedDirectoryNavigation > .option-list--option-highlighted {
         background: $primary 30%;
         color: $text;
         text-style: bold;
     }
 
-    EnhancedFileDialog SearchableDirectoryNavigation:focus > .option-list--option-highlighted {
+    EnhancedFileDialog EnhancedDirectoryNavigation:focus > .option-list--option-highlighted {
         background: $primary 50%;
         color: $text;
         text-style: bold;
@@ -1136,8 +1268,20 @@ class EnhancedFileDialog(BaseFileDialog):
         # Normalize legacy list/tuple filters to a Filters instance so the
         # dialog can safely read ``self.filters.selections`` during compose.
         filters = self._normalize_filters(filters)
+        self.context = context
+        remembered_directory = self._get_last_directory()
+        caller_location = Path(location)
+        effective_location: Union[str, Path]
+        if caller_location == Path("."):
+            effective_location = resolve_file_picker_start(
+                context,
+                remembered_directory,
+                home=Path.home(),
+            )
+        else:
+            effective_location = location
         super().__init__(
-            location,
+            effective_location,
             title,
             select_button,
             cancel_button,
@@ -1156,11 +1300,10 @@ class EnhancedFileDialog(BaseFileDialog):
         self.context = context
         self.multi_select = multi_select
         self._selected_paths: set[Path] = set()
+        self._selected_path: Optional[Path] = None
         self.recent_locations = RecentLocations(context=context)
         self.bookmarks_manager = BookmarksManager(context=context)
-        self._last_directory = self._get_last_directory()
-        if self._last_directory is not None:
-            self._location = self._last_directory
+        self._last_directory = remembered_directory
 
     @staticmethod
     def _normalize_filters(
@@ -1186,7 +1329,7 @@ class EnhancedFileDialog(BaseFileDialog):
         """Get the last used directory for this context"""
         try:
             last_dir = get_cli_setting("filepicker", f"last_dir_{self.context}", None)
-            if last_dir and Path(last_dir).exists():
+            if last_dir and Path(last_dir).is_dir():
                 return Path(last_dir)
         except Exception:
             pass
@@ -1312,16 +1455,26 @@ class EnhancedFileDialog(BaseFileDialog):
                     # Input bar with buttons
                     with InputBar():
                         yield from self._input_bar()
-                        yield Button(
+                        select_button = Button(
                             self._label(self._select_button, "Select"),
                             id="select",
                             variant="primary",
                         )
-                        yield Button(
+                        if self.context == "character_import":
+                            select_button.tooltip = (
+                                "Import the selected character card."
+                            )
+                        yield select_button
+                        cancel_button = Button(
                             self._label(self._cancel_button, "Cancel"),
                             id="cancel",
                             variant="default",
                         )
+                        if self.context == "character_import":
+                            cancel_button.tooltip = (
+                                "Close without importing a character card."
+                            )
+                        yield cancel_button
 
     def on_mount(self) -> None:
         """Initialize the dialog on mount.
@@ -1587,6 +1740,12 @@ class EnhancedFileDialog(BaseFileDialog):
             self._toggle_path_selection(event.path)
             return
 
+        if self.context == "character_import":
+            self._selected_path = event.path
+            try:
+                self.query_one(EnhancedDirectoryNavigation)._repopulate_display()
+            except Exception:
+                pass
         try:
             file_name = self.query_one("#filename-input", Input)
         except Exception:
@@ -1609,6 +1768,8 @@ class EnhancedFileDialog(BaseFileDialog):
             self._toggle_path_selection(event.path)
             return
 
+        if self.context == "character_import":
+            self._selected_path = event.path
         try:
             file_name = self.query_one("#filename-input", Input)
         except Exception:
@@ -1949,18 +2110,19 @@ class EnhancedFileDialog(BaseFileDialog):
     def _file_list_header(self) -> RenderableType:
         """Return a column header matching DirectoryEntry's layout."""
         grid = Table.grid(expand=True)
-        # Optional multi-select marker column.
-        if getattr(self, "multi_select", False):
-            grid.add_column(no_wrap=True, width=1)
-            grid.add_column(no_wrap=True, width=1)
-        else:
+        show_selection_marker = (
+            getattr(self, "multi_select", False)
+            or self.context == "character_import"
+        )
+        grid.add_column(no_wrap=True, width=1)
+        if show_selection_marker:
             grid.add_column(no_wrap=True, width=1)
         grid.add_column(no_wrap=True, width=3)
         grid.add_column(no_wrap=True, ratio=1)
         grid.add_column(no_wrap=True, justify="right", width=10)
         grid.add_column(no_wrap=True, justify="right", width=20)
         grid.add_column(no_wrap=True, width=1)
-        if self.multi_select:
+        if show_selection_marker:
             grid.add_row("", "", "", "Name", "Size", "Modified", "")
         else:
             grid.add_row("", "", "Name", "Size", "Modified", "")
@@ -2178,18 +2340,20 @@ class EnhancedFileDialog(BaseFileDialog):
             self.recent_locations.add(
                 result, "file" if result.is_file() else "directory", persist=False
             )
-
         # Preserves the original ordering: dir_nav.location wins when the
         # query succeeds (even for a list `result`, which never set one
-        # itself), otherwise a single non-list `result` is the fallback.
+        # itself), otherwise a single non-list `result` is the fallback. A
+        # character import deliberately keeps that fallback so the next import
+        # opens beside the selected card rather than the currently viewed path.
         last_directory: Optional[Path] = (
             result if not isinstance(result, list) and result else None
         )
-        try:
-            dir_nav = self.query_one(SearchableDirectoryNavigation)
-            last_directory = dir_nav.location
-        except Exception:
-            pass
+        if self.context != "character_import":
+            try:
+                dir_nav = self.query_one(SearchableDirectoryNavigation)
+                last_directory = dir_nav.location
+            except Exception:
+                pass
 
         self._persist_recent_and_last_directory(last_directory)
 

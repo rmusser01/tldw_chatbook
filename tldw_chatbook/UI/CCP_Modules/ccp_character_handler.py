@@ -965,6 +965,7 @@ class CCPCharacterHandler:
                 title="Import Character Card",
                 filters=filters,
                 context="character_import",
+                select_button="Import",
             )
 
             # Push the file picker screen
