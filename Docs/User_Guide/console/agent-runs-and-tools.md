@@ -650,4 +650,30 @@ restart"; and hovering the cost chip showed `Sub-agents: 1.8k tok (not
 priced)`. One thing found and NOT fixed here: a still-working row's
 elapsed segment froze at `· 1s` for a child a minute old until something
 else repainted the rail — task-15664, fixed in fleet PR 3a-2 by the
-survivor tick described above.)*
+survivor tick described above.) Auto-wake, the cross-screen completion
+indicator, the kill switch, user-wins-ties, and the restart story
+verified @ e38e62a2f — 2026-08-13 (fleet PR3a-2 Task 7: driven live
+against a real Anthropic model on an isolated scratch profile. Confirmed
+by pane and by both databases: a survivor's completion woke its
+supervisor with the machine-origin System notice (verbatim "not user
+input" marking, fenced result, truncation note for a long result) and a
+reply that referenced the child's result, `agent_runs.wake_delivered_at`
+stamped once per delivered run; the wake fired while another Console
+session was in view; a completion landing while on Library toasted there
+by conversation name, staged durably (mark + NULL stamp), and the wake
+ran at the next Console mount with the mark cleared after delivery;
+`autowake_enabled = false` recorded everything (toast, `◈` badge, mark,
+owed ledger row) and fired nothing over a watched quiet window, and the
+owed wake was delivered after flipping back on; a non-empty composer
+draft held a due wake back for the full 50s it existed and the wake fired
+seconds after the draft cleared; SIGKILL with a wake owed left the mark
+and the NULL stamp in place, relaunch swept the mid-run child to `error`
+/ "Interrupted by app restart", and the owed wake was delivered exactly
+once with no previously-stamped run re-announced. Found and NOT fixed
+here, filed as follow-ups: a wake turn's UI can go stale until the
+session is next viewed (stuck `●` on the tab, an unpainted reply row, a
+misleading "finish provider setup" composer state — the delivery itself
+was always correct and durable); one deferred wake's notice labeled a
+`done` child "running"; and after a restart the staged wake's `◈` badge
+did not render on the sidebar row, with delivery waiting on the next
+retry trigger rather than on opening the conversation.)*

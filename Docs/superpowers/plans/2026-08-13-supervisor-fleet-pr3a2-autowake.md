@@ -179,8 +179,13 @@ one missing guard.
 
 ### Task 7: Battery + live verification
 
-- [ ] Battery vs pristine dev at this branch's own base; READ counts.
-- [ ] Live (lessons-live-verification.md binds; scratch config; Anthropic
+- [x] Battery vs pristine dev at this branch's own base; READ counts.
+  (2026-08-13: Agents+Chat+agent_runs_db 5808 passed / 3 failed — all three
+  pre-existing, two re-verified failing on a pristine worktree of
+  `61f6ae575` itself; UI cluster 139 passed; tick/wake-wiring/handoff/
+  discoverability 97 passed + the known `[size0]` red; collect-only 41,817
+  / 0 errors.)
+- [x] Live (lessons-live-verification.md binds; scratch config; Anthropic
   key): (1) child finishes while the user is in ANOTHER Console session —
   toast + marker + wake turn fires there, transcript shows the marked notice,
   supervisor's reply references the child's result; (2) child finishes while
@@ -189,7 +194,12 @@ one missing guard.
   works; (4) restart with a finished-but-undelivered child — mark survives,
   reconcile marks orphans `error`, no phantom wake, mount-claim delivers the
   terminal result; (5) user typing during a due wake — user's send wins.
-- [ ] Ledger + PR body: the headless limit stated plainly.
+  (2026-08-13: all five driven live against real Anthropic on an isolated
+  scratch profile — see the sdd task-7 report for panes, DB stamps, and the
+  three UI-layer findings filed as follow-ups.)
+- [x] Ledger + PR body: the headless limit stated plainly. (Ledger written;
+  PR body is the coordinator's step — the headless limit text is staged in
+  the task-7 report.)
 
 ## Deliberately NOT in this PR (→ 3b / follow-up)
 - Headless wake (supervisor acts with no Console mounted) — requires moving

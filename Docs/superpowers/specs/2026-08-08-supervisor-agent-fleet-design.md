@@ -88,8 +88,16 @@ conversation, owned by the controller (impure layer), surviving turns:
 3. **DB is truth, events are hot path.** `check_agents` and the panel answer
    from run statuses (DB-backed registry); the in-memory event queue is only
    the low-latency path. Restart story: children die with the process,
-   `reconcile_orphaned_runs` marks them, supervisor learns next turn. No new
-   persistence machinery.
+   `reconcile_orphaned_runs` marks them, supervisor learns next turn.
+   *(Corrected 2026-08-13 with PR 3a-2 Task 7's live restart evidence:
+   "learns next turn" is now only the floor. A conversation whose staged
+   wake was owed at exit — a completion had landed and the durable
+   `fleet_unseen` mark was set — has its owed completions delivered by the
+   Console mount-claim without any user turn, exactly once per the
+   `wake_delivered_at` ledger. A child killed mid-run never settled, so its
+   conversation carries no mark: its swept `error` row surfaces in the
+   panel and the supervisor learns of it next turn, as originally written.)*
+   No new persistence machinery.
 4. **Steering never cancels.** Injected instructions append messages; they
    never restart a run (cancellation-based supersede is unsound around
    durable writes — item-status lesson).
@@ -442,7 +450,11 @@ now fights the target, and nothing long-term sneaks into this program's ACs.
   machinery in v1.
 - Provider rate limits under parallelism → per-child run errors, graceful.
 - Process death → `reconcile_orphaned_runs` (runs on every DB open) + panel
-  shows reconciled statuses; supervisor learns next turn; retained
+  shows reconciled statuses; supervisor learns next turn *(corrected
+  2026-08-13, PR 3a-2 Task 7 live evidence: when the conversation was
+  already marked by a pre-exit completion, the mount-claim delivers the
+  owed wake without a user turn — "next turn" remains true only for
+  mid-run orphans, whose conversations were never marked)*; retained
   transcripts lost with clear `send_to_agent` error.
 - Guards: terminal-status first-writer-wins; cancel revokes pending cards;
   supersede spares live background children.
