@@ -212,6 +212,17 @@ def legacy_provider_config(
         }
     )
 
+    if provider_id == "alltalk":
+        # ``app_tts`` is the canonical AllTalk network authority. The legacy
+        # manager applies global and model sections at different precedence;
+        # allowing either to replace the URL would make admission authorize a
+        # different origin from the backend's eventual request.
+        for section_name, section in projected.items():
+            if section_name == "app_tts" or not isinstance(section, dict):
+                continue
+            section.pop("ALLTALK_TTS_URL", None)
+            section.pop("ALLTALK_TTS_URL_DEFAULT", None)
+
     if provider_id == "openai":
         endpoint = normalize_openai_compatible_endpoint(
             effective_tts.get(
@@ -382,7 +393,7 @@ async def _close_delegated_stream(
     cancellation: asyncio.CancelledError | None = None
     while not close_task.done():
         try:
-            await asyncio.shield(close_task)
+            await asyncio.wait((close_task,))
         except asyncio.CancelledError as error:
             cancellation = cancellation or error
         except BaseException:

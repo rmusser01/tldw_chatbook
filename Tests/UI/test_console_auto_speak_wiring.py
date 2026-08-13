@@ -497,6 +497,43 @@ async def test_retry_uses_trusted_path_for_failed_message_without_resuming() -> 
 
 
 @pytest.mark.asyncio
+async def test_retry_drops_when_auto_speak_resumes_during_destination_lookup() -> None:
+    harness = AutoSpeakHarness()
+    await harness.enable()
+    message = await harness.complete_reply("Do not retry after resume.")
+    harness.outcomes.pop()(False)
+    harness.destination_gate = asyncio.Event()
+
+    harness.coordinator.request_retry()
+    await asyncio.sleep(0)
+    harness.coordinator.request_resume()
+    await asyncio.sleep(0)
+    assert harness.session.speech_preferences.paused is False
+
+    harness.destination_gate.set()
+    await harness.drain()
+
+    assert harness.spoken == [message.id]
+
+
+@pytest.mark.asyncio
+async def test_retry_drops_when_hands_free_starts_during_destination_lookup() -> None:
+    harness = AutoSpeakHarness()
+    await harness.enable()
+    message = await harness.complete_reply("Hands-free owns this reply.")
+    harness.outcomes.pop()(False)
+    harness.destination_gate = asyncio.Event()
+
+    harness.coordinator.request_retry()
+    await asyncio.sleep(0)
+    harness.hands_free = True
+    harness.destination_gate.set()
+    await harness.drain()
+
+    assert harness.spoken == [message.id]
+
+
+@pytest.mark.asyncio
 async def test_retry_failed_message_from_wrong_active_session_fails_closed() -> None:
     harness = AutoSpeakHarness()
     await harness.enable()
@@ -540,6 +577,38 @@ async def test_regeneration_waits_for_prior_speech_then_dispatches_once() -> Non
     first_outcome(True)
     await harness.drain()
     assert harness.spoken == [message.id, message.id]
+
+
+@pytest.mark.asyncio
+async def test_pending_regeneration_reconfirms_changed_destination_before_speech() -> None:
+    harness = AutoSpeakHarness()
+    await harness.enable()
+    message = await harness.complete_reply("First destination.")
+    first_outcome = harness.outcomes.pop()
+    harness.store.begin_variant_stream(message.id)
+    harness.store.append_stream_chunk(message.id, "Second destination.")
+    harness.store.finalize_variant_stream(message.id)
+    await harness.drain()
+    assert harness.spoken == [message.id]
+    assert harness.opened == []
+
+    harness.destination = ConsoleTTSDestination(
+        fingerprint=DEST_B,
+        provider_label="PocketChat TTS",
+        sanitized_destination="https://voice-b.example.test",
+        charges_may_apply=False,
+    )
+
+    first_outcome(True)
+    await harness.drain()
+
+    assert harness.spoken == [message.id]
+    assert len(harness.opened) == 1
+    harness.opened.pop()[1](True)
+    await harness.drain()
+
+    assert harness.spoken == [message.id, message.id]
+    assert harness.expected_destinations == [DEST_A, DEST_B]
 
 
 @pytest.mark.asyncio

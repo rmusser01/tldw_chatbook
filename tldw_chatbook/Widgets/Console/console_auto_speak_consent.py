@@ -865,7 +865,7 @@ class ConsoleAutoSpeakCoordinator:
                 return
             pending_completion, pending_operation, pending_active_epoch = pending
             self._schedule_work(
-                self._dispatch(
+                self._handle_completion(
                     token,
                     pending_operation,
                     pending_completion,
@@ -943,6 +943,7 @@ class ConsoleAutoSpeakCoordinator:
         if preferences.auto_speak is not True or preferences.paused is not True:
             return
         try:
+            preference_epoch = store.speech_preference_epoch(session_id)
             if store.session_id_for_message(message_id) != session_id:
                 return
             store.get_message(message_id)
@@ -957,9 +958,28 @@ class ConsoleAutoSpeakCoordinator:
             operation_generation, session_id, active_epoch
         ):
             return
+        if destination is None or self._hands_free_active() is not False:
+            return
+        self._purge_failed_owners()
+        current = self._active_session()
+        try:
+            ownership_is_current = (
+                current is not None
+                and current.id == session_id
+                and store.speech_preference_epoch(session_id) == preference_epoch
+                and store.session_id_for_message(message_id) == session_id
+                and self.failed_message_ids.get(session_id) == message_id
+            )
+        except (KeyError, ValueError):
+            return
+        if not ownership_is_current or current is None:
+            return
+        current_preferences = current.speech_preferences
         if (
-            destination is None
-            or preferences.consent_destination != destination.fingerprint
+            current_preferences.auto_speak is not True
+            or current_preferences.paused is not True
+            or current_preferences.consent_destination
+            != destination.fingerprint
         ):
             return
 
