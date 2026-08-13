@@ -4,10 +4,12 @@ title: Add durable provider tool-continuation checkpoints
 status: Done
 assignee: []
 created_date: '2026-08-12 18:06'
+updated_date: '2026-08-13 17:58'
 labels: []
 dependencies: []
 references:
-  - Docs/superpowers/specs/2026-08-12-durable-provider-tool-continuation-design.md
+  - >-
+    Docs/superpowers/specs/2026-08-12-durable-provider-tool-continuation-design.md
   - >-
     Docs/superpowers/plans/2026-08-12-durable-provider-tool-continuation-implementation.md
   - backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuation.md
@@ -60,6 +62,7 @@ provider/runtime side-effect boundary. ADR-058 records the approved contract.
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 - Added the bounded canonical continuation record on assistant message owners,
   schema-v36 persistence and migration, both sync paths plus durable scoped
   Sync-v2 projection receipts, typed runtime lifecycle barriers, explicit
@@ -70,12 +73,24 @@ provider/runtime side-effect boundary. ADR-058 records the approved contract.
 - Added deterministic joined crash coverage for all seven approved boundaries
   and mutation/property coverage for terminal/ambiguous replay, validation
   bounds and unknown versions, whole-record branch/variant conflicts, and
-  atomic owner/private eviction. No paid or live provider request is present.
+  atomic owner/private eviction. Final review replaced harness-only boundaries
+  with production runtime/store crash hooks and restart assertions. No paid or
+  live provider request is present.
+- Final review corrections project every lifecycle and terminal mutation from
+  its exact committed whole-message intent, propagate inbound deletes, and
+  reconcile exact current upsert/delete intents (including continuation clear
+  and owner deletion) during production restore. Provider-policy-specific prior
+  continuation sidecars now pass through the gateway's ordinary history budget:
+  Kimi K3 and DeepSeek retain their documented prior history, while other
+  Kimi/GLM policies do not receive unrelated prior sidecars. These corrections
+  close AC5, AC9, and AC10 without adding provider wire adapters or an open
+  metadata bag.
 - Final focused continuation verification: `356 passed, 2 warnings in 41.39s`
   across 13 named canonical storage/migration, runtime/eviction, Console
   persistence/recovery/history/privacy/budget, Sync-v2 reconciliation, and
-  `.chatbook` round-trip files. The new crash module independently passed
-  `9 passed`.
+  `.chatbook` round-trip files. The original Task 8 crash module independently
+  passed `9 passed`; later review-added production crash/sync/policy cases were
+  accepted by the final specification and quality reviews at `0d4ac3f6b`.
 - Settled touched surfaces: Agents `1386 passed`; Chat effective `4536 passed,
   3 verified baseline failures, 64 skipped`; Chatbooks `243 passed, 1 skipped`;
   Sync Interop `250 passed`; DB retained 37 verified pre-task failures after
@@ -101,3 +116,4 @@ provider/runtime side-effect boundary. ADR-058 records the approved contract.
   migrations, focused tests, README/user guides, this plan/task, and ADR/spec
   references. No provider adapter/default, vendor built-in tool, legacy
   Settings surface, or paid test was added.
+<!-- SECTION:NOTES:END -->

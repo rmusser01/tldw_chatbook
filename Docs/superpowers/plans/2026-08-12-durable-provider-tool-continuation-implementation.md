@@ -516,11 +516,13 @@ def continuation_owner_group(
 
 #### Task 8 observed verification
 
-- The joined crash-recovery module passed `9 passed` and covers all seven
-  approved crash boundaries, exact restored state, idempotent Sync-v2
-  reconciliation, replay of terminal results without dispatch, ambiguous
-  `executing` recovery, validation bounds, branch/variant conflict ownership,
-  and atomic owner/private-history eviction.
+- The original joined crash-recovery module passed `9 passed` across all seven
+  approved crash boundaries. Final review then added production runtime/store
+  crash hooks and restart assertions, exact lifecycle/terminal Sync-v2
+  projections, inbound delete handling, current-intent clear/delete
+  reconciliation during production restore, and policy-specific prior sidecars
+  routed through the gateway's ordinary history budget. Specification and
+  quality review approved the resulting contract at `0d4ac3f6b`.
 - The final named continuation matrix passed `356 passed, 2 warnings in
   41.39s`. It covered canonical storage and migration, runtime lifecycle and
   eviction, Console persistence and explicit recovery, sync reconciliation,
