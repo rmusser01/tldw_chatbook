@@ -963,7 +963,9 @@ def test_cycle_4c_pending_resume_requires_fresh_review_then_barrier() -> None:
     assert events[-1].result == ContinuationResult("fresh refusal")
 
 
-def test_refusal_finished_failure_leaves_pending_without_executing_or_observability() -> None:
+def test_refusal_finished_failure_leaves_pending_without_executing_or_observability() -> (
+    None
+):
     order: list[str] = []
     history = []
     call = ToolCall(
@@ -1046,7 +1048,9 @@ def test_continuation_review_exception_fails_closed_without_logging_or_dispatch(
 
 
 @pytest.mark.parametrize("contradiction", ["turn", "assistant"])
-def test_tool_batch_requires_exact_assistant_content_association(contradiction: str) -> None:
+def test_tool_batch_requires_exact_assistant_content_association(
+    contradiction: str,
+) -> None:
     call = ToolCall(
         "calculator", {"expression": "2+2"}, "call-1", '{"expression":"2+2"}'
     )
