@@ -359,6 +359,10 @@ async def handle_start_llamafile_server_button_pressed(
             app.notify("Llamafile executable path is required.", severity="error")
             exec_path_input.focus()
             return
+        if not Path(exec_path).is_file():
+            app.notify("Llamafile executable was not found.", severity="error")
+            exec_path_input.focus()
+            return
         additional_args = tuple(shlex.split(additional_args_str))
         claim = reserve_server_launch(
             app,
@@ -477,6 +481,10 @@ async def handle_start_llamacpp_server_button_pressed(
 
         if not exec_path:
             app.notify("Executable path is required.", severity="error")
+            exec_path_input.focus()
+            return
+        if not Path(exec_path).is_file():
+            app.notify("Llama.cpp executable was not found.", severity="error")
             exec_path_input.focus()
             return
         additional_args = tuple(shlex.split(additional_args_str))
