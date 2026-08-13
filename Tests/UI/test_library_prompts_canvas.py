@@ -1625,8 +1625,10 @@ async def test_prompts_canvas_select_mode_geometry_fits_40_columns(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(64, 24), (120, 40)], ids=["narrow", "wide"])
-async def test_library_shell_prompt_select_mode_actions_are_visible_and_reachable(
+@pytest.mark.parametrize("shell_case", ["ordinary", "mutation", "plural-receipt"])
+async def test_library_shell_prompt_select_mode_geometry_matrix(
     size: tuple[int, int],
+    shell_case: str,
 ) -> None:
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
@@ -1644,6 +1646,18 @@ async def test_library_shell_prompt_select_mode_actions_are_visible_and_reachabl
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-prompts").press()
         await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
+        if shell_case == "mutation":
+            screen._library_prompts_mutation_in_flight = True
+        elif shell_case == "plural-receipt":
+            screen._library_prompt_delete_receipt = PromptBatchDeleteResult(
+                entries=(
+                    PromptDeleteReceiptEntry(2, "First", "prompt", 4),
+                    PromptDeleteReceiptEntry(3, "Second", "recipe", 5),
+                )
+            )
+        if shell_case != "ordinary":
+            screen.refresh(recompose=True)
+            await pilot.pause()
         summary = await _wait_for_selector(
             screen, pilot, "#library-prompts-selection-summary"
         )
@@ -1660,8 +1674,56 @@ async def test_library_shell_prompt_select_mode_actions_are_visible_and_reachabl
             action = screen.query_one(f"#{action_id}", Button)
             _assert_region_fully_visible(action, screen.region)
             assert canvas.region.contains_region(action.region), action_id
-            assert action.disabled is False
-            assert action in screen.focus_chain, action_id
+            if shell_case == "mutation":
+                assert action.disabled is True
+                assert action not in screen.focus_chain, action_id
+            else:
+                assert action.disabled is False
+                assert action in screen.focus_chain, action_id
+
+        if shell_case == "mutation":
+            progress = screen.query_one("#library-prompts-mutation-progress", Static)
+            assert str(progress.renderable) == "Updating selected items…"
+            _assert_region_fully_visible(progress, screen.region)
+            assert canvas.region.contains_region(progress.region)
+            assert (
+                _painted_style_of_text(
+                    pilot.app, progress.region, "Updating selected items…"
+                )
+                is not None
+            )
+            prompt_filter = screen.query_one("#library-prompts-filter", Input)
+            assert prompt_filter.disabled is True
+            assert prompt_filter not in screen.focus_chain
+            for selector in (
+                "#library-prompts-collection",
+                "#library-prompt-row-5",
+            ):
+                action = screen.query_one(selector, Button)
+                assert action.disabled is True
+                assert action not in screen.focus_chain
+        elif shell_case == "plural-receipt":
+            receipt_copy = screen.query_one(
+                "#library-prompts-delete-receipt-copy", Static
+            )
+            assert str(receipt_copy.renderable) == "✓ deleted · 2 items"
+            _assert_region_fully_visible(receipt_copy, screen.region)
+            assert canvas.region.contains_region(receipt_copy.region)
+            assert (
+                _painted_style_of_text(
+                    pilot.app, receipt_copy.region, "✓ deleted · 2 items"
+                )
+                is not None
+            )
+            for selector in (
+                "#library-prompts-delete-undo",
+                "#library-prompts-delete-receipt-dismiss",
+            ):
+                action = screen.query_one(selector, Button)
+                _assert_region_fully_visible(action, screen.region)
+                assert canvas.region.contains_region(action.region), selector
+                assert action.disabled is False
+                assert action in screen.focus_chain, selector
         assert list(canvas.query(VerticalScroll)) == []
 
 
