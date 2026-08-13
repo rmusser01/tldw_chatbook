@@ -150,6 +150,14 @@ from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
     ConsolePromptQueueCoordinator,
     QueueGenerationAuthorization,
 )
+from tldw_chatbook.Chat.console_fleet_wake import (
+    AgentWakeAuthorization,
+    ConsoleFleetWakeCoordinator,
+)
+from tldw_chatbook.Chat.message_metadata import (
+    MESSAGE_ORIGIN_AGENT_WAKE,
+    MessageMetadata,
+)
 from tldw_chatbook.Chat.console_skill_resolver import (
     MENTION_SIGIL,
     SKILL_MENTION_SKIPPED_NOTE,
@@ -1482,6 +1490,45 @@ class ConsoleChatController:
         #: user and read by nobody. This slot is what makes the difference
         #: readable (`unattributed_fleet_tokens`) instead of silent.
         self._post_turn_usage_watch: dict[str, tuple[Any, Any, int]] = {}
+        #: PR3a-2 Task 3 (tasks 15660/15667): per ORIGINATING ASSISTANT
+        #: MESSAGE, the turn's signals object + resolution + the ``partial``
+        #: flag its own attach used -- what the last-child-settled fold
+        #: recomputes from. Keyed by message (not session) because a later
+        #: turn in the same session REPLACES the session watch above while
+        #: an earlier turn's survivor is still billing into ITS OWN signals
+        #: object. Recorded by ``_watch_post_turn_usage`` only when the
+        #: bridge says the conversation is still owed a drain
+        #: (``has_unsettled_children``); popped by the fold, so entries
+        #: never outlive the drain that consumes them. Money over memory on
+        #: every ambiguity: a broken/absent check records anyway.
+        self._fleet_usage_reattach_sources: dict[str, tuple[Any, Any, bool]] = {}
+        #: The loop ``_attach_stream_usage`` normally runs on (the app's
+        #: asyncio loop -- every turn-end attach happens there), captured
+        #: at watch time. The drain consumer fires on the CHILD's thread,
+        #: possibly after the Console screen is gone; it hops here so the
+        #: store mutation always runs on the thread that owns the store.
+        #: The app loop outlives the screen, so the hop works after
+        #: teardown too (proven by the teardown test in
+        #: ``test_fleet_usage_reattach.py``).
+        self._usage_reattach_loop: asyncio.AbstractEventLoop | None = None
+        # Register the fold as a fan-out consumer NOW, next to bridge
+        # attachment -- never from `run_reply` (bridge-lifetime registry;
+        # see `FleetDrainFanout.register` for why).
+        self._register_fleet_usage_reattach(agent_bridge)
+        #: PR3a-2 Task 5: the auto-wake coordinator (pending completions,
+        #: gating, delivery). Constructed unconditionally so `_set_run_
+        #: state`'s terminal retry hook always has it; registered on the
+        #: bridge fan-out next to the usage fold above.
+        self._fleet_wake = ConsoleFleetWakeCoordinator(self)
+        #: PR3a-2 Task 5, user-wins-ties: screen-wired probe returning
+        #: True while the USER holds a claim on sending (a non-empty
+        #: composer draft -- which also covers the dispatch gap, since the
+        #: composer clears only on ACCEPTED manual sends). A due wake
+        #: defers while it reports (or raises -- user wins on uncertainty)
+        #: and is retried on the next trigger. ``None`` = no probe wired
+        #: (headless/tests): no user claim to lose to.
+        self.wake_user_priority_probe: Callable[[str], bool] | None = None
+        self._register_fleet_wake(agent_bridge)
         #: task-2154.16 (FB-05): UI-thread callback invoked DIRECTLY (same
         #: main-loop guarantee as ``notify_run_outcome`` above) from
         #: ``_set_run_state``'s once-guarded transition INTO ``FAILED`` for
@@ -2215,15 +2262,83 @@ class ConsoleChatController:
             approval-like round, and/or a still-running sub-agent -- 0 when
             the fleet is idle.
         """
+        killed, surviving = self.fleet_teardown_split()
+        return killed + surviving
+
+    def fleet_teardown_split(self) -> tuple[int, int]:
+        """Partition ``busy_fleet_session_count``'s union by teardown fate.
+
+        PR3a-2 Task 4 (Task 1 A4, executed): post-3a-1 the two halves of
+        that union meet OPPOSITE fates at ``shutdown()``, and the
+        teardown notice was reporting both as "cancelled":
+
+        - **killed**: sessions with an active stream task or an
+          outstanding approval-like round. Shutdown's ``_signal_stop``
+          fanout sets the in-flight turn's own cancel event, and a
+          cancelled turn settles its children ``cancelled`` rather than
+          promoting survivors (``AgentService._surviving_handles``;
+          pinned by execution in ``Tests/Agents/test_fleet_runtime.py::
+          test_stopping_the_turn_still_stops_its_children``). This work
+          genuinely dies.
+        - **surviving**: sessions whose ONLY busy-ness is a cross-turn
+          survivor. Task 1 A1 executed the fate: no cancel signal ever
+          reaches such a child (its turn's cancel event was popped when
+          the turn settled), it runs to completion and its terminal row
+          lands durably after the screen is gone.
+
+        Disjoint by construction -- a session holding BOTH an active
+        stream and earlier-turn survivors lands in **killed** (its
+        in-flight turn really is killed; the stated under-report is that
+        its earlier survivors' continuing goes unmentioned in the
+        next-mount notice -- their own settle toast still reports them).
+        ``killed + surviving`` therefore equals the union the navigation
+        confirm has always shown.
+
+        Returns:
+            ``(killed, surviving)`` live-session counts.
+        """
         live_ids = {session.id for session in self.store.sessions()}
         with self._approval_state_lock:
             pending_ids = set(self._pending_approvals)
-        busy_ids = set(self._live_busy_session_ids())
-        return len(
-            busy_ids
-            | (pending_ids & live_ids)
-            | self._fleet_survivor_session_ids()
+        killed_ids = set(self._live_busy_session_ids()) | (pending_ids & live_ids)
+        surviving_ids = self._fleet_survivor_session_ids() - killed_ids
+        return len(killed_ids), len(surviving_ids)
+
+    def fleet_has_unsettled_children(self) -> bool:
+        """Whether ANY live session's conversation is still owed a drain.
+
+        PR3a-2 Task 4: the drive/stop condition for the screen's survivor
+        tick (task-15664). Reads the bridge's drain-paired unsettled
+        counter (``has_unsettled_children``, Task 3) per live session --
+        cheap dict reads under one lock, safe on a UI timer, unlike
+        ``_fleet_survivor_session_ids``'s coordinator sweep (which
+        ``busy_fleet_session_count`` documents as navigation-only and
+        which task-15666 records as prune-on-read). True exactly while at
+        least one fleet child of a live session has entered its run scope
+        and not yet reached its settle hook -- so the tick keeps painting
+        through the scope-exit->settle window and stops on the same edge
+        the drain (and the badge it stamps) fires on.
+
+        Returns:
+            True while any live session's fleet still owes a drain.
+        """
+        bridge = self._agent_bridge
+        checker = (
+            getattr(bridge, "has_unsettled_children", None)
+            if bridge is not None
+            else None
         )
+        if not callable(checker):
+            return False
+        for session in self.store.sessions():
+            try:
+                if checker(self._agent_conversation_id(session.id)):
+                    return True
+            except Exception:  # noqa: BLE001 -- a UI timer must never crash on a read
+                logger.opt(exception=True).debug(
+                    "fleet unsettled check failed for a session; treated as idle"
+                )
+        return False
 
     def _fleet_survivor_session_ids(self) -> set[str]:
         """Live sessions with at least one still-running sub-agent.
@@ -2604,8 +2719,26 @@ class ConsoleChatController:
         origin: ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
     ) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution.
+
+        PR3a-2 Task 5: ``origin=AGENT_WAKE`` (requires a coordinator-issued
+        ``wake_authorization``, the queue-token precedent) submits a
+        machine-injected auto-wake notice instead of a user draft. The
+        wake branch: no USER transcript row is echoed (a SYSTEM-class row
+        carrying ``MessageMetadata(origin="agent_wake")`` is appended at
+        the acceptance point instead); the composer hook is never invoked
+        (non-MANUAL); pending attachments and the one-shot prefill are
+        left untouched (they are the USER's staged state); auto-titling,
+        RAG capture and prompt history are skipped; and the notice
+        reaches the model as a payload-only trailing user-role entry
+        appended after every per-send transform (see
+        ``console_fleet_wake``'s module docstring for the delivery-path
+        decision record). Skill substitution and dictionary/world-info
+        transforms still run -- they are HISTORY transforms every send
+        re-applies, and the wake's own notice is appended after them, so
+        it is never itself substituted.
 
         F4 fix (Qodo wave, parallel-agents spec §2): sends are dispatched
         per-session -- ``chat_screen._dispatch_console_draft_send`` captures
@@ -2646,6 +2779,26 @@ class ConsoleChatController:
                 raise PermissionError(
                     "queued sends require coordinator-issued generation authority"
                 )
+        elif origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            # PR3a-2 Task 5: only the wake coordinator can mint the token
+            # (queue-token precedent) -- no other code path can fabricate
+            # a machine-origin send.
+            if not self._fleet_wake.authorizes(wake_authorization, target_id):
+                raise PermissionError(
+                    "agent-wake sends require coordinator-issued wake authority"
+                )
+            if target_id and self.prompt_queue_coordinator.controls_generation(
+                target_id
+            ):
+                # Defense-in-depth twin of the coordinator's own gate: a
+                # queue-owned session's next turn belongs to the queue.
+                # Refused WITHOUT a transcript row -- a machine deferral
+                # is not user-visible news; the wake retries later.
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    "Queued messages control the next turn.",
+                )
         elif target_id and self.prompt_queue_coordinator.controls_generation(target_id):
             visible_copy = "Queued messages control the next turn. Resume or manage the queue first."
             if target_id and any(
@@ -2660,7 +2813,9 @@ class ConsoleChatController:
 
         active_rejection = self._active_run_rejection(
             session_id=session_id,
-            append_row=True,
+            # A raced wake refusal is machine-internal (retried later);
+            # only user-facing origins get the explanatory SYSTEM row.
+            append_row=origin is not ConsoleSubmissionOrigin.AGENT_WAKE,
             queue_authorization=queue_authorization,
         )
         if active_rejection is not None:
@@ -2700,16 +2855,31 @@ class ConsoleChatController:
             )
         turn_context = self.resolve_turn_execution_context(session.id)
         turn_selection = turn_context.provider_selection
-        pendings = self.store.pending_attachments(session.id)
+        # PR3a-2 Task 5: a wake never touches the user's staged state --
+        # pending attachments belong to the USER's next send and must be
+        # neither embedded nor cleared by a machine turn.
+        pendings = (
+            self.store.pending_attachments(session.id)
+            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            else []
+        )
         attachment_mode_pendings = [
             pending
             for pending in pendings
             if pending.insert_mode == "attachment" and pending.data is not None
         ]
         has_pending_attachment = bool(attachment_mode_pendings)
-        clean_draft, validation_error = self._validated_draft(
-            draft, allow_empty=has_pending_attachment
-        )
+        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            # The notice is machine-composed from DB text and bounded by
+            # `compose_wake_notice`'s own result budget; `_validated_draft`
+            # exists to validate USER drafts (its length cap and markup
+            # rules are composer policy, not payload policy).
+            clean_draft = str(draft or "").strip()
+            validation_error = None if clean_draft else "Empty wake notice."
+        else:
+            clean_draft, validation_error = self._validated_draft(
+                draft, allow_empty=has_pending_attachment
+            )
         if validation_error is not None:
             return self._block(session.id, validation_error)
         if has_pending_attachment:
@@ -2748,7 +2918,8 @@ class ConsoleChatController:
         # early-returns. Titling first means the conversation is created as the
         # derived title (e.g. "hello") instead of the default "Chat 1", so the
         # workspace rail shows it immediately after persistence.
-        self._maybe_auto_title_session(session, clean_draft)
+        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
+            self._maybe_auto_title_session(session, clean_draft)
         staged_attachments = tuple(
             MessageAttachment(
                 data=pending.data,
@@ -2765,12 +2936,24 @@ class ConsoleChatController:
         # never-sent message re-enter the next send's context, and the orphan
         # would render as a lonely user prompt. The row is flushed to storage
         # only once the turn is confirmed to proceed (below).
-        echoed_user = self.store.append_message(
-            session.id,
-            role=ConsoleMessageRole.USER,
-            content=clean_draft,
-            attachments=staged_attachments,
-            persist=False,
+        #
+        # PR3a-2 Task 5: a wake echoes NOTHING here -- invariant 5 forbids
+        # a USER row for machine input, and the SYSTEM notice row is
+        # appended only at the acceptance point below (TASK-457(a)'s
+        # "reads as sent, not lost" concern protects a HUMAN's typed
+        # message during a slow readiness probe; a machine notice has no
+        # one watching for it, and appending late means a blocked wake
+        # leaves no orphaned notice row to clean up).
+        echoed_user = (
+            self.store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content=clean_draft,
+                attachments=staged_attachments,
+                persist=False,
+            )
+            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            else None
         )
 
         self._set_run_state(
@@ -2784,8 +2967,9 @@ class ConsoleChatController:
             # USER echo must still fail that row — otherwise a never-sent USER
             # message leaks into the NEXT send's provider context (`skip_failed`
             # only drops "failed" rows). Fail it, then re-raise so the caller
-            # still sees the probe failure.
-            self.store.mark_message_send_blocked(echoed_user.id)
+            # still sees the probe failure. (A wake echoed nothing: None guard.)
+            if echoed_user is not None:
+                self.store.mark_message_send_blocked(echoed_user.id)
             raise
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
@@ -2794,8 +2978,9 @@ class ConsoleChatController:
             # The echoed row stays visible but never reached a provider — fail it
             # so it is excluded from the NEXT send's provider context
             # (`skip_failed`) and reads honestly as unsent rather than polluting
-            # the history.
-            self.store.mark_message_send_blocked(echoed_user.id)
+            # the history. (A wake echoed nothing: None guard.)
+            if echoed_user is not None:
+                self.store.mark_message_send_blocked(echoed_user.id)
             return self._block(session.id, visible_copy)
 
         if pendings:
@@ -2820,7 +3005,9 @@ class ConsoleChatController:
                 # A substitution refusal is a block outcome like any other
                 # (provider not ready, probe raise): fail the echoed row so the
                 # refused command never enters the next send's provider context.
-                self.store.mark_message_send_blocked(echoed_user.id)
+                # (A wake echoed nothing: None guard.)
+                if echoed_user is not None:
+                    self.store.mark_message_send_blocked(echoed_user.id)
                 return self._block(session.id, refuse)
             for note in skill_notes:
                 # An embedded skipped-skill note is never an abort: append the
@@ -2828,16 +3015,21 @@ class ConsoleChatController:
                 self.store.append_message(
                     session.id, role=ConsoleMessageRole.SYSTEM, content=note
                 )
-            (
-                citation_context,
-                citation_trace_builder,
-                prompt_evidence_set_id,
-                citation_repair_contract,
-            ) = await self._capture_rag_context(
-                clean_draft,
-                turn_context=turn_context,
-                origin=origin,
-            )
+            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
+                # PR3a-2 Task 5: a wake notice is a delivery, not a query
+                # -- retrieving evidence "about" a machine notice would
+                # inject RAG context the user never asked for. The
+                # pre-initialized Nones above stand.
+                (
+                    citation_context,
+                    citation_trace_builder,
+                    prompt_evidence_set_id,
+                    citation_repair_contract,
+                ) = await self._capture_rag_context(
+                    clean_draft,
+                    turn_context=turn_context,
+                    origin=origin,
+                )
             has_exact_citation_context = (
                 citation_trace_builder is not None
                 or citation_repair_contract is not None
@@ -2858,7 +3050,14 @@ class ConsoleChatController:
                     provider_messages,
                     citation_context,
                 )
-            prefill, prefill_from_one_shot = self._resolve_submit_prefill(session.id)
+            if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+                # The one-shot prefill is USER-staged state; a wake must
+                # not consume (and thereby destroy) it.
+                prefill, prefill_from_one_shot = None, False
+            else:
+                prefill, prefill_from_one_shot = self._resolve_submit_prefill(
+                    session.id
+                )
             terminal_citation_finalizer = self._build_terminal_citation_finalizer(
                 context=citation_context,
                 builder=citation_trace_builder,
@@ -2869,7 +3068,9 @@ class ConsoleChatController:
             # (dictionary/world-info application, prefill resolution) must also
             # fail the echoed row, or a never-sent message leaks into the next
             # send's provider context (`skip_failed` only drops "failed" rows).
-            self.store.mark_message_send_blocked(echoed_user.id)
+            # (A wake echoed nothing: None guard.)
+            if echoed_user is not None:
+                self.store.mark_message_send_blocked(echoed_user.id)
             raise
         # The accepted-hook fires only once the turn is confirmed to
         # actually proceed (Qodo finding 3, PR #636 bot review): it used to
@@ -2887,13 +3088,34 @@ class ConsoleChatController:
             # Close/shutdown can tombstone the chain while this claimed turn
             # awaits readiness/substitution/RAG. Revalidate immediately before
             # acceptance so cancellation cannot turn that stale claim into a
-            # durable user message or provider dispatch.
-            self.store.mark_message_send_blocked(echoed_user.id)
+            # durable user message or provider dispatch. (A wake echoed
+            # nothing: None guard.)
+            if echoed_user is not None:
+                self.store.mark_message_send_blocked(echoed_user.id)
             return ConsoleSubmitResult(
                 False,
                 False,
                 "Queued turn canceled before it could start.",
             )
+        # PR3a-2 Task 5: the wake notice enters the MODEL PAYLOAD here, as
+        # a payload-only trailing user-role entry -- appended AFTER every
+        # per-send transform (substitution/dictionaries/world-info ran on
+        # the history above and must never rewrite the notice) and never
+        # written to the store (the transcript's record is the SYSTEM
+        # machine-origin row at the acceptance point below). Trailing
+        # user-role is deliberate: SYSTEM transcript rows are dropped from
+        # payloads by design, and a payload ending on an assistant row is
+        # a prefill to strict providers -- see console_fleet_wake's
+        # delivery-path decision record for why neither turn_bundle_block
+        # nor the system fold can carry this.
+        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            provider_messages = [
+                *provider_messages,
+                {
+                    "role": ConsoleMessageRole.USER.value,
+                    "content": clean_draft,
+                },
+            ]
         committed_context_epoch = self.store.conversation_context_epoch(session.id)
         self._notify_submission_accepted(
             session_id=session.id,
@@ -2905,12 +3127,29 @@ class ConsoleChatController:
         # Same placement rule as the accepted-hook above: only a send that is
         # confirmed to proceed is recorded -- every `_block`/refusal path
         # returns before this point, and `_record_prompt_history` itself
-        # skips empty (attachment-only) drafts.
-        await self._record_prompt_history(clean_draft)
+        # skips empty (attachment-only) drafts. A wake notice is not a
+        # prompt the user typed and never enters their prompt history.
+        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
+            await self._record_prompt_history(clean_draft)
         # TASK-485: the turn is confirmed to proceed — flush the deferred USER
         # echo to durable storage now (creating the conversation), BEFORE the
         # assistant row, so a reload shows the user's prompt ahead of its reply.
-        self.store.persist_message_if_needed(echoed_user.id)
+        #
+        # PR3a-2 Task 5, the wake half: the SYSTEM-class notice row is
+        # appended HERE, only once the turn is confirmed -- so a blocked
+        # wake leaves no orphaned notice -- ahead of the assistant row,
+        # persisted, and carrying the machine-origin metadata that marks
+        # it as not-user-input for every machine consumer.
+        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            echoed_user = self.store.append_message(
+                session.id,
+                role=ConsoleMessageRole.SYSTEM,
+                content=clean_draft,
+                persist=self.store.persistence is not None,
+                metadata=MessageMetadata(origin=MESSAGE_ORIGIN_AGENT_WAKE),
+            )
+        else:
+            self.store.persist_message_if_needed(echoed_user.id)
         assistant: ConsoleChatMessage | None = None
         citation_repair_session = (
             ConsoleCitationRepairSession(
@@ -3118,6 +3357,12 @@ class ConsoleChatController:
         """
         self._agent_runtime_enabled = enabled
         self._agent_bridge = bridge
+        # PR3a-2 Task 3: a refreshed bridge is a fresh fan-out registry --
+        # re-register the usage fold on it (replace-by-name makes calling
+        # this with the SAME bridge a safe no-op).
+        self._register_fleet_usage_reattach(bridge)
+        # PR3a-2 Task 5: same rule for the auto-wake consumer.
+        self._register_fleet_wake(bridge)
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing native Console session."""
@@ -8957,34 +9202,225 @@ class ConsoleChatController:
         session_id: str,
         stream_signals: ConsoleProviderStreamSignals | None,
         resolution: Any,
+        *,
+        assistant_message_id: str | None = None,
+        partial: bool = False,
     ) -> None:
         """Remember where this turn's billing stopped (PR3a-1 Task 6b, F3).
 
         Called immediately after the turn's ONE usage attach. Everything
         appended to ``stream_signals`` from here on is a surviving fleet
-        child's spend: real money, on a message nobody attaches to again.
+        child's spend: real money, on a message nobody attaches to again --
+        until the conversation's fleet DRAINS.
 
-        NOT the full fix, deliberately. Re-attaching when the last child of
-        a turn finishes needs a "last child done" signal the bridge does not
-        emit, and PR 3a-2 builds exactly that signal for auto-wake; building
-        it twice is waste. **The re-attach itself is already safe**:
-        ``_attach_stream_usage`` recomputes the TOTAL from all payloads and
-        ``ConsoleChatStore.set_message_usage`` REPLACES rather than adds
-        (and persists immediately for an already-terminal message), so
-        calling it a second time with the same signals object is idempotent
-        -- 3a-2 inherits a safe path and does not need to re-derive that.
-        Until then the spend is at least VISIBLE, via
-        ``unattributed_fleet_tokens`` -> the cost chip's "Sub-agents: N tok
-        (not priced)" line.
+        Two consumers read what this records (PR3a-2 Task 3 closed the
+        3a-1 "observable, not fixed" gap):
+
+        - ``unattributed_fleet_tokens`` (the chip's "Sub-agents: N tok
+          (not priced)" line) reads the per-SESSION watch -- spend billed
+          since the attach, zeroed again when the fold below runs;
+        - ``_reattach_fleet_usage`` (the ``FleetDrained`` fan-out consumer)
+          reads the per-MESSAGE source recorded here and re-attaches the
+          whole turn (recompute-all + REPLACE -- idempotent, pinned by
+          ``test_re_attaching_the_same_signals_is_idempotent``), carrying
+          the same ``partial`` flag this turn's own attach used.
+
+        The per-message source is recorded only when the bridge reports the
+        conversation still OWES a drain (``has_unsettled_children``): a
+        turn whose children all settled within the turn -- or that never
+        had any -- would otherwise retain its signals object until
+        teardown with no drain ever coming to pop it. On any ambiguity
+        (no such seam on the bridge, or a raising check) the source is
+        recorded anyway: money over memory.
+
+        Args:
+            session_id: The session whose turn just attached usage.
+            stream_signals: The turn's signals object; ``None`` clears the
+                session watch.
+            resolution: The turn's provider resolution (provider/model for
+                payload normalization).
+            assistant_message_id: The turn's originating assistant message
+                -- the row the drain fold re-attaches to. ``None`` (the
+                legacy shape) records no re-attach source.
+            partial: The flag the turn's own attach used; the fold reuses
+                it so a stopped turn's record stays partial.
         """
         if stream_signals is None:
             self._post_turn_usage_watch.pop(session_id, None)
             return
+        try:
+            # The thread running this IS the one that owns the store (every
+            # caller is an async controller method); remember its loop so
+            # the drain consumer -- a child's thread, maybe post-teardown --
+            # can hop back onto it.
+            self._usage_reattach_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass  # sync test harness: the consumer then runs inline
         self._post_turn_usage_watch[session_id] = (
             stream_signals,
             resolution,
             len(self._usage_payloads(stream_signals)),
         )
+        if assistant_message_id is None:
+            return
+        bridge = self._agent_bridge
+        if bridge is None:
+            # No bridge -> no fleet -> nothing can ever drain: recording a
+            # source would be a straight leak.
+            return
+        checker = getattr(bridge, "has_unsettled_children", None)
+        if callable(checker):
+            try:
+                if not checker(self._agent_conversation_id(session_id)):
+                    return
+            except Exception:  # noqa: BLE001 -- money over memory: keep the source
+                logger.opt(exception=True).debug(
+                    "has_unsettled_children raised; recording re-attach source anyway"
+                )
+        self._fleet_usage_reattach_sources[assistant_message_id] = (
+            stream_signals,
+            resolution,
+            partial,
+        )
+
+    def _register_fleet_usage_reattach(self, bridge: Any) -> None:
+        """Register the last-child-settled usage fold on this bridge.
+
+        PR3a-2 Task 3 (tasks 15660/15667): one bridge-lifetime fan-out
+        consumer, registered next to bridge attachment (constructor and
+        ``update_agent_runtime``) -- never from ``run_reply``, per
+        ``FleetDrainFanout.register``'s contract. Tolerates a bridge
+        without the seam (older fakes) and no bridge at all.
+
+        Args:
+            bridge: The Console agent bridge to register on, or ``None``.
+        """
+        if bridge is None:
+            return
+        register = getattr(bridge, "on_fleet_drained", None)
+        if callable(register):
+            register("usage-reattach", self._on_fleet_drained_reattach_usage)
+
+    @property
+    def fleet_wake(self) -> ConsoleFleetWakeCoordinator:
+        """The auto-wake coordinator (PR3a-2 Task 5): the screen wires its
+        app object (``fleet_wake.wire``), calls ``seed_from_marks`` at
+        mount BEFORE the first tab sync, and pokes ``retry_soon`` when the
+        composer empties."""
+        return self._fleet_wake
+
+    def _register_fleet_wake(self, bridge: Any) -> None:
+        """Register the auto-wake drain consumer on this bridge.
+
+        PR3a-2 Task 5: same contract and same call sites as
+        ``_register_fleet_usage_reattach`` directly above -- constructor
+        and ``update_agent_runtime``, never ``run_reply``; replace-by-name
+        makes re-registration on the same bridge a safe no-op. Also
+        captures the running loop (the app loop in production) as the
+        thread the delivery half hops onto.
+
+        Args:
+            bridge: The Console agent bridge to register on, or ``None``.
+        """
+        self._fleet_wake.capture_loop_if_running()
+        if bridge is None:
+            return
+        register = getattr(bridge, "on_fleet_drained", None)
+        if callable(register):
+            register(
+                ConsoleFleetWakeCoordinator.NAME,
+                self._fleet_wake.on_fleet_drained,
+            )
+
+    def _on_fleet_drained_reattach_usage(self, event: Any) -> None:
+        """``FleetDrained`` consumer: hop off the child's thread and fold.
+
+        Runs under the fan-out's consumer contract: the CHILD's own daemon
+        thread, possibly after the Console screen (and this controller's
+        owner) are gone. The store is single-threaded, so the actual fold
+        is scheduled onto the loop captured at watch time -- the app loop,
+        which outlives the screen -- via ``call_soon_threadsafe``. With no
+        loop ever captured (sync harnesses), or the loop already closed
+        (app exit while a child settles: the last chance to record real
+        money), the fold runs inline instead; every path is wrapped so
+        nothing propagates back into the fan-out.
+
+        Args:
+            event: The ``FleetDrained`` event.
+        """
+        loop = self._usage_reattach_loop
+        if loop is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(
+                    self._reattach_fleet_usage_guarded, event
+                )
+                return
+            except RuntimeError:
+                pass  # closed between the check and the call: fall through
+        self._reattach_fleet_usage_guarded(event)
+
+    def _reattach_fleet_usage_guarded(self, event: Any) -> None:
+        """Never-raise wrapper: a ``call_soon_threadsafe`` callback that
+        raised would land in the loop's exception handler, and an inline
+        call would propagate into the fan-out's per-consumer catch --
+        neither may happen for a best-effort cost figure."""
+        try:
+            self._reattach_fleet_usage(event)
+        except Exception:  # noqa: BLE001 -- a dropped fold is a missing figure, not a broken run
+            logger.opt(exception=True).warning(
+                "fleet usage re-attach failed for conversation {conversation_id}",
+                conversation_id=getattr(event, "conversation_id", "?"),
+            )
+
+    def _reattach_fleet_usage(self, event: Any) -> None:
+        """Fold every drained turn's full spend back onto its own message.
+
+        PR3a-2 Task 3 (tasks 15660/15667). For each distinct originating
+        assistant message in the drain: recompute the turn's TOTAL from
+        ALL of its signals' payloads -- the turn's own calls plus
+        everything its children (survivors included; ``error``/
+        ``cancelled`` children's partial spend is still real spend) billed
+        since -- and REPLACE the stored usage, with the same ``partial``
+        flag the turn's own attach used. Then sync the session watch's
+        attached-count so ``unattributed_fleet_tokens`` falls back to
+        zero, and pop the source: after a drain no child of that turn
+        exists to bill into its signals again, so a second delivery of the
+        same event finds nothing and is a no-op (15660 AC#2's end-to-end
+        idempotence; the attach itself is idempotent besides).
+
+        A child whose turn recorded no source (a within-turn drain firing
+        before the finalize, or ``run_id is None`` for a child that died
+        pre-``create_run``) is skipped: the turn's own attach covers
+        everything billed up to it.
+
+        Args:
+            event: The ``FleetDrained`` event to fold.
+        """
+        processed: set[str] = set()
+        for child in getattr(event, "children", ()) or ():
+            message_id = getattr(child, "assistant_message_id", None)
+            if not message_id or message_id in processed:
+                continue
+            processed.add(message_id)
+            source = self._fleet_usage_reattach_sources.pop(message_id, None)
+            if source is None:
+                continue
+            stream_signals, resolution, partial = source
+            self._attach_stream_usage(
+                message_id, stream_signals, resolution, partial=partial
+            )
+            session_id = getattr(child, "session_id", None)
+            watch = (
+                self._post_turn_usage_watch.get(session_id)
+                if session_id
+                else None
+            )
+            if watch is not None and watch[0] is stream_signals:
+                self._post_turn_usage_watch[session_id] = (
+                    stream_signals,
+                    watch[1],
+                    len(self._usage_payloads(stream_signals)),
+                )
 
     def unattributed_fleet_tokens(self, session_id: str) -> int:
         """Tokens this session billed AFTER its turn's usage was attached.
@@ -8993,7 +9429,11 @@ class ConsoleChatController:
         into the same ``ConsoleProviderStreamSignals``; the agent path
         attaches usage once, the instant ``run_reply`` returns. This is the
         difference -- spend the user was charged for that the message row
-        and its cost figure do not include.
+        and its cost figure do not include YET: when the conversation's
+        fleet drains, ``_reattach_fleet_usage`` folds it onto the message
+        row and re-baselines the watch, so this reads non-zero only in the
+        window between a survivor's billing and its last sibling settling
+        (PR3a-2 Task 3, tasks 15660/15667).
 
         Read by ``ChatScreen._build_console_cost_state`` and folded into the
         chip's unpriced sub-agent token line, so the money is named rather
@@ -9940,8 +10380,16 @@ class ConsoleChatController:
                 )
                 # PR3a-1 Task 6b (audit F3): a Stop ends the TURN, not its
                 # surviving children -- so this branch needs the same
-                # post-turn watch the normal finalizer sets.
-                self._watch_post_turn_usage(session_id, stream_signals, resolution)
+                # post-turn watch the normal finalizer sets. PR3a-2 Task 3:
+                # message + partial flag ride along so the drain fold can
+                # re-attach to this row with the same (partial) semantics.
+                self._watch_post_turn_usage(
+                    session_id,
+                    stream_signals,
+                    resolution,
+                    assistant_message_id=assistant_message_id,
+                    partial=True,
+                )
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id, visible_copy="Response stopped."
@@ -10087,16 +10535,25 @@ class ConsoleChatController:
         # provider calls it did make, but its output side is incomplete.
         # A no-op when the run captured no usage at all (best-effort: absent
         # usage must never fail a send).
+        attach_partial = stopped_now or getattr(outcome, "status", None) != RUN_DONE
         self._attach_stream_usage(
             assistant_message_id,
             stream_signals,
             resolution,
-            partial=stopped_now or getattr(outcome, "status", None) != RUN_DONE,
+            partial=attach_partial,
         )
         # PR3a-1 Task 6b (audit F3): mark where THIS turn's billing stopped,
         # so a surviving child's later provider calls are readable rather
-        # than silently dropped -- see `_watch_post_turn_usage`.
-        self._watch_post_turn_usage(session_id, stream_signals, resolution)
+        # than silently dropped -- see `_watch_post_turn_usage`. PR3a-2
+        # Task 3: message + partial flag ride along so the drain fold can
+        # re-attach to this row with the same semantics.
+        self._watch_post_turn_usage(
+            session_id,
+            stream_signals,
+            resolution,
+            assistant_message_id=assistant_message_id,
+            partial=attach_partial,
+        )
         if stopped_now:
             # The stopped message was already persisted by
             # `mark_message_stopped` (`_persist_existing_message`), so its
@@ -11117,6 +11574,15 @@ class ConsoleChatController:
             # stays correct if a future caller ever moves this off-thread).
             with self._approval_state_lock:
                 self._pending_approvals.pop(target, None)
+            # PR3a-2 Task 5: a terminal transition frees send capacity
+            # (this session's own slot, possibly the global cap) -- retry
+            # any deferred wake. Scheduled via the coordinator's loop hop,
+            # never inline: a wake attempt must not reenter whatever send
+            # flow is stamping this terminal state right now. Guarded for
+            # exotic construction orders where the attribute is not up yet.
+            wake = getattr(self, "_fleet_wake", None)
+            if wake is not None:
+                wake.retry_soon()
         # Parallel-agents spec §6: stamp an unvisited terminal outcome, but
         # ONLY for a session other than the currently active (viewed) one --
         # the viewed session's own COMPLETED/FAILED transition is visible
@@ -11182,6 +11648,13 @@ class ConsoleChatController:
     ) -> None:
         """Publish the one terminal marker/toast deferred across a queue chain."""
 
+        # PR3a-2 Task 5: chain end is the moment queue ownership actually
+        # releases (`finalize_empty_chain`/pause ran before this publish),
+        # and no further terminal run-state transition follows it --
+        # without this retry a wake deferred behind a queue chain would
+        # starve until an unrelated trigger. Before the status filters
+        # below: the release happens for EVERY chain-terminal status.
+        self._fleet_wake.retry_soon()
         if status not in {ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED}:
             return
         if not self.activity_for(session_id).terminal_notification_eligible:

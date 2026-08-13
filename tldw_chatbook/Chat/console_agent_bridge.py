@@ -1050,6 +1050,142 @@ class _PostTurnChangeWindow:
     successor: Any = None
 
 
+@dataclass(frozen=True)
+class SettledChild:
+    """One fleet child whose run has fully settled (PR3a-2 Task 2).
+
+    Identity a downstream consumer needs and the signal's thread context
+    cannot recover on its own: the run row to read the result from, the
+    session the spawning turn belonged to, and that turn's originating
+    assistant message (usage re-attach folds spend back onto it).
+
+    Attributes:
+        run_id: The child's ``agent_runs`` row id, or ``None`` for a child
+            that died before ``create_run`` attached one (there is then no
+            row to read; consumers must tolerate it).
+        status: The child's terminal status as settled (``done`` /
+            ``error`` / ``cancelled``). The DB row already holds it at
+            delivery time; carried here so consumers can filter without a
+            read.
+        session_id: The Console session of the turn that spawned this
+            child.
+        assistant_message_id: That turn's assistant message -- the row a
+            usage re-attach consumer recomputes spend onto.
+        settled_after_turn: Whether this child settled AFTER its spawning
+            turn's ``run_reply`` had already returned (PR3a-2 Task 4's
+            survivor discriminator -- see ``_inflight_turn_message_ids``).
+            ``False`` for a child that finished inside its own turn, whose
+            outcome the turn's own end-of-run notify already covers.
+    """
+
+    run_id: str | None
+    status: str
+    session_id: str
+    assistant_message_id: str
+    settled_after_turn: bool = False
+
+
+@dataclass(frozen=True)
+class FleetDrained:
+    """This conversation's fleet just drained to zero unsettled children
+    (PR3a-2 Task 2).
+
+    Fired exactly once per drain, on the LAST child's own thread, strictly
+    after that child's ``agent_runs`` row is terminal on both the happy
+    and the setup-exception paths (see ``AgentService.on_child_settled``).
+    ``children`` is every child settled since the conversation last had
+    zero unsettled children, in settle order -- a survivor from an earlier
+    turn and a fresh child from the current one both appear, each carrying
+    its own turn's identity.
+    """
+
+    conversation_id: str
+    children: tuple[SettledChild, ...]
+
+
+class FleetDrainFanout:
+    """One signal -- "this conversation's last fleet child has settled
+    terminal" -- fanned out to N registered consumers (PR3a-2 Task 2).
+
+    Consumer contract (Task 1 A3/A5, established by execution, not
+    reading): consumers run on the CHILD's own daemon thread, which
+    demonstrably outlives the Console screen -- at fire time the
+    per-screen store and every UI object may already be torn down, and an
+    append to the dead store lands nowhere durable. Consumers may touch
+    ONLY the databases and thread-safe callables (``call_from_thread``
+    hops included); the sole durable source of a child's result is its
+    ``agent_runs.result`` row, which IS terminal at fire time on both
+    settle paths. Consumers must also be idempotent per event where their
+    effect is durable: the signal fires per drain, and a conversation can
+    drain more than once.
+
+    Isolation: each consumer is invoked inside its own catch -- one
+    consumer raising never starves those after it, and nothing a consumer
+    raises can reach the child thread's teardown (the invoking hook in
+    ``AgentService.run_child`` is itself wrapped never-raise as the second
+    layer).
+
+    Order: registration order, deterministic. The post-turn change window
+    is NOT a consumer here -- it closes at the earlier scope-exit hook
+    (its pinned contract needs the coordinator still ``running`` at fire
+    time, which no consumer of THIS later signal can ever observe) -- and
+    that earlier hook completes strictly before this fan-out fires, so
+    every consumer registered here may read what the change window wrote.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._consumers: list[tuple[str, Callable[[FleetDrained], None]]] = []
+
+    def register(
+        self, name: str, consumer: Callable[[FleetDrained], None]
+    ) -> None:
+        """Register a consumer for the life of the owning bridge.
+
+        Registration is BRIDGE-lifetime, not turn-scoped, because the
+        signal itself is not turn-scoped: a survivor settles after --
+        possibly long after, and on a dead screen -- the turn that
+        spawned it, so anything registered per-turn would either miss
+        that fire or, worse, accumulate one duplicate registration per
+        turn and run its side effect N times per event. ``run_reply``
+        must therefore never call this; wiring belongs next to bridge
+        construction. Re-registering an existing ``name`` REPLACES that
+        consumer in place, keeping its order slot -- the belt to that
+        braces: even a misplaced repeated registration cannot duplicate
+        effects, and order stays deterministic (registration order).
+
+        Args:
+            name: Stable identity for the consumer (also the replace key).
+            consumer: Called with the ``FleetDrained`` event, on the last
+                child's own thread. Must honour the class contract above.
+        """
+        with self._lock:
+            for index, (existing, _) in enumerate(self._consumers):
+                if existing == name:
+                    self._consumers[index] = (name, consumer)
+                    return
+            self._consumers.append((name, consumer))
+
+    def fire(self, event: FleetDrained) -> None:
+        """Deliver one drain event to every consumer, in order, isolated.
+
+        Args:
+            event: The drain to deliver.
+        """
+        with self._lock:
+            consumers = list(self._consumers)
+        for name, consumer in consumers:
+            try:
+                consumer(event)
+            except Exception:  # noqa: BLE001 -- one consumer never starves the rest
+                logger.opt(exception=True).warning(
+                    "fleet drain consumer {name} raised for "
+                    "conversation {conversation_id}",
+                    name=name,
+                    conversation_id=event.conversation_id,
+                )
+
+
 class _ModelCallLifeline:
     """An event loop plus the one thread that drives it: a model-call transport.
 
@@ -2258,9 +2394,49 @@ class ConsoleAgentBridge:
         # scope exits, so a coordinator read at that instant still reports
         # the child as running and the window would never close.
         self._live_child_counts: dict[str, int] = {}
-        # Guards both of the above together -- their invariant is a pair
-        # ("a window is open only while a child is live"), so a lock per
-        # dict could not express it.
+        # PR3a-2 Task 2 -- the SETTLE-phase sibling of the live count.
+        # Incremented with it (same lock, same statement block) when a
+        # child enters `_child_run_scope`; decremented later, by
+        # `_on_fleet_child_settled`, only once that child's `run_child`
+        # finally has made its `agent_runs` row terminal on BOTH paths.
+        # Two counters because the two phases end at different instants
+        # on the same thread: the live count hits zero at the last scope
+        # exit (where the change window must close, coordinator still
+        # `running` -- pinned), while this one hits zero strictly later,
+        # at the last settle -- the only point a wake/usage consumer may
+        # fire from. Reusing the live count for the drain would double-
+        # fire: with two children, both settle hooks can observe live==0.
+        self._unsettled_child_counts: dict[str, int] = {}
+        # The children settled since this conversation last drained, in
+        # settle order -- handed to `FleetDrained` (and cleared) when
+        # `_unsettled_child_counts` hits zero.
+        self._settling_children: dict[str, list[SettledChild]] = {}
+        # PR3a-2 Task 2: the last-child-settled fan-out. ONE per bridge,
+        # constructed here and only here -- registration is bridge-
+        # lifetime (see `FleetDrainFanout.register` for why per-turn
+        # registration is wrong twice over). `run_reply` binds per-turn
+        # IDENTITY into the settle hook it hands `AgentService`, but
+        # never touches this registry.
+        self._fleet_drain_fanout = FleetDrainFanout()
+        # PR3a-2 Task 4: the survivor discriminator. Assistant message ids
+        # of turns whose `run_reply` is CURRENTLY executing -- added when
+        # the turn publishes its fleet service, discarded first thing in
+        # the same `finally` that tears that service down. A child whose
+        # settle hook fires while its own turn's id is still in this set
+        # finished INSIDE its turn (its outcome is the turn's news, already
+        # covered by the per-turn notify); one whose id is absent settled
+        # AFTER its turn returned -- a background completion the user has
+        # not seen (`SettledChild.settled_after_turn`). Known edge, stated:
+        # a child `_settle_fleet` ABANDONS on a cancelled turn (wedged in a
+        # provider call past the join timeout) unwinds after the turn
+        # returns and therefore classifies after-turn; its late `cancelled`
+        # settle is reported honestly rather than suppressed. Guarded by
+        # `_change_window_lock` like the counters above.
+        self._inflight_turn_message_ids: set[str] = set()
+        # Guards all of the above together -- their invariant is a pair
+        # ("a window is open only while a child is live"; "a drain fires
+        # only when the settle count a scope-enter opened has unwound"),
+        # so a lock per dict could not express it.
         self._change_window_lock = threading.Lock()
 
     def native_tool_schemas(self) -> list[dict[str, Any]]:
@@ -3013,6 +3189,20 @@ class ConsoleAgentBridge:
             child_model_scope=functools.partial(
                 self._child_run_scope, conversation_id, adapter
             ),
+            # PR3a-2 Task 2: the settle half of the same seam. This turn's
+            # IDENTITY -- session + originating assistant message -- is
+            # bound here by partial (per turn, correctly: a drain can mix
+            # an earlier turn's survivor with this turn's child, and each
+            # settle record must carry its own turn's identity); the run
+            # id arrives per call from `run_child`'s finally, where it is
+            # first knowable. The fan-out REGISTRY this feeds is bridge-
+            # lifetime and is deliberately not touched here.
+            on_child_settled=functools.partial(
+                self._on_fleet_child_settled,
+                conversation_id,
+                session_id,
+                assistant_message_id,
+            ),
             # PR3a-1 Task 6a: this CONVERSATION's coordinator, not this
             # turn's -- the only thing that makes `[agents]
             # max_live_subagents` a bound on the fleet rather than on one
@@ -3026,6 +3216,12 @@ class ConsoleAgentBridge:
         # `self._fleet_services`'s own docstring in `__init__` for the
         # lifetime/thread-safety contract this relies on.
         self._fleet_services[conversation_id] = service
+        # PR3a-2 Task 4: open the survivor-discriminator window for THIS
+        # turn -- a child settling while this id is present finished
+        # within its turn (see `_inflight_turn_message_ids`); the matching
+        # discard is the FIRST statement of the `finally` below.
+        with self._change_window_lock:
+            self._inflight_turn_message_ids.add(assistant_message_id)
 
         supersede_run_id = (
             self._previous_primary_run_id(conversation_id)
@@ -3111,6 +3307,12 @@ class ConsoleAgentBridge:
                 continuation_owner_key=continuation_owner_key,
             )
         finally:
+            # PR3a-2 Task 4: this turn is over -- from here on a settling
+            # child of it is a background (after-turn) completion. First
+            # statement of the finally so the window closes even when
+            # `run_turn` raised, before any teardown below can block.
+            with self._change_window_lock:
+                self._inflight_turn_message_ids.discard(assistant_message_id)
             # PR2b Task 1: clear the published service in the SAME
             # teardown path that already tears this run down -- not a
             # second one. From this point `fleet_snapshot` reverts to `[]`
@@ -3341,6 +3543,15 @@ class ConsoleAgentBridge:
             self._live_child_counts[conversation_id] = (
                 self._live_child_counts.get(conversation_id, 0) + 1
             )
+            # PR3a-2 Task 2: the settle count opens HERE, with the live
+            # count, and unwinds later -- in `_on_fleet_child_settled`,
+            # which `run_child`'s finally calls once per child, always
+            # (its finally runs even when this scope's enter raises, and
+            # this scope is entered from nowhere but `run_child`). That
+            # pairing is what makes "drain" well-defined.
+            self._unsettled_child_counts[conversation_id] = (
+                self._unsettled_child_counts.get(conversation_id, 0) + 1
+            )
         try:
             with adapter.child_lifeline():
                 yield
@@ -3364,6 +3575,116 @@ class ConsoleAgentBridge:
         """How many of this conversation's sub-agents are mid-run."""
         with self._change_window_lock:
             return self._live_child_counts.get(conversation_id, 0)
+
+    @property
+    def runs_db(self) -> AgentRunsDB:
+        """The run store this bridge writes (PR3a-2 Task 5).
+
+        Public read seam for drain consumers: the sole durable source of
+        a settled child's result is ``agent_runs.result`` (Task 1 A3),
+        and the auto-wake coordinator reads it here rather than reaching
+        for the private handle.
+        """
+        return self._db
+
+    def has_unsettled_children(self, conversation_id: str) -> bool:
+        """True while this conversation is still owed a drain (PR3a-2 Task 3).
+
+        Reads the drain-paired UNSETTLED counter, not the scope-exit live
+        counter: between a child's scope exit and its settle hook the live
+        count already reads 0 while the drain has not fired yet, so a
+        caller deciding "will a ``FleetDrained`` still come for this
+        conversation?" must ask the counter the drain itself unwinds.
+        Used by the controller's usage re-attach to record a turn's
+        signals object only when a drain will later pop it -- a turn owing
+        no drain would otherwise retain that object until teardown.
+
+        Args:
+            conversation_id: The conversation to check.
+
+        Returns:
+            True when at least one fleet child of this conversation has
+            entered its run scope and not yet reached its settle hook.
+        """
+        with self._change_window_lock:
+            return self._unsettled_child_counts.get(conversation_id, 0) > 0
+
+    def on_fleet_drained(
+        self, name: str, consumer: Callable[[FleetDrained], None]
+    ) -> None:
+        """Register a bridge-lifetime consumer of the last-child-settled
+        signal (PR3a-2 Task 2).
+
+        See ``FleetDrainFanout`` for the full consumer contract -- the
+        short form: you run on the child's own thread, after the screen
+        may be gone; DBs and thread-safe callables only, never the store
+        or any UI object; at fire time every settled child's ``agent_runs``
+        row is terminal on both settle paths. Register ONCE, next to
+        bridge construction -- never from ``run_reply`` (see
+        ``FleetDrainFanout.register`` for why); re-registering a name
+        replaces in place.
+
+        Args:
+            name: Stable consumer identity (also the replace key).
+            consumer: Called with each ``FleetDrained`` event.
+        """
+        self._fleet_drain_fanout.register(name, consumer)
+
+    def _on_fleet_child_settled(
+        self,
+        conversation_id: str,
+        session_id: str,
+        assistant_message_id: str,
+        run_id: str | None,
+        status: str,
+    ) -> None:
+        """One fleet child fully settled -- record it; fire on the drain.
+
+        The ``on_child_settled`` hook `run_reply` hands `AgentService`,
+        with this turn's identity bound by partial (the scope partial
+        cannot carry run identity -- no run row exists when the scope is
+        entered, and the scope exits before the row is terminal). Runs on
+        the child's own thread, once per child, strictly after that
+        child's row went terminal (`run_child`'s finally ordering).
+
+        When the last unsettled child of the conversation settles, pops
+        the accumulated ``SettledChild`` records and fires the fan-out --
+        outside the lock, because consumers do DB I/O and every child
+        thread contends on this lock.
+
+        Args:
+            conversation_id: The conversation the child belonged to.
+            session_id: Session of the turn that spawned it (partial-bound).
+            assistant_message_id: That turn's assistant message
+                (partial-bound).
+            run_id: The child's run row id, ``None`` if it never got one.
+            status: The child's terminal status.
+        """
+        with self._change_window_lock:
+            # PR3a-2 Task 4: classify AT SETTLE TIME, per child, under the
+            # same lock the window open/close uses -- a drain can carry a
+            # within-turn child (settled while its turn still ran) next to
+            # a survivor from an earlier turn, and only the record made
+            # HERE knows which was which by fire time.
+            record = SettledChild(
+                run_id=run_id,
+                status=status,
+                session_id=session_id,
+                assistant_message_id=assistant_message_id,
+                settled_after_turn=(
+                    assistant_message_id not in self._inflight_turn_message_ids
+                ),
+            )
+            self._settling_children.setdefault(conversation_id, []).append(record)
+            remaining = self._unsettled_child_counts.get(conversation_id, 1) - 1
+            if remaining > 0:
+                self._unsettled_child_counts[conversation_id] = remaining
+                return
+            self._unsettled_child_counts.pop(conversation_id, None)
+            children = tuple(self._settling_children.pop(conversation_id, ()))
+        self._fleet_drain_fanout.fire(
+            FleetDrained(conversation_id=conversation_id, children=children)
+        )
 
     def _open_post_turn_change_window(
         self,

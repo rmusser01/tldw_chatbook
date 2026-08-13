@@ -4481,13 +4481,29 @@ def export_conversation_to_json(
             timestamp = msg.get("timestamp", "")
             if hasattr(timestamp, "isoformat"):
                 timestamp = timestamp.isoformat()
-            export_data["messages"].append(
-                {
-                    "sender": msg.get("sender", ""),
-                    "content": msg.get("content", ""),
-                    "timestamp": timestamp,
-                }
-            )
+            entry = {
+                "sender": msg.get("sender", ""),
+                "content": msg.get("content", ""),
+                "timestamp": timestamp,
+            }
+            # tasks 15660/15667: the message row's normalized provider
+            # usage (`messages.usage_json`, the Console cost ticker's
+            # local-only column) rides the export when present, so a
+            # conversation export accounts for what a turn actually
+            # billed -- including sub-agent spend folded back onto the
+            # assistant row when a surviving fleet child finishes. Rows
+            # with no recorded usage (every non-assistant row, plus
+            # legacy assistant rows) simply omit the key.
+            usage_json = msg.get("usage_json")
+            if usage_json:
+                try:
+                    entry["usage"] = json.loads(usage_json)
+                except (TypeError, ValueError):
+                    logger.debug(
+                        f"Skipping malformed usage_json on message export "
+                        f"for conversation {conversation_id}"
+                    )
+            export_data["messages"].append(entry)
 
         return json.dumps(export_data, indent=2, ensure_ascii=False)
 

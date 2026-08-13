@@ -212,3 +212,84 @@ def test_conversation_metadata_does_not_include_local_marks(tmp_path):
     assert "starred" not in metadata
     assert "marks" not in metadata
     assert "local_marks" not in metadata
+
+
+# ---------------------------------------------------------------------------
+# PR 3a-2 Task 4: the FLEET_UNSEEN mark type (background sub-agent
+# completion the user has not seen).
+# ---------------------------------------------------------------------------
+
+
+def test_fleet_unseen_mark_type_is_allowed_and_independent_of_starring(tmp_path):
+    db = _db(tmp_path)
+    service = ConversationLocalMarksService(db)
+
+    service.set_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
+    assert service.has_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
+    # The two mark types never bleed into each other.
+    assert not service.is_starred("conv-a")
+    assert service.list_marked_conversation_ids(
+        ConversationLocalMarksService.FLEET_UNSEEN
+    ) == ("conv-a",)
+    assert service.list_marked_conversation_ids() == ()
+
+    service.clear_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
+    assert not service.has_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
+
+
+def test_fleet_unseen_mark_survives_into_a_fresh_service_handle(tmp_path):
+    """Restart-proof by construction: the mark written through one service
+    handle is read back through a FRESH service over a FRESH DB handle on
+    the same file -- the exact shape of an app restart (PR3a-2 Task 4)."""
+    path = str(tmp_path / "chacha.sqlite")
+    db = CharactersRAGDB(path, client_id="writer")
+    ConversationLocalMarksService(db).set_mark(
+        "conv-restart", ConversationLocalMarksService.FLEET_UNSEEN
+    )
+    db.close_connection()
+
+    fresh_db = CharactersRAGDB(path, client_id="reader")
+    fresh = ConversationLocalMarksService(fresh_db)
+    assert fresh.has_mark(
+        "conv-restart", ConversationLocalMarksService.FLEET_UNSEEN
+    )
+    assert fresh.list_marked_conversation_ids(
+        ConversationLocalMarksService.FLEET_UNSEEN
+    ) == ("conv-restart",)
+    fresh_db.close_connection()
+
+
+def test_get_mark_returns_timestamps_with_created_at_stable_across_refreshes(
+    tmp_path,
+):
+    """PR3a-2 Task 5: the auto-wake mount-claim reads ``created_at`` as the
+    since-when boundary for undelivered completions, so a re-delivered
+    drain's refresh (``set_mark`` on an existing row) must bump ONLY
+    ``updated_at`` -- a moving ``created_at`` would silently exclude the
+    first drain's own runs from the claim."""
+    db = _db(tmp_path)
+    service = ConversationLocalMarksService(db)
+    assert (
+        service.get_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
+        is None
+    )
+
+    service.set_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
+    first = service.get_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
+    assert first is not None
+    assert first.conversation_id == "conv-a"
+    assert first.mark_type == ConversationLocalMarksService.FLEET_UNSEEN
+    assert first.created_at and first.updated_at
+
+    service.set_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
+    refreshed = service.get_mark(
+        "conv-a", ConversationLocalMarksService.FLEET_UNSEEN
+    )
+    assert refreshed is not None
+    assert refreshed.created_at == first.created_at
+    assert refreshed.updated_at >= first.updated_at
+
+    with pytest.raises(ValueError):
+        service.get_mark("", ConversationLocalMarksService.FLEET_UNSEEN)
+    with pytest.raises(ValueError):
+        service.get_mark("conv-a", "not-a-mark")

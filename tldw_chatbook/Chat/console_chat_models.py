@@ -40,10 +40,18 @@ class ConsoleRunStatus(str, Enum):
 
 
 class ConsoleSubmissionOrigin(str, Enum):
-    """Origin of a Console turn entering the accepted-send boundary."""
+    """Origin of a Console turn entering the accepted-send boundary.
+
+    ``AGENT_WAKE`` (PR3a-2 Task 5) is a machine-injected auto-wake turn:
+    it requires a coordinator-issued ``AgentWakeAuthorization`` (the
+    queue-token precedent), writes NO USER transcript row (a SYSTEM-class
+    machine-origin notice instead), never clears the composer, and its
+    notice reaches the model as a payload-only trailing user-role entry.
+    """
 
     MANUAL = "manual"
     QUEUED = "queued"
+    AGENT_WAKE = "agent_wake"
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +117,18 @@ class ConsoleRunMarker(str, Enum):
     NEEDS_APPROVAL = "needs-approval"
     FINISHED_OK = "finished-ok"
     FINISHED_FAILED = "finished-failed"
+    #: PR3a-2 Task 4: a background SUB-AGENT of this conversation settled
+    #: after its turn had already returned, and the user has not viewed
+    #: the conversation since. Deliberately distinct from FINISHED_OK/
+    #: FINISHED_FAILED, which announce a TURN's unvisited outcome -- a
+    #: survivor finishing is a different event (the turn it belonged to
+    #: ended long ago, possibly in a previous app run: this marker is
+    #: backed by the durable ``fleet_unseen`` conversation-local mark, so
+    #: it survives restart where the turn markers cannot). Derived in the
+    #: screen layer (the controller has no marks service); lowest
+    #: precedence of the non-NONE markers -- any live or unvisited TURN
+    #: state outranks it.
+    SUBAGENT_UNSEEN = "subagent-unseen"
 
 
 #: Glyph shown for each `ConsoleRunMarker` on Console session tabs and
@@ -122,6 +142,7 @@ CONSOLE_RUN_MARKER_GLYPHS: dict[ConsoleRunMarker, str] = {
     ConsoleRunMarker.NEEDS_APPROVAL: "◆",
     ConsoleRunMarker.FINISHED_OK: "✓",
     ConsoleRunMarker.FINISHED_FAILED: "✗",
+    ConsoleRunMarker.SUBAGENT_UNSEEN: "◈",
 }
 
 
@@ -146,6 +167,10 @@ CONSOLE_RUN_MARKER_MEANINGS: dict[ConsoleRunMarker, str] = {
     ConsoleRunMarker.NEEDS_APPROVAL: "waiting for approval",
     ConsoleRunMarker.FINISHED_OK: "finished — unseen",
     ConsoleRunMarker.FINISHED_FAILED: "failed — unseen",
+    # Deliberately "ended", not "finished": the durable mark behind this
+    # marker is set for error/cancelled survivor settles too, and the
+    # tooltip must not promise success the run log may contradict.
+    ConsoleRunMarker.SUBAGENT_UNSEEN: "sub-agent ended in background — unseen",
 }
 
 #: Reverse lookup from rendered glyph to its meaning, for callers along the
@@ -161,6 +186,40 @@ CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH: dict[str, str] = {
     for marker, glyph in CONSOLE_RUN_MARKER_GLYPHS.items()
     if glyph
 }
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleFleetCompletionTarget:
+    """Deep-link payload for a background sub-agent completion (PR3a-2 Task 4).
+
+    Staged on the ``HandoffChannel.CONSOLE_FLEET_COMPLETION`` single-slot
+    channel by the fleet drain consumer when a survivor settles while
+    Console is NOT the active screen; the next Console mount claims it and
+    switches to the named conversation's session. ``conversation_id`` is
+    the bridge's durable id (the persisted conversation id when the
+    session was saved, the native session id otherwise), so the claimer
+    matches it against both ``session.persisted_conversation_id`` and
+    ``session.id``.
+
+    Attributes:
+        conversation_id: The settled conversation's durable id (required).
+        session_id: The native Console session id the drain event carried,
+            when known -- a faster exact match for a still-open session.
+    """
+
+    conversation_id: str
+    session_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.conversation_id, str) or not isinstance(
+            self.session_id, str
+        ):
+            raise TypeError("Console fleet completion target ids must be text")
+        normalized = self.conversation_id.strip()
+        if not normalized:
+            raise ValueError("Console fleet completion target needs a conversation id")
+        object.__setattr__(self, "conversation_id", normalized)
+        object.__setattr__(self, "session_id", self.session_id.strip())
 
 
 ConsoleMessageStatus = Literal["complete", "pending", "streaming", "stopped", "failed"]

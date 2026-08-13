@@ -97,26 +97,35 @@ screen's own page for its "Keyboard & commands" table.
 
 ## Console agent runs are screen-scoped
 
-Background agent runs and parallel sessions you start in Console — and any
-approval/confirmation they're waiting on — live only as long as the Console
-screen itself stays mounted. Leaving Console for another screen (e.g.
-Settings, Ctrl+1…Ctrl+0, or the command palette) cancels every in-flight
-run and denies every pending or parked approval for that visit; coming
-back always starts a fresh Console with no memory of what was running
-before. Two guards make this visible instead of silent:
+Agent **turns** you start in Console — and any approval/confirmation
+they're waiting on — live only as long as the Console screen itself stays
+mounted. Leaving Console for another screen (e.g. Settings, Ctrl+1…Ctrl+0,
+or the command palette) cancels every in-flight turn and denies every
+pending or parked approval for that visit; coming back starts a fresh
+Console. One thing is deliberately **not** screen-scoped: a background
+sub-agent that already outlived its spawning turn keeps running through
+the leave — its result lands durably in the run log, its completion
+raises a toast on whatever screen you're on plus a durable `◈` marker,
+and the supervisor's auto-wake is staged and claimed when Console next
+mounts (see [Console ▸ Agent runs &
+tools](console/agent-runs-and-tools.md)). Guards make all of this visible
+instead of silent:
 
 - **Before you leave:** if any run is still in flight or waiting on an
   approval, a confirmation dialog asks "N agent runs will be cancelled if
-  you leave Console. Leave anyway?" — **Leave** proceeds and cancels them,
-  **Stay** keeps Console (and the fleet) exactly as it was. An idle
-  Console never shows this prompt.
-- **After you return:** if you left anyway (or navigated away some other
-  way while runs were active), the next time Console mounts you get a
-  one-time toast — "N agent runs were cancelled when you left Console." —
-  so a lost run is never silently unexplained.
+  you leave Console. Leave anyway?" — **Leave** proceeds, **Stay** keeps
+  Console (and the fleet) exactly as it was. An idle Console never shows
+  this prompt.
+- **After you return:** the next Console mount reports each fate
+  truthfully, one-time: "N agent runs were cancelled when you left
+  Console." for the turns the teardown killed, and "… sub-agents kept
+  running in the background when you left Console — you'll be notified
+  as they finish." for the survivors it spared — so neither a lost run
+  nor continuing background work is ever silently unexplained.
 
 Nothing is ever auto-approved: an approval that gets caught by this
-teardown is always denied, never resolved on your behalf.
+teardown is always denied, never resolved on your behalf — and an
+auto-wake can never resolve one either.
 
 Full detail on runs, approvals, and tools:
 [Console ▸ Agent runs & tools](console/agent-runs-and-tools.md).

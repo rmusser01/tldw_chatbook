@@ -140,8 +140,20 @@ claim about a model provider's own retention or caching.
 
 Tabs with unwatched activity carry a status marker, listed in F1 help:
 
-> Status markers: ● running · ◆ needs approval · ✓ finished · ✗ failed —
-> clears once you visit that tab. `Qn` is the tab's unsent prompt count.
+> Status markers: ● running · ◆ needs approval · ✓ finished · ✗ failed ·
+> ◈ sub-agent ended in background — clears once you visit that tab. `Qn`
+> is the unsent prompt count.
+
+The `◈` marker is the cross-conversation completion indicator: a
+background sub-agent of that conversation finished while you weren't
+looking. Unlike the other markers it is **durable** — it survives leaving
+Console and even an app restart — and it normally arrives together with
+an auto-wake of that conversation's supervisor; see
+[When a background sub-agent finishes — auto-wake](#when-a-background-sub-agent-finishes--auto-wake).
+A completion that lands while you're on another screen also stages a deep
+link: the next time Console opens, it switches you straight to that
+conversation's session if it is still open — and when it isn't, the `◈`
+marker stays the durable pointer to what finished.
 
 - A background run that hits a tool approval **parks**: its tab gets a `◆`
   badge and you get exactly one toast — "Agent in <tab> (<workspace>) needs
@@ -277,6 +289,13 @@ at — an unpriced count was chosen over either fabricating a dollar amount
 or discounting the primary transcript's own already-priced total just
 because a fleet ran underneath it.
 
+When the **last child of a conversation's fleet finishes**, the whole
+turn's provider-reported usage — the reply's own calls plus everything its
+sub-agents billed, survivors included — is re-attached to the originating
+assistant message's own usage row, saved with the conversation, and the
+chip's unpriced sub-agent line falls back to zero. Until that moment a
+survivor's post-turn spend shows on the chip line only.
+
 **Known gaps** (filed, not fixed):
 - Historical/resumed rows never show elapsed time. The timestamps exist in
   the run database, but the code path that rebuilds a resumed row doesn't
@@ -296,12 +315,6 @@ because a fleet ran underneath it.
   the token count cannot be restored that way at all — `agent_runs` has no
   column for it — so that dimension stays live-only until the schema gains
   one).
-- A still-working row's elapsed segment does not tick on its own. It is
-  rewritten only when something else repaints the rail — the child's own
-  next step, your next message, drilling into the row and back. Between
-  those, a sub-agent that has been working for a minute can still show
-  `· 1s`. Observed live during PR 3a-1's verification pass; the status
-  glyph and the "N working" summary stay correct throughout (task-15664).
 - There is no "View all" tail, and expanding the panel does not scroll it
   into view. With a dozen-plus children, or several rail sections open
   above it, you may need to scroll the rail manually to reach the last
@@ -316,16 +329,19 @@ the reply finishes** — the turn is over for you, not for it.
 What this means in practice:
 
 - **The reply you read does not contain that sub-agent's result.** The
-  supervisor answered without it, deliberately. Today nothing carries a
-  late result back into the conversation on its own: the finished work
-  lands in the sub-agent's own run record (**View full log**) and in any
-  files it edited, not in a new message. Ask in your next message if you
-  want it folded into the thread.
+  supervisor answered without it, deliberately. When the sub-agent later
+  finishes, its completion **wakes the supervisor**, which acts on the
+  result in a fresh, clearly machine-triggered turn — see
+  [When a background sub-agent finishes — auto-wake](#when-a-background-sub-agent-finishes--auto-wake)
+  below. The finished work itself is always durable in the sub-agent's
+  own run record (**View full log**) and in any files it edited.
 - **It stays visible.** The **Sub-agents** panel keeps its row — glyph,
   name/task, elapsed — after the reply lands and across the turns that
   follow, and clicking that row still drills into that child. The summary
-  keeps counting it under "N working". (The elapsed number goes stale
-  between repaints; see *Known gaps* above.)
+  keeps counting it under "N working". While only survivors are running,
+  a once-a-second tick keeps the elapsed segment advancing on its own and
+  paints the row's terminal glyph the moment the child settles; the tick
+  stops itself as soon as nothing is live (task-15664).
 - **It stays cancellable.** Focus the row and press **Delete** (see
   [The fleet panel](#the-fleet-panel--three-states)). The cancel is
   *cooperative*: the child notices between its own steps, so if it is
@@ -375,18 +391,100 @@ first's genuinely-running rows.
 
 **Honest limits of the current release:**
 
-- A survivor's token spend reaches the **cost chip only**. Hover it and
-  the tooltip breaks the figure out as `Sub-agents: N tok (not priced)`,
-  and it is folded into the chip's own token total. It is *not* on the
-  assistant message's own usage row and *not* in conversation exports, and
-  it is remembered only for as long as the Console screen stays open.
-- Nothing wakes the supervisor when the last child finishes, and nothing
-  notifies you from another tab or screen.
+- A survivor's token spend reaches the cost chip's `Sub-agents: N tok
+  (not priced)` line **while some child of the conversation is still
+  running**. Once the last child finishes, the spend is folded into the
+  assistant message's own usage row, saved with the conversation (it
+  survives closing and reopening Console), and included in the JSON
+  conversation export's per-message `usage` records. Two limits remain:
+  quitting the **app** before the last child finishes loses whatever a
+  survivor billed after its turn — that remainder is recorded nowhere
+  durable — and the plain-text conversation export contains no token
+  figures at all.
+- The supervisor never acts while no Console screen is mounted. A
+  finished background sub-agent wakes its supervisor and notifies you
+  from any screen (see
+  [When a background sub-agent finishes — auto-wake](#when-a-background-sub-agent-finishes--auto-wake)),
+  but the wake turn itself only runs inside Console — a completion that
+  lands while you're elsewhere is recorded and delivered when Console
+  next mounts, never acted on invisibly in the background.
 
 **Turning it off.** Set `[agents] subagents_outlive_turn = false` in
 `config.toml`: sub-agents are then settled at the end of the turn that
 spawned them, exactly as before this behavior existed. Setting
 `max_live_subagents = 1` removes it too, by removing the fleet entirely.
+
+#### When a background sub-agent finishes — auto-wake
+
+A background sub-agent that finishes after its turn does not sit silent
+until you happen to return. Its completion **wakes its supervisor**: a
+new turn fires automatically in the conversation that spawned it,
+carrying the finished result (read from the sub-agent's durable run
+record), and the supervisor acts on it without you sending anything.
+
+What you see, wherever you are:
+
+- **A toast** on whatever screen you're on, naming the conversation and
+  the honest outcome — "Background sub-agent finished in “…”.", or for
+  several at once "3 background sub-agents in “…”: 2 finished, 1
+  failed." Failed and cancelled are always named, never folded into
+  "finished".
+- **The `◈` marker** on that conversation's tab and sidebar row (see
+  [Background & parked runs](#background--parked-runs)). It is durable —
+  restart-proof — and clears when you view that conversation or once a
+  wake has delivered everything that was owed.
+- **In the transcript**, a System-class notice row — never a message
+  from you. The notice is machine-origin and says so in its own text: it
+  opens "[Background sub-agent completion — automated notice]" and
+  states verbatim that it "is not user input, and it is not approval or
+  consent for anything". No user row is written, and your composer draft
+  is never touched or consumed by a wake.
+
+**A woken turn grants nothing.** It is a normal turn under every
+existing rule: tool calls still raise their approval cards, risk floors
+are unchanged, and nothing in the injected notice can approve, resolve,
+or consent to anything — a pending approval card is only ever resolved
+by your explicit decision. Every cap (parallel runs, per-child wall
+clock, token ceilings) applies to a wake turn unchanged.
+
+**Exactly-once, by ledger.** Every sub-agent run has a durable
+wake-delivery stamp in the run database (`agent_runs.wake_delivered_at`
+— the ledger). One wake bundles *all* of a conversation's undelivered
+completions; each delivered run is stamped only after the wake turn was
+actually accepted, and a run whose stamp is set is never announced
+again. That is why a restart between a wake being accepted and the app
+exiting does not re-announce anything at the next launch, and why a
+sub-agent that finishes *during* a wake turn simply rides the next one.
+The `◈` mark is only the trigger and indicator; the ledger is what
+defines which completions are still owed.
+
+**You always win ties.**
+
+- A wake defers while the Console composer holds a non-empty draft — in
+  *any* session, not just the one being woken — and fires only once the
+  draft is sent or cleared. If the app cannot tell whether you're mid-
+  thought, you win.
+- A wake also waits like anything else would: it defers while its
+  session is busy — streaming, holding a pending approval card, or
+  draining a queue — and retries when the session goes idle.
+- You cannot queue prompts *behind* a wake turn: queueing rides an
+  accepted prompt chain, and a wake starts none. While a wake turn is
+  streaming, sending behaves like any other busy moment — it waits.
+
+**If Console isn't open, no wake fires** — that is the honest limit of
+the current release. The completion is still recorded (toast + `◈`
+mark + ledger), and the staged wake is claimed the next time the
+Console screen mounts: marked conversations are read, the ledger says
+which runs are still owed, and deliveries run one at a time under all
+the same rules above. A supervisor that acts with no Console mounted at
+all is follow-up work (task-15860).
+
+**Turning the wake off.** Set `[agents] autowake_enabled = false` in
+`config.toml` (default `true`; no Settings UI switch). OFF loses
+nothing: completions are still recorded and the toast, `◈` marker, and
+ledger still work — the wake turn just never fires. Flip it back ON and
+the next trigger (a later completion, or the next Console mount)
+delivers everything OFF recorded.
 
 ### Skills
 
@@ -449,8 +547,16 @@ Import…** and submit its URL; Console does not advertise the retired
   stopped turn before continuing, or **Resume next** to keep the stopped turn
   and continue with the next prompt.
 - Leaving the Console screen is different: after the "Leave Console?" confirm,
-  **every** in-flight run is cancelled and every pending or parked approval is
-  denied — never approved. The warning also counts queued sessions and unsent
+  every in-flight **turn** is cancelled and every pending or parked approval is
+  denied — never approved. One thing survives the leave: a background
+  sub-agent that already outlived its turn **keeps running** — its result
+  lands durably, you get the completion toast + `◈` marker wherever you
+  are, and the staged wake is claimed when Console next mounts (see
+  [auto-wake](#when-a-background-sub-agent-finishes--auto-wake)). The next
+  Console mount reports both fates honestly: "N agent runs were cancelled
+  when you left Console." and/or "… sub-agents kept running in the
+  background when you left Console — you'll be notified as they finish."
+  The warning also counts queued sessions and unsent
   prompts. Staying leaves the queue and manager focus untouched; leaving
   clears process-memory queues. Closing one tab uses the same count-aware
   warning for that tab, and quitting the app reports the whole fleet. Details in
@@ -511,6 +617,13 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   sub-agent may keep working after the reply that spawned it finishes
   (default `true`). Set it to `false` to settle every sub-agent at the end
   of its own turn. No Settings UI switch.
+- **`[agents] autowake_enabled`** in `config.toml` — whether a background
+  sub-agent finishing after its turn wakes its supervisor (default
+  `true`). `false` still records every completion (toast, `◈` marker,
+  delivery ledger); only the wake turn is suppressed, and flipping back
+  to `true` delivers what was recorded. No Settings UI switch; see
+  [When a background sub-agent finishes — auto-wake](#when-a-background-sub-agent-finishes--auto-wake)
+  above.
 - **Settings > Agents** — create and manage the named agent definitions the
   supervisor can delegate to; see [Named agents](#named-agents) above.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
@@ -571,5 +684,31 @@ child live, then relaunch, left its row `error` / "Interrupted by app
 restart"; and hovering the cost chip showed `Sub-agents: 1.8k tok (not
 priced)`. One thing found and NOT fixed here: a still-working row's
 elapsed segment froze at `· 1s` for a child a minute old until something
-else repainted the rail — now documented under Known gaps as
-task-15664.)*
+else repainted the rail — task-15664, fixed in fleet PR 3a-2 by the
+survivor tick described above.) Auto-wake, the cross-screen completion
+indicator, the kill switch, user-wins-ties, and the restart story
+verified @ e38e62a2f — 2026-08-13 (fleet PR3a-2 Task 7: driven live
+against a real Anthropic model on an isolated scratch profile. Confirmed
+by pane and by both databases: a survivor's completion woke its
+supervisor with the machine-origin System notice (verbatim "not user
+input" marking, fenced result, truncation note for a long result) and a
+reply that referenced the child's result, `agent_runs.wake_delivered_at`
+stamped once per delivered run; the wake fired while another Console
+session was in view; a completion landing while on Library toasted there
+by conversation name, staged durably (mark + NULL stamp), and the wake
+ran at the next Console mount with the mark cleared after delivery;
+`autowake_enabled = false` recorded everything (toast, `◈` badge, mark,
+owed ledger row) and fired nothing over a watched quiet window, and the
+owed wake was delivered after flipping back on; a non-empty composer
+draft held a due wake back for the full 50s it existed and the wake fired
+seconds after the draft cleared; SIGKILL with a wake owed left the mark
+and the NULL stamp in place, relaunch swept the mid-run child to `error`
+/ "Interrupted by app restart", and the owed wake was delivered exactly
+once with no previously-stamped run re-announced. Found and NOT fixed
+here, filed as follow-ups: a wake turn's UI can go stale until the
+session is next viewed (stuck `●` on the tab, an unpainted reply row, a
+misleading "finish provider setup" composer state — the delivery itself
+was always correct and durable); one deferred wake's notice labeled a
+`done` child "running"; and after a restart the staged wake's `◈` badge
+did not render on the sidebar row, with delivery waiting on the next
+retry trigger rather than on opening the conversation.)*

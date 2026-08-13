@@ -11,6 +11,8 @@ import json
 import pytest
 
 from tldw_chatbook.Chat.message_metadata import (
+    MESSAGE_ORIGIN_AGENT_WAKE,
+    MESSAGE_ORIGINS,
     TEMPLATE_KINDS,
     TRANSCRIPT_STATUSES,
     MessageMetadata,
@@ -191,3 +193,43 @@ def test_interrupted_survives_every_shape_a_payload_can_carry_it_in(stored, expe
 
     assert restored is not None
     assert restored.interrupted is expected
+
+
+# ---------------------------------------------------------------------------
+# PR3a-2 Task 5: the machine-origin marking on auto-wake notice rows.
+# ---------------------------------------------------------------------------
+
+
+def test_agent_wake_origin_round_trips():
+    """The wake notice's not-user-input marking is a durable machine fact:
+    it must survive persistence and resume exactly, not live only in the
+    row's visible copy (the pre-task-2364 failure mode this module exists
+    to prevent)."""
+    metadata = MessageMetadata(origin=MESSAGE_ORIGIN_AGENT_WAKE)
+
+    assert metadata.is_empty is False
+    raw = metadata.to_json()
+    assert json.loads(raw)["origin"] == "agent_wake"
+    assert MessageMetadata.from_json(raw) == metadata
+
+
+def test_unknown_origin_is_refused_at_construction():
+    """Closed vocabulary, same rule as transcript_status: a typo'd origin
+    fails where it is written, never silently un-matching every reader."""
+    with pytest.raises(ValueError):
+        MessageMetadata(origin="agent-wake")
+
+    for origin in MESSAGE_ORIGINS:
+        assert MessageMetadata(origin=origin).origin == origin
+
+
+def test_from_json_degrades_an_unrecognised_origin_to_blank():
+    """A payload written by a NEWER build's wider vocabulary must load (a
+    resume can never fail over metadata) but must not pass the unknown
+    value through as if this build understood it."""
+    restored = MessageMetadata.from_json(
+        json.dumps({"engine": "realtime", "origin": "from_the_future"})
+    )
+
+    assert restored == MessageMetadata(engine="realtime")
+    assert restored.origin == ""

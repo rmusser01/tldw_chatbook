@@ -3320,6 +3320,73 @@ Two corollaries worth carrying:
   rescues it with zero headroom. When you find the blocking mechanism,
   measure what fixing it actually buys before scoping the follow-up around
   it (this one became TASK-15700 with that number in its description).
+
+---
+
+## An infrastructure "agent stopped" report is a claim, not evidence
+
+**PR 3a-2 Task 5, 2026-08-13.** The harness twice reported the Task 5
+implementation agent stopped ("stopped by the user"; after a Claude Code
+process restart it also refused to resume the agent — "won't be resumed").
+The worktree was verified clean at the briefed HEAD, twice, and a fresh
+agent was dispatched into `.worktrees/fleet-pr3a2` with the same brief.
+Both reports described an agent that was never stopped: the pre-restart
+Claude Code process had survived as an orphan — `ps` showed TWO
+`claude --resume <same-session-id>` processes — and its subagent kept
+editing, committing, and pushing. The fresh agent adopted a commit that
+sat one beyond the briefed HEAD, then collided mid-edit: "string not
+found" on a file the supposedly-stopped agent had rewritten seconds
+earlier (mtime observed under a minute old). It halted itself and wrote
+an incident file instead of the report
+(`.superpowers/sdd/2026-08-13-supervisor-fleet-pr3a2-autowake/task-5-incident-shared-worktree.md`).
+
+The same orphan was still working at Task 6 close-out, HOURS later: three
+fully-formed backlog task files appeared untracked in the worktree between
+one of the Task 6 agent's commands and the next — filed under the exact
+ids that agent's own sweep had just derived — followed four minutes later
+by a commit made on top of the Task 6 agent's fresh commits. Two agents
+were doing the same close-out in one worktree, neither told about the
+other, because a "stopped" report had been believed twice.
+
+**Why the clean-tree check wasn't enough.** "Verified clean at HEAD X" is
+a statement about one instant. An agent alternates minutes-long quiet
+stretches (gate batteries, provider calls) with bursts of writes, so any
+point-in-time check taken during a quiet stretch passes.
+
+**What to do.** Treat "the agent was stopped" as a claim to verify, never
+a premise. Before dispatching into a worktree a reportedly-stopped agent
+occupied, verify quiescence by OBSERVATION over a real interval — stable
+`git log`, stable `git --no-optional-locks status --porcelain`, no fresh
+file mtimes, held for minutes, not sampled once — and check `ps` for a
+second `claude --resume <session-id>` process, the smoking gun in both
+sightings. An OS process outlives the harness's account of it; only the
+OS can tell you it is gone.
+
+---
+
+## A `0.00s` pytest summary is a usage error wearing a pass's clothes
+
+**PR 3a-2 Task 5 gate verification, 2026-08-13.** A gate run passed
+pytest a nonexistent path — `Tests/Chat/test_console_mcp_approval.py`;
+the file lives in `Tests/UI/` — so pytest exited 4 after collecting
+nothing. The habitual `| tail` read showed only "1 warning in 0.00s",
+which was nearly recorded as an empty-but-fine run. The one line that
+mattered — `ERROR: file or directory not found` — was at the HEAD of the
+output, above everything tail kept. The same shape recurred within hours
+in the same PR: a background gate run launched with a relative
+`.venv/bin/python` that does not exist in that worktree "completed with
+exit code 0" — the trailing `| tail -3` laundered the interpreter's
+failure into the pipeline's success — and only READING the output file
+revealed `no such file or directory: .venv/bin/python`. No tests had run
+in either case, and both runs wore a green-looking coat.
+
+**What to do.** A `0.00s` (or near-instant) pytest summary means nothing
+ran: treat it as a FAILED gate, never a fast pass. Read the HEAD of the
+output — usage errors print before the summary line, and exit codes
+piped through `tail` are the pipe's, not pytest's. A gate passes only on
+a READ, nonzero passed-count that matches the expected number; "no tests
+ran", a count you didn't read, and a summary too fast to be real are all
+the same verdict.
 ## A truncated pytest diff is not the diff (task-15512)
 
 **Incident.** A failing `assert service.calls == [...]` printed its summary line

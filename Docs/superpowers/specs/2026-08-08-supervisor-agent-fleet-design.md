@@ -88,8 +88,16 @@ conversation, owned by the controller (impure layer), surviving turns:
 3. **DB is truth, events are hot path.** `check_agents` and the panel answer
    from run statuses (DB-backed registry); the in-memory event queue is only
    the low-latency path. Restart story: children die with the process,
-   `reconcile_orphaned_runs` marks them, supervisor learns next turn. No new
-   persistence machinery.
+   `reconcile_orphaned_runs` marks them, supervisor learns next turn.
+   *(Corrected 2026-08-13 with PR 3a-2 Task 7's live restart evidence:
+   "learns next turn" is now only the floor. A conversation whose staged
+   wake was owed at exit — a completion had landed and the durable
+   `fleet_unseen` mark was set — has its owed completions delivered by the
+   Console mount-claim without any user turn, exactly once per the
+   `wake_delivered_at` ledger. A child killed mid-run never settled, so its
+   conversation carries no mark: its swept `error` row surfaces in the
+   panel and the supervisor learns of it next turn, as originally written.)*
+   No new persistence machinery.
 4. **Steering never cancels.** Injected instructions append messages; they
    never restart a run (cancellation-based supersede is unsound around
    durable writes — item-status lesson).
@@ -412,6 +420,20 @@ now fights the target, and nothing long-term sneaks into this program's ACs.
   completion they will miss. The indicator must be reachable from wherever
   they are; the fleet panel's own rows stay scoped to the conversation they
   belong to.
+
+  **Where the wake itself runs — the honest architectural limit as built
+  (recorded 2026-08-13, PR 3a-2).** The INDICATOR is fully cross-screen
+  (app-wide toast + durable unseen-completion mark + session glyphs), but
+  the wake TURN requires a live Console controller: bridge and controller
+  are per-screen today, so the wake fires immediately whenever a Console
+  screen is mounted — whichever session or screen the user is watching —
+  and with no Console mounted it is staged durably (the mark plus the
+  per-run `agent_runs.wake_delivered_at` ledger) and claimed synchronously
+  at the next Console mount. A fully headless supervisor — one that ACTS
+  with no Console mounted at all — requires moving bridge/controller
+  ownership above the screen and is a filed follow-up (task-15860).
+  Everything PR 3a-2 built is substrate that version needs; the only delta
+  is where the wake runs.
 - **Cost:** per-child token spend rolls into the existing Console cost
   ticker, attributed per agent in expanded rows; fleet aggregate visible on
   the summary line's expansion.
@@ -428,7 +450,11 @@ now fights the target, and nothing long-term sneaks into this program's ACs.
   machinery in v1.
 - Provider rate limits under parallelism → per-child run errors, graceful.
 - Process death → `reconcile_orphaned_runs` (runs on every DB open) + panel
-  shows reconciled statuses; supervisor learns next turn; retained
+  shows reconciled statuses; supervisor learns next turn *(corrected
+  2026-08-13, PR 3a-2 Task 7 live evidence: when the conversation was
+  already marked by a pre-exit completion, the mount-claim delivers the
+  owed wake without a user turn — "next turn" remains true only for
+  mid-run orphans, whose conversations were never marked)*; retained
   transcripts lost with clear `send_to_agent` error.
 - Guards: terminal-status first-writer-wins; cancel revokes pending cards;
   supersede spares live background children.
@@ -468,8 +494,8 @@ verification per `backlog/docs/lessons-live-verification.md`.
 | **1 — Definitions** | Models + DB (idempotent ALTERs, version row 5) + spawn `agent` param + Settings ▸ Agents editor + user-guide page |
 | **2a — Concurrency runtime** | FleetCoordinator, threaded children, `wait_agents`/`check_agents`, both gates per-run scoped, registry lock, `on_step` run_id, `set_status` guard, approval-round keying, MCP provider locked pending audit, card revocation |
 | **2b — Panel v1** | Section component + Agents section (summary/rows/drill-in read-only), coalescer, cost rollup |
-| **3a — Cross-turn runtime** | End-of-turn no longer waits, supersede boundary change, mailboxes + `send_to_agent`, finished-agent continuation (`resumed_from_run_id`), completion delivery next turn |
-| **3b — Steering UI** | Steering input, mailbox "queued" state, notification chip, Stop-semantics change + "Cancel all agents" |
+| **3a — Cross-turn runtime** | (corrected 2026-08-13, following §3 invariant 5's / §7's 2026-08-11 corrections; shipped as two PRs) **3a-1:** end-of-turn no longer waits, supersede boundary change (merged, PR #1557). **3a-2:** auto-wake on completion + cross-conversation notification — the completion **wakes the supervisor**; this row's original "completion delivery next turn" was the pre-correction ruling. Mailboxes + `send_to_agent` + finished-agent continuation (`resumed_from_run_id`) move to 3b with the steering UI |
+| **3b — Steering UI** | Steering input, mailboxes + `send_to_agent`, finished-agent continuation (`resumed_from_run_id`) (both moved from 3a, 2026-08-13), mailbox "queued" state, notification chip, Stop-semantics change + "Cancel all agents" |
 | **4 — Polish** | Starter library (plain CRUD: researcher, critic, ingest-runner), per-definition `max_wall_seconds`, config knobs, docs pass, file follow-ups (inspector sections) |
 
 Backlog: one parent task + one per PR, IDs assigned against origin/dev with
@@ -481,6 +507,7 @@ headroom (collision lesson). UI-changing PRs update the matching
 ```toml
 [agents]
 max_live_subagents = 3        # fleet thread cap (phase 2)
+autowake_enabled = true       # completion wakes the supervisor (3a-2 kill switch; default ON)
 # retained finished transcripts: count + byte caps (phase 3)
 ```
 
@@ -488,12 +515,20 @@ Definitions themselves live in the DB, not config.
 
 ## 11. Out of scope / follow-ups (filed, not built)
 
-- Auto-wake / auto-resume of the supervisor on child completion (config-gated
-  follow-up at most).
+- ~~Auto-wake / auto-resume of the supervisor on child completion (config-gated
+  follow-up at most).~~ (corrected 2026-08-13 — this bullet contradicted §3
+  invariant 5's 2026-08-11 correction, which makes auto-wake REQUIRED. Built in
+  PR 3a-2: `[agents] autowake_enabled` defaults ON and is a kill switch, not a
+  scope reduction. What genuinely remains a follow-up is the **headless** wake —
+  the supervisor acting while no Console screen is mounted — filed as
+  task-15860.)
 - Cross-provider child models; provider-aware model validation in the editor.
 - Cross-restart resurrection of finished agents.
 - File export/import of definitions.
 - Inspector sections beyond Agents (Changes, Sources/RAG, Workspace/Git/PR,
   multi-root) — filed referencing the section component.
-- Cross-conversation completion indicator.
+- ~~Cross-conversation completion indicator.~~ (corrected 2026-08-13 — required
+  by §7 as corrected 2026-08-11: "cross-conversation by requirement, not as a
+  follow-up". Built in PR 3a-2: app-wide completion toast + durable
+  `FLEET_UNSEEN` mark + `◈` session marker + mount-time claim.)
 - Per-agent session approval grants (kept session-wide, labeled honestly).

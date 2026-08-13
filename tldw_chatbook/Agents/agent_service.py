@@ -215,6 +215,23 @@ DEFAULT_SUBAGENTS_OUTLIVE_TURN = True
 #: the per-turn bound it always had.
 CHILD_MAX_WALL_SECONDS_KEY = "child_max_wall_seconds"
 DEFAULT_CHILD_MAX_WALL_SECONDS = 1800.0
+#: ``[agents]`` key deciding whether a finished background sub-agent WAKES
+#: its supervisor (PR3a-2 Task 5; spec Sec 3 invariant 5, corrected
+#: 2026-08-11). Default **true**: a supervisor that cannot act on a
+#: result until the user happens to revisit the conversation makes
+#: background work pointless -- delegation exists precisely for the
+#: conversation the user is NOT currently looking at.
+#:
+#: ``false`` is the supported kill switch and is honoured at BOTH fire
+#: points (the immediate on-drain wake and the Console-mount claim of a
+#: staged one). OFF loses nothing: the durable ``fleet_unseen`` mark, the
+#: toast, and the sidebar badge still record every completion -- the wake
+#: turn simply never fires, and flipping the key back on lets the next
+#: trigger (a drain, a run finishing, a Console mount) deliver what is
+#: still marked undelivered. Following ``subagents_outlive_turn``'s
+#: recorded reasoning: this bounds BEHAVIOUR, not record-keeping.
+AUTOWAKE_ENABLED_KEY = "autowake_enabled"
+DEFAULT_AUTOWAKE_ENABLED = True
 #: How long a poll loop sleeps between coordinator checks. Small enough
 #: that a cancelled run is not held up perceptibly, large enough not to
 #: spin a core while several children work.
@@ -319,6 +336,36 @@ def _coerce_subagents_outlive_turn(value) -> bool:
         return False
     logger.warning("subagents_outlive_turn is not boolean; using default")
     return DEFAULT_SUBAGENTS_OUTLIVE_TURN
+
+
+def _coerce_autowake_enabled(value) -> bool:
+    """Read the auto-wake switch from config, tolerating any junk.
+
+    Identical posture to ``_coerce_subagents_outlive_turn`` (its sibling
+    kill switch): ``_setting`` already boolean-parses an ENV override;
+    this covers a TOML value of any type and a hand-edited string, and an
+    unrecognised value falls back to the default rather than raising --
+    a malformed config key must never break a settle, and must never
+    silently mean its opposite.
+
+    Args:
+        value: Whatever ``_setting`` returned.
+
+    Returns:
+        The configured switch, or ``DEFAULT_AUTOWAKE_ENABLED`` for junk.
+    """
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    logger.warning(
+        f"[agents] {AUTOWAKE_ENABLED_KEY}={value!r} is not a boolean; "
+        f"using {DEFAULT_AUTOWAKE_ENABLED}"
+    )
+    return DEFAULT_AUTOWAKE_ENABLED
 
 
 # Task 7: appended to config.system_prompt only when THIS run wired the
@@ -546,6 +593,7 @@ class AgentService:
         revoke_approvals: Callable[[str], object] | None = None,
         child_model_scope: Callable[[], "contextlib.AbstractContextManager"]
         | None = None,
+        on_child_settled: Callable[[str | None, str], None] | None = None,
         persist_provider_continuation: Callable[[ProviderContinuationEvent], None]
         | None = None,
         expand_provider_continuation: (
@@ -699,6 +747,34 @@ class AgentService:
         # construction, and a second loop would only cost a second HTTP
         # client for no reachable benefit.
         self._child_model_scope = child_model_scope or contextlib.nullcontext
+        # PR3a-2 Task 2 -- THE TERMINAL-ON-BOTH-PATHS SETTLE SIGNAL.
+        #
+        # Called with ``(child_run_id, status)`` as the LAST act of a fleet
+        # child's teardown (`run_child`'s finally), on the child's own
+        # thread, strictly after `fleet.finish` AND after the terminal-
+        # status fallback write. That placement is the whole point:
+        # `child_model_scope` exits BEFORE `fleet.finish`, and on the
+        # setup-phase-exception path before the run row is terminal (it
+        # settles via the finally's `set_status`, i.e. AFTER the scope) --
+        # so a consumer that needs "this child is DONE and its `agent_runs`
+        # row is terminal" cannot hang off the scope. Waiting inside a
+        # scope-exit consumer can never work either: on the raise path the
+        # terminal write happens later ON THE SAME THREAD, so any bounded
+        # DB-settle wait there would time out by construction, every time.
+        # This hook is the one point where both facts hold on both paths
+        # (barring a logged DB write failure, which the fallback already
+        # tolerates).
+        #
+        # ``child_run_id`` is ``None`` for a child that died before
+        # `create_run` could attach one -- there is then no row to read.
+        # Fleet children only: an inline child (`max_live_subagents == 1`)
+        # settles synchronously inside its parent's turn, which still owns
+        # delivery. The call is wrapped never-raise at its call site: it
+        # is a daemon thread's last act, and an escaping exception would
+        # kill that thread through the default excepthook with nothing
+        # else noticing. The Console bridge's fan-out additionally
+        # isolates its consumers from EACH OTHER (see `FleetDrainFanout`).
+        self._on_child_settled = on_child_settled
         self.persist_provider_continuation = persist_provider_continuation
         self.expand_provider_continuation = expand_provider_continuation
         self.prepare_provider_continuation_request = bool(
@@ -1912,6 +1988,24 @@ class AgentService:
                         except Exception:  # noqa: BLE001
                             logger.warning(
                                 "could not persist terminal status for sub-agent run"
+                            )
+                    # PR3a-2 Task 2: the settle signal, LAST -- after
+                    # `fleet.finish` and after the terminal-status
+                    # fallback, so at fire time the row is terminal on
+                    # the happy path (`_persist` wrote it) AND on the
+                    # setup-exception path (`set_status` just did). See
+                    # `on_child_settled`'s __init__ comment for why no
+                    # earlier point can offer that. Wrapped never-raise:
+                    # this is a daemon thread's teardown, and a notifier
+                    # bug must not kill it (same containment rule as the
+                    # `except BaseException` above).
+                    if self._on_child_settled is not None:
+                        try:
+                            self._on_child_settled(child_run_id, status)
+                        except Exception:  # noqa: BLE001
+                            logger.opt(exception=True).warning(
+                                "on_child_settled consumer raised for "
+                                f"sub-agent run {child_run_id}"
                             )
 
             thread = threading.Thread(

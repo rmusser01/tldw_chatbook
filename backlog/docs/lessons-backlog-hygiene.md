@@ -444,6 +444,32 @@ no-op.
 
 ---
 
+## Gitignored working files die with their worktree — keep long-lived ledgers above it
+
+**Supervisor-fleet PR 3a-1 → 3a-2, 2026-08-13.** PR 3a-1's working ledger —
+the full seven-seam audit table, the decision records, every task report —
+lived in the branch worktree's gitignored `.superpowers/sdd/` directory.
+Deleting that worktree after the merge (routine, correct cleanup) destroyed
+all of it. The distilled record survived only because it had been copied
+OUT before the deletion — the committed plan, the lessons entries, the
+backlog tasks 15660-15671, the PR #1557 body — but the full audit detail is
+gone permanently: when PR 3a-2 needed 3a-1's seam-audit evidence days
+later, it had to re-derive it by execution. PR 3a-2's ledger was therefore
+placed at the repository root
+(`<repo>/.superpowers/sdd/2026-08-13-supervisor-fleet-pr3a2-autowake/`),
+above every worktree, and that placement is what let its reports survive
+the branch's own multi-agent worktree churn.
+
+**What to do.** A gitignored file's lifetime is its directory's lifetime,
+and a worktree is disposable by design — post-merge deletion is the normal
+end of its life, and everything inside it that exists nowhere else is part
+of what gets deleted. Working state that must outlive the branch (audit
+tables, decision logs, incident reports) goes either into the repository
+as a commit or into a location above every worktree. Choose at
+ledger-creation time; by cleanup time it is too late.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md`

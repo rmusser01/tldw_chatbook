@@ -625,10 +625,15 @@ _RUN_MARKER_URGENCY = {
     "●": 1,
     "✗": 2,
     "✓": 3,
+    # PR3a-2 Task 4: unseen background sub-agent completion -- news, but
+    # below every live/turn-outcome marker (matches `run_marker_for`'s
+    # screen-side precedence for SUBAGENT_UNSEEN).
+    "◈": 4,
     "[!]": 0,
     "[*]": 1,
     "[X]": 2,
     "[x]": 3,
+    "[s]": 4,
 }
 
 

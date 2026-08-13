@@ -46,6 +46,30 @@ TRANSCRIPT_STATUSES: frozenset[str] = frozenset(
 TEMPLATE_KINDS: frozenset[str] = frozenset({"", "character_greeting"})
 
 
+#: ``MessageMetadata.origin`` value for a row injected by the auto-wake
+#: machinery (PR3a-2 Task 5): the SYSTEM-class transcript notice a finished
+#: background sub-agent's completion delivery appends. Machine consumers
+#: (exports, resume, any future "who wrote this row" logic) read THIS, not
+#: the row's visible copy.
+MESSAGE_ORIGIN_AGENT_WAKE = "agent_wake"
+
+#: Closed vocabulary for ``MessageMetadata.origin``.
+#:
+#: - ``""``           -- an ordinary row (typed, streamed, or otherwise not
+#:   machine-injected); every row written before this field existed.
+#: - ``agent_wake``   -- a machine-injected auto-wake notice
+#:   (:data:`MESSAGE_ORIGIN_AGENT_WAKE`). Never user input; a row carrying
+#:   it must never be read as the user having said anything.
+#:
+#: Compatibility note (deliberate, local-only): ``from_json`` on an OLDER
+#: build drops unknown keys, so a wake notice's origin marking is invisible
+#: there -- the row degrades to a plain SYSTEM row. ``metadata_json`` is a
+#: local-only column that never enters sync payloads, so the degradation is
+#: confined to the device that downgraded; accepted rather than gated on a
+#: schema bump.
+MESSAGE_ORIGINS: frozenset[str] = frozenset({"", MESSAGE_ORIGIN_AGENT_WAKE})
+
+
 @dataclass(frozen=True, slots=True)
 class MessageMetadata:
     """Structured provenance/state facts about one transcript row.
@@ -64,11 +88,13 @@ class MessageMetadata:
         transcript_status: One of :data:`TRANSCRIPT_STATUSES`.
         template_kind: The closed kind of a trusted template source.
         template_source: The source text used by ``template_kind``.
+        origin: One of :data:`MESSAGE_ORIGINS` -- ``"agent_wake"`` for a
+            machine-injected auto-wake notice row, ``""`` otherwise.
 
     Raises:
-        ValueError: If ``transcript_status`` is outside the closed
-            vocabulary. Refused at construction so a typo fails at the
-            call site rather than silently never matching a reader.
+        ValueError: If ``transcript_status`` or ``origin`` is outside its
+            closed vocabulary. Refused at construction so a typo fails at
+            the call site rather than silently never matching a reader.
     """
 
     engine: str = ""
@@ -78,12 +104,18 @@ class MessageMetadata:
     transcript_status: str = ""
     template_kind: str = ""
     template_source: str = ""
+    origin: str = ""
 
     def __post_init__(self) -> None:
         if self.transcript_status not in TRANSCRIPT_STATUSES:
             raise ValueError(
                 "transcript_status must be one of "
                 f"{sorted(TRANSCRIPT_STATUSES)}; got {self.transcript_status!r}"
+            )
+        if self.origin not in MESSAGE_ORIGINS:
+            raise ValueError(
+                "origin must be one of "
+                f"{sorted(MESSAGE_ORIGINS)}; got {self.origin!r}"
             )
         if (
             not isinstance(self.template_kind, str)
@@ -164,6 +196,7 @@ class MessageMetadata:
                 ),
                 template_kind=template_kind,
                 template_source=template_source,
+                origin=_as_origin(data.get("origin")),
             )
         except ValueError:
             # Direct construction remains strict. Stored data is an untrusted
@@ -210,6 +243,17 @@ def _as_bool(value: Any) -> bool:
 def _as_transcript_status(value: Any) -> str:
     status = _as_text(value)
     return status if status in TRANSCRIPT_STATUSES else ""
+
+
+def _as_origin(value: Any) -> str:
+    """Restore a stored origin, degrading an unrecognised one to ``""``.
+
+    Same posture as ``_as_transcript_status``: a payload written by a NEWER
+    build (a vocabulary this build does not know) must not be passed
+    through as if this build understood it, and must not fail the load.
+    """
+    origin = _as_text(value)
+    return origin if origin in MESSAGE_ORIGINS else ""
 
 
 def _as_template_kind(value: Any) -> str:
