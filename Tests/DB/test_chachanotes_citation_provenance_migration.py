@@ -10,6 +10,25 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBErro
 
 
 SCHEMA_NAME = "rag_char_chat_schema"
+HISTORICAL_NOTES_COLUMNS = {
+    "id",
+    "title",
+    "content",
+    "created_at",
+    "last_modified",
+    "deleted",
+    "client_id",
+    "version",
+    "file_path_on_disk",
+    "relative_file_path_on_disk",
+    "sync_root_folder",
+    "last_synced_disk_file_hash",
+    "last_synced_disk_file_mtime",
+    "is_externally_synced",
+    "sync_strategy",
+    "sync_excluded",
+    "file_extension",
+}
 PROVENANCE_TABLES = {
     "rag_identity_context",
     "rag_citation_traces",
@@ -333,7 +352,20 @@ def _minimal_v24(path: Path) -> None:
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 content TEXT NOT NULL,
-                deleted INTEGER NOT NULL DEFAULT 0
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                deleted BOOLEAN NOT NULL DEFAULT 0,
+                client_id TEXT NOT NULL DEFAULT 'unknown',
+                version INTEGER NOT NULL DEFAULT 1,
+                file_path_on_disk TEXT,
+                relative_file_path_on_disk TEXT,
+                sync_root_folder TEXT,
+                last_synced_disk_file_hash TEXT,
+                last_synced_disk_file_mtime REAL,
+                is_externally_synced BOOLEAN NOT NULL DEFAULT 0,
+                sync_strategy TEXT,
+                sync_excluded BOOLEAN NOT NULL DEFAULT 0,
+                file_extension TEXT DEFAULT '.md'
             );
             """
         )
@@ -440,6 +472,11 @@ def test_v24_upgrade_reaches_v28_and_uses_exact_citation_sql_schema(
     assert _version(connection) == db._CURRENT_SCHEMA_VERSION
     assert PROVENANCE_TABLES <= _table_names(connection)
     assert "message_generation_metadata" in _table_names(connection)
+    with db.transaction() as cursor:
+        notes_columns = {
+            row["name"] for row in cursor.execute("PRAGMA table_info(notes)")
+        }
+    assert notes_columns == HISTORICAL_NOTES_COLUMNS
     conversation_columns = {
         row["name"]
         for row in connection.execute("PRAGMA table_info(conversations)").fetchall()

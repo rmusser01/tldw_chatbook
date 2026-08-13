@@ -51,6 +51,7 @@ Reason: this is a bounded test-fixture and validation-allowlist repair aligned t
 <!-- SECTION:NOTES:BEGIN -->
 - Repaired the preserved 40-node ChaChaNotes v35 failure cluster without changing production migration policy.
 - Ratcheted fresh/current schema assertions to v35, completed deliberately minimal historical fixtures with required notes/conversation/message fields, and removed the v34 compaction column before replaying older migration chains.
+- Review follow-up completed the v24/v28 `notes` fixtures with the v4 bookkeeping and v5 sync columns, added an executable column-contract ratchet, and routed the reviewed repository read through `transaction()`.
 - Added the three live v33 Console context tables to the hand-maintained ChaChaNotes SQL allowlist.
 - Verification: exact preserved nodes 40 passed; affected plus dedicated v34/v35 suites 240 passed; Ruff check and format, scoped mypy, and git diff check passed.
 - ADR check: no ADR required because this aligns fixtures and an existing validation inventory to the shipped v35 schema; no storage boundary or migration policy changed.
