@@ -144,16 +144,17 @@ def test_options_persist_to_config(monkeypatch):
         saved_batches.append(section_values)
         return True
 
-    monkeypatch.setattr(
-        library_screen_module,
-        "save_settings_to_cli_config",
-        fake_save,
-    )
-
     submitted_jobs = []
     screen = library_screen_module.LibraryScreen.__new__(
         library_screen_module.LibraryScreen
     )
+    # task-15470: the actual write moved into a `@work(thread=True)`
+    # instance method (`_save_library_ingest_options`), which needs a
+    # running app to dispatch through `run_worker` -- this screen was never
+    # mounted. Patching that instance method (rather than the module-level
+    # `save_settings_to_cli_config` it wraps) keeps this test's own
+    # subject -- the one atomic batch shape -- intact.
+    screen._save_library_ingest_options = fake_save
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=lambda **kwargs: submitted_jobs.append(kwargs)
     )
@@ -204,16 +205,14 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
     """task-3301: the generic panel's Inputs hand back display text
     (``"1000"``); the submitted snapshot must carry ints so processors and
     the persisted config never see a string chunk size/overlap."""
-    monkeypatch.setattr(
-        library_screen_module,
-        "save_settings_to_cli_config",
-        lambda section_values: True,
-    )
-
     submitted_jobs = []
     screen = library_screen_module.LibraryScreen.__new__(
         library_screen_module.LibraryScreen
     )
+    # task-15470: see `test_options_persist_to_config` above for why this
+    # patches the `@work(thread=True)` instance method rather than the
+    # module-level config function it wraps.
+    screen._save_library_ingest_options = lambda section_values: True
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=lambda **kwargs: submitted_jobs.append(kwargs)
     )
