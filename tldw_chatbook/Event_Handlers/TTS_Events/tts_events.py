@@ -644,6 +644,7 @@ class TTSEventHandler:
         self._active_file_playback_owner: TTSPlaybackLifecycle | None = None
         self._active_file_playback_stop: tuple[str, threading.Event] | None = None
         self._active_stream_playback_owner: TTSPlaybackLifecycle | None = None
+        self._playback_handoff_lock = asyncio.Lock()
         self._console_generation_owner: _ConsoleGenerationOwner | None = None
         # Task-4 review round 2 (F3+N2), round 3 (D1): one `threading.Event`
         # per IN-FLIGHT `_play_utterance_legacy_artifact` play-and-poll call
@@ -1581,7 +1582,9 @@ class TTSEventHandler:
         owner = self._console_generation_owner
         if owner is None or owner.task is None:
             return False
-        if message_id is not None and owner.lifecycle.message_id != message_id:
+        if message_id and lifecycle is None:
+            return False
+        if message_id and owner.lifecycle.message_id != message_id:
             return False
         if lifecycle is not None and owner.lifecycle is not lifecycle:
             return False
@@ -3241,10 +3244,12 @@ class TTSEventHandler:
             bare_stop = not event.message_id
             stream_owner_matches = bool(
                 stream_owner is not None
-                and (bare_stop or stream_owner.message_id == event.message_id)
                 and (
-                    event.playback_lifecycle is None
-                    or stream_owner is event.playback_lifecycle
+                    bare_stop
+                    or (
+                        stream_owner.message_id == event.message_id
+                        and stream_owner is event.playback_lifecycle
+                    )
                 )
             )
             if bare_stop or stream_owner_matches:
@@ -3255,19 +3260,27 @@ class TTSEventHandler:
                     self._active_stream_playback_owner = None
                 stream_owner.report_terminal("stopped")
 
-            file_owner = self._active_file_playback_owner
-            file_owner_matches = bool(
-                file_owner is not None
-                and (bare_stop or file_owner.message_id == event.message_id)
-                and (
-                    event.playback_lifecycle is None
-                    or file_owner is event.playback_lifecycle
+            async with self._playback_handoff_lock:
+                file_owner = self._active_file_playback_owner
+                file_owner_matches = bool(
+                    file_owner is not None
+                    and (
+                        bare_stop
+                        or (
+                            file_owner.message_id == event.message_id
+                            and file_owner is event.playback_lifecycle
+                        )
+                    )
                 )
-            )
-            if file_owner_matches and file_owner is not None:
                 handoff = self._active_file_playback_stop
-                if handoff is not None and handoff[0] == file_owner.message_id:
-                    handoff[1].set()
+                if file_owner_matches and file_owner is not None:
+                    if handoff is not None and handoff[0] == file_owner.message_id:
+                        handoff[1].set()
+                    if self._active_file_playback_owner is file_owner:
+                        self._active_file_playback_owner = None
+                    if self._active_file_playback_stop == handoff:
+                        self._active_file_playback_stop = None
+            if file_owner_matches and file_owner is not None:
                 async with self._audio_files_lock:
                     last_played = self._last_played
                     if (
@@ -3280,10 +3293,6 @@ class TTSEventHandler:
                 if last_played is not None:
                     stop_audio_playback_if_current(last_played[1])
                 file_stop_accepted = True
-                if self._active_file_playback_owner is file_owner:
-                    self._active_file_playback_owner = None
-                if self._active_file_playback_stop == handoff:
-                    self._active_file_playback_stop = None
                 file_owner.report_terminal("stopped")
 
             if bare_stop:
@@ -3301,28 +3310,55 @@ class TTSEventHandler:
             if not lifecycle.is_current():
                 event.report_outcome(False)
                 return
+            stop_requested = threading.Event()
+            async with self._playback_handoff_lock:
+                if not lifecycle.is_current():
+                    event.report_outcome(False)
+                    return
+                prior_owner = self._active_file_playback_owner
+                if prior_owner is not None and prior_owner is not lifecycle:
+                    prior_handoff = self._active_file_playback_stop
+                    if (
+                        prior_handoff is not None
+                        and prior_handoff[0] == prior_owner.message_id
+                    ):
+                        prior_handoff[1].set()
+                    prior_owner.report_terminal("stopped")
+                self._active_file_playback_owner = lifecycle
+                self._active_file_playback_stop = (
+                    event.message_id,
+                    stop_requested,
+                )
             async with self._audio_files_lock:
                 audio_file = self._audio_files.get(event.message_id)
+                playback_cancelled = bool(
+                    stop_requested.is_set()
+                    or self._active_file_playback_owner is not lifecycle
+                    or not lifecycle.is_current()
+                )
+                if (
+                    not playback_cancelled
+                    and audio_file is not None
+                    and audio_file.exists()
+                ):
+                    self._last_played = (event.message_id, audio_file)
+            if playback_cancelled:
+                event.report_outcome(False)
+                return
             if audio_file is None or not audio_file.exists():
+                async with self._playback_handoff_lock:
+                    if self._active_file_playback_owner is lifecycle:
+                        self._active_file_playback_owner = None
+                    if self._active_file_playback_stop == (
+                        event.message_id,
+                        stop_requested,
+                    ):
+                        self._active_file_playback_stop = None
                 lifecycle.report_terminal("failed")
                 event.report_outcome(False)
                 return
 
             stop_live_sink()
-            prior_owner = self._active_file_playback_owner
-            if prior_owner is not None and prior_owner is not lifecycle:
-                prior_handoff = self._active_file_playback_stop
-                if (
-                    prior_handoff is not None
-                    and prior_handoff[0] == prior_owner.message_id
-                ):
-                    prior_handoff[1].set()
-                prior_owner.report_terminal("stopped")
-            stop_requested = threading.Event()
-            self._active_file_playback_owner = lifecycle
-            self._active_file_playback_stop = (event.message_id, stop_requested)
-            async with self._audio_files_lock:
-                self._last_played = (event.message_id, audio_file)
             task = asyncio.create_task(
                 self._run_owned_file_playback(
                     event.message_id,

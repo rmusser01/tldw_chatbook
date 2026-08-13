@@ -1162,6 +1162,97 @@ async def test_context_invalidation_falls_back_to_real_handler_stop(
 
 
 @pytest.mark.asyncio
+async def test_invalidation_fallback_exception_can_retry_retained_owner() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="Ready."
+    )
+    controller = _SpeechRequestControllerStub(store, True)
+    await ConsoleMessageController.request_console_message_speech(controller, message.id)
+    request = controller.app_instance.post_message.call_args.args[0]
+    request.playback_lifecycle.report("playing")
+    controller.app_instance.post_message.return_value = False
+    attempts = 0
+
+    async def handle_stop(event: TTSPlaybackEvent) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("handler unavailable")
+        event.playback_lifecycle.report_terminal("stopped")
+        event.report_outcome(True)
+
+    controller.app_instance._tts_handler = SimpleNamespace(
+        handle_tts_playback=handle_stop
+    )
+
+    first = ConsoleMessageController.invalidate_console_speech_context(controller)
+    assert first is not None
+    await first
+
+    assert controller._console_speech_pending_stop is None
+    assert controller._console_speech_owner is request.playback_lifecycle
+    assert controller._console_speaking_message_id == message.id
+    assert controller._console_speech_states[message.id] == "failed"
+
+    second = ConsoleMessageController.invalidate_console_speech_context(controller)
+    assert second is not None
+    await second
+
+    assert attempts == 2
+    assert controller._console_speech_pending_stop is None
+    assert controller._console_speech_owner is None
+    assert controller._console_speaking_message_id is None
+    assert controller._console_speech_states[message.id] == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_restore_same_ids_rejects_delayed_invalidation_ui_settlement() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="Original."
+    )
+    controller = _SpeechRequestControllerStub(store, True)
+    posted: list[object] = []
+    controller.app_instance.post_message.side_effect = lambda event: (
+        posted.append(event) or True
+    )
+    await ConsoleMessageController.request_console_message_speech(controller, message.id)
+    request = posted[-1]
+    request.playback_lifecycle.report("playing")
+
+    invalidation = ConsoleMessageController.invalidate_console_speech_context(
+        controller
+    )
+    assert invalidation is not None
+    await invalidation
+    stop_event = posted[-1]
+    replacement_session = type(session)(id=session.id, title="Restored")
+    replacement_message = type(message)(
+        id=message.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Replacement.",
+        status="complete",
+    )
+    store.restore_state(
+        sessions=[replacement_session],
+        messages_by_session={replacement_session.id: [replacement_message]},
+        active_session_id=replacement_session.id,
+    )
+
+    request.playback_lifecycle.report_terminal("stopped")
+    stop_event.report_outcome(True)
+    await asyncio.sleep(0)
+
+    assert controller._console_speech_pending_stop is None
+    assert controller._console_speech_owner is None
+    assert controller._console_speaking_message_id is None
+    assert message.id not in controller._console_speech_states
+
+
+@pytest.mark.asyncio
 async def test_ownership_state_remains_bounded_across_many_requests() -> None:
     store = ConsoleChatStore()
     session = store.create_session()
@@ -1368,6 +1459,67 @@ async def test_stale_message_stop_does_not_stop_different_stream_owner(
 
 
 @pytest.mark.asyncio
+async def test_lifecycleless_message_stop_cannot_touch_owned_same_message(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="same-message",
+        request_id=1,
+        validator=lambda: True,
+        callback=lambda _state: None,
+    )
+    lifecycle.report("playing")
+    never_finish = asyncio.Event()
+    generation_task = asyncio.create_task(never_finish.wait())
+    stop_requested = __import__("threading").Event()
+    artifact = tmp_path / "owned.wav"
+    artifact.write_bytes(b"RIFF")
+    handler = TTSEventHandler()
+    handler._console_generation_owner = SimpleNamespace(
+        lifecycle=lifecycle,
+        task=generation_task,
+        cancel_as_success=False,
+    )
+    handler._active_stream_playback_owner = lifecycle
+    handler._active_file_playback_owner = lifecycle
+    handler._active_file_playback_stop = (lifecycle.message_id, stop_requested)
+    handler._last_played = (lifecycle.message_id, artifact)
+    sink_stops: list[bool] = []
+    file_stops: list[object] = []
+    outcomes: list[bool] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events.stop_live_sink",
+        lambda: sink_stops.append(True),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events.stop_audio_playback_if_current",
+        lambda path: file_stops.append(path) or True,
+    )
+
+    try:
+        await handler.handle_tts_playback(
+            TTSPlaybackEvent(
+                action="stop",
+                message_id=lifecycle.message_id,
+                outcome_callback=outcomes.append,
+            )
+        )
+
+        assert outcomes == [False]
+        assert sink_stops == []
+        assert file_stops == []
+        assert stop_requested.is_set() is False
+        assert generation_task.done() is False
+        assert lifecycle.state == "playing"
+        assert handler._active_stream_playback_owner is lifecycle
+        assert handler._active_file_playback_owner is lifecycle
+    finally:
+        generation_task.cancel()
+        await asyncio.gather(generation_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_bare_stop_settles_stream_and_file_owners(
     tmp_path,
     monkeypatch,
@@ -1417,6 +1569,70 @@ async def test_bare_stop_settles_stream_and_file_owners(
     assert file_states == ["stopped"]
     assert handler._active_stream_playback_owner is None
     assert outcomes == [True]
+
+
+@pytest.mark.asyncio
+async def test_exact_stop_during_owned_play_lock_wait_is_accepted(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    artifact = tmp_path / "pending.wav"
+    artifact.write_bytes(b"RIFF")
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="message-1",
+        request_id=1,
+        validator=lambda: True,
+        callback=lambda _state: None,
+    )
+    handler = TTSEventHandler()
+    handler._audio_files[lifecycle.message_id] = artifact
+    starts: list[bool] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events._play_legacy_clip_and_await_completion",
+        lambda *_args, **_kwargs: starts.append(True) or True,
+    )
+    play_outcomes: list[bool] = []
+    stop_outcomes: list[bool] = []
+    await handler._audio_files_lock.acquire()
+    try:
+        play_task = asyncio.create_task(
+            handler.handle_tts_playback(
+                TTSPlaybackEvent(
+                    action="play",
+                    message_id=lifecycle.message_id,
+                    playback_lifecycle=lifecycle,
+                    outcome_callback=play_outcomes.append,
+                )
+            )
+        )
+        await asyncio.sleep(0)
+        reserved_before_audio_lookup = (
+            handler._active_file_playback_owner is lifecycle
+        )
+        stop_task = asyncio.create_task(
+            handler.handle_tts_playback(
+                TTSPlaybackEvent(
+                    action="stop",
+                    message_id=lifecycle.message_id,
+                    playback_lifecycle=lifecycle,
+                    outcome_callback=stop_outcomes.append,
+                )
+            )
+        )
+        await asyncio.sleep(0)
+    finally:
+        handler._audio_files_lock.release()
+
+    await asyncio.gather(play_task, stop_task)
+    active_task = handler._active_file_playback_task
+    if active_task is not None:
+        await active_task
+
+    assert reserved_before_audio_lookup is True
+    assert play_outcomes == [False]
+    assert stop_outcomes == [True]
+    assert starts == []
+    assert lifecycle.state == "stopped"
 
 
 @pytest.mark.asyncio

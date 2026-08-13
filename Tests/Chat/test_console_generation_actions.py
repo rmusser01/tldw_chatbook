@@ -985,7 +985,7 @@ async def test_real_handler_stop_order_settles_and_notifies_once(monkeypatch):
             state=state,
         ),
     )
-    screen._console_speech_owner = lifecycle
+    screen._message._console_speech_owner = lifecycle
     assert lifecycle.report("playing") is True
     handler = TTSEventHandler()
     handler._active_stream_playback_owner = lifecycle

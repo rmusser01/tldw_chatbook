@@ -1189,11 +1189,12 @@ class ConsoleMessageController:
             return True
 
         def report_playback(state: str) -> None:
-            self._settle_console_speech_presentation(
-                message_id,
-                request_generation,
-                state=state,
-            )
+            if playback_is_current():
+                self._settle_console_speech_presentation(
+                    message_id,
+                    request_generation,
+                    state=state,
+                )
             if state == "stopped":
                 report_outcome(True)
             elif state == "failed":
@@ -1252,7 +1253,12 @@ class ConsoleMessageController:
         handler = getattr(self.app_instance, "_tts_handler", None)
         handle = getattr(handler, "handle_tts_playback", None)
         if inspect.iscoroutinefunction(handle):
-            await handle(event)
+            try:
+                await handle(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                event.report_outcome(False)
             return
         event.report_outcome(False)
 
@@ -1311,22 +1317,50 @@ class ConsoleMessageController:
             self._console_speech_states.clear()
             return None
         generation = self._console_speech_request_generation
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        session_epoch = store.active_session_epoch()
+        lifetime_generation = self._console_speech_lifetime_generation
         pending = (message_id, generation)
         if self._console_speech_pending_stop == pending:
             return None
         self._console_speech_pending_stop = pending
 
+        def context_is_current() -> bool:
+            try:
+                return bool(
+                    self._ensure_console_chat_store() is store
+                    and self._console_speech_lifetime_generation
+                    == lifetime_generation
+                    and store.active_session_id == session_id
+                    and store.active_session_epoch() == session_epoch
+                )
+            except Exception:
+                return False
+
         def settle_invalidation_stop(accepted: bool) -> None:
             if self._console_speech_pending_stop != pending:
                 return
             self._console_speech_pending_stop = None
+            if self._console_speech_request_generation != generation:
+                return
             if accepted:
-                self._console_speech_states = {message_id: "stopped"}
-                self._console_speech_owner = None
-                if self._console_speaking_message_id == message_id:
+                if context_is_current():
+                    self._console_speech_states = {message_id: "stopped"}
+                else:
+                    self._console_speech_states.pop(message_id, None)
+                if self._console_speech_owner is owner:
+                    self._console_speech_owner = None
+                if (
+                    self._console_speaking_message_id == message_id
+                    and self._console_speech_owner is None
+                ):
                     self._console_speaking_message_id = None
             else:
-                self._console_speech_states = {message_id: "failed"}
+                if context_is_current():
+                    self._console_speech_states = {message_id: "failed"}
+                else:
+                    self._console_speech_states.pop(message_id, None)
                 self._console_speech_owner = owner
                 self._console_speaking_message_id = message_id
             self._schedule_console_speech_state_sync()
