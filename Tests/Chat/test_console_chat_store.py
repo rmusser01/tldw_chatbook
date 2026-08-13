@@ -1,31 +1,300 @@
-from dataclasses import FrozenInstanceError
-
-import pytest
+from dataclasses import FrozenInstanceError, replace
 from datetime import datetime
 
+import pytest
+
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleWorkspaceContext,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProducer
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.tldw_api import SyncV2Envelope
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
-from tldw_chatbook.Chat.provider_usage import ProviderUsage
-from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.TTS.profile_types import CharacterRef
-from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
+
+
+def _pristine_defaults(*, model: str = "default-model") -> ConsoleSessionSettings:
+    return ConsoleSessionSettings(provider="openai", model=model)
+
+
+def test_initial_chat_one_is_pristine_until_the_user_types():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1", settings=defaults)
+
+    assert store.is_pristine_session(session.id, expected_settings=defaults)
+
+    store.set_session_draft(session.id, "typed work")
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_typed_then_cleared_session_keeps_durable_work_marker():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1", settings=defaults)
+
+    store.set_session_draft(session.id, "typed work")
+    store.set_session_draft(session.id, "")
+
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+@pytest.mark.parametrize(
+    "disqualify",
+    [
+        pytest.param(
+            lambda store, session: setattr(session, "title", "Chat 2"), id="title"
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session, "persisted_conversation_id", "conversation-1"
+            ),
+            id="persisted-conversation",
+        ),
+        pytest.param(
+            lambda store, session: store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content="hello",
+                persist=False,
+            ),
+            id="message",
+        ),
+        pytest.param(
+            lambda store, session: store._nodes_by_session[session.id].update(
+                {"orphan": object()}
+            ),
+            id="off-path-tree-node",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "draft", "draft"), id="draft"
+        ),
+        pytest.param(
+            lambda store, session: session.pending_attachments.append(object()),
+            id="attachment",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "one_shot_prefill", "prefill"),
+            id="one-shot-prefill",
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session,
+                "settings",
+                replace(session.settings, pinned_prefill="Always:"),
+            ),
+            id="pinned-prefill",
+        ),
+        pytest.param(
+            lambda store, session: session.rag_scope_holder.set(
+                RagScope(
+                    items=(ScopeItem("media", "m1"),),
+                    updated_at="2026-01-01T00:00:00Z",
+                )
+            ),
+            id="rag-scope",
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session,
+                "context_policy_overrides",
+                ConsoleContextPolicyOverrides(summary_max_tokens=256),
+            ),
+            id="context-overrides",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "context_policy_error", "bad"),
+            id="context-error",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "runtime_backend", "server"),
+            id="runtime-backend",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "assistant_kind", "character"),
+            id="assistant-kind",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "assistant_id", "7"),
+            id="assistant-id",
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session, "assistant_authority_id", "authority"
+            ),
+            id="assistant-authority",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "character_id", 7),
+            id="character-id",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "character_name", "Alba"),
+            id="character-name",
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session, "user_display_name_override", "Captain"
+            ),
+            id="user-name-override",
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session, "character_system_template", "Stay in character."
+            ),
+            id="character-template",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "identity_revision", 1),
+            id="identity-revision",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "ephemeral", True),
+            id="ephemeral",
+        ),
+        pytest.param(
+            lambda store, session: setattr(
+                session, "settings", _pristine_defaults(model="changed-model")
+            ),
+            id="altered-settings",
+        ),
+        pytest.param(
+            lambda store, session: setattr(session, "settings", None),
+            id="missing-settings",
+        ),
+        pytest.param(
+            lambda store, session: session.todos.append(
+                {"content": "work", "status": "pending"}
+            ),
+            id="todo-work",
+        ),
+        pytest.param(
+            lambda store, session: store._tool_markers_by_session.update(
+                {session.id: [(None, object())]}
+            ),
+            id="tool-state",
+        ),
+        pytest.param(
+            lambda store, session: store._context_summary_by_session.update(
+                {session.id: ("summary", None)}
+            ),
+            id="context-summary",
+        ),
+        pytest.param(
+            lambda store, session: store._roleplay_system_projection_candidates.update(
+                {session.id: ("prompt",)}
+            ),
+            id="roleplay-work-state",
+        ),
+        pytest.param(
+            lambda store, session: store._conversation_context_epochs.update(
+                {session.id: 1}
+            ),
+            id="provider-context-work-state",
+        ),
+    ],
+)
+def test_pristine_session_rejects_each_work_or_identity_disqualifier(disqualify):
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1", settings=defaults)
+
+    disqualify(store, session)
+
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_pristine_session_predicate_returns_false_for_missing_session():
+    store = ConsoleChatStore()
+
+    assert not store.is_pristine_session(
+        "missing", expected_settings=_pristine_defaults()
+    )
+
+
+def test_repurpose_pristine_session_preserves_slot_and_applies_identity_atomically():
+    defaults = _pristine_defaults()
+    roleplay_settings = replace(
+        defaults,
+        model="current-model",
+        system_prompt="You are Alba.",
+        character_label="Alba",
+    )
+    store = ConsoleChatStore()
+    first = store.create_session(
+        title="Other", workspace_id="workspace-before", settings=defaults
+    )
+    target = store.create_session(
+        title="Chat 1", workspace_id="workspace-target", settings=defaults
+    )
+    order_before = [session.id for session in store.sessions()]
+
+    updated = store.repurpose_pristine_session(
+        target.id,
+        expected_settings=defaults,
+        title="Chat with Alba",
+        settings=roleplay_settings,
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="local-authority",
+        character_id=7,
+        character_name="Alba",
+    )
+
+    assert updated.id == target.id
+    assert updated.workspace_id == "workspace-target"
+    assert [session.id for session in store.sessions()] == order_before
+    assert store.sessions()[0] is first
+    assert updated.title == "Chat with Alba"
+    assert updated.settings == roleplay_settings
+    assert updated.runtime_backend == "local"
+    assert updated.assistant_kind == "character"
+    assert updated.assistant_id == "7"
+    assert updated.assistant_authority_id == "local-authority"
+    assert updated.character_id == 7
+    assert updated.character_name == "Alba"
+    assert updated.persisted_conversation_id is None
+
+
+def test_repurpose_pristine_session_revalidation_failure_is_nonmutating(monkeypatch):
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1", settings=defaults)
+    before = replace(session)
+    monkeypatch.setattr(store, "is_pristine_session", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(ValueError, match="pristine"):
+        store.repurpose_pristine_session(
+            session.id,
+            expected_settings=defaults,
+            title="Chat with Alba",
+            settings=replace(defaults, system_prompt="You are Alba."),
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id="7",
+            assistant_authority_id="local-authority",
+            character_id=7,
+            character_name="Alba",
+        )
+
+    assert store.sessions() == [before]
 
 
 def test_session_character_ref_projects_complete_local_and_server_identities():

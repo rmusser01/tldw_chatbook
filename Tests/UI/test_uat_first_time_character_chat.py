@@ -623,6 +623,10 @@ async def test_first_time_user_character_chat_journey(
             print("screen is_mounted:", chat_screen.is_mounted)
             raise AssertionError("handoff was not consumed by the Console")
 
+        clean_profile_sessions = chat_screen._ensure_console_chat_store().sessions()
+        assert len(clean_profile_sessions) == 1
+        assert clean_profile_sessions[0].title != "Chat 1"
+
         # Load the draft through the composer's public API: the composer
         # treats its paste-aware segments as canonical (``draft_text()``
         # ignores the hidden Input once segments are initialized), so a real

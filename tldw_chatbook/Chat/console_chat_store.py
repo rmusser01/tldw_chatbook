@@ -463,6 +463,9 @@ class ConsoleChatSession:
     #: Bounded persistence diagnostic for a corrupt/unreadable stored policy.
     context_policy_error: str | None = None
     draft: str = ""
+    #: Session-lifetime evidence that the composer has held user-authored text.
+    #: Clearing the draft does not make that work safe to overwrite.
+    has_user_work: bool = False
     updated_at: str = field(default_factory=_utc_now_iso)
     pending_attachments: list[PendingAttachment] = field(default_factory=list)
     one_shot_prefill: str | None = None
@@ -718,6 +721,159 @@ class ConsoleChatStore:
         self._conversation_context_epochs[session.id] = 0
         self.active_session_id = session.id
         return session
+
+    def is_pristine_session(
+        self,
+        session_id: str,
+        *,
+        expected_settings: ConsoleSessionSettings,
+    ) -> bool:
+        """Return whether a session is the untouched initial Console tab."""
+        session = self._sessions.get(session_id)
+        if session is None or not isinstance(expected_settings, ConsoleSessionSettings):
+            return False
+        if (
+            session.title != DEFAULT_CONSOLE_SESSION_TITLE
+            or session.persisted_conversation_id is not None
+            or session.settings != expected_settings
+            or session.draft != ""
+            or session.has_user_work
+            or session.pending_attachments
+            or session.one_shot_prefill is not None
+            or session.rag_scope_holder.scope is not None
+            or not session.context_policy_overrides.is_empty
+            or session.context_policy_error is not None
+            or session.runtime_backend != "local"
+            or session.assistant_kind != "generic"
+            or session.assistant_id != "console"
+            or session.assistant_authority_id is not None
+            or session.character_id is not None
+            or session.character_name is not None
+            or session.user_display_name_override is not None
+            or session.character_system_template is not None
+            or session.identity_revision != 0
+            or session.ephemeral
+            or session.todos
+        ):
+            return False
+        return not (
+            self._messages_by_session.get(session_id)
+            or self._nodes_by_session.get(session_id)
+            or self._children_by_parent.get(session_id)
+            or self._active_leaf_by_session.get(session_id) is not None
+            or any(owner == session_id for owner in self._message_session_index.values())
+            or session_id in self._tool_markers_by_session
+            or self._context_summary_by_session.get(session_id) != (None, None)
+            or session_id in self._roleplay_system_projection_candidates
+            or self._conversation_context_epochs.get(session_id) != 0
+        )
+
+    def repurpose_pristine_session(
+        self,
+        session_id: str,
+        **identity: Any,
+    ) -> ConsoleChatSession:
+        """Atomically replace an untouched initial tab with roleplay identity."""
+        required = {
+            "expected_settings",
+            "title",
+            "settings",
+            "runtime_backend",
+            "assistant_kind",
+            "assistant_id",
+            "assistant_authority_id",
+            "character_id",
+            "character_name",
+        }
+        if set(identity) != required:
+            raise TypeError("Repurpose identity must provide the complete roleplay state.")
+
+        expected_settings = identity["expected_settings"]
+        settings = identity["settings"]
+        title = identity["title"]
+        runtime_backend = identity["runtime_backend"]
+        assistant_kind = identity["assistant_kind"]
+        assistant_id = identity["assistant_id"]
+        assistant_authority_id = identity["assistant_authority_id"]
+        character_id = identity["character_id"]
+        character_name = identity["character_name"]
+        if not isinstance(expected_settings, ConsoleSessionSettings):
+            raise TypeError("expected_settings must be ConsoleSessionSettings.")
+        if not isinstance(settings, ConsoleSessionSettings):
+            raise TypeError("settings must be ConsoleSessionSettings.")
+        if type(title) is not str or not title:
+            raise ValueError("Roleplay title must be non-empty text.")
+        if runtime_backend not in {"local", "server"}:
+            raise ValueError("Roleplay runtime backend must be local or server.")
+        if assistant_kind != "character":
+            raise ValueError("Repurposed sessions require character identity.")
+        if type(assistant_id) is not str or not assistant_id:
+            raise ValueError("Roleplay assistant id must be non-empty text.")
+        if assistant_authority_id is not None and (
+            type(assistant_authority_id) is not str or not assistant_authority_id
+        ):
+            raise ValueError("Roleplay authority id must be non-empty text or None.")
+        if type(character_name) is not str or not character_name.strip():
+            raise ValueError("Roleplay character name must be non-empty text.")
+        if runtime_backend == "local":
+            if (
+                type(character_id) is not int
+                or character_id < 1
+                or assistant_id != str(character_id)
+            ):
+                raise ValueError("Local roleplay identity is inconsistent.")
+        elif character_id is not None:
+            raise ValueError("Server roleplay identity cannot carry a local id.")
+
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise ValueError("Session is no longer pristine.")
+        candidate = replace(
+            session,
+            title=title,
+            settings=settings,
+            runtime_backend=runtime_backend,
+            assistant_kind=assistant_kind,
+            assistant_id=assistant_id,
+            assistant_authority_id=assistant_authority_id,
+            character_id=character_id,
+            character_name=character_name,
+            updated_at=_utc_now_iso(),
+        )
+        if not self.is_pristine_session(
+            session_id,
+            expected_settings=expected_settings,
+        ):
+            raise ValueError("Session is no longer pristine.")
+        self._sessions[session_id] = candidate
+        return candidate
+
+    def refresh_pristine_session_settings(
+        self,
+        session_id: str,
+        *,
+        expected_settings: ConsoleSessionSettings,
+        settings: ConsoleSessionSettings,
+    ) -> ConsoleChatSession:
+        """Atomically refresh derived defaults on an otherwise untouched tab."""
+        if (
+            not isinstance(expected_settings, ConsoleSessionSettings)
+            or not isinstance(settings, ConsoleSessionSettings)
+            or expected_settings.source != "derived"
+            or settings.source != "derived"
+        ):
+            raise ValueError("Only derived pristine settings may be refreshed.")
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise ValueError("Session is no longer pristine.")
+        candidate = replace(session, settings=settings, updated_at=_utc_now_iso())
+        if not self.is_pristine_session(
+            session_id,
+            expected_settings=expected_settings,
+        ):
+            raise ValueError("Session is no longer pristine.")
+        self._sessions[session_id] = candidate
+        return candidate
 
     def restore_persisted_session(
         self,
@@ -1227,9 +1383,13 @@ class ConsoleChatStore:
         self,
         session_id: str,
         settings: ConsoleSessionSettings,
+        *,
+        mark_user_work: bool = True,
     ) -> ConsoleChatSession:
         """Replace in-memory settings for a native Console session."""
         session = self._session_or_raise(session_id)
+        if mark_user_work and session.settings != settings:
+            session.has_user_work = True
         session.settings = settings
         self._bump_payload_revision(session_id)
         return session
@@ -1242,6 +1402,8 @@ class ConsoleChatStore:
         """Replace the in-memory composer draft for a native Console session."""
         session = self._session_or_raise(session_id)
         session.draft = draft
+        if draft:
+            session.has_user_work = True
         return session
 
     def session_one_shot_prefill(self, session_id: str) -> str | None:
