@@ -8434,15 +8434,22 @@ class SettingsScreen(BaseAppScreen):
             return
         select_value = self._provider_select_value_for_provider(provider)
         uses_manual_entry = select_value == PROVIDER_MANUAL_SELECT_VALUE
+        # task-15740: the `_syncing_*` flags alone cannot guard these
+        # assignments -- `Changed` is a POSTED message, delivered after the
+        # `finally` has dropped the flag, so every programmatic repopulation
+        # was arriving at the handlers as a user edit. `prevent()` stops the
+        # message at the source; the flags stay for the synchronous path.
         self._syncing_provider_selection = True
         try:
-            provider_select.value = select_value
+            with provider_select.prevent(Select.Changed):
+                provider_select.value = select_value
         finally:
             self._syncing_provider_selection = False
         self._syncing_provider_manual = True
         try:
             manual_input.disabled = not uses_manual_entry
-            manual_input.value = provider if uses_manual_entry else ""
+            with manual_input.prevent(Input.Changed):
+                manual_input.value = provider if uses_manual_entry else ""
             manual_row.set_class(
                 not uses_manual_entry, "settings-provider-manual-hidden"
             )
@@ -8470,7 +8477,10 @@ class SettingsScreen(BaseAppScreen):
         if selector.value != display_value:
             self._syncing_provider_api_mode = True
             try:
-                selector.value = display_value
+                # task-15740: see `_sync_provider_selection_widgets` -- the
+                # flag misses the posted message.
+                with selector.prevent(Select.Changed):
+                    selector.value = display_value
             finally:
                 self._syncing_provider_api_mode = False
         guidance.update(
@@ -8623,7 +8633,11 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_credential_env_var = True
         try:
             if credential_input is not None:
-                credential_input.value = self._provider_credential_env_var(provider)
+                # task-15740: the flag misses the posted message; this echo
+                # staged the new provider's env var against the old
+                # provider's original.
+                with credential_input.prevent(Input.Changed):
+                    credential_input.value = self._provider_credential_env_var(provider)
                 credential_input.placeholder = self._provider_credential_placeholder(
                     provider
                 )
@@ -8683,23 +8697,25 @@ class SettingsScreen(BaseAppScreen):
                     except QueryError:
                         continue
                     select.disabled = not supported
-                    if draft_key == "model_profile_streaming":
-                        select.value = (
-                            self._streaming_select_value(value)
-                            if supported
-                            else Select.NULL
-                        )
-                    else:
-                        select.value = (
-                            self._select_option_value(
-                                value,
-                                CLOSED_ENUM_SELECT_OPTIONS[
-                                    PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
-                                ],
+                    # task-15740: prevent the posted echo the flag misses.
+                    with select.prevent(Select.Changed):
+                        if draft_key == "model_profile_streaming":
+                            select.value = (
+                                self._streaming_select_value(value)
+                                if supported
+                                else Select.NULL
                             )
-                            if supported
-                            else Select.NULL
-                        )
+                        else:
+                            select.value = (
+                                self._select_option_value(
+                                    value,
+                                    CLOSED_ENUM_SELECT_OPTIONS[
+                                        PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
+                                    ],
+                                )
+                                if supported
+                                else Select.NULL
+                            )
                 else:
                     try:
                         widget = self.query_one(selector, Input)
@@ -8709,7 +8725,11 @@ class SettingsScreen(BaseAppScreen):
                     widget.placeholder = self._model_profile_input_placeholder(
                         provider, draft_key
                     )
-                    widget.value = self._profile_input_value(value) if supported else ""
+                    # task-15740: prevent the posted echo the flag misses.
+                    with widget.prevent(Input.Changed):
+                        widget.value = (
+                            self._profile_input_value(value) if supported else ""
+                        )
                 # task-189: gated rows are hidden (not rendered as disabled
                 # placeholder noise); the disclosure shows one summary line.
                 try:
@@ -8728,11 +8748,20 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_context_window = True
         try:
             try:
-                self.query_one(
+                context_input = self.query_one(
                     "#settings-model-context-window", Input
-                ).value = self._profile_input_value(value)
+                )
             except QueryError:
                 pass
+            else:
+                # task-15740: THE defect behind "Model context window must be
+                # a positive whole number" refusing a provider switch's save:
+                # this repopulation (often to "") arrived at the handler after
+                # the flag dropped and was staged as a user edit against the
+                # OLD model's loaded value -- dirty-and-empty, which the save
+                # guard then refused.
+                with context_input.prevent(Input.Changed):
+                    context_input.value = self._profile_input_value(value)
         finally:
             self._syncing_provider_context_window = False
         self._set_static_text(
@@ -14526,7 +14555,13 @@ class SettingsScreen(BaseAppScreen):
         try:
             self._syncing_provider_model_value = True
             try:
-                self.query_one("#settings-model-value", Input).value = model_value
+                model_input = self.query_one("#settings-model-value", Input)
+                # task-15673/15740: the flag misses the posted message; the
+                # echo staged the nav model as an edit, marking the category
+                # dirty so this method's own unsaved-changes guard refused
+                # the NEXT navigation apply.
+                with model_input.prevent(Input.Changed):
+                    model_input.value = model_value
             finally:
                 self._syncing_provider_model_value = False
         except QueryError:
@@ -16930,7 +16965,13 @@ class SettingsScreen(BaseAppScreen):
         if endpoint_input is not None:
             self._syncing_provider_endpoint = True
             try:
-                endpoint_input.value = self._provider_endpoint_value(staged_provider)
+                # task-15740: the flag misses the posted message; the echo
+                # staged the new provider's endpoint (often "") against the
+                # old provider's original -- the exact stale-endpoint save
+                # test_settings_provider_switch_does_not_save_stale_endpoint
+                # pins against.
+                with endpoint_input.prevent(Input.Changed):
+                    endpoint_input.value = self._provider_endpoint_value(staged_provider)
                 endpoint_input.placeholder = self._provider_endpoint_placeholder(
                     staged_provider
                 )
@@ -16943,11 +16984,15 @@ class SettingsScreen(BaseAppScreen):
         if provider_changed:
             self._stage_provider_value("model", provider_default_model or None)
             try:
-                self.query_one(
-                    "#settings-model-value", Input
-                ).value = provider_default_model
+                default_model_input = self.query_one("#settings-model-value", Input)
             except QueryError:
                 pass
+            else:
+                # task-15740: the model is staged explicitly one line up; the
+                # unguarded echo re-staged it a second time through the
+                # handler. Same class as the flagged sites, no flag at all.
+                with default_model_input.prevent(Input.Changed):
+                    default_model_input.value = provider_default_model
         model = str(self._provider_setting_values_mapping().get("model") or "")
         self._sync_provider_model_profile_widgets(staged_provider, model)
         self._reset_provider_model_discovery_state()
@@ -17047,9 +17092,12 @@ class SettingsScreen(BaseAppScreen):
         self._stage_provider_value("model_context_window_reset", True)
         self._syncing_provider_context_window = True
         try:
-            self.query_one("#settings-model-context-window", Input).value = str(
-                detected
-            )
+            context_input = self.query_one("#settings-model-context-window", Input)
+            # task-15740: with the echo prevented at the source, the handler's
+            # reset-echo tolerance is belt-and-braces rather than the only
+            # thing keeping a reset from turning back into an override.
+            with context_input.prevent(Input.Changed):
+                context_input.value = str(detected)
         finally:
             self._syncing_provider_context_window = False
         event.button.disabled = True
@@ -17068,6 +17116,19 @@ class SettingsScreen(BaseAppScreen):
     def handle_provider_endpoint_changed(self, event: Input.Changed) -> None:
         if self._syncing_provider_endpoint:
             self._update_provider_dynamic_widgets()
+            return
+        # task-15673: a freshly MOUNTED Input posts Changed for its
+        # compose-time initial value (verified against Textual directly), so a
+        # navigation preselect's recompose delivers the nav provider's
+        # endpoint here as if the user typed it -- staged against the OLD
+        # provider's loaded original, that dirt made the deferred
+        # _apply_navigation_provider_context refuse to apply the nav model.
+        # Same nav-echo tolerance handle_model_value_changed already has.
+        if (
+            self._navigation_provider
+            and event.value.strip()
+            == self._provider_endpoint_value(self._navigation_provider)
+        ):
             return
         self._stage_provider_value("endpoint", event.value.strip())
         self._reset_provider_model_discovery_state()
@@ -17133,6 +17194,14 @@ class SettingsScreen(BaseAppScreen):
     def handle_provider_credential_env_var_changed(self, event: Input.Changed) -> None:
         if self._syncing_provider_credential_env_var:
             self._update_provider_dynamic_widgets()
+            return
+        # task-15673: see handle_provider_endpoint_changed -- the nav
+        # recompose's mount echo must not stage as a user edit.
+        if (
+            self._navigation_provider
+            and event.value.strip()
+            == self._provider_credential_env_var(self._navigation_provider)
+        ):
             return
         self._stage_provider_value("credential_env_var", event.value.strip())
         self._reset_provider_model_discovery_state()
@@ -18337,9 +18406,12 @@ class SettingsScreen(BaseAppScreen):
                 provider = str(values["provider"])
                 self._syncing_provider_selection = True
                 try:
-                    self.query_one(
-                        "#settings-provider-value", Select
-                    ).value = self._provider_select_value_for_provider(provider)
+                    revert_select = self.query_one("#settings-provider-value", Select)
+                    # task-15740: prevent the posted echo the flag misses.
+                    with revert_select.prevent(Select.Changed):
+                        revert_select.value = (
+                            self._provider_select_value_for_provider(provider)
+                        )
                 finally:
                     self._syncing_provider_selection = False
                 self._sync_provider_manual_widget(provider)

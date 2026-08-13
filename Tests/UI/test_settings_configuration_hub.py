@@ -5297,18 +5297,6 @@ async def test_settings_provider_category_renders_catalog_select_with_visible_va
         assert "llama.cpp" in _visible_text(screen)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "task-15673: navigation preselect applies the provider, which itself "
-    "marks Providers & Models dirty; the deferred "
-    "_apply_navigation_provider_context then hits its unsaved-changes guard "
-    "(settings_screen.py:14161) and returns without writing the model, so the "
-    "field keeps the previous provider's model. Passed only while the harness "
-    "booted with a near-empty config (task-15270) and the provider switch did "
-    "not register as dirty. strict=True so the fix flips this loudly."
-    ),
-)
 @pytest.mark.asyncio
 async def test_settings_navigation_context_can_preselect_provider_category_target():
     app = _build_test_app()
@@ -5417,18 +5405,6 @@ async def test_sync_rows_recompose_mid_navigation_still_focuses_target_field():
         assert api_key.has_focus
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "task-15673: navigation preselect applies the provider, which itself "
-    "marks Providers & Models dirty; the deferred "
-    "_apply_navigation_provider_context then hits its unsaved-changes guard "
-    "(settings_screen.py:14161) and returns without writing the model, so the "
-    "field keeps the previous provider's model. Passed only while the harness "
-    "booted with a near-empty config (task-15270) and the provider switch did "
-    "not register as dirty. strict=True so the fix flips this loudly."
-    ),
-)
 @pytest.mark.asyncio
 async def test_settings_navigation_context_preselection_does_not_create_provider_draft():
     app = _build_test_app()
@@ -6808,6 +6784,101 @@ async def test_settings_provider_revert_restores_provider_dependent_placeholders
 
         assert endpoint.placeholder == "https://api.openai.com/v1"
         assert credential.placeholder == "OPENAI_API_KEY"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_repopulation_is_not_a_user_edit(monkeypatch):
+    """task-15740/15673: the app rewriting its own widgets must not stage edits.
+
+    The bug class: `Input.Changed`/`Select.Changed` are POSTED messages, so
+    they arrive after any `_syncing_*` flag has been dropped -- and a freshly
+    MOUNTED Input posts Changed for its compose-time initial value too. Every
+    programmatic repopulation therefore reached the staging handlers as if the
+    user had typed it. Switching provider then marked `credential_env_var`,
+    `endpoint` and `model_context_window` as edited-to-empty, and the empty
+    context window aborted the whole save.
+
+    This pins the distinction directly: the app path stays clean, a genuine
+    user edit still stages.
+    """
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        # The app's own repopulation path: switch provider, let every posted
+        # echo drain.
+        screen._apply_provider_value_change("llama_cpp")
+        for _ in range(20):
+            await pilot.pause(0.02)
+
+        draft = screen._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
+        dirty = sorted(draft.dirty_keys) if draft is not None else []
+        repopulation_dirt = {
+            "credential_env_var",
+            "endpoint",
+            "model_context_window",
+        } & set(dirty)
+        assert not repopulation_dirt, (
+            f"the provider switch's own widget rewrites were staged as user "
+            f"edits: {sorted(repopulation_dirt)} (dirty={dirty})"
+        )
+
+        # A genuine user edit through the same widget still stages.
+        screen.query_one("#settings-model-context-window", Input).value = "4096"
+        for _ in range(10):
+            await pilot.pause(0.02)
+
+        draft = screen._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
+        assert draft is not None and "model_context_window" in draft.dirty_keys, (
+            "a real edit to the context window must still register as dirty"
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_user_emptied_context_window_still_refuses_the_save(monkeypatch):
+    """task-15740 AC#3: the guard is narrowed, not removed.
+
+    Repopulation blanking the field must no longer abort the save -- but a user
+    deliberately clearing it (with a model set) still must, with the existing
+    message, and nothing persisted.
+    """
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append(
+            (str(message), kwargs.get("severity"))
+        )
+
+        # A user edit that sets, then genuinely clears, the context window.
+        context_input = screen.query_one("#settings-model-context-window", Input)
+        context_input.value = "4096"
+        await pilot.pause()
+        context_input.value = ""
+        for _ in range(10):
+            await pilot.pause(0.02)
+
+        screen.action_settings_save_category()
+        await pilot.pause()
+
+        assert (
+            "Model context window must be a positive whole number.",
+            "error",
+        ) in toasts
+        assert saved == []
 
 
 @pytest.mark.asyncio

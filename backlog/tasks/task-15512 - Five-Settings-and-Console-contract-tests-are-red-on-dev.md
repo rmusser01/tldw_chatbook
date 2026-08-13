@@ -69,17 +69,17 @@ across `app.py` and `settings_screen.py`; all are converted to `%s` and
 
 That alone fixes `test_settings_console_behavior_saves_display_name_exactly`.
 
-**2. Underneath it, a real product bug — filed as task-15610 (high).**
+**2. Underneath it, a real product bug — filed as task-15740 (high).**
 With the crash gone, two tests fail on their actual assertion: the save persists
 nothing. Measured cause: pressing Save adds `credential_env_var`, `endpoint` and
 `model_context_window` to the draft's `dirty_keys` as empty edits, for fields the
 user never touched (`['model','provider']` before the click, five keys after).
 The empty `model_context_window` then trips its positive-integer guard and
-`return`s before anything is written. Same shape as task-15510 -- the app's own
+`return`s before anything is written. Same shape as task-15673 -- the app's own
 repopulation is indistinguishable from a user edit.
 
 So those two are **not** stale contracts; they assert the save persists and it
-genuinely does not. They stay red until task-15610 is fixed.
+genuinely does not. They stay red until task-15740 is fixed.
 
 **Stale contracts, fixed here.** Three tests pinned values that a feature
 legitimately changed and nobody updated:
@@ -100,7 +100,7 @@ legitimately changed and nobody updated:
 
 - [x] Each of the six failures is attributed to its causing change, with the commit identified
 - [x] It is established whether the three save-related failures are stale contracts or a genuine break in the Settings save path, with evidence either way
-- [x] Any genuine product break found is fixed rather than absorbed into the tests' expectations (the log-call crash is fixed; the save refusal is filed as task-15610 rather than absorbed)
+- [x] Any genuine product break found is fixed rather than absorbed into the tests' expectations (the log-call crash is fixed; the save refusal is filed as task-15740 rather than absorbed)
 - [ ] All six pass on dev
 
 ## Loose end handed off
@@ -110,5 +110,14 @@ task's six: `test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_b
 fails only in a multi-module run (`ConflictError`, note version mismatch). It
 passes alone, passes with its own module alone on base dev, and passes behind a
 settings-module prefix. The decisive comparison — the same 5-module set on base
-dev — was killed by the environment three times. Filed as **task-15611** with
+dev — was killed by the environment three times. Filed as **task-15741** with
 everything ruled out so far, rather than left as an unexplained red.
+
+## New arrival, attributed but not fixed here
+
+`test_settings_footer_hints.py::test_narrow_footer_collapses_but_f1_help_stays_truthful`
+went red on dev between `537451cb8` (green in this branch's runs there) and
+`61f6ae575` (fails on an untouched worktree at that commit) -- "expected
+collapsed footer at 70 cols". Same class as this task's six: a dev merge in
+that range changed footer behaviour without its contract test. Left for the
+usual triage rather than absorbed here.
