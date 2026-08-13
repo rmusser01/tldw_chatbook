@@ -117,6 +117,10 @@ class _Service:
         return self.installed
 
 
+class _PostAcquireCancellation(BaseException):
+    pass
+
+
 def _lease(reference: ArtifactRef, root: Path) -> _Lease:
     return _Lease(
         ArtifactHandle(
@@ -283,6 +287,28 @@ def test_acquire_managed_gguf_returns_exact_declared_payload_and_open_lease() ->
             ),
             "payload",
         ),
+        (
+            (
+                _installed(
+                    _descriptor(REF, role=ArtifactRole.DEPENDENCY),
+                    name="dependency",
+                ),
+            ),
+            "payload",
+        ),
+        (
+            (
+                _installed(
+                    _descriptor(
+                        REF,
+                        artifact_format=ArtifactFormat.ONNX,
+                        files=(ArtifactFile("model.gguf", 12, "6" * 64),),
+                    ),
+                    name="onnx",
+                ),
+            ),
+            "payload",
+        ),
     ],
 )
 def test_managed_payload_failures_close_lease_and_hide_private_state(
@@ -302,6 +328,39 @@ def test_managed_payload_failures_close_lease_and_hide_private_state(
     rendered = repr((caught.value, caught.value.args, caught.value.__dict__))
     assert "/private/managed-root" not in rendered
     assert "corrupt" not in rendered
+
+
+def test_mismatched_leased_root_closes_handle() -> None:
+    other_ref = ArtifactRef("other-model", "revision", "q4-k-m")
+    root = Path("/private/managed-root/artifact")
+    leased = _Lease(
+        ArtifactHandle(
+            root=other_ref,
+            closure=(REF, other_ref),
+            closure_fingerprint="fingerprint",
+            paths=((REF, root), (other_ref, root.parent / "other")),
+        )
+    )
+    service = _Service((_installed(_descriptor(REF), name="artifact"),), leased)
+
+    with pytest.raises(GGUFSourceError) as caught:
+        acquire_managed_gguf(service, REF)
+
+    assert caught.value.code == "payload"
+    assert leased.closed is True
+
+
+def test_post_acquire_base_exception_closes_lease_and_propagates_original() -> None:
+    cancellation = _PostAcquireCancellation("cancelled")
+    leased = _lease(REF, Path("/private/managed-root/artifact"))
+    service = _Service((), leased, list_error=cancellation)
+
+    with pytest.raises(_PostAcquireCancellation) as caught:
+        acquire_managed_gguf(service, REF)
+
+    assert caught.value is cancellation
+    assert leased.closed is True
+    assert caught.value.__context__ is None
 
 
 def test_managed_inventory_exception_closes_lease_without_chaining_raw_error() -> None:

@@ -246,6 +246,12 @@ def acquire_managed_gguf(
         failure_code = "state"
     except Exception:
         failure_code = "state"
+    except BaseException:
+        try:
+            leased.close()
+        except BaseException:
+            pass
+        raise
 
     try:
         leased.close()
