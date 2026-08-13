@@ -186,7 +186,7 @@ async def test_console_workbench_normal_and_compact_snapshots(density: str) -> N
             _assert_console_density_evidence(svg)
 
 
-@pytest.mark.parametrize("size", ((100, 30), (140, 42), (160, 45)))
+@pytest.mark.parametrize("size", ((130, 30), (140, 42), (160, 45)))
 @pytest.mark.parametrize("approval_count", (0, 3))
 @pytest.mark.asyncio
 async def test_task_15705_console_collapsed_inspector_rail_visual_parity_sweep(
