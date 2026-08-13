@@ -95,6 +95,7 @@ from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
+    LibraryMediaContentSearchControls,
 )
 from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
@@ -4771,6 +4772,41 @@ async def test_library_shell_media_viewer_inplace_search_applies_only_on_enter()
         assert screen._library_media_content_query == ""
         assert screen.query_one("#library-media-content-search", Input) is search_input
         assert not screen.query("#library-media-content-search-status")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_inplace_teardown_contains_child_query_errors():
+    """Catch mounted-viewer coordinators leaking child teardown query failures."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+        viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
+        search_input = screen.query_one("#library-media-content-search", Input)
+        controls = viewer.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
+        )
+
+        await controls.remove()
+        assert screen.query_one("#library-media-viewer") is viewer
+
+        screen.handle_library_media_content_search_submitted(
+            Input.Submitted(search_input, "setup")
+        )
+        screen._advance_library_media_content_match(1)
+
+        body = viewer.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        )
+        await body.remove()
+        assert screen.query_one("#library-media-viewer") is viewer
+
+        await screen._set_library_media_content_mode("raw")
 
 
 @pytest.mark.asyncio

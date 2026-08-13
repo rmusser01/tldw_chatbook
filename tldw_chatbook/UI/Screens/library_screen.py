@@ -24856,11 +24856,14 @@ class LibraryScreen(BaseAppScreen):
         viewer = self._mounted_library_media_viewer()
         if viewer is None:
             return
-        viewer.sync_query_state(
-            query=submitted,
-            matches=matches,
-            match_index=0,
-        )
+        try:
+            viewer.sync_query_state(
+                query=submitted,
+                matches=matches,
+                match_index=0,
+            )
+        except (NoMatches, QueryError):
+            return
         self.call_after_refresh(self._focus_library_media_content_search_input)
         # Bring the first match into view after Rich text wrapping/layout settles.
         if matches:
@@ -24926,7 +24929,10 @@ class LibraryScreen(BaseAppScreen):
         viewer = self._mounted_library_media_viewer()
         if viewer is None:
             return
-        await viewer.sync_mode(mode)
+        try:
+            await viewer.sync_mode(mode)
+        except (NoMatches, QueryError):
+            return
 
     @on(Button.Pressed, "#library-media-content-search-next")
     def handle_library_media_content_search_next(self, event: Button.Pressed) -> None:
@@ -24974,10 +24980,13 @@ class LibraryScreen(BaseAppScreen):
         viewer = self._mounted_library_media_viewer()
         if viewer is None:
             return
-        viewer.sync_match_index(
-            matches=matches,
-            match_index=self._library_media_content_match_index,
-        )
+        try:
+            viewer.sync_match_index(
+                matches=matches,
+                match_index=self._library_media_content_match_index,
+            )
+        except (NoMatches, QueryError):
+            return
         self.call_after_refresh(self._scroll_library_media_content_to_line, line_index)
 
     def _scroll_library_media_content_to_line(self, line_index: int) -> None:
