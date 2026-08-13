@@ -20,7 +20,9 @@ from typing import Any
 import pytest
 
 from Tests.Model_Artifacts.lease_processes import hold_set
+from Tests.Model_Artifacts.gguf_test_helpers import make_gguf
 import tldw_chatbook.Model_Artifacts as artifacts_module
+from tldw_chatbook.Model_Artifacts import gguf_admission
 from tldw_chatbook.Model_Artifacts import service as service_module
 from tldw_chatbook.Model_Artifacts import (
     ArtifactDescriptor,
@@ -93,6 +95,8 @@ def test_package_exports_the_complete_public_artifact_api() -> None:
         "LeasedArtifactHandle",
         "LeasedArtifactDependencyHandle",
         "LeaseMode",
+        "LocalGGUFImportProgress",
+        "LocalGGUFImportResult",
         "ModelArtifactService",
         "PreflightNotGrantableError",
         "PreflightReport",
@@ -1624,6 +1628,59 @@ def test_install_verifies_then_promotes_immutable_directory(tmp_path: Path) -> N
         "schema_version": 1,
         "descriptor": item.to_dict(),
     }
+
+
+def test_import_local_gguf_promotes_path_private_full_digest_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "private-name.gguf"
+    payload = make_gguf(architecture="llama", name="Local LLM", file_type=7)
+    source.write_bytes(payload)
+    before = source.stat()
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    source_opens: list[Path] = []
+    write_targets: list[Path] = []
+    real_os_open = os.open
+    real_open = builtins.open
+
+    def record_os_open(path, flags, *args, **kwargs):
+        resolved = Path(path).resolve(strict=False)
+        if resolved == source.resolve():
+            source_opens.append(resolved)
+        if flags & (os.O_WRONLY | os.O_RDWR):
+            write_targets.append(resolved)
+        return real_os_open(path, flags, *args, **kwargs)
+
+    def record_open(file, mode="r", *args, **kwargs):
+        if any(flag in mode for flag in "wax+"):
+            write_targets.append(Path(file).resolve(strict=False))
+        return real_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(gguf_admission.os, "open", record_os_open)
+    monkeypatch.setattr(builtins, "open", record_open)
+
+    result = service.import_local_gguf(source)
+
+    digest = hashlib.sha256(payload).hexdigest()
+    assert result.already_installed is False
+    assert result.reference.revision == f"sha256-{digest}"
+    assert result.reference.artifact_id == f"local-gguf-{digest[:16]}"
+    installed = service.artifact_path(result.reference)
+    assert (installed / "model.gguf").read_bytes() == payload
+    manifest = json.loads((installed / "manifest.json").read_text())
+    rendered = json.dumps(manifest)
+    assert str(source) not in rendered
+    assert "file://" not in rendered
+    assert "local.invalid" not in rendered
+    assert source.read_bytes() == payload
+    assert source.stat().st_mtime_ns == before.st_mtime_ns
+    assert source_opens == [source.resolve()]
+    payload_writes = [path for path in write_targets if path.suffix == ".gguf"]
+    assert len(payload_writes) == 1
+    assert payload_writes[0].name == "model.gguf"
+    assert payload_writes[0].parent.parent == service.staging_path
+    assert payload_writes[0] != source.resolve()
 
 
 @pytest.mark.parametrize("phase", ("_copy_payload", "_verify_payload"))
