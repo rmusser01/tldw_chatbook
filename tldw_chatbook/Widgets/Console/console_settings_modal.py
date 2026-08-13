@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
@@ -1198,15 +1199,25 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         self.dismiss(result)
 
     @on(Button.Pressed, "#console-settings-save-default")
-    def _save_as_default(self, event: Button.Pressed) -> None:
-        """Apply the draft to the session and write it through to config defaults."""
+    async def _save_as_default(self, event: Button.Pressed) -> None:
+        """Apply the draft to the session and write it through to config defaults.
+
+        task-15470: the write itself now runs via ``asyncio.to_thread``
+        rather than straight on the event loop -- a full config.toml
+        read+atomic-rewrite+cache-reload could otherwise stall the UI
+        thread for the duration of the write on slow storage. The
+        success/failure contract is unchanged: this handler still awaits
+        the result before showing the error copy or dismissing, exactly as
+        the synchronous call did.
+        """
         event.stop()
         result = self._validated_result_or_show_errors()
         if result is None:
             return
         try:
-            saved = save_settings_to_cli_config(
-                self._default_persist_sections(result.settings)
+            saved = await asyncio.to_thread(
+                save_settings_to_cli_config,
+                self._default_persist_sections(result.settings),
             )
         except Exception:
             saved = False

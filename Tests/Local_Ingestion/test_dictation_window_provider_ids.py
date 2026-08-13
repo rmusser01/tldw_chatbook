@@ -134,7 +134,7 @@ def test_load_settings_normalizes_legacy_provider_id(monkeypatch) -> None:
     save_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     monkeypatch.setattr(
         dwi,
-        "save_setting_to_cli_config",
+        "save_settings_to_cli_config",
         lambda *args, **kwargs: save_calls.append((args, kwargs)),
     )
 

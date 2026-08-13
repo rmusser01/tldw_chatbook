@@ -676,6 +676,13 @@ CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 # call to notice -- needs its own slow repaint timer. 10s keeps the
 # countdown's staleness bound well under the 300s cache TTL it is watching.
 CONSOLE_COST_TTL_TICK_SECONDS = 10.0
+# task-15470: every `Collapsible.Toggled` (plus expand-all/collapse-all/reset)
+# used to reassign `sidebar_state` and have `watch_sidebar_state` open+parse+
+# rewrite `ui_state.toml` synchronously on the event loop, per click. This
+# debounce coalesces a burst of toggles into one write, dispatched off the
+# loop (see `_flush_sidebar_state_after_debounce`); `on_unmount` force-flushes
+# so a toggle immediately followed by quit is never lost.
+SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS = 0.5
 # P3c Task 3: the "Character" rail avatar box's fitted cell size (mirrors
 # the transcript inline-image row's `fit_image_cell_size` usage, sized
 # smaller for the rail's narrower column).
@@ -3610,6 +3617,11 @@ class ChatScreen(BaseAppScreen):
         self._console_expression_spec_cache: dict[tuple[int, str], dict] = {}
         self.ui_state = UIState()
         self._load_sidebar_state()
+        # task-15470: debounce state for `watch_sidebar_state` -- see
+        # `SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS`.
+        self._sidebar_state_save_timer: Any | None = None
+        self._sidebar_state_dirty = False
+        self._sidebar_state_persist_worker: Any | None = None
 
     # Sections `load_settings()` always injects into a disk-loaded config but
     # which Console test fakes never carry. Used to tell a real boot snapshot
@@ -14542,6 +14554,11 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        # task-15470: flush a pending debounced sidebar-state write FIRST,
+        # ahead of every other teardown step below -- several of those can
+        # raise, and a raised exception must not strand an unpersisted
+        # toggle-then-quit.
+        await self._flush_sidebar_state_now()
         registry = self._h3_image_edit_registry()
         store = self._console_chat_store
         if store is not None:
@@ -22020,8 +22037,100 @@ class ChatScreen(BaseAppScreen):
                 return
 
     def watch_sidebar_state(self, new_state: dict) -> None:
-        """Auto-save when sidebar state changes."""
-        self._save_sidebar_state()
+        """Debounce persistence when sidebar state changes.
+
+        task-15470: this used to call `_save_sidebar_state()` directly --
+        synchronous open+parse+rewrite of `ui_state.toml` on the event loop,
+        once per `Collapsible.Toggled`. Now it only marks the state dirty and
+        (re)arms one debounce timer; a burst of toggles collapses into a
+        single write, dispatched off the loop by
+        `_flush_sidebar_state_after_debounce`. `on_unmount` force-flushes any
+        pending write so a toggle immediately followed by quit is not lost.
+        """
+        self._schedule_sidebar_state_save()
+
+    def _schedule_sidebar_state_save(self) -> None:
+        """Mark the sidebar state dirty and (re)arm the debounce timer.
+
+        The single scheduling point -- `watch_sidebar_state` and any direct
+        caller that mutates `ui_state.collapsible_states` without going
+        through the reactive (e.g. a bulk reset that may reassign an
+        already-`{}` `sidebar_state`, which the reactive would then treat as
+        a no-op and never call the watcher for) both route through here so
+        a pending write is unconditionally scheduled.
+        """
+        self._sidebar_state_dirty = True
+        if self._sidebar_state_save_timer is not None:
+            self._sidebar_state_save_timer.stop()
+        self._sidebar_state_save_timer = self.set_timer(
+            SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS,
+            self._flush_sidebar_state_after_debounce,
+        )
+
+    def _flush_sidebar_state_after_debounce(self) -> None:
+        """Debounce timer callback: hand the actual write to a worker."""
+        self._sidebar_state_save_timer = None
+        self._sidebar_state_persist_worker = self.run_worker(
+            self._persist_sidebar_state_off_loop(),
+            exclusive=True,
+            group="sidebar-state-persist",
+        )
+
+    async def _persist_sidebar_state_off_loop(self) -> None:
+        """Write `ui_state.toml` on a worker thread, off the event loop.
+
+        Snapshots `self.ui_state` here, on the main thread, before handing
+        the write to `to_thread` -- a further toggle can still arrive and
+        mutate `collapsible_states` while this write is in flight, and it
+        must not race the worker thread's read of that same dict.
+
+        Clears `_sidebar_state_dirty` immediately after taking the
+        snapshot, NOT after the write completes (review round,
+        task-15470): the awaited `to_thread` call below yields to the
+        event loop, and a further toggle can land while this write is
+        still in flight. Clearing dirty only after the write finished
+        would blindly stamp it False again on completion -- clobbering
+        the True a mid-flight toggle had just set -- so a quit landing
+        before that toggle's own new debounce timer fires would see
+        `dirty=False` and lose it. Clearing right here instead means the
+        dirty flag always answers "is there a toggle newer than the
+        snapshot this worker is holding", which a mid-flight toggle
+        correctly flips back to True.
+        """
+        snapshot = self._sidebar_state_snapshot()
+        self._sidebar_state_dirty = False
+        await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
+
+    async def _flush_sidebar_state_now(self) -> None:
+        """Force-flush a pending sidebar-state write (unmount/quit path).
+
+        Cancels any pending debounce timer and writes off the loop via
+        `to_thread` so the screen never unmounts with an unpersisted toggle
+        -- the AC #2 flush-on-quit guarantee. If a debounced write is
+        already in flight (the timer fired moments before quit), this waits
+        for it rather than dispatching a second writer against the same
+        file -- `_write_sidebar_state_snapshot` does an unlocked
+        read-modify-write of `ui_state.toml`, so two concurrent writers
+        could interleave.
+        """
+        if self._sidebar_state_save_timer is not None:
+            self._sidebar_state_save_timer.stop()
+            self._sidebar_state_save_timer = None
+        worker = self._sidebar_state_persist_worker
+        if worker is not None and not worker.is_finished:
+            try:
+                await worker.wait()
+            except Exception as error:
+                logger.error(f"Pending sidebar-state write failed: {error}")
+            # Falls through to the dirty re-check below (review round,
+            # task-15470) rather than returning here: a toggle can land
+            # while THIS await was in flight, re-dirtying the state after
+            # the awaited worker already took its own snapshot. Returning
+            # unconditionally after the wait would silently drop it.
+        if self._sidebar_state_dirty:
+            snapshot = self._sidebar_state_snapshot()
+            await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
+            self._sidebar_state_dirty = False
 
     def _load_sidebar_state(self) -> None:
         """Load sidebar state from config file."""
@@ -22054,8 +22163,27 @@ class ChatScreen(BaseAppScreen):
             logger.error(f"Failed to load sidebar state: {e}")
             self.sidebar_state = {}
 
-    def _save_sidebar_state(self) -> None:
-        """Save sidebar state to config file."""
+    def _sidebar_state_snapshot(self) -> Dict[str, Any]:
+        """Copy the sidebar-persisted fields off `self.ui_state`.
+
+        `collapsible_states` is a plain mutable dict; taking this copy on
+        the caller's thread (always the main/event-loop thread -- see
+        `_persist_sidebar_state_off_loop`) before handing the write to a
+        worker thread means the worker never reads `self.ui_state` directly,
+        so a toggle arriving while that write is in flight cannot race it.
+        """
+        return {
+            "collapsible_states": dict(self.ui_state.collapsible_states),
+            "search_query": self.ui_state.sidebar_search_query,
+            "last_active_section": self.ui_state.last_active_section,
+        }
+
+    def _write_sidebar_state_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        """Write a pre-captured sidebar-state snapshot to `ui_state.toml`.
+
+        Safe to call from a worker thread: touches only the passed-in
+        `snapshot`, never `self.ui_state`.
+        """
         config_path = _get_effective_config_path().parent / "ui_state.toml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -22068,21 +22196,28 @@ class ChatScreen(BaseAppScreen):
                 data = {}
 
             # Update sidebar section
-            data["sidebar"] = {
-                "collapsible_states": dict(self.ui_state.collapsible_states),
-                "search_query": self.ui_state.sidebar_search_query,
-                "last_active_section": self.ui_state.last_active_section,
-            }
+            data["sidebar"] = snapshot
 
             # Save back to file
             with open(config_path, "w") as f:
                 toml.dump(data, f)
 
             logger.debug(
-                f"Saved sidebar state with {len(self.ui_state.collapsible_states)} collapsibles"
+                f"Saved sidebar state with {len(snapshot['collapsible_states'])} collapsibles"
             )
         except Exception as e:
             logger.error(f"Failed to save sidebar state: {e}")
+
+    def _save_sidebar_state(self) -> None:
+        """Save sidebar state to config file, synchronously, on this thread.
+
+        Convenience wrapper around `_sidebar_state_snapshot` +
+        `_write_sidebar_state_snapshot` for a caller that is already off the
+        event loop (a worker thread via `to_thread`) or does not care (a
+        direct test call). Callers on the event loop that must NOT block it
+        should go through `watch_sidebar_state`'s debounce instead.
+        """
+        self._write_sidebar_state_snapshot(self._sidebar_state_snapshot())
 
     def _restore_collapsible_states(self) -> None:
         """Restore collapsible states from saved state."""
@@ -22197,7 +22332,7 @@ class ChatScreen(BaseAppScreen):
                 else:
                     collapsible.collapsed = True
 
-            self._save_sidebar_state()
+            self._schedule_sidebar_state_save()
             logger.info("Reset sidebar to default state")
             self.notify("Settings reset to defaults", severity="success")
         except Exception as e:

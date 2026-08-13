@@ -13,12 +13,15 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Optional
+from unittest.mock import patch
 
 import pytest
+import toml
 from textual import events
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Static
 
+from tldw_chatbook.config import _get_effective_config_path
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
 from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileOpen,
@@ -315,6 +318,154 @@ async def test_open_dialog_confirms_selected_file(tmp_path):
         result.append(app._result)
 
     assert result[0] == test_file
+
+
+@pytest.mark.asyncio
+async def test_dismiss_does_not_write_config_synchronously(tmp_path):
+    """task-15470 review round: ``dismiss()`` must not run
+    ``recent_locations.add()``'s synchronous ``save_to_config()`` (nor the
+    last-directory write) on the event loop.
+
+    Calls ``dialog.dismiss(...)`` directly rather than driving it through a
+    ``Button.press()`` + ``pilot.pause()``: ``Button.press()`` only posts a
+    ``Button.Pressed`` message (confirmed by reading `_button.py`) -- the
+    handler that actually calls ``dismiss()`` does not run until a pause
+    lets the message queue process it, so asserting "no write yet"
+    immediately after ``press()`` alone is checking nothing (nothing has
+    run yet either way, bug or no bug). ``dismiss()`` is itself a plain
+    synchronous method; calling it directly and checking spy state in the
+    SAME synchronous call stack (no ``await`` at all) is deterministic --
+    Python cannot preempt into a worker thread until this code yields
+    control back to the event loop, so a still-empty spy here can only mean
+    the write was genuinely deferred, not a timing accident.
+
+    Spies on BOTH ``save_settings_to_cli_config`` (the batch API
+    `_persist_recent_and_last_directory` calls) AND ``save_setting_to_cli_
+    config`` (the singular API ``RecentLocations.save_to_config`` calls
+    internally -- a DIFFERENT function; a spy on only the batch API would
+    have stayed silent if ``dismiss()`` regressed to calling
+    ``recent_locations.add()`` with its default ``persist=True``, since
+    that path never touches the batch API at all).
+    """
+    test_file = tmp_path / "confirm_me_sync_check.txt"
+    test_file.write_text("hello")
+
+    batch_calls: list[dict] = []
+    singular_calls: list[tuple] = []
+    import tldw_chatbook.Widgets.enhanced_file_picker as efp_module
+
+    def batch_spy(section_values):
+        batch_calls.append(section_values)
+        return True
+
+    def singular_spy(section, key, value):
+        singular_calls.append((section, key, value))
+        return True
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Dismiss Sync Check",
+        context="test_dismiss_sync_check",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Mounting/populating the dialog (bookmarks defaults, recent-list
+        # load, etc.) can trigger its OWN unrelated singular-API writes;
+        # only calls made by the `dismiss()` call below are this test's
+        # actual subject.
+        with (
+            patch.object(efp_module, "save_settings_to_cli_config", batch_spy),
+            patch.object(efp_module, "save_setting_to_cli_config", singular_spy),
+        ):
+            dialog.dismiss(test_file)
+
+            # No `await` above this line: this assertion runs in the same
+            # synchronous call as `dismiss()` itself.
+            assert batch_calls == [] and singular_calls == [], (
+                "a config write fired synchronously from dismiss() instead "
+                f"of being deferred to a worker (batch={batch_calls!r}, "
+                f"singular={singular_calls!r})"
+            )
+
+
+@pytest.mark.asyncio
+async def test_confirm_coalesces_recent_and_last_dir_into_one_write(tmp_path):
+    """task-15470 review round: once persistence does run, it must be the
+    single coalesced ``save_settings_to_cli_config`` batch call carrying
+    both the ``recent_<context>`` and ``last_dir_<context>`` keys -- not
+    two separate writes -- and the on-disk state must end up correct.
+
+    Real end-to-end path: drives the dialog through an actual Select
+    button press, and the host app actually exits mid-test (`_DialogHost`
+    calls `self.exit()` from the dismiss callback), so this also proves
+    the deferred write is not simply discarded by app shutdown before the
+    worker thread gets a chance to run.
+    """
+    test_file = tmp_path / "confirm_me_coalesced.txt"
+    test_file.write_text("hello")
+
+    batch_calls: list[dict] = []
+    import tldw_chatbook.Widgets.enhanced_file_picker as efp_module
+
+    real_save_settings = efp_module.save_settings_to_cli_config
+
+    def batch_spy(section_values):
+        batch_calls.append(section_values)
+        return real_save_settings(section_values)
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Confirm Open Coalesced",
+        context="test_confirm_open_coalesced",
+    )
+    app = _DialogHost(dialog)
+
+    with patch.object(efp_module, "save_settings_to_cli_config", batch_spy):
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+            for _ in range(20):
+                if dir_nav.option_count > 0:
+                    break
+                await pilot.pause()
+
+            file_index = None
+            for index in range(dir_nav.option_count):
+                option = dir_nav.get_option_at_index(index)
+                if option.location == test_file:
+                    file_index = index
+                    break
+            assert file_index is not None
+
+            dir_nav.highlighted = file_index
+            dir_nav.action_select()
+            await pilot.pause()
+
+            dialog.query_one("#select").press()
+            await pilot.pause()
+
+    # The host app has now fully exited (this test's whole point: the
+    # deferred worker must still have gotten to run before teardown threw
+    # its result away).
+    assert len(batch_calls) == 1, (
+        f"expected exactly one coalesced write, got {len(batch_calls)}"
+    )
+    section = batch_calls[0]["filepicker"]
+    assert "recent_test_confirm_open_coalesced" in section
+    assert "last_dir_test_confirm_open_coalesced" in section
+    assert section["last_dir_test_confirm_open_coalesced"] == str(tmp_path)
+
+    on_disk = toml.load(_get_effective_config_path())
+    saved_recent = on_disk["filepicker"]["recent_test_confirm_open_coalesced"]
+    assert saved_recent, "recent-locations entry was not actually persisted"
+    assert saved_recent[0]["path"] == str(test_file)
+    assert (
+        on_disk["filepicker"]["last_dir_test_confirm_open_coalesced"]
+        == str(tmp_path)
+    )
 
 
 @pytest.mark.asyncio

@@ -8550,10 +8550,17 @@ def test_remote_images_toggle_persists_and_pokes_live_config(monkeypatch):
     app = _build_test_app()
     app.app_config["COMPREHENSIVE_CONFIG_RAW"] = {"chat": {"images": {}}}
     screen = SettingsScreen(app)
+    # task-15470: the actual write moved into a `@work(thread=True)`
+    # instance method (`_persist_remote_images_toggle`), which needs a
+    # running/mounted app to dispatch through `run_worker` -- this screen
+    # is constructed but never pushed onto `app`'s screen stack. Patching
+    # the instance method (rather than the module-level
+    # `save_settings_to_cli_config` it wraps) keeps this test's own
+    # subject -- the dotted section shape and the live app_config poke --
+    # intact.
     saved = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_settings_to_cli_config",
-        lambda section_values: (saved.append(section_values), True)[1],
+    screen._persist_remote_images_toggle = lambda next_value: saved.append(
+        {"chat.images": {"render_remote_images": next_value}}
     )
 
     enabled = screen._toggle_remote_images()
