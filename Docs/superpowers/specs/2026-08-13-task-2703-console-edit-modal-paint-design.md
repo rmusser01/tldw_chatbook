@@ -87,26 +87,29 @@ the production scope.
    mounts `ConsoleEditMessageModal` in USER and non-USER forms, and asserts on
    button-region compositor cells, hit-testing, and containment rather than
    computed geometry or whole-frame word presence alone.
-2. Capture the USER RED against the current fixed editor: action regions extend
-   outside the modal content region, hit-testing returns the modal, and button
-   cells are absent. The non-USER control must remain green.
+2. Capture the current baseline by dimension. USER paint, center hit-testing,
+   and full-region containment are RED. Non-USER paint and center hit-testing
+   remain green, while its full-region containment may also be RED by one row.
 3. Add only the flexible editor sizing correction and rerun the same assertions
-   to GREEN.
+   until paint, hit-testing, and full-region containment are GREEN for both
+   shapes.
 4. After containment is green, independently test ordinary and focused button
    cells under the real bundle. Add scoped app-tier paint/focus rules only for
    any remaining RED.
 5. Mutation-check layout containment separately from any paint/focus rule: the
-   fixed 16-row editor must fail USER containment, while removing a required
-   focus cue must fail the focused-cell oracle.
+   fixed 16-row editor must fail USER paint/hit/containment and every applicable
+   non-USER containment assertion, while removing a required focus cue must fail
+   the focused-cell oracle.
 6. Run incumbent modal behavior, Console wiring, CSS bundle-sync, Ruff, and
    compilation checks.
 7. Run a temporary, untracked harness through two real drivers: tmux and an
    actual non-tmux terminal/TTY. Preserve SGR styling (`tmux capture-pane -e`
    or the driver's equivalent), Tab through Cancel → Save → Edit & resend, and
    compare the targeted button cells for the focus palette and non-color cue.
-   Verify the USER and non-USER labels, containment, and mouse-visible hit
-   targets. A generic whole-frame diff is not sufficient. Remove the harness
-   afterward.
+   Repeat Cancel → Save in the non-USER shape and verify each focused button's
+   targeted cells. Verify both shapes' labels, containment, and mouse-visible
+   hit targets. A generic whole-frame diff is not sufficient. Remove the
+   harness afterward.
 8. Remove the TASK-2703 workaround from
    `Docs/User_Guide/console/branching-and-rewind.md` only after live evidence is
    green.
