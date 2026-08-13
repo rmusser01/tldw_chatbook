@@ -3633,6 +3633,34 @@ def _controller_history_checkpoint(canary: str):
     )
 
 
+def _controller_active_history_checkpoint(call_state: str):
+    return parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 2,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "active",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": ["ACTIVE-SWITCH-PRIVATE-CANARY"],
+                    "calls": [
+                        {
+                            "call_id": "active-switch-call",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": call_state,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
 @pytest.mark.asyncio
 async def test_controller_real_gateway_budgets_active_continuation_owner_atomically():
     store = ConsoleChatStore()
@@ -3749,6 +3777,60 @@ async def test_provider_switch_ignores_unrelated_completed_continuation_history(
     )
     assert gateway.prepare_kwargs["continuation_sidecar"] == ()
     assert "PROVIDER-SWITCH-PRIVATE-CANARY" not in repr(gateway.prepared)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("call_state", ["pending", "executing"])
+async def test_provider_switch_race_blocks_active_continuation_before_dispatch(
+    call_state: str,
+):
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="old")
+    owner = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="old answer"
+    )
+    store._message_or_raise(owner.id).provider_continuation = (
+        _controller_history_checkpoint("COMPLETE-BEFORE-RESOLUTION ")
+    )
+
+    class SwitchingGateway(ContinuationHistoryGateway):
+        provider_calls = 0
+
+        async def resolve_for_send(self, selection):
+            store._message_or_raise(owner.id).provider_continuation = (
+                _controller_active_history_checkpoint(call_state)
+            )
+            return ConsoleProviderResolution(
+                provider="openai",
+                base_url="https://api.openai.com/v1",
+                model="gpt-4.1",
+                ready=True,
+                readiness_key="openai",
+                execution_key="openai",
+                max_tokens=10,
+            )
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.provider_calls += 1
+            yield "must not dispatch"
+
+    gateway = SwitchingGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    result = await controller.submit_draft("current")
+
+    assert result.visible_copy == (
+        "Recover the interrupted tool run before sending a new message: "
+        "Resume or Discard it first."
+    )
+    assert controller.run_state_for(session.id).status is ConsoleRunStatus.BLOCKED
+    assert gateway.provider_calls == 0
+    assert "ACTIVE-SWITCH-PRIVATE-CANARY" not in repr(result)
 
 
 @pytest.mark.asyncio

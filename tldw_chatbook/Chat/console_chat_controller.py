@@ -129,6 +129,7 @@ from tldw_chatbook.Chat.console_visual_transcript import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationConflictError,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
     validate_continuation_restore,
@@ -297,6 +298,10 @@ _APPROVAL_SCOPE_RANK: dict[str, int] = {
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
+PROVIDER_CONTINUATION_RECOVERY_REQUIRED = (
+    "Recover the interrupted tool run before sending a new message: "
+    "Resume or Discard it first."
+)
 
 # Private payload-row key threading a transcript message's native id from the
 # payload builder to the dispatch choke point, where `/rewind`
@@ -2314,10 +2319,7 @@ class ConsoleChatController:
         if interrupted is not None and not self.provider_continuation_owner_is_live(
             interrupted.id
         ):
-            return (
-                "Recover the interrupted tool run before sending a new message: "
-                "Resume or Discard it first."
-            )
+            return PROVIDER_CONTINUATION_RECOVERY_REQUIRED
         if self.prompt_queue_coordinator.controls_generation(session_id):
             return (
                 "Queued messages control the next turn. "
@@ -8140,9 +8142,14 @@ class ConsoleChatController:
             global_overrides=global_overrides,
             conversation_overrides=overrides,
         ).compaction_representation
-        continuation_sidecar, continuation_target = (
-            self._provider_continuation_history_for_resolution(session_id, resolution)
-        )
+        try:
+            continuation_sidecar, continuation_target = (
+                self._provider_continuation_history_for_resolution(
+                    session_id, resolution
+                )
+            )
+        except ContinuationConflictError:
+            return False, PROVIDER_CONTINUATION_RECOVERY_REQUIRED
         _messages, blocked_result = await self._apply_conversation_memory_preflight(
             session_id=session_id,
             resolution=resolution,
@@ -8732,9 +8739,18 @@ class ConsoleChatController:
             turn_context = self.resolve_turn_execution_context(owner_id)
         elif turn_context.session_id != owner_id:
             raise ValueError("Console turn context does not own the assistant row.")
-        continuation_sidecar, continuation_target = (
-            self._provider_continuation_history_for_resolution(owner_id, resolution)
-        )
+        try:
+            continuation_sidecar, continuation_target = (
+                self._provider_continuation_history_for_resolution(
+                    owner_id, resolution
+                )
+            )
+        except ContinuationConflictError:
+            return self._block_context_preflight(
+                session_id=owner_id,
+                assistant_message_id=assistant_message_id,
+                visible_copy=PROVIDER_CONTINUATION_RECOVERY_REQUIRED,
+            )
         # A character session always takes the plain-provider
         # path, even with the global agent runtime enabled and a bridge
         # present. Keyed on the message's OWNING session (looked up here,
@@ -10790,6 +10806,10 @@ class ConsoleChatController:
         sidecar = self._provider_continuation_sidecar_for_session(session_id)
         if not sidecar:
             return (), None
+        if any(item.checkpoint.state != "complete" for item in sidecar):
+            raise ContinuationConflictError(
+                "Active continuation requires explicit recovery."
+            )
         target = _continuation_restore_target_for_resolution(resolution)
         if target is None:
             return (), None
@@ -11332,10 +11352,7 @@ class ConsoleChatController:
         """
         target_id = session_id if session_id else (self.store.active_session_id or "")
         if self.store.interrupted_provider_continuation_message(target_id) is not None:
-            visible_copy = (
-                "Recover the interrupted tool run before sending a new message: "
-                "Resume or Discard it first."
-            )
+            visible_copy = PROVIDER_CONTINUATION_RECOVERY_REQUIRED
             if append_row and any(
                 session.id == target_id for session in self.store.sessions()
             ):
