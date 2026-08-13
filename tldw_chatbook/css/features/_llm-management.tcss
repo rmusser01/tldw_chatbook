@@ -5,6 +5,128 @@
  * ======================================== */
 
 /* --- LLM Management Tab --- */
+.gguf-source-mode-row {
+    layout: horizontal;
+    width: 100%;
+    height: 3;
+    margin-bottom: 1;
+}
+
+.gguf-source-label {
+    width: 18;
+    height: 3;
+    content-align: right middle;
+    padding-right: 1;
+}
+
+.gguf-source-mode {
+    width: 1fr;
+    min-width: 12;
+    height: 3;
+}
+
+.gguf-source-region {
+    display: none;
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.gguf-source-region.-active {
+    display: block;
+}
+
+.gguf-source-choice-row {
+    layout: horizontal;
+    width: 100%;
+    height: 3;
+}
+
+.gguf-source-choice-row Input,
+.gguf-source-managed-select {
+    width: 1fr;
+    min-width: 8;
+    height: 3;
+}
+
+.gguf-source-refresh,
+.gguf-source-browse {
+    width: auto;
+    margin-left: 1;
+}
+
+.gguf-source-authority,
+.gguf-source-copy,
+.gguf-source-status {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+}
+
+.gguf-source-authority {
+    color: $warning;
+    text-style: bold;
+}
+
+.gguf-source-copy,
+.gguf-source-status {
+    color: $text-muted;
+}
+
+.gguf-source-status {
+    margin-bottom: 1;
+}
+
+.gguf-source-narrow .gguf-source-choice-row {
+    layout: vertical;
+    height: 6;
+}
+
+.gguf-source-narrow .gguf-source-refresh,
+.gguf-source-narrow .gguf-source-browse {
+    width: 100%;
+    margin-left: 0;
+}
+
+/* Textual dims disabled focusable controls (and Button text) below readable
+ * contrast. Keep this override local to the two GGUF runtime forms; their
+ * status line explains why launch controls are unavailable. */
+#llm-view-llama-cpp Button:disabled,
+#llm-view-llama-cpp Input:disabled,
+#llm-view-llama-cpp Select:disabled,
+#llm-view-llamafile Button:disabled,
+#llm-view-llamafile Input:disabled,
+#llm-view-llamafile Select:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    color: $text;
+    background: $surface-darken-1;
+}
+
+#llm-view-llama-cpp Button:disabled,
+#llm-view-llama-cpp Input:disabled,
+#llm-view-llamafile Button:disabled,
+#llm-view-llamafile Input:disabled {
+    border: dashed $foreground;
+}
+
+#llm-view-llama-cpp Select:disabled > SelectCurrent,
+#llm-view-llama-cpp Select:disabled > SelectCurrent Static#label,
+#llm-view-llama-cpp Select:disabled > SelectCurrent .arrow,
+#llm-view-llamafile Select:disabled > SelectCurrent,
+#llm-view-llamafile Select:disabled > SelectCurrent Static#label,
+#llm-view-llamafile Select:disabled > SelectCurrent .arrow {
+    opacity: 100%;
+    text-opacity: 100%;
+    color: $text;
+    background: $surface-darken-1;
+}
+
+#llm-view-llama-cpp Select:disabled > SelectCurrent,
+#llm-view-llamafile Select:disabled > SelectCurrent {
+    border: dashed $foreground !important;
+}
+
 #llm_management-window { /* Matches TAB_LLM ("llm_management") */
     layout: horizontal;
 }

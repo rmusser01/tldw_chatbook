@@ -10,7 +10,7 @@ from loguru import logger as _loguru_fallback_logger
 import shlex
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Optional
 
 #
 # Third-party Imports
@@ -23,18 +23,77 @@ if TYPE_CHECKING:
     from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
+from tldw_chatbook.Model_Artifacts.gguf_admission import (
+    GGUFPathError,
+    GGUFSourceChangedError,
+    inspect_gguf_structure,
+    open_local_gguf,
+)
+from tldw_chatbook.Model_Artifacts.store import managed_service
+from .gguf_source_modes import (
+    GGUFSourceMode,
+    GGUFSourceSelection,
+    acquire_managed_gguf,
+    gguf_source_failure_message,
+    initial_gguf_selection,
+)
 from .server_lifecycle import (
     ServerLaunchClaim,
+    attach_server_claim_resource,
     current_llm_destination,
     release_server_claim,
     reserve_server_launch,
     run_server_subprocess,
+    sync_current_llm_destination,
     stop_server_process,
 )
 #
 ########################################################################################################################
 #
 # Constants:
+
+_GGUF_RUNTIME_LOAD_FAILURE = (
+    "The runtime could not load this GGUF. Check that its architecture and "
+    "quantization are supported."
+)
+_GGUF_PRIMARY_SOURCE_ARGUMENTS = frozenset(
+    {
+        "-m",
+        "--model",
+        "-mu",
+        "--model-url",
+        "-dr",
+        "--docker-repo",
+        "-hf",
+        "-hfr",
+        "--hf-repo",
+        "-hff",
+        "--hf-file",
+        "--models-dir",
+        "--models-preset",
+        "--embd-gemma-default",
+        "--fim-qwen-1.5b-default",
+        "--fim-qwen-3b-default",
+        "--fim-qwen-7b-default",
+        "--fim-qwen-7b-spec",
+        "--fim-qwen-14b-spec",
+        "--fim-qwen-30b-default",
+        "--gpt-oss-20b-default",
+        "--gpt-oss-120b-default",
+        "--vision-gemma-4b-default",
+        "--vision-gemma-12b-default",
+    }
+)
+
+
+def _validate_gguf_additional_args(arguments: tuple[str, ...]) -> None:
+    """Reject primary source selectors while preserving accepted arguments exactly."""
+    if any(
+        argument.partition("=")[0] in _GGUF_PRIMARY_SOURCE_ARGUMENTS
+        for argument in arguments
+    ):
+        raise ValueError("additional arguments cannot select a model source")
+
 
 __all__ = [
     # Generic Helpers (Exported for other modules to use)
@@ -138,37 +197,197 @@ async def handle_llamafile_browse_model_button_pressed(
 ###############################################################################
 
 
-# Each run_…_worker uses the same streaming pattern – consider refactoring, but
-# explicit duplication keeps each implementation easy to tweak individually.
+def _settle_source_preparation(
+    app: "TldwCli",
+    provider: str,
+    claim: ServerLaunchClaim,
+    status: str | None = None,
+) -> bool:
+    """Release one exact pre-spawn claim and update only its current destination."""
+
+    def settle() -> bool:
+        if not release_server_claim(app, provider, claim):
+            return False
+        sync_current_llm_destination(app, provider, status)
+        return True
+
+    try:
+        return bool(app.call_from_thread(settle))
+    except Exception:
+        try:
+            return release_server_claim(app, provider, claim)
+        except Exception:
+            return False
+
+
+def _gguf_server_source_failure_message(error: BaseException) -> str:
+    """Map ordered external failures before the shared managed taxonomy."""
+    if isinstance(error, GGUFSourceChangedError):
+        return "The selected external GGUF changed during validation. Retry."
+    if isinstance(error, GGUFPathError):
+        return "The selected external GGUF is unavailable. Browse for another file."
+    return gguf_source_failure_message(error)
+
+
+def _close_worker_lease(app: "TldwCli", provider: str, leased: object) -> None:
+    """Close a lease that was not transferred without exposing private details."""
+    try:
+        leased.close()  # type: ignore[attr-defined]
+    except BaseException:
+        logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
+        logger.error(
+            "GGUF launch lease close failed (provider={}, category=resource_close_failed).",
+            provider,
+        )
+
+
+def _build_gguf_server_command(
+    provider: str,
+    executable: str,
+    model_path: Path | None,
+    host: str,
+    port: str,
+    additional_args: tuple[str, ...],
+) -> list[str]:
+    command = [executable]
+    if model_path is not None:
+        command.extend(["--model" if provider == "llamacpp" else "-m", str(model_path)])
+    command.extend(("--host", host, "--port", port, *additional_args))
+    return command
+
+
+def _run_gguf_server_worker(
+    app: "TldwCli",
+    provider: str,
+    executable: str,
+    host: str,
+    port: str,
+    additional_args: tuple[str, ...],
+    selection: GGUFSourceSelection,
+    claim: ServerLaunchClaim,
+) -> str:
+    """Prepare exactly one GGUF authority, then delegate process ownership."""
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
+    leased: object | None = None
+    try:
+        selection.validate_for(provider)
+        if claim.cancel_event.is_set():
+            _settle_source_preparation(app, provider, claim)
+            return f"{provider} launch cancelled"
+
+        model_path: Path | None
+        if selection.mode is GGUFSourceMode.EMBEDDED:
+            model_path = None
+        elif selection.mode is GGUFSourceMode.EXTERNAL:
+            with open_local_gguf(selection.external_path) as opened:
+                inspect_gguf_structure(
+                    opened.handle,
+                    file_size=opened.identity.size_bytes,
+                )
+                if claim.cancel_event.is_set():
+                    _settle_source_preparation(app, provider, claim)
+                    return f"{provider} launch cancelled"
+                model_path = opened.path
+        else:
+            model_path, leased = acquire_managed_gguf(
+                managed_service(),
+                selection.managed_ref,  # type: ignore[arg-type]
+            )
+            if not attach_server_claim_resource(
+                app,
+                provider,
+                claim,
+                leased,
+            ):
+                _settle_source_preparation(app, provider, claim)
+                return f"{provider} launch cancelled"
+            leased = None
+        command = _build_gguf_server_command(
+            provider,
+            executable,
+            model_path,
+            host,
+            port,
+            additional_args,
+        )
+        return run_server_subprocess(
+            app,
+            provider,
+            command,
+            claim,
+            subprocess,
+            cwd=Path(executable).parent if provider == "llamafile" else None,
+            nonzero_status=_GGUF_RUNTIME_LOAD_FAILURE,
+        )
+    except Exception as error:
+        logger.error(
+            "GGUF source preparation failed (provider={}, category=source_preparation_failed).",
+            provider,
+        )
+        _settle_source_preparation(
+            app,
+            provider,
+            claim,
+            _gguf_server_source_failure_message(error),
+        )
+        return f"{provider} source preparation failed"
+    finally:
+        if leased is not None:
+            _close_worker_lease(app, provider, leased)
 
 
 def run_llamafile_server_worker(
     app_instance: "TldwCli",
-    command: List[str],
+    executable: str,
+    host: str,
+    port: str,
+    additional_args: tuple[str, ...],
+    selection: GGUFSourceSelection,
     claim: ServerLaunchClaim,
 ) -> str:
-    return run_server_subprocess(
+    return _run_gguf_server_worker(
         app_instance,
         "llamafile",
-        command,
+        executable,
+        host,
+        port,
+        additional_args,
+        selection,
         claim,
-        subprocess,
-        cwd=Path(command[0]).parent,
     )
 
 
 def run_llamacpp_server_worker(
     app_instance: "TldwCli",
-    command: List[str],
+    executable: str,
+    host: str,
+    port: str,
+    additional_args: tuple[str, ...],
+    selection: GGUFSourceSelection,
     claim: ServerLaunchClaim,
 ) -> str | None:
-    return run_server_subprocess(
+    return _run_gguf_server_worker(
         app_instance,
         "llamacpp",
-        command,
+        executable,
+        host,
+        port,
+        additional_args,
+        selection,
         claim,
-        subprocess,
     )
+
+
+def _source_snapshot(
+    window: "LLMManagementWindow",
+    provider: str,
+    legacy_input_id: str,
+) -> GGUFSourceSelection:
+    snapshot = getattr(window, "gguf_source_snapshot", None)
+    if callable(snapshot):
+        return snapshot(provider).validate_for(provider)
+    model_path = window.query_one(f"#{legacy_input_id}", Input).value
+    return initial_gguf_selection(provider, model_path).validate_for(provider)
 
 
 async def handle_start_llamafile_server_button_pressed(
@@ -179,17 +398,16 @@ async def handle_start_llamafile_server_button_pressed(
 
     try:
         exec_path_input = window.query_one("#llamafile-exec-path", Input)
-        model_path_input = window.query_one("#llamafile-model-path", Input)
         host_input = window.query_one("#llamafile-host", Input)
         port_input = window.query_one("#llamafile-port", Input)
         additional_args_input = window.query_one("#llamafile-additional-args", TextArea)
         log_output_widget = window.query_one("#llamafile-log-output", RichLog)
 
         exec_path = exec_path_input.value.strip()
-        model_path = model_path_input.value.strip()
         host = host_input.value.strip() or "127.0.0.1"
         port = port_input.value.strip() or "8000"
         additional_args_str = additional_args_input.text.strip()  # .text for TextArea
+        selection = _source_snapshot(window, "llamafile", "llamafile-model-path")
 
         if not exec_path:
             app.notify("Llamafile executable path is required.", severity="error")
@@ -199,40 +417,40 @@ async def handle_start_llamafile_server_button_pressed(
             app.notify("Llamafile executable was not found.", severity="error")
             exec_path_input.focus()
             return
-
-        if not model_path:
-            app.notify("Model path is required.", severity="error")
-            model_path_input.focus()
+        additional_args = tuple(shlex.split(additional_args_str))
+        try:
+            _validate_gguf_additional_args(additional_args)
+        except ValueError:
+            app.notify(
+                "Additional arguments cannot select another model source. "
+                "Remove the model source option and try again.",
+                severity="error",
+            )
             return
-        if not Path(model_path).is_file():
-            app.notify("Llamafile model file was not found.", severity="error")
-            model_path_input.focus()
-            return
-
-        command = [
-            exec_path,
-            "-m",  # Llamafile typically uses -m for model
-            model_path,
-            "--host",
-            host,
-            "--port",
-            port,
-        ]
-        if additional_args_str:
-            command.extend(shlex.split(additional_args_str))
-
-        claim = reserve_server_launch(app, "llamafile")
+        claim = reserve_server_launch(
+            app,
+            "llamafile",
+            authority=selection.authority,
+        )
         if claim is None:
             window._sync_process_controls("llamafile")
             app.notify(
                 "Llamafile server is already starting or running.", severity="warning"
             )
             return
+        window._sync_process_controls("llamafile")
         log_output_widget.clear()
         log_output_widget.write("Starting Llamafile server.\n")
 
         worker_callable = functools.partial(
-            run_llamafile_server_worker, app, command, claim
+            run_llamafile_server_worker,
+            app,
+            exec_path,
+            host,
+            port,
+            additional_args,
+            selection,
+            claim,
         )
 
         app.run_worker(
@@ -243,7 +461,6 @@ async def handle_start_llamafile_server_button_pressed(
             thread=True,
             # NO 'args' or 'done' parameters
         )
-        window._sync_process_controls("llamafile")
         app.notify(
             f"Llamafile server starting… — endpoint will be "
             f"http://{host}:{port} once the chip shows 'running'."
@@ -314,17 +531,16 @@ async def handle_start_llamacpp_server_button_pressed(
 
     try:
         exec_path_input = window.query_one("#llamacpp-exec-path", Input)
-        model_path_input = window.query_one("#llamacpp-model-path", Input)
         host_input = window.query_one("#llamacpp-host", Input)
         port_input = window.query_one("#llamacpp-port", Input)
         additional_args_input = window.query_one("#llamacpp-additional-args", Input)
         log_output_widget = window.query_one("#llamacpp-log-output", RichLog)
 
         exec_path = exec_path_input.value.strip()
-        model_path = model_path_input.value.strip()
         host = host_input.value.strip() or "127.0.0.1"
         port = port_input.value.strip() or "8001"
         additional_args_str = additional_args_input.value.strip()
+        selection = _source_snapshot(window, "llamacpp", "llamacpp-model-path")
 
         if not exec_path:
             app.notify("Executable path is required.", severity="error")
@@ -334,40 +550,40 @@ async def handle_start_llamacpp_server_button_pressed(
             app.notify("Llama.cpp executable was not found.", severity="error")
             exec_path_input.focus()
             return
-
-        if not model_path:
-            app.notify("Model path is required.", severity="error")
-            model_path_input.focus()
+        additional_args = tuple(shlex.split(additional_args_str))
+        try:
+            _validate_gguf_additional_args(additional_args)
+        except ValueError:
+            app.notify(
+                "Additional arguments cannot select another model source. "
+                "Remove the model source option and try again.",
+                severity="error",
+            )
             return
-        if not Path(model_path).is_file():
-            app.notify("Llama.cpp model file was not found.", severity="error")
-            model_path_input.focus()
-            return
-
-        command: List[str] = [
-            exec_path,
-            "--model",
-            model_path,
-            "--host",
-            host,
-            "--port",
-            port,
-        ]
-        if additional_args_str:
-            command.extend(shlex.split(additional_args_str))
-
-        claim = reserve_server_launch(app, "llamacpp")
+        claim = reserve_server_launch(
+            app,
+            "llamacpp",
+            authority=selection.authority,
+        )
         if claim is None:
             window._sync_process_controls("llamacpp")
             app.notify(
                 "Llama.cpp server is already starting or running.", severity="warning"
             )
             return
+        window._sync_process_controls("llamacpp")
         log_output_widget.clear()
         log_output_widget.write("Starting Llama.cpp server.\n")
 
         worker_callable = functools.partial(
-            run_llamacpp_server_worker, app, command, claim
+            run_llamacpp_server_worker,
+            app,
+            exec_path,
+            host,
+            port,
+            additional_args,
+            selection,
+            claim,
         )
 
         app.run_worker(
@@ -378,7 +594,6 @@ async def handle_start_llamacpp_server_button_pressed(
             thread=True,
         )
 
-        window._sync_process_controls("llamacpp")
         app.notify(
             f"Llama.cpp server starting… — endpoint will be "
             f"http://{host}:{port} once the chip shows 'running'."
