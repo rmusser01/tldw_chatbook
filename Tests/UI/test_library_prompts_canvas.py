@@ -8797,6 +8797,7 @@ async def test_library_prompt_editor_geometry_keeps_actions_visible_without_cove
             (
                 "library-prompt-conflict-save-new",
                 "library-prompt-conflict-reload",
+                "library-prompt-discard",
             )
             if conflict
             else (
@@ -8806,6 +8807,7 @@ async def test_library_prompt_editor_geometry_keeps_actions_visible_without_cove
                 "library-prompt-copy",
                 "library-prompt-duplicate",
                 "library-prompt-delete",
+                "library-prompt-discard",
             )
         )
         for action_id in action_ids:
