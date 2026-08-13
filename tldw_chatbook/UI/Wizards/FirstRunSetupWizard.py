@@ -1501,8 +1501,6 @@ class ProviderStep(SetupStep):
             return False
         source, value, _ = self._credential_at_request_boundary()
         previous = self._credential_observations.get(provider_key)
-        if source not in {"environment", "stored"} and previous is None:
-            return False
         digest = hmac.new(
             self._credential_observation_key,
             f"{source}\0{value or ''}".encode("utf-8"),
@@ -1545,9 +1543,6 @@ class ProviderStep(SetupStep):
         if not provider_key or not self._credential_observation_key:
             return
         source, value, _ = self._credential_at_request_boundary()
-        if source not in {"environment", "stored"}:
-            self._credential_observations.pop(provider_key, None)
-            return
         digest = hmac.new(
             self._credential_observation_key,
             f"{source}\0{value or ''}".encode("utf-8"),
@@ -1809,10 +1804,6 @@ class ProviderStep(SetupStep):
         """Return the current credential decision without exposing its value."""
 
         provider_key = self.selected_provider_key
-        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
-        presence = wizard_state.read_provider_secret_presence(
-            app_config, self._environment(), provider_key=provider_key
-        )
         key_input = self.query_one("#setup-provider-api-key", Input)
         ui_draft = self._provider_drafts.get(provider_key)
         typed_key = (
@@ -1824,12 +1815,9 @@ class ProviderStep(SetupStep):
             source, value = "draft", typed_key
         elif self._clear_requested:
             source, value = "draft", ""
-        elif presence.inline_configured:
-            source, value = "stored", ""
-        elif presence.env_var and (presence.env_var_declared or presence.env_var_set):
-            source, value = "environment", presence.env_var
         else:
-            source, value = "none", ""
+            source, _, readiness = self._credential_at_request_boundary()
+            value = (readiness.env_var or "") if source == "environment" else ""
         return wizard_state.ProviderCredentialDraft(
             source, value, self._credential_revision if revision is None else revision
         )

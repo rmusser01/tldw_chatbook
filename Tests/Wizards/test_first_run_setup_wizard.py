@@ -4347,6 +4347,7 @@ async def test_provider_discovery_uses_exact_draft_settings_and_secret_free_key(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
+    environment_canary = "exact-draft-environment-canary"
     scope_service = MagicMock()
     scope_service.discover_models = AsyncMock(
         return_value=_typed_model_discovery_result("custom", "exact-model")
@@ -4368,7 +4369,11 @@ async def test_provider_discovery_uses_exact_draft_settings_and_secret_free_key(
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
-    step = _provider_step(wizard=wizard, discover=AsyncMock(return_value=()))
+    step = _provider_step(
+        wizard=wizard,
+        discover=AsyncMock(return_value=()),
+        environ={"CUSTOM_API_KEY": environment_canary},
+    )
     app = _StepHost(step)
 
     async with app.run_test(size=(120, 40)) as pilot:
@@ -4401,6 +4406,7 @@ async def test_provider_discovery_uses_exact_draft_settings_and_secret_free_key(
         assert identity.credential_source == "environment"
         assert models == ("exact-model",)
         assert "CUSTOM_API_KEY" not in repr(identity)
+        assert environment_canary not in repr(identity)
 
 
 @pytest.mark.asyncio
@@ -4534,6 +4540,105 @@ async def test_mounted_keep_and_clear_are_distinct_exact_auth_decisions(
             )
         ]
         assert rendered_model_ids == ["keyless-model"]
+
+
+@pytest.mark.asyncio
+async def test_mounted_reloaded_explicit_keyless_stays_keyless_through_discovery_save(
+    monkeypatch,
+):
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+    from tldw_chatbook.LLM_Provider_Catalog.llm_provider_catalog_scope_service import (
+        LLMProviderCatalogScopeService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+
+    endpoint = "https://reloaded-keyless.example.test/v1/chat/completions"
+    ambient_canary = "reloaded-ambient-custom-key-canary"
+    monkeypatch.setenv("CUSTOM_API_KEY", ambient_canary)
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {
+            "api_settings.custom": {
+                "api_url": endpoint,
+                "credential_source": "none",
+            }
+        }
+    ).fully_applied
+    reloaded = config_module.load_settings(force_reload=True)
+    assert reloaded["api_settings"]["custom"]["credential_source"] == "none"
+
+    requests: list[dict[str, object]] = []
+
+    async def record_discovery(**kwargs):
+        requests.append(kwargs)
+        return _typed_model_discovery_result("custom", "reloaded-keyless-model")
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = reloaded
+    local_service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {"custom": []},
+        settings_loader=lambda: wizard.app_instance.app_config,
+        discovery_client=record_discovery,
+        environ={"CUSTOM_API_KEY": ambient_canary},
+    )
+    wizard.app_instance.llm_provider_catalog_scope_service = (
+        LLMProviderCatalogScopeService(local_service=local_service, server_service=None)
+    )
+
+    async with _HostApp(wizard).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        voice_index = container._step_index_for_id(STEP_VOICE)
+        assert provider_index is not None
+        assert model_index is not None
+        assert voice_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        for _ in range(20):
+            if provider_step._selected_discovery_state == "complete":
+                break
+            await pilot.pause(0.05)
+
+        assert provider_step._selected_discovery_state == "complete"
+        provider_key = provider_step._selected_discovery_key
+        assert provider_key is not None
+        assert provider_key.credential_source == "none"
+        assert requests and all(request["api_key"] is None for request in requests)
+        assert ambient_canary not in repr(requests)
+
+        await container._advance()
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        for _ in range(20):
+            rows = [
+                row
+                for row in model_step.query(RadioButton)
+                if getattr(row, "_model_id", "") == "reloaded-keyless-model"
+            ]
+            if rows:
+                break
+            await pilot.pause(0.05)
+        assert rows
+        rows[0].value = True
+        await pilot.pause()
+        await container._advance()
+
+        assert container.current_step == voice_index
+        persisted = config_module.load_settings(force_reload=True)
+        custom = persisted["api_settings"]["custom"]
+        assert custom["credential_source"] == "none"
+        readiness = get_provider_readiness(
+            "custom", persisted, environ={"CUSTOM_API_KEY": ambient_canary}
+        )
+        assert readiness.api_key is None
+        assert readiness.api_key_source is None
 
 
 @pytest.mark.asyncio
@@ -6530,6 +6635,156 @@ async def test_open_wizard_restarts_discovery_for_rotated_environment_key(monkey
         assert step._selected_provider_models == {rotated_key: ("model-2",)}
         assert first_secret not in repr(step._selected_provider_models)
         assert rotated_secret not in repr(step._selected_provider_models)
+
+
+@pytest.mark.asyncio
+async def test_environment_appearance_revisions_and_fences_keyless_discovery(
+    monkeypatch,
+):
+    import asyncio
+    import os
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    seen_keys: list[str | None] = []
+    appeared_canary = "appeared-custom-environment-canary"
+    monkeypatch.delenv("CUSTOM_API_KEY", raising=False)
+
+    async def discover_models(*, provider, staged_settings, **_kwargs):
+        api_key = get_provider_readiness(
+            provider, staged_settings, environ=os.environ
+        ).api_key
+        seen_keys.append(api_key)
+        if len(seen_keys) == 1:
+            first_started.set()
+            try:
+                await release_first.wait()
+            except asyncio.CancelledError:
+                await release_first.wait()
+            return _typed_model_discovery_result("custom", "late-keyless-model")
+        return _typed_model_discovery_result("custom", "current-environment-model")
+
+    scope_service = MagicMock(discover_models=AsyncMock(side_effect=discover_models))
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={
+                "api_settings": {
+                    "custom": {
+                        "api_url": "https://appearing-env.example/v1/chat/completions",
+                        "api_key_env_var": "CUSTOM_API_KEY",
+                    }
+                }
+            },
+            llm_provider_catalog_scope_service=scope_service,
+        ),
+        stage_provider_setup=MagicMock(return_value=True),
+        invalidate_provider_model_handoff=MagicMock(),
+        invalidate_provider_write_expectation=MagicMock(),
+        rerun=False,
+    )
+    step = _provider_step(
+        wizard=wizard,
+        environ=os.environ,
+        discover=AsyncMock(return_value=()),
+    )
+
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("custom")
+        await asyncio.wait_for(first_started.wait(), timeout=2)
+        first_key = step._selected_discovery_key
+        assert first_key is not None
+        assert first_key.credential_source == "none"
+        first_revision = first_key.credential_revision
+
+        monkeypatch.setenv("CUSTOM_API_KEY", appeared_canary)
+        assert step._sync_live_credential_revision() is True
+        for _ in range(20):
+            if len(seen_keys) == 2 and step._selected_discovery_state == "complete":
+                break
+            await pilot.pause(0.05)
+        release_first.set()
+        await pilot.pause(0.1)
+
+        current_key = step._selected_discovery_key
+        assert current_key is not None
+        assert current_key.credential_source == "environment"
+        assert current_key.credential_revision > first_revision
+        assert seen_keys == [None, appeared_canary]
+        assert first_key not in step._selected_provider_models
+        assert step._selected_provider_models == {
+            current_key: ("current-environment-model",)
+        }
+        assert appeared_canary not in repr(step._credential_observations)
+        assert appeared_canary not in repr(step._selected_provider_models)
+
+
+@pytest.mark.asyncio
+async def test_explicit_keyless_suppresses_later_environment_appearance(monkeypatch):
+    import os
+    from unittest.mock import AsyncMock
+
+    appeared_canary = "suppressed-custom-environment-canary"
+    monkeypatch.delenv("CUSTOM_API_KEY", raising=False)
+    requests: list[dict[str, object]] = []
+
+    async def discover_models(**kwargs):
+        requests.append(kwargs)
+        return _typed_model_discovery_result("custom", "explicit-keyless-model")
+
+    wizard = MagicMock()
+    wizard.app_instance = MagicMock(
+        app_config={
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://explicit-keyless.example/v1/chat/completions",
+                    "credential_source": "none",
+                    "api_key_env_var": "CUSTOM_API_KEY",
+                }
+            }
+        },
+        llm_provider_catalog_scope_service=MagicMock(
+            discover_models=AsyncMock(side_effect=discover_models)
+        ),
+    )
+    wizard.stage_provider_setup = MagicMock(return_value=True)
+    wizard.rerun = False
+    step = _provider_step(
+        wizard=wizard,
+        environ=os.environ,
+        discover=AsyncMock(return_value=()),
+    )
+
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("custom")
+        for _ in range(20):
+            if step._selected_discovery_state == "complete":
+                break
+            await pilot.pause(0.05)
+        first_key = step._selected_discovery_key
+        assert first_key is not None
+        assert first_key.credential_source == "none"
+        first_revision = first_key.credential_revision
+        assert requests and requests[0]["staged_settings"]["api_settings"][
+            "custom"
+        ]["credential_source"] == "none"
+
+        monkeypatch.setenv("CUSTOM_API_KEY", appeared_canary)
+        assert step._sync_live_credential_revision() is False
+        await pilot.pause(0.1)
+
+        assert step._selected_discovery_key == first_key
+        assert step._credential_revision == first_revision
+        assert len(requests) == 1
+        assert requests[0]["staged_settings"]["api_settings"]["custom"].get(
+            "api_key"
+        ) in {None, ""}
+        assert appeared_canary not in repr(requests)
 
 
 @pytest.mark.asyncio
