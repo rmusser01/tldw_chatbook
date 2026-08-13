@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -238,6 +239,10 @@ class ProviderContinuationRecoveryCallout(Vertical):
             succeeded = (
                 bool(await result) if inspect.isawaitable(result) else bool(result)
             )
+        except asyncio.CancelledError:
+            self._busy = False
+            self.sync_recovery(self.recovery_state)
+            raise
         except Exception:
             succeeded = False
         if succeeded:

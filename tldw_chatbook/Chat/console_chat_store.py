@@ -5114,6 +5114,7 @@ class ConsoleChatStore:
         )
         if not durability.ready:
             raise RuntimeError(durability.reason)
+        message.provider_continuation_warning = None
 
     @staticmethod
     def _continuation_event_value(

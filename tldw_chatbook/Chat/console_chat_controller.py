@@ -2332,6 +2332,12 @@ class ConsoleChatController:
             return False
         self._provider_continuation_recovery_sessions.add(session_id)
         try:
+            if not self._provider_continuation_recovery_target_is_current(
+                session_id=session_id,
+                message_id=message.id,
+                expected_message_version=expected_message_version,
+            ):
+                return False
             if action == "discard":
                 try:
                     return self.store.discard_provider_continuation(
@@ -2386,6 +2392,12 @@ class ConsoleChatController:
         resolution = await self.provider_gateway.resolve_for_send(
             self._provider_selection_for_session(session_id)
         )
+        if not self._provider_continuation_recovery_target_is_current(
+            session_id=session_id,
+            message_id=message.id,
+            expected_message_version=expected_message_version,
+        ):
+            return False
         if not getattr(resolution, "ready", False):
             self.store.set_provider_continuation_warning(
                 message.id,
@@ -2471,6 +2483,32 @@ class ConsoleChatController:
             self._active_assistant_message_ids.get(session_id) == message_id
             and not self.run_state_for(session_id).is_send_allowed
         )
+
+    def _provider_continuation_recovery_target_is_current(
+        self,
+        *,
+        session_id: str,
+        message_id: str,
+        expected_message_version: int,
+    ) -> bool:
+        """Fail closed unless the requested owner is active and durably current."""
+        current = self.store.interrupted_provider_continuation_message(session_id)
+        if (
+            current is None
+            or current.id != message_id
+            or current.provider_continuation_message_version != expected_message_version
+            or current.persisted_message_id is None
+        ):
+            return False
+        version_reader = getattr(self.store.persistence, "get_message_version", None)
+        if not callable(version_reader):
+            return False
+        try:
+            return (
+                version_reader(current.persisted_message_id) == expected_message_version
+            )
+        except Exception:
+            return False
 
     def provider_continuation_recovery_message(
         self,

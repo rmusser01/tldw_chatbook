@@ -10,6 +10,8 @@ import pytest
 from tldw_chatbook.Agents.agent_models import (
     ContinuationEventContext,
     ToolBatchReady,
+    ToolCallExecuting,
+    ToolCallFinished,
 )
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -18,10 +20,14 @@ from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleSubmitResult,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ContinuationDurabilityResult,
+)
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRound,
+    ContinuationResult,
     ProviderContinuationCheckpoint,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -507,6 +513,224 @@ async def test_concurrent_resume_is_serialized_at_controller_session_boundary(
         release.set()
         assert await first
         assert session.id not in controller._provider_continuation_recovery_sessions
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize("action", ["discard", "resume"])
+async def test_stale_variant_recovery_rejects_inactive_owner_before_side_effects(
+    monkeypatch,
+    action: str,
+) -> None:
+    """A callout from branch A cannot recover it after branch B becomes active."""
+    database, store, _session, owner = _store_with_checkpoint(content="Branch A")
+
+    class Gateway:
+        calls = 0
+
+        def expand_provider_continuation(self, _checkpoint):
+            return []
+
+        async def resolve_for_send(self, _selection):
+            self.calls += 1
+            return SimpleNamespace(
+                ready=True,
+                provider="Moonshot",
+                model="kimi-k2",
+                base_url="https://api.moonshot.ai/v1",
+                api_mode="chat_completions",
+            )
+
+    gateway = Gateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=object(),
+    )
+    bridge_calls = 0
+
+    async def unexpected_runtime(**_kwargs):
+        nonlocal bridge_calls
+        bridge_calls += 1
+        return ConsoleSubmitResult(True, True, "unexpected")
+
+    monkeypatch.setattr(controller, "_run_agent_reply", unexpected_runtime)
+    try:
+        version = store.get_message(owner.id).provider_continuation_message_version
+        persisted_id = store.get_message(owner.id).persisted_message_id
+        assert version is not None
+        assert persisted_id is not None
+        sibling = store.create_sibling(
+            owner.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Branch B",
+            persist=True,
+        )
+
+        assert store.active_leaf(store.active_session_id or "") == sibling.id
+        assert not await controller.recover_provider_continuation(
+            action, owner.id, version
+        )
+        row = database.get_message_by_id(persisted_id)
+        assert row is not None
+        assert row["version"] == version
+        assert row["provider_continuation_json"] is not None
+        assert store.get_message(owner.id).provider_continuation is not None
+        assert gateway.calls == 0
+        assert bridge_calls == 0
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize("ready", [False, True])
+async def test_resume_revalidates_active_variant_after_async_resolution(
+    monkeypatch,
+    ready: bool,
+) -> None:
+    """A branch switch during readiness resolution cannot enter the runtime."""
+    database, store, session, owner = _store_with_checkpoint(content="Branch A")
+    sibling = store.create_sibling(
+        owner.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Branch B",
+        persist=True,
+    )
+    store.set_active_leaf(session.id, owner.id)
+
+    class Gateway:
+        calls = 0
+
+        def expand_provider_continuation(self, _checkpoint):
+            return []
+
+        async def resolve_for_send(self, _selection):
+            self.calls += 1
+            store.set_active_leaf(session.id, sibling.id)
+            await asyncio.sleep(0)
+            return SimpleNamespace(
+                ready=ready,
+                provider="Moonshot",
+                model="kimi-k2",
+                base_url="https://api.moonshot.ai/v1",
+                api_mode="chat_completions",
+            )
+
+    gateway = Gateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=object(),
+    )
+    runtime_calls = 0
+
+    async def unexpected_runtime(**_kwargs):
+        nonlocal runtime_calls
+        runtime_calls += 1
+        return ConsoleSubmitResult(True, True, "unexpected")
+
+    monkeypatch.setattr(controller, "_run_agent_reply", unexpected_runtime)
+    try:
+        version = store.get_message(owner.id).provider_continuation_message_version
+        persisted_id = store.get_message(owner.id).persisted_message_id
+        assert version is not None
+        assert persisted_id is not None
+        assert not await controller.recover_provider_continuation(
+            "resume", owner.id, version
+        )
+        row = database.get_message_by_id(persisted_id)
+        assert row is not None
+        assert row["version"] == version
+        assert row["provider_continuation_json"] is not None
+        stale_owner = store.get_message(owner.id)
+        assert stale_owner.provider_continuation is not None
+        assert stale_owner.provider_continuation_warning is None
+        assert gateway.calls == 1
+        assert runtime_calls == 0
+    finally:
+        database.close_connection()
+
+
+async def test_recovery_rejects_stale_persisted_owner_version_before_resolution() -> (
+    None
+):
+    database, store, _session, owner = _store_with_checkpoint(content="Visible")
+
+    class Gateway:
+        calls = 0
+
+        def expand_provider_continuation(self, _checkpoint):
+            return []
+
+        async def resolve_for_send(self, _selection):
+            self.calls += 1
+            raise AssertionError("stale durable state must not reach resolution")
+
+    gateway = Gateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=object(),
+    )
+    try:
+        version = store.get_message(owner.id).provider_continuation_message_version
+        persisted_id = store.get_message(owner.id).persisted_message_id
+        assert version is not None
+        assert persisted_id is not None
+        row = database.get_message_by_id(persisted_id)
+        assert row is not None
+        database.update_provider_continuation(
+            message_id=persisted_id,
+            expected_message_version=version,
+            provider_continuation_json=row["provider_continuation_json"],
+        )
+
+        assert not await controller.recover_provider_continuation(
+            "resume", owner.id, version
+        )
+        durable = database.get_message_by_id(persisted_id)
+        assert durable is not None
+        assert durable["version"] == version + 1
+        assert durable["provider_continuation_json"] is not None
+        assert store.get_message(owner.id).provider_continuation is not None
+        assert gateway.calls == 0
+    finally:
+        database.close_connection()
+
+
+def test_continuation_warning_clears_only_after_successful_durability(
+    monkeypatch,
+) -> None:
+    database, store, _session, owner = _store_with_checkpoint(content="Visible")
+    warning = "Recovery failed. The interrupted run is unchanged."
+    context = ContinuationEventContext(owner.id, "run", "primary", "persistent")
+    store.set_provider_continuation_warning(owner.id, warning)
+    monkeypatch.setattr(
+        store,
+        "ensure_provider_continuation_durable",
+        lambda **_kwargs: ContinuationDurabilityResult(False, "safe failure"),
+    )
+    try:
+        with pytest.raises(RuntimeError, match="safe failure"):
+            store.persist_provider_continuation_event(
+                ToolCallExecuting(context, "PRIVATE-CALL-ID", 1)
+            )
+        assert store.get_message(owner.id).provider_continuation_warning == warning
+
+        monkeypatch.setattr(
+            store,
+            "ensure_provider_continuation_durable",
+            lambda **_kwargs: ContinuationDurabilityResult(True, "durable"),
+        )
+        store.persist_provider_continuation_event(
+            ToolCallFinished(
+                context,
+                "PRIVATE-CALL-ID",
+                2,
+                "completed",
+                ContinuationResult("PRIVATE-RESULT-CANARY"),
+            )
+        )
+        assert store.get_message(owner.id).provider_continuation_warning is None
     finally:
         database.close_connection()
 
