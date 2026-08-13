@@ -20,10 +20,10 @@ Fix direction: keep the Markdown widget mounted and move match-highlight and scr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Match navigation does not re-parse the document or remount the screen (evidence)
-- [ ] #2 Search-while-typing performs at most one deferred re-render per debounce window and never the double update(\"\")/update(content) parse
+- [x] #1 Match navigation does not re-parse the document or remount the screen (evidence)
+- [x] #2 Search-while-typing performs at most one deferred re-render per debounce window and never the double update(\"\")/update(content) parse
 - [ ] #3 Match highlighting and scroll behavior preserved (tests); click latency before/after on a long document recorded
-- [ ] #4 Literal async pytest commands run on Windows without mutating the guarded network families, while ordinary same-thread and concurrent-thread application egress remains blocked and recorded
+- [x] #4 Literal async pytest commands run on Windows without mutating the guarded network families, while ordinary same-thread and concurrent-thread application egress remains blocked and recorded
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,8 +54,9 @@ replaced on search/navigation, the persistent content body was not mounted,
 inactive Raw/Rendered children were removed, and Rendered search state did not
 reach a later Raw mount. The Enter-only regression already passed.
 
-The deterministic 2,000-line Markdown document contained exactly 100 matching
-source lines. The isolated repeat of the identical submit/Next/Prev sequence
+The deterministic 2,000-line Markdown document contained 101 matching source
+lines: 100 generated match lines plus the heading, which also contains
+`budget`. The isolated repeat of the identical submit/Next/Prev sequence
 recorded `TASK-15458 latency median_ms=1091.689`. The screen stayed at object ID
 `2237538817072`, while the viewer IDs were `2235866381104`, `2237674891232`,
 `2235874008944`, and `2235896514272`, and the Markdown IDs were `2235871484416`,
@@ -100,3 +101,109 @@ The whole-file Ruff baseline still reports pre-existing `E721` findings in
 `library_screen.py` and one pre-existing unused import in `test_library_shell.py`;
 the scoped verification excluded only those existing rule findings. `git diff
 --check` was clean.
+
+### Task 5 interim verification checkpoint (blocked)
+
+- Extracted scoped Library search controls and a lazy persistent content body so
+  match navigation updates status/highlighting/scroll state without remounting
+  the screen or reparsing Markdown.
+- Preserved Enter-to-search, Rendered-by-default Markdown behavior, Raw
+  highlighting, wraparound navigation, and focus continuity in the mounted
+  product-path tests. Rendered UAT found that the Library status and navigation
+  controls are nevertheless occluded by the content body at 170x48; therefore
+  acceptance criterion #3 remains open and this task remains In Progress.
+- Debounced legacy content search at 250 ms with monotonic lifecycle invalidation
+  and one Markdown update per applied query.
+- Repaired Windows async-test bootstrap under ADR-058 with a nested
+  current-thread socketpair exemption; literal pytest commands pass while
+  ordinary and concurrent-thread egress remain denied and recorded.
+- ADR required: yes; followed
+  `backlog/decisions/058-thread-scoped-test-socketpair-exemption.md` for the
+  review-expanded test security boundary.
+
+#### Fresh focused verification
+
+All required task-focused commands ran literally with the parent checkout's
+Python 3.12 virtual environment and default network denial:
+
+```powershell
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/Library/test_library_media_content.py Tests/UI/test_media_viewer_content_search_debounce.py -v
+# 16 passed
+
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/test_network_guard.py -q
+# 12 passed, 1 skipped (AF_UNIX unavailable on Windows)
+
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/UI/test_library_shell.py -k 'media_content_search or media_viewer_raw_toggle or media_viewer_defaults_markdown or media_viewer_inplace' -v -s
+# 17 passed, 546 deselected
+
+& 'C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe' -m pytest Tests/UI/test_media_window_v2_parity.py Tests/UI/test_media_handoffs.py -q
+# 38 passed
+```
+
+The combined focused result is 83 passed and one expected platform skip. The
+fresh 2,000-line product-path measurement was `103.287 ms` median for
+submit/Next/Previous, compared with the isolated pre-change `1091.689 ms`
+median. The four viewer observations had one stable viewer identity; the four
+Markdown observations had one stable Markdown identity; and
+`markdown_update_count=1` represented initial construction only, so navigation
+caused zero Markdown updates. The fixture is 49,288 characters and contains
+2,000 lines and 101 matching source lines; earlier notes that called this 100
+matches omitted the matching heading.
+
+The parent virtual environment does not contain the Ruff module, so the literal
+`python -m ruff` command reports `No module named ruff`. The documented installed
+binary, `C:\Python312\Scripts\ruff.exe`, reports eight whole-file baseline
+findings on unchanged lines (one `F401` in `test_library_shell.py` and seven
+`E721` findings in `library_screen.py`). The complete task surface passes when
+only those two pre-existing rule classes are excluded. The branch diff check
+initially found two trailing spaces in the design document's Task/Date metadata;
+those spaces were removed and the check was rerun.
+
+The full `pytest -q` run stopped during Windows collection after 225.85 seconds:
+`Tests/Media_Playback/test_player_pipeline.py` references unavailable
+`signal.SIGSTOP`/`SIGCONT`, and
+`Tests/TTS/test_profile_reference_materialization.py` imports unavailable
+`fcntl`. An exact two-module rerun reproduced both errors in 0.68 seconds, and
+both files are byte-identical to `origin/dev`; these are unrelated Windows
+baseline failures rather than task regressions. Existing pytest cache-permission,
+pytest-asyncio loop-scope, SQLite privacy, optional-dependency, and missing
+OpenAI-TTS-mapping warnings also remain attributable to the environment/baseline.
+
+#### Rendered keyboard UAT
+
+No configured real-data Library profile was used. The UAT therefore mounted the
+real `LibraryScreen` with the production stylesheet and deterministic media
+fixture through the existing product-path harness, plus the real legacy
+`MediaViewerPanel`; it drove keyboard events and used
+`screen._compositor.render_strips()` as the visual oracle. The ephemeral UAT
+driver was removed after capture and is not part of the implementation.
+
+- Library terminal: 170x48. Fixture: 49,288 characters, 2,000 lines, 101
+  `budget` matches. Markdown opened Rendered. Typing `budget` left the applied
+  query blank until Enter; Enter retained search focus. Previous retained its
+  focus, wrapped 1 to 101, and scrolled the content body from y=0 to y=404;
+  Next retained its focus, wrapped 101 to 1, and scrolled back to y=0. Raw
+  visibly rendered the literal `# Large budget document`, and its selected
+  Rich span was `budget`. Four subsequent Raw/Rendered keyboard toggles retained
+  the same viewer, Markdown, and Raw identities, retained content, and caused
+  no additional Markdown update (one initial update total), so no remount/blank
+  frame was observed.
+- Library blocker: the status widget has region `(x=35, y=23, width=128,
+  height=1)`, is displayed, and contains `Match 1 of 101 matches`, but the
+  content body occupies `(x=35, y=20, width=129, height=18)` and paints its
+  Markdown heading at terminal row 23. The compositor frame therefore contains
+  neither the status text nor visible Previous/Next controls
+  (`status_painted=False`, `previous_painted=False`, `next_painted=False`).
+  Model-state assertions alone had hidden this overlap. Because visible status
+  and navigation behavior are part of criterion #3, that criterion is not
+  complete.
+- Legacy Media terminal: 120x36. Fixture: 67 characters. A `budget` input burst
+  produced no update during the silent window and exactly one highlighted
+  repaint after debounce (observed elapsed 0.390 seconds including harness
+  pauses). Clearing, typing another burst, and loading a replacement record
+  before expiry produced the replacement content with zero stale highlighted
+  repaint.
+
+Closeout status: blocked on the rendered Library status/navigation overlap.
+Task status remains In Progress; no layout fix was attempted in this verification
+checkpoint.

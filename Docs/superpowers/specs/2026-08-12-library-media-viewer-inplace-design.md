@@ -1,7 +1,7 @@
 # Library Media Viewer In-Place Search Design
 
-**Task:** TASK-15458  
-**Date:** 2026-08-12  
+**Task:** TASK-15458
+**Date:** 2026-08-12
 **Status:** Approved design
 
 ## Purpose
