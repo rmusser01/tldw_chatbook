@@ -4,6 +4,7 @@
 # Imports
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -69,8 +70,14 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     load_global_speech_tts_state,
 )
 from tldw_chatbook.UI.Speech.speech_settings_pane import (
+    SpeechDestinationBackRequested,
+    SpeechDestinationRequested,
     SpeechSettingsPane,
     StudioPreferencesSaved,
+    VoiceBlendsPane,
+)
+from tldw_chatbook.UI.Speech.speech_settings_mixin import (
+    normalize_provider_voice_selection,
 )
 from tldw_chatbook.UI.stts_profile_library import (
     ProfileLibraryContinuity,
@@ -107,6 +114,7 @@ STTS_VIEW_KEYS = frozenset(
     {
         "playground",
         "profiles",
+        "blends",
         "settings",
         "voice-cloning",
         "effects",
@@ -114,6 +122,43 @@ STTS_VIEW_KEYS = frozenset(
         "dictation",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class SpeechNavigationDestination:
+    """Exact identity for a user-facing Speech voice tool."""
+
+    destination_id: str
+    label: str
+    view: str
+    provider_id: str | None
+
+
+_SPEECH_NAVIGATION_DESTINATIONS = {
+    "voice-profiles": SpeechNavigationDestination(
+        "voice-profiles",
+        "Voice Profiles",
+        "profiles",
+        None,
+    ),
+    "voice-blends": SpeechNavigationDestination(
+        "voice-blends",
+        "Voice Blends",
+        "blends",
+        "kokoro",
+    ),
+}
+
+
+def resolve_speech_navigation(destination_id: str) -> SpeechNavigationDestination:
+    """Resolve one unambiguous Voice Profiles or Voice Blends destination."""
+
+    if type(destination_id) is not str:
+        raise TypeError("Speech destination ID must be a string")
+    try:
+        return _SPEECH_NAVIGATION_DESTINATIONS[destination_id]
+    except KeyError:
+        raise ValueError("unknown Speech destination") from None
 
 
 class VoiceProfilePickerModal(
@@ -1071,34 +1116,34 @@ class AudioBookGenerationWidget(Widget):
         if provider == "openai":
             voice_select.set_options(
                 [
-                    ("alloy", "Alloy"),
-                    ("echo", "Echo"),
-                    ("fable", "Fable"),
-                    ("onyx", "Onyx"),
-                    ("nova", "Nova"),
-                    ("shimmer", "Shimmer"),
+                    ("Alloy", "alloy"),
+                    ("Echo", "echo"),
+                    ("Fable", "fable"),
+                    ("Onyx", "onyx"),
+                    ("Nova", "nova"),
+                    ("Shimmer", "shimmer"),
                 ]
             )
         elif provider == "elevenlabs":
             voice_select.set_options(
                 [
-                    ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
-                    ("AZnzlk1XvdvUeBnXmlld", "Domi"),
-                    ("EXAVITQu4vr4xnSDxMaL", "Bella"),
-                    ("ErXwobaYiN019PkySvjV", "Antoni"),
-                    ("MF3mGyEYCl7XYWbV9V6O", "Elli"),
+                    ("Rachel", "21m00Tcm4TlvDq8ikWAM"),
+                    ("Domi", "AZnzlk1XvdvUeBnXmlld"),
+                    ("Bella", "EXAVITQu4vr4xnSDxMaL"),
+                    ("Antoni", "ErXwobaYiN019PkySvjV"),
+                    ("Elli", "MF3mGyEYCl7XYWbV9V6O"),
                 ]
             )
         elif provider == "kokoro":
             logger.info(f"Setting up Kokoro voices for provider: {provider}")
             voice_options = [
-                ("af_bella", "Bella (US Female)"),
-                ("af_nicole", "Nicole (US Female)"),
-                ("af_sarah", "Sarah (US Female)"),
-                ("am_adam", "Adam (US Male)"),
-                ("am_michael", "Michael (US Male)"),
-                ("bf_emma", "Emma (UK Female)"),
-                ("bm_george", "George (UK Male)"),
+                ("Bella (US Female)", "af_bella"),
+                ("Nicole (US Female)", "af_nicole"),
+                ("Sarah (US Female)", "af_sarah"),
+                ("Adam (US Male)", "am_adam"),
+                ("Michael (US Male)", "am_michael"),
+                ("Emma (UK Female)", "bf_emma"),
+                ("George (UK Male)", "bm_george"),
             ]
 
             # Add saved voice blends
@@ -1112,7 +1157,7 @@ class AudioBookGenerationWidget(Widget):
                         if blends:
                             # Add separator
                             voice_options.append(
-                                ("_separator", "──── Voice Blends ────")
+                                ("──── Voice Blends ────", "_separator")
                             )
                             # Add each blend
                             for blend_name, blend_data in blends.items():
@@ -1122,7 +1167,7 @@ class AudioBookGenerationWidget(Widget):
                                         f" - {blend_data['description'][:30]}"
                                     )
                                 voice_options.append(
-                                    (f"blend:{blend_name}", display_name)
+                                    (display_name, f"blend:{blend_name}")
                                 )
                 except Exception as e:
                     logger.error(f"Failed to load voice blends: {e}")
@@ -1131,7 +1176,7 @@ class AudioBookGenerationWidget(Widget):
 
             # Find first valid voice option (skip separators)
             valid_voice = None
-            for value, _ in voice_options:
+            for _, value in voice_options:
                 if self._is_valid_voice(value):
                     valid_voice = value
                     break
@@ -1142,10 +1187,22 @@ class AudioBookGenerationWidget(Widget):
         elif provider == "chatterbox":
             voice_select.set_options(
                 [
-                    ("default", "Default"),
-                    ("custom", "Custom Voice"),
+                    ("Default", "default"),
+                    ("Custom Voice", "custom"),
                 ]
             )
+
+        available_voice_ids = tuple(
+            value
+            for _label, value in voice_select._options
+            if type(value) is str and value != Select.BLANK
+        )
+        normalized = normalize_provider_voice_selection(
+            provider,
+            voice_select.value,
+            available_voice_ids,
+        )
+        voice_select.value = normalized if normalized is not None else Select.BLANK
 
     def _export_audiobook(self) -> None:
         """Export the generated audiobook"""
@@ -1468,6 +1525,7 @@ class STTSWindow(Container):
         self._profile_focus_sequence = 0
         self._profile_focus_restore_token: int | None = None
         self._profile_focus_restore_baseline = None
+        self._voice_tool_origin: tuple[str, str | None] | None = None
         # Bounded, process-local Playground axes survive only internal Lab
         # view switches. They are never written to global or Studio settings.
         self._playground_axis_values: dict[str, str] = dict(
@@ -1665,6 +1723,13 @@ class STTSWindow(Container):
 
         if view != "settings" and not await self.confirm_studio_preferences_leave():
             return False
+        if self.current_view == "profiles" and view != "profiles":
+            try:
+                content = self.query_one(".stts-content", Container)
+            except QueryError:
+                content = None
+            if content is not None:
+                await content.remove_children()
         self.select_view(
             view,
             profile_preset=profile_preset,
@@ -1780,6 +1845,14 @@ class STTSWindow(Container):
                 self._pending_playground_navigation = None
         elif new_view == "profiles":
             focus_restore_token = self._begin_profile_focus_restore()
+            if self._voice_tool_origin is not None:
+                content_container.mount(
+                    Button(
+                        "Back to previous Speech view",
+                        id="speech-destination-back",
+                        disabled=True,
+                    )
+                )
             content_container.mount(
                 STTSProfileLibrary(
                     self._load_profile_service,
@@ -1792,6 +1865,10 @@ class STTSWindow(Container):
                     focus_restore_token=focus_restore_token,
                 )
             )
+            if self._voice_tool_origin is not None:
+                self.call_after_refresh(self._enable_profile_destination_back)
+        elif new_view == "blends":
+            content_container.mount(VoiceBlendsPane(id="speech-voice-blends-pane"))
         elif new_view == "settings":
             adopted = self._pending_adopted_preset
             content_container.mount(
@@ -2050,6 +2127,93 @@ class STTSWindow(Container):
             return
         playground.apply_profile_preset(preset, context_token=context_token)
 
+    @on(SpeechDestinationRequested)
+    def on_speech_destination_requested(
+        self,
+        message: SpeechDestinationRequested,
+    ) -> None:
+        """Open an exact voice tool and retain its return destination."""
+
+        message.stop()
+        destination = resolve_speech_navigation(message.destination_id)
+        focused_id = getattr(self.screen.focused, "id", None)
+        origin = (
+            self.current_view,
+            focused_id if isinstance(focused_id, str) else None,
+        )
+        self.run_worker(
+            self._open_speech_destination(destination, origin),
+            group="speech-voice-tool-navigation",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _open_speech_destination(
+        self,
+        destination: SpeechNavigationDestination,
+        origin: tuple[str, str | None],
+    ) -> None:
+        prior_origin = self._voice_tool_origin
+        self._voice_tool_origin = origin
+        if not await self.request_view(destination.view):
+            if self._voice_tool_origin == origin:
+                self._voice_tool_origin = prior_origin
+
+    @on(SpeechDestinationBackRequested)
+    def on_speech_destination_back_requested(
+        self,
+        message: SpeechDestinationBackRequested,
+    ) -> None:
+        """Return to the originating view and restore its action focus."""
+
+        message.stop()
+        origin = self._voice_tool_origin
+        self._voice_tool_origin = None
+        view, focus_id = origin or ("playground", None)
+        if view in {"profiles", "blends"} or view not in STTS_VIEW_KEYS:
+            view, focus_id = "playground", None
+        self.run_worker(
+            self._return_to_speech_origin(view, focus_id),
+            group="speech-voice-tool-navigation",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _return_to_speech_origin(
+        self,
+        view: str,
+        focus_id: str | None,
+    ) -> None:
+        if not await self.request_view(view):
+            return
+        if focus_id is not None:
+            self.call_after_refresh(self._restore_destination_focus, focus_id)
+
+    def _restore_destination_focus(self, focus_id: str, attempts: int = 4) -> None:
+        try:
+            self.query_one(f"#{focus_id}").focus()
+        except QueryError:
+            if attempts > 0:
+                self.call_after_refresh(
+                    self._restore_destination_focus,
+                    focus_id,
+                    attempts - 1,
+                )
+            return
+
+    def _enable_profile_destination_back(self) -> None:
+        """Expose Back only after the profile library is safe to leave."""
+
+        if self.current_view != "profiles" or self._voice_tool_origin is None:
+            return
+        try:
+            back = self.query_one("#speech-destination-back", Button)
+            self.query_one("#stts-profile-edit-btn", Button)
+        except QueryError:
+            self.call_after_refresh(self._enable_profile_destination_back)
+            return
+        back.disabled = False
+
     def on_unmount(self) -> None:
         """Release any profile authority not yet transferred to a pane."""
 
@@ -2073,7 +2237,10 @@ class STTSWindow(Container):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle sidebar button presses and delegate to content widgets"""
         # Handle sidebar buttons
-        if event.button.id == "view-playground-btn":
+        if event.button.id == "speech-destination-back":
+            event.stop()
+            self.post_message(SpeechDestinationBackRequested())
+        elif event.button.id == "view-playground-btn":
             self.run_worker(self.request_view("playground"), exclusive=True)
         elif event.button.id == "view-profiles-btn":
             self.run_worker(self.request_view("profiles"), exclusive=True)

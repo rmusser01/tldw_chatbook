@@ -26,6 +26,7 @@ from tldw_chatbook.TTS import (
 from tldw_chatbook.TTS.adapter_types import TTSNativeCapabilitySnapshot
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.UI import stts_profile_library as profile_library_module
+from tldw_chatbook.UI import STTS_Window as stts_window_module
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import (
     OpenVoiceProfilesRequested,
@@ -34,8 +35,29 @@ from tldw_chatbook.UI.Speech.speech_playground_pane import (
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSNavigationIntent,
 )
+from tldw_chatbook.UI.Speech.speech_settings_pane import VoiceBlendsPane
 from tldw_chatbook.UI.stts_profile_library import STTSProfileLibrary
 from tldw_chatbook.UI.STTS_Window import VoiceProfilePickerModal
+
+
+def test_voice_profiles_action_never_opens_blend_editor() -> None:
+    resolver = getattr(stts_window_module, "resolve_speech_navigation", None)
+
+    assert callable(resolver), "Speech destinations need one explicit resolver"
+    target = resolver("voice-profiles")
+    assert target.view == "profiles"
+    assert target.provider_id is None
+    assert target.label == "Voice Profiles"
+
+
+def test_voice_blends_are_labeled_and_scoped_to_kokoro() -> None:
+    resolver = getattr(stts_window_module, "resolve_speech_navigation", None)
+
+    assert callable(resolver), "Speech destinations need one explicit resolver"
+    target = resolver("voice-blends")
+    assert target.view == "blends"
+    assert target.provider_id == "kokoro"
+    assert target.label == "Voice Blends"
 
 
 @pytest.fixture(autouse=True)
@@ -343,6 +365,88 @@ async def test_profile_library_bundle_service_is_lazy_until_warning_acknowledged
 
         app._ensure_tts_voice_bundle_service.assert_not_awaited()  # type: ignore[attr-defined]
         app.screen.query_one("#bundle-warning-cancel", Button).press()
+
+
+@pytest.mark.asyncio
+async def test_voice_profiles_returns_to_originating_studio_action() -> None:
+    app = _SpeechHost({"view": "settings"})
+    screen = app.screen_under_test
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.stts_window is not None
+                and screen.stts_window.current_view == "settings"
+                and len(screen.query("#voice-profiles")) == 1
+            ),
+        )
+        profiles_action = screen.query_one("#voice-profiles", Button)
+        profiles_action.focus()
+        profiles_action.press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.stts_window.current_view == "profiles"
+                and len(screen.query(STTSProfileLibrary)) == 1
+            ),
+        )
+
+        back = screen.query_one("#speech-destination-back", Button)
+        assert back.label.plain == "Back to previous Speech view"
+        await _wait_until(pilot, lambda: not back.disabled)
+        back.press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.stts_window.current_view == "settings"
+                and getattr(app.focused, "id", None) == "voice-profiles"
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_voice_blends_opens_kokoro_tool_and_returns_to_origin() -> None:
+    app = _SpeechHost({"view": "settings"})
+    screen = app.screen_under_test
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.stts_window is not None
+                and screen.stts_window.current_view == "settings"
+                and len(screen.query("#voice-blends")) == 1
+            ),
+        )
+        blends_action = screen.query_one("#voice-blends", Button)
+        blends_action.focus()
+        blends_action.press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.stts_window.current_view == "blends"
+                and len(screen.query(VoiceBlendsPane)) == 1
+            ),
+        )
+
+        pane = screen.query_one(VoiceBlendsPane)
+        assert str(pane.query_one("#voice-blends-heading", Static).render()) == (
+            "Voice Blends"
+        )
+        assert "Kokoro only" in str(
+            pane.query_one("#voice-blends-scope", Static).render()
+        )
+        assert not pane.query(STTSProfileLibrary)
+
+        pane.query_one("#speech-destination-back", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.stts_window.current_view == "settings"
+                and getattr(app.focused, "id", None) == "voice-blends"
+            ),
+        )
 
 
 @pytest.mark.asyncio

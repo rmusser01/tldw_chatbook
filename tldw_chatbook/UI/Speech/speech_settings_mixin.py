@@ -65,6 +65,28 @@ LAB_STUDIO_COMPATIBILITY_SETTING_KEYS = frozenset(
 """Request-scoped legacy keys allowed across the Lab save boundary."""
 
 
+def normalize_provider_voice_selection(
+    provider_id: object,
+    selected_voice_id: object,
+    available_voice_ids: tuple[str, ...],
+) -> str | None:
+    """Return a voice selection that is valid for the active provider."""
+
+    if type(provider_id) is not str:
+        return None
+    allowed = tuple(
+        voice_id
+        for voice_id in available_voice_ids
+        if type(voice_id) is str
+        and voice_id
+        and not voice_id.startswith("_separator")
+        and (provider_id == "kokoro" or not voice_id.startswith("blend:"))
+    )
+    if type(selected_voice_id) is str and selected_voice_id in allowed:
+        return selected_voice_id
+    return allowed[0] if allowed else None
+
+
 class SpeechSettingsMixin:
     """Settings load/save behaviour, independent of the layout."""
 
@@ -594,6 +616,18 @@ class SpeechSettingsMixin:
                 ]
             )
             voice_select.value = "female_01.wav"
+
+        available_voice_ids = tuple(
+            value
+            for _label, value in voice_select._options
+            if type(value) is str and value != Select.BLANK
+        )
+        normalized = normalize_provider_voice_selection(
+            provider,
+            voice_select.value,
+            available_voice_ids,
+        )
+        voice_select.value = normalized if normalized is not None else Select.BLANK
 
     def _update_default_model_options(self, provider: str) -> None:
         """Update default model options based on provider"""
