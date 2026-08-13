@@ -46,7 +46,7 @@ def test_migration_adds_usage_json_and_bumps_version(tmp_path, monkeypatch):
 
     db = CharactersRAGDB(db_path, client_id="migration-test")
     connection = db.get_connection()
-    assert _version(connection) == 33
+    assert _version(connection) == db._CURRENT_SCHEMA_VERSION
     assert "usage_json" in _message_columns(connection)
     db.close_connection()
 
@@ -103,7 +103,9 @@ def test_migration_is_idempotent_when_column_already_present(tmp_path, monkeypat
         v29_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 29)
         db = CharactersRAGDB(db_path, client_id="pre-applied")
         connection = db.get_connection()
-        connection.execute("ALTER TABLE messages ADD COLUMN usage_json TEXT DEFAULT NULL")
+        connection.execute(
+            "ALTER TABLE messages ADD COLUMN usage_json TEXT DEFAULT NULL"
+        )
         connection.commit()
         assert _version(connection) == 29
         assert "usage_json" in _message_columns(connection)
@@ -111,7 +113,7 @@ def test_migration_is_idempotent_when_column_already_present(tmp_path, monkeypat
 
     db = CharactersRAGDB(db_path, client_id="migration-test")  # must not raise
     connection = db.get_connection()
-    assert _version(connection) == 33
+    assert _version(connection) == db._CURRENT_SCHEMA_VERSION
     assert "usage_json" in _message_columns(connection)
     # And the column is still usable, not left in some half-migrated state.
     conv_id = db.add_conversation({"title": "t"})

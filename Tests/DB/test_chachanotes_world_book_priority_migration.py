@@ -18,6 +18,11 @@ def test_world_book_entries_priority_migrate_v20_to_v21(tmp_path):
     # `_migrate_from_v30_to_v31`'s already-present branch and this test
     # silently stopped exercising the clean path (task-2364 Qodo round).
     conn.execute("ALTER TABLE messages DROP COLUMN metadata_json")
+    # A V20 fixture predates the V33->V34 visual-compaction preference.
+    conn.execute(
+        "ALTER TABLE console_conversation_context_policy "
+        "DROP COLUMN compaction_representation"
+    )
     # A v20 fixture must not retain citation tables introduced at v26→v27.
     for table in (
         "rag_artifact_owner_operations",

@@ -15,6 +15,25 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
 
 
 SCHEMA_NAME = "rag_char_chat_schema"
+HISTORICAL_NOTES_COLUMNS = {
+    "id",
+    "title",
+    "content",
+    "created_at",
+    "last_modified",
+    "deleted",
+    "client_id",
+    "version",
+    "file_path_on_disk",
+    "relative_file_path_on_disk",
+    "sync_root_folder",
+    "last_synced_disk_file_hash",
+    "last_synced_disk_file_mtime",
+    "is_externally_synced",
+    "sync_strategy",
+    "sync_excluded",
+    "file_extension",
+}
 SERVER_AUTHORITY = f"server-user-v1:{'a' * 64}"
 
 
@@ -109,6 +128,25 @@ def _identity_only_v28_database(
             CREATE TABLE rag_identity_context(
                 context_name TEXT,
                 local_authority_id
+            );
+            CREATE TABLE notes(
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                deleted BOOLEAN NOT NULL DEFAULT 0,
+                client_id TEXT NOT NULL DEFAULT 'unknown',
+                version INTEGER NOT NULL DEFAULT 1,
+                file_path_on_disk TEXT,
+                relative_file_path_on_disk TEXT,
+                sync_root_folder TEXT,
+                last_synced_disk_file_hash TEXT,
+                last_synced_disk_file_mtime REAL,
+                is_externally_synced BOOLEAN NOT NULL DEFAULT 0,
+                sync_strategy TEXT,
+                sync_excluded BOOLEAN NOT NULL DEFAULT 0,
+                file_extension TEXT DEFAULT '.md'
             );
             """
         )
@@ -224,6 +262,12 @@ def test_local_authority_accessor_fails_closed_for_unavailable_or_ambiguous_stat
     _identity_only_v28_database(path, rows)
     db = CharactersRAGDB(path, client_id="authority-test")
 
+    with db.transaction() as cursor:
+        notes_columns = {
+            row["name"] for row in cursor.execute("PRAGMA table_info(notes)")
+        }
+    assert notes_columns == HISTORICAL_NOTES_COLUMNS
+
     with pytest.raises(
         CharactersRAGDBError,
         match=r"^Local authority identity is unavailable or invalid\.$",
@@ -311,13 +355,14 @@ def test_v27_migration_rolls_back_column_backfill_and_version_on_late_failure(
         assert _conversation_columns(connection) == before_columns
 
     migrated = CharactersRAGDB(path, client_id="migration-test")
-    row = migrated.get_connection().execute(
-        """
+    with migrated.transaction() as cursor:
+        row = cursor.execute(
+            """
         SELECT assistant_authority_id
         FROM conversations
         WHERE id = 'local-proven'
-        """
-    ).fetchone()
+            """
+        ).fetchone()
     assert row["assistant_authority_id"] == expected_authority
 
 
@@ -412,9 +457,9 @@ def test_local_character_create_read_and_list_infer_same_database_authority(
     assert row["character_id"] == 1
     assert row["assistant_id"] == "1"
     assert row["assistant_authority_id"] == authority_id
-    listed = {
-        item["id"]: item for item in db.list_all_active_conversations()
-    }[conversation_id]
+    listed = {item["id"]: item for item in db.list_all_active_conversations()}[
+        conversation_id
+    ]
     assert listed["assistant_authority_id"] == authority_id
     searched = db.search_conversations_page("Local Character")[0][0]
     assert searched["assistant_authority_id"] == authority_id

@@ -98,7 +98,9 @@ def _force_row1_bare(connection) -> None:
     connection.commit()
 
 
-def _seed_v31_database_with_bare_row(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _seed_v31_database_with_bare_row(
+    path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with monkeypatch.context() as v31_patch:
         v31_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 31)
         db = CharactersRAGDB(path, client_id="migration-seed")
@@ -134,7 +136,7 @@ def test_fresh_database_seeds_rich_content(tmp_path):
     assert row["alternate_greetings"] != BARE_ALTERNATE_GREETINGS
 
     connection = db.get_connection()
-    assert _version(connection) == 33
+    assert _version(connection) == db._CURRENT_SCHEMA_VERSION
     db.close_connection()
 
 
@@ -161,7 +163,7 @@ def test_migration_enriches_untouched_bare_row_and_bumps_version(tmp_path, monke
 
     db = CharactersRAGDB(db_path, client_id="migration-test")
     connection = db.get_connection()
-    assert _version(connection) == 33
+    assert _version(connection) == db._CURRENT_SCHEMA_VERSION
 
     row = db.get_character_card_by_id(1)
     assert row["name"] == BARE_NAME
@@ -227,7 +229,9 @@ _EDIT_CASES = [
 _JSON_FIELDS = {"alternate_greetings", "tags", "extensions"}
 
 
-@pytest.mark.parametrize("field, edited_value", _EDIT_CASES, ids=[c[0] for c in _EDIT_CASES])
+@pytest.mark.parametrize(
+    "field, edited_value", _EDIT_CASES, ids=[c[0] for c in _EDIT_CASES]
+)
 def test_migration_preserves_row_with_single_field_edited(
     tmp_path, monkeypatch, field, edited_value
 ):
@@ -264,7 +268,7 @@ def test_migration_preserves_row_with_single_field_edited(
 
     db2 = CharactersRAGDB(db_path, client_id="migration-test")
     connection2 = db2.get_connection()
-    assert _version(connection2) == 33  # migration chain still runs
+    assert _version(connection2) == db2._CURRENT_SCHEMA_VERSION
 
     post_migration_row = db2.get_character_card_by_id(1)
     # The edited field survives untouched.
@@ -298,7 +302,7 @@ def test_migration_preserves_deleted_row(tmp_path, monkeypatch):
 
     db2 = CharactersRAGDB(db_path, client_id="migration-test")
     connection2 = db2.get_connection()
-    assert _version(connection2) == 33
+    assert _version(connection2) == db2._CURRENT_SCHEMA_VERSION
     row = connection2.execute(
         "SELECT description, deleted FROM character_cards WHERE id = 1"
     ).fetchone()
@@ -375,7 +379,9 @@ def test_first_edit_of_row_1_succeeds_on_a_migrated_pre_existing_database(
     row = db.get_character_card_by_id(1)
 
     result = db.update_character_card(
-        1, {"description": "second edit after migration"}, expected_version=row["version"]
+        1,
+        {"description": "second edit after migration"},
+        expected_version=row["version"],
     )
     assert result is True
     db.close_connection()
@@ -450,7 +456,8 @@ def test_conversation_and_message_against_character_id_1_still_works(tmp_path):
 
 
 def test_current_schema_version_is_33():
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 33
+    """Keep the historical node ID while ratcheting its current-schema value."""
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 35
 
 
 def test_migrate_from_v31_to_v32_requires_version_31(tmp_path):
