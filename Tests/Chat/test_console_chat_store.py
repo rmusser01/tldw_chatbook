@@ -19,7 +19,7 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProducer
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
@@ -1542,6 +1542,212 @@ def test_initial_reply_speech_is_inserted_at_version_one_with_sibling_metadata(
         assert metadata["console_roleplay_context"] == roleplay
         assert metadata["other"] == {"keep": True}
         assert metadata["console_speech"]["auto_speak"] is True
+        events = db.execute_query(
+            "SELECT operation, payload FROM sync_log "
+            "WHERE entity = 'conversations' AND entity_id = ?",
+            (conversation_id,),
+        ).fetchall()
+        assert len(events) == 1
+        assert events[0]["operation"] == "create"
+        assert json.loads(events[0]["payload"])["metadata"] == record["metadata"]
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        pytest.param("{", id="malformed-json"),
+        pytest.param("[]", id="array-json"),
+        pytest.param('"scalar"', id="string-json"),
+        pytest.param("null", id="null-json"),
+        pytest.param('{"bad": NaN}', id="non-finite-json"),
+        pytest.param(["unsupported"], id="unsupported-type"),
+        pytest.param({"bad": {"not-json"}}, id="unserializable-mapping"),
+        pytest.param({"bad": float("nan")}, id="non-finite-mapping"),
+        pytest.param({1: "coerced-key"}, id="non-string-mapping-key"),
+    ],
+)
+@pytest.mark.parametrize("with_speech", [False, True])
+def test_create_conversation_rejects_non_object_metadata_before_db_add(
+    tmp_path,
+    monkeypatch,
+    metadata,
+    with_speech,
+):
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    db = CharactersRAGDB(
+        tmp_path / f"speech-invalid-service-{with_speech}.db",
+        "speech-test",
+    )
+    try:
+        service = ChatPersistenceService(db)
+        add_calls = []
+        original_add = db.add_conversation
+
+        def recording_add(conversation_data):
+            add_calls.append(conversation_data)
+            return original_add(conversation_data)
+
+        monkeypatch.setattr(db, "add_conversation", recording_add)
+        before_rows = db.execute_query(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0]
+        before_events = db.execute_query(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+        ).fetchone()[0]
+        speech_preferences = (
+            ConsoleSpeechPreferences(auto_speak=True) if with_speech else None
+        )
+
+        with pytest.raises(ValueError, match="metadata.*JSON object"):
+            service.create_conversation(
+                conversation_title="Invalid metadata",
+                metadata=metadata,
+                speech_preferences=speech_preferences,
+            )
+
+        assert add_calls == []
+        assert (
+            db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == before_rows
+        )
+        assert (
+            db.execute_query(
+                "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+            ).fetchone()[0]
+            == before_events
+        )
+    finally:
+        db.close_connection()
+
+
+def test_service_metadata_rejection_is_nonmutating_in_caller_transaction(tmp_path):
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    db = CharactersRAGDB(tmp_path / "speech-invalid-service-outer.db", "speech-test")
+    try:
+        service = ChatPersistenceService(db)
+        connection = db.get_connection()
+        before_rows = connection.execute(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0]
+        before_events = connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+        ).fetchone()[0]
+        connection.execute("BEGIN")
+
+        with pytest.raises(ValueError, match="metadata.*JSON object"):
+            service.create_conversation(
+                conversation_title="Invalid metadata",
+                metadata="not-json",
+                speech_preferences=ConsoleSpeechPreferences(auto_speak=True),
+            )
+
+        connection.commit()
+        assert connection.execute(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0] == before_rows
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+        ).fetchone()[0] == before_events
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        pytest.param("{", id="malformed-json"),
+        pytest.param("[]", id="array-json"),
+        pytest.param("1", id="number-json"),
+        pytest.param("null", id="null-json"),
+        pytest.param('{"bad": NaN}', id="non-finite-json"),
+        pytest.param({"unsupported": True}, id="mapping-type"),
+        pytest.param(["unsupported"], id="list-type"),
+        pytest.param(1, id="number-type"),
+    ],
+)
+def test_add_conversation_rejects_non_object_metadata_without_writes(
+    tmp_path,
+    metadata,
+):
+    db = CharactersRAGDB(tmp_path / "speech-invalid-db.db", "speech-test")
+    try:
+        before_rows = db.execute_query(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0]
+        before_events = db.execute_query(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+        ).fetchone()[0]
+
+        with pytest.raises(InputError, match="metadata.*JSON object"):
+            db.add_conversation({"title": "Invalid metadata", "metadata": metadata})
+
+        assert (
+            db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+            == before_rows
+        )
+        assert (
+            db.execute_query(
+                "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+            ).fetchone()[0]
+            == before_events
+        )
+    finally:
+        db.close_connection()
+
+
+def test_direct_metadata_rejection_is_nonmutating_in_caller_transaction(tmp_path):
+    db = CharactersRAGDB(tmp_path / "speech-invalid-db-outer.db", "speech-test")
+    try:
+        connection = db.get_connection()
+        before_rows = connection.execute(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0]
+        before_events = connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+        ).fetchone()[0]
+        connection.execute("BEGIN")
+
+        with pytest.raises(InputError, match="metadata.*JSON object"):
+            db.add_conversation({"title": "Invalid metadata", "metadata": "[]"})
+
+        connection.commit()
+        assert connection.execute(
+            "SELECT COUNT(*) FROM conversations"
+        ).fetchone()[0] == before_rows
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'conversations'"
+        ).fetchone()[0] == before_events
+    finally:
+        db.close_connection()
+
+
+def test_add_conversation_accepts_object_metadata_in_one_create_event(tmp_path):
+    db = CharactersRAGDB(tmp_path / "speech-valid-db.db", "speech-test")
+    try:
+        expected = {"other": {"keep": True}}
+
+        conversation_id = db.add_conversation(
+            {
+                "title": "Valid metadata",
+                "metadata": json.dumps(expected),
+            }
+        )
+
+        record = db.get_conversation_by_id(conversation_id)
+        events = db.execute_query(
+            "SELECT operation, payload FROM sync_log "
+            "WHERE entity = 'conversations' AND entity_id = ?",
+            (conversation_id,),
+        ).fetchall()
+        assert record["version"] == 1
+        assert json.loads(record["metadata"]) == expected
+        assert len(events) == 1
+        assert events[0]["operation"] == "create"
+        assert json.loads(events[0]["payload"])["metadata"] == record["metadata"]
     finally:
         db.close_connection()
 

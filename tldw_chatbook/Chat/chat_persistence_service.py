@@ -32,6 +32,41 @@ logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
 
 
+def _initial_metadata_object(metadata: object) -> dict[str, object]:
+    """Return strict JSON-object metadata without lossy key coercion."""
+
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"Non-finite JSON constant {value!r} is not supported.")
+
+    try:
+        if isinstance(metadata, Mapping):
+            candidate = dict(metadata)
+            if not _mapping_keys_are_strings(candidate):
+                raise ValueError("Mapping keys must be strings.")
+            serialized = json.dumps(candidate, allow_nan=False, sort_keys=True)
+            decoded = json.loads(serialized, parse_constant=reject_constant)
+        elif type(metadata) is str:
+            decoded = json.loads(metadata, parse_constant=reject_constant)
+        else:
+            raise ValueError("Unsupported metadata type.")
+    except (TypeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError("metadata must be a valid JSON object.") from exc
+    if not isinstance(decoded, dict):
+        raise ValueError("metadata must be a valid JSON object.")
+    return decoded
+
+
+def _mapping_keys_are_strings(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return all(
+            type(key) is str and _mapping_keys_are_strings(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return all(_mapping_keys_are_strings(item) for item in value)
+    return True
+
+
 class ChatPersistenceService:
     def __init__(
         self,
@@ -217,7 +252,8 @@ class ChatPersistenceService:
             conversation_title: Explicit title, which takes precedence when
                 truthy; otherwise the character or assistant-derived title is used.
             system_prompt: Initial system prompt persisted with the conversation.
-            metadata: Optional initial conversation metadata object or JSON object.
+            metadata: Optional initial conversation metadata mapping or JSON object
+                string. Malformed or non-object values are rejected before creation.
             speech_preferences: Optional staged Console reply-speech preferences
                 to include in the conversation metadata before returning.
 
@@ -259,7 +295,9 @@ class ChatPersistenceService:
         }
         if assistant_authority_id is not _ASSISTANT_AUTHORITY_UNSET:
             conversation_data["assistant_authority_id"] = assistant_authority_id
-        initial_metadata: Mapping[str, object] | str | None = metadata
+        initial_metadata = (
+            _initial_metadata_object(metadata) if metadata is not None else None
+        )
         if (
             speech_preferences is not None
             and speech_preferences != ConsoleSpeechPreferences()
@@ -268,15 +306,12 @@ class ChatPersistenceService:
                 initial_metadata,
                 speech_preferences,
             )
-        if isinstance(initial_metadata, Mapping):
+        if initial_metadata is not None:
             conversation_data["metadata"] = json.dumps(
-                dict(initial_metadata),
+                initial_metadata,
+                allow_nan=False,
                 sort_keys=True,
             )
-        elif type(initial_metadata) is str:
-            conversation_data["metadata"] = initial_metadata
-        elif initial_metadata is not None:
-            raise TypeError("metadata must be a mapping, JSON string, or None.")
         conversation_id = self.db.add_conversation(conversation_data)
         if safe_workspace_id is not None:
             try:
