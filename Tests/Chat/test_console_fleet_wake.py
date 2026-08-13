@@ -794,6 +794,55 @@ async def test_a_wake_turn_occupies_the_sessions_send_slot(tmp_path):
         chacha.close()
 
 
+@pytest.mark.asyncio
+async def test_one_conversations_failed_delivery_does_not_strand_anothers(
+    tmp_path,
+):
+    """The chaining half `_deliver`'s own trailing retry owns (mutation
+    M23's first run SURVIVED without this): a delivery that RAISES lands
+    no terminal run-state transition -- the session sticks at VALIDATING
+    -- so nothing else would ever re-attempt the OTHER conversation that
+    deferred behind the serialization gate."""
+    chacha, app, runs_db, store, session, gateway, bridge, controller = (
+        _controller_rig(tmp_path)
+    )
+    try:
+        second = store.create_session(title="Second")
+        _pa, run_a = _terminal_subagent_run(runs_db, session.id, result="alpha")
+        _pb, run_b = _terminal_subagent_run(runs_db, second.id, result="beta")
+        real_resolve = gateway.resolve_for_send
+        blew_up = []
+
+        async def exploding_resolve(selection):
+            if not blew_up:
+                blew_up.append(True)
+                raise RuntimeError("probe blew up mid-wake")
+            return await real_resolve(selection)
+
+        gateway.resolve_for_send = exploding_resolve
+        wake = controller.fleet_wake
+        # Both pending before the first delivery task runs: attempt #2
+        # defers behind the serialization gate, so only the failed
+        # delivery's own completion can ever revive it.
+        wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_a, session_id=session.id))
+        )
+        wake.on_fleet_drained(
+            _drain(second.id, _survivor(run_b, session_id=second.id))
+        )
+        assert await _settle(lambda: gateway.payloads), (
+            "the surviving conversation's wake never fired after the "
+            "other's delivery raised"
+        )
+        assert any(
+            "beta" in p[-1]["content"] for p in gateway.payloads
+        ), "the delivered wake must be the SECOND conversation's"
+        # The failed conversation keeps its pending bit for a later retry.
+        assert wake.has_pending(session.id)
+    finally:
+        chacha.close()
+
+
 # ---------------------------------------------------------------------------
 # 4. Mount-claim: the durable mark IS the staged wake.
 # ---------------------------------------------------------------------------
