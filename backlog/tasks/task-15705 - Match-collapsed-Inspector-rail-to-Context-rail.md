@@ -2,9 +2,10 @@
 id: TASK-15705
 title: Match collapsed Inspector rail to Context rail
 status: In Progress
-assignee: []
+assignee:
+  - '@codex'
 created_date: '2026-08-13 06:07'
-updated_date: '2026-08-13 06:08'
+updated_date: '2026-08-13 13:42'
 labels: []
 dependencies: []
 ---
@@ -24,3 +25,18 @@ Make the collapsed Console Inspector rail visually match the established Context
 - [ ] #5 Component TCSS and the generated stylesheet remain in sync.
 - [ ] #6 Focused Console rail and stylesheet integrity tests pass.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/017-console-left-rail-usability.md
+Related ADR: backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md
+Reason: Existing ADR-017 governs the rail visual language and ADR-043 governs compact-width access preserved by AC #4; no new architectural decision is introduced.
+
+1. Add solid-framed, production-stylesheet regressions for Context/Inspector height parity, deterministic unbadged/badged geometry, shared-right-handle isolation, and source/bundle CSS parity.
+2. Add a Console-only Inspector handle class and Python button geometry override; switch its Console frame from quiet to solid.
+3. Update component TCSS, regenerate the production CSS bundle, and run focused rail/CSS/static checks.
+4. Run a real-Console six-state SVG/geometry sweep at 100x30, 140x42, and 160x45 with zero/three approvals.
+5. Run full-suite Ruff/check/format gates; verify the task diff; close only if every Definition of Done gate is green.
+<!-- SECTION:PLAN:END -->
