@@ -14,6 +14,7 @@ from typing import Any, Generic, Literal, TypeAlias, TypeVar
 
 from ...ACP_Interop.runtime_session import ACP_SESSION_RECORD_PREFIX
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Chat.console_chat_models import ConsoleFleetCompletionTarget
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
 from ...Chat.provider_readiness import provider_config_key
 from ...Prompt_Management.prompt_variables import PromptVariableApplication
@@ -52,6 +53,12 @@ class HandoffChannel(StrEnum):
     CONSOLE_LIVE_WORK = "console_live_work"
     CONSOLE_PROMPT_INSERT = "console_prompt_insert"
     CONSOLE_PROVIDER = "console_provider"
+    #: PR3a-2 Task 4: a background sub-agent completion's deep link --
+    #: staged by the fleet drain consumer while Console is not the active
+    #: screen; the next Console mount claims it and switches to the
+    #: settled conversation's session (and Task 5's mount-claim reads the
+    #: same channel for wake delivery).
+    CONSOLE_FLEET_COMPLETION = "console_fleet_completion"
     STUDY_SCOPE = "study_scope"
     STUDY_INITIAL_SECTION = "study_initial_section"
     STUDY_ORIGIN = "study_origin"
@@ -297,6 +304,13 @@ class PendingHandoffStore:
             if not isinstance(value, ConsoleProviderIntent):
                 raise TypeError("Console provider handoff must be typed")
             return ConsoleProviderIntent(provider=value.provider)
+        if channel is HandoffChannel.CONSOLE_FLEET_COMPLETION:
+            if not isinstance(value, ConsoleFleetCompletionTarget):
+                raise TypeError("Console fleet completion handoff must be typed")
+            return ConsoleFleetCompletionTarget(
+                conversation_id=value.conversation_id,
+                session_id=value.session_id,
+            )
         if channel is HandoffChannel.STUDY_SCOPE:
             if not isinstance(value, StudyScopeContext):
                 raise TypeError("Study scope must be a StudyScopeContext")

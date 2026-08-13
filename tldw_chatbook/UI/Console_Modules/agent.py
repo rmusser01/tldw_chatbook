@@ -516,6 +516,17 @@ class ConsoleAgentController:
             native_tools_enabled=self._console_native_tool_calls_enabled,
             change_tracker=change_tracker if change_tracker.available else None,
         )
+        # PR3a-2 Task 4: the survivor-completion attention consumer (durable
+        # unseen mark + app-wide toast + deep link), registered NEXT TO
+        # bridge construction per `FleetDrainFanout.register`'s contract.
+        # Captures the APP object only -- never this screen -- because the
+        # bridge (and its registered consumers) outlives the screen whenever
+        # a survivor is still running at teardown.
+        from tldw_chatbook.Chat.console_fleet_attention import (
+            register_fleet_attention,
+        )
+
+        register_fleet_attention(self._console_agent_bridge, self.app_instance)
         return self._console_agent_bridge
 
     def _console_agent_section_lines(self) -> tuple[str, str, str]:

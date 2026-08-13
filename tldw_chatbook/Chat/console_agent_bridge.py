@@ -1066,12 +1066,18 @@ class SettledChild:
             child.
         assistant_message_id: That turn's assistant message -- the row a
             usage re-attach consumer recomputes spend onto.
+        settled_after_turn: Whether this child settled AFTER its spawning
+            turn's ``run_reply`` had already returned (PR3a-2 Task 4's
+            survivor discriminator -- see ``_inflight_turn_message_ids``).
+            ``False`` for a child that finished inside its own turn, whose
+            outcome the turn's own end-of-run notify already covers.
     """
 
     run_id: str | None
     status: str
     session_id: str
     assistant_message_id: str
+    settled_after_turn: bool = False
 
 
 @dataclass(frozen=True)
@@ -2405,6 +2411,21 @@ class ConsoleAgentBridge:
         # IDENTITY into the settle hook it hands `AgentService`, but
         # never touches this registry.
         self._fleet_drain_fanout = FleetDrainFanout()
+        # PR3a-2 Task 4: the survivor discriminator. Assistant message ids
+        # of turns whose `run_reply` is CURRENTLY executing -- added when
+        # the turn publishes its fleet service, discarded first thing in
+        # the same `finally` that tears that service down. A child whose
+        # settle hook fires while its own turn's id is still in this set
+        # finished INSIDE its turn (its outcome is the turn's news, already
+        # covered by the per-turn notify); one whose id is absent settled
+        # AFTER its turn returned -- a background completion the user has
+        # not seen (`SettledChild.settled_after_turn`). Known edge, stated:
+        # a child `_settle_fleet` ABANDONS on a cancelled turn (wedged in a
+        # provider call past the join timeout) unwinds after the turn
+        # returns and therefore classifies after-turn; its late `cancelled`
+        # settle is reported honestly rather than suppressed. Guarded by
+        # `_change_window_lock` like the counters above.
+        self._inflight_turn_message_ids: set[str] = set()
         # Guards all of the above together -- their invariant is a pair
         # ("a window is open only while a child is live"; "a drain fires
         # only when the settle count a scope-enter opened has unwound"),
@@ -3171,6 +3192,12 @@ class ConsoleAgentBridge:
         # `self._fleet_services`'s own docstring in `__init__` for the
         # lifetime/thread-safety contract this relies on.
         self._fleet_services[conversation_id] = service
+        # PR3a-2 Task 4: open the survivor-discriminator window for THIS
+        # turn -- a child settling while this id is present finished
+        # within its turn (see `_inflight_turn_message_ids`); the matching
+        # discard is the FIRST statement of the `finally` below.
+        with self._change_window_lock:
+            self._inflight_turn_message_ids.add(assistant_message_id)
 
         supersede_run_id = (
             self._previous_primary_run_id(conversation_id)
@@ -3244,6 +3271,12 @@ class ConsoleAgentBridge:
                 supersede_run_id=supersede_run_id,
             )
         finally:
+            # PR3a-2 Task 4: this turn is over -- from here on a settling
+            # child of it is a background (after-turn) completion. First
+            # statement of the finally so the window closes even when
+            # `run_turn` raised, before any teardown below can block.
+            with self._change_window_lock:
+                self._inflight_turn_message_ids.discard(assistant_message_id)
             # PR2b Task 1: clear the published service in the SAME
             # teardown path that already tears this run down -- not a
             # second one. From this point `fleet_snapshot` reverts to `[]`
@@ -3580,13 +3613,21 @@ class ConsoleAgentBridge:
             run_id: The child's run row id, ``None`` if it never got one.
             status: The child's terminal status.
         """
-        record = SettledChild(
-            run_id=run_id,
-            status=status,
-            session_id=session_id,
-            assistant_message_id=assistant_message_id,
-        )
         with self._change_window_lock:
+            # PR3a-2 Task 4: classify AT SETTLE TIME, per child, under the
+            # same lock the window open/close uses -- a drain can carry a
+            # within-turn child (settled while its turn still ran) next to
+            # a survivor from an earlier turn, and only the record made
+            # HERE knows which was which by fire time.
+            record = SettledChild(
+                run_id=run_id,
+                status=status,
+                session_id=session_id,
+                assistant_message_id=assistant_message_id,
+                settled_after_turn=(
+                    assistant_message_id not in self._inflight_turn_message_ids
+                ),
+            )
             self._settling_children.setdefault(conversation_id, []).append(record)
             remaining = self._unsettled_child_counts.get(conversation_id, 1) - 1
             if remaining > 0:

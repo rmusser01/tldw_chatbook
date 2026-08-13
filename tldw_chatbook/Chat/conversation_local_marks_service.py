@@ -32,7 +32,16 @@ class ConversationLocalMarksService:
     """
 
     STARRED = "starred"
-    _ALLOWED_MARK_TYPES = frozenset({STARRED})
+    #: PR3a-2 Task 4: a background sub-agent completion the user has not
+    #: seen yet. Set by the fleet drain consumer when a SURVIVOR settles
+    #: (a child that outlived its spawning turn -- never one that finished
+    #: inside it); cleared when the user views that conversation in
+    #: Console, or when auto-wake delivers the result (Task 5). Local-only
+    #: by design, like every mark here -- never serialized into sync
+    #: payloads -- but durable across restarts, which is the whole point:
+    #: the completion badge must survive the app that showed the toast.
+    FLEET_UNSEEN = "fleet_unseen"
+    _ALLOWED_MARK_TYPES = frozenset({STARRED, FLEET_UNSEEN})
 
     def __init__(self, db: Any):
         """Initialize the service.
