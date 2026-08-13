@@ -168,7 +168,9 @@ def test_scope_rewrite_reproduces_textuals_comma_quirk():
     assert ".leaked" in own and "MyWidget" not in own
     assert "MyWidget .scoped" in scoped
 
-    own, scoped = widget_css.split_scoped_css(css, "MyWidget", scope_every_selector=True)
+    own, scoped = widget_css.split_scoped_css(
+        css, "MyWidget", scope_every_selector=True
+    )
     assert own.strip() == "", "nothing should stay unscoped when scoping everything"
     assert "MyWidget .leaked" in scoped and "MyWidget .scoped" in scoped
 
@@ -271,7 +273,9 @@ def test_consolidated_classes_declare_no_textual_css_attribute():
         if class_name in consolidated
         and _declares(module, class_name, {"DEFAULT_CSS", "CSS"})
     ]
-    assert not offenders, f"consolidated classes still declaring Textual CSS: {offenders}"
+    assert not offenders, (
+        f"consolidated classes still declaring Textual CSS: {offenders}"
+    )
 
 
 def _declares(module: str, class_name: str, names: set[str]) -> bool:
@@ -281,9 +285,10 @@ def _declares(module: str, class_name: str, names: set[str]) -> bool:
         if not isinstance(node, ast.ClassDef) or node.name != class_name:
             continue
         for stmt in node.body:
-            if isinstance(stmt, ast.Assign) and {
-                t.id for t in stmt.targets if isinstance(t, ast.Name)
-            } & names:
+            if (
+                isinstance(stmt, ast.Assign)
+                and {t.id for t in stmt.targets if isinstance(t, ast.Name)} & names
+            ):
                 return True
     return False
 

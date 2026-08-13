@@ -226,10 +226,7 @@ def build_widget_defaults(css_dir: Path, self_file: Path, scoped_file: Path) -> 
     self_file.write_text(own, encoding="utf-8")
     scoped_file.write_text(scoped, encoding="utf-8")
     print(f"\n✅ Widget defaults build complete: {self_file}, {scoped_file}")
-    print(
-        f"📏 {len(blocks)} widget classes, "
-        f"{len(own):,} + {len(scoped):,} characters"
-    )
+    print(f"📏 {len(blocks)} widget classes, {len(own):,} + {len(scoped):,} characters")
 
 
 def widget_defaults_sources(
