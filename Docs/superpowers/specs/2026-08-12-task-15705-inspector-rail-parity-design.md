@@ -4,8 +4,10 @@
 
 Make the collapsed Console Inspector rail read as the right-side counterpart
 to the collapsed Context rail: the rail surface fills the workspace height and
-the Inspector label is centered vertically. Preserve the current width,
-tooltip, badge vocabulary, and open/collapse behavior.
+the compact visible label is centered vertically. The horizontal handle uses
+the shorter action label `Inspect` so it stays on one line. Preserve the
+current width, `Open Inspector rail` tooltip, canonical Inspector terminology,
+badge vocabulary, vertical-label mode, and open/collapse behavior.
 
 ## Current behavior and root cause
 
@@ -46,6 +48,21 @@ Use the opt-in vertical-label presentation developed for TASK-1335. This
 recovers horizontal space, but changes reading direction and is a different
 interaction/design decision from visual parity with the Context rail.
 
+### Follow-up copy refinement
+
+The initial `Inspector` button copy wraps inside the bordered nine-column
+content region. Three shorter labels were considered after reviewing the live
+render:
+
+- `Inspect` (selected) is a specific action, keeps the established Inspector
+  meaning, and fits the horizontal handle on one line.
+- `Details` fits but broadens the control beyond inspection.
+- `Info` is shortest but too vague for an action control.
+
+Only the horizontal button's visible copy changes. The canonical rail name,
+DOM ids, class names, tooltip, and opt-in vertically stacked presentation keep
+`Inspector`.
+
 ## Design
 
 The existing `ConsoleRailHandle` and `DestinationRailHandle` boundaries stay
@@ -63,8 +80,10 @@ normal solid frame instead of the quiet frame, matching the existing Context
 handle's frame.
 
 No ids, messages, state builders, persistence keys, rail widths, responsive
-thresholds, labels, tooltips, or badge abbreviations change. The open Inspector
-rail and Context rail are untouched.
+thresholds, tooltips, or badge abbreviations change. The only copy change is
+the horizontal right-handle display label from `Inspector` to `Inspect`. The
+open Inspector rail, vertically stacked label mode, and Context rail are
+untouched.
 
 The component stylesheet remains the source of truth. The generated modular
 stylesheet must be rebuilt with the repository CSS generator.
@@ -84,6 +103,9 @@ and prove:
   and right edges stay within the handle content bounds.
 - the button's left and right edges stay within `handle.content_region`,
   proving the new solid border does not cause horizontal overflow.
+- the horizontal right-handle button displays `Inspect` without a newline,
+  while its tooltip remains `Open Inspector rail` and vertical-label mode
+  continues to render the canonical Inspector name.
 
 Update the existing Console decomposition assertion from a quiet/no-border
 Inspector handle to a solid/all-edge frame. Add a non-Console right-handle

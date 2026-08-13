@@ -1,11 +1,11 @@
 ---
 id: TASK-15705
 title: Match collapsed Inspector rail to Context rail
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-13 06:07'
-updated_date: '2026-08-13 16:35'
+updated_date: '2026-08-13 17:26'
 labels: []
 dependencies: []
 ---
@@ -24,6 +24,7 @@ Make the collapsed Console Inspector rail visually match the established Context
 - [x] #4 Existing Inspector width, tooltip, badge abbreviation, open behavior, and compact-width access remain unchanged.
 - [x] #5 Component TCSS and the generated stylesheet remain in sync.
 - [x] #6 Focused Console rail and stylesheet integrity tests pass.
+- [ ] #7 The collapsed right-rail button displays “Inspect” on one line while retaining “Open Inspector rail” as its tooltip and preserving the vertical-label mode.
 <!-- AC:END -->
 
 ## Implementation Plan
