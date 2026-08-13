@@ -252,9 +252,15 @@ async def test_a_wake_defers_behind_a_pending_card_and_cannot_resolve_it(
             "the deferred wake never fired after the manual turn's "
             "terminal transition"
         )
-        assert controller.run_state_for(session.id).status is (
-            ConsoleRunStatus.COMPLETED
-        )
+        # Settled, not sampled: the reply CONTENT lands a beat before the
+        # wake turn's own terminal transition, so reading the run state at
+        # the content's first appearance races finalization (caught as an
+        # interference-only failure in the full battery).
+        assert await _settle(
+            lambda: controller.run_state_for(session.id).status
+            is ConsoleRunStatus.COMPLETED,
+            seconds=10.0,
+        ), "the wake turn must settle terminal like any turn"
     finally:
         chacha.close()
 
