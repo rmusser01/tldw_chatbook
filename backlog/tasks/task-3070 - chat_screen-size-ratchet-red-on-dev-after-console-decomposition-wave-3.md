@@ -1,8 +1,9 @@
 ---
 id: TASK-3070
 title: chat_screen size ratchet red on dev after console decomposition wave 3
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-07 18:20'
 updated_date: '2026-08-11 04:55'
 labels:
@@ -33,6 +34,20 @@ decomposition stream's owner explicitly decides the budget is wrong.
 - [ ] #1 The chat_screen size-ratchet test passes on dev
 - [ ] #2 The resolution shrinks the screen (or an explicit, documented owner decision adjusts the budget)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: N/A (governed by `Docs/superpowers/specs/2026-08-02-screen-decomposition-design.md` and `DESIGN.md` section 7)
+Reason: This is the next implementation wave of the existing, approved Console decomposition architecture; it does not introduce a new runtime, storage, security, or cross-module policy.
+
+1. Record the current post-rebase measurement and map the image/H3, video, conversation-browser, and retrieval/RAG ownership clusters method by method.
+2. Write and review a wave-6 design that preserves Textual entry points on `ChatScreen`, keeps DOM work in regions/screen handlers, and puts non-DOM state/behaviour in explicit controllers wired through `UI/Console_Modules/wiring.py`.
+3. Characterize each cluster through its real product boundary before moving code, then extract one controller at a time with exact dependency signatures and separate commits.
+4. Run the controller, UI, Chat, Video Generation, RAG, architecture, worker-group, and import/reference regression suites after each extraction; mutation-check the screen delegations and controller ownership seams.
+5. Rebase onto final `origin/dev`, measure again, lower the ratchet to the exact earned line/method counts, update the decomposition spec/task notes, and run repository-level verification before marking Done.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
