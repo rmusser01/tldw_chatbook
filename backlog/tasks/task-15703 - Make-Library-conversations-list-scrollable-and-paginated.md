@@ -74,7 +74,7 @@ Detailed plan: `Docs/superpowers/plans/2026-08-12-library-conversations-paginati
   newer compose-once Library behavior and omitting unrelated maintenance from the
   older local base. Hardened the feature's async UI assertions/polls to wait for
   mounted widgets instead of racing Textual recomposition.
-- Remote-base verification passed for Ruff, `git diff --check`, 30 focused
+- Remote-base verification passed for Ruff, `git diff --check`, 31 focused
   state/visibility tests, 22 focused conversation UI tests, and the destination
   conversation contract. The broader Library run completed with 1917 passed, 1
   skipped, and 2 unrelated failures; the broader Library shell run completed with
@@ -88,4 +88,10 @@ Detailed plan: `Docs/superpowers/plans/2026-08-12-library-conversations-paginati
   or Minor issues and marked the branch ready to merge. No generalized lesson
   entry was added because the only test trap encountered is already documented in
   `lessons-testing-evidence.md`.
+- Rebased PR #1601 onto `origin/dev` at `bed39af6b`. Review follow-up capped
+  selection carry-over at 20 rows, treats an omitted total as unknown instead of
+  rendering `of 0`, and added the required pager-handler parameter docs. Both
+  correctness findings were reproduced before their fixes; the two regressions,
+  31 state/visibility tests, 22 focused conversation UI tests, the destination
+  contract, Ruff, and `git diff --check` then passed.
 <!-- SECTION:NOTES:END -->

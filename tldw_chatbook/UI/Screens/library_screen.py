@@ -6597,7 +6597,9 @@ class LibraryScreen(BaseAppScreen):
             # Still present in the incoming snapshot -- no carry-over needed.
             return records
         merged = dict(records)
-        merged["conversations"] = (carried_record, *new_conversations)
+        merged["conversations"] = (carried_record, *new_conversations)[
+            :LIBRARY_CONVERSATION_PAGE_SIZE
+        ]
         return merged
 
     @staticmethod
@@ -26967,7 +26969,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-conversations-previous")
     def handle_library_conversations_previous(self, event: Button.Pressed) -> None:
-        """Load the preceding complete conversation page."""
+        """Load the preceding complete conversation page.
+
+        Args:
+            event: Button press emitted by the conversations pager.
+        """
         event.stop()
         if self._library_conversation_loading or self._library_conversation_page <= 1:
             return
@@ -26978,7 +26984,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-conversations-next")
     def handle_library_conversations_next(self, event: Button.Pressed) -> None:
-        """Load the following complete conversation page."""
+        """Load the following complete conversation page.
+
+        Args:
+            event: Button press emitted by the conversations pager.
+        """
         event.stop()
         if (
             self._library_conversation_loading

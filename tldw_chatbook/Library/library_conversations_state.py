@@ -166,10 +166,11 @@ def build_library_conversations_state(
     normalized_query = str(query or "").strip()
     resolved_page_size = max(1, int(page_size))
     requested_page = max(1, int(page))
+    resolved_total_known = total_known and total_count is not None
     known_total = max(0, int(total_count or 0))
     page_count = max(1, (known_total + resolved_page_size - 1) // resolved_page_size)
     resolved_page = (
-        min(requested_page, page_count) if total_known else requested_page
+        min(requested_page, page_count) if resolved_total_known else requested_page
     )
 
     entries: list[_ConversationEntry] = []
@@ -218,7 +219,7 @@ def build_library_conversations_state(
     elif loading:
         status_copy = "Loading conversations…"
     elif normalized_query:
-        match_count = known_total if total_known else len(entries)
+        match_count = known_total if resolved_total_known else len(entries)
         suffix = "match" if match_count == 1 else "matches"
         status_copy = f"{match_count} {suffix} for '{normalized_query}'"
     else:
@@ -233,7 +234,7 @@ def build_library_conversations_state(
 
     start = (resolved_page - 1) * resolved_page_size + 1 if entries else 0
     end = (resolved_page - 1) * resolved_page_size + len(entries) if entries else 0
-    if total_known:
+    if resolved_total_known:
         range_copy = f"{start}-{end} of {known_total}" if entries else f"0 of {known_total}"
         page_copy = f"Page {resolved_page} of {page_count}"
     else:

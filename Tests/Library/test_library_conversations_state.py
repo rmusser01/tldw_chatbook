@@ -75,6 +75,17 @@ def test_rows_are_sorted_by_recency_with_age_labels_and_missing_last():
         assert isinstance(row, LibraryConversationRow)
 
 
+def test_omitted_total_uses_unknown_total_copy_for_nonempty_rows():
+    state = build_library_conversations_state(
+        [{"id": "conv-1", "title": "One"}],
+        now=NOW,
+    )
+
+    assert state.range_copy == "1-1"
+    assert state.page_copy == "Page 1"
+    assert "of 0" not in state.range_copy
+
+
 def test_query_uses_supplied_matching_page_with_status_copy_singular_and_plural():
     records = [
         {"id": "1", "title": "Alpha Chat", "updated_at": "2026-07-05T11:00:00+00:00"},

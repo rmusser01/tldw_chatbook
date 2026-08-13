@@ -7441,6 +7441,26 @@ async def test_library_shell_restore_state_seeds_local_source_snapshot_from_cach
     assert conversation_ids == ["chat-1", "chat-2"]
 
 
+def test_library_snapshot_carry_preserves_selection_without_exceeding_page_size():
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    selected = {
+        "conversation_id": "chat-selected",
+        "title": "Selected conversation",
+    }
+    incoming = tuple(_conversation_records(20))
+    screen._selected_conversation_id = "chat-selected"
+    screen._local_source_records = {"conversations": (selected,)}
+
+    merged = screen._carry_selected_conversation_into_snapshot(
+        {"conversations": incoming}
+    )
+
+    assert len(merged["conversations"]) == 20
+    assert merged["conversations"][0] is selected
+    assert merged["conversations"][1:] == incoming[:19]
+
+
 class _FlappingStudyScopeService:
     """Study-scope fake whose ``count_decks`` raises on exactly one call.
 
