@@ -414,6 +414,7 @@ class STTSSettingsSaveEvent(Message):
         delete_setting_keys: tuple[str, ...] | list[str] = (),
         request_id: int | None = None,
         reply_to: object | None = None,
+        commit_defaults_after_handoff: bool = False,
     ) -> None:
         super().__init__()
         if request_id is not None:
@@ -421,6 +422,10 @@ class STTSSettingsSaveEvent(Message):
                 raise TypeError("TTS settings request ID must be an integer")
             if request_id < 0:
                 raise ValueError("TTS settings request ID must be nonnegative")
+        if type(commit_defaults_after_handoff) is not bool:
+            raise TypeError("TTS default activation intent must be boolean")
+        if commit_defaults_after_handoff and preferences is None:
+            raise ValueError("TTS default activation requires preferences")
         copied_deletes = tuple(delete_setting_keys)
         if not all(isinstance(key, str) and key for key in copied_deletes):
             raise ValueError("TTS setting delete keys must be non-empty strings")
@@ -431,6 +436,7 @@ class STTSSettingsSaveEvent(Message):
         self.delete_setting_keys = copied_deletes
         self.request_id = request_id
         self.reply_to = reply_to
+        self.commit_defaults_after_handoff = commit_defaults_after_handoff
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,12 +450,18 @@ class STTSSettingsSaveResult:
     provider_configuration_revisions: Mapping[str, int] = field(default_factory=dict)
     provider_runtime_revisions: Mapping[str, int] = field(default_factory=dict)
     staged_provider_ids: frozenset[str] = frozenset()
+    defaults_activated: bool | None = None
 
     def __post_init__(self) -> None:
         if type(self.request_id) is not int or self.request_id < 0:
             raise ValueError("TTS settings result request ID is invalid")
         if type(self.persisted) is not bool:
             raise TypeError("TTS settings persistence result must be boolean")
+        if (
+            self.defaults_activated is not None
+            and type(self.defaults_activated) is not bool
+        ):
+            raise TypeError("TTS default activation result must be boolean")
         allowed_statuses = frozenset(
             {"applied", "unchanged", "pending", "superseded", "unavailable"}
         )
@@ -712,9 +724,7 @@ class STTSEventHandler:
                 ),
                 channels=channels if type(channels) is int else None,
                 sample_width_bytes=(
-                    sample_width_bytes
-                    if type(sample_width_bytes) is int
-                    else None
+                    sample_width_bytes if type(sample_width_bytes) is int else None
                 ),
             )
         except Exception:  # noqa: BLE001 - evidence must not fail delivered audio
@@ -1797,10 +1807,11 @@ class STTSEventHandler:
             )
             if not isinstance(preferences, TTSPreferencesSnapshot):
                 raise TypeError("Invalid TTS preferences proposal")
-            preference_mutation = preferences.config_mutation()
-            _merge_section_mutations(section_values, preference_mutation.sets)
-            for section, keys in preference_mutation.deletes.items():
-                proposed_deletes.setdefault(section, set()).update(keys)
+            if not event.commit_defaults_after_handoff:
+                preference_mutation = preferences.config_mutation()
+                _merge_section_mutations(section_values, preference_mutation.sets)
+                for section, keys in preference_mutation.deletes.items():
+                    proposed_deletes.setdefault(section, set()).update(keys)
             delete_keys = {
                 section: tuple(sorted(keys))
                 for section, keys in proposed_deletes.items()
@@ -1853,12 +1864,26 @@ class STTSEventHandler:
                     failure_phase=result.failure_phase,
                 )
 
-            ticket = service.begin_preferences_publication(
-                preferences,
-                provider_configs,
-                persist,
-            )
+            if event.commit_defaults_after_handoff:
+                ticket = service.begin_preferences_publication(
+                    preferences,
+                    provider_configs,
+                    persist,
+                    publish_preferences=False,
+                )
+            else:
+                ticket = service.begin_preferences_publication(
+                    preferences,
+                    provider_configs,
+                    persist,
+                )
             publication = await asyncio.shield(ticket.foreground)
+            defaults_activated: bool | None = None
+            if event.commit_defaults_after_handoff:
+                defaults_activated = await self.commit_voice_setup_default(
+                    preferences,
+                    expected_saved_revision=publication.generation,
+                )
             if publication.persistence.caches_reloaded and self.app is not None:
                 refreshed_settings = getattr(config_module, "settings", None)
                 if isinstance(refreshed_settings, Mapping):
@@ -1889,7 +1914,10 @@ class STTSEventHandler:
                 for provider_id, status in publication.provider_statuses.items()
             ):
                 self._observe_pending_settings_publication(service, ticket, event)
-            self._notify_settings_publication(publication)
+            self._notify_settings_publication(
+                publication,
+                defaults_activated=defaults_activated,
+            )
             self._reply_settings_save(
                 event,
                 persisted=publication.persistence.file_replaced,
@@ -1901,6 +1929,7 @@ class STTSEventHandler:
                 },
                 provider_runtime_revisions=publication.provider_revisions,
                 staged_provider_ids=publication.staged_provider_ids,
+                defaults_activated=defaults_activated,
             )
         except asyncio.CancelledError:
             raise
@@ -1925,6 +1954,7 @@ class STTSEventHandler:
         provider_configuration_revisions: Mapping[str, int] = MappingProxyType({}),
         provider_runtime_revisions: Mapping[str, int] = MappingProxyType({}),
         staged_provider_ids: frozenset[str] = frozenset(),
+        defaults_activated: bool | None = None,
     ) -> None:
         """Deliver a bounded result to an optional mounted requester."""
         if event.request_id is None or event.reply_to is None:
@@ -1946,10 +1976,94 @@ class STTSEventHandler:
                     provider_configuration_revisions=(provider_configuration_revisions),
                     provider_runtime_revisions=provider_runtime_revisions,
                     staged_provider_ids=staged_provider_ids,
+                    defaults_activated=defaults_activated,
                 )
             )
         except Exception:
             logger.debug("TTS settings requester result delivery failed")
+
+    async def commit_voice_setup_default(
+        self,
+        preferences: TTSPreferencesSnapshot,
+        *,
+        expected_saved_revision: int,
+    ) -> bool:
+        """Persist and activate only default axes for one active provider generation."""
+
+        service = self._stts_service
+        if service is None or not callable(
+            getattr(service, "_commit_voice_setup_default", None)
+        ):
+            return False
+        mutation = preferences.config_mutation()
+        from tldw_chatbook import config as config_module
+
+        current_settings = getattr(config_module, "settings", {})
+        try:
+            persisted_preferences = TTSPreferencesSnapshot.from_settings(
+                current_settings if isinstance(current_settings, Mapping) else {}
+            )
+        except (TypeError, ValueError):
+            persisted_preferences = None
+        frozen_sets = {
+            section: deepcopy(dict(values)) for section, values in mutation.sets.items()
+        }
+        frozen_deletes = {
+            section: tuple(keys) for section, keys in mutation.deletes.items()
+        }
+
+        def persist_defaults() -> TTSSettingsPersistenceOutcome:
+            result = config_module.apply_settings_mutation_to_cli_config(
+                frozen_sets,
+                delete_keys=frozen_deletes,
+            )
+            return TTSSettingsPersistenceOutcome(
+                file_replaced=result.file_replaced,
+                caches_reloaded=result.caches_reloaded,
+                failure_phase=result.failure_phase,
+            )
+
+        def rollback_defaults(
+            prior_preferences: TTSPreferencesSnapshot | None,
+        ) -> TTSSettingsPersistenceOutcome:
+            rollback_preferences = prior_preferences or persisted_preferences
+            if rollback_preferences is None:
+                return TTSSettingsPersistenceOutcome(
+                    file_replaced=False,
+                    caches_reloaded=False,
+                    failure_phase="before_replace",
+                )
+            prior_mutation = rollback_preferences.config_mutation()
+            prior_sets = {
+                section: deepcopy(dict(values))
+                for section, values in prior_mutation.sets.items()
+            }
+            prior_deletes = {
+                section: tuple(keys) for section, keys in prior_mutation.deletes.items()
+            }
+            result = config_module.apply_settings_mutation_to_cli_config(
+                prior_sets,
+                delete_keys=prior_deletes,
+            )
+            return TTSSettingsPersistenceOutcome(
+                file_replaced=result.file_replaced,
+                caches_reloaded=result.caches_reloaded,
+                failure_phase=result.failure_phase,
+            )
+
+        changed = await service._commit_voice_setup_default(
+            preferences,
+            expected_saved_revision=expected_saved_revision,
+            persistence=persist_defaults,
+            rollback=rollback_defaults,
+        )
+        if changed and self.app is not None:
+            from tldw_chatbook import config as config_module
+
+            refreshed_settings = getattr(config_module, "settings", None)
+            if isinstance(refreshed_settings, Mapping):
+                self.app.app_config = deepcopy(dict(refreshed_settings))
+        return bool(changed)
 
     def _post_applied_settings_changes(
         self,
@@ -2042,6 +2156,8 @@ class STTSEventHandler:
     def _notify_settings_publication(
         self,
         publication: TTSSettingsPublication,
+        *,
+        defaults_activated: bool | None = None,
     ) -> None:
         """Render bounded, value-independent settings publication copy."""
         persistence = publication.persistence
@@ -2051,6 +2167,12 @@ class STTSEventHandler:
                 self.app.notify("Failed to save settings", severity="error")
             else:
                 self.app.notify("Settings unchanged", severity="information")
+            return
+        if defaults_activated is False:
+            self.app.notify(
+                "Saved, activation failed. Previous TTS defaults remain active; retry.",
+                severity="error",
+            )
             return
         if "unavailable" in statuses.values():
             self.app.notify(

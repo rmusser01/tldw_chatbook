@@ -639,6 +639,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_defaults = None
         self._pending_saved_provider_id: str | None = None
         self._pending_saved_provider_values: dict[str, object] | None = None
+        self._pending_commit_defaults_after_handoff = False
         self._pending_saved_openai_confirmation: OpenAIPlaintextConfirmation | None = (
             None
         )
@@ -3171,6 +3172,11 @@ class SpeechTTSSettingsPanel(Vertical):
             if provider_configuration_changed
             else None
         )
+        self._pending_commit_defaults_after_handoff = bool(
+            defaults_changed
+            and provider_configuration_changed
+            and proposal.preferences.provider_id == self.configure_provider
+        )
         self._pending_saved_openai_confirmation = (
             deepcopy(self.state.openai_plaintext_confirmation)
             if self.configure_provider == "openai"
@@ -3220,6 +3226,9 @@ class SpeechTTSSettingsPanel(Vertical):
                 preferences=proposal.preferences,
                 request_id=request_id,
                 reply_to=self,
+                commit_defaults_after_handoff=(
+                    self._pending_commit_defaults_after_handoff
+                ),
             )
         )
 
@@ -3280,6 +3289,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_defaults = None
         self._pending_saved_provider_id = None
         self._pending_saved_provider_values = None
+        self._pending_commit_defaults_after_handoff = False
         self._pending_saved_openai_confirmation = None
         self._pending_saved_openai_confirmation_cleanup_needed = None
         self._set_save_pending(False)
@@ -3471,6 +3481,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_defaults = None
         self._pending_saved_provider_id = None
         self._pending_saved_provider_values = None
+        self._pending_commit_defaults_after_handoff = False
         self._pending_saved_openai_confirmation = None
         self._pending_saved_openai_confirmation_cleanup_needed = None
         settings = {} if mutation.delete else {mutation.setting_key: mutation.value}
@@ -3592,6 +3603,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_defaults = None
         self._pending_saved_provider_id = None
         self._pending_saved_provider_values = None
+        self._pending_commit_defaults_after_handoff = False
         self._pending_saved_openai_confirmation = None
         self._pending_saved_openai_confirmation_cleanup_needed = None
         if not result.persisted:
@@ -3642,13 +3654,17 @@ class SpeechTTSSettingsPanel(Vertical):
                     provider_source
                 )
         else:
-            if saved_defaults is not None:
+            if saved_defaults is not None and result.defaults_activated is not False:
                 self.original_state.defaults = saved_defaults
                 self.state.defaults_source = GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
                 self.original_state.defaults_source = (
                     GlobalSpeechTTSEffectiveSource.SAVED_LOCAL
                 )
-            if saved_provider_id is not None and saved_provider_values is not None:
+            if (
+                saved_provider_id is not None
+                and saved_provider_values is not None
+                and result.defaults_activated is not False
+            ):
                 self.original_state.providers[saved_provider_id] = saved_provider_values
                 if (
                     self.state.provider_sources[saved_provider_id]
@@ -3693,7 +3709,12 @@ class SpeechTTSSettingsPanel(Vertical):
             )
         else:
             handoff = "no provider adapter recreation needed"
-        if cache_reload_failed:
+        if result.defaults_activated is False:
+            result_copy = (
+                "Saved, activation failed. The previous default remains active; "
+                "retry after the provider is available."
+            )
+        elif cache_reload_failed:
             result_copy = (
                 "Saved locally, but the runtime configuration cache reload failed; "
                 f"restart or retry. Provider handoff: {handoff}."
@@ -3742,7 +3763,8 @@ class SpeechTTSSettingsPanel(Vertical):
             result_copy,
             severity=(
                 "warning"
-                if cache_reload_failed
+                if result.defaults_activated is False
+                or cache_reload_failed
                 or "unavailable" in result.provider_statuses.values()
                 else "information"
             ),

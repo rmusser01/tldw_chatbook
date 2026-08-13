@@ -22,6 +22,7 @@ from tldw_chatbook.TTS.effective_settings import (
     TTSSelectionOverrides,
     TTSSelectionSource,
     TTSStudioDraftSelection,
+    tts_configuration_is_active,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.studio_preferences import (
@@ -182,6 +183,70 @@ class _ResolutionRuntime:
         if self.capability is None:
             raise AssertionError("native capability evidence was not configured")
         return self.capability
+
+
+def test_provider_revision_accessors_keep_publication_and_runtime_ids_distinct() -> (
+    None
+):
+    revisions = TTSEffectiveSelectionRevisions(
+        global_preferences=8,
+        studio_preferences=None,
+        character_repository=None,
+        character_profile=None,
+        default_profile_repository=None,
+        default_profile_revision=None,
+        provider_configuration=41,
+        provider_catalog=None,
+        provider_saved=7,
+        provider_applied=7,
+    )
+
+    assert revisions.provider_saved == 7
+    assert revisions.provider_applied == 7
+    assert revisions.provider_active == 41
+    assert revisions.provider_configuration == 41
+
+
+class _ActiveConfigurationService:
+    def __init__(self, *, saved: int, applied: int, active: int) -> None:
+        self.saved = saved
+        self.applied = applied
+        self.active = active
+
+    def saved_configuration_revision(self, provider_id: str) -> int:
+        assert provider_id == "openai"
+        return self.saved
+
+    def applied_configuration_revision(self, provider_id: str) -> int:
+        assert provider_id == "openai"
+        return self.applied
+
+    def configuration_revision(self, provider_id: str) -> int:
+        assert provider_id == "openai"
+        return self.active
+
+
+def test_active_configuration_compares_publication_generations_not_runtime_revision() -> (
+    None
+):
+    service = _ActiveConfigurationService(saved=7, applied=7, active=41)
+
+    assert tts_configuration_is_active(service, "openai", 7) is True
+
+    service.applied = 6
+    assert tts_configuration_is_active(service, "openai", 7) is False
+
+
+def test_active_configuration_rejects_missing_active_runtime_identity() -> None:
+    service = _ActiveConfigurationService(saved=7, applied=7, active=-1)
+
+    assert tts_configuration_is_active(service, "openai", 7) is False
+
+
+def test_active_configuration_rejects_unsaved_bootstrap_generation() -> None:
+    service = _ActiveConfigurationService(saved=0, applied=0, active=1)
+
+    assert tts_configuration_is_active(service, "openai", 0) is False
 
 
 @pytest.mark.asyncio

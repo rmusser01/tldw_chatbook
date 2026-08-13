@@ -55,6 +55,7 @@ def test_settings_save_result_is_safe_immutable_and_separates_persistence() -> N
         failure_phase=None,
         provider_configuration_revisions={"openai": 4},
         provider_runtime_revisions={"openai": 9},
+        defaults_activated=False,
     )
 
     assert result.persisted is True
@@ -62,12 +63,31 @@ def test_settings_save_result_is_safe_immutable_and_separates_persistence() -> N
     assert result.provider_configuration_revisions == {"openai": 4}
     assert result.provider_runtime_revisions == {"openai": 9}
     assert result.failure_phase is None
+    assert result.defaults_activated is False
     with pytest.raises(TypeError):
         result.provider_statuses["openai"] = "applied"  # type: ignore[index]
     with pytest.raises(TypeError):
         result.provider_configuration_revisions["openai"] = 5  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
         result.persisted = False  # type: ignore[misc]
+
+
+def test_voice_setup_save_intent_is_explicit_and_bounded() -> None:
+    preferences = load_global_speech_tts_state({}).defaults.snapshot()
+
+    event = STTSSettingsSaveEvent(
+        {"OPENAI_BASE_URL": "http://127.0.0.1:8765"},
+        preferences=preferences,
+        commit_defaults_after_handoff=True,
+    )
+
+    assert event.commit_defaults_after_handoff is True
+
+    with pytest.raises(TypeError):
+        STTSSettingsSaveEvent(
+            {},
+            commit_defaults_after_handoff=1,  # type: ignore[arg-type]
+        )
 
 
 def test_every_global_provider_mutation_targets_exactly_its_adapter() -> None:

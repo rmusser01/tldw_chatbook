@@ -38,6 +38,7 @@ from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
     ProviderHealth,
     TTSAudioResponse,
+    TTSCloneGenerationEvidence,
     TTSNativeCapabilityObservation,
     TTSNativeCapabilitySnapshot,
     TTSNativeCloneAdapter,
@@ -54,7 +55,6 @@ from tldw_chatbook.TTS.adapter_types import (
     _new_admitted_audio_cpp_clone_request,
     _new_tts_clone_generation_evidence,
 )
-from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.audio_cpp_guided_config import AudioCppSettingsConfig
 from tldw_chatbook.TTS.audio_cpp_recipes import (
@@ -68,13 +68,7 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppTTSCapability,
     _AudioCppGenerationChanged,
 )
-from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
-from tldw_chatbook.TTS.playground_types import (
-    STTSPlaygroundCloneSnapshot,
-    STTSPlaygroundProfilePreview,
-    TTSRequestedSelectionSnapshot,
-)
-from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.effective_settings import (
     NativeCapabilityReader,
     TTSCharacterProfileSelection,
@@ -82,7 +76,15 @@ from tldw_chatbook.TTS.effective_settings import (
     TTSEffectiveSelectionSnapshot,
     TTSSelectionOverrides,
     TTSStudioDraftSelection,
+    tts_configuration_is_active,
 )
+from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
+from tldw_chatbook.TTS.playground_types import (
+    STTSPlaygroundCloneSnapshot,
+    STTSPlaygroundProfilePreview,
+    TTSRequestedSelectionSnapshot,
+)
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.profile_reference_materialization import (
     TTSCloneMaterializationError,
     TTSCloneReferenceMaterialization,
@@ -94,8 +96,8 @@ from tldw_chatbook.TTS.profile_reference_types import (
     TTSCloneRecipeRequirement,
 )
 from tldw_chatbook.TTS.request_admission import (
-    TTSRequestAdmissionCoordinator,
     TTSProfileReferenceResolver,
+    TTSRequestAdmissionCoordinator,
     _ResolvedTTSCloneExecutionAuthority,
 )
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
@@ -2908,6 +2910,7 @@ class TTSService:
         persistence: Callable[[], TTSSettingsPersistenceOutcome],
         *,
         foreground_timeout_seconds: float = (_TTS_SETTINGS_FOREGROUND_TIMEOUT_SECONDS),
+        publish_preferences: bool = True,
     ) -> TTSSettingsPublicationTicket:
         """Start one retained settings persistence and runtime publication.
 
@@ -2936,6 +2939,8 @@ class TTSService:
             raise TypeError("provider_configs must be a mapping")
         if not callable(persistence):
             raise TypeError("persistence must be callable")
+        if type(publish_preferences) is not bool:
+            raise TypeError("publish_preferences must be a boolean")
         if (
             isinstance(foreground_timeout_seconds, bool)
             or not isinstance(foreground_timeout_seconds, (int, float))
@@ -2974,6 +2979,7 @@ class TTSService:
                 persistence=persistence,
                 foreground_timeout_seconds=float(foreground_timeout_seconds),
                 foreground=foreground,
+                publish_preferences=publish_preferences,
             ),
             name=f"tts_settings_publication_{generation}",
         )
@@ -2995,6 +3001,7 @@ class TTSService:
         persistence: Callable[[], TTSSettingsPersistenceOutcome],
         foreground_timeout_seconds: float,
         foreground: asyncio.Future[TTSSettingsPublication],
+        publish_preferences: bool,
     ) -> TTSSettingsPublication:
         tickets: dict[str, TTSReconfigurationTicket] = {}
         provider_statuses: dict[str, TTSSettingsProviderStatus] = {}
@@ -3077,7 +3084,6 @@ class TTSService:
                         break
 
                 if transition_failed:
-                    await self._seal_provider_configs(provider_configs)
                     provider_statuses.update(
                         {provider_id: "unavailable" for provider_id in provider_configs}
                     )
@@ -3090,10 +3096,16 @@ class TTSService:
                         )
                     )
 
-                self._request_admission._publish_preferences(
+                if publish_preferences and self._preferences_can_activate(
                     preferences,
                     generation,
-                )
+                    provider_configs,
+                    provider_statuses,
+                ):
+                    self._request_admission._publish_preferences(
+                        preferences,
+                        generation,
+                    )
                 provider_revisions.update(
                     self._safe_provider_revisions(provider_configs)
                 )
@@ -3120,6 +3132,18 @@ class TTSService:
                 await asyncio.shield(ticket.completion)
             except BaseException:
                 pass
+        if publish_preferences:
+            async with self._request_admission._gate.write():
+                if self._preferences_can_activate(
+                    preferences,
+                    generation,
+                    provider_configs,
+                    final_statuses,
+                ):
+                    self._request_admission._publish_preferences(
+                        preferences,
+                        generation,
+                    )
         final_revisions = self._safe_provider_revisions(provider_configs)
         return self._settings_publication_result(
             generation=generation,
@@ -3130,6 +3154,137 @@ class TTSService:
             published=True,
             staged_provider_ids=staged_provider_ids,
         )
+
+    def _preferences_can_activate(
+        self,
+        preferences: TTSPreferencesSnapshot,
+        generation: int,
+        provider_configs: Mapping[str, Mapping[str, Any]],
+        provider_statuses: Mapping[str, TTSSettingsProviderStatus],
+    ) -> bool:
+        """Fence one default snapshot against its provider handoff."""
+
+        provider_id = preferences.provider_id
+        if provider_id not in provider_configs:
+            return True
+        if provider_statuses.get(provider_id) not in {"applied", "unchanged"}:
+            return False
+        return tts_configuration_is_active(self, provider_id, generation)
+
+    async def commit_voice_setup_default(
+        self,
+        preferences: TTSPreferencesSnapshot,
+        *,
+        expected_saved_revision: int,
+    ) -> bool:
+        """Publish one default only while its exact provider generation is active."""
+
+        return await self._commit_voice_setup_default(
+            preferences,
+            expected_saved_revision=expected_saved_revision,
+        )
+
+    async def _commit_voice_setup_default(
+        self,
+        preferences: TTSPreferencesSnapshot,
+        *,
+        expected_saved_revision: int,
+        persistence: Callable[[], TTSSettingsPersistenceOutcome] | None = None,
+        rollback: (
+            Callable[
+                [TTSPreferencesSnapshot | None],
+                TTSSettingsPersistenceOutcome,
+            ]
+            | None
+        ) = None,
+    ) -> bool:
+        """Fence optional defaults persistence and active-snapshot publication."""
+
+        if not isinstance(preferences, TTSPreferencesSnapshot):
+            raise TypeError("preferences must be a TTSPreferencesSnapshot")
+        if type(expected_saved_revision) is not int or expected_saved_revision < 0:
+            raise ValueError("expected_saved_revision must be nonnegative")
+        if persistence is not None and not callable(persistence):
+            raise TypeError("persistence must be callable")
+        if rollback is not None and not callable(rollback):
+            raise TypeError("rollback must be callable")
+
+        async def compensate(prior: TTSPreferencesSnapshot | None) -> bool:
+            if rollback is None:
+                logger.error(
+                    "TTS default activation failed after persistence without rollback"
+                )
+                return False
+            try:
+                outcome = await asyncio.to_thread(rollback, prior)
+            except BaseException as error:
+                logger.error(
+                    "TTS default rollback raised %s",
+                    type(error).__name__,
+                )
+                return False
+            restored = bool(
+                isinstance(outcome, TTSSettingsPersistenceOutcome)
+                and outcome.file_replaced
+                and outcome.caches_reloaded
+            )
+            if not restored:
+                logger.error("TTS default rollback did not restore persisted settings")
+            return restored
+
+        async with self._request_admission._publication_lock:
+            async with self._request_admission._gate.write():
+                prior_preferences = self.preferences_snapshot()
+                prior_generation = self.preferences_generation()
+                if self.preferences_generation() > expected_saved_revision:
+                    return False
+                if not tts_configuration_is_active(
+                    self,
+                    preferences.provider_id,
+                    expected_saved_revision,
+                ):
+                    return False
+                if persistence is not None:
+                    try:
+                        outcome = await asyncio.to_thread(persistence)
+                    except BaseException:
+                        return False
+                    if not isinstance(outcome, TTSSettingsPersistenceOutcome):
+                        return False
+                    if not outcome.file_replaced:
+                        return False
+                    if not outcome.caches_reloaded:
+                        await compensate(prior_preferences)
+                        return False
+                    if not tts_configuration_is_active(
+                        self,
+                        preferences.provider_id,
+                        expected_saved_revision,
+                    ):
+                        await compensate(prior_preferences)
+                        return False
+                try:
+                    self._request_admission._publish_preferences(
+                        preferences,
+                        expected_saved_revision,
+                    )
+                except BaseException:
+                    if persistence is not None:
+                        await compensate(prior_preferences)
+                    self._request_admission._preferences = prior_preferences
+                    self._request_admission._preferences_generation = prior_generation
+                    return False
+                activated = bool(
+                    self.preferences_generation() == expected_saved_revision
+                    and self.preferences_snapshot() == preferences
+                )
+                if activated:
+                    return True
+                if persistence is not None:
+                    await compensate(prior_preferences)
+                self._request_admission._preferences = prior_preferences
+                self._request_admission._preferences_generation = prior_generation
+                return False
 
     async def _stage_managed_boundary(
         self,
@@ -3196,7 +3351,6 @@ class TTSService:
         try:
             result = await asyncio.shield(ticket.completion)
         except BaseException:
-            await self._seal_provider_configs((provider_id,))
             return "unavailable"
         if result is ReconfigureResult.CHANGED:
             return "applied"
@@ -3207,18 +3361,7 @@ class TTSService:
             > ticket.generation
         ):
             return "superseded"
-        await self._seal_provider_configs((provider_id,))
         return "unavailable"
-
-    async def _seal_provider_configs(
-        self,
-        provider_configs: Mapping[str, object] | tuple[str, ...],
-    ) -> None:
-        for provider_id in reversed(tuple(provider_configs)):
-            try:
-                await self.registry.seal_provider_unavailable(provider_id)
-            except BaseException:
-                pass
 
     def _safe_provider_revisions(
         self,
