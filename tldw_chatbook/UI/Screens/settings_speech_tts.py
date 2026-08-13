@@ -43,14 +43,17 @@ from tldw_chatbook.TTS.openai_compatible_config import (
     openai_destination_fingerprint,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
-from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    ProviderTestFingerprint,
     SpeechTTSConfigurationState,
+    SpeechTTSConnectionState,
+    SpeechTTSTestOperation,
 )
 from tldw_chatbook.Utils.input_validation import (
     provider_api_key_validation_error,
     validate_url,
 )
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 BUILT_IN_TTS_PROVIDER_ORDER = (
     "audio_cpp",
@@ -555,6 +558,205 @@ class GlobalSpeechTTSValidationError(ValueError):
         self.provider_id = provider_id
         self.field_id = field_id
         super().__init__(message)
+
+
+class ProcessProviderTestEvidenceStore:
+    """Process-only successful sample evidence keyed by provider fingerprint."""
+
+    _DEFAULT_MAX_SAMPLE_BYTES = 8 * 1024 * 1024
+
+    _CONTENT_TYPES_BY_FORMAT = MappingProxyType(
+        {
+            "aac": frozenset({"audio/aac"}),
+            "flac": frozenset({"audio/flac"}),
+            "mp3": frozenset({"audio/mpeg", "audio/mp3"}),
+            "opus": frozenset({"audio/ogg", "audio/opus"}),
+            "pcm": frozenset({"audio/l16", "audio/pcm"}),
+            "wav": frozenset({"audio/wav", "audio/wave", "audio/x-wav"}),
+        }
+    )
+
+    def __init__(self) -> None:
+        self._successful_samples: dict[str, ProviderTestFingerprint] = {}
+        self._catalog_states: dict[
+            str, tuple[ProviderTestFingerprint, SpeechTTSConnectionState]
+        ] = {}
+
+    @staticmethod
+    def _audio_body_matches_format(body: bytes, response_format: str) -> bool:
+        if response_format == "wav":
+            return (
+                len(body) >= 12
+                and body[:4] == b"RIFF"
+                and body[8:12] == b"WAVE"
+                and int.from_bytes(body[4:8], "little") + 8 == len(body)
+            )
+        if response_format == "mp3":
+            return body.startswith(b"ID3") or (
+                len(body) >= 2 and body[0] == 0xFF and body[1] & 0xE0 == 0xE0
+            )
+        if response_format == "flac":
+            return body.startswith(b"fLaC")
+        if response_format == "opus":
+            return body.startswith(b"OggS") and b"OpusHead" in body[:512]
+        if response_format == "aac":
+            return len(body) >= 2 and body[0] == 0xFF and body[1] & 0xF6 == 0xF0
+        if response_format == "pcm":
+            return bool(body) and len(body) % 2 == 0
+        return False
+
+    def record_successful_sample(
+        self,
+        fingerprint: ProviderTestFingerprint,
+        *,
+        status_code: int,
+        response_format: str,
+        body: bytes,
+        content_type: str | None = None,
+        max_bytes: int = _DEFAULT_MAX_SAMPLE_BYTES,
+    ) -> bool:
+        """Record only a bounded, format-valid successful speech response."""
+
+        if type(fingerprint) is not ProviderTestFingerprint:
+            raise TypeError("Provider test fingerprint is invalid")
+        if (
+            type(status_code) is not int
+            or not 200 <= status_code < 300
+            or type(response_format) is not str
+            or type(body) is not bytes
+            or (
+                content_type is not None
+                and (
+                    type(content_type) is not str
+                    or content_type.split(";", 1)[0].strip().lower()
+                    not in self._CONTENT_TYPES_BY_FORMAT.get(
+                        response_format.lower(),
+                        frozenset(),
+                    )
+                )
+            )
+            or type(max_bytes) is not int
+            or max_bytes <= 0
+            or not 0 < len(body) <= max_bytes
+            or not self._audio_body_matches_format(body, response_format.lower())
+        ):
+            return False
+        self._successful_samples[fingerprint.provider_id] = fingerprint
+        return True
+
+    def record_catalog(
+        self,
+        fingerprint: ProviderTestFingerprint,
+        state: SpeechTTSConnectionState,
+    ) -> None:
+        """Record one bounded catalog observation for the exact fingerprint."""
+
+        if type(fingerprint) is not ProviderTestFingerprint:
+            raise TypeError("Provider test fingerprint is invalid")
+        if type(state) is not SpeechTTSConnectionState:
+            raise TypeError("Speech TTS catalog state is invalid")
+        self._catalog_states[fingerprint.provider_id] = (fingerprint, state)
+
+    def sample_state(
+        self, fingerprint: ProviderTestFingerprint
+    ) -> SpeechTTSConnectionState:
+        return (
+            SpeechTTSConnectionState.REACHABLE
+            if self._successful_samples.get(fingerprint.provider_id) == fingerprint
+            else SpeechTTSConnectionState.NOT_TESTED
+        )
+
+    def catalog_state(
+        self, fingerprint: ProviderTestFingerprint
+    ) -> SpeechTTSConnectionState:
+        evidence = self._catalog_states.get(fingerprint.provider_id)
+        if evidence is None or evidence[0] != fingerprint:
+            return SpeechTTSConnectionState.NOT_TESTED
+        return evidence[1]
+
+    def sample_operation(
+        self, fingerprint: ProviderTestFingerprint
+    ) -> SpeechTTSTestOperation:
+        return SpeechTTSTestOperation.SAMPLE
+
+
+def process_provider_test_evidence_store(
+    owner: object,
+) -> ProcessProviderTestEvidenceStore:
+    """Return one non-persisted evidence store for an app-process owner."""
+
+    attribute = "_tts_provider_test_evidence"
+    existing = getattr(owner, attribute, None)
+    if type(existing) is ProcessProviderTestEvidenceStore:
+        return existing
+    store = ProcessProviderTestEvidenceStore()
+    setattr(owner, attribute, store)
+    return store
+
+
+def build_provider_test_fingerprint(
+    state: GlobalSpeechTTSState,
+    *,
+    provider_id: str,
+    saved_revision: int,
+) -> ProviderTestFingerprint:
+    """Build the process-local test identity for one provider configuration."""
+
+    if provider_id not in BUILT_IN_TTS_PROVIDER_ORDER:
+        raise ValueError("Unknown built-in TTS provider")
+    if type(saved_revision) is not int or saved_revision < 0:
+        raise ValueError("Saved provider revision must be a non-negative integer")
+
+    raw_values = state.providers.get(provider_id)
+    if not isinstance(raw_values, Mapping):
+        raise TypeError("Provider configuration is unavailable")
+    allowed_fields = GLOBAL_TTS_PROVIDER_FIELD_IDS[provider_id]
+    validated = _validated_provider_values(
+        provider_id,
+        {
+            field_id: raw_values[field_id]
+            for field_id in allowed_fields
+            if field_id != "credential" and field_id in raw_values
+        },
+    )
+
+    def render(value: object) -> str:
+        if type(value) is bool:
+            return "true" if value else "false"
+        if value is None:
+            return ""
+        if isinstance(value, (tuple, list)):
+            return "[" + ",".join(render(item) for item in value) + "]"
+        if isinstance(value, Mapping):
+            return (
+                "{"
+                + ",".join(
+                    f"{key!s}:{render(value[key])}" for key in sorted(value, key=str)
+                )
+                + "}"
+            )
+        return str(value)
+
+    normalized = {key: render(value) for key, value in validated.items()}
+    credential = state.credentials.get(provider_id)
+    credential_required = not (
+        provider_id == "openai"
+        and validated.get("authentication_mode") == OpenAIAuthenticationMode.NONE.value
+    )
+    if credential is not None:
+        normalized["credential_present"] = (
+            "true"
+            if credential_required and credential.source is not CredentialSource.MISSING
+            else "false"
+        )
+        normalized["credential_source"] = (
+            credential.source.value if credential_required else "not_used"
+        )
+    return ProviderTestFingerprint(
+        provider_id=provider_id,
+        normalized_fields=tuple(sorted(normalized.items())),
+        saved_revision=saved_revision,
+    )
 
 
 def _raw_settings(settings: Mapping[str, Any]) -> Mapping[str, Any]:

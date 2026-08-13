@@ -22,6 +22,7 @@ from textual.widgets import Button, ProgressBar, RichLog, Static
 
 #
 # Local imports
+from tldw_chatbook.config import get_runtime_config_snapshot
 from tldw_chatbook.TTS import (
     OpenAISpeechRequest,
     STTSGeneratedAudio,
@@ -33,7 +34,6 @@ from tldw_chatbook.TTS import (
     TTSRequestedSelectionSnapshot,
     get_tts_service,
 )
-from tldw_chatbook.TTS.audio_cpp_contract import validate_pcm16_wav
 from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
     TTSOperationError,
@@ -41,6 +41,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderReconfiguringError,
     TTSRegistryClosedError,
 )
+from tldw_chatbook.TTS.audio_cpp_contract import validate_pcm16_wav
 from tldw_chatbook.TTS.audio_cpp_guided_config import (
     project_audio_cpp_settings_config,
 )
@@ -58,6 +59,12 @@ from tldw_chatbook.TTS.TTS_Generation import (
     TTSSettingsPublication,
     TTSSettingsPublicationTicket,
     _join_retained_task,
+)
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    ProcessProviderTestEvidenceStore,
+    build_provider_test_fingerprint,
+    load_global_speech_tts_state,
+    process_provider_test_evidence_store,
 )
 from tldw_chatbook.Utils.secure_temp_files import (
     create_secure_temp_file,
@@ -540,6 +547,9 @@ class STTSEventHandler:
 
     def __init__(self, app=None):
         self.app = app  # Reference to the main app
+        self.provider_test_evidence = process_provider_test_evidence_store(
+            app if app is not None else self
+        )
         self._stts_service = None
         self._current_audio_file = None
         self._current_playground_artifact: STTSGeneratedAudio | None = None
@@ -553,6 +563,45 @@ class STTSEventHandler:
         self._playground_file_leases: dict[Path, int] = {}
         self._cleanup_task: asyncio.Task[None] | None = None
         self._settings_save_lock = asyncio.Lock()
+
+    def _record_successful_sample_evidence(
+        self,
+        artifact: STTSGeneratedAudio,
+    ) -> bool:
+        """Record only a bounded, validated artifact for the saved provider."""
+
+        service = self._stts_service
+        saved_revision = getattr(service, "saved_configuration_revision", None)
+        if not callable(saved_revision):
+            return False
+        try:
+            revision = saved_revision(artifact.provider_id)
+            values = get_runtime_config_snapshot().values
+            state = load_global_speech_tts_state(
+                values if isinstance(values, Mapping) else {}
+            )
+            fingerprint = build_provider_test_fingerprint(
+                state,
+                provider_id=artifact.provider_id,
+                saved_revision=revision,
+            )
+            max_bytes = ProcessProviderTestEvidenceStore._DEFAULT_MAX_SAMPLE_BYTES
+            with artifact.path.open("rb") as source:
+                body = source.read(max_bytes + 1)
+            return self.provider_test_evidence.record_successful_sample(
+                fingerprint,
+                status_code=200,
+                response_format=artifact.audio_format,
+                content_type=artifact.content_type,
+                body=body,
+                max_bytes=max_bytes,
+            )
+        except Exception:  # noqa: BLE001 - evidence must not fail delivered audio
+            logger.warning(
+                "TTS sample evidence was not accepted (provider={}).",
+                artifact.provider_id,
+            )
+            return False
 
     async def initialize_stts(self) -> None:
         """Initialize S/TT/S service"""
@@ -1261,6 +1310,7 @@ class STTSEventHandler:
             if self._retired_playground_operation_id == snapshot.operation_id:
                 self._delete_operation_files(snapshot.operation_id)
                 return
+            self._record_successful_sample_evidence(artifact)
             self._accept_playground_artifact(artifact)
             self._deliver_generation_success(
                 snapshot.operation_id,

@@ -22,9 +22,10 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSPlaygroundGenerateEvent,
 )
 from tldw_chatbook.TTS import (
+    CanonicalTTSCloneReference,
     ProviderHealth,
-    STTSPlaygroundCloneSnapshot,
     STTSGeneratedAudio,
+    STTSPlaygroundCloneSnapshot,
     STTSPlaygroundProfilePreview,
     STTSPlaygroundRequest,
     STTSPlaygroundResultProjection,
@@ -34,23 +35,29 @@ from tldw_chatbook.TTS import (
     TTSProviderDescriptor,
     TTSRequest,
     TTSRequestedSelectionSnapshot,
-    CanonicalTTSCloneReference,
 )
 from tldw_chatbook.TTS.adapter_types import (
+    _TTS_CLONE_GENERATION_EVIDENCE_TOKEN,
     TTSCloneGenerationEvidence,
     TTSProviderReconfiguringError,
     TTSRegistryClosedError,
-    _TTS_CLONE_GENERATION_EVIDENCE_TOKEN,
 )
 from tldw_chatbook.TTS.effective_settings import (
     TTSSelectionOverrides,
     TTSStudioDraftSelection,
 )
 from tldw_chatbook.TTS.studio_preferences import (
-    StudioTTSPreferenceStore,
     StudioTTSPreferencesSnapshot,
+    StudioTTSPreferenceStore,
+)
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    build_provider_test_fingerprint,
+    load_global_speech_tts_state,
 )
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSConnectionState,
+)
 
 
 def _snapshot(
@@ -71,6 +78,10 @@ def _snapshot(
         speed=1.0,
         options=options or {},
     )
+
+
+def _sample_wav(payload: bytes = b"\x00\x00") -> bytes:
+    return b"RIFF" + (len(payload) + 4).to_bytes(4, "little") + b"WAVE" + payload
 
 
 class _CountingStream:
@@ -172,6 +183,10 @@ class _NativeService:
         self.legacy_calls += 1
         raise AssertionError("audio.cpp must not use the legacy stream bridge")
         yield b""  # pragma: no cover
+
+    def saved_configuration_revision(self, provider_id: str) -> int:
+        assert provider_id == "audio_cpp"
+        return 3
 
 
 class _LegacyService:
@@ -913,6 +928,118 @@ async def test_handler_dispatches_native_generation_and_delivers_artifact() -> N
             ("TTS generation complete!", "information"),
         ]
         assert handler._is_generating is False
+    finally:
+        if artifact is not None:
+            artifact.path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    (
+        ("valid", SpeechTTSConnectionState.REACHABLE),
+        ("empty", SpeechTTSConnectionState.NOT_TESTED),
+        ("oversized", SpeechTTSConnectionState.NOT_TESTED),
+        ("invalid", SpeechTTSConnectionState.NOT_TESTED),
+        ("invalid_content_type", SpeechTTSConnectionState.NOT_TESTED),
+        ("failed", SpeechTTSConnectionState.NOT_TESTED),
+    ),
+)
+async def test_playground_records_only_successful_bounded_valid_sample_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    expected: SpeechTTSConnectionState,
+) -> None:
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={}),
+        raising=False,
+    )
+    state = load_global_speech_tts_state({}, environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="audio_cpp",
+        saved_revision=3,
+    )
+    sample = {
+        "valid": _sample_wav(),
+        "empty": b"",
+        "oversized": _sample_wav(b"\x00" * (8 * 1024 * 1024)),
+        "invalid": b"not audio",
+        "invalid_content_type": _sample_wav(),
+        "failed": b"",
+    }[case]
+    response = _Response(
+        _CountingStream((sample,)),
+        content_type="text/html" if case == "invalid_content_type" else "audio/wav",
+    )
+    service = _NativeService(response)
+    if case == "failed":
+        service.synthesize_exact = AsyncMock(
+            side_effect=RuntimeError("provider failed")
+        )
+    handler = STTSEventHandler(app=_DeliveryApp())
+    handler._stts_service = service
+
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(_snapshot()))
+
+    artifact = handler._current_playground_artifact
+    try:
+        assert handler.provider_test_evidence.sample_state(fingerprint) is expected
+    finally:
+        if artifact is not None:
+            artifact.path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_playground_sample_does_not_record_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={}),
+        raising=False,
+    )
+    state = load_global_speech_tts_state({}, environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="audio_cpp",
+        saved_revision=3,
+    )
+    blocked = asyncio.Event()
+    response = _Response(_CountingStream((), blocked=blocked))
+    handler = STTSEventHandler(app=_DeliveryApp())
+    handler._stts_service = _NativeService(response)
+    generation = asyncio.create_task(
+        handler.handle_playground_generate(STTSPlaygroundGenerateEvent(_snapshot()))
+    )
+    await asyncio.sleep(0)
+
+    generation.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await generation
+
+    assert (
+        handler.provider_test_evidence.sample_state(fingerprint)
+        is SpeechTTSConnectionState.NOT_TESTED
+    )
+
+
+@pytest.mark.asyncio
+async def test_evidence_lookup_failure_does_not_fail_valid_generation() -> None:
+    response = _Response(_CountingStream((_sample_wav(),)))
+    service = _NativeService(response)
+    service.saved_configuration_revision = Mock(
+        side_effect=RuntimeError("revision unavailable")
+    )
+    handler = STTSEventHandler(app=_DeliveryApp())
+    handler._stts_service = service
+
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(_snapshot()))
+
+    artifact = handler._current_playground_artifact
+    try:
+        assert artifact is not None
     finally:
         if artifact is not None:
             artifact.path.unlink(missing_ok=True)

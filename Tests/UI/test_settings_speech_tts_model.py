@@ -13,20 +13,26 @@ from tldw_chatbook.TTS.openai_compatible_config import (
 from tldw_chatbook.UI.Screens import settings_speech_tts as settings_speech_tts_module
 from tldw_chatbook.UI.Screens.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
+    GLOBAL_TTS_PROVIDER_FIELD_IDS,
     CredentialIntent,
     CredentialSource,
-    GLOBAL_TTS_PROVIDER_FIELD_IDS,
-    GlobalSpeechTTSEffectiveSource,
     GlobalSpeechTTSCredentialMutation,
+    GlobalSpeechTTSEffectiveSource,
     GlobalSpeechTTSValidationError,
+    ProcessProviderTestEvidenceStore,
     build_credential_mutation,
     build_global_speech_tts_save_proposal,
+    build_provider_test_fingerprint,
     global_speech_tts_provider_configuration_state,
     load_global_speech_tts_state,
     restore_non_secret_defaults,
 )
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSConfigurationState,
+    SpeechTTSConfigurationValidity,
+    SpeechTTSConnectionState,
+    SpeechTTSTestOperation,
+    combine_tts_readiness,
 )
 
 
@@ -66,6 +72,253 @@ def _settings() -> dict[str, object]:
             },
         }
     }
+
+
+def _wav_sample() -> bytes:
+    return (
+        b"RIFF"
+        + (40).to_bytes(4, "little")
+        + b"WAVEfmt "
+        + (16).to_bytes(4, "little")
+        + b"\x01\x00\x01\x00\x80\xbb\x00\x00\x00w\x01\x00\x02\x00\x10\x00"
+        + b"data"
+        + (4).to_bytes(4, "little")
+        + b"\x00\x00\x01\x00"
+    )
+
+
+def test_successful_sample_outranks_unsupported_catalog() -> None:
+    readiness = combine_tts_readiness(
+        configuration="valid",
+        catalog="unsupported",
+        sample="success",
+    )
+
+    assert readiness.configuration is SpeechTTSConfigurationValidity.VALID
+    assert readiness.connection is SpeechTTSConnectionState.REACHABLE
+    assert readiness.catalog is SpeechTTSConnectionState.UNSUPPORTED
+    assert readiness.sample is SpeechTTSConnectionState.REACHABLE
+
+
+def test_readiness_keeps_configuration_and_connection_independent() -> None:
+    readiness = combine_tts_readiness(
+        configuration=SpeechTTSConfigurationState.INVALID,
+        catalog=SpeechTTSConnectionState.REACHABLE,
+        sample=SpeechTTSConnectionState.NOT_TESTED,
+    )
+
+    assert readiness.configuration is SpeechTTSConfigurationValidity.INVALID
+    assert readiness.connection is SpeechTTSConnectionState.REACHABLE
+
+
+@pytest.mark.parametrize(
+    ("sample", "expected"),
+    (
+        ("failure", SpeechTTSConnectionState.UNREACHABLE),
+        ("unsupported", SpeechTTSConnectionState.UNSUPPORTED),
+    ),
+)
+def test_completed_sample_outcome_outranks_reachable_catalog(
+    sample: str,
+    expected: SpeechTTSConnectionState,
+) -> None:
+    readiness = combine_tts_readiness(
+        configuration="valid",
+        catalog="reachable",
+        sample=sample,
+    )
+
+    assert readiness.connection is expected
+
+
+def test_provider_test_fingerprint_is_secret_free_and_revision_bound() -> None:
+    state = load_global_speech_tts_state(
+        _settings(),
+        environment={"OPENAI_API_KEY": "environment-secret"},
+    )
+    state.providers["openai"]["credential"] = "draft-secret"
+
+    initial = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=7,
+    )
+    same = build_provider_test_fingerprint(
+        deepcopy(state),
+        provider_id="openai",
+        saved_revision=7,
+    )
+    changed_revision = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=8,
+    )
+    state.providers["openai"]["base_url"] = "http://127.0.0.1:8765/v1"
+    changed_endpoint = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=7,
+    )
+
+    assert initial == same
+    assert initial != changed_revision
+    assert initial != changed_endpoint
+    assert ("credential_present", "true") in initial.normalized_fields
+    assert ("authentication_mode", "api_key") in initial.normalized_fields
+    rendered = repr(initial)
+    assert "environment-secret" not in rendered
+    assert "draft-secret" not in rendered
+    assert "credential" not in initial.digest
+    assert len(initial.digest) == 64
+
+
+def test_process_evidence_preserves_exact_unchanged_fingerprint_only() -> None:
+    state = load_global_speech_tts_state(_settings(), environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=3,
+    )
+    store = ProcessProviderTestEvidenceStore()
+
+    assert store.record_successful_sample(
+        fingerprint,
+        status_code=200,
+        response_format="wav",
+        body=_wav_sample(),
+    )
+    assert store.sample_state(fingerprint) is SpeechTTSConnectionState.REACHABLE
+    unchanged = build_provider_test_fingerprint(
+        deepcopy(state),
+        provider_id="openai",
+        saved_revision=3,
+    )
+    assert store.sample_state(unchanged) is SpeechTTSConnectionState.REACHABLE
+    assert (
+        store.sample_state(
+            build_provider_test_fingerprint(
+                state,
+                provider_id="openai",
+                saved_revision=4,
+            )
+        )
+        is SpeechTTSConnectionState.NOT_TESTED
+    )
+    assert (
+        ProcessProviderTestEvidenceStore().sample_state(fingerprint)
+        is SpeechTTSConnectionState.NOT_TESTED
+    )
+
+
+def test_process_evidence_keeps_only_latest_fingerprint_per_provider() -> None:
+    state = load_global_speech_tts_state(_settings(), environment={})
+    first = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=1,
+    )
+    second = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=2,
+    )
+    store = ProcessProviderTestEvidenceStore()
+
+    assert store.record_successful_sample(
+        first,
+        status_code=200,
+        response_format="wav",
+        body=_wav_sample(),
+    )
+    assert store.record_successful_sample(
+        second,
+        status_code=200,
+        response_format="wav",
+        body=_wav_sample(),
+    )
+
+    assert store.sample_state(first) is SpeechTTSConnectionState.NOT_TESTED
+    assert store.sample_state(second) is SpeechTTSConnectionState.REACHABLE
+
+
+def test_provider_fingerprint_tracks_authentication_and_credential_presence() -> None:
+    missing = load_global_speech_tts_state({}, environment={})
+    configured = load_global_speech_tts_state(
+        {},
+        environment={"OPENAI_API_KEY": "first-secret"},
+    )
+    replaced = load_global_speech_tts_state(
+        {},
+        environment={"OPENAI_API_KEY": "different-secret"},
+    )
+    none_auth = deepcopy(configured)
+    none_auth.providers["openai"].update(
+        {
+            "base_url": "http://127.0.0.1:8765/v1/audio/speech",
+            "authentication_mode": "none",
+        }
+    )
+
+    missing_fingerprint = build_provider_test_fingerprint(
+        missing,
+        provider_id="openai",
+        saved_revision=1,
+    )
+    configured_fingerprint = build_provider_test_fingerprint(
+        configured,
+        provider_id="openai",
+        saved_revision=1,
+    )
+    replaced_fingerprint = build_provider_test_fingerprint(
+        replaced,
+        provider_id="openai",
+        saved_revision=1,
+    )
+    none_fingerprint = build_provider_test_fingerprint(
+        none_auth,
+        provider_id="openai",
+        saved_revision=1,
+    )
+
+    assert missing_fingerprint != configured_fingerprint
+    assert configured_fingerprint == replaced_fingerprint
+    assert configured_fingerprint != none_fingerprint
+    assert "first-secret" not in repr(configured_fingerprint)
+    assert "different-secret" not in repr(replaced_fingerprint)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "response_format", "body", "max_bytes"),
+    (
+        (500, "wav", _wav_sample(), 1024),
+        (200, "wav", b"not audio", 1024),
+        (200, "wav", _wav_sample(), 8),
+        (200, "unknown", _wav_sample(), 1024),
+    ),
+)
+def test_sample_evidence_requires_bounded_successful_format_valid_response(
+    status_code: int,
+    response_format: str,
+    body: bytes,
+    max_bytes: int,
+) -> None:
+    state = load_global_speech_tts_state(_settings(), environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=3,
+    )
+    store = ProcessProviderTestEvidenceStore()
+
+    assert not store.record_successful_sample(
+        fingerprint,
+        status_code=status_code,
+        response_format=response_format,
+        body=body,
+        max_bytes=max_bytes,
+    )
+    assert store.sample_state(fingerprint) is SpeechTTSConnectionState.NOT_TESTED
+    assert store.sample_operation(fingerprint) is SpeechTTSTestOperation.SAMPLE
 
 
 def test_global_field_inventory_is_bounded_complete_and_includes_managed_audio_cpp() -> (

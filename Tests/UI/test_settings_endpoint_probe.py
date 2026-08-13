@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import errno
 
 import httpx
@@ -11,6 +12,10 @@ import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_probe_module
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
     probe_settings_endpoint,
+)
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSConnectionState,
+    SpeechTTSTestOperation,
 )
 
 pytestmark = pytest.mark.local_server_probe
@@ -661,3 +666,211 @@ async def test_invalid_input_never_makes_a_request_or_echoes_input() -> None:
     assert outcome.category is None
     assert outcome.summary == "unreachable: invalid endpoint URL"
     assert not any(part in outcome.summary for part in ("password", "token", "secret"))
+
+
+@pytest.mark.asyncio
+async def test_tts_unknown_speech_path_is_not_extended_or_requested() -> None:
+    requests: list[httpx.Request] = []
+
+    def unexpected_request(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, request=request)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(unexpected_request)
+    ) as client:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:8765/custom/speech",
+            provider="openai",
+            http_client=client,
+        )
+
+    assert outcome.state is SpeechTTSConnectionState.NOT_TESTED
+    assert outcome.operation is SpeechTTSTestOperation.CATALOG
+    assert outcome.model_count is None
+    assert requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "location",
+    (
+        "http://127.0.0.1:8765/other/models",
+        "http://127.0.0.2:9876/v1/models",
+    ),
+)
+async def test_tts_catalog_redirect_is_never_followed(location: str) -> None:
+    requests: list[httpx.Request] = []
+
+    def redirect(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(302, headers={"Location": location}, request=request)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(redirect),
+        follow_redirects=True,
+    ) as client:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:8765",
+            provider="openai",
+            http_client=client,
+        )
+
+    assert outcome.state is SpeechTTSConnectionState.UNREACHABLE
+    assert outcome.operation is SpeechTTSTestOperation.CATALOG
+    assert [str(request.url) for request in requests] == [
+        "http://127.0.0.1:8765/v1/models"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tts_catalog_uses_only_normalized_declared_url_and_origin() -> None:
+    requests: list[httpx.Request] = []
+
+    def models(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "model-a"}]},
+            request=request,
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(models)) as client:
+        outcome = await probe_settings_endpoint(
+            "HTTP://127.0.0.1:8765/v1/audio/speech/",
+            provider="openai",
+            http_client=client,
+        )
+
+    assert outcome.state is SpeechTTSConnectionState.REACHABLE
+    assert outcome.operation is SpeechTTSTestOperation.CATALOG
+    assert outcome.model_count == 1
+    assert [str(request.url) for request in requests] == [
+        "http://127.0.0.1:8765/v1/models"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tts_catalog_accepts_models_explicitly_labeled_for_speech() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": "pocket-tts", "task": "tts"},
+                        {"id": "narrator", "model_type": "speech"},
+                    ]
+                },
+                request=request,
+            )
+        )
+    ) as client:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:8765",
+            provider="openai",
+            http_client=client,
+        )
+
+    assert outcome.state is SpeechTTSConnectionState.REACHABLE
+    assert outcome.model_ids == ("pocket-tts", "narrator")
+
+
+@pytest.mark.asyncio
+async def test_tts_catalog_rejects_response_bound_to_another_origin() -> None:
+    response = httpx.Response(
+        200,
+        json={"data": [{"id": "model-a"}]},
+        request=httpx.Request(
+            "GET",
+            "http://127.0.0.2:9876/v1/models",
+        ),
+    )
+
+    class ResponseContext:
+        async def __aenter__(self) -> httpx.Response:
+            return response
+
+        async def __aexit__(self, *_args: object) -> None:
+            await response.aclose()
+
+    class MismatchedClient:
+        def stream(self, *_args: object, **_kwargs: object) -> ResponseContext:
+            return ResponseContext()
+
+    outcome = await probe_settings_endpoint(
+        "http://127.0.0.1:8765",
+        provider="openai",
+        http_client=MismatchedClient(),  # type: ignore[arg-type]
+    )
+
+    assert outcome.state is SpeechTTSConnectionState.UNREACHABLE
+    assert outcome.category == "connection_error"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", (404, 405, 501))
+async def test_tts_missing_catalog_is_unsupported_not_unreachable(
+    status_code: int,
+) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(status_code, request=request)
+        )
+    ) as client:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:8765/v1/audio/speech",
+            provider="openai",
+            http_client=client,
+        )
+
+    assert outcome.state is SpeechTTSConnectionState.UNSUPPORTED
+    assert outcome.operation is SpeechTTSTestOperation.CATALOG
+    assert outcome.model_count is None
+    assert outcome.reachable is False
+
+
+@pytest.mark.asyncio
+async def test_tts_malformed_endpoint_is_not_reported_as_offline() -> None:
+    outcome = await probe_settings_endpoint(
+        "http://127.0.0.1:8765/v1//audio/speech",
+        provider="openai",
+    )
+
+    assert outcome.state is SpeechTTSConnectionState.NOT_TESTED
+    assert outcome.operation is SpeechTTSTestOperation.CATALOG
+    assert outcome.category is None
+
+
+@pytest.mark.asyncio
+async def test_owned_tts_probe_client_closes_when_cancelled(monkeypatch) -> None:
+    class CancelContext:
+        async def __aenter__(self) -> httpx.Response:
+            raise asyncio.CancelledError
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class OwnedClient:
+        closed = False
+
+        def stream(self, *_args: object, **_kwargs: object) -> CancelContext:
+            return CancelContext()
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    client = OwnedClient()
+    monkeypatch.setattr(
+        settings_probe_module.httpx,
+        "AsyncClient",
+        lambda **_kwargs: client,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await probe_settings_endpoint(
+            "http://127.0.0.1:8765",
+            provider="openai",
+        )
+
+    assert client.closed is True

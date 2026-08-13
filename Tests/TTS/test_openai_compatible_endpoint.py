@@ -278,6 +278,15 @@ def test_safe_percent_escapes_are_canonical_without_decoding_path_semantics() ->
     ) == openai_destination_fingerprint("openai", upper)
 
 
+def test_unknown_valid_speech_path_declares_no_catalog_operation() -> None:
+    endpoint = normalize_openai_compatible_endpoint(
+        "http://127.0.0.1:8765/custom/speech"
+    )
+
+    assert endpoint.speech_url == "http://127.0.0.1:8765/custom/speech"
+    assert endpoint.catalog_url is None
+
+
 @pytest.mark.parametrize(
     "raw",
     (
