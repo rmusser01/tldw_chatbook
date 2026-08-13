@@ -1,36 +1,23 @@
 """Console-native composer action row.
 
-Undo/redo (TASK-1281): history is recorded as flat (draft text, cursor
-index) snapshots, never a copy of the live `_DraftSegment` objects. This
-keeps the history model simple, and it means undo/redo restores plain
-text -- a snapshot never carries a segment's `label` or its `expanded`/
-`confirm` display state, so a restored segment is always either an
-ordinary literal or a generic collapsed paste token (`_apply_history_
-snapshot` re-collapses any restored text over `UNDO_RECOLLAPSE_CHAR_
-THRESHOLD`, review NEW-2/W-1/W-2 -- a large, performance-driven threshold
-deliberately distinct from the small, cosmetic `paste_collapse_threshold`
-a real paste uses), never the exact original presentation (a labeled
-file/attachment segment, or one the user had manually unfurled, comes
-back as a plain "Pasted text | N characters | Expand" token if it's still over the
-recollapse threshold, or as ordinary literal text otherwise). What
-undo/redo does NOT do anymore is repaint a large restored segment as one
-giant literal: that used to run the composer's O(n^2) wrap/render path
-against the full text on every undo/redo (measured up to 283s frozen for
-a 2.4 MB snapshot), which is why the re-collapse exists -- gated on a
-threshold sized from the measured render cost, not on the paste-cosmetics
-threshold or preference, so it can never itself turn an ordinary
-human-typed draft into an opaque token (review W-1) or be disabled by a
-user's paste-collapse preference (review W-2).
+Undo/redo (TASK-1281): ordinary-sized history entries retain immutable
+segment snapshots so collapsed paste tokens, labels, and generated paste
+boundaries survive undo, redo, and session switching. Segment retention is
+bounded by both character and segment-count ceilings. Oversized or highly
+fragmented drafts keep the established flat-text fallback: text above
+`UNDO_RECOLLAPSE_CHAR_THRESHOLD` is restored as one generic collapsed token
+to avoid the composer's former O(n^2) repaint cost (measured up to 283s for
+a 2.4 MB snapshot), while ordinary flat text remains literal.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
 import hashlib
 import hmac
 import json
 import re
 import secrets
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from rich.cells import cell_len
@@ -49,7 +36,6 @@ from textual.widgets import Button, Input, Static
 
 from ...Chat.console_display_state import build_console_disabled_reason
 from ...Chat.console_glyphs import GLYPH_VOICE_RECORDING, GLYPH_VOICE_WORKING
-from ...Widgets.glyph_fallback import resolve_glyph, resolve_glyph_text
 from ...Chat.console_voice_input import (
     STATE_FINISHING,
     STATE_IDLE,
@@ -57,7 +43,6 @@ from ...Chat.console_voice_input import (
     STATE_PREPARING,
 )
 from ...Chat.prompt_history import PromptHistory
-from ...UI.character_display_text import sanitize_character_display_label
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -65,7 +50,8 @@ from ...config import (
     coerce_bool_setting,
     coerce_int_setting,
 )
-
+from ...UI.character_display_text import sanitize_character_display_label
+from ...Widgets.glyph_fallback import resolve_glyph, resolve_glyph_text
 
 _CollapseState = Literal["literal", "collapsed", "confirm", "expanded"]
 _DictationState = Literal["idle", "starting", "recording", "transcribing"]
@@ -139,6 +125,8 @@ class ComposerDraftSegmentSnapshot:
     origin: DraftSegmentOrigin
     collapse_state: _CollapseState
     label: str | None
+    generated_boundary: bool = False
+    paste_block: bool = False
 
 
 @dataclass(frozen=True)
@@ -181,6 +169,8 @@ def _snapshot_fingerprint(
                 "collapse_state": segment.collapse_state,
                 "label": segment.label,
                 "origin": segment.origin,
+                "generated_boundary": segment.generated_boundary,
+                "paste_block": segment.paste_block,
                 "text": segment.text,
             }
             for segment in segments
@@ -221,6 +211,8 @@ class _DraftSegment:
     origin: DraftSegmentOrigin = "literal"
     collapse_state: _CollapseState = "literal"
     label: str | None = None
+    generated_boundary: bool = False
+    paste_block: bool = False
 
 
 @dataclass
@@ -239,23 +231,31 @@ class ConsoleDraftStash:
 
 @dataclass(frozen=True)
 class _DraftHistorySnapshot:
-    """Undo/redo entry (TASK-1281): the canonical draft text plus caret offset.
-
-    Deliberately flat text+cursor rather than a copy of `_segments` -- the
-    architecture this task specified trades away exact display-state
-    fidelity across an undo/redo (`_apply_history_snapshot` reconstructs a
-    single segment from `text` alone, re-collapsing it into a generic
-    paste token when it's over `UNDO_RECOLLAPSE_CHAR_THRESHOLD` -- review
-    NEW-2/W-1/W-2, a performance-sized threshold, deliberately NOT the
-    cosmetic `paste_collapse_threshold` -- but never recovering the
-    ORIGINAL segment's `label` or `expanded`/`confirm` state) for a much
-    simpler history model. `restore_stashed_draft`/`ConsoleDraftStash`
-    already own the "preserve real segment objects" contract for the send
-    flow; this is a separate, narrower one.
-    """
+    """Undo/redo entry with bounded structured state and flat compatibility."""
 
     text: str
     cursor_index: int
+    segments: tuple[ComposerDraftSegmentSnapshot, ...] | None = field(
+        default=None,
+        repr=False,
+    )
+
+
+class _HistoryStack(list[_DraftHistorySnapshot]):
+    """List-compatible exported stack carrying the current structured draft."""
+
+    def __init__(
+        self,
+        entries: list[_DraftHistorySnapshot],
+        *,
+        current_text: str | None = None,
+        current_segments: tuple[ComposerDraftSegmentSnapshot, ...] | None = None,
+        current_cursor: int | None = None,
+    ) -> None:
+        super().__init__(entries)
+        self.current_text = current_text
+        self.current_segments = current_segments
+        self.current_cursor = current_cursor
 
 
 #: Public alias for the (undo stack, redo stack) pair `export_undo_history`
@@ -451,6 +451,9 @@ class ConsoleComposerBar(Horizontal):
     #: freezes repainting a large restored draft -- a performance guard
     #: must not hang off a display preference a user can turn off.
     UNDO_RECOLLAPSE_CHAR_THRESHOLD = 20_000
+    #: Structured history is intentionally bounded independently of the text
+    #: budget so a highly fragmented draft cannot multiply metadata objects.
+    UNDO_STRUCTURED_SEGMENT_CAP = 512
     #: Shared with the mic button's initial `compose()` tooltip and
     #: `sync_dictation_state`'s idle tooltip, and used as the fallback in
     #: `set_dictation_availability` -- an `Availability(ok=False)` with no
@@ -737,6 +740,28 @@ class ConsoleComposerBar(Horizontal):
                 raise ComposerTransactionValidationError(
                     "Composer snapshot segment label is invalid."
                 )
+            if type(segment.generated_boundary) is not bool:
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot generated-boundary state is invalid."
+                )
+            if type(segment.paste_block) is not bool:
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot paste-block state is invalid."
+                )
+            if segment.generated_boundary and (
+                segment.text != "\n"
+                or segment.origin != "literal"
+                or segment.collapse_state != "literal"
+                or segment.label is not None
+                or segment.paste_block
+            ):
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot generated boundary is invalid."
+                )
+            if segment.paste_block and segment.origin != "paste":
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot paste-block ownership is invalid."
+                )
 
         draft_length = sum(len(segment.text) for segment in snapshot.segments)
         if (
@@ -804,6 +829,8 @@ class ConsoleComposerBar(Horizontal):
                 origin=segment.origin,
                 collapse_state=segment.collapse_state,
                 label=segment.label,
+                generated_boundary=segment.generated_boundary,
+                paste_block=segment.paste_block,
             )
             for segment in snapshot.segments
         ]
@@ -811,15 +838,7 @@ class ConsoleComposerBar(Horizontal):
     def capture_draft_snapshot(self) -> ComposerDraftSnapshot:
         """Capture the exact immutable Console draft transaction state."""
         self._ensure_editable_segments()
-        segments = tuple(
-            ComposerDraftSegmentSnapshot(
-                text=segment.text,
-                origin=segment.origin,
-                collapse_state=segment.collapse_state,
-                label=segment.label,
-            )
-            for segment in self._segments
-        )
+        segments = self._capture_segment_snapshots()
         selection = self._snapshot_selection()
         fingerprint = _snapshot_fingerprint(
             segments=segments,
@@ -836,6 +855,64 @@ class ConsoleComposerBar(Horizontal):
             generation=self._draft_generation,
             fingerprint=fingerprint,
         )
+
+    def _capture_segment_snapshots(
+        self,
+    ) -> tuple[ComposerDraftSegmentSnapshot, ...]:
+        """Return detached immutable snapshots of the live segment structure."""
+        return tuple(
+            ComposerDraftSegmentSnapshot(
+                text=segment.text,
+                origin=segment.origin,
+                collapse_state=segment.collapse_state,
+                label=segment.label,
+                generated_boundary=segment.generated_boundary,
+                paste_block=segment.paste_block,
+            )
+            for segment in self._segments
+        )
+
+    @classmethod
+    def _history_entry_is_valid(cls, entry: object) -> bool:
+        """Return whether one internal/exported history entry is safe to restore."""
+        if (
+            not isinstance(entry, _DraftHistorySnapshot)
+            or type(entry.text) is not str
+            or type(entry.cursor_index) is not int
+            or not 0 <= entry.cursor_index <= len(entry.text)
+        ):
+            return False
+        if entry.segments is None:
+            return True
+        if (
+            type(entry.segments) is not tuple
+            or len(entry.segments) > cls.UNDO_STRUCTURED_SEGMENT_CAP
+            or sum(len(segment.text) for segment in entry.segments) != len(entry.text)
+            or "".join(segment.text for segment in entry.segments) != entry.text
+        ):
+            return False
+        for segment in entry.segments:
+            if not isinstance(segment, ComposerDraftSegmentSnapshot):
+                return False
+            if (
+                not segment.text
+                or segment.origin not in _VALID_DRAFT_ORIGINS
+                or segment.collapse_state not in _VALID_COLLAPSE_STATES
+                or (segment.label is not None and not isinstance(segment.label, str))
+                or type(segment.generated_boundary) is not bool
+                or type(segment.paste_block) is not bool
+                or (segment.paste_block and segment.origin != "paste")
+            ):
+                return False
+            if segment.generated_boundary and (
+                segment.text != "\n"
+                or segment.origin != "literal"
+                or segment.collapse_state != "literal"
+                or segment.label is not None
+                or segment.paste_block
+            ):
+                return False
+        return True
 
     def capture_transaction_checkpoint(self) -> ComposerTransactionCheckpoint:
         """Capture draft and undo state for coordinated rollback.
@@ -881,13 +958,7 @@ class ConsoleComposerBar(Horizontal):
                 "Composer transaction checkpoint history is invalid."
             )
         history_entries = (*checkpoint.undo_stack, *checkpoint.redo_stack)
-        if any(
-            not isinstance(entry, _DraftHistorySnapshot)
-            or type(entry.text) is not str
-            or type(entry.cursor_index) is not int
-            or not 0 <= entry.cursor_index <= len(entry.text)
-            for entry in history_entries
-        ):
+        if any(not self._history_entry_is_valid(entry) for entry in history_entries):
             raise ComposerTransactionValidationError(
                 "Composer transaction checkpoint history is invalid."
             )
@@ -1286,17 +1357,6 @@ class ConsoleComposerBar(Horizontal):
         last_index = len(self._segments) - 1
         return (last_index, len(self._segments[last_index].text))
 
-    def _segment_preceding_cursor(self) -> _DraftSegment | None:
-        """Return the segment immediately before the canonical caret."""
-        if not self._segments or self._cursor_index <= 0:
-            return None
-        segment_index, offset = self._locate_canonical(self._cursor_index)
-        if offset == 0:
-            segment_index -= 1
-        if segment_index < 0:
-            return None
-        return self._segments[segment_index]
-
     def _cursor_display_index(self) -> int:
         """Map the canonical caret offset to an unwrapped display-string offset.
 
@@ -1355,10 +1415,31 @@ class ConsoleComposerBar(Horizontal):
         if segment.collapse_state == "collapsed":
             if segment.label:
                 return segment.label
-            return f"Pasted text | {len(segment.text)} characters | Expand"
+            token = f"Pasted text | {len(segment.text)} characters | Expand"
+            if segment.origin == "paste":
+                leading, trailing = ConsoleComposerBar._paste_edge_line_breaks(
+                    segment.text
+                )
+                return leading + token + trailing
+            return token
         if segment.collapse_state == "confirm":
+            if segment.origin == "paste":
+                leading, trailing = ConsoleComposerBar._paste_edge_line_breaks(
+                    segment.text
+                )
+                return leading + "Expand?" + trailing
             return "Expand?"
         return segment.text
+
+    @staticmethod
+    def _paste_edge_line_breaks(text: str) -> tuple[str, str]:
+        """Return non-overlapping LF/CRLF runs at a paste block's edges."""
+        leading_match = re.match(r"(?:(?:\r\n)|\n)+", text)
+        leading = leading_match.group(0) if leading_match else ""
+        remaining = text[len(leading) :]
+        trailing_match = re.search(r"(?:(?:\r\n)|\n)+$", remaining)
+        trailing = trailing_match.group(0) if trailing_match else ""
+        return leading, trailing
 
     def _segment_display_ranges(self) -> list[_DraftSegmentDisplayRange]:
         """Return segment ranges in the unwrapped visible draft string."""
@@ -2470,6 +2551,7 @@ class ConsoleComposerBar(Horizontal):
             "expanded",
         }:
             segment.text = segment.text[:offset] + text + segment.text[offset:]
+            segment.generated_boundary = False
             self._cursor_index += len(text)
             return
         if offset == len(segment.text):
@@ -2484,6 +2566,7 @@ class ConsoleComposerBar(Horizontal):
                 self._segments[right_index].text = (
                     text + self._segments[right_index].text
                 )
+                self._segments[right_index].generated_boundary = False
             else:
                 self._segments.insert(right_index, _DraftSegment(text))
             self._cursor_index += len(text)
@@ -2497,6 +2580,7 @@ class ConsoleComposerBar(Horizontal):
                 and self._segments[left_index].collapse_state == "literal"
             ):
                 self._segments[left_index].text += text
+                self._segments[left_index].generated_boundary = False
             else:
                 self._segments.insert(segment_index, _DraftSegment(text))
             self._cursor_index += len(text)
@@ -2509,19 +2593,19 @@ class ConsoleComposerBar(Horizontal):
         right_text = segment.text[offset:]
         replacement: list[_DraftSegment] = []
         if left_text:
-            replacement.append(replace(segment, text=left_text))
+            replacement.append(replace(segment, text=left_text, paste_block=False))
         replacement.append(_DraftSegment(text))
         if right_text:
-            replacement.append(replace(segment, text=right_text))
+            replacement.append(replace(segment, text=right_text, paste_block=False))
         self._segments[segment_index : segment_index + 1] = replacement
         self._cursor_index += len(text)
 
-    def _insert_segment_at_cursor(self, segment: _DraftSegment) -> None:
-        """Insert a paste/file segment at the caret, splitting literal text."""
+    def _insert_segment_at_cursor(self, segment: _DraftSegment) -> int:
+        """Insert a segment at the caret and return its resulting list index."""
         if not self._segments:
             self._segments = [segment]
             self._cursor_index = len(segment.text)
-            return
+            return 0
         segment_index, offset = self._locate_canonical(self._cursor_index)
         target = self._segments[segment_index]
         if target.collapse_state in {"collapsed", "confirm"}:
@@ -2532,12 +2616,143 @@ class ConsoleComposerBar(Horizontal):
             right_text = target.text[offset:]
             replacement: list[_DraftSegment] = []
             if left_text:
-                replacement.append(replace(target, text=left_text))
+                replacement.append(
+                    replace(
+                        target,
+                        text=left_text,
+                        paste_block=(
+                            target.paste_block
+                            and not (
+                                target.collapse_state == "expanded"
+                                and 0 < offset < len(target.text)
+                            )
+                        ),
+                    )
+                )
+            insert_index = segment_index + len(replacement)
             replacement.append(segment)
             if right_text:
-                replacement.append(replace(target, text=right_text))
+                replacement.append(
+                    replace(
+                        target,
+                        text=right_text,
+                        paste_block=(
+                            target.paste_block
+                            and not (
+                                target.collapse_state == "expanded"
+                                and 0 < offset < len(target.text)
+                            )
+                        ),
+                    )
+                )
             self._segments[segment_index : segment_index + 1] = replacement
         self._cursor_index += len(segment.text)
+        return insert_index
+
+    @staticmethod
+    def _is_paste_block(segment: _DraftSegment) -> bool:
+        """Return whether a segment still owns adjacent-paste block semantics."""
+        return (
+            segment.origin == "paste"
+            and segment.paste_block
+            and segment.collapse_state in {"collapsed", "confirm", "expanded"}
+        )
+
+    @staticmethod
+    def _starts_with_line_break(text: str) -> bool:
+        return text.startswith(("\n", "\r\n"))
+
+    @staticmethod
+    def _ends_with_line_break(text: str) -> bool:
+        return text.endswith("\n")
+
+    @classmethod
+    def _paste_blocks_need_generated_boundary(
+        cls,
+        left: _DraftSegment,
+        right: _DraftSegment,
+    ) -> bool:
+        return (
+            cls._is_paste_block(left)
+            and cls._is_paste_block(right)
+            and not cls._ends_with_line_break(left.text)
+            and not cls._starts_with_line_break(right.text)
+        )
+
+    def _remove_segment_at(self, index: int) -> None:
+        """Remove one segment while preserving the canonical caret offset."""
+        start = sum(len(segment.text) for segment in self._segments[:index])
+        segment = self._segments[index]
+        end = start + len(segment.text)
+        del self._segments[index]
+        if end <= self._cursor_index:
+            self._cursor_index -= len(segment.text)
+        elif start < self._cursor_index:
+            self._cursor_index = start
+
+    def _prune_orphaned_generated_boundaries(self) -> None:
+        """Remove generated separators no longer joining two paste blocks."""
+        index = 0
+        while index < len(self._segments):
+            segment = self._segments[index]
+            if not segment.generated_boundary:
+                index += 1
+                continue
+            owns_boundary = (
+                index > 0
+                and index + 1 < len(self._segments)
+                and self._is_paste_block(self._segments[index - 1])
+                and self._is_paste_block(self._segments[index + 1])
+            )
+            if owns_boundary:
+                index += 1
+            else:
+                self._remove_segment_at(index)
+
+    def _ensure_new_paste_left_boundary(self, paste_index: int) -> int:
+        separator_index = paste_index - 1
+        has_generated = (
+            separator_index >= 0 and self._segments[separator_index].generated_boundary
+        )
+        left_index = separator_index - 1 if has_generated else separator_index
+        if left_index < 0 or not self._is_paste_block(self._segments[left_index]):
+            return paste_index
+        needed = self._paste_blocks_need_generated_boundary(
+            self._segments[left_index], self._segments[paste_index]
+        )
+        if has_generated and not needed:
+            self._remove_segment_at(separator_index)
+            return paste_index - 1
+        if not has_generated and needed:
+            self._segments.insert(
+                paste_index,
+                _DraftSegment("\n", generated_boundary=True),
+            )
+            self._cursor_index += 1
+            return paste_index + 1
+        return paste_index
+
+    def _ensure_new_paste_right_boundary(self, paste_index: int) -> None:
+        separator_index = paste_index + 1
+        has_generated = (
+            separator_index < len(self._segments)
+            and self._segments[separator_index].generated_boundary
+        )
+        right_index = separator_index + 1 if has_generated else separator_index
+        if right_index >= len(self._segments) or not self._is_paste_block(
+            self._segments[right_index]
+        ):
+            return
+        needed = self._paste_blocks_need_generated_boundary(
+            self._segments[paste_index], self._segments[right_index]
+        )
+        if has_generated and not needed:
+            self._remove_segment_at(separator_index)
+        elif not has_generated and needed:
+            self._segments.insert(
+                separator_index,
+                _DraftSegment("\n", generated_boundary=True),
+            )
 
     def _delete_canonical_range(self, start: int, end: int) -> None:
         """Delete canonical text in ``[start, end)`` and move the caret there.
@@ -2563,9 +2778,21 @@ class ConsoleComposerBar(Horizontal):
                 + segment.text[max(0, end - segment_start) :]
             )
             if kept_text:
-                kept_segments.append(replace(segment, text=kept_text))
+                kept_segments.append(
+                    replace(
+                        segment,
+                        text=kept_text,
+                        generated_boundary=False,
+                        paste_block=(
+                            False
+                            if segment.collapse_state == "expanded"
+                            else segment.paste_block
+                        ),
+                    )
+                )
         self._segments = kept_segments
         self._cursor_index = start
+        self._prune_orphaned_generated_boundaries()
         self._clamp_cursor()
 
     def _current_visible_draft_renderable(self, draft: str, width: int) -> Text:
@@ -2873,16 +3100,28 @@ class ConsoleComposerBar(Horizontal):
         """
         if coalesce and self._coalescing_active:
             return
-        self._undo_stack.append(
-            _DraftHistorySnapshot(
-                text=self.draft_text(), cursor_index=self._cursor_index
-            )
-        )
+        self._undo_stack.append(self._make_history_snapshot())
         if len(self._undo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
             del self._undo_stack[0]
         self._evict_to_char_budget(self._undo_stack)
         self._redo_stack.clear()
         self._coalescing_active = coalesce
+
+    def _make_history_snapshot(self) -> _DraftHistorySnapshot:
+        """Capture exact bounded structure, or a flat oversized fallback."""
+        self._ensure_editable_segments()
+        text = self._canonical_draft_text()
+        segments = None
+        if (
+            len(text) <= self.UNDO_RECOLLAPSE_CHAR_THRESHOLD
+            and len(self._segments) <= self.UNDO_STRUCTURED_SEGMENT_CAP
+        ):
+            segments = self._capture_segment_snapshots()
+        return _DraftHistorySnapshot(
+            text=text,
+            cursor_index=self._cursor_index,
+            segments=segments,
+        )
 
     @classmethod
     def _evict_to_char_budget(cls, stack: list[_DraftHistorySnapshot]) -> None:
@@ -2901,7 +3140,10 @@ class ConsoleComposerBar(Horizontal):
     def _apply_history_snapshot(self, snapshot: _DraftHistorySnapshot) -> None:
         """Replace the live draft with a recorded undo/redo snapshot.
 
-        TASK-1281 review NEW-2 (fix shape corrected by review W-1/W-2): a
+        Bounded snapshots restore their exact segment structure, including
+        collapsed paste identity and generated boundary ownership. For an
+        oversized snapshot without structured state, TASK-1281 review NEW-2
+        (fix shape corrected by review W-1/W-2) still applies: a
         restored segment over `UNDO_RECOLLAPSE_CHAR_THRESHOLD` is created
         COLLAPSED -- the same paste-token mechanics `insert_pasted_text`
         already uses for a real paste over `paste_collapse_threshold` --
@@ -2923,14 +3165,9 @@ class ConsoleComposerBar(Horizontal):
         freeze back in full (review W-2, LOW). See the constant's own
         docstring for the measurements behind the threshold value.
 
-        A redo landing back on a snapshot taken while a large paste was
-        still collapsed correctly shows the collapsed token again, not the
-        fully expanded literal text -- see the module docstring for the
-        (narrower) limitation that remains: the restored token is always a
-        generic "Pasted text | N characters | Expand" collapse, never the original
-        segment's label (a labeled file/attachment segment, or one already
-        `expanded`/mid-`confirm`, is not carried through the flat snapshot
-        -- only the raw text and whether it crosses the threshold are).
+        An oversized restored token remains a generic
+        "Pasted text | N characters | Expand" collapse because carrying a
+        potentially unbounded segment graph would defeat the history bound.
 
         Collapsed tokens are atomic for the caret everywhere else in this
         widget (no other code path leaves it mid-token), so when the
@@ -2943,7 +3180,20 @@ class ConsoleComposerBar(Horizontal):
         self._clear_draft_selection()
         text_length = len(snapshot.text)
         raw_cursor = max(0, min(snapshot.cursor_index, text_length))
-        if not snapshot.text:
+        if snapshot.segments is not None and self._history_entry_is_valid(snapshot):
+            self._segments = [
+                _DraftSegment(
+                    text=segment.text,
+                    origin=segment.origin,
+                    collapse_state=segment.collapse_state,
+                    label=segment.label,
+                    generated_boundary=segment.generated_boundary,
+                    paste_block=segment.paste_block,
+                )
+                for segment in snapshot.segments
+            ]
+            self._cursor_index = raw_cursor
+        elif not snapshot.text:
             self._segments = []
             self._cursor_index = 0
         elif text_length > self.UNDO_RECOLLAPSE_CHAR_THRESHOLD:
@@ -2978,9 +3228,7 @@ class ConsoleComposerBar(Horizontal):
         if not self._undo_stack:
             return False
         self._mark_manual_draft_edit()
-        current = _DraftHistorySnapshot(
-            text=self.draft_text(), cursor_index=self._cursor_index
-        )
+        current = self._make_history_snapshot()
         self._redo_stack.append(current)
         if len(self._redo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
             del self._redo_stack[0]
@@ -3001,9 +3249,7 @@ class ConsoleComposerBar(Horizontal):
         if not self._redo_stack:
             return False
         self._mark_manual_draft_edit()
-        current = _DraftHistorySnapshot(
-            text=self.draft_text(), cursor_index=self._cursor_index
-        )
+        current = self._make_history_snapshot()
         self._undo_stack.append(current)
         if len(self._undo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
             del self._undo_stack[0]
@@ -3022,7 +3268,14 @@ class ConsoleComposerBar(Horizontal):
         hold in a dict keyed by session id without aliasing this composer's
         live stacks.
         """
-        return (list(self._undo_stack), list(self._redo_stack))
+        current = self._make_history_snapshot()
+        undo_entries = _HistoryStack(
+            list(self._undo_stack),
+            current_text=current.text,
+            current_segments=current.segments,
+            current_cursor=current.cursor_index,
+        )
+        return (undo_entries, list(self._redo_stack))
 
     def restore_undo_history(self, history: ConsoleComposerUndoHistory | None) -> None:
         """Replace the undo/redo stacks wholesale (TASK-1281 session scoping).
@@ -3033,8 +3286,15 @@ class ConsoleComposerBar(Horizontal):
                 edit -- freshly created, or never visited before).
         """
         undo_entries, redo_entries = history if history is not None else ([], [])
-        self._undo_stack = list(undo_entries)
-        self._redo_stack = list(redo_entries)
+        current_text = getattr(undo_entries, "current_text", None)
+        current_segments = getattr(undo_entries, "current_segments", None)
+        current_cursor = getattr(undo_entries, "current_cursor", None)
+        self._undo_stack = [
+            entry for entry in undo_entries if self._history_entry_is_valid(entry)
+        ]
+        self._redo_stack = [
+            entry for entry in redo_entries if self._history_entry_is_valid(entry)
+        ]
         # TASK-1281 review F6: a caller-supplied history (banked across a
         # session switch, potentially from before this composer instance's
         # own char-budget enforcement existed, or simply handed in from
@@ -3042,6 +3302,34 @@ class ConsoleComposerBar(Horizontal):
         # within budget.
         self._evict_to_char_budget(self._undo_stack)
         self._evict_to_char_budget(self._redo_stack)
+        current = _DraftHistorySnapshot(
+            text=current_text if type(current_text) is str else "",
+            cursor_index=current_cursor if type(current_cursor) is int else -1,
+            segments=current_segments if type(current_segments) is tuple else None,
+        )
+        if (
+            current_segments is not None
+            and current_text == self.draft_text()
+            and self._history_entry_is_valid(current)
+        ):
+            self._segments = [
+                _DraftSegment(
+                    text=segment.text,
+                    origin=segment.origin,
+                    collapse_state=segment.collapse_state,
+                    label=segment.label,
+                    generated_boundary=segment.generated_boundary,
+                    paste_block=segment.paste_block,
+                )
+                for segment in current.segments or ()
+            ]
+            self._segments_initialized = True
+            self._cursor_index = current.cursor_index
+            self._clear_draft_selection()
+            self._sync_hidden_input()
+            self._refresh_visible_draft()
+            self._sync_interaction_classes()
+            self._sync_current_action_state()
         self._coalescing_active = False
 
     def handle_console_key(self, event: Key) -> bool:
@@ -3257,6 +3545,7 @@ class ConsoleComposerBar(Horizontal):
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
         self._insert_literal_at_cursor(text)
+        self._prune_orphaned_generated_boundaries()
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -3293,21 +3582,17 @@ class ConsoleComposerBar(Horizontal):
             and len(text) > self.paste_collapse_threshold
         )
         if should_collapse:
-            predecessor = self._segment_preceding_cursor()
-            if (
-                predecessor is not None
-                and predecessor.collapse_state in {"collapsed", "confirm"}
-                and not predecessor.text.endswith("\n")
-                and not text.startswith("\n")
-            ):
-                self._insert_segment_at_cursor(_DraftSegment("\n"))
-            self._insert_segment_at_cursor(
+            paste_index = self._insert_segment_at_cursor(
                 _DraftSegment(
                     text,
                     origin="paste",
                     collapse_state="collapsed",
+                    paste_block=True,
                 )
             )
+            paste_index = self._ensure_new_paste_left_boundary(paste_index)
+            self._ensure_new_paste_right_boundary(paste_index)
+            self._prune_orphaned_generated_boundaries()
         else:
             self._insert_segment_at_cursor(
                 _DraftSegment(
@@ -3420,9 +3705,13 @@ class ConsoleComposerBar(Horizontal):
             del self._segments[segment_index]
         else:
             segment.text = segment.text[: offset - 1] + segment.text[offset:]
+            segment.generated_boundary = False
+            if segment.collapse_state == "expanded":
+                segment.paste_block = False
             self._cursor_index -= 1
             if not segment.text:
                 del self._segments[segment_index]
+        self._prune_orphaned_generated_boundaries()
         self._clamp_cursor()
         self._sync_hidden_input()
         self._refresh_visible_draft()
@@ -3455,14 +3744,21 @@ class ConsoleComposerBar(Horizontal):
                 del self._segments[segment_index + 1]
             else:
                 next_segment.text = next_segment.text[1:]
+                next_segment.generated_boundary = False
+                if next_segment.collapse_state == "expanded":
+                    next_segment.paste_block = False
                 if not next_segment.text:
                     del self._segments[segment_index + 1]
         elif segment.collapse_state in {"collapsed", "confirm"}:
             del self._segments[segment_index]
         else:
             segment.text = segment.text[:offset] + segment.text[offset + 1 :]
+            segment.generated_boundary = False
+            if segment.collapse_state == "expanded":
+                segment.paste_block = False
             if not segment.text:
                 del self._segments[segment_index]
+        self._prune_orphaned_generated_boundaries()
         self._clamp_cursor()
         self._sync_hidden_input()
         self._refresh_visible_draft()

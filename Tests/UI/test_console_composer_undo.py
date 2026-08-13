@@ -47,7 +47,6 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import (
     _DraftHistorySnapshot,
 )
 
-
 # ---------------------------------------------------------------------------
 # Pure composer-level tests: typed-run coalescing, mutation-kind boundaries,
 # redo, depth cap, export/restore -- no App/pilot needed.
@@ -140,6 +139,134 @@ def test_second_collapsed_paste_and_boundary_are_one_undo_transaction():
 
     assert composer.redo() is True
     assert composer.draft_text() == first + "\n" + second
+
+
+def test_undo_redo_preserves_collapsed_tokens_and_generated_boundary_identity():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+
+    assert composer.undo() is True
+    after_undo = composer.capture_draft_snapshot()
+    assert [
+        (segment.origin, segment.collapse_state) for segment in after_undo.segments
+    ] == [("paste", "collapsed")]
+
+    assert composer.redo() is True
+    after_redo = composer.capture_draft_snapshot()
+    assert [segment.text for segment in after_redo.segments] == [first, "\n", second]
+    assert [segment.generated_boundary for segment in after_redo.segments] == [
+        False,
+        True,
+        False,
+    ]
+    assert [segment.collapse_state for segment in after_redo.segments] == [
+        "collapsed",
+        "literal",
+        "collapsed",
+    ]
+
+
+def test_backspace_right_paste_removes_orphan_boundary_and_undo_restores_both():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+
+    composer.delete_left()
+
+    assert composer.draft_text() == first
+    assert composer.undo() is True
+    assert composer.draft_text() == first + "\n" + second
+    assert composer.capture_draft_snapshot().segments[1].generated_boundary is True
+
+
+def test_delete_left_paste_removes_orphan_boundary_and_undo_restores_both():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+    composer.position_cursor_from_display_index(0)
+
+    composer.delete_right()
+
+    assert composer.draft_text() == second
+    assert composer.undo() is True
+    assert composer.draft_text() == first + "\n" + second
+    assert composer.capture_draft_snapshot().segments[1].generated_boundary is True
+
+
+def test_deleting_paste_does_not_remove_user_authored_newline():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_text("\n")
+    composer.insert_pasted_text(second)
+
+    composer.delete_left()
+
+    assert composer.draft_text() == first + "\n"
+    snapshot = composer.capture_draft_snapshot()
+    assert snapshot.segments[-1].text == "\n"
+    assert snapshot.segments[-1].generated_boundary is False
+
+
+def test_export_restore_history_preserves_current_and_undo_structured_paste_state():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+    composer.delete_left()
+    history = composer.export_undo_history()
+
+    restored = ConsoleComposerBar(paste_collapse_threshold=50)
+    restored.load_draft(composer.draft_text())
+    restored.restore_undo_history(history)
+
+    assert restored.capture_draft_snapshot().segments[0].origin == "paste"
+    assert restored.capture_draft_snapshot().segments[0].collapse_state == "collapsed"
+    assert restored.undo() is True
+    snapshot = restored.capture_draft_snapshot()
+    assert [segment.text for segment in snapshot.segments] == [first, "\n", second]
+    assert snapshot.segments[1].generated_boundary is True
+
+
+@pytest.mark.asyncio
+async def test_session_switch_restores_current_collapsed_paste_structure():
+    _, host = _ready_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_a = store.ensure_session(title="Paste A")
+        composer.load_draft("")
+        console._session._sync_console_session_draft()
+        first = "A" * 80
+        second = "B" * 90
+        composer.insert_pasted_text(first)
+        composer.insert_pasted_text(second)
+
+        session_b = store.create_session(title="Paste B")
+        console._session._sync_console_session_draft()
+        assert store.active_session_id == session_b.id
+
+        store.switch_session(session_a.id)
+        console._session._sync_console_session_draft()
+
+        snapshot = composer.capture_draft_snapshot()
+        assert [segment.text for segment in snapshot.segments] == [first, "\n", second]
+        assert [segment.collapse_state for segment in snapshot.segments] == [
+            "collapsed",
+            "literal",
+            "collapsed",
+        ]
+        assert snapshot.segments[1].generated_boundary is True
 
 
 def test_composer_undo_reverts_file_segment_insertion():

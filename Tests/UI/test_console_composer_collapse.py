@@ -5,6 +5,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from textual.app import App, ComposeResult
 from textual.events import Paste
 from textual.widgets import Button, Static
@@ -18,7 +20,6 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
-
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SOURCE_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
@@ -160,6 +161,186 @@ def test_adjacent_paste_snapshot_restore_preserves_boundary_and_block_states():
     assert restored.draft_text() == first + "\n" + second
     assert restored._display_draft_text().count("Pasted text |") == 2
     assert restored.cursor_index == len(first) + 1 + len(second)
+
+
+def _paste_token(text: str) -> str:
+    return f"Pasted text | {len(text)} characters | Expand"
+
+
+@pytest.mark.parametrize(
+    ("first_suffix", "second_prefix", "display_boundary"),
+    [
+        ("\n", "", "\n"),
+        ("\r\n", "", "\r\n"),
+        ("", "\n", "\n"),
+        ("", "\r\n", "\r\n"),
+        ("\n\n", "", "\n\n"),
+        ("", "\r\n\r\n", "\r\n\r\n"),
+    ],
+)
+def test_embedded_line_breaks_separate_collapsed_tokens_in_display_without_rewrite(
+    first_suffix: str,
+    second_prefix: str,
+    display_boundary: str,
+):
+    composer = ConsoleComposerBar(paste_collapse_threshold=20)
+    first = ("A" * 21) + first_suffix
+    second = second_prefix + ("B" * 22)
+
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+
+    assert composer.draft_text() == first + second
+    assert composer._display_draft_text() == (
+        _paste_token(first) + display_boundary + _paste_token(second)
+    )
+    assert not any(
+        getattr(segment, "generated_boundary", False)
+        for segment in composer.capture_draft_snapshot().segments
+    )
+
+
+def test_inserting_collapsed_paste_before_existing_block_adds_right_boundary():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(second)
+    composer.position_cursor_from_display_index(0)
+
+    composer.insert_pasted_text(first)
+
+    assert composer.draft_text() == first + "\n" + second
+    assert composer._display_draft_text() == (
+        _paste_token(first) + "\n" + _paste_token(second)
+    )
+
+
+def test_inserting_collapsed_paste_between_blocks_reuses_and_adds_boundaries():
+    first = "A" * 80
+    middle = "M" * 85
+    last = "Z" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(last)
+    composer.position_cursor_from_display_index(len(_paste_token(first)) + 1)
+
+    composer.insert_pasted_text(middle)
+
+    assert composer.draft_text() == first + "\n" + middle + "\n" + last
+    snapshot = composer.capture_draft_snapshot()
+    assert [segment.text for segment in snapshot.segments] == [
+        first,
+        "\n",
+        middle,
+        "\n",
+        last,
+    ]
+    assert [segment.generated_boundary for segment in snapshot.segments] == [
+        False,
+        True,
+        False,
+        True,
+        False,
+    ]
+
+
+@pytest.mark.parametrize("file_first", [True, False])
+def test_file_and_collapsed_paste_never_gain_a_generated_boundary(file_first: bool):
+    pasted = "P" * 80
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    if file_first:
+        composer.insert_file_segment("file body", label="file.txt")
+        composer.insert_pasted_text(pasted)
+        expected = "file body" + pasted
+    else:
+        composer.insert_pasted_text(pasted)
+        composer.insert_file_segment("file body", label="file.txt")
+        expected = pasted + "file body"
+
+    assert composer.draft_text() == expected
+    assert not any(
+        segment.generated_boundary
+        for segment in composer.capture_draft_snapshot().segments
+    )
+
+
+def test_generic_history_collapsed_literal_is_not_a_paste_block_boundary():
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    huge_literal = "L" * (composer.UNDO_RECOLLAPSE_CHAR_THRESHOLD + 1)
+    composer.load_draft(huge_literal)
+    composer.insert_text("x")
+    assert composer.undo() is True
+    assert composer.capture_draft_snapshot().segments[0].origin == "literal"
+    assert composer.capture_draft_snapshot().segments[0].collapse_state == "collapsed"
+
+    composer.insert_pasted_text("P" * 80)
+
+    assert composer.draft_text() == huge_literal + ("P" * 80)
+    assert not any(
+        segment.generated_boundary
+        for segment in composer.capture_draft_snapshot().segments
+    )
+
+
+def test_expanded_unedited_paste_retains_block_identity_for_next_paste():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer._segments[0].collapse_state = "expanded"
+
+    composer.insert_pasted_text(second)
+
+    assert composer.draft_text() == first + "\n" + second
+    first_snapshot = composer.capture_draft_snapshot().segments[0]
+    assert first_snapshot.collapse_state == "expanded"
+    assert first_snapshot.paste_block is True
+
+
+def test_editing_inside_expanded_paste_uses_literal_split_semantics_for_adjacency():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer._segments[0].collapse_state = "expanded"
+    composer.position_cursor_from_display_index(40)
+    composer.insert_text(" edited ")
+    composer.move_cursor_end()
+
+    composer.insert_pasted_text(second)
+
+    assert composer.draft_text() == first[:40] + " edited " + first[40:] + second
+    assert not any(
+        segment.generated_boundary
+        for segment in composer.capture_draft_snapshot().segments
+    )
+
+
+@settings(max_examples=24, derandomize=True, deadline=None)
+@given(
+    first_suffix=st.sampled_from(["", " ", "\t", "\n", "\r\n", "\n\n"]),
+    second_prefix=st.sampled_from(["", " ", "\t", "\n", "\r\n", "\r\n\r\n"]),
+)
+def test_adjacent_paste_boundary_matrix_is_canonical_and_visibly_separated(
+    first_suffix: str,
+    second_prefix: str,
+):
+    first = ("A" * 60) + first_suffix
+    second = second_prefix + ("B" * 70)
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+
+    has_explicit_break = first.endswith(("\n", "\r\n")) or second.startswith(
+        ("\n", "\r\n")
+    )
+    expected_separator = "" if has_explicit_break else "\n"
+    assert composer.draft_text() == first + expected_separator + second
+    display = composer._display_draft_text()
+    first_label_end = display.index(_paste_token(first)) + len(_paste_token(first))
+    second_label_start = display.index(_paste_token(second), first_label_end)
+    assert "\n" in display[first_label_end:second_label_start]
 
 
 def _assert_full_button_label_fits(button: Button, expected_label: str) -> None:
