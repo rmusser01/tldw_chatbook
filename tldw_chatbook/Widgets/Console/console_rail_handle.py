@@ -97,7 +97,7 @@ class ConsoleRailHandle(DestinationRailHandle):
             return self._stack_vertical_label(self.label)
         if self.side != "right":
             return self.label
-        return "Inspector" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
+        return "Inspect" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
 
     def _display_badge(self) -> str:
         """Return badge copy that fits the collapsed inspector affordance."""
