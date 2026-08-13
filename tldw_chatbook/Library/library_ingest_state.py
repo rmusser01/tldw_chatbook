@@ -92,6 +92,29 @@ INGEST_EMPTY_SELECTION_COPY = (
     "with files, or a single file."
 )
 
+
+def active_ingest_start_confirm_line(
+    *,
+    active_source_count: int,
+    is_folder: bool,
+    tooling_affected_count: int,
+) -> str:
+    """Return the bounded inline consent copy for active-source matches."""
+    if active_source_count and tooling_affected_count:
+        return (
+            f"Import active; {tooling_affected_count} may fail. "
+            "Start again to queue."
+        )
+    if active_source_count and is_folder:
+        noun = "file" if active_source_count == 1 else "files"
+        return (
+            f"{active_source_count} active {noun}. "
+            "Start again to queue all."
+        )
+    if active_source_count:
+        return "Import active. Start again to queue a duplicate."
+    return ""
+
 #: (xhigh review of task-14823) The gate reason for a folder that holds
 #: entries the scan passed over -- symlinks, dot-entries, unreadable
 #: subfolders. ``total_files == 0`` covers this case too, and the sentence
@@ -2355,6 +2378,7 @@ def build_library_ingest_state(
     expanded_details: frozenset[str] | set[str] = frozenset(),
     analysis_unready_hint: str = "",
     start_confirm_armed: bool = False,
+    start_confirm_line: str = "",
     last_submission_available: bool = False,
     retry_confirm_armed: bool = False,
 ) -> LibraryIngestCanvasState:
@@ -2385,6 +2409,11 @@ def build_library_ingest_state(
             ``form.preflight_checking``.
         transcribe_cpp_configured: Whether the dedicated direct-local model
             setting exists. Only the boolean reaches render state.
+        start_confirm_armed: Whether the screen has an immutable pending
+            consent snapshot for the current request.
+        start_confirm_line: Optional active-duplicate/combined consent copy.
+            When empty, an armed tooling-only request retains the forecast's
+            existing consent sentence.
         retry_confirm_armed: Whether a destructive re-stage is awaiting its
             second press. Rendered as the affordance's label; ignored
             whenever the affordance itself is hidden.
@@ -2783,15 +2812,24 @@ def build_library_ingest_state(
     start_confirm_active = bool(
         start_confirm_armed
         and start_enabled
-        and warning_lines
-        and forecast is not None
-        and forecast.consent_affected
+        and (
+            start_confirm_line
+            or (
+                warning_lines
+                and forecast is not None
+                and forecast.consent_affected
+            )
+        )
     )
     if start_confirm_active:
         # (task-14820 AC#1) Rendered FROM the same forecast the commit
         # line above it renders from -- the two numbers cannot disagree
         # because there is only one of them.
-        start_quiet_line = forecast_consent_line(forecast)
+        start_quiet_line = (
+            start_confirm_line
+            if start_confirm_line
+            else forecast_consent_line(forecast)
+        )
 
     # (task-3313) "Retry this batch" appears once a last submission exists
     # AND the queue has settled — an active job means that submission has
