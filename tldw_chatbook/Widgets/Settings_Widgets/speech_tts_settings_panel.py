@@ -14,7 +14,7 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from loguru import logger
 from rich.text import Text
@@ -439,6 +439,39 @@ class _GlobalSpeechTTSLeaveModal(ModalScreen[LeaveChoice]):
     def handle_save(self, event: Button.Pressed) -> None:
         event.stop()
         self.dismiss("save")
+
+
+class _SpeechSettingsCard(Vertical):
+    """One Speech settings focus card, recomposable on its own (task-15475).
+
+    A plain ``Vertical`` whose children come from a builder the owning panel
+    supplies. The indirection buys exactly one thing: ``await card.recompose()``
+    rebuilds THIS card -- Textual only re-runs ``compose()`` on the widget that
+    owns it, so the card's contents have to be reachable from a ``compose()``
+    of its own rather than inline in the panel's.
+
+    Still a ``Vertical`` subclass, so every ``Vertical`` and
+    ``.settings-focus-card`` CSS rule that styled these cards before keeps
+    matching (Textual type selectors match base classes too).
+    """
+
+    def __init__(self, builder: Callable[[], ComposeResult], **kwargs: Any) -> None:
+        """Store the panel-side builder for this card's children.
+
+        Args:
+            builder: Zero-argument callable yielding the card's children. A
+                bound method of the owning panel: the panel outlives its
+                cards (a card recompose never replaces the panel), and a
+                panel recompose mints fresh cards bound to the fresh panel --
+                so the reference can never go stale.
+            **kwargs: Forwarded to ``Vertical`` (id, classes, ...).
+        """
+        super().__init__(**kwargs)
+        self._builder = builder
+
+    def compose(self) -> ComposeResult:
+        """Yield this card's children from the panel's builder."""
+        yield from self._builder()
 
 
 class SpeechTTSSettingsPanel(Vertical):
@@ -1460,6 +1493,110 @@ class SpeechTTSSettingsPanel(Vertical):
                 markup=False,
             )
 
+        yield _SpeechSettingsCard(
+            self._compose_global_defaults_body,
+            id=self._GLOBAL_DEFAULTS_CARD_ID,
+            classes="settings-focus-card",
+        )
+
+        yield _SpeechSettingsCard(
+            self._compose_provider_setup_body,
+            id=self._PROVIDER_SETUP_CARD_ID,
+            classes="settings-focus-card",
+        )
+
+        yield from self._compose_realtime_section()
+
+        yield _SpeechSettingsCard(
+            self._compose_inspector_body,
+            id=self._INSPECTOR_CARD_ID,
+            classes="settings-focus-card",
+        )
+
+        with Horizontal(id="settings-speech-actions", classes="settings-action-row"):
+            yield Button(
+                "Save",
+                id="settings-speech-save",
+                variant="primary",
+                disabled=self._latest_request_id is not None,
+            )
+            yield Button("Revert", id="settings-speech-revert")
+            yield Button(
+                "Restore Non-secret Defaults",
+                id="settings-speech-restore-defaults",
+            )
+            yield Button("Open Speech Lab", id="settings-speech-open-lab-bottom")
+        yield Static(
+            self.result_text,
+            id="settings-speech-save-result",
+            classes="settings-status-row",
+            markup=False,
+        )
+
+    #: task-15475: the three cards a dropdown change can invalidate, each
+    #: rebuildable on its own (see `_replace_card_bodies`). Composing their
+    #: contents from a method rather than inline in `compose()` is what makes
+    #: a card-scoped rebuild possible at all -- the whole-panel
+    #: `await self.recompose()` these handlers used to call destroyed ~200
+    #: widgets (and every one of them, per the audit) to repaint one card.
+    _GLOBAL_DEFAULTS_CARD_ID = "settings-speech-global-defaults"
+    _PROVIDER_SETUP_CARD_ID = "settings-speech-provider-setup"
+    _INSPECTOR_CARD_ID = "settings-speech-inspector"
+
+    async def _replace_card_bodies(self, *card_ids: str) -> None:
+        """Rebuild the named focus cards in place, keeping focus.
+
+        The card-scoped alternative to ``await self.recompose()``, which
+        destroyed and rebuilt every widget in the panel (~200 of them, per the
+        2026-08-11 input-latency audit) to repaint one card -- and dropped
+        focus entirely while doing it, so a keyboard user operating a Select
+        was left with ``app.focused is None`` after every change.
+
+        Delegates to each card's own ``recompose()`` rather than hand-rolling
+        ``remove_children()``/``mount_all()``: a body generator that opens a
+        container (``_compose_provider_setup_body`` does, via
+        ``_compose_provider_form``) can only be consumed inside a real compose
+        -- Textual's ``Widget.__enter__`` indexes ``app._compose_stacks[-1]``
+        and raises ``IndexError`` off one. ``recompose()`` sets that stack up,
+        awaits the removal before mounting (Textual's ``remove`` is deferred,
+        so mounting early raises ``DuplicateIds`` on every re-used id -- the
+        same trap ``speech_playground_pane._replace_provider_regions``
+        documents), and being awaited here it is ordered against the caller,
+        unlike a fire-and-forget ``refresh(recompose=True)``.
+
+        Focus is restored only when it was inside this panel to begin with:
+        restoring unconditionally would let a programmatic value change (a
+        test, a catalog load) STEAL focus from wherever the user actually is.
+
+        Args:
+            card_ids: Ids of the focus cards to rebuild, in mount order.
+
+        Returns:
+            None.
+        """
+        focused = self.app.focused if self.is_mounted else None
+        focus_token = (
+            self._focus_token(focused)
+            if focused is not None and self in focused.ancestors_with_self
+            else None
+        )
+        for card_id in card_ids:
+            try:
+                card = self.query_one(f"#{card_id}", _SpeechSettingsCard)
+            except QueryError:
+                # The panel was torn down (category switch, screen change)
+                # while this coroutine was suspended -- nothing to rebuild.
+                continue
+            await card.recompose()
+        self._restore_focus(focus_token)
+
+    def _compose_global_defaults_body(self) -> ComposeResult:
+        """Yield the Global defaults card's children.
+
+        Reads ``self.state.defaults`` only -- the Provider setup card is keyed
+        off ``self.configure_provider`` and the Realtime card off
+        ``self._realtime_draft``, so neither is affected by a change here.
+        """
         defaults = self.state.defaults
         audio_cpp_selected = defaults.provider_id == "audio_cpp"
         audio_cpp_choices = self._audio_cpp_choices() if audio_cpp_selected else None
@@ -1479,287 +1616,271 @@ class SpeechTTSSettingsPanel(Vertical):
                 ("Exact", "exact"),
                 ("Server default", "server_default"),
             ]
-        with Vertical(
-            id="settings-speech-global-defaults", classes="settings-focus-card"
-        ):
-            yield Static("Global defaults", classes="destination-section")
-            yield Static(
-                "Global default selection: "
-                f"{self._defaults_configuration_state().value} — effective source "
-                f"{self.state.defaults_source.value}.",
-                id="settings-speech-default-source",
-                classes="settings-status-row",
-                markup=False,
-            )
-            yield self._default_profile_row()
+        yield Static("Global defaults", classes="destination-section")
+        yield Static(
+            "Global default selection: "
+            f"{self._defaults_configuration_state().value} — effective source "
+            f"{self.state.defaults_source.value}.",
+            id="settings-speech-default-source",
+            classes="settings-status-row",
+            markup=False,
+        )
+        yield self._default_profile_row()
+        yield self._row(
+            "Default TTS Provider",
+            Select(
+                _PROVIDER_OPTIONS,
+                value=defaults.provider_id,
+                id="settings-speech-default-provider",
+                allow_blank=False,
+                compact=True,
+                classes="settings-compact-select settings-speech-draft-field",
+            ),
+            classes="settings-select-row",
+            error=self._default_error(
+                "provider_id",
+                "settings-speech-default-provider",
+            ),
+        )
+        yield self._row(
+            "Model policy",
+            Select(
+                model_policy_options,
+                value=defaults.model_mode,
+                id="settings-speech-model-policy",
+                allow_blank=False,
+                compact=True,
+                classes="settings-compact-select settings-speech-draft-field",
+            ),
+            classes="settings-select-row",
+            error=self._default_error(
+                "model_mode",
+                "settings-speech-model-policy",
+            ),
+        )
+        if audio_cpp_choices is not None:
             yield self._row(
-                "Default TTS Provider",
+                "Model value",
                 Select(
-                    _PROVIDER_OPTIONS,
-                    value=defaults.provider_id,
-                    id="settings-speech-default-provider",
-                    allow_blank=False,
+                    self._safe_exact_options(audio_cpp_choices.model.options),
+                    value=(
+                        defaults.model_id
+                        if defaults.model_mode == "exact" and defaults.model_id
+                        else Select.NULL
+                    ),
+                    id="settings-speech-model-value",
+                    allow_blank=defaults.model_mode != "exact",
                     compact=True,
-                    classes="settings-compact-select settings-speech-draft-field",
+                    disabled=defaults.model_mode != "exact",
+                    classes=("settings-compact-select settings-speech-draft-field"),
                 ),
                 classes="settings-select-row",
                 error=self._default_error(
-                    "provider_id",
-                    "settings-speech-default-provider",
+                    "default_model",
+                    "settings-speech-model-value",
                 ),
             )
+        else:
             yield self._row(
-                "Model policy",
-                Select(
-                    model_policy_options,
-                    value=defaults.model_mode,
-                    id="settings-speech-model-policy",
-                    allow_blank=False,
-                    compact=True,
-                    classes="settings-compact-select settings-speech-draft-field",
-                ),
-                classes="settings-select-row",
-                error=self._default_error(
-                    "model_mode",
-                    "settings-speech-model-policy",
-                ),
-            )
-            if audio_cpp_choices is not None:
-                yield self._row(
-                    "Model value",
-                    Select(
-                        self._safe_exact_options(audio_cpp_choices.model.options),
-                        value=(
-                            defaults.model_id
-                            if defaults.model_mode == "exact" and defaults.model_id
-                            else Select.NULL
-                        ),
-                        id="settings-speech-model-value",
-                        allow_blank=defaults.model_mode != "exact",
-                        compact=True,
-                        disabled=defaults.model_mode != "exact",
-                        classes=("settings-compact-select settings-speech-draft-field"),
-                    ),
-                    classes="settings-select-row",
-                    error=self._default_error(
-                        "default_model",
-                        "settings-speech-model-value",
-                    ),
-                )
-            else:
-                yield self._row(
-                    "Model value",
-                    Input(
-                        value=defaults.model_id or "",
-                        id="settings-speech-model-value",
-                        disabled=defaults.model_mode != "exact",
-                        placeholder="Exact model ID",
-                        classes="settings-compact-input settings-speech-draft-field",
-                    ),
-                    error=self._default_error(
-                        "default_model",
-                        "settings-speech-model-value",
-                    ),
-                )
-            yield self._row(
-                "Voice policy",
-                Select(
-                    voice_policy_options,
-                    value=defaults.voice_mode,
-                    id="settings-speech-voice-policy",
-                    allow_blank=False,
-                    compact=True,
-                    classes="settings-compact-select settings-speech-draft-field",
-                ),
-                classes="settings-select-row",
-                error=self._default_error(
-                    "voice_mode",
-                    "settings-speech-voice-policy",
-                ),
-            )
-            if audio_cpp_choices is not None:
-                yield self._row(
-                    "Voice value",
-                    Select(
-                        self._safe_exact_options(audio_cpp_choices.voice.options),
-                        value=(
-                            defaults.voice_id
-                            if defaults.voice_mode == "exact" and defaults.voice_id
-                            else Select.NULL
-                        ),
-                        id="settings-speech-voice-value",
-                        allow_blank=defaults.voice_mode != "exact",
-                        compact=True,
-                        disabled=defaults.voice_mode != "exact",
-                        classes=("settings-compact-select settings-speech-draft-field"),
-                    ),
-                    classes="settings-select-row",
-                    error=self._default_error(
-                        "default_voice",
-                        "settings-speech-voice-value",
-                    ),
-                )
-                yield Static(
-                    f"Model: {audio_cpp_choices.model.state.value} | "
-                    f"Voice: {audio_cpp_choices.voice.state.value}",
-                    id="settings-speech-audio-cpp-choice-status",
-                    classes="settings-status-row",
-                    markup=False,
-                )
-                yield Static(
-                    self._audio_cpp_observation_copy(audio_cpp_choices),
-                    id="settings-speech-audio-cpp-observation-provenance",
-                    classes="settings-detail-row",
-                    markup=False,
-                )
-                yield Static(
-                    "Settings reuses accepted in-memory observations only. Open "
-                    "Speech Lab to test the server or refresh models and voices.",
-                    classes="settings-detail-row",
-                    markup=False,
-                )
-            else:
-                yield self._row(
-                    "Voice value",
-                    Input(
-                        value=defaults.voice_id or "",
-                        id="settings-speech-voice-value",
-                        disabled=defaults.voice_mode != "exact",
-                        placeholder="Exact voice ID",
-                        classes="settings-compact-input settings-speech-draft-field",
-                    ),
-                    error=self._default_error(
-                        "default_voice",
-                        "settings-speech-voice-value",
-                    ),
-                )
-            yield self._row(
-                "Output format",
-                Select(
-                    [
-                        ("MP3", "mp3"),
-                        ("Opus", "opus"),
-                        ("AAC", "aac"),
-                        ("FLAC", "flac"),
-                        ("WAV", "wav"),
-                    ],
-                    value=defaults.response_format,
-                    id="settings-speech-output-format",
-                    allow_blank=False,
-                    compact=True,
-                    disabled=audio_cpp_selected,
-                    classes="settings-compact-select settings-speech-draft-field",
-                ),
-                classes="settings-select-row",
-                error=self._default_error(
-                    "response_format",
-                    "settings-speech-output-format",
-                ),
-            )
-            yield self._row(
-                "Speed",
+                "Model value",
                 Input(
-                    value=str(defaults.speed),
-                    id="settings-speech-speed",
-                    disabled=audio_cpp_selected,
-                    placeholder="0.25 - 4.0",
+                    value=defaults.model_id or "",
+                    id="settings-speech-model-value",
+                    disabled=defaults.model_mode != "exact",
+                    placeholder="Exact model ID",
                     classes="settings-compact-input settings-speech-draft-field",
                 ),
                 error=self._default_error(
-                    "default_speed",
-                    "settings-speech-speed",
+                    "default_model",
+                    "settings-speech-model-value",
                 ),
             )
-            yield Static(
-                "audio.cpp requires WAV output and speed 1.0."
-                if audio_cpp_selected
-                else "Provider capability constraints are validated before Save.",
-                id="settings-speech-default-constraints",
-                classes="settings-status-row",
-                markup=False,
-            )
-
-        with Vertical(
-            id="settings-speech-provider-setup", classes="settings-focus-card"
-        ):
-            yield Static("Provider setup", classes="destination-section")
-            yield Static(
-                "Configure Provider does not change the Default TTS Provider.",
-                classes="settings-detail-row",
-                markup=False,
-            )
+        yield self._row(
+            "Voice policy",
+            Select(
+                voice_policy_options,
+                value=defaults.voice_mode,
+                id="settings-speech-voice-policy",
+                allow_blank=False,
+                compact=True,
+                classes="settings-compact-select settings-speech-draft-field",
+            ),
+            classes="settings-select-row",
+            error=self._default_error(
+                "voice_mode",
+                "settings-speech-voice-policy",
+            ),
+        )
+        if audio_cpp_choices is not None:
             yield self._row(
-                "Configure Provider",
+                "Voice value",
                 Select(
-                    _PROVIDER_OPTIONS,
-                    value=self.configure_provider,
-                    id="settings-speech-configure-provider",
-                    allow_blank=False,
+                    self._safe_exact_options(audio_cpp_choices.voice.options),
+                    value=(
+                        defaults.voice_id
+                        if defaults.voice_mode == "exact" and defaults.voice_id
+                        else Select.NULL
+                    ),
+                    id="settings-speech-voice-value",
+                    allow_blank=defaults.voice_mode != "exact",
                     compact=True,
-                    classes="settings-compact-select",
+                    disabled=defaults.voice_mode != "exact",
+                    classes=("settings-compact-select settings-speech-draft-field"),
                 ),
                 classes="settings-select-row",
+                error=self._default_error(
+                    "default_voice",
+                    "settings-speech-voice-value",
+                ),
             )
-            yield from self._compose_provider_form(self.configure_provider)
-
-        yield from self._compose_realtime_section()
-
-        with Vertical(id="settings-speech-inspector", classes="settings-focus-card"):
-            yield Static("Configuration inspector", classes="destination-section")
             yield Static(
-                f"Selected setup: {TTS_PROVIDER_LABELS[self.configure_provider]}",
-                id="settings-speech-inspector-summary",
+                f"Model: {audio_cpp_choices.model.state.value} | "
+                f"Voice: {audio_cpp_choices.voice.state.value}",
+                id="settings-speech-audio-cpp-choice-status",
                 classes="settings-status-row",
                 markup=False,
             )
             yield Static(
-                "Selected provider setup source: "
-                f"{self.state.provider_sources[self.configure_provider].value}.",
-                id="settings-speech-provider-source",
-                classes="settings-status-row",
-                markup=False,
-            )
-            yield Static(
-                self._draft_impact_copy(),
-                id="settings-speech-draft-impact",
-                classes="settings-status-row",
-                markup=False,
-            )
-            projection = self._status_projection()
-            dirty_connection = self._provider_connection_draft_dirty(
-                self.configure_provider
-            )
-            for row in projection.rows(dirty_draft=dirty_connection):
-                yield Static(
-                    row.copy,
-                    id=f"settings-speech-status-{row.row_id}",
-                    classes="settings-status-row",
-                    markup=False,
-                )
-            yield Static(
-                "Ordinary Save validates and persists locally. Use Speech Lab for "
-                "connection tests, discovery, generation, and playback.",
+                self._audio_cpp_observation_copy(audio_cpp_choices),
+                id="settings-speech-audio-cpp-observation-provenance",
                 classes="settings-detail-row",
                 markup=False,
             )
-
-        with Horizontal(id="settings-speech-actions", classes="settings-action-row"):
-            yield Button(
-                "Save",
-                id="settings-speech-save",
-                variant="primary",
-                disabled=self._latest_request_id is not None,
+            yield Static(
+                "Settings reuses accepted in-memory observations only. Open "
+                "Speech Lab to test the server or refresh models and voices.",
+                classes="settings-detail-row",
+                markup=False,
             )
-            yield Button("Revert", id="settings-speech-revert")
-            yield Button(
-                "Restore Non-secret Defaults",
-                id="settings-speech-restore-defaults",
+        else:
+            yield self._row(
+                "Voice value",
+                Input(
+                    value=defaults.voice_id or "",
+                    id="settings-speech-voice-value",
+                    disabled=defaults.voice_mode != "exact",
+                    placeholder="Exact voice ID",
+                    classes="settings-compact-input settings-speech-draft-field",
+                ),
+                error=self._default_error(
+                    "default_voice",
+                    "settings-speech-voice-value",
+                ),
             )
-            yield Button("Open Speech Lab", id="settings-speech-open-lab-bottom")
+        yield self._row(
+            "Output format",
+            Select(
+                [
+                    ("MP3", "mp3"),
+                    ("Opus", "opus"),
+                    ("AAC", "aac"),
+                    ("FLAC", "flac"),
+                    ("WAV", "wav"),
+                ],
+                value=defaults.response_format,
+                id="settings-speech-output-format",
+                allow_blank=False,
+                compact=True,
+                disabled=audio_cpp_selected,
+                classes="settings-compact-select settings-speech-draft-field",
+            ),
+            classes="settings-select-row",
+            error=self._default_error(
+                "response_format",
+                "settings-speech-output-format",
+            ),
+        )
+        yield self._row(
+            "Speed",
+            Input(
+                value=str(defaults.speed),
+                id="settings-speech-speed",
+                disabled=audio_cpp_selected,
+                placeholder="0.25 - 4.0",
+                classes="settings-compact-input settings-speech-draft-field",
+            ),
+            error=self._default_error(
+                "default_speed",
+                "settings-speech-speed",
+            ),
+        )
         yield Static(
-            self.result_text,
-            id="settings-speech-save-result",
+            "audio.cpp requires WAV output and speed 1.0."
+            if audio_cpp_selected
+            else "Provider capability constraints are validated before Save.",
+            id="settings-speech-default-constraints",
             classes="settings-status-row",
+            markup=False,
+        )
+
+    def _compose_provider_setup_body(self) -> ComposeResult:
+        """Yield the Provider setup card's children.
+
+        Keyed off ``self.configure_provider`` and
+        ``self.state.providers`` -- independent of the Global defaults
+        card above (Configure Provider does not change the default).
+        """
+        yield Static("Provider setup", classes="destination-section")
+        yield Static(
+            "Configure Provider does not change the Default TTS Provider.",
+            classes="settings-detail-row",
+            markup=False,
+        )
+        yield self._row(
+            "Configure Provider",
+            Select(
+                _PROVIDER_OPTIONS,
+                value=self.configure_provider,
+                id="settings-speech-configure-provider",
+                allow_blank=False,
+                compact=True,
+                classes="settings-compact-select",
+            ),
+            classes="settings-select-row",
+        )
+        yield from self._compose_provider_form(self.configure_provider)
+
+    def _compose_inspector_body(self) -> ComposeResult:
+        """Yield the Configuration inspector card's children.
+
+        Reads BOTH the defaults and the configured provider, so it is
+        rebuilt alongside whichever of the two cards above changed.
+        """
+        yield Static("Configuration inspector", classes="destination-section")
+        yield Static(
+            f"Selected setup: {TTS_PROVIDER_LABELS[self.configure_provider]}",
+            id="settings-speech-inspector-summary",
+            classes="settings-status-row",
+            markup=False,
+        )
+        yield Static(
+            "Selected provider setup source: "
+            f"{self.state.provider_sources[self.configure_provider].value}.",
+            id="settings-speech-provider-source",
+            classes="settings-status-row",
+            markup=False,
+        )
+        yield Static(
+            self._draft_impact_copy(),
+            id="settings-speech-draft-impact",
+            classes="settings-status-row",
+            markup=False,
+        )
+        projection = self._status_projection()
+        dirty_connection = self._provider_connection_draft_dirty(
+            self.configure_provider
+        )
+        for row in projection.rows(dirty_draft=dirty_connection):
+            yield Static(
+                row.copy,
+                id=f"settings-speech-status-{row.row_id}",
+                classes="settings-status-row",
+                markup=False,
+            )
+        yield Static(
+            "Ordinary Save validates and persists locally. Use Speech Lab for "
+            "connection tests, discovery, generation, and playback.",
+            classes="settings-detail-row",
             markup=False,
         )
 
@@ -3704,7 +3825,9 @@ class SpeechTTSSettingsPanel(Vertical):
 
     async def _apply_configure_provider(self, requested_provider: str) -> None:
         self.configure_provider = requested_provider
-        await self.recompose()
+        await self._replace_card_bodies(
+            self._PROVIDER_SETUP_CARD_ID, self._INSPECTOR_CARD_ID
+        )
         self._announce_draft_state()
 
     async def _change_configure_provider(
@@ -3738,7 +3861,9 @@ class SpeechTTSSettingsPanel(Vertical):
                 self.state.defaults.voice_id = None
             self.state.defaults.response_format = "wav"
             self.state.defaults.speed = 1.0
-        await self.recompose()
+        await self._replace_card_bodies(
+            self._GLOBAL_DEFAULTS_CARD_ID, self._INSPECTOR_CARD_ID
+        )
         self._announce_draft_state()
 
     @on(Select.Changed, "#settings-speech-model-policy")
@@ -3754,7 +3879,9 @@ class SpeechTTSSettingsPanel(Vertical):
             choices = self._audio_cpp_choices().model.options
             if choices and not self.state.defaults.model_id:
                 self.state.defaults.model_id = choices[0][1]
-        await self.recompose()
+        await self._replace_card_bodies(
+            self._GLOBAL_DEFAULTS_CARD_ID, self._INSPECTOR_CARD_ID
+        )
         self._announce_draft_state()
 
     @on(Select.Changed, "#settings-speech-voice-policy")
@@ -3770,7 +3897,9 @@ class SpeechTTSSettingsPanel(Vertical):
             choices = self._audio_cpp_choices().voice.options
             if choices and not self.state.defaults.voice_id:
                 self.state.defaults.voice_id = choices[0][1]
-        await self.recompose()
+        await self._replace_card_bodies(
+            self._GLOBAL_DEFAULTS_CARD_ID, self._INSPECTOR_CARD_ID
+        )
         self._announce_draft_state()
 
     @on(Select.Changed, "#settings-speech-model-value")
@@ -3784,7 +3913,9 @@ class SpeechTTSSettingsPanel(Vertical):
         ):
             return
         self._collect_visible_state()
-        await self.recompose()
+        await self._replace_card_bodies(
+            self._GLOBAL_DEFAULTS_CARD_ID, self._INSPECTOR_CARD_ID
+        )
         self._announce_draft_state()
 
     @on(Input.Changed, "#settings-speech-audio_cpp-base-url")

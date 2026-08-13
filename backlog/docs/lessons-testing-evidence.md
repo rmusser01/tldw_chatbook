@@ -3439,3 +3439,79 @@ after inspection. Do not assume every portable `stat_result` field has identical
 meaning across pathname and handle APIs. Preserve strict handle rechecks, test
 each stable identity field, and require native-platform evidence for filesystem
 security claims.
+## A whole-screen recompose is doing four things you did not ask it for
+
+**The trap.** Converting `refresh(recompose=True)` to a region-scoped rebuild looks
+like a pure narrowing: same content, fewer widgets. It is not. The recompose was also
+providing services the new path silently drops, and none of them fail loudly.
+
+**What happened.** Task-15475 (2026-08-11/13) converted four surfaces. Every one of
+these was caught by an EXISTING test, not by reading the diff:
+
+* **Mouse-capture release.** `BaseAppScreen.refresh`/`recompose` release
+  `App.mouse_captured` before and after the teardown (task-627): an `Input` has no
+  `_on_hide`, so a widget torn down while capturing leaves a dangling capture and
+  every mouse click app-wide is silently swallowed from then on. A region swap tears
+  widgets down too and got none of that. Now extracted to
+  `release_mouse_capture_for_teardown` / `sweep_stale_mouse_capture` and called by
+  both converted screens.
+* **Callback ordering.** Textual runs a screen's recompose BEFORE its
+  `call_after_refresh` callbacks, so "select the category, then focus a field in it"
+  worked by construction. A region rebuild driven from a worker (or from the region's
+  own `_check_recompose`) is a DIFFERENT pump with no ordering against the screen's
+  callback list: the Speech deep link ran against a pane that did not exist yet and
+  dropped its focus on the floor, leaving the user on `nav-home`. Follow-ups must hang
+  off the swap itself.
+* **Post-layout geometry.** Anything reading `virtual_size`/`container_size` (here an
+  inspector overflow indicator) must still run after a REFRESH; read inline at the end
+  of the swap it sees pre-layout zeros and renders the wrong state.
+* **The repaint short-circuit.** `Widget.refresh(recompose=True)` returns before
+  `_set_dirty`. Drop `recompose=True` and a plain reactive assignment now resolves
+  `self.app` — which raises `NoActiveAppError` in every bare-screen unit test that
+  sets that reactive. `repaint=False` restores the property honestly (the screen
+  renders nothing from the value; its children do).
+
+Also worth knowing: scoped is not automatically faster. Two separately-awaited region
+swaps each drove their own layout pass and measured 105 ms against the 69 ms the
+whole-screen recompose appeared to cost. Both numbers were wrong to compare — the Lab
+frame defers its body mount OUT of the recompose, so that 69 ms excluded the expensive
+half. Wrapping the swap in `self.batch()` (what `Widget.recompose` itself uses) took
+it to 88 ms, and the honest end-to-end measure — trigger to content actually on
+screen — was 325 ms before, 146 ms after.
+
+**What to do.** Before converting a recompose, list what it did besides re-render:
+grep the screen's `refresh`/`recompose` overrides, its `call_after_refresh` call
+sites, and any geometry reads. Port each explicitly. Measure trigger-to-content, never
+"time the two coroutines", and batch the swap.
+
+**Review round 1 added three more, all measured, none visible in the diff:**
+
+* **A "container" you empty may not be yours.** `remove_children()` on a frame region
+  is only safe if the region holds nothing but mode content. `#lab-rail` and
+  `#lab-inspector` each carry a frame-composed collapse header as their FIRST child —
+  which is precisely why `LabScreen._populate_regions` APPENDS with `mount_all` and
+  says so. The blanket removal destroyed both collapse buttons on the first click,
+  permanently (no keyboard binding, no recompose left to restore them). If the
+  existing code mounts with `mount_all` rather than replacing, that is a signal:
+  something else already lives there.
+* **Focus does not "stay put" when the widget under it is destroyed — it MOVES, to a
+  neighbour you did not choose.** Both conversions landed the user on a collapse
+  affordance one Space away from destroying their own context
+  (`settings-category-group-domain-defaults`, `lab-rail-collapse`). Capture the focus
+  token before a teardown and restore it by id, but defer the restore and yield to
+  the rebuilt subtree — a freshly mounted widget may have focused itself ON PURPOSE
+  (`ResultsGrid` does, so its advertised shortcuts work), and an eager restore wins
+  the FIFO race and silently kills that.
+* **`exclusive=True` is the wrong supersede primitive for a teardown.** It cancels the
+  in-flight worker, and the cancellation can land inside `remove_children` — leaving a
+  region emptied and never refilled when the superseding swap does not rebuild that
+  same region, and skipping the post-teardown capture sweep. A lock plus a revision
+  check supersedes just as firmly and lets the loser return before touching a widget.
+  Accumulate any per-call flags (`rail_dirty`) across superseded calls, or the
+  survivor silently drops the loser's work.
+
+And one about the evidence itself: **a test that asserts on the nearest visible text
+can be satisfied by a different code path.** Neutering the sync-rows region rebuild
+left all six evidence tests green, because the assertion read a summary `Static` that
+another path keeps current. Assert on the widgets ONLY the mechanism under test
+writes, then mutation-check by neutering that mechanism.
