@@ -6,6 +6,7 @@ import inspect
 import struct
 import traceback
 from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, fields
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,24 +25,30 @@ from tldw_chatbook.TTS.audio_cpp_guided_config import (
 )
 from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
 from tldw_chatbook.TTS.adapter_types import (
+    _TTS_CLONE_GENERATION_EVIDENCE_TOKEN,
     ProviderHealth,
+    TTSCloneGenerationEvidence,
     TTSConfigurationRevisionError,
     TTSModelInfo,
     TTSNativeCapabilitySnapshot,
     TTSProviderCatalog,
     TTSVoiceDiscoveryResult,
-    TTSCloneGenerationEvidence,
-    _TTS_CLONE_GENERATION_EVIDENCE_TOKEN,
 )
 from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
     TTSRequestedSelectionSnapshot,
 )
-from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
 from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
     ProfileServiceError,
     ProfileValidationError,
+)
+from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
+from tldw_chatbook.TTS.profile_reference_types import (
+    CanonicalTTSCloneReference,
+    TTSCloneReference,
+    TTSCloneRecipeRequirement,
+    TTSCloneReferenceSummary,
 )
 from tldw_chatbook.TTS.profile_service import (
     LoadedCharacterTTSAssignment,
@@ -54,12 +61,6 @@ from tldw_chatbook.TTS.profile_service import (
     TTSProfilePageSnapshot,
     TTSProfileService,
 )
-from tldw_chatbook.TTS.profile_reference_types import (
-    CanonicalTTSCloneReference,
-    TTSCloneReference,
-    TTSCloneRecipeRequirement,
-    TTSCloneReferenceSummary,
-)
 from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -69,6 +70,7 @@ from tldw_chatbook.TTS.profile_types import (
     TTSProfileCollisionSnapshot,
     TTSProfileDraft,
     TTSProfilePage,
+    profile_options_fingerprint,
 )
 
 _CREATED_AT = datetime(2026, 7, 27, 12, tzinfo=UTC)
@@ -611,6 +613,31 @@ def _artifact(
         metadata={"endpoint": "https://user:credential@example.test"},
         requested_selection=selection,
         clone_evidence=clone_evidence,
+    )
+
+
+def _successful_artifact(
+    selection: TTSRequestedSelectionSnapshot,
+    *,
+    provider_id: str | None = None,
+    model_id: str | None = None,
+    voice_id: str | None | object = _UNSET,
+    audio_format: str | None = None,
+) -> STTSGeneratedAudio:
+    selected_voice = selection.voice_id if voice_id is _UNSET else voice_id
+    return STTSGeneratedAudio(
+        path=Path("/private/secret/result.mp3"),
+        provider_id=selection.provider_id if provider_id is None else provider_id,
+        model_id=selection.model_id if model_id is None else model_id,
+        voice_id=cast(str | None, selected_voice),
+        source_text="private submitted text",
+        operation_id="operation",
+        audio_format=(
+            selection.response_format if audio_format is None else audio_format
+        ),
+        content_type="audio/mpeg",
+        metadata={"endpoint": "https://user:credential@example.test"},
+        requested_selection=selection,
     )
 
 
@@ -1233,6 +1260,9 @@ class _FakeTTSService:
         snapshot: TTSNativeCapabilitySnapshot | None = None,
     ) -> None:
         self.revision = 3
+        self.revisions: dict[str, int] = {}
+        self.saved_revisions: dict[str, int] = {}
+        self.applied_revisions: dict[str, int] = {}
         self.snapshot = (
             _capability_snapshot(models=(_model("selected-model"),))
             if snapshot is None
@@ -1285,7 +1315,13 @@ class _FakeTTSService:
 
     def configuration_revision(self, provider_id: str) -> int:
         self.revision_reads.append(provider_id)
-        return self.revision
+        return self.revisions.get(provider_id, self.revision)
+
+    def saved_configuration_revision(self, provider_id: str) -> int:
+        return self.saved_revisions.get(provider_id, 0)
+
+    def applied_configuration_revision(self, provider_id: str) -> int:
+        return self.applied_revisions.get(provider_id, 0)
 
     async def require_current_configuration_revision(
         self,
@@ -1298,12 +1334,16 @@ class _FakeTTSService:
             if self.revision_boundary is not None:
                 await self.revision_boundary.wait()
             await asyncio.sleep(0)
-            if self.stale_decision or self.revision != expected_revision:
+            current_revision = self.revisions.get(provider_id, self.revision)
+            if self.stale_decision or current_revision != expected_revision:
                 raise TTSConfigurationRevisionError(
                     "https://user:credential@example.test/private/path"
                 )
             if self.reconfigure_after_decision:
-                self.revision += 1
+                if provider_id in self.revisions:
+                    self.revisions[provider_id] += 1
+                else:
+                    self.revision += 1
         finally:
             self.read_side_active = False
 
@@ -1451,6 +1491,16 @@ def test_service_values_are_immutable_and_defensively_freeze_containers() -> Non
                 "recovery_action": "edit",
             },
             "recovery_action",
+        ),
+        (
+            TTSProfileAvailability,
+            {
+                "profile_id": _PROFILE_ID,
+                "state": "available",
+                "recovery_action": "none",
+                "provider_configuration_revision": True,
+            },
+            "configuration_revision",
         ),
         (
             TTSProfileAvailabilitySnapshot,
@@ -2074,6 +2124,11 @@ async def test_availability_all_legacy_page_skips_native_capability_call() -> No
         response_format="mp3",
     )
     tts_service = _FakeTTSService()
+    tts_service.revisions = {
+        "audio_cpp": 3,
+        "openai": 9,
+        "elevenlabs": 11,
+    }
     tts_service.capability_hook = _raise
     service, repository, tts_service = _service(tts_service=tts_service)
 
@@ -2087,7 +2142,13 @@ async def test_availability_all_legacy_page_skips_native_capability_call() -> No
 
     assert tts_service.capability_calls == []
     assert tts_service.revision_decisions == []
-    assert tts_service.revision_reads == ["audio_cpp"]
+    assert tts_service.revision_reads == [
+        "openai",
+        "elevenlabs",
+        "audio_cpp",
+        "openai",
+        "elevenlabs",
+    ]
     assert tuple(item.state for item in observed.profiles) == (
         "unverified",
         "unverified",
@@ -2096,6 +2157,9 @@ async def test_availability_all_legacy_page_skips_native_capability_call() -> No
         "none",
         "none",
     )
+    assert tuple(
+        item.provider_configuration_revision for item in observed.profiles
+    ) == (9, 11)
     assert observed.catalog_revision is None
     assert observed.repository_generation == repository.generation
     assert observed.configuration_revision == tts_service.revision
@@ -2155,6 +2219,7 @@ async def test_availability_mixed_page_probes_only_audio_cpp_models() -> None:
             voice_results={"model-a": voice_result},
         )
     )
+    tts_service.revisions = {"audio_cpp": 3, "openai": 9}
     service, repository, tts_service = _service(tts_service=tts_service)
 
     observed = await service.observe_availability(
@@ -2177,6 +2242,267 @@ async def test_availability_mixed_page_probes_only_audio_cpp_models() -> None:
         "none",
         "none",
     )
+    assert tuple(
+        item.provider_configuration_revision for item in observed.profiles
+    ) == (3, 9)
+
+
+def test_current_revision_reads_requested_active_provider_not_publication_counters() -> (
+    None
+):
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"audio_cpp": 2, "openai": 41}
+    tts_service.saved_revisions = {"openai": 7}
+    tts_service.applied_revisions = {"openai": 7}
+    service, _repository, _tts_service = _service(tts_service=tts_service)
+
+    assert service._current_configuration_revision("openai") == 41
+    assert tts_service.revision_reads == ["openai"]
+
+
+@pytest.mark.asyncio
+async def test_openai_profile_created_from_sample_is_available_this_process() -> None:
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"audio_cpp": 2, "openai": 41}
+    tts_service.saved_revisions = {"openai": 7}
+    tts_service.applied_revisions = {"openai": 7}
+    service, repository, _tts_service = _service(tts_service=tts_service)
+    selection = _selection(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="mp3",
+        configuration_revision=41,
+    )
+
+    loaded = await service.create_from_artifact(
+        "Pocket Alba",
+        _successful_artifact(selection),
+    )
+    observed = await service.observe_availability(
+        TTSProfilePageSnapshot(
+            repository_generation=repository.generation,
+            profiles=(loaded.profile,),
+            total=1,
+        )
+    )
+
+    assert observed.configuration_revision == 2
+    assert observed.catalog_revision is None
+    assert observed.profiles[0].state == "available"
+    assert observed.profiles[0].provider_configuration_revision == 41
+    evidence = service._sample_evidence[loaded.profile.profile_id]
+    assert evidence.profile_revision == loaded.profile.revision
+    assert evidence.options_fingerprint == profile_options_fingerprint({})
+    assert "credential" not in repr(evidence)
+    assert "submitted text" not in repr(evidence)
+
+
+@pytest.mark.asyncio
+async def test_openai_profile_evidence_invalidates_on_active_revision_change() -> None:
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"audio_cpp": 2, "openai": 41}
+    service, repository, _tts_service = _service(tts_service=tts_service)
+    selection = _selection(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="mp3",
+        configuration_revision=41,
+    )
+    loaded = await service.create_from_artifact(
+        "Pocket Alba",
+        _successful_artifact(selection),
+    )
+
+    tts_service.revisions["openai"] = 42
+    observed = await service.observe_availability(
+        TTSProfilePageSnapshot(
+            repository_generation=repository.generation,
+            profiles=(loaded.profile,),
+            total=1,
+        )
+    )
+
+    assert observed.profiles[0].state == "unverified"
+    assert observed.profiles[0].provider_configuration_revision == 42
+
+    tts_service.revisions["openai"] = 41
+    observed_after_revert = await service.observe_availability(
+        TTSProfilePageSnapshot(
+            repository_generation=repository.generation,
+            profiles=(loaded.profile,),
+            total=1,
+        )
+    )
+    assert observed_after_revert.profiles[0].state == "unverified"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "artifact_overrides",
+    (
+        {"provider_id": "elevenlabs"},
+        {"model_id": "other-model"},
+        {"voice_id": "other-voice"},
+        {"audio_format": "wav"},
+    ),
+)
+async def test_sample_evidence_rejects_malformed_or_mismatched_artifact(
+    artifact_overrides: dict[str, object],
+) -> None:
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"audio_cpp": 2, "openai": 41}
+    service, repository, _tts_service = _service(tts_service=tts_service)
+    profile = _profile(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="mp3",
+    )
+    loaded = LoadedTTSProfile(repository.generation, profile)
+    selection = _selection(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="mp3",
+        configuration_revision=41,
+    )
+
+    service.record_sample_evidence(
+        loaded,
+        _successful_artifact(selection, **artifact_overrides),  # type: ignore[arg-type]
+    )
+
+    assert profile.profile_id not in service._sample_evidence
+
+
+def test_sample_evidence_rejects_failed_cancelled_or_forged_values() -> None:
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"openai": 41}
+    service, repository, _tts_service = _service(tts_service=tts_service)
+    loaded = LoadedTTSProfile(
+        repository.generation,
+        _profile(
+            provider_id="openai",
+            model_id="pocket-tts",
+            voice_id="alba",
+            response_format="mp3",
+        ),
+    )
+    forged = object.__new__(STTSGeneratedAudio)
+
+    service.record_sample_evidence(loaded, cast(STTSGeneratedAudio, object()))
+    service.record_sample_evidence(loaded, forged)
+
+    assert service._sample_evidence == {}
+
+
+@pytest.mark.asyncio
+async def test_edit_and_delete_clear_process_sample_evidence() -> None:
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"openai": 41}
+    service, _repository, _tts_service = _service(tts_service=tts_service)
+    selection = _selection(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="mp3",
+        configuration_revision=41,
+    )
+    loaded = await service.create_from_artifact(
+        "Pocket Alba",
+        _successful_artifact(selection),
+    )
+    assert loaded.profile.profile_id in service._sample_evidence
+
+    updated = await service.update_profile(
+        loaded,
+        TTSProfileDraft(
+            display_name="Pocket Alba edited",
+            provider_id="openai",
+            model_id="pocket-tts",
+            voice_id="alba",
+            response_format="mp3",
+            speed=1.0,
+            options={},
+        ),
+    )
+    assert loaded.profile.profile_id not in service._sample_evidence
+
+    service.record_sample_evidence(updated, _successful_artifact(selection))
+    assert updated.profile.profile_id in service._sample_evidence
+    await service.delete_profile(updated)
+    assert updated.profile.profile_id not in service._sample_evidence
+
+
+@pytest.mark.asyncio
+async def test_new_service_and_unrecorded_profile_have_no_sample_evidence() -> None:
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"audio_cpp": 2, "openai": 41}
+    first, repository, _tts_service = _service(tts_service=tts_service)
+    selection = _selection(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="mp3",
+        configuration_revision=41,
+    )
+    loaded = await first.create_from_artifact(
+        "Pocket Alba",
+        _successful_artifact(selection),
+    )
+    restarted = TTSProfileService(repository, tts_service)
+
+    observed = await restarted.observe_availability(
+        TTSProfilePageSnapshot(
+            repository_generation=repository.generation,
+            profiles=(loaded.profile,),
+            total=1,
+        )
+    )
+
+    assert observed.profiles[0].state == "unverified"
+    assert restarted._sample_evidence == {}
+
+
+def test_sample_evidence_cache_is_bounded_and_thread_safe() -> None:
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"openai": 41}
+    service, repository, _tts_service = _service(tts_service=tts_service)
+    selection = _selection(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="mp3",
+        configuration_revision=41,
+    )
+    artifact = _successful_artifact(selection)
+    loaded_profiles = tuple(
+        LoadedTTSProfile(
+            repository.generation,
+            _profile(
+                profile_id=UUID(int=index + 1),
+                provider_id="openai",
+                model_id="pocket-tts",
+                voice_id="alba",
+                response_format="mp3",
+            ),
+        )
+        for index in range(300)
+    )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        tuple(
+            executor.map(
+                lambda loaded: service.record_sample_evidence(loaded, artifact),
+                loaded_profiles[:-1],
+            )
+        )
+    service.record_sample_evidence(loaded_profiles[-1], artifact)
+
+    assert len(service._sample_evidence) <= 256
+    assert loaded_profiles[-1].profile.profile_id in service._sample_evidence
 
 
 @pytest.mark.asyncio
