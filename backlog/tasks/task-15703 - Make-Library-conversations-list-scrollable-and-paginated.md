@@ -50,3 +50,30 @@ Reason: the change consumes the existing paginated conversation-service contract
 
 Detailed plan: `Docs/superpowers/plans/2026-08-12-library-conversations-pagination.md`
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+Draft — implementation and live verification are complete, but task closure remains
+blocked by two pre-existing repository-wide verification failures, so the acceptance
+criteria and In Progress status intentionally remain unchanged.
+
+- Implemented a 20-row, service-backed conversation page model with query/offset
+  filtering, stale-response rejection, preserved last-successful content during
+  loading or recoverable errors, a native vertically scrolling row viewport, and
+  fixed Previous/Next controls with range and page status.
+- Updated state, Library screen/canvas presentation, CSS source/generated bundle,
+  focused state and Textual Pilot coverage, and
+  `Docs/User_Guide/library/media-and-conversations.md`. No ADR was required because
+  the existing conversation-service pagination contract and module boundaries were
+  retained.
+- Focused verification passed: Ruff; CSS regeneration with no semantic bundle diff;
+  30 state/visibility tests; and 21 focused Library conversation UI tests. Isolated
+  live TUI verification passed with 45 scratch-only conversations at 100x30 and
+  170x48, covering row 20 scrolling, first/middle/final pages, oldest-row filtering,
+  and clearing back to page 1. Evidence:
+  `/tmp/tldw-task15703-live.ZWehQn/evidence/live-verification.txt`.
+- Closure blockers: the broader Library gate reported 1 failure and 1118 passes due
+  to the command-name drift guard (`generate-video`, `stream-video`), and the fresh
+  corrected UI checks reported 1 failure and 1 pass due to the landing-footer copy
+  guard. Both failures reproduce unchanged on pre-feature base `438739778`; project
+  policy nevertheless requires green gates before marking the task Done.
