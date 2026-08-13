@@ -104,3 +104,21 @@ this task's diff.
 `Tests/UI/test_library_ingest_retry_last.py`,
 `Tests/integration/test_library_ingest_flow.py`,
 `Tests/UI/test_settings_configuration_hub.py` updated).
+
+### Review round 1 (fix commit a73eda6cc)
+
+The independent review found 1 Critical + 2 Important defects in the original round, all
+probe-proven: the splash viewer's worker error branch called `self.call_from_thread` (App-only
+API) and crashed the app via exit_on_error; both debounced sites could silently lose an edit
+landing during an in-flight write on quit (dirty cleared after the write; flush returned without
+re-checking); and the file-picker conversion was neutered by `recent_locations.add()`'s sync
+write on the same dismiss path. All fixed: `self.app.call_from_thread` + failure reverts the
+in-memory value; dirty clears at snapshot time and the flush re-checks after awaiting in-flight
+(race tests born red at both sites); recents + last-dir coalesced into one deferred write with
+an end-to-end persistence test. The three library swallows now log; one test pins production's
+real dotted config strings.
+
+Provenance: the fix was authored by the task's implementer agent, which was interrupted
+mid-verification (session limit, then stopped); the controlling session completed the remaining
+test batches (50 + 31 green, ruff attributed) and committed the staged work as a73eda6cc. The
+scoped re-review independently mutation-verified the Critical and one flush-race site.
