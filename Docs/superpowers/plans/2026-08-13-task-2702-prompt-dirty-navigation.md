@@ -1,36 +1,46 @@
 # TASK-2702 Prompt Dirty-Navigation Feedback Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> `superpowers:subagent-driven-development` or `superpowers:executing-plans` to
+> implement this plan one RED→GREEN cycle at a time.
 
-**Goal:** Make a dirty Library Prompt navigation veto explain itself and give every dirty Prompt editor a truthful `Discard changes` recovery.
+**Goal:** Make a dirty Library Prompt navigation veto explain itself and give
+every dirty Prompt editor a truthful `Discard changes` recovery.
 
-**Architecture:** Mirror the existing Skill dirty-veto/discard pattern inside the existing Prompt canvas and `LibraryScreen`. Reuse the Prompt editor's current `dirty` state, in-place patch discipline, and clean-Back reset/list-return tail; add no new state owner, worker, modal, CSS, or shared abstraction.
+**Architecture:** Mirror the existing Skill dirty-veto/discard behavior in the
+existing Prompt canvas and `LibraryScreen`. Reuse the Prompt editor's current
+`dirty` state, in-place patch discipline, and clean-Back reset/list-return tail;
+add no state owner, worker, modal, CSS, or shared abstraction.
 
 **Tech Stack:** Python 3.12, Textual 8.x, pytest/Pilot, Ruff
 
-**ADR required:** no  
-**ADR path:** N/A  
-**Reason:** Routine UX bug fix applying an existing Library pattern without changing persistence, service contracts, ownership, security, or long-lived structure.
+**ADR required:** no
+**ADR path:** N/A
+**Reason:** Routine UX bug fix applying an existing Library pattern without
+changing persistence, service contracts, ownership, security, or long-lived
+structure.
 
 ---
 
-### Task 1: Pin the dirty-veto and discard contracts RED-first
+### Task 1: Explain only a dirty Prompt navigation veto
 
 **Files:**
-- Modify: `Tests/UI/test_library_prompts_canvas.py:7441-7463`
+- Modify: `Tests/UI/test_library_prompts_canvas.py:7440-7465`
+- Modify: `tldw_chatbook/UI/Screens/library_screen.py:575-585,6003-6035`
 
-- [ ] **Step 1: Strengthen the mounted dirty-navigation test**
+- [ ] **Step 1: Strengthen the existing mounted flush regression**
 
-Record `app.notify`, keep the existing real SQLite Prompt/editor flow, and assert the fixed warning exactly once at warning severity while the dirty author field and dirty flag remain unchanged:
+In
+`test_library_prompt_flush_pending_work_vetoes_dirty_editor`, record
+`app.notify`. First call `flush_pending_work()` while the editor is clean and
+assert it returns `True` with no notification. Then edit the author, flush again,
+and assert:
 
 ```python
-notifications: list[tuple[str, dict[str, object]]] = []
-app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
-
-allowed = await screen.flush_pending_work()
-
 assert allowed is False
-assert screen.query_one("#library-prompt-author", Input).value == "Changed mid switch"
+assert screen.query_one("#library-prompt-author", Input).value == (
+    "Changed mid switch"
+)
 assert screen._library_prompt_dirty is True
 assert notifications == [
     (
@@ -40,31 +50,73 @@ assert notifications == [
 ]
 ```
 
-- [ ] **Step 2: Add the clean/save state and no-convert compatibility discard test**
-
-Use the real Prompt database/service and mounted canvas. Prove `#library-prompt-discard` is disabled with a reason on a clean editor, enables without remounting after a metadata edit, and re-disables after a successful save. Add a compatibility-only structured artifact with blank System/User lanes; prove Update/Convert are disabled, metadata can still become dirty, Discard is enabled, and pressing it returns to the list without persisting the edit.
-
-- [ ] **Step 3: Run the exact tests and verify RED**
-
-Run:
+- [ ] **Step 2: Run the exact test and verify RED**
 
 ```bash
 ../../.venv/bin/python -m pytest \
-  Tests/UI/test_library_prompts_canvas.py \
-  -q -k 'flush_pending_work_vetoes_dirty_editor or prompt_discard'
+  Tests/UI/test_library_prompts_canvas.py::test_library_prompt_flush_pending_work_vetoes_dirty_editor \
+  -q
 ```
 
-Expected: failures because `#library-prompt-discard` and the Prompt warning do not exist.
+Expected RED: the dirty refusal produces no notification. The clean assertion
+must already pass, proving the future notifier is not unconditional.
 
-### Task 2: Implement the minimal Prompt sibling of the Skill pattern
+- [ ] **Step 3: Implement the fixed warning at the existing barrier**
+
+Add the content-free constant
+`LIBRARY_PROMPT_DIRTY_VETO_COPY = "Unsaved Prompt changes — Save or Discard changes first."`
+and `_notify_prompt_dirty_veto()` beside the Skill sibling. In
+`flush_pending_work()`, call it only when the awaited Prompt flush result is
+false. Leave every note/skill barrier and the combined return expression
+unchanged; notification failure must not change the fail-closed veto.
+
+- [ ] **Step 4: Rerun the exact test GREEN**
+
+Run the Step 2 command and require one pass.
+
+### Task 2: Render a truthful clean Discard action
 
 **Files:**
-- Modify: `tldw_chatbook/Widgets/Library/library_prompts_canvas.py:50-75,980-1010`
-- Modify: `tldw_chatbook/UI/Screens/library_screen.py:555-585,5994-6030,18250-18325,18588-18615,19000-19025,19290-19345`
+- Modify: `Tests/UI/test_library_prompts_canvas.py:7897-7940`
+- Modify: `tldw_chatbook/Widgets/Library/library_prompts_canvas.py:52-72,970-1020`
+- Modify: `tldw_chatbook/Widgets/Library/__init__.py:10-20,60-80`
+- Modify: `tldw_chatbook/UI/Screens/library_screen.py:341-360`
 
-- [ ] **Step 1: Add literal Prompt discard copy and render the action**
+- [ ] **Step 1: Pin the clean action and literal reason**
 
-Define content-free clean/dirty tooltips beside the Prompt canvas constants. Render `Discard changes` in the existing editor action region for every non-mutation editor state:
+Extend
+`test_library_prompt_editing_shows_unsaved_marker_and_save_clears_it` only as
+far as the initial clean editor. Assert `#library-prompt-discard` is mounted,
+disabled, and carries exactly:
+
+```text
+No unsaved Prompt changes to discard.
+```
+
+- [ ] **Step 2: Run the exact test and verify RED**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_library_prompts_canvas.py::test_library_prompt_editing_shows_unsaved_marker_and_save_clears_it \
+  -q
+```
+
+Expected RED: `#library-prompt-discard` is absent.
+
+- [ ] **Step 3: Add and export the Prompt tooltip constants, then render**
+
+Define beside the Prompt canvas constants:
+
+```python
+PROMPT_DISCARD_TOOLTIP_CLEAN = "No unsaved Prompt changes to discard."
+PROMPT_DISCARD_TOOLTIP_DIRTY = (
+    "Return to the Prompt list without saving these changes."
+)
+```
+
+Export both from `Widgets/Library/__init__.py`, import them through the existing
+`Widgets.Library` screen seam, and render `Discard changes` in the fixed editor
+action region for every normal, conflict, and compatibility editor:
 
 ```python
 yield Button(
@@ -81,93 +133,209 @@ yield Button(
 )
 ```
 
-- [ ] **Step 2: Add the fixed warning and live button patcher**
+Only mutation and a clean working copy disable this action.
 
-Add `LIBRARY_PROMPT_DIRTY_VETO_COPY`, `_notify_prompt_dirty_veto()`, and `_set_library_prompt_discard_enabled()`. The patcher updates both `disabled` and tooltip, matching the existing Skill implementation. Invoke it on the existing dirty false→true and save-success true→false targeted-update paths; do not recompose fields.
+- [ ] **Step 4: Rerun the exact test GREEN through the clean assertions**
 
-- [ ] **Step 3: Notify only when the Prompt barrier refuses app navigation**
+Run the Step 2 command and require the clean action assertions to pass.
 
-In `flush_pending_work()`, after awaiting `_flush_library_prompt_save()`, call `_notify_prompt_dirty_veto()` only when that result is false. Keep the combined return expression and every note/skill barrier unchanged.
+### Task 3: Patch Discard live across dirty and saved transitions
 
-- [ ] **Step 4: Add the explicit discard handler**
+**Files:**
+- Modify: `Tests/UI/test_library_prompts_canvas.py:7897-7940`
+- Modify: `tldw_chatbook/UI/Screens/library_screen.py:18240-18335,18610-19010`
 
-Handle `#library-prompt-discard` at the screen seam. Refuse during mutation or when clean; otherwise reset the editor, request the current Prompt browse scope, refresh the local snapshot, and arm first-row focus—the established clean-Back exit tail—with no persistence call.
+- [ ] **Step 1: Strengthen the existing no-recompose regression**
 
-- [ ] **Step 5: Run focused GREEN verification**
+Capture the clean Discard widget identity. After editing, assert the same widget
+instance is enabled with exactly:
 
-Run:
+```text
+Return to the Prompt list without saving these changes.
+```
+
+After the existing real save reaches `Saved.`, assert the same widget instance
+is disabled again with the clean tooltip. This node already proves the Prompt
+meta and editor fields do not recompose.
+
+- [ ] **Step 2: Run the exact test and verify RED**
+
+Run the Task 2 Step 2 command.
+
+Expected RED: the mounted action stays in its clean disabled state after the
+field change.
+
+- [ ] **Step 3: Implement one targeted Discard patcher**
+
+Add `_set_library_prompt_discard_enabled()` beside
+`_sync_library_prompt_save_action_widgets()`. It updates only `disabled` and
+`tooltip`. Call it from both false→true dirty paths:
+
+- `_mark_library_prompt_dirty()`; and
+- `_capture_library_prompt_block_state()`.
+
+Call it from the common successful create/update save settlement after
+`_library_prompt_dirty = False`, so both branches re-disable the action. Paths
+that already recompose project the correct state from `dirty` and need no second
+mechanism.
+
+- [ ] **Step 4: Rerun the exact test GREEN**
+
+Run the Task 2 Step 2 command and require one pass.
+
+### Task 4: Make compatibility-only dirty editors escapable
+
+**Files:**
+- Modify: `Tests/UI/test_library_prompts_canvas.py` (new mounted regression near
+  the Prompt dirty-state tests)
+- Modify: `tldw_chatbook/UI/Screens/library_screen.py:19280-19335`
+
+- [ ] **Step 1: Add the compatibility dead-end regression**
+
+Use a real Prompt database/service and mount a compatibility-only structured
+artifact with blank System/User lanes. Prove `Update original` and
+`Convert and save as new Prompt` are unavailable, edit metadata, and assert
+Discard enables. Press it and prove all of the established clean-Back tail:
+
+- no persistence call and the stored metadata remains unchanged;
+- editor returns to the Prompt list;
+- the current browse scope is requested exactly once;
+- the local source snapshot refreshes exactly once; and
+- deferred first-row focus lands on the first Prompt row.
+
+- [ ] **Step 2: Run the exact new node and verify RED**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_library_prompts_canvas.py::test_library_prompt_compatibility_editor_discard_returns_to_current_list \
+  -q
+```
+
+Expected RED: pressing the mounted Discard action has no handler/list-return
+effect.
+
+- [ ] **Step 3: Add the explicit screen handler**
+
+Handle `#library-prompt-discard`. Refuse during mutation or while clean.
+Otherwise reset the Prompt editor, request the current Prompt browse scope,
+refresh the local source snapshot, and arm first-row focus using the same exact
+operations and ordering as the clean Back tail. Do not persist and do not add a
+confirmation modal or state.
+
+- [ ] **Step 4: Rerun the exact new node GREEN**
+
+Run the Step 2 command and require one pass.
+
+### Task 5: Mutation proofs and affected verification
+
+- [ ] **Step 1: Prove all behavior boundaries are non-vacuous**
+
+Temporarily bypass the Prompt notifier; Task 1's exact dirty-flush node must go
+RED while its clean assertion remains green. Restore it. Temporarily omit the
+live Discard dirty patch; Task 3's exact node must go RED on the disabled action.
+Restore it. Temporarily bypass the Discard handler; Task 4's exact node must go
+RED on its unchanged editor/list assertions. Restore and rerun all three GREEN.
+
+- [ ] **Step 2: Run focused sibling verification**
 
 ```bash
 ../../.venv/bin/python -m pytest \
   Tests/UI/test_library_prompts_canvas.py \
   Tests/UI/test_library_skills_canvas.py \
-  -q -k 'flush_pending_work_vetoes_dirty_editor or prompt_discard or flush_pending_work_skill_veto_notifies'
+  -q -k 'flush_pending_work_vetoes_dirty_editor or prompt_discard or editing_shows_unsaved_marker_and_save_clears_it or flush_pending_work_skill_veto_notifies'
 ```
 
-Expected: all selected tests pass.
-
-- [ ] **Step 6: Mutation-check both new boundaries**
-
-Temporarily bypass the Prompt notifier and confirm the dirty-navigation test fails. Restore it. Temporarily leave Discard disabled after dirty marking and confirm the compatibility test fails. Restore it and rerun both tests green.
-
-- [ ] **Step 7: Commit the behavior**
-
-```bash
-git add \
-  tldw_chatbook/UI/Screens/library_screen.py \
-  tldw_chatbook/Widgets/Library/library_prompts_canvas.py \
-  Tests/UI/test_library_prompts_canvas.py
-git commit -m "fix(library): explain dirty Prompt navigation veto"
-```
-
-### Task 3: Verify and close out TASK-2702
-
-**Files:**
-- Modify: `backlog/tasks/task-2702 - Library-unsaved-prompt-silently-blocks-screen-navigation.md`
-
-- [ ] **Step 1: Run bounded affected verification**
-
-Run the full Prompt canvas file once plus the focused Skill sibling:
+- [ ] **Step 3: Run the full Prompt canvas file once**
 
 ```bash
 ../../.venv/bin/python -m pytest Tests/UI/test_library_prompts_canvas.py -q
-../../.venv/bin/python -m pytest \
-  Tests/UI/test_library_skills_canvas.py::test_library_flush_pending_work_skill_veto_notifies \
-  -q
 ```
 
-Classify any failure against unchanged `origin/dev`; do not weaken unrelated tests.
+Classify any failure against unchanged `origin/dev`; do not weaken unrelated
+tests.
 
-- [ ] **Step 2: Run static and UI-hardening gates**
+- [ ] **Step 4: Run static checks over every owned Python file**
 
 ```bash
 ../../.venv/bin/ruff check \
   tldw_chatbook/UI/Screens/library_screen.py \
   tldw_chatbook/Widgets/Library/library_prompts_canvas.py \
+  tldw_chatbook/Widgets/Library/__init__.py \
   Tests/UI/test_library_prompts_canvas.py
-../../.venv/bin/ruff format --check Tests/UI/test_library_prompts_canvas.py
+../../.venv/bin/ruff format --check tldw_chatbook/Widgets/Library/__init__.py
+../../.venv/bin/ruff format --check --range=52-75 \
+  tldw_chatbook/Widgets/Library/library_prompts_canvas.py
+../../.venv/bin/ruff format --check --range=960-1040 \
+  tldw_chatbook/Widgets/Library/library_prompts_canvas.py
+../../.venv/bin/ruff format --check --range=330-365 \
+  tldw_chatbook/UI/Screens/library_screen.py
+../../.venv/bin/ruff format --check --range=545-590 \
+  tldw_chatbook/UI/Screens/library_screen.py
+../../.venv/bin/ruff format --check --range=5990-6045 \
+  tldw_chatbook/UI/Screens/library_screen.py
+../../.venv/bin/ruff format --check --range=18230-18340 \
+  tldw_chatbook/UI/Screens/library_screen.py
+../../.venv/bin/ruff format --check --range=18595-19015 \
+  tldw_chatbook/UI/Screens/library_screen.py
+../../.venv/bin/ruff format --check --range=19275-19340 \
+  tldw_chatbook/UI/Screens/library_screen.py
+../../.venv/bin/ruff format --check --range=7420-7485 \
+  Tests/UI/test_library_prompts_canvas.py
+../../.venv/bin/ruff format --check --range=7870-7985 \
+  Tests/UI/test_library_prompts_canvas.py
 ../../.venv/bin/python -m py_compile \
   tldw_chatbook/UI/Screens/library_screen.py \
-  tldw_chatbook/Widgets/Library/library_prompts_canvas.py
+  tldw_chatbook/Widgets/Library/library_prompts_canvas.py \
+  tldw_chatbook/Widgets/Library/__init__.py
 git diff --check
+```
+
+The exact changed ranges above are baseline-green before implementation. If
+edits shift their end lines, widen only the affected range and record it. Do not
+whole-file-format the three monolithic files.
+
+- [ ] **Step 5: Run the Impeccable detector once at final state**
+
+```bash
 node /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.agents/skills/impeccable/scripts/detect.mjs \
   --json \
   tldw_chatbook/UI/Screens/library_screen.py \
   tldw_chatbook/Widgets/Library/library_prompts_canvas.py \
+  tldw_chatbook/Widgets/Library/__init__.py \
   Tests/UI/test_library_prompts_canvas.py
 ```
 
-Use changed-range Ruff formatting for the two monolithic production files if their unchanged whole-file baselines remain unformatted.
+### Task 6: Commit behavior and close out TASK-2702
 
-- [ ] **Step 3: Complete task hygiene**
+- [ ] **Step 1: Commit the verified behavior**
 
-Check all three ACs, add concise Implementation Notes with exact test/static evidence and the ADR decision, and set TASK-2702 to Done without using a CLI operation that strips the existing task sections. No lesson entry is expected unless implementation exposes a new generalizable incident.
+```bash
+git add \
+  tldw_chatbook/UI/Screens/library_screen.py \
+  tldw_chatbook/Widgets/Library/library_prompts_canvas.py \
+  tldw_chatbook/Widgets/Library/__init__.py \
+  Tests/UI/test_library_prompts_canvas.py
+git commit -m "fix(library): explain dirty Prompt navigation veto"
+```
 
-- [ ] **Step 4: Commit closeout**
+- [ ] **Step 2: Complete task hygiene**
+
+Check all acceptance criteria, add concise Implementation Notes with exact
+test/static evidence and the ADR decision, and set TASK-2702 to Done without a
+CLI operation that strips existing task sections. Add a lesson only if a new,
+generalizable incident actually occurred.
+
+- [ ] **Step 3: Commit closeout and verify the cumulative branch**
 
 ```bash
 git add \
   'backlog/tasks/task-2702 - Library-unsaved-prompt-silently-blocks-screen-navigation.md' \
-  Docs/superpowers/plans/2026-08-13-task-2702-prompt-dirty-navigation.md
+  Docs/superpowers/plans/2026-08-13-task-2702-prompt-dirty-navigation.md \
+  Docs/superpowers/specs/2026-08-13-task-2702-prompt-dirty-navigation-design.md
 git commit -m "docs(library): complete TASK-2702"
+git diff --check origin/dev...HEAD
+git status --short
 ```
+
+The cumulative branch diff, not an empty post-commit working-tree diff, is the
+authoritative whitespace gate.

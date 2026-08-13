@@ -68,8 +68,8 @@ detector over the changed UI/test files.
 
 ## Architecture decision
 
-ADR required: no  
-ADR path: N/A  
+ADR required: no
+ADR path: N/A
 Reason: this is a routine UX bug fix that applies an existing Library notification
 pattern without changing state ownership, service contracts, persistence, security,
 or long-lived application structure.
