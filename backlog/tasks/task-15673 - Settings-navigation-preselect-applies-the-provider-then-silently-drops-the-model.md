@@ -1,7 +1,7 @@
 ---
 id: task-15673
 title: Settings navigation preselect applies the provider then silently drops the model
-status: To Do
+status: Done
 assignee: []
 labels:
   - bug
@@ -45,7 +45,30 @@ to prevent.
 
 ## Acceptance Criteria
 
-- [ ] Navigating to Providers & Models with both a provider and a model applies both, with the model field showing the requested model
-- [ ] A genuinely unsaved user draft in Providers & Models is still preserved when a navigation context arrives, and the model is not force-applied over it
-- [ ] The two tests marked xfail(strict=True) for this defect in `Tests/UI/test_settings_configuration_hub.py` pass with the marker removed
-- [ ] A test distinguishes the two dirtiness sources directly, so a future change that re-suppresses the model fails loudly rather than silently
+- [x] Navigating to Providers & Models with both a provider and a model applies both, with the model field showing the requested model
+- [x] A genuinely unsaved user draft in Providers & Models is still preserved when a navigation context arrives, and the model is not force-applied over it
+- [x] The two tests marked xfail(strict=True) for this defect in `Tests/UI/test_settings_configuration_hub.py` pass with the marker removed
+- [x] A test distinguishes the two dirtiness sources directly, so a future change that re-suppresses the model fails loudly rather than silently
+
+## Implementation Plan
+
+1. Re-measure the dirt source with the echo class already fixed
+2. Find the mount-time echo mechanism; verify it against Textual directly
+3. Mirror the model handler's existing nav-echo tolerance
+
+## Implementation Notes
+
+Fixed together with task-15740 -- same root class, two mechanisms. The original
+diagnosis ("applying the provider marks the category dirty") was right about
+the effect but incomplete about the source: the dirt was not the provider
+staging itself but (a) posted `Changed` echoes from programmatic repopulation
+arriving after the `_syncing_*` flags dropped, and (b) the navigation
+recompose's freshly mounted Inputs posting `Changed` for their compose-time
+initial values -- verified against Textual with a minimal probe app; a mounted
+`Input(value="x")` delivers `Changed("x")`. (b) is why fixing (a) alone left
+this task's tests red. The guard in `_apply_navigation_provider_context` is
+untouched -- a genuinely unsaved user draft still survives a navigation
+(pinned by `test_settings_navigation_context_preserves_existing_provider_draft_values`);
+what changed is that navigation no longer manufactures the dirt that tripped
+it. Both xfail(strict=True) markers removed; the discriminating test lives in
+task-15740's notes. See that task for the full mechanism write-up.

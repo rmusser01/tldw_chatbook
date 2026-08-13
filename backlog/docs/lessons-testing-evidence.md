@@ -3292,3 +3292,41 @@ Two corollaries worth carrying:
   rescues it with zero headroom. When you find the blocking mechanism,
   measure what fixing it actually buys before scoping the follow-up around
   it (this one became TASK-15700 with that number in its description).
+## A truncated pytest diff is not the diff (task-15512)
+
+**Incident.** A failing `assert service.calls == [...]` printed its summary line
+as `assert [{'include_ci...tions'), ...}] == [{'include_ci...tions'), ...}]`,
+followed by one `At index 0 diff:` line that pytest itself had cut mid-value. I
+read the visible fragment as a *scope* change and wrote that into the task file
+as the diagnosis. It was wrong: the actual delta was `top_k` (5 vs 15), which
+sat past the truncation point. The wrong diagnosis then travelled -- into a task
+another person would have picked up, pointing them at "a search silently
+widening its scope", which is a much more alarming and entirely fictional bug.
+
+**Rule.** When a collection assertion fails, do not diagnose from the summary
+line. Re-run that single test and read the full comparison, or print the two
+values. The `...` in pytest's output is not an ellipsis for your benefit -- it
+is hiding the part you need.
+
+## Fixing a crash is how you find out what it was hiding (task-15512)
+
+**Incident.** Three Settings tests failed with a timeout waiting for a toast. The
+cause was a stdlib-logging call written in loguru's `{}` style, which raises
+`TypeError` when the record is formatted; `_pytest.logging.LogCaptureHandler.
+handleError` re-raises deliberately, so the Textual save worker died mid-save.
+Fixing the log call made ONE of the three pass -- and the other two then failed
+on their real assertion, which was a genuine product bug (pressing Save marks
+untouched fields dirty-and-empty, and one of them aborts the save).
+
+**Rule.** A crash in a code path masks every assertion downstream of it. After
+fixing one, re-run and expect NEW failures rather than green; treat "same count
+of failures, different reasons" as progress. This is the third time in this
+programme that repairing a run-killing defect exposed defects nobody had counted
+(see the hang-class sweep and the harness-config work).
+
+**Corollary on severity.** The same log bug behaves differently in the two
+environments: production stdlib logging *swallows* the formatting error and
+carries on, so nothing was broken for users -- only the warning was lost. It was
+tempting, and I did briefly claim, that a failing save in tests meant a failing
+save in the product. Check which layer makes a failure fatal before assigning it
+user impact.

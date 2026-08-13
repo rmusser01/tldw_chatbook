@@ -3217,7 +3217,7 @@ class LibraryIngestQueueMixin:
                     type(callback).__name__,
                 )
                 logger.error(
-                    "Library local STT callback could not be marshaled (callback={}).",
+                    "Library local STT callback could not be marshaled (callback=%s).",
                     callback_name,
                 )
 
@@ -4746,7 +4746,7 @@ def _build_generated_video_store():
         store.enforce_retention()
     except Exception as exc:
         logger.warning(
-            "Generated-video startup retention failed (error_type={}).",
+            "Generated-video startup retention failed (error_type=%s).",
             type(exc).__name__,
         )
     return store
@@ -4992,7 +4992,7 @@ class TldwCli(
             )
         except Exception as _instance_lock_exc:
             logger.debug(
-                "Instance lock acquisition failed unexpectedly ({}): {}",
+                "Instance lock acquisition failed unexpectedly (%s): %s",
                 type(_instance_lock_exc).__name__,
                 _instance_lock_exc,
             )
@@ -7153,7 +7153,7 @@ class TldwCli(
             )
         except Exception as exc:
             logger.warning(
-                "Runtime source change was not committed (exception_category={}).",
+                "Runtime source change was not committed (exception_category=%s).",
                 type(exc).__name__,
             )
             self.notify(
@@ -7189,7 +7189,7 @@ class TldwCli(
             except Exception as exc:
                 logger.warning(
                     "Runtime screen callback failed after runtime commit "
-                    "(exception_category={}).",
+                    "(exception_category=%s).",
                     type(exc).__name__,
                 )
         return True
@@ -7930,7 +7930,7 @@ class TldwCli(
                 # confirm. Abandoning the wait does not abandon the save --
                 # the note-save worker is a separate task and keeps running.
                 logger.warning(
-                    "Screen flush timed out after {}s; staying put (route={}).",
+                    "Screen flush timed out after %ss; staying put (route=%s).",
                     self.NAVIGATION_FLUSH_TIMEOUT_SECONDS,
                     screen_name,
                 )
@@ -7947,7 +7947,7 @@ class TldwCli(
                 # The outgoing instance may be the only place pending edits
                 # still exist, so a failed flush must abort the transition.
                 logger.warning(
-                    "Screen flush failed (route={}, exception_category={}).",
+                    "Screen flush failed (route=%s, exception_category=%s).",
                     screen_name,
                     type(exc).__name__,
                 )
@@ -7986,7 +7986,7 @@ class TldwCli(
                 # proceed and tear down live work the user was never asked
                 # about -- fail closed, same as the flush veto above.
                 logger.warning(
-                    "Screen navigation confirm failed (route={}, exception_category={}).",
+                    "Screen navigation confirm failed (route=%s, exception_category=%s).",
                     screen_name,
                     type(exc).__name__,
                 )
@@ -8055,14 +8055,14 @@ class TldwCli(
             if exc is not None:
                 logger.warning(
                     "Screen flush eventually failed after navigation gave up "
-                    "waiting (route={}, exception_category={}).",
+                    "waiting (route=%s, exception_category=%s).",
                     screen_name,
                     type(exc).__name__,
                 )
             else:
                 logger.info(
                     "Screen flush eventually completed after navigation gave "
-                    "up waiting (route={}).",
+                    "up waiting (route=%s).",
                     screen_name,
                 )
 
@@ -8175,17 +8175,17 @@ class TldwCli(
                                 runtime_identity,
                             )
                     logger.debug(
-                        "Saved screen snapshot for canonical route: {}",
+                        "Saved screen snapshot for canonical route: %s",
                         outgoing_key,
                     )
                 else:
                     logger.warning(
-                        "Screen snapshot save skipped (route={}, reason=non_mapping).",
+                        "Screen snapshot save skipped (route=%s, reason=non_mapping).",
                         outgoing_key,
                     )
             except Exception as exc:
                 logger.warning(
-                    "Screen snapshot save failed (route={}, exception_category={}).",
+                    "Screen snapshot save failed (route=%s, exception_category=%s).",
                     outgoing_key,
                     type(exc).__name__,
                 )
@@ -8217,14 +8217,14 @@ class TldwCli(
                 try:
                     restore_state(restored_state)
                     logger.debug(
-                        "Restored screen snapshot for canonical route: {}",
+                        "Restored screen snapshot for canonical route: %s",
                         current_tab_value,
                     )
                 except Exception as exc:
                     self.screen_state_store.discard(current_tab_value)
                     logger.warning(
                         "Screen snapshot restore failed "
-                        "(route={}, exception_category={}).",
+                        "(route=%s, exception_category=%s).",
                         current_tab_value,
                         type(exc).__name__,
                     )
@@ -8242,7 +8242,7 @@ class TldwCli(
                 except Exception as exc:
                     logger.warning(
                         "Navigation context application failed "
-                        "(route={}, exception_category={}).",
+                        "(route=%s, exception_category=%s).",
                         current_tab_value,
                         type(exc).__name__,
                     )
@@ -9313,7 +9313,7 @@ class TldwCli(
             except Exception as exc:
                 logger.warning(
                     "Initial navigation context application failed "
-                    "(route={}, exception_category={}).",
+                    "(route=%s, exception_category=%s).",
                     initial_tab,
                     type(exc).__name__,
                 )
@@ -9334,7 +9334,7 @@ class TldwCli(
             self._maybe_warn_config_load_failure()
         except Exception as e:
             logger.error(
-                "Config load failure warning failed (error_type={})",
+                "Config load failure warning failed (error_type=%s)",
                 type(e).__name__,
             )
 
