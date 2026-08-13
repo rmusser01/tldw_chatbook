@@ -1,11 +1,11 @@
 ---
 id: TASK-208
 title: Guard active ingest submissions against duplicate sources
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-12 17:34'
-updated_date: '2026-08-13 18:44'
+updated_date: '2026-08-13 21:37'
 labels:
   - follow-up
   - ingest
@@ -29,10 +29,10 @@ behavior.
 - [x] #2 Equivalent local path spellings and conservative HTTP(S) URL spellings share a stable lexical admission key without filesystem, network, database, or content-hash work.
 - [x] #3 Local and Server jobs use separate admission scopes, so an active Local import does not block submission of the same source to Server and vice versa.
 - [x] #4 A blocked first press preserves the complete form and displays a compact, fully visible one-row instruction at the minimum supported Library geometry; the existing dead zone prevents double-clicks and key repeat from counting as consent.
-- [x] #5 One deliberate second press applies a one-shot duplicate override only when the unchanged armed snapshot included an active-source reason; a combined active-source and preflight-warning confirmation still requires two presses total, never three.
-- [x] #6 Consent fingerprints stable matching job IDs, not their ordinary QUEUED/PARSING/WRITING transitions. Source/form/backend edits, changed warning identity, active-match membership changes, canvas reset/exit, or Escape disarm; identical preflight refresh and focus movement alone do not.
-- [x] #7 Folder admission is atomic: one outer check runs before any member is queued, and confirmed members use an already-admitted child seam so recursive re-entry cannot partially submit or re-block the batch.
-- [x] #8 The app repeats the guard immediately before local queue creation or remote submission. Expected refusal carries only bounded job ID/state references, is safe to stringify, creates no generic failure receipt, and releases retained external-model resources.
+- [ ] #5 One deliberate second press applies a one-shot duplicate override only when the unchanged armed snapshot included an active-source reason; submit-time candidate identity is exact and every current active match is covered, while a combined active-source and preflight-warning confirmation still requires two presses total, never three.
+- [ ] #6 Consent fingerprints candidate-set identity/count, tooling affected-file count, and stable matching job IDs, not their ordinary QUEUED/PARSING/WRITING transitions. Source/form/backend edits, candidate mutations, changed warning identity or affected count, active-match membership changes, canvas reset/exit, or Escape disarm; an identical full preflight refresh and focus movement alone do not.
+- [ ] #7 Folder admission is atomic: one outer check runs after current expansion and before any member is queued, changed members re-arm, and confirmed exact members use an already-admitted child seam so recursive re-entry cannot partially submit or re-block the batch.
+- [ ] #8 The app repeats the guard immediately before local queue creation or remote submission. Expected refusal carries only bounded job ID/state references plus an opaque candidate digest/count, is safe to stringify without source metadata, creates no generic failure receipt, and releases retained external-model resources.
 - [x] #9 Focused registry, coordinator, screen, folder, URL/path-normalization, privacy, keyboard-parity, constrained-geometry, resource-lifecycle, and regression tests plus scoped static checks and documentation pass.
 <!-- AC:END -->
 
@@ -54,6 +54,7 @@ behavior.
 2. Refactor submission into one authoritative outer admission check plus a private already-admitted child seam, preserving Local/Server routing and atomic folder behavior.
 3. Extend the existing inline two-press Start grammar with stable request fingerprints, reason-specific override forwarding, late-refusal recovery, and external-scope release.
 4. Prove the exact warning copy through painted `72x18` compositor tests, update the Library user guide, run the affected regression/static matrix, and complete task/ADR hygiene.
+5. Final review fix wave: replace the Boolean override with a privacy-safe exact candidate/membership scope, add mutation-sensitive screen/app regressions, rerun TASK-208 plus TASK-15742 evidence, and restore Done only after ACs 5–7 are green.
 
 ## Implementation Notes
 

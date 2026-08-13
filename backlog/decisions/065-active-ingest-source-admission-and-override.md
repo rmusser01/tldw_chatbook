@@ -22,9 +22,13 @@ The screen previews admission from the direct source or the candidate paths
 already produced by background preflight; it performs no new filesystem scan.
 The app repeats one outer guard immediately before local job creation or remote
 submission, then routes admitted folder members through a private seam that
-cannot re-enter the guard. Expected refusal carries only bounded job ID/state
-references. The override is explicit, reason-specific, one-shot, and never
-persisted.
+cannot re-enter the guard. The override is an immutable scope containing an
+opaque deterministic candidate-set digest/count and the bounded active job IDs
+the user consented to. The app re-expands and accepts that scope only when the
+candidate identity is exact and every current active match is covered. Expected
+refusal carries that privacy-safe scope plus bounded job ID/state references so a
+late authoritative refusal can re-arm without exposing paths. The override is
+explicit, reason-specific, one-shot, and never persisted.
 
 ## Context
 
@@ -65,14 +69,19 @@ filesystem stat, content read, hash, database lookup, network request, redirect
 resolution, query sorting, or tracking-parameter removal.
 
 The app performs the binding check before the first local append or remote call.
-Expected refusal creates no failed job and transfers no external-model resource.
-The screen's preview is explanatory defense in depth, not authority.
+Added, removed, or changed folder members and newly active unmatched job IDs
+invalidate a supplied scope. A consented active job's ordinary lifecycle
+transition remains covered, and terminal matches may disappear without blocking
+normal submission. Expected refusal creates no failed job and transfers no
+external-model resource. The screen's preview is explanatory defense in depth,
+not authority.
 
-Consent fingerprints stable matching job IDs, not lifecycle states. Ordinary
-queued/parsing/writing progress preserves the second press; terminal membership,
-request, backend, option, or warning changes invalidate it. Focus movement alone
-does not. A tooling-only confirmation cannot authorize a duplicate that was not
-part of its armed reason set.
+Consent fingerprints the candidate-set digest/count, tooling affected-file count,
+and stable matching job IDs, not lifecycle states. Ordinary queued/parsing/writing
+progress preserves the second press; candidate membership, terminal membership,
+request, backend, option, warning, or affected-count changes invalidate it. Focus
+movement alone does not. A tooling-only confirmation cannot authorize a duplicate
+that was not part of its armed reason set.
 
 The inline instruction remains complete in the fixed one-row gate at the minimum
 supported Library geometry. Its text, not warning color or a glyph, communicates

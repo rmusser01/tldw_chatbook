@@ -36,7 +36,10 @@ TASK-208 fills only that gap and reuses the established consent grammar.
 A pure registry query finds active jobs with the same canonical source and
 backend. The screen uses the result to render the first-press confirmation, and
 the app repeats the check immediately before local queue creation or remote
-submission. A one-shot `allow_active_duplicate` flag carries the second press.
+submission. A one-shot immutable duplicate-consent scope carries the second
+press. It contains a deterministic digest/count for the exact canonical
+candidate set and the stable active job IDs the user consented to; it contains
+no source paths.
 
 This approach gives the UI enough information to be honest while retaining an
 authoritative non-UI guard for every entry point. It adds no database schema,
@@ -100,7 +103,10 @@ the folder before admission. All members are compared against the active
 registry before any member is appended or sent. If one or more members match,
 the first press queues none and the inline copy states how many selected files
 are already active. The confirmed second press admits the original batch using
-its existing grouping and per-file behavior.
+its existing grouping and per-file behavior. The app re-expands the folder and
+requires the current canonical candidate set to equal the consented set before
+the override can apply. Any added, removed, or changed member refuses and
+re-arms before the first child is submitted.
 
 This all-or-nothing admission rule avoids a half-submitted folder whose form and
 receipt cannot explain which members were silently omitted.
@@ -129,10 +135,14 @@ the authoritative admission operation:
 1. resolve the target backend;
 2. expand a directory with the existing bounded collector;
 3. query active matches using that backend origin;
-4. if matches exist and the one-shot override is false, raise a typed expected
-   refusal containing only bounded `(job_id, state)` references;
-5. consume the one-shot admission decision once; and
-6. route the single source, or every expanded folder member, through a private
+4. derive a privacy-safe duplicate-consent scope from the expanded canonical
+   candidates and current active job IDs;
+5. if matches exist and the supplied scope does not cover the exact candidate
+   identity and every current active match, raise a typed expected refusal
+   containing bounded `(job_id, state)` references plus the opaque candidate
+   digest/count needed for late-refusal re-arming;
+6. consume the one-shot admission decision once; and
+7. route the single source, or every expanded folder member, through a private
    already-admitted child seam that cannot re-run or partially re-enter the
    outer guard.
 
@@ -140,7 +150,8 @@ The check occurs before the first job append and before any remote service call.
 The typed refusal is control flow, not a product failure: it creates no failed
 job, no generic error receipt, and no error-level diagnostic. Its payload omits
 source paths, titles, keywords, options, progress, and all other job metadata;
-its string and representation expose only a bounded count and safe lifecycle
+the extra candidate identity is an opaque digest/count, and its string and
+representation expose only bounded counts, that digest, and safe lifecycle
 tokens.
 
 The public method resolves the backend and expands the source exactly once. A
@@ -168,7 +179,9 @@ two serial confirmations. Its fingerprint contains:
 - resolved source;
 - backend origin;
 - the form/options snapshot relevant to submission;
-- preflight-warning identity; and
+- preflight-warning identity;
+- deterministic candidate-set identity and count;
+- the tooling-warning affected-file count; and
 - the stable matching active job IDs in deterministic order.
 
 Lifecycle state is deliberately absent from the fingerprint. `QUEUED` to
@@ -211,8 +224,10 @@ for Enter-to-arm followed by a mouse click on Start. The current
 disarm trigger and must be corrected while this code is touched.
 
 The override is not stored in form/config state and is consumed by one call only.
-It is `True` only when the current, equal armed fingerprint contains at least one
-active duplicate job ID. A confirmation armed solely for tooling warnings cannot
+It is supplied only when the current, equal armed fingerprint contains at least
+one active duplicate job ID. The app accepts it only when submit-time expansion
+has the exact consented candidate identity and every current active match is one
+of the consented job IDs. A confirmation armed solely for tooling warnings cannot
 silently authorize a duplicate that appears later; the changed active membership
 instead presents the duplicate reason and requires a new first press.
 
@@ -243,6 +258,9 @@ No retained model scope transfers to a duplicate job until admission succeeds.
   press submits normally without an obsolete override.
 - If a matching active job appears after preview, the authoritative guard refuses
   and arms the current request rather than creating a duplicate silently.
+- If folder membership changes after arming, the authoritative guard refuses and
+  returns the current opaque candidate identity so the changed batch must be
+  presented and armed again.
 - If consent was armed only for tooling risk and an active duplicate appears,
   the generic consent cannot set the duplicate override; the request re-arms with
   the new reason.
@@ -269,6 +287,8 @@ No retained model scope transfers to a duplicate job until admission succeeds.
   effects;
 - terminal history permits re-ingestion;
 - folder matching is all-or-nothing;
+- added, removed, or changed folder members invalidate a consented batch;
+- a newly active match absent from the preview cannot ride the supplied consent;
 - the override admits the unchanged original batch once through the private
   admitted-child seam, including when the matching member is not first;
 - no folder member is queued before the outer admission decision;
@@ -288,6 +308,8 @@ No retained model scope transfers to a duplicate job until admission succeeds.
 - simultaneous tooling and duplicate warnings need two presses total;
 - a queued-to-parsing-to-writing transition between presses preserves consent;
 - source/options/backend/active-membership changes and canvas exit disarm consent;
+- candidate membership and tooling affected-count changes invalidate consent even
+  when the rendered warning text is otherwise identical;
 - path blur preserves consent for Enter-to-arm then click-to-confirm;
 - tooling-only consent cannot authorize a duplicate that appears later;
 - duplicate and folder copy is exact, markup-safe, and non-modal; and

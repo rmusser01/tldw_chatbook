@@ -15,8 +15,8 @@
 - Canonicalization is lexical only: no symlink resolution, stat, content read, hash, SQLite query, or network access.
 - HTTP(S) normalization lowercases scheme/host, removes default ports and fragments, treats an empty path as `/`, and preserves path bytes and query ordering.
 - Folder admission is all-or-nothing and runs once before any member is appended or sent.
-- The override is reason-specific, one-shot, request-local, and never persisted or exposed as a setting.
-- Expected refusal data contains only a bounded count and `(job_id, state)` references; its string/repr must not reveal source, title, keywords, options, or progress metadata.
+- The override is reason-specific, one-shot, request-local, and never persisted or exposed as a setting. It carries an opaque deterministic candidate-set digest/count and consented active IDs; the app accepts it only for an exact current candidate identity whose active matches are all covered.
+- Expected refusal data contains only a bounded count, `(job_id, state)` references, and the opaque candidate digest/count required for late-refusal re-arming; its string/repr must not reveal source, title, keywords, options, or progress metadata.
 - Exact active-source copy is `Import active. Start again to queue a duplicate.`, `2 active files. Start again to queue all.`, or `Import active; 2 may fail. Start again to queue.` as applicable.
 - The fixed gate remains `markup=False`, one row high, and fully visible at `72x18`; color or glyphs are not required to understand the instruction.
 - The existing `0.3` second dead zone remains authoritative for double-click/key-repeat rejection.
@@ -27,16 +27,27 @@
 
 ## File Structure
 
-- Modify `tldw_chatbook/Library/library_ingest_jobs.py`: immutable source key, lexical normalizer, active-state definition, privacy-safe refusal references, and copy-returning registry query.
-- Modify `tldw_chatbook/app.py`: one authoritative outer admission check, one-shot override argument, and private already-admitted child routing.
+- Modify `tldw_chatbook/Library/library_ingest_jobs.py`: immutable source key, lexical normalizer, active-state definition, privacy-safe duplicate-consent scope/refusal references, and copy-returning registry query.
+- Modify `tldw_chatbook/app.py`: one authoritative outer admission check, exact-scope one-shot override argument, and private already-admitted child routing.
 - Modify `tldw_chatbook/Library/library_ingest_state.py`: pure exact-copy projection for duplicate-only and combined consent.
 - Modify `tldw_chatbook/UI/Screens/library_screen.py`: stable consent snapshot/fingerprint, preview query, first/second press behavior, late authoritative-refusal handling, and external-scope release.
 - Modify `Tests/Library/test_library_ingest_jobs.py`: path/URL normalization, state/origin partitioning, copy isolation, and refusal privacy contracts.
-- Modify `Tests/App/test_submit_library_ingest_job.py`: Local/Server authority, terminal allowance, atomic folder routing, override consumption, and side-effect fencing.
-- Modify `Tests/UI/test_library_ingest_inline_consent.py`: consent union, fingerprint invalidation/preservation, keyboard/dead-zone behavior, late refusal, and external-resource ownership.
+- Modify `Tests/App/test_submit_library_ingest_job.py`: Local/Server authority, terminal allowance, mutation-sensitive atomic folder routing, scoped override consumption, and side-effect fencing.
+- Modify `Tests/UI/test_library_ingest_inline_consent.py`: consent union, candidate/blast-radius fingerprint invalidation, keyboard/dead-zone behavior, late refusal, real screen-to-app scope forwarding, and external-resource ownership.
 - Modify `Tests/UI/test_library_ingest_canvas.py`: exact one-row painted-compositor evidence at `72x18`.
 - Modify `Docs/User_Guide/library/import-and-export.md`: active-import first-press refusal and deliberate second-press behavior.
 - Modify `backlog/tasks/task-208 - Optional-source_path-dedup-for-ingest-submissions-idempotency.md`: plan link, checked acceptance criteria, implementation notes, verification evidence, and Done status after every gate passes.
+
+## Final review refinement
+
+The final whole-branch review found that the original Boolean override could
+authorize a submit-time folder expansion or active-match set that the screen had
+not previewed. The fix wave retains ADR-065 and replaces that Boolean with the
+privacy-safe exact duplicate-consent scope above. TDD must cover added/removed or
+changed folder members between presses, a newly active match absent from stale
+preflight, and an identical warning list whose tooling affected count changes.
+At least one regression must drive the real screen state machine into the real
+app coordinator rather than asserting either boundary in isolation.
 
 ---
 
