@@ -467,6 +467,295 @@ async def test_voice_late_sample_success_cannot_verify_changed_endpoint(monkeypa
             step.query_one("#setup-voice-status", Static).renderable
         )
         assert step._verified_draft is None
+        assert step.query_one("#setup-voice-test", Button).disabled is False
+
+
+@pytest.mark.parametrize(
+    ("control_id", "invalid_value"),
+    [
+        ("setup-voice-endpoint", "not-an-endpoint"),
+        ("setup-voice-model", ""),
+        ("setup-voice-voice", ""),
+        ("setup-voice-format", "unsupported"),
+        ("setup-voice-speed", "not-a-number"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_voice_test_enablement_tracks_the_entire_current_configuration(
+    control_id: str,
+    invalid_value: str,
+) -> None:
+    from types import SimpleNamespace
+
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        button = step.query_one("#setup-voice-test", Button)
+        assert button.disabled is False
+
+        step.query_one(f"#{control_id}", Input).value = invalid_value
+        await pilot.pause()
+
+        assert button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_voice_edit_cancels_inflight_sample_and_reenables_valid_test(
+    monkeypatch,
+) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def delayed_sample(*_args, **_kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(voice_state, "run_voice_sample", delayed_sample)
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        button = step.query_one("#setup-voice-test", Button)
+        button.press()
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert button.disabled is True
+
+        step.query_one("#setup-voice-model", Input).value = "edited-pocket-model"
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        await pilot.pause()
+
+        assert button.disabled is False
+        assert "Needs test" in str(
+            step.query_one("#setup-voice-status", Static).renderable
+        )
+
+
+@pytest.mark.parametrize("change", ["authentication", "preset"])
+@pytest.mark.asyncio
+async def test_voice_auth_and_preset_changes_cancel_inflight_sample(
+    monkeypatch,
+    change: str,
+) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def delayed_sample(*_args, **_kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(voice_state, "run_voice_sample", delayed_sample)
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        button = step.query_one("#setup-voice-test", Button)
+        button.press()
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        target = (
+            "#setup-voice-auth-key"
+            if change == "authentication"
+            else "#setup-voice-preset-official"
+        )
+        step.query_one(target, RadioButton).value = True
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        await pilot.pause()
+
+        assert button.disabled is False
+        assert "Needs test" in str(
+            step.query_one("#setup-voice-status", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_voice_external_worker_cancel_restores_retry_state(monkeypatch) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
+
+    started = asyncio.Event()
+
+    async def delayed_sample(*_args, **_kwargs):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(voice_state, "run_voice_sample", delayed_sample)
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        button = step.query_one("#setup-voice-test", Button)
+        button.press()
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        app.workers.cancel_group(step, "setup-voice-sample")
+        await pilot.pause(0.1)
+
+        assert button.disabled is False
+        assert "Needs test" in str(
+            step.query_one("#setup-voice-status", Static).renderable
+        )
+
+
+@pytest.mark.parametrize("lifecycle_method", ["on_hide", "on_unmount"])
+@pytest.mark.asyncio
+async def test_voice_lifecycle_cancels_sample_and_restores_retry_state(
+    monkeypatch,
+    lifecycle_method: str,
+) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def delayed_sample(*_args, **_kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(voice_state, "run_voice_sample", delayed_sample)
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        button = step.query_one("#setup-voice-test", Button)
+        button.press()
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        getattr(step, lifecycle_method)()
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        await pilot.pause()
+
+        assert button.disabled is False
+        assert "Needs test" in str(
+            step.query_one("#setup-voice-status", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_stale_voice_completion_cannot_overwrite_newer_testing_state(
+    monkeypatch,
+) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
+
+    releases = [asyncio.Event(), asyncio.Event()]
+    started = [asyncio.Event(), asyncio.Event()]
+    call = 0
+
+    async def delayed_sample(*_args, **_kwargs):
+        nonlocal call
+        index = call
+        call += 1
+        started[index].set()
+        try:
+            await releases[index].wait()
+        except asyncio.CancelledError:
+            await releases[index].wait()
+        return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
+
+    monkeypatch.setattr(voice_state, "run_voice_sample", delayed_sample)
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        button = step.query_one("#setup-voice-test", Button)
+        button.press()
+        await asyncio.wait_for(started[0].wait(), timeout=1)
+
+        step.query_one("#setup-voice-model", Input).value = "new-model"
+        await pilot.pause()
+        button.press()
+        await asyncio.wait_for(started[1].wait(), timeout=1)
+        releases[0].set()
+        await pilot.pause(0.1)
+
+        assert button.disabled is True
+        assert str(step.query_one("#setup-voice-status", Static).renderable) == (
+            "Testing voice…"
+        )
+
+        releases[1].set()
+        await pilot.pause(0.1)
+        assert button.disabled is False
+        assert "Verified" in str(
+            step.query_one("#setup-voice-status", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_reselecting_current_voice_preset_preserves_user_edits() -> None:
+    from types import SimpleNamespace
+
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        model = step.query_one("#setup-voice-model", Input)
+        model.value = "user-edited-pocket-model"
+        await pilot.pause()
+
+        pressed = step.query_one("#setup-voice-preset-pocket", RadioButton)
+        step._on_preset(SimpleNamespace(pressed=pressed))
+        await pilot.pause()
+
+        assert model.value == "user-edited-pocket-model"
 
 
 @pytest.mark.asyncio

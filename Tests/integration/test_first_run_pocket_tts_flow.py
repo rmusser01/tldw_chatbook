@@ -3,9 +3,11 @@ from __future__ import annotations
 import io
 import json
 import threading
+import tomllib
 import wave
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -14,10 +16,15 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, Input, RadioButton
 
+from Tests.TTS.adapter_fakes import FakeAdapterFactory, provider_spec
+from tldw_chatbook import config as config_module
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+    STTSEventHandler,
     STTSSettingsSaveEvent,
-    STTSSettingsSaveResult,
 )
+from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.TTS_Generation import TTSService
 from tldw_chatbook.UI.Wizards.first_run_setup_state import STEP_VOICE, TRACK_QUICK
 from tldw_chatbook.UI.Wizards.first_run_voice_step_state import (
     VoiceSetupDraft,
@@ -93,10 +100,16 @@ def fake_pocket_tts():
 
 
 class _VoiceFlowApp(App):
-    def __init__(self, wizard: FirstRunSetupWizard) -> None:
+    def __init__(
+        self,
+        wizard: FirstRunSetupWizard,
+        service: TTSService,
+    ) -> None:
         super().__init__()
         self.wizard = wizard
-        self.saved_event: STTSSettingsSaveEvent | None = None
+        self.app_config = config_module.settings
+        self.stts_handler = STTSEventHandler(self)
+        self.stts_handler._stts_service = service
 
     def compose(self) -> ComposeResult:
         yield from ()
@@ -105,58 +118,98 @@ class _VoiceFlowApp(App):
         self.push_screen(self.wizard)
 
     @on(STTSSettingsSaveEvent)
-    def handle_voice_save(self, event: STTSSettingsSaveEvent) -> None:
-        self.saved_event = event
-        assert event.request_id is not None
-        event.reply_to.receive_stts_settings_save_result(
-            STTSSettingsSaveResult(
-                request_id=event.request_id,
-                persisted=True,
-                provider_statuses={"openai": "applied"},
-                provider_configuration_revisions={"openai": 7},
-                provider_runtime_revisions={"openai": 41},
-                defaults_activated=True,
-                defaults_activation_status="committed",
-            )
-        )
+    async def handle_voice_save(self, event: STTSSettingsSaveEvent) -> None:
+        await self.stts_handler.handle_settings_save(event)
 
 
-async def run_quick_voice_setup(endpoint: str):
-    app_instance = MagicMock(app_config={})
+async def run_quick_voice_setup(endpoint: str, config_path: Path):
+    old_defaults = TTSPreferencesSnapshot.from_settings(config_module.settings)
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("openai", FakeAdapterFactory("openai"), {}),),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=old_defaults)
+    app_instance = MagicMock(app_config=config_module.settings)
     wizard = FirstRunSetupWizard(app_instance)
-    app = _VoiceFlowApp(wizard)
+    app = _VoiceFlowApp(wizard, service)
 
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause(0.2)
-        container = wizard.query_one(SetupWizardContainer)
-        container.select_track(TRACK_QUICK)
-        index = container._step_index_for_id(STEP_VOICE)
-        assert index is not None
-        container.show_step(index)
-        step = container.steps[index]
-        assert isinstance(step, VoiceSetupStep)
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            container.select_track(TRACK_QUICK)
+            index = container._step_index_for_id(STEP_VOICE)
+            assert index is not None
+            container.show_step(index)
+            step = container.steps[index]
+            assert isinstance(step, VoiceSetupStep)
 
-        step.query_one("#setup-voice-endpoint", Input).value = endpoint
-        step.query_one("#setup-voice-model", Input).value = "pocket-tts"
-        step.query_one("#setup-voice-voice", Input).value = "alba"
-        step.query_one("#setup-voice-format", Input).value = "wav"
-        step.query_one("#setup-voice-speed", Input).value = "1.0"
-        step.query_one("#setup-voice-sample", Input).value = "Hello from Chatbook."
-        step.query_one("#setup-voice-default", Checkbox).value = True
-        step.query_one("#setup-voice-auth-none", RadioButton).value = True
-        await pilot.pause()
+            step.query_one("#setup-voice-endpoint", Input).value = endpoint
+            step.query_one("#setup-voice-model", Input).value = "pocket-tts"
+            step.query_one("#setup-voice-voice", Input).value = "alba"
+            step.query_one("#setup-voice-format", Input).value = "wav"
+            step.query_one("#setup-voice-speed", Input).value = "1.0"
+            step.query_one("#setup-voice-sample", Input).value = "Hello from Chatbook."
+            step.query_one("#setup-voice-default", Checkbox).value = True
+            step.query_one("#setup-voice-auth-none", RadioButton).value = True
+            await pilot.pause()
 
-        step.query_one("#setup-voice-test", Button).press()
-        for _ in range(100):
-            if "Verified" in str(step.query_one("#setup-voice-status").renderable):
-                break
-            await pilot.pause(0.02)
-        assert "Verified" in str(step.query_one("#setup-voice-status").renderable)
+            step.query_one("#setup-voice-test", Button).press()
+            for _ in range(100):
+                if "Verified" in str(step.query_one("#setup-voice-status").renderable):
+                    break
+                await pilot.pause(0.02)
+            assert "Verified" in str(step.query_one("#setup-voice-status").renderable)
 
-        ok, error = await step.commit()
-        assert (ok, error) == (True, "")
-        assert app.saved_event is not None
-        return SimpleNamespace(default=app.saved_event.preferences)
+            ok, error = await step.commit()
+            assert (ok, error) == (True, "")
+
+            persisted = tomllib.loads(config_path.read_text(encoding="utf-8"))
+            app_tts = persisted["app_tts"]
+            active_configuration = await registry.provider_configuration_snapshot(
+                "openai"
+            )
+            return SimpleNamespace(
+                persisted_settings=app_tts,
+                saved_revision=service.saved_configuration_revision("openai"),
+                applied_revision=service.applied_configuration_revision("openai"),
+                active_runtime_revision=service.configuration_revision("openai"),
+                active_provider_settings=active_configuration.applied_config[
+                    "app_config"
+                ]["app_tts"],
+                effective_defaults=TTSPreferencesSnapshot.from_settings(persisted),
+                active_defaults=service.preferences_snapshot(),
+            )
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.fixture
+def isolated_voice_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    config_path = tmp_path / "voice-flow.toml"
+    config_path.write_text(
+        "[app_tts]\n"
+        'default_provider = "openai"\n'
+        'default_model_mode = "exact"\n'
+        'default_model = "tts-1-hd"\n'
+        'default_voice_mode = "exact"\n'
+        'default_voice = "shimmer"\n'
+        'default_format = "mp3"\n'
+        "default_speed = 1.0\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    initial = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    monkeypatch.setattr(
+        config_module,
+        "settings",
+        {"COMPREHENSIVE_CONFIG_RAW": initial},
+    )
+    return config_path
 
 
 @pytest.mark.asyncio
@@ -192,11 +245,22 @@ async def test_real_pocket_tts_sample_uses_exact_request_and_playable_response(
 @pytest.mark.asyncio
 async def test_quick_voice_setup_sends_sample_and_activates_exact_defaults(
     fake_pocket_tts,
+    isolated_voice_config: Path,
 ) -> None:
-    result = await run_quick_voice_setup(fake_pocket_tts.url)
+    result = await run_quick_voice_setup(
+        fake_pocket_tts.url,
+        isolated_voice_config,
+    )
 
-    assert result.default.provider_id == "openai"
-    assert result.default.model_id == "pocket-tts"
-    assert result.default.voice_id == "alba"
+    assert result.persisted_settings["OPENAI_BASE_URL"] == fake_pocket_tts.url
+    assert result.persisted_settings["OPENAI_AUTH_MODE"] == "none"
+    assert result.saved_revision == result.applied_revision
+    assert result.active_runtime_revision > 0
+    assert result.active_provider_settings["OPENAI_BASE_URL"] == fake_pocket_tts.url
+    assert result.active_provider_settings["OPENAI_AUTH_MODE"] == "none"
+    assert result.effective_defaults.provider_id == "openai"
+    assert result.effective_defaults.model_id == "pocket-tts"
+    assert result.effective_defaults.voice_id == "alba"
+    assert result.effective_defaults == result.active_defaults
     assert fake_pocket_tts.requests[-1].json()["input"] == "Hello from Chatbook."
     assert "Authorization" not in fake_pocket_tts.requests[-1].headers

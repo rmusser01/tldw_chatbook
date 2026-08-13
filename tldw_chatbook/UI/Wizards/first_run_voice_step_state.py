@@ -29,6 +29,10 @@ VOICE_PRESET_CUSTOM = "custom"
 
 POCKET_TTS_ENDPOINT = "http://127.0.0.1:8765/v1/audio/speech"
 OFFICIAL_OPENAI_TTS_ENDPOINT = "https://api.openai.com/v1/audio/speech"
+POCKET_TTS_MODEL = "pocket-tts"
+POCKET_TTS_VOICE = "alba"
+OFFICIAL_OPENAI_TTS_MODEL = "tts-1-hd"
+OFFICIAL_OPENAI_TTS_VOICE = "shimmer"
 
 _RESPONSE_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav"})
 _MAX_IDENTIFIER_CHARACTERS = 512
@@ -162,8 +166,8 @@ def apply_voice_preset(draft: VoiceSetupDraft, preset: str) -> VoiceSetupDraft:
             draft,
             endpoint=POCKET_TTS_ENDPOINT,
             authentication_mode="none",
-            model_id="pocket-tts",
-            voice_id=draft.voice_id or "alba",
+            model_id=POCKET_TTS_MODEL,
+            voice_id=POCKET_TTS_VOICE,
             response_format="wav",
         )
     if preset == VOICE_PRESET_OFFICIAL_OPENAI:
@@ -171,8 +175,9 @@ def apply_voice_preset(draft: VoiceSetupDraft, preset: str) -> VoiceSetupDraft:
             draft,
             endpoint=OFFICIAL_OPENAI_TTS_ENDPOINT,
             authentication_mode="api_key",
-            model_id=draft.model_id or "gpt-4o-mini-tts",
-            voice_id=draft.voice_id or "alloy",
+            model_id=OFFICIAL_OPENAI_TTS_MODEL,
+            voice_id=OFFICIAL_OPENAI_TTS_VOICE,
+            response_format="mp3",
         )
     if preset == VOICE_PRESET_CUSTOM:
         return draft

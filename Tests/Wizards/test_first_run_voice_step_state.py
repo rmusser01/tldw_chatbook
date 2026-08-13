@@ -84,6 +84,42 @@ def test_voice_presets_enforce_authentication_without_erasing_custom_values() ->
     assert restored.model_id == custom.model_id
 
 
+def test_voice_service_presets_replace_incompatible_model_and_voice_defaults() -> None:
+    custom = _pocket_draft(
+        endpoint="https://speech.example.test/custom",
+        authentication_mode="api_key",
+        model_id="custom-model",
+        voice_id="custom-voice",
+        response_format="flac",
+        speed=1.25,
+    )
+
+    pocket = apply_voice_preset(custom, VOICE_PRESET_POCKET_TTS)
+    official = apply_voice_preset(pocket, VOICE_PRESET_OFFICIAL_OPENAI)
+    pocket_again = apply_voice_preset(official, VOICE_PRESET_POCKET_TTS)
+
+    assert (pocket.model_id, pocket.voice_id) == ("pocket-tts", "alba")
+    assert (official.model_id, official.voice_id) == ("tts-1-hd", "shimmer")
+    assert official.response_format == "mp3"
+    assert (pocket_again.model_id, pocket_again.voice_id) == ("pocket-tts", "alba")
+    assert pocket_again.response_format == "wav"
+
+
+def test_custom_preset_preserves_every_user_owned_field() -> None:
+    custom = _pocket_draft(
+        endpoint="https://speech.example.test/custom",
+        authentication_mode="api_key",
+        model_id="custom-model",
+        voice_id="custom-voice",
+        response_format="flac",
+        speed=1.25,
+        sample_text="Keep this exact sample.",
+        use_as_default=True,
+    )
+
+    assert apply_voice_preset(custom, VOICE_PRESET_CUSTOM) == custom
+
+
 def test_official_openai_rejects_none_but_custom_uses_exact_endpoint_rules() -> None:
     invalid_official = _pocket_draft(
         endpoint="https://api.openai.com/v1/audio/speech",

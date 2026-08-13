@@ -1881,6 +1881,7 @@ class VoiceSetupStep(SetupStep):
         self._save_draft: voice_state.VoiceSetupDraft | None = None
         self._save_future: asyncio.Future[tuple[bool, str]] | None = None
         self._test_generation = 0
+        self._test_in_progress_generation: int | None = None
         self._sample_audio_path: Path | None = None
 
     @staticmethod
@@ -1888,8 +1889,8 @@ class VoiceSetupStep(SetupStep):
         return voice_state.VoiceSetupDraft(
             endpoint=voice_state.POCKET_TTS_ENDPOINT,
             authentication_mode="none",
-            model_id="pocket-tts",
-            voice_id="alba",
+            model_id=voice_state.POCKET_TTS_MODEL,
+            voice_id=voice_state.POCKET_TTS_VOICE,
             response_format="wav",
             speed=1.0,
             sample_text="Hello from Chatbook.",
@@ -2027,6 +2028,13 @@ class VoiceSetupStep(SetupStep):
     def _on_preset(self, event: RadioSet.Changed) -> None:
         if event.pressed is None:
             return
+        preset = {
+            "setup-voice-preset-pocket": voice_state.VOICE_PRESET_POCKET_TTS,
+            "setup-voice-preset-official": voice_state.VOICE_PRESET_OFFICIAL_OPENAI,
+            "setup-voice-preset-custom": voice_state.VOICE_PRESET_CUSTOM,
+        }.get(event.pressed.id)
+        if preset is None or preset == self._preset:
+            return
         try:
             current = self._draft_from_controls()
         except (TypeError, ValueError):
@@ -2036,13 +2044,6 @@ class VoiceSetupStep(SetupStep):
             return
         if self._preset == voice_state.VOICE_PRESET_CUSTOM:
             self._custom_draft = current
-        preset = {
-            "setup-voice-preset-pocket": voice_state.VOICE_PRESET_POCKET_TTS,
-            "setup-voice-preset-official": voice_state.VOICE_PRESET_OFFICIAL_OPENAI,
-            "setup-voice-preset-custom": voice_state.VOICE_PRESET_CUSTOM,
-        }.get(event.pressed.id)
-        if preset is None:
-            return
         self._preset = preset
         base = self._custom_draft if preset == voice_state.VOICE_PRESET_CUSTOM and self._custom_draft is not None else current
         self._apply_draft_to_controls(voice_state.apply_voice_preset(base, preset))
@@ -2067,13 +2068,19 @@ class VoiceSetupStep(SetupStep):
 
     def _invalidate_sample_evidence(self) -> None:
         self._test_generation += 1
+        self._test_in_progress_generation = None
         self._verified_draft = None
+        try:
+            self.workers.cancel_group(self, "setup-voice-sample")
+        except Exception:
+            pass
         try:
             self.query_one("#setup-voice-status", Static).update(
                 "Needs test. You can save this configuration while offline."
             )
         except Exception:
             pass
+        self._refresh_sample_state()
 
     @staticmethod
     def _sample_identity(draft: voice_state.VoiceSetupDraft) -> tuple[object, ...]:
@@ -2097,13 +2104,46 @@ class VoiceSetupStep(SetupStep):
                 f"{trimmed_count} / 500"
             )
             try:
-                voice_state.validate_voice_sample_text(sample)
-                valid = True
-            except ValueError:
+                draft = self._draft_from_controls()
+                valid = voice_state.validate_voice_setup_draft(
+                    draft
+                ).configuration_valid
+            except (TypeError, ValueError):
                 valid = False
-            self.query_one("#setup-voice-test", Button).disabled = not valid
+            self.query_one("#setup-voice-test", Button).disabled = (
+                self._test_in_progress_generation is not None or not valid
+            )
         except Exception:
             return
+
+    def _cancel_active_sample(self) -> None:
+        if self._test_in_progress_generation is None:
+            self._refresh_sample_state()
+            return
+        self._test_generation += 1
+        self._test_in_progress_generation = None
+        self._verified_draft = None
+        try:
+            self.workers.cancel_group(self, "setup-voice-sample")
+        except Exception:
+            pass
+        try:
+            self.query_one("#setup-voice-status", Static).update(
+                "Needs test. The sample was cancelled; retry when ready."
+            )
+        except Exception:
+            pass
+        self._refresh_sample_state()
+
+    def on_hide(self) -> None:
+        super().on_hide()
+        self._cancel_active_sample()
+
+    def on_unmount(self) -> None:
+        self._cancel_active_sample()
+        if self._sample_audio_path is not None:
+            self._sample_audio_path.unlink(missing_ok=True)
+            self._sample_audio_path = None
 
     @on(Button.Pressed, "#setup-voice-test")
     def _on_test_and_hear(self) -> None:
@@ -2115,8 +2155,9 @@ class VoiceSetupStep(SetupStep):
             return
         self._test_generation += 1
         generation = self._test_generation
+        self._test_in_progress_generation = generation
         self.query_one("#setup-voice-status", Static).update("Testing voice…")
-        self.query_one("#setup-voice-test", Button).disabled = True
+        self._refresh_sample_state()
         self.run_worker(
             self._run_voice_sample(generation, draft),
             exclusive=True,
@@ -2150,28 +2191,35 @@ class VoiceSetupStep(SetupStep):
                 credential=self._existing_openai_credential(),
             )
         except asyncio.CancelledError:
+            if generation == self._test_generation:
+                self.query_one("#setup-voice-status", Static).update(
+                    "Needs test. The sample was cancelled; retry when ready."
+                )
             raise
         except Exception:
             if generation == self._test_generation:
                 self.query_one("#setup-voice-status", Static).update(
                     "Needs test. The sample failed; review the service and retry."
                 )
+            return
+        else:
+            if generation != self._test_generation:
+                return
+            try:
+                current = self._draft_from_controls()
+            except (TypeError, ValueError):
+                return
+            if self._sample_identity(current) != self._sample_identity(draft):
+                return
+            self._verified_draft = draft
+            self.query_one("#setup-voice-status", Static).update(
+                "Verified. The sample is ready to hear."
+            )
+            await self._play_sample(result)
+        finally:
+            if self._test_in_progress_generation == generation:
+                self._test_in_progress_generation = None
                 self._refresh_sample_state()
-            return
-        if generation != self._test_generation:
-            return
-        try:
-            current = self._draft_from_controls()
-        except (TypeError, ValueError):
-            return
-        if self._sample_identity(current) != self._sample_identity(draft):
-            return
-        self._verified_draft = draft
-        self.query_one("#setup-voice-status", Static).update(
-            "Verified. The sample is ready to hear."
-        )
-        self._refresh_sample_state()
-        await self._play_sample(result)
 
     async def _play_sample(self, result: voice_state.VoiceSampleResult) -> None:
         audio_player = getattr(self.app, "audio_player", None)
