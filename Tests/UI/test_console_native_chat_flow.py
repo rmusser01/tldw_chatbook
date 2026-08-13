@@ -3011,12 +3011,15 @@ async def test_console_collapsed_paste_sends_full_payload_not_visible_token():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_pasted_text(long_text)
 
-        assert "Pasted Text: 80 Characters" in _visible_text(console)
+        assert "Pasted text | 80 characters | Expand" in _visible_text(console)
         console.query_one("#console-send-message", Button).press()
         await _wait_for_text(console, pilot, "accepted")
 
     assert gateway.sent_messages[-1][-1]["content"] == long_text
-    assert "Pasted Text: 80 Characters" not in gateway.sent_messages[-1][-1]["content"]
+    assert (
+        "Pasted text | 80 characters | Expand"
+        not in gateway.sent_messages[-1][-1]["content"]
+    )
 
 
 @pytest.mark.asyncio
@@ -10570,7 +10573,7 @@ def test_paste_collapse_label_still_defaults_to_character_count():
     composer = ConsoleComposerBar(paste_collapse_threshold=5)
     composer.insert_pasted_text("0123456789")
 
-    assert composer._display_draft_text() == "Pasted Text: 10 Characters"
+    assert composer._display_draft_text() == "Pasted text | 10 characters | Expand"
 
 
 @pytest.mark.asyncio

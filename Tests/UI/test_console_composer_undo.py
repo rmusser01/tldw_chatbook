@@ -127,6 +127,21 @@ def test_composer_undo_reverts_paste_insertion():
     assert composer.draft_text() == "before "
 
 
+def test_second_collapsed_paste_and_boundary_are_one_undo_transaction():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+    assert composer.draft_text() == first + "\n" + second
+
+    assert composer.undo() is True
+    assert composer.draft_text() == first
+
+    assert composer.redo() is True
+    assert composer.draft_text() == first + "\n" + second
+
+
 def test_composer_undo_reverts_file_segment_insertion():
     composer = ConsoleComposerBar()
     composer.insert_text("before ")
@@ -895,7 +910,7 @@ async def test_console_undo_redo_re_collapses_over_threshold_restored_segment():
         # literal payload -- painting the literal is exactly what froze
         # the UI thread.
         painted = visible_draft.render_line(0).text.rstrip()
-        assert f"Pasted Text: {len(big_text)} Characters" in painted
+        assert f"Pasted text | {len(big_text)} characters | Expand" in painted
         assert big_text not in painted
 
         # Sanity: canonical text still round-trips the FULL content --
@@ -907,7 +922,7 @@ async def test_console_undo_redo_re_collapses_over_threshold_restored_segment():
         # must repaint collapsed too, not expanded.
         assert composer.redo() is True
         painted_after_redo = visible_draft.render_line(0).text.rstrip()
-        assert "Pasted Text:" in painted_after_redo
+        assert "Pasted text |" in painted_after_redo
         assert big_text not in painted_after_redo
         assert composer.draft_text() == big_text + "!"
 
@@ -937,7 +952,7 @@ def test_composer_undo_redo_does_not_double_collapse_already_collapsed_snapshot(
     assert composer.draft_text() == big_text
     assert [segment.collapse_state for segment in composer._segments] == ["collapsed"]
     # The segment's real text is the raw payload, never the display string
-    # ("Pasted Text: N Characters") -- a token-of-a-token would fail this.
+    # ("Pasted text | N characters | Expand") -- a token-of-a-token would fail this.
     assert composer._segments[0].text == big_text
 
     assert composer.undo() is True
@@ -1008,7 +1023,7 @@ async def test_console_undo_of_ordinary_typed_text_stays_literal_not_a_paste_tok
     """W-1 (HIGH): the NEW-2 re-collapse fix reused `paste_collapse_
     threshold` (shipped default 50 chars) as the undo-restore gate, so
     undo of ordinary TYPED draft text over 50 characters repainted as an
-    opaque "Pasted Text: N Characters" token -- `has_paste_segments()`
+    opaque "Pasted text | N characters | Expand" token -- `has_paste_segments()`
     became True for text that was never pasted, and one Backspace then
     deleted the WHOLE restored draft in a single step (a collapsed token
     deletes as one unit). This lands squarely on the AC's own flagship
@@ -1041,7 +1056,7 @@ async def test_console_undo_of_ordinary_typed_text_stays_literal_not_a_paste_tok
         assert composer.has_paste_segments() is False
         painted = visible_draft.render_line(0).text.rstrip()
         assert message[:20] in painted
-        assert "Pasted Text:" not in painted
+        assert "Pasted text |" not in painted
 
         # One Backspace removes exactly one character -- not the token
         # that a collapsed segment would delete as an atomic unit.
@@ -1192,6 +1207,6 @@ async def test_console_undo_recollapses_regardless_of_collapse_large_pastes_sett
         assert composer.undo() is True
 
         painted = visible_draft.render_line(0).text.rstrip()
-        assert f"Pasted Text: {len(big_text)} Characters" in painted
+        assert f"Pasted text | {len(big_text)} characters | Expand" in painted
         assert big_text not in painted
         assert composer.draft_text() == big_text

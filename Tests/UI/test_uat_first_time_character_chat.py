@@ -926,3 +926,16 @@ async def test_character_voice_portability_round_trip_to_complete_wav(
     assert handler is not None
     assert artifact is not None
     assert not artifact.exists()
+
+
+async def test_uat_adjacent_roleplay_pastes_keep_a_visible_and_canonical_boundary():
+    first = "First roleplay block " * 8
+    second = "Second roleplay block " * 8
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+
+    assert composer.draft_text() == first + "\n" + second
+    assert composer._display_draft_text().count("Pasted text |") == 2
+    assert "Unfurl" not in composer._display_draft_text()

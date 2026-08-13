@@ -100,6 +100,68 @@ def test_small_ordinary_paste_keeps_explicit_paste_origin_when_not_collapsed():
     assert composer.has_paste_segments() is True
 
 
+def test_adjacent_collapsed_pastes_have_one_literal_newline_and_expand_copy():
+    composer = ConsoleComposerBar(paste_collapse_threshold=20)
+    first = "A" * 21
+    second = "B" * 22
+
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+
+    assert composer.draft_text() == first + "\n" + second
+    assert composer._display_draft_text() == (
+        f"Pasted text | {len(first)} characters | Expand\n"
+        f"Pasted text | {len(second)} characters | Expand"
+    )
+    assert [
+        (segment.text, segment.origin, segment.collapse_state)
+        for segment in composer.capture_draft_snapshot().segments
+    ] == [
+        (first, "paste", "collapsed"),
+        ("\n", "literal", "literal"),
+        (second, "paste", "collapsed"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("first_suffix", "second_prefix", "expected_boundary"),
+    [
+        ("\n", "", ""),
+        ("", "\n", ""),
+        (" \t", " \t", "\n"),
+    ],
+)
+def test_adjacent_collapsed_paste_boundary_respects_only_literal_newlines(
+    first_suffix: str,
+    second_prefix: str,
+    expected_boundary: str,
+):
+    composer = ConsoleComposerBar(paste_collapse_threshold=20)
+    first = ("A" * 21) + first_suffix
+    second = second_prefix + ("B" * 22)
+
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+
+    assert composer.draft_text() == first + expected_boundary + second
+
+
+def test_adjacent_paste_snapshot_restore_preserves_boundary_and_block_states():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_pasted_text(second)
+    snapshot = composer.capture_draft_snapshot()
+
+    restored = ConsoleComposerBar(paste_collapse_threshold=50)
+    restored.restore_snapshot(snapshot)
+
+    assert restored.draft_text() == first + "\n" + second
+    assert restored._display_draft_text().count("Pasted text |") == 2
+    assert restored.cursor_index == len(first) + 1 + len(second)
+
+
 def _assert_full_button_label_fits(button: Button, expected_label: str) -> None:
     """Assert the mounted button renders its complete label inside its chrome."""
     rendered_line = button.render_line(0)

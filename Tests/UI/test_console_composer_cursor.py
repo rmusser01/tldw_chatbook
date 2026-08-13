@@ -22,7 +22,7 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
 PASTE_CHUNK = "chunk of pasted console text " * 10
-PASTE_TOKEN = f"Pasted Text: {len(PASTE_CHUNK)} Characters"
+PASTE_TOKEN = f"Pasted text | {len(PASTE_CHUNK)} characters | Expand"
 
 
 def _composer_with(*parts: str) -> ConsoleComposerBar:

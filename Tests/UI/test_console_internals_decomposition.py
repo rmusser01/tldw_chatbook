@@ -1064,7 +1064,7 @@ async def test_console_native_composer_auto_expands_for_long_drafts():
         assert visible_draft.region.height > 1
         assert visible_draft.region.height <= 4
         assert "\n" in visible_plain
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
         assert "long composer qa" in visible_plain
 
 
@@ -1082,7 +1082,7 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
         command_input = composer.query_one("#console-command-input", Input)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "pasted composer qa " * 80
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         console.on_paste(Paste(pasted_text))
         await pilot.pause(0.2)
@@ -1105,7 +1105,7 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
 
 def test_console_paste_token_style_span_survives_literal_ellipsis_prefix():
     pasted_text = "x" * 51
-    expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+    expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
     display_text = f"... {expected_token}"
 
     renderable = ConsoleComposerBar._draft_renderable(
@@ -1124,7 +1124,7 @@ def test_console_paste_token_style_span_survives_literal_ellipsis_prefix():
 
 def test_console_paste_token_style_span_survives_crlf_before_token():
     pasted_text = "x" * 51
-    expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+    expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
     display_text = f"before\r\n{expected_token}"
     token_start = display_text.index(expected_token)
 
@@ -1189,7 +1189,7 @@ async def test_console_paste_under_threshold_remains_literal():
         assert composer.draft_text() == pasted_text
         assert composer._display_draft_text() == pasted_text
         _assert_visible_literal_projection(visible_plain, pasted_text)
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
 
 
 @pytest.mark.asyncio
@@ -1227,7 +1227,7 @@ async def test_console_paste_threshold_can_be_configured_from_app_config():
         assert composer.draft_text() == over_custom_threshold
         assert (
             _without_trailing_cursor(visible_draft.renderable.plain)
-            == "Pasted Text: 81 Characters"
+            == "Pasted text | 81 characters | Expand"
         )
 
 
@@ -1256,7 +1256,7 @@ async def test_console_large_paste_collapse_can_be_disabled_from_config(
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == pasted_text
         assert composer._display_draft_text() == pasted_text
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
         _assert_visible_literal_projection(visible_plain, pasted_text)
 
 
@@ -1310,7 +1310,7 @@ async def test_console_collapsed_paste_backspace_deletes_whole_chunk():
         assert composer.draft_text() == prefix
         assert _without_trailing_cursor(visible_plain) == prefix
         assert pasted_text not in composer.draft_text()
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
 
 
 @pytest.mark.asyncio
@@ -1352,7 +1352,7 @@ async def test_console_collapsed_paste_delete_key_deletes_whole_chunk():
         assert composer.draft_text() == prefix
         assert _without_trailing_cursor(visible_plain) == prefix
         assert pasted_text not in composer.draft_text()
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
 
 
 @pytest.mark.asyncio
@@ -1372,13 +1372,13 @@ async def test_console_collapsed_paste_real_click_enters_unfurl_prompt():
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
         assert isinstance(visible_draft.renderable, Text)
         _assert_single_style_span(
             visible_draft.renderable,
             style=ConsoleComposerBar.PASTE_CONFIRM_STYLE,
-            expected_text="Unfurl?",
+            expected_text="Expand?",
         )
 
 
@@ -1405,7 +1405,7 @@ async def test_console_collapsed_paste_composer_row_click_enters_unfurl_prompt()
         )
         await pilot.pause(0.1)
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
 
 
@@ -1431,7 +1431,7 @@ async def test_console_collapsed_paste_textual_web_row_click_enters_unfurl_promp
             visible_region.y - 1,
         )
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
 
 
@@ -1457,7 +1457,7 @@ async def test_console_collapsed_paste_textual_web_bottom_boundary_click_enters_
             visible_region.y + visible_draft.size.height,
         )
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
 
 
@@ -1484,7 +1484,7 @@ async def test_console_collapsed_paste_row_click_keeps_focus_on_composer():
             visible_region.y + visible_draft.size.height,
         )
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert console.app.focused is composer
         assert composer.draft_text() == pasted_text
 
@@ -1509,8 +1509,8 @@ async def test_console_collapsed_paste_second_click_unfurls_literal_text():
 
         visible_plain = visible_draft.renderable.plain
         assert "literal unfurled paste" in visible_plain
-        assert "Pasted Text:" not in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Pasted text |" not in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1531,15 +1531,15 @@ async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_col
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text", offset=(8, 0))
         await pilot.pause(0.1)
-        assert "Unfurl?" in visible_draft.renderable.plain
+        assert "Expand?" in visible_draft.renderable.plain
 
         await pilot.click("#console-command-visible-text", offset=(0, 0))
         await pilot.pause(0.1)
 
         visible_plain = visible_draft.renderable.plain
         assert "prefix " in visible_plain
-        assert "Pasted Text:" in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Pasted text |" in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == f"prefix {pasted_text}"
 
 
@@ -1563,7 +1563,7 @@ async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_f
         await pilot.pause(0.1)
 
         assert console.app.focused is composer
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
 
         await pilot.press("enter")
@@ -1571,8 +1571,8 @@ async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_f
 
         visible_plain = visible_draft.renderable.plain
         assert "keyboard unfurl paste" in visible_plain
-        assert "Pasted Text:" not in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Pasted text |" not in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1598,7 +1598,7 @@ async def test_console_collapsed_paste_click_targets_token_after_literal_newline
 
         assert (
             _without_trailing_cursor(visible_draft.renderable.plain)
-            == "prefix\nUnfurl?"
+            == "prefix\nExpand?"
         )
         assert composer.draft_text() == f"prefix\n{pasted_text}"
 
@@ -1616,30 +1616,30 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         first_paste = "first large paste " * 10
         second_paste = "second large paste " * 10
-        first_token = f"Pasted Text: {len(first_paste)} Characters"
-        second_token = f"Pasted Text: {len(second_paste)} Characters"
+        first_token = f"Pasted text | {len(first_paste)} characters | Expand"
+        second_token = f"Pasted text | {len(second_paste)} characters | Expand"
 
         composer.insert_pasted_text(first_paste)
         composer.insert_pasted_text(second_paste)
         await pilot.pause(0.1)
         assert (
             _without_trailing_cursor(visible_draft.renderable.plain)
-            == f"{first_token}{second_token}"
+            == f"{first_token}\n{second_token}"
         )
 
         await pilot.click(
             "#console-command-visible-text",
-            offset=(len(first_token) + 2, 0),
+            offset=(2, 1),
         )
         await pilot.pause(0.1)
         assert (
             _without_trailing_cursor(visible_draft.renderable.plain)
-            == f"{first_token}Unfurl?"
+            == f"{first_token}\nExpand?"
         )
 
         await pilot.click(
             "#console-command-visible-text",
-            offset=(len(first_token) + 2, 0),
+            offset=(2, 1),
         )
         await pilot.pause(0.1)
 
@@ -1647,8 +1647,8 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
         assert first_token in visible_plain
         assert "second large paste" in visible_plain
         assert "first large paste" not in visible_plain
-        assert "Unfurl?" not in visible_plain
-        assert composer.draft_text() == f"{first_paste}{second_paste}"
+        assert "Expand?" not in visible_plain
+        assert composer.draft_text() == f"{first_paste}\n{second_paste}"
 
 
 @pytest.mark.asyncio
@@ -1664,12 +1664,12 @@ async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "typing resets pending paste " * 10
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text", offset=(1, 0))
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
 
         await pilot.press("x")
         await pilot.pause(0.1)
@@ -1681,7 +1681,7 @@ async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
 
         await pilot.click("#console-command-visible-text", offset=(1, 0))
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?x"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?x"
         assert composer.draft_text() == f"{pasted_text}x"
 
 
@@ -1698,7 +1698,7 @@ async def test_console_collapsed_paste_click_targets_token_after_visible_clippin
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         prefix = "preceding wrapped composer text " * 40
         pasted_text = "visible clipped paste " * 10
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         composer.insert_text(prefix)
         composer.insert_pasted_text(pasted_text)
@@ -1740,7 +1740,7 @@ async def test_console_collapsed_paste_click_targets_token_after_visible_clippin
         )
         await pilot.pause(0.1)
 
-        assert "Unfurl?" in visible_draft.renderable.plain
+        assert "Expand?" in visible_draft.renderable.plain
         assert expected_token not in visible_draft.renderable.plain
         assert composer.draft_text() == f"{prefix}{pasted_text}"
 
@@ -1757,19 +1757,19 @@ async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "reset pending unfurl " * 10
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
 
         await pilot.click("#console-workspace-grid")
         await pilot.pause(0.1)
 
         visible_plain = visible_draft.renderable.plain
         assert expected_token in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1785,12 +1785,12 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "stale suppressed click reset paste " * 6
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
 
         composer.suppress_next_draft_click()
         await pilot.click("#console-workspace-grid")
@@ -1798,7 +1798,7 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
 
         visible_plain = visible_draft.renderable.plain
         assert expected_token in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1822,7 +1822,7 @@ async def test_console_normal_typing_remains_literal_over_paste_threshold():
         visible_plain = visible_draft.renderable.plain
         assert len(typed_text) > ConsoleComposerBar.PASTE_COLLAPSE_THRESHOLD
         assert composer.draft_text() == typed_text
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
         assert "normaltypedcomposertext" in visible_plain
         assert isinstance(visible_draft.renderable, Text)
         assert not visible_draft.renderable.spans

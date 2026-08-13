@@ -11,7 +11,7 @@ THRESHOLD`, review NEW-2/W-1/W-2 -- a large, performance-driven threshold
 deliberately distinct from the small, cosmetic `paste_collapse_threshold`
 a real paste uses), never the exact original presentation (a labeled
 file/attachment segment, or one the user had manually unfurled, comes
-back as a plain "Pasted Text: N Characters" token if it's still over the
+back as a plain "Pasted text | N characters | Expand" token if it's still over the
 recollapse threshold, or as ordinary literal text otherwise). What
 undo/redo does NOT do anymore is repaint a large restored segment as one
 giant literal: that used to run the composer's O(n^2) wrap/render path
@@ -437,7 +437,7 @@ class ConsoleComposerBar(Horizontal):
     #: `_apply_history_snapshot` must NOT reuse `paste_collapse_threshold`
     #: -- that constant is a cosmetic PASTE-display preference (shipped
     #: default 50 characters) and, applied to undo/redo, converted ORDINARY
-    #: TYPED draft text into an opaque "Pasted Text: N Characters" token on
+    #: TYPED draft text into an opaque "Pasted text | N characters | Expand" token on
     #: every restore over 50 characters, including the AC's own flagship
     #: Ctrl+U -> Ctrl+Z recovery path (one Backspace then destroyed the
     #: whole recovered draft in a single step, since a collapsed token
@@ -1286,6 +1286,17 @@ class ConsoleComposerBar(Horizontal):
         last_index = len(self._segments) - 1
         return (last_index, len(self._segments[last_index].text))
 
+    def _segment_preceding_cursor(self) -> _DraftSegment | None:
+        """Return the segment immediately before the canonical caret."""
+        if not self._segments or self._cursor_index <= 0:
+            return None
+        segment_index, offset = self._locate_canonical(self._cursor_index)
+        if offset == 0:
+            segment_index -= 1
+        if segment_index < 0:
+            return None
+        return self._segments[segment_index]
+
     def _cursor_display_index(self) -> int:
         """Map the canonical caret offset to an unwrapped display-string offset.
 
@@ -1344,9 +1355,9 @@ class ConsoleComposerBar(Horizontal):
         if segment.collapse_state == "collapsed":
             if segment.label:
                 return segment.label
-            return f"Pasted Text: {len(segment.text)} Characters"
+            return f"Pasted text | {len(segment.text)} characters | Expand"
         if segment.collapse_state == "confirm":
-            return "Unfurl?"
+            return "Expand?"
         return segment.text
 
     def _segment_display_ranges(self) -> list[_DraftSegmentDisplayRange]:
@@ -2916,7 +2927,7 @@ class ConsoleComposerBar(Horizontal):
         still collapsed correctly shows the collapsed token again, not the
         fully expanded literal text -- see the module docstring for the
         (narrower) limitation that remains: the restored token is always a
-        generic "Pasted Text: N Characters" collapse, never the original
+        generic "Pasted text | N characters | Expand" collapse, never the original
         segment's label (a labeled file/attachment segment, or one already
         `expanded`/mid-`confirm`, is not carried through the flat snapshot
         -- only the raw text and whether it crosses the threshold are).
@@ -3282,6 +3293,14 @@ class ConsoleComposerBar(Horizontal):
             and len(text) > self.paste_collapse_threshold
         )
         if should_collapse:
+            predecessor = self._segment_preceding_cursor()
+            if (
+                predecessor is not None
+                and predecessor.collapse_state in {"collapsed", "confirm"}
+                and not predecessor.text.endswith("\n")
+                and not text.startswith("\n")
+            ):
+                self._insert_segment_at_cursor(_DraftSegment("\n"))
             self._insert_segment_at_cursor(
                 _DraftSegment(
                     text,
@@ -4004,7 +4023,7 @@ class ConsoleComposerBar(Horizontal):
         """Return whether a collapsed paste token is waiting on confirm.
 
         Returns:
-            True when at least one pasted segment is showing the `Unfurl?` prompt.
+            True when at least one pasted segment is showing the `Expand?` prompt.
         """
         return any(segment.collapse_state == "confirm" for segment in self._segments)
 
