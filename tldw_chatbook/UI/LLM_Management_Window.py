@@ -895,6 +895,15 @@ class LLMManagementWindow(Container):
             (choice.label, choice.reference) for choice in self._managed_gguf_choices
         ]
 
+    def _managed_gguf_ready(self, provider: str) -> bool:
+        """Return whether the retained ref is present in the current inventory."""
+
+        selection = self._gguf_sources[provider]
+        return not self._managed_gguf_inventory_error and any(
+            choice.reference == selection.managed_ref
+            for choice in self._managed_gguf_choices
+        )
+
     def _compose_gguf_source(self, provider: str) -> ComposeResult:
         """Compose one compact, mutually-exclusive GGUF source control."""
 
@@ -1468,6 +1477,11 @@ class LLMManagementWindow(Container):
             selection = self._gguf_sources[provider]
         except KeyError:
             raise ValueError("unsupported GGUF source provider") from None
+        if selection.mode is GGUFSourceMode.MANAGED:
+            if self._managed_gguf_inventory_error:
+                raise ValueError("managed GGUF inventory unavailable")
+            if not self._managed_gguf_ready(provider):
+                raise ValueError("managed GGUF selection unavailable")
         try:
             value = self.query_one(f"#{provider}-model-path", Input).value
         except QueryError:
@@ -1763,7 +1777,7 @@ class LLMManagementWindow(Container):
             source_ready = not (
                 provider in self.GGUF_PROVIDERS
                 and self._gguf_sources[provider].mode is GGUFSourceMode.MANAGED
-                and self._gguf_sources[provider].managed_ref is None
+                and not self._managed_gguf_ready(provider)
             )
             start.disabled = active or not source_ready
             stop.disabled = not active

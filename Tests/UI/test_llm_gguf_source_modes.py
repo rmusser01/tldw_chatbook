@@ -373,7 +373,11 @@ async def test_refresh_removing_selected_ref_blocks_stale_managed_launch(
 
         assert _select_values(managed) == (REF_B,)
         assert managed.value is Select.NULL
-        assert window.gguf_source_snapshot("llamacpp").managed_ref is None
+        with pytest.raises(
+            ValueError,
+            match="^managed GGUF selection unavailable$",
+        ):
+            window.gguf_source_snapshot("llamacpp")
         assert start.disabled
         recovery = str(
             window.query_one("#llamacpp-gguf-source-status", Static).render()
@@ -429,6 +433,119 @@ async def test_inventory_failure_disables_only_managed_selection(
         assert not window.query_one("#llamacpp-browse-model-button", Button).disabled
         assert not window.query_one("#llamacpp-gguf-refresh-button", Button).disabled
         assert PRIVATE_MANAGED_PATH not in _rendered_text(window)
+    finally:
+        await _close_context(context)
+
+
+@pytest.mark.asyncio
+async def test_inventory_failure_after_selection_blocks_stale_managed_launch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    choice = ManagedGGUFChoice(REF_A, "Model A · Q4_K_M · 4 MiB · Managed")
+    service = _InventoryService()
+    app, pilot, context, _screen, window, _service = await _mount_models(
+        monkeypatch,
+        choices=(choice,),
+        service=service,
+    )
+    try:
+        modes = {
+            provider: window.query_one(f"#{provider}-gguf-source-mode", Select)
+            for provider in ("llamacpp", "llamafile")
+        }
+        managed = {
+            provider: window.query_one(f"#{provider}-gguf-managed-select", Select)
+            for provider in modes
+        }
+        starts = {
+            provider: window.query_one(f"#{provider}-start-server-button", Button)
+            for provider in modes
+        }
+        for provider in modes:
+            modes[provider].value = "managed"
+        await pilot.pause()
+        assert all(select.value == REF_A for select in managed.values())
+        assert all(not button.disabled for button in starts.values())
+
+        service.error = RuntimeError(PRIVATE_MANAGED_PATH)
+        generation = window._managed_gguf_inventory_generation
+        refresh = window.query_one("#llamacpp-gguf-refresh-button", Button)
+        await window.on_button_pressed(Button.Pressed(refresh))
+        for _ in range(20):
+            await pilot.pause(0.02)
+            if (
+                window._managed_gguf_inventory_generation > generation
+                and window._managed_gguf_inventory_error
+            ):
+                break
+
+        for provider in modes:
+            assert managed[provider].value is Select.NULL
+            assert managed[provider].disabled
+            assert starts[provider].disabled
+            with pytest.raises(
+                ValueError,
+                match="^managed GGUF inventory unavailable$",
+            ):
+                window.gguf_source_snapshot(provider)
+            recovery = str(
+                window.query_one(f"#{provider}-gguf-source-status", Static).render()
+            )
+            assert recovery == (
+                "Managed GGUF inventory unavailable. "
+                "Refresh managed models to retry."
+            )
+            assert PRIVATE_MANAGED_PATH not in recovery
+
+        workers: list[object] = []
+        real_run_worker = app.run_worker
+        monkeypatch.setattr(
+            app,
+            "run_worker",
+            lambda work, **_kwargs: workers.append(work),
+        )
+        for provider in modes:
+            await window.on_button_pressed(Button.Pressed(starts[provider]))
+            assert current_server_claim(app, provider) is None
+        assert workers == []
+
+        window.query_one("#llamacpp-model-path", Input).value = "/outside/model.gguf"
+        modes["llamacpp"].value = "external"
+        modes["llamafile"].value = "embedded"
+        await pilot.pause()
+        assert not starts["llamacpp"].disabled
+        assert not starts["llamafile"].disabled
+        assert (
+            window.gguf_source_snapshot("llamacpp").mode
+            is GGUFSourceMode.EXTERNAL
+        )
+        assert (
+            window.gguf_source_snapshot("llamafile").mode
+            is GGUFSourceMode.EMBEDDED
+        )
+
+        monkeypatch.setattr(app, "run_worker", real_run_worker)
+        for provider in modes:
+            modes[provider].value = "managed"
+        service.error = None
+        generation = window._managed_gguf_inventory_generation
+        await window.on_button_pressed(Button.Pressed(refresh))
+        for _ in range(20):
+            await pilot.pause(0.02)
+            if (
+                window._managed_gguf_inventory_generation > generation
+                and not window._managed_gguf_inventory_error
+                and all(select.value == REF_A for select in managed.values())
+            ):
+                break
+
+        assert all(select.value == REF_A for select in managed.values())
+        assert all(not select.disabled for select in managed.values())
+        assert all(not button.disabled for button in starts.values())
+        assert all(
+            window.gguf_source_snapshot(provider).managed_ref == REF_A
+            for provider in modes
+        )
     finally:
         await _close_context(context)
 
