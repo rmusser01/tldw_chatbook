@@ -135,6 +135,12 @@ class LibraryMediaContentBody(VerticalScroll):
 class LibraryMediaContentSearchControls(Vertical):
     """Maintain search controls while preserving active widget identity."""
 
+    DEFAULT_CSS = """
+    LibraryMediaContentSearchControls {
+        height: auto;
+    }
+    """
+
     def __init__(
         self,
         *,

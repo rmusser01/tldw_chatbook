@@ -4474,7 +4474,7 @@ def _media_item_with_two_hits_on_one_line():
 
 
 def _large_markdown_media_item():
-    """A deterministic 2,000-line Markdown item with exactly 100 match lines."""
+    """A deterministic 2,000-line Markdown item with exactly 101 match lines."""
     items = _markdown_media_item()
     lines = ["# Large budget document"]
     lines.extend(
@@ -4921,6 +4921,103 @@ async def test_library_shell_media_viewer_inplace_large_document_latency_and_par
         assert set(observed_viewer_ids) == {id(viewer_before)}
         assert unique_markdown_ids == {id(markdown_before)}
         assert markdown_updates == [id(markdown_before)]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_content(
+    monkeypatch,
+):
+    """Catch content painting over search status and navigation at 170x48."""
+    markdown_updates: list[int] = []
+    original_update = Markdown.update
+
+    def recording_update(markdown_widget: Markdown, source: str):
+        markdown_updates.append(id(markdown_widget))
+        return original_update(markdown_widget, source)
+
+    monkeypatch.setattr(Markdown, "update", recording_update)
+    app = _build_test_app()
+    items = _large_markdown_media_item()
+    assert len(items[0]["content"]) == 49_288
+    _seed_conversations(app, _two_conversations(), media=items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+        viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
+        markdown = screen.query_one(
+            "#library-media-viewer-content-markdown", Markdown
+        )
+
+        await _submit_content_search_query(screen, pilot, "budget")
+        controls = screen.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
+        )
+        status = screen.query_one("#library-media-content-search-status", Static)
+        previous = screen.query_one("#library-media-content-search-prev", Button)
+        next_button = screen.query_one("#library-media-content-search-next", Button)
+        body = screen.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        )
+        await pilot.pause()
+
+        strips = screen._compositor.render_strips()
+        rows = ["".join(segment.text for segment in strip) for strip in strips]
+        painted = "\n".join(rows)
+        heading_row = next(
+            (index for index, row in enumerate(rows) if "Large budget document" in row),
+            None,
+        )
+        visible_strings = tuple(
+            text
+            for text in (
+                "Match 1 of 101 matches",
+                "◀ Prev",
+                "Next ▶",
+                "Large budget document",
+            )
+            if text in painted
+        )
+        print(
+            "TASK-15458 rendered UAT "
+            f"controls={controls.region} status={status.region} "
+            f"previous={previous.region} next={next_button.region} "
+            f"content={body.region} heading_row={heading_row} "
+            f"visible_strings={ascii(visible_strings)}"
+        )
+
+        assert controls.region.bottom <= body.region.y
+        assert status.region.bottom <= body.region.y
+        assert previous.region.bottom <= body.region.y
+        assert next_button.region.bottom <= body.region.y
+        assert "Match 1 of 101 matches" in painted
+        assert "◀ Prev" in painted
+        assert "Next ▶" in painted
+        assert heading_row is not None
+        assert heading_row >= body.region.y
+        assert body.styles.min_height is not None
+        assert body.styles.min_height.value == 3
+        assert body.styles.max_height is not None
+        assert body.styles.max_height.value == 18
+
+        parse_count_before_navigation = len(markdown_updates)
+        next_button.focus()
+        next_button.press()
+        await pilot.pause()
+
+        assert screen.query_one("#library-media-viewer") is viewer
+        assert screen.query_one("#library-media-viewer-content-markdown") is markdown
+        assert screen.query_one("#library-media-content-search-prev") is previous
+        assert screen.query_one("#library-media-content-search-next") is next_button
+        assert screen.focused is next_button
+        assert len(markdown_updates) == parse_count_before_navigation
+        assert body.max_scroll_y > 0
+        body.scroll_to(y=10, animate=False, immediate=True)
+        await pilot.pause()
+        assert body.scroll_y > 0
 
 
 @pytest.mark.asyncio
