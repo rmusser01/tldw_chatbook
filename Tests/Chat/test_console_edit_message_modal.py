@@ -1,9 +1,8 @@
-"""TASK-1 (Console branching Phase B): the edit modal gains an explicit
-"Edit & resend" affordance alongside the existing in-place "Save".
+"""Console edit-message modal behavior and rendered-state contracts.
 
-Construction-level tests are the minimum contract (per the task brief); a
-mounted `run_test` pilot assertion is added to mirror the existing modal
-suite's style (Tests/UI/test_console_edit_modal_keystroke_guard.py).
+TASK-1 covers Save/Edit & resend construction and outcomes. TASK-2703 adds
+real-bundle compositor evidence for action geometry, paint, contrast, isolated
+keyboard focus cues, and Enter activation.
 """
 
 from pathlib import Path
@@ -84,9 +83,9 @@ def _joined_segment_text(rows: tuple[tuple[Segment, ...], ...]) -> str:
     return "\n".join("".join(segment.text for segment in row) for row in rows)
 
 
-def _relative_luminance(color) -> float:
+def _relative_luminance(color, *, foreground: bool = True) -> float:
     """Return WCAG relative luminance for a compositor-painted Rich colour."""
-    triplet = color.get_truecolor()
+    triplet = color.get_truecolor(foreground=foreground)
 
     def channel(value: int) -> float:
         srgb = value / 255
@@ -99,10 +98,14 @@ def _relative_luminance(color) -> float:
     )
 
 
-def _contrast(first, second) -> float:
-    """Return the WCAG contrast ratio of two compositor-painted colours."""
+def _contrast(foreground, background) -> float:
+    """Return WCAG contrast for explicit compositor foreground/background."""
     lighter, darker = sorted(
-        (_relative_luminance(first), _relative_luminance(second)), reverse=True
+        (
+            _relative_luminance(foreground),
+            _relative_luminance(background, foreground=False),
+        ),
+        reverse=True,
     )
     return (lighter + 0.05) / (darker + 0.05)
 
@@ -141,11 +144,6 @@ def _painted_label_segments(
         if "".join(segment.text for segment in label_segments) == expected_label:
             return tuple(label_segments)
     raise AssertionError(f"no exact painted label segments for {expected_label!r}")
-
-
-def _has_painted_edge_row(rows: tuple[tuple[Segment, ...], ...]) -> bool:
-    """Return whether the button's top or bottom row paints a visible edge glyph."""
-    return any(segment.text.strip() for row in (rows[0], rows[-1]) for segment in row)
 
 
 _REAL_BUNDLE_ACTIONS = [
@@ -351,30 +349,101 @@ async def test_real_bundle_focus(
         await pilot.pause()
         await pilot.pause()
 
-        button = modal.query_one(selector, Button)
-        ordinary_rows = _cropped_compositor_region(app, button)
-        ordinary_label_segments = _painted_label_segments(ordinary_rows, expected_label)
-        ordinary_styles = tuple(segment.style for segment in ordinary_label_segments)
-        ordinary_underlined = any(
-            segment.style is not None and segment.style.underline
-            for segment in ordinary_label_segments
-        )
-        ordinary_edge_row = _has_painted_edge_row(ordinary_rows)
+        editor = modal.query_one("#console-edit-message-body", TextArea)
+        assert modal.focused is editor
 
         focus_order = [
-            "#console-edit-message-cancel",
-            "#console-edit-message-save",
+            ("#console-edit-message-cancel", "Cancel"),
+            ("#console-edit-message-save", "Save"),
         ]
         if can_resend:
-            focus_order.append("#console-edit-message-resend")
-        target_index = focus_order.index(selector)
-        for expected_selector in focus_order[: target_index + 1]:
+            focus_order.append(("#console-edit-message-resend", "Edit & resend"))
+
+        buttons = {
+            action_selector: modal.query_one(action_selector, Button)
+            for action_selector, _ in focus_order
+        }
+        ordinary_rows_by_action = {
+            action_selector: _cropped_compositor_region(app, buttons[action_selector])
+            for action_selector, _ in focus_order
+        }
+        ordinary_cue_signatures = {}
+        for action_selector, action_label in focus_order:
+            action_rows = ordinary_rows_by_action[action_selector]
+            action_label_segments = _painted_label_segments(action_rows, action_label)
+            ordinary_cue_signatures[action_selector] = (
+                any(
+                    segment.style is not None and segment.style.underline
+                    for segment in action_label_segments
+                ),
+                tuple(
+                    tuple((segment.text, segment.style) for segment in edge_row)
+                    for edge_row in (action_rows[0], action_rows[-1])
+                ),
+            )
+
+        button = buttons[selector]
+        ordinary_rows = ordinary_rows_by_action[selector]
+        ordinary_label_segments = _painted_label_segments(ordinary_rows, expected_label)
+        ordinary_styles = tuple(segment.style for segment in ordinary_label_segments)
+        target_index = [item[0] for item in focus_order].index(selector)
+        for expected_selector, _ in focus_order[: target_index + 1]:
             await pilot.press("tab")
             await pilot.pause()
-            assert modal.focused is modal.query_one(expected_selector, Button), (
-                f"Tab order must be {focus_order!r}; expected {expected_selector!r}, "
+            await pilot.pause()
+            assert modal.focused is buttons[expected_selector], (
+                f"Tab order must be {[item[0] for item in focus_order]!r}; "
+                f"expected {expected_selector!r}, "
                 f"focused={modal.focused!r}"
             )
+
+            for action_selector, action_label in focus_order:
+                action_rows = _cropped_compositor_region(app, buttons[action_selector])
+                action_label_segments = _painted_label_segments(
+                    action_rows, action_label
+                )
+                cue_signature = (
+                    any(
+                        segment.style is not None and segment.style.underline
+                        for segment in action_label_segments
+                    ),
+                    tuple(
+                        tuple((segment.text, segment.style) for segment in edge_row)
+                        for edge_row in (action_rows[0], action_rows[-1])
+                    ),
+                )
+                if action_selector == expected_selector:
+                    ordinary_underline, ordinary_edges = ordinary_cue_signatures[
+                        action_selector
+                    ]
+                    focused_underline, focused_edges = cue_signature
+                    ordinary_edge_text = tuple(
+                        "".join(text for text, _ in edge_row)
+                        for edge_row in ordinary_edges
+                    )
+                    focused_edge_text = tuple(
+                        "".join(text for text, _ in edge_row)
+                        for edge_row in focused_edges
+                    )
+                    has_focus_only_non_color_cue = (
+                        focused_underline and not ordinary_underline
+                    ) or (
+                        focused_edge_text != ordinary_edge_text
+                        and any(text.strip() for text in focused_edge_text)
+                    )
+                    assert has_focus_only_non_color_cue, (
+                        f"focused {action_label!r} needs a new underline or visible "
+                        f"edge glyph at size={size}; ordinary_signature="
+                        f"{ordinary_cue_signatures[action_selector]!r}, "
+                        f"focused_signature={cue_signature!r}"
+                    )
+                else:
+                    assert cue_signature == ordinary_cue_signatures[action_selector], (
+                        f"focusing {expected_selector!r} must not change sibling "
+                        f"{action_selector!r} at size={size}; ordinary_signature="
+                        f"{ordinary_cue_signatures[action_selector]!r}, "
+                        f"current_signature={cue_signature!r}"
+                    )
         await pilot.pause()
 
         focused_rows = _cropped_compositor_region(app, button)
@@ -386,14 +455,6 @@ async def test_real_bundle_focus(
             for segment in focused_label_segments
             if segment.style is not None
         )
-        focused_underlined = any(
-            segment.style is not None and segment.style.underline
-            for segment in focused_label_segments
-        )
-        focused_edge_row = _has_painted_edge_row(focused_rows)
-        has_focus_only_non_color_cue = (
-            focused_underlined and not ordinary_underlined
-        ) or (focused_edge_row and not ordinary_edge_row)
 
         assert modal.focused is button
         assert expected_label in focused_text, (
@@ -407,13 +468,6 @@ async def test_real_bundle_focus(
         assert focused_styles != ordinary_styles, (
             f"focused {expected_label!r} styles must differ from ordinary styles; "
             f"ordinary={ordinary_styles!r}, focused={focused_styles!r}"
-        )
-        assert has_focus_only_non_color_cue, (
-            f"focused {expected_label!r} needs an underline or newly-painted edge "
-            f"row at size={size}; ordinary_underlined={ordinary_underlined}, "
-            f"focused_underlined={focused_underlined}, "
-            f"ordinary_edge_row={ordinary_edge_row}, "
-            f"focused_edge_row={focused_edge_row}"
         )
 
 
