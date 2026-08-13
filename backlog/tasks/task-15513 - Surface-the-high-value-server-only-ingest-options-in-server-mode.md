@@ -1,7 +1,7 @@
 ---
 id: task-15513
 title: Expose high-value ingest options with local parity
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: ''
@@ -24,13 +24,13 @@ Task-3309 closed request-layer server parity. This task exposes overwrite_existi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Shared controls for overwrite existing, custom prompt, system prompt, and generate embeddings are visible and settable in both Local and Server modes.
-- [ ] #2 Each shared control reaches the selected backend and has focused tests proving its local pipeline behavior and server request mapping; no selection is silently inert.
-- [ ] #3 Custom and system prompt controls clearly communicate and enforce their relationship to analysis, including a readable disabled reason when analysis is off.
-- [ ] #4 Local overwrite updates the matching Library item according to the local deduplication contract, while Server overwrite sends overwrite_existing to the declared server field.
-- [ ] #5 Local generate embeddings invokes the supported local embedding and indexing path, while Server generate embeddings sends generate_embeddings to the declared server field.
-- [ ] #6 keep_original_file is available and functional in Server mode, reaches the declared server field, and is not rendered in Local mode because local ingestion already preserves the source file.
-- [ ] #7 The remaining server-only fields stay recorded as deliberately unexposed, with no unsupported controls shown in either mode.
+- [x] #1 Shared controls for overwrite existing, custom prompt, system prompt, and generate embeddings are visible and settable in both Local and Server modes.
+- [x] #2 Each shared control reaches the selected backend and has focused tests proving its local pipeline behavior and server request mapping; no selection is silently inert.
+- [x] #3 Custom and system prompt controls clearly communicate and enforce their relationship to analysis, including a readable disabled reason when analysis is off.
+- [x] #4 Local overwrite updates the matching Library item according to the local deduplication contract, while Server overwrite sends overwrite_existing to the declared server field.
+- [x] #5 Local generate embeddings invokes the supported local embedding and indexing path, while Server generate embeddings sends generate_embeddings to the declared server field.
+- [x] #6 keep_original_file is available and functional in Server mode, reaches the declared server field, and is not rendered in Local mode because local ingestion already preserves the source file.
+- [x] #7 The remaining server-only fields stay recorded as deliberately unexposed, with no unsupported controls shown in either mode.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -53,3 +53,13 @@ Reason: the accepted ADRs already define default local ingestion-time indexing a
 Detailed design: `Docs/superpowers/specs/2026-08-12-task-15513-ingest-option-local-parity-design.md`.
 
 Detailed plan: `Docs/superpowers/plans/2026-08-12-task-15513-ingest-option-local-parity.md`.
+
+## Implementation Notes
+
+- Extended the capability-driven Import behavior panel with backend visibility metadata, multiline analysis prompts, shared overwrite/indexing controls, and Server-only Keep original file. Textarea edits update in place, preserve focus/cursor state, and use bounded collapsed-title receipts.
+- Seeded fresh snapshots from capability defaults and preserved all values through retry. Local and Server projections explicitly gate prompts on Analyze after import; Server requests map every declared shared field while Local never receives Keep original file.
+- Routed Local overwrite to the authoritative SQLite dedup/update seam and proved Off skips while On updates the existing row. Added a token-reset `ContextVar` scope that suppresses only the best-effort semantic indexing hook for a Local ingest when Generate embeddings is off; SQLite persistence remains unconditional and concurrent threads remain isolated.
+- Rebasing onto the latest `dev` incorporated the Library canvas-scoped-sync refactor. Structural controls retain canvas-scoped synchronization, while text, number, and textarea edits remain non-recomposing.
+- Verification on the rebased branch: all 22 new and integration-focused tests passed, including normal/constrained full-screen compositor geometry, retry/server contract coverage, real SQLite overwrite, default-On and opt-out indexing, exception reset, thread isolation, and upstream ingest canvas-sync behavior. Python compilation, isolated import smoke, `git diff --check`, the 1,852-task duplicate-ID guard, and changed-line Ruff checks passed. Ruff still reports 148 pre-existing whole-file findings outside added/modified lines; broad Windows Textual/RAG runs remain limited by the repository network guard blocking Proactor socketpair setup.
+- Plan evidence deviation: full-screen compositor assertions at 170x48 and constrained 120x48 replaced a persisted screenshot at 99 columns because the production Library frame allocates a zero-width canvas at that narrower size. TDD RED runs and mutation-sensitive regressions cover the backend filter, prompt gate, overwrite forwarding, schema-default delegation, and indexing suppression guard.
+- ADR required: no new ADR. The implementation follows ADR-005 for default ingestion-time indexing and ADR-030 for authoritative SQLite persistence with a best-effort derived semantic index.
