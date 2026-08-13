@@ -13298,7 +13298,11 @@ class LibraryScreen(BaseAppScreen):
                 and self._conversation_page_needs_unfiltered_reset()
             )
             await self._select_library_rail_row(row_id)
-            if reset_conversations:
+            if (
+                reset_conversations
+                and row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+                and self._library_selected_row_id == row_id
+            ):
                 self._start_library_conversation_page_request(1, "")
             return
         if target_kind == "handoff":

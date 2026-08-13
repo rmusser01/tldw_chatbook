@@ -5750,6 +5750,54 @@ async def test_library_conversations_reentry_restores_unfiltered_first_page():
 
 
 @pytest.mark.asyncio
+async def test_library_conversations_reentry_does_not_load_when_dirty_editor_vetoes():
+    app = _build_test_app()
+    records = _conversation_records(25)
+    records[-1] = {**records[-1], "title": "Needle outside first page"}
+    _seed_conversations(app, records, notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+        field = screen.query_one("#library-conversations-filter", Input)
+        field.value = "needle"
+        field.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_conversation_total == 1,
+            message="Filtered conversation pager state never landed.",
+        )
+
+        await _open_note_editor(screen, pilot)
+        _bump_note_version_externally(app.notes_scope_service, "n-1")
+        body = screen.query_one("#library-note-body", TextArea)
+        body.text = "unsaved text that must survive"
+        screen.query_one("#library-note-save").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_autosave_state == "conflict",
+            message="The dirty-editor conflict was never reached.",
+        )
+        body.focus()
+        await pilot.pause()
+        calls_before = len(app.chat_conversation_scope_service.calls)
+
+        screen.query_one("#library-row-browse-conversations").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(app.chat_conversation_scope_service.calls) == calls_before
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        assert screen._library_note_autosave_state == "conflict"
+        mounted_body = screen.query_one("#library-note-body", TextArea)
+        assert mounted_body.text == "unsaved text that must survive"
+
+
+@pytest.mark.asyncio
 async def test_library_conversation_initial_failure_keeps_filter_for_retry():
     app = _build_test_app()
     _seed_conversations(app, _conversation_records(2))
