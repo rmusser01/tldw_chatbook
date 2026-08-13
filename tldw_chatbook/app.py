@@ -3549,10 +3549,15 @@ class LibraryIngestQueueMixin:
         if self._claim_ingest_local_stt_job(job_id) is None:
             return
         existing = self.library_ingest_jobs.get_job(job_id)
-        progress = dict(existing.progress or {}) if existing is not None else {}
-        progress.pop("percent", None)
-        progress["phase"] = event.phase.value
-        progress["message"] = _INGEST_LOCAL_STT_PHASE_MESSAGES[event.phase]
+        progress: dict[str, Any] = {
+            "phase": event.phase.value,
+            "message": _INGEST_LOCAL_STT_PHASE_MESSAGES[event.phase],
+        }
+        if (
+            existing is not None
+            and (existing.progress or {}).get("cancel_requested") is True
+        ):
+            progress["cancel_requested"] = True
         self.library_ingest_jobs.update_progress(
             job_id,
             progress=progress,

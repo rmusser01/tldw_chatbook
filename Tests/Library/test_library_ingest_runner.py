@@ -1460,6 +1460,57 @@ async def test_local_stt_cancel_and_force_stop_are_exact_attempt_scoped(
         assert topups == ["top-up"]
 
 
+@pytest.mark.parametrize(
+    ("cancel_requested", "expected_progress"),
+    (
+        (
+            True,
+            {
+                "phase": "post-processing",
+                "message": "Post-processing audio",
+                "cancel_requested": True,
+            },
+        ),
+        (
+            "truthy-untrusted-value",
+            {
+                "phase": "post-processing",
+                "message": "Post-processing audio",
+            },
+        ),
+    ),
+)
+def test_local_stt_phase_replaces_untrusted_progress_and_preserves_only_true_cancel(
+    cancel_requested: object,
+    expected_progress: dict[str, Any],
+) -> None:
+    app = _IngestRunnerHarness(None)
+    job = app.library_ingest_jobs.submit(source_path="speech.wav")
+    assert app.library_ingest_jobs.mark_parsing(job.job_id) is not None
+    attempt_id = "attempt-progress-replacement"
+    app._ingest_local_stt_jobs[job.job_id] = (1, attempt_id)
+    app.library_ingest_jobs.update_progress(
+        job.job_id,
+        progress={
+            "phase": "transcribing",
+            "message": "Stale message",
+            "percent": 64.0,
+            "cancel_requested": cancel_requested,
+            "provider_private_detail": {"raw": "must not survive"},
+        },
+        persist=False,
+    )
+
+    app._on_ingest_local_stt_event(
+        job.job_id,
+        ExecutorEvent(1, attempt_id, WorkerPhase.POST_PROCESSING),
+    )
+
+    current = app.library_ingest_jobs.get_job(job.job_id)
+    assert current is not None
+    assert current.progress == expected_progress
+
+
 @pytest.mark.asyncio
 async def test_local_stt_cancel_rejects_stale_or_unbound_job(tmp_path: Path) -> None:
     executor = _FakeLocalSTTExecutor()
