@@ -107,6 +107,27 @@ and prove:
   while its tooltip remains `Open Inspector rail` and vertical-label mode
   continues to render the canonical Inspector name.
 
+The one-line check must inspect the button's actual composited region and
+require exactly one non-empty painted row equal to `Inspect`. A whole-SVG
+substring assertion is insufficient: the screenshot title contains
+`Inspector` (and therefore the substring `Inspect`) even when the rail button
+is absent, wrapped, or wrong. Keep the tooltip and vertical-label assertions
+as focused component contracts so each invariant fails independently.
+
+The regression inventory includes every current horizontal collapsed-label
+expectation, not only the TASK-15705 sweep:
+
+- `Tests/UI/test_console_rail_handle.py`
+- `Tests/UI/test_destination_rail.py`
+- `Tests/UI/test_console_shell_regions.py`
+- `Tests/UI/test_settings_console_rail_labels.py`
+- `Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py`
+
+Update only expectations that observe the horizontal collapsed button. Do not
+change vertical `I\nn\ns\np\ne\nc\nt\no\nr` expectations, Inspector headings,
+settings copy, tooltips, or unrelated destination text. Run these modules with
+the existing TASK-15705 focused suite.
+
 Update the existing Console decomposition assertion from a quiet/no-border
 Inspector handle to a solid/all-edge frame. Add a non-Console right-handle
 assertion proving the Lab/Personas shared default remains compact and quiet.
