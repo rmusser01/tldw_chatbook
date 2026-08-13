@@ -805,10 +805,27 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self._apply_post_compose_state()
 
     def _apply_post_compose_state(self) -> None:
-        """Post-compose wiring shared by ``on_mount`` and ``_after_recompose``."""
+        """Post-compose wiring shared by ``on_mount`` and ``_after_recompose``.
+
+        Gated on the MOUNTED CHILDREN, not on ``self.mode``. ``on_mount``
+        could trust the mode because it fires once, immediately after its own
+        compose. ``_after_recompose`` cannot: ``sync_state`` mutates the
+        fields and only SCHEDULES the rebuild, so a second ``sync_state``
+        landing while the first recompose is still awaiting ``mount_all``
+        leaves this hook reading the newer state against the older children.
+        Observed exactly that on the list -> loading -> editor row-press
+        sequence: ``mode`` was already "editor" with a presentation state set
+        while the mounted child was still ``#library-note-load-state``, and
+        ``apply_session_state``'s ``query_one("#library-note-title")`` raised
+        into the sync's whole-screen fallback. The newer state's own
+        recompose is already queued and applies it a moment later.
+        """
         self.apply_compact_presentation(self.compact)
-        if self.mode == "editor" and self.presentation_state is not None:
-            self.apply_session_state(self.presentation_state)
+        if self.mode != "editor" or self.presentation_state is None:
+            return
+        if not self.query("#library-note-title"):
+            return
+        self.apply_session_state(self.presentation_state)
 
     def apply_compact_presentation(self, compact: bool) -> None:
         """Update responsive copy without remounting the canvas."""
