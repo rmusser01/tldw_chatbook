@@ -40,6 +40,24 @@ def _write_safetensors(path: Path) -> None:
     path.write_bytes(struct.pack("<Q", 2) + b"{}")
 
 
+def _write_recipe_fixture(root: Path, package_variant: str) -> None:
+    from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+
+    recipe = AUDIO_CPP_RECIPE_REGISTRY.for_package(package_variant)
+    for signal in recipe.required_files:
+        target = root / signal.relative_path
+        if signal.kind.value == "gguf":
+            _write_gguf(target)
+        elif signal.kind.value == "safetensors":
+            _write_safetensors(target)
+        elif signal.kind.value == "json":
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("{}", encoding="utf-8")
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"fixture")
+
+
 def test_exact_gguf_package_is_discovered_from_only_the_selected_root(
     tmp_path: Path,
 ) -> None:
@@ -191,6 +209,49 @@ def test_multifile_safetensors_layout_requires_every_companion(tmp_path: Path) -
     assert complete.discoveries[0].match.state is api["AudioCppMatchState"].EXACT
     assert incomplete.discoveries[0].match.state is (
         api["AudioCppMatchState"].INCOMPLETE
+    )
+
+
+@pytest.mark.parametrize(
+    "package_variant",
+    (
+        "qwen3_tts_1_7b_base_q8_0",
+        "chatterbox_safetensors",
+        "voxcpm2_safetensors",
+        "index_tts2_safetensors",
+        "glm_tts_q8_0",
+    ),
+)
+def test_new_recipe_layouts_are_exact_through_the_bounded_scanner(
+    tmp_path: Path,
+    package_variant: str,
+) -> None:
+    api = _api()
+    root = tmp_path / package_variant
+    root.mkdir()
+    _write_recipe_fixture(root, package_variant)
+
+    exact = api["scan_audio_cpp_package_root"](root)
+    recipe = next(
+        candidate.recipe
+        for discovery in exact.discoveries
+        for candidate in discovery.match.candidates
+        if candidate.recipe.package_variant == package_variant
+    )
+    (root / recipe.required_files[-1].relative_path).unlink()
+    incomplete = api["scan_audio_cpp_package_root"](root)
+
+    exact_matches = tuple(
+        discovery
+        for discovery in exact.discoveries
+        if discovery.match.state is api["AudioCppMatchState"].EXACT
+    )
+    assert len(exact_matches) == 1
+    assert exact_matches[0].match.candidates[0].recipe is recipe
+    assert all(
+        candidate.recipe.package_variant != package_variant
+        for discovery in incomplete.discoveries
+        for candidate in discovery.match.candidates
     )
 
 

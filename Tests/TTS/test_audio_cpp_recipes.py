@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError, fields, replace
 from hashlib import sha256
 from uuid import UUID
 
@@ -87,6 +87,15 @@ EXPECTED_RELEASE_FAMILY_COUNTS = {
     "outetts": 1,
     "vietneu_tts": 1,
 }
+EXPECTED_APPROVED_COUNT = 62
+QWEN_BASE_SAFETENSORS_FILES = (
+    "config.json",
+    "generation_config.json",
+    "model.safetensors",
+    "speech_tokenizer/config.json",
+    "speech_tokenizer/model.safetensors",
+    "tokenizer_config.json",
+)
 
 
 def _api():
@@ -140,7 +149,7 @@ def _description(recipe, *, missing=(), invalid=(), partial=False, permission=Fa
     )
 
 
-def test_registry_is_pinned_and_contains_every_initial_package_exactly_once() -> None:
+def test_registry_is_pinned_and_contains_every_approved_package_exactly_once() -> None:
     api = _api()
     registry = api["AUDIO_CPP_RECIPE_REGISTRY"]
 
@@ -148,11 +157,13 @@ def test_registry_is_pinned_and_contains_every_initial_package_exactly_once() ->
     assert api["AUDIO_CPP_PINNED_COMMIT"] == (
         "238ab6a9e321c17de8e120559f57efeedaeb1345"
     )
-    assert len(registry.recipes) == 15
-    assert {recipe.package_variant for recipe in registry.recipes} == set(
-        EXPECTED_INITIAL_PACKAGES
+    assert len(registry.recipes) == EXPECTED_APPROVED_COUNT
+    assert set(EXPECTED_INITIAL_PACKAGES) <= {
+        recipe.package_variant for recipe in registry.recipes
+    }
+    assert len({recipe.recipe_id for recipe in registry.recipes}) == len(
+        registry.recipes
     )
-    assert len({recipe.recipe_id for recipe in registry.recipes}) == 15
 
 
 def test_registry_collection_cannot_be_replaced_after_construction() -> None:
@@ -220,7 +231,7 @@ def test_recipe_has_exact_reviewed_layout_and_safe_projection(
         assert recipe.projection.model_relative_path is None
 
 
-def test_tasks_and_pocket_language_options_follow_the_pinned_specs() -> None:
+def test_initial_tasks_and_pocket_language_options_follow_the_pinned_specs() -> None:
     registry = _api()["AUDIO_CPP_RECIPE_REGISTRY"]
     reference_requirement = _api()["AudioCppReferenceRequirement"]
     voice_reference_policy = _api()["AudioCppVoiceReferencePolicy"]
@@ -232,6 +243,8 @@ def test_tasks_and_pocket_language_options_follow_the_pinned_specs() -> None:
             assert recipe.projection.session_options == ()
             assert recipe.reference_requirement is reference_requirement.NONE
             assert recipe.voice_reference_policy is voice_reference_policy.NATIVE_ONLY
+            continue
+        if recipe.family != "pocket_tts":
             continue
         assert recipe.family == "pocket_tts"
         assert recipe.capabilities == ("tts", "clone")
@@ -246,8 +259,7 @@ def test_tasks_and_pocket_language_options_follow_the_pinned_specs() -> None:
             assert recipe.recipe_revision == 2
             assert recipe.reference_requirement is reference_requirement.REQUIRED
             assert (
-                recipe.voice_reference_policy
-                is voice_reference_policy.REFERENCE_ONLY
+                recipe.voice_reference_policy is voice_reference_policy.REFERENCE_ONLY
             )
         else:
             assert recipe.reference_requirement is reference_requirement.OPTIONAL
@@ -277,17 +289,18 @@ def test_recipe_policy_admits_only_declared_voice_reference_combinations(
 ) -> None:
     recipe = _api()["AUDIO_CPP_RECIPE_REGISTRY"].for_package(package_variant)
 
-    assert recipe.admits_voice_reference(
-        has_voice=voice is not None,
-        has_reference=has_reference,
-    ) is accepted
+    assert (
+        recipe.admits_voice_reference(
+            has_voice=voice is not None,
+            has_reference=has_reference,
+        )
+        is accepted
+    )
 
 
 def test_reserved_combined_policy_requires_and_emits_both_fields() -> None:
     api = _api()
-    recipe = api["AUDIO_CPP_RECIPE_REGISTRY"].for_package(
-        "pocket_tts_english_q8_0"
-    )
+    recipe = api["AUDIO_CPP_RECIPE_REGISTRY"].for_package("pocket_tts_english_q8_0")
     combined = replace(
         recipe,
         voice_reference_policy=(
@@ -505,21 +518,57 @@ def test_release_accounting_is_complete_and_truthful_for_all_21_families() -> No
 
     assert len(accounting) == 67
     assert counts == EXPECTED_RELEASE_FAMILY_COUNTS
-    assert sum(entry.state is support_state.APPROVED for entry in accounting) == 15
-    assert sum(entry.state is support_state.OPEN_GAP for entry in accounting) == 52
-    assert not any(
-        entry.state is support_state.EXPLICITLY_UNSUPPORTED for entry in accounting
+    assert {entry.state for entry in accounting} == {
+        support_state.APPROVED,
+        support_state.EXPLICITLY_UNSUPPORTED,
+    }
+    assert not any(entry.state is support_state.OPEN_GAP for entry in accounting)
+    approved = tuple(
+        entry for entry in accounting if entry.state is support_state.APPROVED
     )
-    assert {
-        entry.package_variant
+    unsupported = tuple(
+        entry
         for entry in accounting
-        if entry.state is support_state.APPROVED
-    } == {recipe.package_variant for recipe in registry.recipes}
-    assert all(
-        entry.recipe_id is not None
-        if entry.state is support_state.APPROVED
-        else entry.reason == "Recipe review is not complete."
-        for entry in accounting
+        if entry.state is support_state.EXPLICITLY_UNSUPPORTED
+    )
+    assert len(approved) == EXPECTED_APPROVED_COUNT
+    assert len(unsupported) == 5
+    assert {entry.package_variant for entry in unsupported} == {
+        "miotts_1_7b_q8_0",
+        "miotts_1_7b_bf16",
+        "miotts_1_7b_orig",
+        "qwen3_tts_1_7b_base_safetensors",
+        "qwen3_tts_0_6b_base_safetensors",
+    }
+    assert {entry.package_variant for entry in approved} == {
+        recipe.package_variant for recipe in registry.recipes
+    }
+    assert len({(entry.family, entry.package_variant) for entry in accounting}) == 67
+    assert len({entry.package_variant for entry in accounting}) == 67
+    assert len({entry.recipe_id for entry in approved}) == len(approved)
+    for entry in approved:
+        recipe = registry.for_package(entry.package_variant)
+        assert entry.recipe_id == recipe.recipe_id
+        assert recipe.family == entry.family
+        match = registry.match(_description(recipe))
+        assert match.state is api["AudioCppMatchState"].EXACT
+        assert len(match.candidates) == 1
+        assert match.candidates[0].recipe is recipe
+        assert entry.reason is None
+        assert entry.evidence_reference is None
+    for entry in unsupported:
+        assert entry.recipe_id is None
+        assert entry.reason is not None and entry.reason.strip()
+        assert len(entry.reason) <= 256
+        assert entry.evidence_reference is not None
+        assert entry.evidence_reference.startswith("https://")
+        assert api["AUDIO_CPP_PINNED_COMMIT"] in entry.evidence_reference
+        assert len(entry.evidence_reference) <= 512
+        with pytest.raises(ValueError, match="unavailable"):
+            registry.for_package(entry.package_variant)
+    accounting_fields = {item.name for item in fields(accounting[0])}
+    assert accounting_fields.isdisjoint(
+        {"artifact_availability", "artifact_state", "downloadable", "local_only"}
     )
     pinned_rows = "\n".join(
         sorted(f"{entry.family}:{entry.package_variant}" for entry in accounting)
@@ -527,6 +576,43 @@ def test_release_accounting_is_complete_and_truthful_for_all_21_families() -> No
     assert sha256(pinned_rows.encode("utf-8")).hexdigest() == (
         "10d75a8ab499d15cbb49c73dc8a070d994c788dda66f5d82315747146c9d8480"
     )
+
+
+def test_identical_qwen_base_safetensors_layouts_fail_closed() -> None:
+    api = _api()
+    evidence_type = api["AudioCppPackageFileEvidence"]
+    description_type = api["AudioCppPackageDescription"]
+    accounting = {
+        entry.package_variant: entry for entry in api["AUDIO_CPP_RELEASE_ACCOUNTING"]
+    }
+    support_state = api["AudioCppRecipeSupportState"]
+    description = description_type(
+        canonical_root="/models/qwen-base",
+        canonical_root_identity=_identity("qwen-base-root"),
+        safe_name="Qwen3-TTS-12Hz-Base",
+        files=tuple(
+            evidence_type(
+                relative_path=path,
+                size_bytes=128,
+                identity=_identity(path),
+                readable=True,
+                metadata_valid=True,
+            )
+            for path in QWEN_BASE_SAFETENSORS_FILES
+        ),
+    )
+
+    assert {
+        accounting[variant].state
+        for variant in (
+            "qwen3_tts_1_7b_base_safetensors",
+            "qwen3_tts_0_6b_base_safetensors",
+        )
+    } == {support_state.EXPLICITLY_UNSUPPORTED}
+    result = api["AUDIO_CPP_RECIPE_REGISTRY"].match(description)
+    assert result.state is not api["AudioCppMatchState"].EXACT
+    assert result.candidates == ()
+    assert not any("qwen3_tts" in recipe_id for recipe_id in result.recipe_ids)
 
 
 def test_user_facing_verified_claims_exclude_expected_or_untested_tuples() -> None:
