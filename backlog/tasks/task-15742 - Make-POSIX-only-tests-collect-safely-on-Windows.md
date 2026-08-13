@@ -4,6 +4,7 @@ title: Make POSIX-only tests collect safely on Windows
 status: In Progress
 assignee: []
 created_date: '2026-08-13 20:15'
+updated_date: '2026-08-13 20:26'
 labels:
   - testing
   - windows
@@ -28,6 +29,15 @@ Restore repository-wide pytest collection on Windows by gating POSIX-only signal
 - [ ] #5 Focused tests and static checks pass
 - [ ] #6 No production behavior schema dependency or ADR changes are introduced
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Capture both Windows collection failures as RED evidence and gate media signal tests by capability.
+2. Gate the POSIX TTS materialization suite when fcntl is unavailable.
+3. Run focused and repository-wide collection verification plus static checks.
+4. Complete TASK-15742 notes and acceptance criteria, rebase on current dev, then push and create the PR.
+<!-- SECTION:PLAN:END -->
 
 ## References
 
