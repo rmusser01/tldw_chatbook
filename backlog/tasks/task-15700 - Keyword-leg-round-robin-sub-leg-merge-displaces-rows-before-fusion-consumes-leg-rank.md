@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-12 22:58'
-updated_date: '2026-08-13 14:14'
+updated_date: '2026-08-13 16:27'
 labels:
   - rag
   - retrieval
@@ -111,3 +111,9 @@ Part A (Task 1): form-tiered sub-leg merge at _keyword_search's gather site (tie
 Part B (Tasks 2-4): prefix + and_then_prefix constructions, six-row sweep under the 15400 decision rule verbatim, conditional default flip.
 Task 5: conditional re-stamp, README/AC#4 margin, live check, closure.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Task-3 six-row sweep (gated, 2026-08-13, tiered merge): census and 20 / and_trim 21 / or 28 / and_or 29 / prefix 23 / and_pfx 23; control self-check 20/53; 105/105 (+0.000) at the shipped default before the run. PART A PAYOFF MEASURED: and_then_or moved rescue NO -> yes@slot 10 and scoped 0.429 -> 1.000 (leg form stamps ['and','or',...] show the AND primary leading its tier-2 fallbacks). `or` still fails and the merge was never its cause — the fixture is absent from the leg top-10 entirely (intra-sub-leg self-displacement; a widening PRIMARY is all tier 1, so tiering is a no-op). Hard constraint (b) measured in ALL THREE modes by the gate's own compare_or_update: prefix and and_then_prefix PASSED with 0 of 105 cells moved; and_then_or REGRESSED (8 cells past 0.02, 5 past the 0.05 fail band — paraphrase/vocab mrr+ndcg, overall.mrr -0.056), or REGRESSED 12. WINNER under the rule = `prefix` (census 23, +kw-quillon-mast +kw-thimble-relay, lost 0, 0 extra FTS statements; tie with and_pfx at 23 broken by fewest-extra-queries, measured 0/60 vs 60/60 fallback expressions). The census-maximal and_then_or is disqualified on (b). AC#7: residual zero-row 36/60 (from 39), census 23/53 (from 21). AC#4: fixture at slot 9 of 10, score 0.05, gap 0.003333333333333341 to the first excluded row (conv-lower-store-flood, 0.04666666666666666); next displacer is a MERGED fts+vector row, not another vector-only row. Negative axis corpus-VACUOUS (7/7 negatives zero leg rows under every construction). Winner moves 0 of 105 cells, so AC#6's re-stamp is a disclosed non-event. Full tables + the rule line-by-line: .superpowers/sdd/2026-08-13-rag-keyword-leg-tiered-merge/task-3-report.md
+<!-- SECTION:NOTES:END -->
