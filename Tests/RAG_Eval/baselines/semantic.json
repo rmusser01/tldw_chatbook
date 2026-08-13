@@ -1,6 +1,6 @@
 {
   "baseline_id": "semantic",
-  "created_at": "2026-08-11T19:39:50.866367+00:00",
+  "created_at": "2026-08-12T23:01:15.691443+00:00",
   "pipeline_config": {
     "mode": "semantic",
     "k": 10,
@@ -55,7 +55,7 @@
       "transformers": "5.6.2",
       "torch": "2.11.0",
       "chromadb": "1.5.8",
-      "corpus_sha256": "7234f5823be703dd3de2e2b70ee78da1fbec76fc3d967520932a849830edca04",
+      "corpus_sha256": "6346786bcc45ffd96903147b2e178dbfe4d084e5519abb9601b2e3e09d24730e",
       "platform": "darwin"
     },
     "environment_info": {
@@ -64,10 +64,10 @@
     "report_only": {
       "latency": {
         "count": 60.0,
-        "mean_ms": 14.7,
-        "p95_ms": 42.8,
-        "max_ms": 61.8,
-        "total_s": 0.9
+        "mean_ms": 8.4,
+        "p95_ms": 13.9,
+        "max_ms": 15.9,
+        "total_s": 0.5
       },
       "mean_docs_at_k": 9.652,
       "num_queries": 46,

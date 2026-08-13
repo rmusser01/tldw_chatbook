@@ -17,6 +17,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import (
     Any,
+    Callable,
     Collection,
     Dict,
     FrozenSet,
@@ -52,7 +53,7 @@ from tldw_chatbook.Metrics.metrics_logger import (
 from .embeddings_wrapper import EmbeddingsServiceWrapper
 from .vector_store import create_vector_store, SearchResult, SearchResultWithCitations
 from .citations import Citation, CitationType, merge_citations
-from .config import RAGConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
+from .config import RAGConfig, SearchConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
 from ..fusion import (
     reciprocal_rank_fusion,
@@ -147,6 +148,66 @@ KEYWORD_LEG_SOURCE_TYPES = frozenset(
     }
 )
 CHACHA_KEYWORD_SOURCE_TYPES = frozenset({SOURCE_TYPE_NOTE, SOURCE_TYPE_CONVERSATION})
+
+
+# --- The keyword leg's MATCH construction (TASK-15400) ----------------------
+#
+# The four candidates the arc's spec pre-registers, selected by
+# `SearchConfig.fts_match_construction` and resolved by
+# `RAGService._fts5_match_expressions`. See that method for what each one
+# builds and why; see the config field for why this is not a user knob.
+FTS_MATCH_CONSTRUCTION_AND = "and"
+FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM = "and_stopword_trim"
+FTS_MATCH_CONSTRUCTION_OR = "or"
+FTS_MATCH_CONSTRUCTION_AND_THEN_OR = "and_then_or"
+FTS_MATCH_CONSTRUCTIONS = (
+    FTS_MATCH_CONSTRUCTION_AND,
+    FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM,
+    FTS_MATCH_CONSTRUCTION_OR,
+    FTS_MATCH_CONSTRUCTION_AND_THEN_OR,
+)
+
+# The two values `metadata["fts_match"]` can take. They name the FORM that
+# matched a row and NOTHING else: `and` is an implicit-AND expression (full
+# or stopword-trimmed), `or` is the content-token OR form -- whether that
+# form ran as `and_then_or`'s fallback or as the `or` construction's own
+# primary. Deliberately NOT `or_fallback`: under the `or` construction every
+# row comes from the primary query, so a name carrying "fallback" would weld
+# a false position claim onto a true form fact, and Task 5's mechanism prose
+# reads this key verbatim. Fallback-ness is derivable whenever it is wanted
+# (construction + form), so it gets no second field. The naming also extends
+# to the spec's probe axis (`near`, prefix) as `or_fallback` could not.
+FTS_MATCH_AND = "and"
+FTS_MATCH_OR = "or"
+
+# A small fixed English function-word list, consulted by every construction
+# EXCEPT the full AND (`and`, the pre-TASK-15400 construction) -- so it IS
+# consulted on the shipped default path, `and_stopword_trim`'s trimmed AND,
+# and on the OR form used by `or`/`and_then_or`'s fallback. The FULL AND
+# never consults it: an implicit AND over function words is harmless, and
+# TASK-15400's census measured that trimming them rescues 1 of the 40
+# zero-row golden queries (`pm-vendor-chaser`, blocked solely by "about") --
+# the +1 that made `and_stopword_trim` the sweep's winner and the shipped
+# default. Where the list is more load-bearing still is the
+# OR form: a raw OR of every token matches every document containing "the",
+# and bm25's IDF discounts a ubiquitous term in the RANKING but not in the
+# row COUNT, so the junk rows still enter fusion. Fixed and small on purpose
+# -- a large list starts deleting content words (the census's real blockers
+# were `template`, `building`, `rough`, `turns`, `pulls`, `builds`, which no
+# stopword list removes). The exact size is pinned by
+# `test_stopword_list_is_lowercase_and_covers_the_measured_blocker`.
+_FTS5_STOPWORDS: FrozenSet[str] = frozenset(
+    {
+        "a", "about", "all", "also", "am", "an", "and", "any", "are", "as",
+        "at", "be", "been", "but", "by", "can", "do", "does", "for", "from",
+        "had", "has", "have", "how", "i", "if", "in", "into", "is", "it",
+        "its", "me", "my", "no", "not", "of", "on", "or", "our", "out",
+        "so", "than", "that", "the", "their", "them", "then", "there",
+        "these", "they", "this", "to", "up", "was", "we", "were", "what",
+        "when", "where", "which", "who", "why", "will", "with", "would",
+        "you", "your",
+    }
+)
 
 
 def _resolve_keyword_source_types(
@@ -585,6 +646,11 @@ class RAGService:
             config: RAG configuration (uses defaults if None)
         """
         self.config = config or RAGConfig()
+
+        # Unrecognized `fts_match_construction` values already seen, so the
+        # use-time resolver warns once per service rather than once per
+        # search (TASK-15400).
+        self._warned_fts_constructions: set = set()
 
         # Log comprehensive configuration
         logger.info(
@@ -1162,6 +1228,16 @@ class RAGService:
                 ),
             )
 
+        # The keyword leg's companion to `hybrid_fusion_key` (TASK-15400):
+        # the MATCH construction decides which rows the FTS leg returns at
+        # all, so every search that READS that leg keys it. `None` for
+        # semantic (no keyword leg). The resolved value, for the same reason
+        # the fusion params are resolved: an unrecognized construction
+        # behaves as `and` and must therefore key as `and`.
+        fts_match_construction_key: Optional[str] = None
+        if search_type in ("hybrid", "keyword"):
+            fts_match_construction_key = self._resolved_fts_match_construction()
+
         # Check cache first
         cached_result = await self.cache.get_async(
             query,
@@ -1171,6 +1247,7 @@ class RAGService:
             metadata_allowlist,
             keyword_source_types=keyword_source_types,
             hybrid_fusion=hybrid_fusion_key,
+            fts_match_construction=fts_match_construction_key,
         )
         if cached_result is not None:
             results, context = cached_result
@@ -1266,6 +1343,7 @@ class RAGService:
                 metadata_allowlist,
                 keyword_source_types=keyword_source_types,
                 hybrid_fusion=hybrid_fusion_key,
+                fts_match_construction=fts_match_construction_key,
             )
 
             return results
@@ -1518,7 +1596,12 @@ class RAGService:
         # whitespace-only, or all punctuation) escapes to "" and can only
         # ever match nothing. Short-circuit before resolving any DB
         # path or acquiring a connection -- no FTS5 call, no DB touch.
-        if not self._escape_fts5_query(query):
+        # TASK-15400: read the ACTIVE construction's primary expression, so
+        # the `or` construction's all-stopword emptiness short-circuits here
+        # too. Under `and` this is `_escape_fts5_query` verbatim; under the
+        # shipped `and_stopword_trim` an all-stopword query falls back to
+        # that same full AND, so neither can short-circuit on emptiness.
+        if not self._fts5_match_expressions(query)[0]:
             logger.debug(
                 "Keyword search query has no FTS5-searchable tokens after "
                 "escaping; returning no results without a database lookup."
@@ -1954,8 +2037,11 @@ class RAGService:
         if not selected:
             return rows
 
-        escaped_query = self._escape_fts5_query(query)
-        if not escaped_query:
+        # One construction, resolved once for both sub-queries; each of them
+        # then decides independently whether its own zero-row result widens
+        # (TASK-15400).
+        expressions = self._fts5_match_expressions(query)
+        if not expressions[0]:
             return rows
 
         if not isinstance(limit, int) or limit < 1:
@@ -1978,20 +2064,26 @@ class RAGService:
 
         with closing(conn):
             if SOURCE_TYPE_NOTE in selected:
-                rows[SOURCE_TYPE_NOTE] = self._chacha_notes_fts(
-                    conn,
-                    escaped_query,
-                    limit,
-                    None if allowed_ids is None else allowed_ids.get(SOURCE_TYPE_NOTE),
+                note_ids = (
+                    None if allowed_ids is None else allowed_ids.get(SOURCE_TYPE_NOTE)
+                )
+                rows[SOURCE_TYPE_NOTE] = self._fts_rows_with_fallback(
+                    lambda expression: self._chacha_notes_fts(
+                        conn, expression, limit, note_ids
+                    ),
+                    expressions,
                 )
             if SOURCE_TYPE_CONVERSATION in selected:
-                rows[SOURCE_TYPE_CONVERSATION] = self._chacha_conversations_fts(
-                    conn,
-                    escaped_query,
-                    limit,
+                conversation_ids = (
                     None
                     if allowed_ids is None
-                    else allowed_ids.get(SOURCE_TYPE_CONVERSATION),
+                    else allowed_ids.get(SOURCE_TYPE_CONVERSATION)
+                )
+                rows[SOURCE_TYPE_CONVERSATION] = self._fts_rows_with_fallback(
+                    lambda expression: self._chacha_conversations_fts(
+                        conn, expression, limit, conversation_ids
+                    ),
+                    expressions,
                 )
         return rows
 
@@ -2387,8 +2479,8 @@ class RAGService:
             first -- an unopenable database or a failing sub-query yields
             ``[]`` plus one logged warning, never an exception.
         """
-        escaped_query = self._escape_fts5_query(query)
-        if not escaped_query:
+        expressions = self._fts5_match_expressions(query)
+        if not expressions[0]:
             return []
 
         if not isinstance(limit, int) or limit < 1:
@@ -2409,7 +2501,12 @@ class RAGService:
             return []
 
         with closing(conn):
-            return self._prompts_fts(conn, escaped_query, limit, allowed_ids)
+            return self._fts_rows_with_fallback(
+                lambda expression: self._prompts_fts(
+                    conn, expression, limit, allowed_ids
+                ),
+                expressions,
+            )
 
     @staticmethod
     def _prompts_fts(
@@ -2824,6 +2921,15 @@ class RAGService:
             "text_preview": content[:200],
             "source_type": source_type,
             "source": source_type,
+            # Which MATCH form actually returned this row (TASK-15400):
+            # `and` for an implicit-AND expression, `or` for the
+            # content-token OR form. One query can carry both -- the
+            # fallback is decided per sub-leg -- so this is a per-ROW fact,
+            # not a per-search one, and the sweep's negative-composition
+            # count plus the arc's mechanism prose are both read off it.
+            # Whether an `or` row was a FALLBACK is derived from this plus
+            # the construction, never stamped as a second fact.
+            "fts_match": item.get("fts_match", FTS_MATCH_AND),
         }
 
     def _process_keyword_results_basic(
@@ -2931,11 +3037,20 @@ class RAGService:
         """Create a single keyword result with citations.
 
         Citation spans come from ``_keyword_citation_spans``, which reads
-        the SAME token list ``_escape_fts5_query`` built this search's MATCH
-        expression from. Locating the raw query as one contiguous substring
-        instead (what this did before) assumed phrase semantics the keyword
-        leg no longer has, so every multi-token hit whose tokens are
-        scattered lost its citations entirely.
+        the FULL token list ``_fts5_query_tokens`` returns for the query --
+        every token the user typed, not necessarily the same tokens the
+        MATCH expression required. At the shipped ``and_stopword_trim``
+        construction the MATCH runs over a strict SUBSET of that list
+        (content tokens only; see ``_fts5_match_expressions``), so citations
+        evidence the full typed query while the match itself may have needed
+        only some of its tokens. Verified NOT a behavioural regression: the
+        spans themselves are unchanged, and a row that matched is guaranteed
+        to carry the content tokens the MATCH required, so a matched row's
+        citations are never missing evidence for the match. Locating the raw
+        query as one contiguous substring instead (what this did before)
+        assumed phrase semantics the keyword leg no longer has, so every
+        multi-token hit whose tokens are scattered lost its citations
+        entirely.
 
         Args:
             item: One raw sub-leg row.
@@ -3047,13 +3162,17 @@ class RAGService:
     def _fts5_query_tokens(query: str) -> List[str]:
         """Tokenize a raw user query -- the ONE tokenization of the keyword leg.
 
-        Two consumers must agree on this list or the leg contradicts itself:
-        ``_escape_fts5_query`` builds the FTS5 MATCH expression from it, and
-        ``_keyword_citation_spans`` locates the citation spans from it. They
-        used to tokenize independently (per-token quoting on one side, a raw
-        whole-query substring lookup on the other), which is exactly how a
-        row could match the query and then be reported with no evidence for
-        it -- see ``_keyword_citation_spans``.
+        Both MATCH construction and citation building start from this ONE
+        list. ``_fts5_match_expressions`` builds the MATCH expression from it
+        -- the full list under ``and``, but a content-token SUBSET under
+        ``and_stopword_trim`` and ``or`` (see that method) -- while
+        ``_keyword_citation_spans`` always locates the citation spans from
+        the FULL list, so a matched row's citations can cite tokens the
+        MATCH itself did not require. They used to tokenize independently
+        (per-token quoting on one side, a raw whole-query substring lookup on
+        the other), which is exactly how a row could match the query and
+        then be reported with no evidence for it -- see
+        ``_keyword_citation_spans``.
 
         Tokens are whitespace-separated runs that contain at least one
         alphanumeric character. FTS5's default tokenizer indexes only
@@ -3114,22 +3233,80 @@ class RAGService:
         rather than run a MATCH expression that can only ever match
         nothing.
 
-        **This construction is under review -- TASK-15400.** The implicit
-        AND means a document must contain literally every token the user
-        typed. Measured on the RAG_Eval golden set (TASK-15020/B2,
-        2026-08-11): this leg returns ZERO rows for 40 of 60 golden
-        queries, firing only where the query is keyword-shaped. The
-        dominant cause is AND-strictness over CONTENT words -- trimming
-        function words rescues 1 of those 40, and reusing the Library
-        four-seam path's ``build_fts_match_query`` also rescues 1;
-        OR-of-tokens rescues 34 (but loses the golden set's one
-        vector-blind fixture, whose design rests on AND uniqueness). For
-        media/notes/conversations the semantic leg hides this entirely;
-        prompts have no semantic leg, which is where it surfaced. Do not
-        change the join here without TASK-15400's before/after matrix --
-        and whatever changes, keep each token individually quoted (the
+        **TASK-15400 RESOLVED (2026-08-11): this full AND is no longer the
+        default join.** It is still the expression this method builds, and
+        it still ships on three live paths -- the ``and`` construction, the
+        fail-safe an unrecognized ``fts_match_construction`` degrades to,
+        and ``and_stopword_trim``'s own fallback when trimming empties the
+        query -- but ``SearchConfig.fts_match_construction`` now defaults to
+        ``and_stopword_trim``, so a default search ANDs the CONTENT tokens
+        (see ``_fts5_match_expressions``).
+
+        The arc's sweep measured all four pre-registered constructions over
+        the RAG_Eval golden set at the shipped fusion parameters and applied
+        a pre-registered rule; these are that matrix's cells, not arithmetic
+        on top of it (sweep row ``and_trim``, `Tests/RAG_Eval/harness/
+        fusion_sweep.py`):
+
+        * **What the winner bought.** Keyword-leg census 20 -> 21 of the 53
+          non-negative golden queries (the one rescue is
+          ``pm-vendor-chaser``; ``_FTS5_STOPWORDS``' comment records which
+          function word was blocking it), and hybrid ``prompt`` recall
+          0.000 -> 0.200 (mrr 0.022, ndcg 0.060) -- the category that
+          surfaced the arc at all, because prompts have no semantic leg to
+          hide the keyword leg's misses. NO cell moved DOWN in any category
+          in any mode, and plain/semantic are byte-identical to ``and``
+          (only hybrid can move). It issues zero extra FTS queries.
+        * **What it did NOT buy, and who owns that.** The arc opened on
+          "this leg returns ZERO rows for 40 of 60 golden queries"; the
+          winner moves that to **39 of 60**. What is left is not function
+          words -- the census's measured blockers are absent CONTENT words
+          (``template``, ``building``, ``rough``, ``turns``, ``pulls``,
+          ``builds``), which no stopword list removes -- and it belongs to
+          the RE-SCOPED merge-level follow-up filed off TASK-15400
+          (**TASK-15700**; see the next point for why it is a merge problem
+          rather than a MATCH problem).
+        * **What else was measured, so these four rows do not read as the
+          only options.** Reusing the Library four-seam path's
+          ``build_fts_match_query`` was measured at authoring time and
+          rescues 1 of the 40 (it is AND-joined too). Two report-only probes
+          ran over the same 40 zero-row queries: proximity (``NEAR``)
+          rescues 0 -- it can only narrow, so it is a subset of the trimmed
+          AND by construction -- and prefix matching rescues 3, the only
+          unexplored variant beating the winner, held back by the arc's
+          pre-registered promotion bar and carrying the same unmeasured
+          displacement risk as the OR forms.
+        * **The OR forms were measured and DISQUALIFIED -- for two
+          DIFFERENT reasons, one of them the merge.** ``or`` (census 28) and
+          ``and_then_or`` (census 29) both scored far higher AND both lost
+          the golden set's vector-blind fixture's hybrid rescue, with scoped
+          recall 1.000 -> 0.429 -- but not by the same mechanism, and the
+          distinction is the whole finding:
+
+          - Under ``or`` the JOIN itself loses the fixture: the leg returns
+            ten OR rows and the target is not among them (leg rank 11 in the
+            k=20 fusion window, fused 0.0188, an order below the cut). No
+            merge behaviour is implicated.
+          - Under ``and_then_or`` the fixture's own sub-leg is UNTOUCHED --
+            its row is still an AND row at leg rank 2 -- and it is the MERGE
+            that loses it. ``_keyword_search`` merges the four FTS sub-legs
+            with ``interleave_rankings`` (round-robin, NOT a score merge),
+            so when OTHER sub-legs fall back they inject rows that displace
+            the untouched AND row from leg rank 1 to 2, and hybrid fusion
+            consumes LEG RANK. That one position is the whole distance
+            between rescued and gone. The same displacement decomposes the
+            scoped collapse exactly (the 4 note-targeted scoped queries fall
+            behind a media fallback row; media is first in the round-robin;
+            3 of 7 = 0.429).
+
+          So a widening construction that keeps its own AND rows still has
+          to fix the MERGE; and one that does not keep them (``or``) fails
+          before the merge is even reached.
+
+        Whatever changes here, keep each token individually quoted (the
         injection property above, pinned by
-        ``Tests/RAG_Search/test_fts5_query_escaping.py``).
+        ``Tests/RAG_Search/test_fts5_query_escaping.py``, which re-runs it
+        through every construction and through the fallback expression).
 
         Args:
             query: Raw search query
@@ -3145,7 +3322,7 @@ class RAGService:
             )
 
         quoted_tokens = [
-            '"{}"'.format(token.replace('"', '""'))
+            self._quote_fts5_token(token)
             for token in self._fts5_query_tokens(query)
         ]
 
@@ -3153,10 +3330,251 @@ class RAGService:
         return " ".join(quoted_tokens)
 
     @staticmethod
+    def _quote_fts5_token(token: str) -> str:
+        """Quote ONE query token as an FTS5 string literal.
+
+        The single place the injection-safety property of TASK-3995 is
+        implemented, so every MATCH construction inherits it rather than
+        re-deriving it: a bare token FTS5 parses as column-filter or
+        operator syntax (``Obsidian-3`` raises
+        ``OperationalError('no such column: 3')``; a typed ``OR`` becomes a
+        disjunction of the user's own words), while a quoted token is a
+        literal string with no operator semantics. An embedded double quote
+        is doubled, FTS5's own escape for a literal quote inside a quoted
+        term.
+
+        Args:
+            token: One raw token from ``_fts5_query_tokens``.
+
+        Returns:
+            The token as a quoted FTS5 term.
+        """
+        return '"{}"'.format(token.replace('"', '""'))
+
+    @staticmethod
+    def _is_fts5_stopword(token: str) -> bool:
+        """Whether a raw query token is a function word.
+
+        Consulted by every construction except the full AND (``and``, the
+        pre-TASK-15400 one) -- so it runs on the SHIPPED default path, the
+        content-token AND (``and_stopword_trim``), as well as on the
+        content-token OR (``or`` / ``and_then_or``'s fallback).
+
+        Compared on the token's alphanumeric runs, because that is how FTS5
+        reads a quoted token: ``About,`` indexes and matches exactly as
+        ``about``, so the trimmer must see them as the same word. A token
+        with more than one run (``read-only``) is content, never a stopword.
+
+        Args:
+            token: One raw token from ``_fts5_query_tokens``.
+
+        Returns:
+            True when the token is a single alphanumeric run listed in
+            ``_FTS5_STOPWORDS``.
+        """
+        runs = re.findall(r"[^\W_]+", token, re.UNICODE)
+        return len(runs) == 1 and runs[0].lower() in _FTS5_STOPWORDS
+
+    @staticmethod
+    def _fts5_term_key(token: str) -> str:
+        """What FTS5 actually matches for a quoted token, as a comparable key.
+
+        A quoted token is a phrase over its alphanumeric runs, and the
+        default tokenizer folds case -- so ``Wombat``, ``wombat`` and
+        ``wombat,`` are all the same query term. Comparing raw token
+        STRINGS would miss that, which is how a duplicate-token query
+        ("wombat wombat") burns an FTS query on a fallback that cannot
+        return a row the primary did not.
+
+        Args:
+            token: One raw token from ``_fts5_query_tokens``.
+
+        Returns:
+            The token's runs, space-joined and case-folded.
+        """
+        return " ".join(re.findall(r"[^\W_]+", token, re.UNICODE)).lower()
+
+    def _resolved_fts_match_construction(self) -> str:
+        """The active MATCH construction, or ``"and"`` for anything unknown.
+
+        Resolved at use time (like ``resolve_rrf_k`` and
+        ``resolve_hybrid_alpha``), so an unrecognized value degrades with one
+        warning instead of crashing a search or silently retrieving
+        differently. Warned once per service instance per bad value -- this
+        runs on every search, and a per-call warning would bury the log.
+
+        NOTE the fail-safe target is ``"and"``, the PRE-TASK-15400 full AND
+        -- deliberately NOT the shipped default (``and_stopword_trim`` since
+        2026-08-11). A bad value should land on the most conservative
+        construction the engine has, which is the one that never widens a
+        query; and it keeps this fail-safe stable if the measured default
+        moves again.
+
+        Returns:
+            One of ``FTS_MATCH_CONSTRUCTIONS``.
+        """
+        construction = getattr(
+            self.config.search, "fts_match_construction", FTS_MATCH_CONSTRUCTION_AND
+        )
+        if construction in FTS_MATCH_CONSTRUCTIONS:
+            return construction
+
+        # `SearchConfig` is built from an untyped dict (`SearchConfig(**search_data)`
+        # in config.py, reachable from user-editable profile JSON), so `construction`
+        # can be a list/dict here -- unhashable, which would raise TypeError on the
+        # set membership/add below and crash hybrid AND keyword search instead of
+        # degrading to "and". Route non-str values through a hashable surrogate key
+        # for the warn-once set; a str value keeps using itself, unchanged.
+        dedup_key = (
+            construction
+            if isinstance(construction, str)
+            else f"{type(construction).__name__}:{construction!r}"
+        )
+
+        if dedup_key not in self._warned_fts_constructions:
+            self._warned_fts_constructions.add(dedup_key)
+            logger.warning(
+                "Unknown fts_match_construction {!r}; the keyword leg is "
+                "falling back to the {!r} construction (the conservative "
+                "full AND, NOT the shipped default {!r}). Valid values: {}.",
+                construction,
+                FTS_MATCH_CONSTRUCTION_AND,
+                SearchConfig.fts_match_construction,
+                ", ".join(FTS_MATCH_CONSTRUCTIONS),
+            )
+        return FTS_MATCH_CONSTRUCTION_AND
+
+    def _fts5_match_expressions(self, query: str) -> Tuple[str, Optional[str]]:
+        """Build the MATCH expression(s) one search runs (TASK-15400).
+
+        The construction seam: ONE definition consumed by all four FTS
+        sub-legs (media, notes, conversations, prompts). Every token in
+        every form is individually quoted by ``_quote_fts5_token`` -- only
+        the JOIN between tokens is in play here, never the quoting.
+
+        The four pre-registered candidates
+        (``SearchConfig.fts_match_construction``):
+
+        * ``and`` (pre-TASK-15400; still the fail-safe for an unrecognized
+          value) -- implicit AND over every token. Byte-identical to
+          ``_escape_fts5_query``, which it delegates to.
+        * ``and_stopword_trim`` (**the shipped default since 2026-08-11**,
+          the sweep's winner) -- implicit AND over the CONTENT tokens,
+          falling back to the full AND when trimming empties the token list
+          (an empty MATCH expression is an FTS5 syntax error, not "no
+          results").
+        * ``or`` -- the content tokens joined by FTS5's ``OR`` operator.
+          Stopwords are trimmed here because a raw OR of every token matches
+          every document containing "the"; when trimming empties the list
+          the answer is honestly no rows (``""``, the existing skip
+          contract), never a syntax error.
+        * ``and_then_or`` -- both: the AND form as primary, the OR form as
+          the fallback each sub-leg runs ONLY when its own primary returns
+          zero rows. A non-empty AND is therefore never widened, which
+          preserves every hit the full AND finds within a SUB-LEG -- but
+          NOT, as the sweep measured, every hit the LEG contributes to
+          fusion: the round-robin merge re-ranks the untouched rows. That
+          is why this candidate was disqualified (see
+          ``_escape_fts5_query``).
+
+        The fallback is suppressed when it cannot widen anything -- when
+        both forms reduce to the same single FTS5 term -- since re-running
+        it costs one query per zero-row sub-leg and can only return the same
+        zero rows.
+
+        Args:
+            query: Raw search query.
+
+        Returns:
+            ``(primary, fallback)``. ``primary == ""`` means "no rows" and
+            callers must skip the FTS5 query entirely (the pre-existing
+            contract). ``fallback is None`` means "never widen".
+        """
+        construction = self._resolved_fts_match_construction()
+        and_expression = self._escape_fts5_query(query)
+
+        if construction == FTS_MATCH_CONSTRUCTION_AND:
+            return and_expression, None
+
+        tokens = self._fts5_query_tokens(query)
+        content_tokens = [
+            token for token in tokens if not self._is_fts5_stopword(token)
+        ]
+        quoted = [self._quote_fts5_token(token) for token in content_tokens]
+
+        if construction == FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM:
+            # Trimming everything away leaves the FULL AND, not "" -- so an
+            # only-function-word query is byte-identical to the pre-arc
+            # construction rather than a syntax error or an empty answer.
+            return " ".join(quoted) or and_expression, None
+
+        or_expression = " OR ".join(quoted)
+
+        if construction == FTS_MATCH_CONSTRUCTION_OR:
+            return or_expression, None
+
+        # and_then_or. The fallback is suppressed when it cannot possibly
+        # widen: that is when both forms reduce to ONE identical FTS5 term
+        # (`OR` over a single term is that term, and an implicit AND over
+        # repetitions of it is too). Compared on TERM keys, not on the
+        # expression strings, so "wombat wombat" and "wombat, Wombat" are
+        # recognized as the single-term queries FTS5 reads them as instead
+        # of burning a redundant query per zero-row sub-leg.
+        and_terms = {self._fts5_term_key(token) for token in tokens}
+        or_terms = {self._fts5_term_key(token) for token in content_tokens}
+        if not or_expression or (len(or_terms) == 1 and or_terms == and_terms):
+            return and_expression, None
+        return and_expression, or_expression
+
+    def _fts_rows_with_fallback(
+        self,
+        run_expression: Callable[[str], List[Dict[str, Any]]],
+        expressions: Tuple[str, Optional[str]],
+    ) -> List[Dict[str, Any]]:
+        """Run one sub-leg's FTS query, widening only when it finds nothing.
+
+        Wraps a sub-leg's SQL-executing helper (never the tokenizer), so
+        each sub-leg decides independently whether to widen: one query can
+        legitimately carry AND rows from one sub-leg and OR rows from
+        another (the spec's deliberate mixed-mode interleave), which is why
+        every row is stamped with the form that matched it.
+
+        Args:
+            run_expression: Executes ONE MATCH expression and returns its
+                rows (already degrading to ``[]`` on a database error --
+                the fallback inherits that path unchanged, adding no new
+                failure modes).
+            expressions: ``_fts5_match_expressions``' ``(primary,
+                fallback)`` pair.
+
+        Returns:
+            The rows, each carrying an ``fts_match`` key
+            (``FTS_MATCH_AND`` / ``FTS_MATCH_OR``) that
+            ``_keyword_row_metadata`` promotes into the row's metadata.
+        """
+        primary, fallback = expressions
+        rows = run_expression(primary) if primary else []
+        # The primary is an OR form only under the `or` construction; the
+        # stamp names the form, not the position (see FTS_MATCH_AND).
+        form = (
+            FTS_MATCH_OR
+            if self._resolved_fts_match_construction() == FTS_MATCH_CONSTRUCTION_OR
+            else FTS_MATCH_AND
+        )
+
+        if not rows and fallback:
+            rows = run_expression(fallback)
+            form = FTS_MATCH_OR
+
+        for row in rows:
+            row["fts_match"] = form
+        return rows
+
+    @staticmethod
     def _keyword_citation_spans(
         content: str, tokens: List[str]
     ) -> List[Tuple[int, int, frozenset]]:
-        """Locate the citation spans for a keyword hit, from the SAME tokens.
+        """Locate the citation spans for a keyword hit, from the query's tokens.
 
         TASK-3996 follow-up (Qodo, PR #1469). Before TASK-3995 the keyword
         leg used phrase semantics, so a hit guaranteed the raw query was one
@@ -3166,11 +3584,14 @@ class RAGService:
         lookup found nothing, and the rows the fix had just made reachable
         came back with ``citations=[]``.
 
-        Spans are located per token, case-insensitively, from the token list
-        ``_escape_fts5_query`` built the MATCH expression from. A token is
-        matched as its alphanumeric runs separated by non-alphanumerics
-        ("Obsidian-3" -> ``Obsidian`` then ``3``), which is how FTS5 reads a
-        quoted token: a phrase over the runs, adjacency required.
+        Spans are located per token, case-insensitively, from the FULL token
+        list ``_fts5_query_tokens`` returns for the query (not necessarily
+        the subset ``_fts5_match_expressions`` required for the MATCH itself
+        under the shipped ``and_stopword_trim`` construction -- see that
+        method). A token is matched as its alphanumeric runs separated by
+        non-alphanumerics ("Obsidian-3" -> ``Obsidian`` then ``3``), which is
+        how FTS5 reads a quoted token: a phrase over the runs, adjacency
+        required.
 
         Spans that overlap, or that are separated only by non-alphanumeric
         characters, are merged -- so a query whose tokens ARE contiguous in
@@ -3254,8 +3675,12 @@ class RAGService:
         Returns:
             List of search results
         """
-        # Properly escape the query for FTS5
-        escaped_query = self._escape_fts5_query(query)
+        # Properly escape the query for FTS5, in whichever MATCH
+        # construction is active (TASK-15400). Under `and` this is
+        # `_escape_fts5_query` verbatim with no fallback; under the shipped
+        # `and_stopword_trim` it is the content-token AND, also with no
+        # fallback (only `and_then_or` ever returns a second expression).
+        expressions = self._fts5_match_expressions(query)
 
         # Validate limit parameter
         if not isinstance(limit, int) or limit < 1:
@@ -3279,12 +3704,9 @@ class RAGService:
         # not need to be selected at all, only ordered on.
         # Only "?" placeholders are interpolated into the SQL; every value,
         # including the whole id allowlist, is bound.
-        params: List[Any] = [escaped_query]
         id_filter_sql = ""
         if allowed_ids is not None:
             id_filter_sql = "AND m.id IN (SELECT value FROM json_each(?))"
-            params.append(_json_id_param(allowed_ids))
-        params.append(limit)
 
         sql = f"""
         SELECT
@@ -3304,32 +3726,42 @@ class RAGService:
         LIMIT ?
         """
 
-        results = []
-        try:
-            # Use transaction for consistent read
-            with pool.transaction() as conn:
-                cursor = conn.cursor()
-                # Use parameterized query - the escaped_query is already safe
-                cursor.execute(sql, tuple(params))
+        def _run(escaped_query: str) -> List[Dict[str, Any]]:
+            params: List[Any] = [escaped_query]
+            if allowed_ids is not None:
+                params.append(_json_id_param(allowed_ids))
+            params.append(limit)
 
-                for row in cursor:
-                    results.append(
-                        {
-                            "id": row["id"],
-                            "title": row["title"],
-                            "content": row["content"],
-                            "url": row["url"],
-                            "type": row["type"],
-                            "author": row["author"],
-                            "ingestion_date": row["ingestion_date"],
-                        }
-                    )
-        except Exception as e:
-            logger.error(f"FTS5 search failed for query '{query}': {e}")
-            # Re-raise with more context
-            raise RuntimeError(f"Database search failed: {str(e)}") from e
+            results = []
+            try:
+                # Use transaction for consistent read
+                with pool.transaction() as conn:
+                    cursor = conn.cursor()
+                    # Use parameterized query - the escaped_query is already safe
+                    cursor.execute(sql, tuple(params))
 
-        return results
+                    for row in cursor:
+                        results.append(
+                            {
+                                "id": row["id"],
+                                "title": row["title"],
+                                "content": row["content"],
+                                "url": row["url"],
+                                "type": row["type"],
+                                "author": row["author"],
+                                "ingestion_date": row["ingestion_date"],
+                            }
+                        )
+            except Exception as e:
+                logger.error(f"FTS5 search failed for query '{query}': {e}")
+                # Re-raise with more context
+                raise RuntimeError(f"Database search failed: {str(e)}") from e
+
+            return results
+
+        # The zero-row fallback lives INSIDE this helper so the caller's
+        # retry wrapper cannot multiply it (TASK-15400).
+        return self._fts_rows_with_fallback(_run, expressions)
 
     def _extract_context_from_results(
         self,

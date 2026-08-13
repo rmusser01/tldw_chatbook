@@ -3233,3 +3233,62 @@ catalog conversion. Prove the derived permission key cannot be forged, while pin
 nearby valid and case-distinct IDs. For negative documentation contracts, pair literal
 stale-name scans with an exact positive sentence describing the current boundary;
 synonyms can preserve a stale claim without preserving any searched token.
+
+---
+
+## A property that holds "by construction" holds for the COMPONENT — measure it at the MERGE the requirement actually names (TASK-15400, 2026-08-12)
+
+**Incident.** The MATCH-construction arc pre-registered a hard constraint:
+whatever the keyword leg's expression becomes, the golden set's one
+vector-blind fixture (`kw-plant-maintenance-record`, which only the keyword
+path can find) must keep its hybrid rescue. The spec then argued that the
+favourite candidate — `and_then_or`, "AND first, OR only when the AND
+returns nothing" — satisfied it **by construction**: *a nonempty AND never
+falls back*, so the fixture's own row can never change.
+
+That premise is TRUE, and the sweep verified it directly: the notes
+sub-leg's row for that query was still there, still stamped `and`, still
+its sub-leg's rank 1. **The conclusion was false anyway.** Measured, the
+rescue was GONE — the fixture dropped out of the fused top-10 entirely.
+
+The guarantee was about a **sub-leg**; the constraint was about the **leg**.
+`RAGService._keyword_search` merges its four source sub-legs with
+`interleave_rankings` — a round-robin over sub-leg position. The media and
+conversations sub-legs returned zero AND rows for that query, fell back to
+OR, and injected ten rows each; media is first in the round-robin, so the
+untouched notes row moved from leg rank 1 to leg rank **2**. Fusion consumes
+*leg* rank: `0.3/6 = 0.0500` became `0.3/7 = 0.0429`, which loses to the
+vector rank-11 row's `0.04375`. Nothing about the fixture's own row changed;
+everything about its position did. The same displacement then decomposed a
+whole category exactly — scoped recall 1.000 → 0.429 is the four
+note-targeted scoped queries falling behind a media fallback row while the
+three media-targeted ones keep rank 1 (3/7, the measured cell to the digit).
+
+**Why it was caught.** Only because the constraint's probe was written at
+the **output** — "is this document in the FUSED top-10" — rather than at the
+component the guarantee described. A probe asserting "the notes sub-leg
+still returns its AND row at rank 1" would have passed, and the arc would
+have shipped a construction that silently deleted the one rescue the whole
+fixture exists to detect.
+
+**What to do.** When a design argues a property holds "by construction",
+write down two scopes before believing it: **what object the guarantee is
+about**, and **what object the requirement is about**. If they differ by
+even one level of composition — sub-leg vs leg, row vs list, component vs
+merged output, one writer vs the aggregate — the argument is about a
+different thing than the requirement and proves nothing about it. Put the
+acceptance probe at the level the requirement names.
+
+Two corollaries worth carrying:
+
+- **Any positional merge (round-robin, concatenation, fixed source order)
+  makes every component's rank a function of every OTHER component's row
+  COUNT.** A change that only ADDS rows in one place still re-ranks
+  everything downstream. Treat "this change is additive" as a claim about
+  the component, never about the merged list.
+- **Necessary is not sufficient, and the margin is measurable.** Re-fusing
+  the same run with the fixture restored to leg rank 1 and nothing else
+  changed put it back at **slot 10 of 10** — so even fixing the merge
+  rescues it with zero headroom. When you find the blocking mechanism,
+  measure what fixing it actually buys before scoping the follow-up around
+  it (this one became TASK-15700 with that number in its description).

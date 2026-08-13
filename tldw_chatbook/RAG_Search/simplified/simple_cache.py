@@ -35,6 +35,15 @@ from tldw_chatbook.Metrics.metrics_logger import (
 )
 
 
+# The keyword leg's pre-TASK-15400 MATCH construction. A key built with
+# this value renders byte-identically to every key built before the
+# construction existed, which is the invariant
+# `test_the_and_construction_keeps_the_hybrid_key_byte_identical` pins.
+# Spelled out here rather than imported from `rag_service` (which imports
+# THIS module) -- the two are kept honest by that test, not by an import.
+LEGACY_FTS_MATCH_CONSTRUCTION = "and"
+
+
 def _canonicalize_metadata_allowlist(
     metadata_allowlist: Optional[Any],
 ) -> Optional[Tuple[frozenset, ...]]:
@@ -168,6 +177,7 @@ class SimpleRAGCache:
         metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
         keyword_source_types: Optional[Collection[str]] = None,
         hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> str:
         """
         Create a cache key from search parameters.
@@ -217,6 +227,25 @@ class SimpleRAGCache:
                 exact bytes change as a result (a new key part is always
                 present for `search_type == "hybrid"`); nothing pins the
                 literal hash, and the cache is in-process/ephemeral only.
+            fts_match_construction: The keyword leg's MATCH construction
+                (TASK-15400) -- the companion to ``hybrid_fusion`` for the
+                OTHER leg, and part of the key for the same reason: it
+                changes which rows the FTS leg returns at all, so two
+                searches identical except for it must never share an entry.
+                The construction is not a user knob, but it IS mutable at
+                runtime (the arc's sweep varies it on a live
+                ``SearchConfig`` against a per-service cache), which is
+                precisely the shape that made TASK-4110's sweep report "k
+                doesn't matter" before the fusion params entered the key.
+                Passed for hybrid AND keyword searches (both read the FTS
+                leg), ``None`` for semantic. The pre-arc construction
+                (``"and"``) contributes NO key part, so every key built
+                before this parameter existed stays byte-identical. Since
+                TASK-15400 shipped ``and_stopword_trim`` as the default
+                (2026-08-11) that is no longer the key a DEFAULT search
+                renders -- it carries ``fts:and_stopword_trim`` -- which is
+                the point: entries cached under the old construction are
+                keyed apart from the new one rather than served to it.
 
         Returns:
             A unique cache key
@@ -270,6 +299,17 @@ class SimpleRAGCache:
                 )
             )
 
+        if (
+            fts_match_construction is not None
+            and fts_match_construction != LEGACY_FTS_MATCH_CONSTRUCTION
+        ):
+            # Prefixed like the parts above so it can never be confused with
+            # another one. Omitted for the LEGACY (pre-TASK-15400)
+            # construction (see the parameter's docstring) -- this is that
+            # value's byte-identity guarantee, not a "falsy means absent"
+            # test, and it is deliberately NOT re-pointed at the new default.
+            key_parts.append("fts:" + fts_match_construction)
+
         # Use a faster hash function - fallback to md5 if xxhash not available
         key_str = "|".join(key_parts)
         try:
@@ -291,6 +331,7 @@ class SimpleRAGCache:
         *,
         keyword_source_types: Optional[Collection[str]] = None,
         hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """
         Async-safe get cached search results.
@@ -309,6 +350,8 @@ class SimpleRAGCache:
             hybrid_fusion: The resolved ``(alpha, rrf_k, pool_multiplier)``
                 for a hybrid search; see ``_make_key`` for why this must be
                 part of the key.
+            fts_match_construction: The keyword leg's MATCH construction
+                (hybrid/keyword searches); see ``_make_key``.
 
         Returns:
             Tuple of (results, context) if found and valid, None otherwise
@@ -333,6 +376,7 @@ class SimpleRAGCache:
                 metadata_allowlist,
                 keyword_source_types,
                 hybrid_fusion,
+                fts_match_construction,
             )
             log_counter("cache_request", labels={"type": search_type})
 
@@ -497,6 +541,7 @@ class SimpleRAGCache:
         *,
         keyword_source_types: Optional[Collection[str]] = None,
         hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> None:
         """
         Async-safe cache search results.
@@ -514,13 +559,22 @@ class SimpleRAGCache:
                 callers).
             keyword_source_types: Optional keyword-leg source-type selection;
                 also part of the key. The synchronous ``get``/``put`` twins
-                deliberately do not take it: no caller can hand them one, so
-                they key without it, and the worst a mixed sync/async
-                workload can produce is a miss -- never a wrong hit.
+                do not take it: no caller can hand them one, so they key
+                without it. Across a MIXED sync/async workload that can only
+                produce a miss (the two paths render different keys). It is
+                NOT safe between two SYNC calls: two sync searches differing
+                only in a dimension the sync key omits render the SAME key,
+                so the second is served the first's rows -- a wrong hit.
+                Latent only because no production code calls the sync API
+                (re-verified at the close of TASK-15400); **TASK-15701**
+                owns closing it.
             hybrid_fusion: The resolved ``(alpha, rrf_k, pool_multiplier)``
                 for a hybrid search; see ``_make_key`` for why this must be
                 part of the key. Same sync-twin exclusion rationale as
                 ``keyword_source_types`` above.
+            fts_match_construction: The keyword leg's MATCH construction
+                (hybrid/keyword searches); see ``_make_key``. Same sync-twin
+                exclusion rationale.
         """
         if not self.enabled:
             return
@@ -534,6 +588,7 @@ class SimpleRAGCache:
                 metadata_allowlist,
                 keyword_source_types,
                 hybrid_fusion,
+                fts_match_construction,
             )
 
             # Calculate memory for new entry

@@ -1,0 +1,113 @@
+---
+id: TASK-15700
+title: >-
+  Keyword leg round-robin sub-leg merge displaces rows before fusion consumes
+  leg rank
+status: To Do
+assignee: []
+created_date: '2026-08-12 22:58'
+labels:
+  - rag
+  - retrieval
+dependencies: []
+priority: high
+---
+
+## Description
+
+The RAG engine's keyword leg (`RAGService._keyword_search`) runs four
+source sub-legs — media, notes, conversations, prompts — and merges them
+with `interleave_rankings`: a **round-robin over sub-leg position**, not a
+merge over any score, rank quality or relevance signal. Hybrid fusion then
+consumes the resulting **leg** rank.
+
+The consequence is that *how many rows one sub-leg returns changes the leg
+rank of every other sub-leg's rows*. A document its own sub-leg ranked
+first can be pushed out of the fused top-k by rows from a sub-leg that has
+nothing to do with the query, and the ordering is decided by the fixed
+source order (media first) rather than by anything about the documents.
+
+This was found by measurement, not by reading: it is what disqualified both
+widening candidates in TASK-15400's MATCH-construction sweep, and it is why
+that arc could only ship a one-query improvement. **The blocker on the
+keyword leg is the merge, not the match form.** TASK-15400's own spec
+argued its widest candidate was safe "by construction: a nonempty AND never
+falls back" — that premise was verified TRUE at the sub-leg and the
+conclusion was still FALSE, because the guarantee is about a SUB-LEG and
+the constraint is about the LEG.
+
+### The measured evidence (TASK-15400 Task 3, gated run over the 172-doc golden corpus)
+
+**The vector-blind fixture.** For `kw-plant-maintenance-record` →
+`note-saltmarsh-hide` under the `and_then_or` construction, the notes
+sub-leg's row is *untouched* — still stamped `and`, still the sub-leg's
+rank 1. The media and conversations sub-legs return zero AND rows for that
+query, fall back to OR, and inject 10 rows each; the round-robin puts media
+FIRST, so the untouched notes row is demoted from leg rank 1 to leg rank 2.
+Fusion (`alpha` 0.7, `rrf_k` 5) then reads:
+
+```
+fts-only, leg rank 1   : 0.05                    ((1-0.7) * 1/6)
+vector-only, vec rank 9: 0.049999999999999996    (0.7 * 1/14)   <- strictly loses, by 6.94e-18
+fts-only, leg rank 2   : 0.042857142857142864
+vector-only, vec rank 11: 0.04375                                <- now strictly wins
+```
+
+One position of cross-sub-leg displacement is the whole distance between
+"rescued at slot 9" and "absent from the top-10".
+
+**The scoped category, which decomposes exactly.** Measured under each
+scoped query's real `EffectiveScope`, the same displacement moves scoped
+recall 1.000 → 0.429: the four NOTE-targeted scoped queries each drop to
+leg rank 2 behind a media fallback row, while the three MEDIA-targeted ones
+keep leg rank 1 — because media is first in the round-robin. **3 of 7 =
+0.429, the measured cell to the digit.** The collapse is not statistical;
+it is the interleave's source-type order.
+
+### The counterfactual margin — a merge fix alone is NOT sufficient
+
+Re-fusing the same `and_then_or` pass with the fixture restored to leg rank
+1 and **nothing else changed** puts it back — at **slot 10 of 10**. At leg
+rank 1 it scores 0.05, the media row it displaces falls to 0.0428…, and the
+next contender is the vector rank-9 row at 0.049999999999999996. So a
+merge-ordering fix rescues this fixture with **zero headroom**: the next
+widening step would displace it again. Any plan here must treat "fix
+`interleave_rankings`" as necessary and not sufficient, and must say what
+provides the margin.
+
+### The unexplored lead, with its risk stated
+
+A **prefix**-matching construction (`"tok"*` per token) was probed
+report-only over the same 40 zero-row queries and rescues **3**
+(`kw-quillon-mast`, `kw-thimble-relay`, `pm-vendor-chaser`) against the
+shipped `and_stopword_trim`'s 1, with **0 negatives gaining rows**. It is
+the only unexplored variant that beats the shipped construction. Two
+caveats are load-bearing: the probe is **leg-level only** (its hybrid cells
+were never measured), and it widens rows exactly the way the OR forms do —
+so it carries **the same displacement risk described above, unmeasured**.
+It is a candidate for the sweep this task re-runs, not a shortcut around it.
+
+## Acceptance Criteria
+
+<!-- AC:BEGIN -->
+- [ ] #1 The keyword leg's cross-sub-leg merge no longer lets one sub-leg's row count decide another sub-leg's leg rank: the merged order is derived from a stated, attributable property of the rows (e.g. per-sub-leg rank with AND rows ahead of fallback rows, or a real score), and the rule is written down where the merge happens
+- [ ] #2 The behaviour is pinned by a test that fails on the CURRENT round-robin: a query where one sub-leg returns a rank-1 row and another returns many rows must keep the rank-1 row ahead of them in the merged output
+- [ ] #3 TASK-15400's four-construction sweep is re-run under the new merge and the table is published: for each construction, whether `kw-plant-maintenance-record` keeps its hybrid rescue and what scoped recall does. A widening construction that still fails is recorded with its mechanism rather than dropped
+- [ ] #4 The zero-headroom problem is addressed explicitly: if the vector-blind fixture is rescued only at the last fused slot, the write-up states what margin (if any) the change provides and what would displace it next
+- [ ] #5 The `prefix` construction is measured at BOTH leg and hybrid level under the new merge, so its 3-rescue lead is either promoted on evidence or rejected on evidence
+- [ ] #6 Any movement in `Tests/RAG_Eval`'s committed baselines is one deliberate, disclosed re-stamp naming this task, with before/after numbers in the PR and the environment-fingerprint decision stated (see the harness README's re-stamp sections)
+- [ ] #7 The residual "keyword leg returns zero rows for 39 of 60 golden queries" figure is re-measured and reported after the change, per category, alongside the leg-level census (21 of 53 today)
+<!-- AC:END -->
+
+## Related
+
+- **TASK-15400** — the MATCH-construction arc that found this. Its sweep
+  table, the disqualification mechanism and the counterfactual are in
+  `Tests/RAG_Eval/README.md` ("The fourth real re-stamp") and in
+  `.superpowers/sdd/2026-08-11-rag-keyword-leg-match-construction/`.
+  `RAGService._escape_fts5_query`'s docstring names this task as the owner
+  of the residual.
+- **TASK-3997** — the Library four-seam keyword path's AND-strictness. A
+  different path with no fusion and no leg to be displaced in; the two are
+  deliberately decided separately (the reasoning is recorded in the harness
+  README's known-defects list).

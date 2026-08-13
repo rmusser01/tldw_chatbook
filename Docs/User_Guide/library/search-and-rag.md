@@ -118,9 +118,15 @@ follows whichever **search mode** your active RAG profile
 - **Prompts are keyword-only.** Nothing builds a vector index over your
   saved prompts, so a prompt reaches hybrid results through the keyword leg
   alone. In practice that means prompts answer *keyword-shaped* queries —
-  the words you type have to appear in the prompt's name or body. A long
-  natural-language question that would find a note by meaning will not find
-  a prompt.
+  the words you type have to appear in the prompt's name or body.
+  **Common function words are the one exception (2026-08-12):** the keyword
+  leg drops them ("the", "a", "for", "about", "of", …) before requiring the
+  rest, so "saved prompt for chasing a supplier **about** a late order"
+  finds a prompt whose text never contains "about". Every *content* word you
+  type must still appear, so a long natural-language question that would
+  find a note by meaning will still usually not find a prompt — the change
+  buys you the small words, not the phrasing. If a prompt you know exists is
+  not coming back, drop to the distinctive nouns from its name or body.
 
 A quiet one-line disclosure can appear above the evidence rows,
 alongside the "No strong semantic matches" / "Semantic search found
@@ -566,6 +572,28 @@ DBs and vector index — 453 vectors, 4 media — plus 24 of this repo's own
 User Guide pages seeded as notes and 3 prompts, because the untouched
 library had 8 notes and no prompts, too little to tell a 5-deep list from
 a 15-deep one or to have a prompt to find at all).*
+
+*Verified against fix/rag-keyword-leg-match @ 2558f7844 — 2026-08-12
+(TASK-15400, the function-word change in "Prompts are keyword-only" above).
+**What was verified in the running app:** a scratch profile (`TLDW_CONFIG_PATH`
+plus its own `[paths] data_dir`, `lsof`-confirmed to hold no handle under the
+real profile, real config byte-identical before and after) with three prompts
+written through the app's own `add_prompt`, and two RAG profiles differing in
+exactly one value — the keyword leg's MATCH construction. Library ▸ Search /
+RAG listed **"Prompts (3)"** and offered them as a selected source, and
+switching the mode control to **"mode: Search ⇄ ✓ RAG Answer"** started a run
+against the hybrid profile. **What was NOT verified:** that run did not
+finish — the first hybrid query in a fresh profile sat on "searching ·
+Prompts…" at 98% CPU for over four minutes while the embedding stack came up,
+so no Evidence row was ever seen on screen and the retrieval claim below does
+not rest on a screenshot. **What the claim does rest on:** the same query, on
+the same app-written prompts database, through the engine's own MATCH builder
+under those two profiles — `"saved" "prompt" "for" "chasing" "a" "supplier"
+"about" "a" "late" "order"` returned **0 rows**, and
+`"saved" "prompt" "chasing" "supplier" "late" "order"` returned **1** — the
+"Saved prompt: chasing a late order" row. Note that the plain **Search** mode
+of the same screen is a different code path (the Library's four-seam keyword
+search) and is unchanged by this: it still requires every typed word.*
 
 - ***Depth follows the profile, both ways.*** On the shipped default
   profile the Evidence heading read **"Evidence · top 15 per source"** and

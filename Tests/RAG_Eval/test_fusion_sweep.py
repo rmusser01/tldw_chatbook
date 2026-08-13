@@ -145,3 +145,142 @@ def test_the_fusion_strategy_matrix_over_the_real_fixtures(tmp_path, capsys):
     assert ("WINNER" in rendered) != ("BLOCKED" in rendered), (
         "the matrix must reach exactly one verdict"
     )
+
+
+def test_the_match_construction_matrix_over_the_real_fixtures(tmp_path, capsys):
+    """TASK-15400's MEASUREMENT: four MATCH constructions, one runtime.
+
+    Same shape as the fusion matrix above and the same refusal to pin a
+    winner — the census decides, under the rule the spec pre-registered, and
+    Task 3 applies that rule in writing against this printed table.
+
+    What this test DOES assert is that the experiment was valid: every row
+    ran, every pass routed through hybrid, no query erred, the control row
+    reproduced its own expected keyword-leg census (the alarm that a
+    cache-blinded sweep cannot pass — not a claim about the shipped
+    construction's census, which is a different number), and the caller's
+    service came back on the construction it started with.
+
+    The NEAR/prefix probes run afterwards over the control's own zero-row
+    queries — report-only, promoted to a matrix row only if one beats the
+    best swept candidate's census.
+    """
+    from Tests.RAG_Eval.harness.fusion_sweep import (
+        CONSTRUCTION_CONTROL_NAME,
+        CONSTRUCTION_STRATEGIES,
+        HYBRID_MODE,
+        RESCUE_QUERY_ID,
+        SHIPPED_CONTROL_CENSUS,
+        format_construction_matrix,
+        format_probe_table,
+        rescued_zero_row_queries,
+        run_construction_sweep,
+        run_near_prefix_probes,
+    )
+    from Tests.RAG_Eval.harness.goldenset import load_fixtures
+    from Tests.RAG_Eval.harness.ingest import build_eval_runtime
+
+    corpus, golden = load_fixtures()
+    runtime = build_eval_runtime(corpus, tmp_path)
+    search_config = runtime.service.config.search
+    before = (
+        search_config.rrf_k,
+        search_config.hybrid_pool_multiplier,
+        search_config.hybrid_alpha,
+        search_config.default_search_mode,
+        search_config.fts_match_construction,
+    )
+
+    close_error: Exception | None = None
+    try:
+        report = run_construction_sweep(runtime, golden, k=K)
+        control = report.control()
+        probes = run_near_prefix_probes(
+            runtime, golden, control.census.zero_row_queries, k=K
+        )
+    finally:
+        try:
+            runtime.close()
+        except Exception as exc:  # pragma: no cover - reported, not raised
+            close_error = exc
+
+    # The probes only ever ran the ZERO-ROW queries, so the number they must
+    # beat is a rescue count over those same queries — never a row's full
+    # census, which carries the control's own ~20 hits no probe was run over.
+    best_rescues = max(
+        len(rescued_zero_row_queries(entry, control.census))
+        for entry in report.entries
+    )
+    with capsys.disabled():
+        print("\n" + format_construction_matrix(report))
+        print("\n" + format_probe_table(probes, rescues_to_beat=best_rescues))
+        for entry in report.entries:
+            print(
+                f"{entry.strategy.name:<10} census hits: "
+                f"{', '.join(entry.census.hit_queries)}"
+            )
+            print(
+                f"{entry.strategy.name:<10} rescued: "
+                f"{', '.join(rescued_zero_row_queries(entry, control.census)) or '-'}"
+            )
+    if close_error is not None:
+        print(f"NOTE: runtime.close() failed after the sweep: {close_error!r}")
+
+    names = [entry.strategy.name for entry in report.entries]
+    assert names == [s.name for s in CONSTRUCTION_STRATEGIES], (
+        f"the construction matrix did not run in full: {names}"
+    )
+    assert report.control().strategy.name == CONSTRUCTION_CONTROL_NAME
+    assert control.census_hits == SHIPPED_CONTROL_CENSUS, (
+        "the control row did not reproduce its expected control census, and "
+        "the sweep's own self-check should already have raised on it"
+    )
+
+    for entry in report.entries:
+        label = entry.strategy.name
+        assert entry.hybrid.mode == HYBRID_MODE
+        assert not entry.hybrid.errors, (
+            f"{label}: {len(entry.hybrid.errors)} query error(s) at the seam: "
+            f"{entry.hybrid.errors}"
+        )
+        backends = tuple(
+            sorted(
+                {
+                    outcome.runtime_backend
+                    for outcome in entry.hybrid.queries
+                    if outcome.runtime_backend
+                }
+            )
+        )
+        assert backends == ("rag-hybrid",), (
+            f"{label}: expected every query to route to 'rag-hybrid', got "
+            f"{backends}"
+        )
+        assert len(entry.hybrid.queries) == len(golden), (
+            f"{label}: ran {len(entry.hybrid.queries)} of {len(golden)} queries"
+        )
+        assert entry.census is not None and entry.negatives is not None, (
+            f"{label}: an instrumented row must carry both records"
+        )
+        assert entry.census.queries == len(golden)
+        assert entry.rescue.query_id == RESCUE_QUERY_ID
+        assert entry.rescue.consistent_with_run, (
+            f"{label}: the rescue probe and the scored pass disagree about "
+            f"the fixture's rank ({entry.rescue.rank} vs "
+            f"{entry.rescue.run_rank}) — stale cache, or a non-deterministic leg"
+        )
+
+    after = (
+        search_config.rrf_k,
+        search_config.hybrid_pool_multiplier,
+        search_config.hybrid_alpha,
+        search_config.default_search_mode,
+        search_config.fts_match_construction,
+    )
+    assert after == before, (
+        f"the sweep left the service on {after}, not the {before} it found"
+    )
+
+    rendered = format_construction_matrix(report)
+    for name in names:
+        assert name in rendered
