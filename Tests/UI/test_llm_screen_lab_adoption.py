@@ -275,6 +275,9 @@ def test_audio_cpp_terminal_rejects_a_foreign_result_without_staging() -> None:
 
 def test_audio_cpp_owner_failure_keeps_private_details_out_of_logs(monkeypatch) -> None:
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+        AudioCppModelInstallOperation,
+    )
     from tldw_chatbook.UI.Screens import llm_screen as module
 
     fake_logger = MagicMock()
@@ -283,9 +286,17 @@ def test_audio_cpp_owner_failure_keeps_private_details_out_of_logs(monkeypatch) 
     screen._model_install_reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
     screen._audio_cpp_operation_expects_return = True
     screen._apply_audio_cpp_provision_result = MagicMock()
+    operation = AudioCppModelInstallOperation(threading.Event())
+    screen._audio_cpp_model_install_operation = operation
+    monkeypatch.setattr(
+        module.LLMScreen,
+        "is_attached",
+        property(lambda _self: True),
+    )
 
     module.LLMScreen._audio_cpp_operation_settled(
         screen,
+        operation,
         None,
         RuntimeError("PRIVATE-AUDIO-PATH-/secret/model"),
         False,
@@ -298,6 +309,93 @@ def test_audio_cpp_owner_failure_keeps_private_details_out_of_logs(monkeypatch) 
     assert "PRIVATE-AUDIO-PATH" not in str(
         screen._apply_audio_cpp_provision_result.call_args
     )
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_order"),
+    (
+        ("stage", ["stage", "release"]),
+        ("ack", ["stage", "ack", "clear", "release"]),
+    ),
+)
+def test_audio_cpp_result_stage_and_ack_fail_closed_without_orphan(
+    monkeypatch,
+    failure,
+    expected_order,
+) -> None:
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+        AudioCppModelLibraryRequest,
+        AudioCppModelLibraryResult,
+    )
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+        HandoffChannel,
+        HandoffValueError,
+        PendingHandoffStore,
+    )
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    store = PendingHandoffStore()
+    request = AudioCppModelLibraryRequest("atomic-request", 5)
+    store.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
+    claim = store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST)
+    assert claim is not None
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    result = AudioCppModelLibraryResult(
+        request.token,
+        request.draft_revision,
+        reference.artifact_id,
+        reference.revision,
+        reference.variant,
+        "/managed/audio-cpp-model",
+    )
+    order: list[str] = []
+    real_stage = PendingHandoffStore.stage
+    real_ack = PendingHandoffStore.acknowledge
+    real_clear = PendingHandoffStore.clear_pending
+    real_release = PendingHandoffStore.release
+
+    def stage(self, channel, value):
+        if channel is HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT:
+            order.append("stage")
+            if failure == "stage":
+                raise HandoffValueError("injected stage failure")
+        return real_stage(self, channel, value)
+
+    def acknowledge(self, current):
+        order.append("ack")
+        return False if failure == "ack" else real_ack(self, current)
+
+    def clear_pending(self, channel):
+        order.append("clear")
+        return real_clear(self, channel)
+
+    def release(self, current):
+        order.append("release")
+        return real_release(self, current)
+
+    monkeypatch.setattr(PendingHandoffStore, "stage", stage)
+    monkeypatch.setattr(PendingHandoffStore, "acknowledge", acknowledge)
+    monkeypatch.setattr(PendingHandoffStore, "clear_pending", clear_pending)
+    monkeypatch.setattr(PendingHandoffStore, "release", release)
+    screen = module.LLMScreen(MagicMock(pending_handoffs=store))
+    screen._audio_cpp_model_request_claim = claim
+    screen.notify = MagicMock()
+    screen._deliver_curated = MagicMock()
+    screen._curated_view = MagicMock(return_value=None)
+    screen._model_install_kind = "curated"
+    screen._model_install_reference = reference
+    screen._model_install_service = MagicMock()
+    screen._model_install_registry = MagicMock()
+    screen._model_install_sources = {}
+    screen._model_install_pending_report = object()
+
+    module.LLMScreen._apply_audio_cpp_provision_result(screen, result, None)
+
+    assert order == expected_order
+    assert store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT) is None
+    replay = store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST)
+    assert replay is not None and replay.value == request
 
 
 def test_detached_audio_cpp_failure_releases_request_and_settles_lifecycle():

@@ -7,7 +7,7 @@ from dataclasses import FrozenInstanceError, fields
 import hashlib
 from pathlib import Path
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -472,6 +472,14 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
         returned = app.pending_handoffs.claim(
             HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
         )
+        fresh_view = screen.query_one(CuratedView)
+        assert await _wait_for(lambda: fresh_view._loaded, pilot)
+        installed = screen.query_one(".curated-install", Button)
+        assert str(installed.label) == "Installed"
+        assert installed.disabled is True
+        installed.press()
+        await pilot.pause()
+        assert app.audio_cpp_model_install_owner.active_count == 0
 
     assert returned is not None
     assert returned.value.token == request.token
@@ -679,3 +687,168 @@ async def test_real_app_shutdown_drains_audio_cpp_owner_executor(
 
     assert finished.is_set()
     assert app.audio_cpp_model_install_owner.active_count == 0
+
+
+@pytest.mark.asyncio
+async def test_mounted_unmount_during_blocked_audio_preflight_drains_once(
+    monkeypatch,
+) -> None:
+    from textual.screen import Screen
+
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_model_curated_view import _descriptor, _registry_with
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+    from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+    from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
+
+    monkeypatch.setattr(
+        LLMManagementWindow,
+        "_ollama_api_available",
+        lambda _self: asyncio.sleep(0, result=False),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.app.get_cli_setting",
+        lambda section, key=None, default=None: (
+            False
+            if section == "splash_screen" and key == "enabled"
+            else real_get_cli_setting(section, key, default)
+        ),
+    )
+    app = _build_test_app()
+    request = AudioCppModelLibraryRequest("preflight-cancel", 12)
+    app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
+    reference = ArtifactRef("audio-cpp-preflight", "d" * 40, "f16")
+    registry = _registry_with(_descriptor(reference, consumer="audio_cpp"))
+    started = threading.Event()
+    release = threading.Event()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = LLMScreen(app)
+        await app.push_screen(screen)
+        screen._model_install_kind = "curated"
+        screen._model_install_reference = reference
+        screen._model_install_service = MagicMock()
+        screen._model_install_registry = registry
+        screen._model_install_sources = {}
+        screen._provision_curated = AsyncMock()
+        screen.notify = MagicMock()
+
+        async def blocked_preflight(_reference):
+            def block():
+                started.set()
+                assert release.wait(3)
+                return MagicMock(root=reference)
+
+            return await asyncio.to_thread(block)
+
+        screen._preflight_curated = blocked_preflight
+        screen._start_audio_cpp_preflight()
+        worker = screen._model_install_worker
+        assert worker is not None
+        assert await asyncio.to_thread(started.wait, 2)
+        assert app.audio_cpp_model_install_owner.active_count == 1
+
+        await app.switch_screen(Screen())
+        release.set()
+        assert await _wait_for(
+            lambda: app.audio_cpp_model_install_owner.active_count == 0, pilot
+        )
+        replay = app.pending_handoffs.claim(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST
+        )
+
+    assert worker.is_finished
+    assert screen._model_install_worker is None
+    assert replay is not None and replay.value == request
+    screen._provision_curated.assert_not_called()
+    screen.notify.assert_not_called()
+    assert (
+        app.pending_handoffs.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT)
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_mounted_unmount_with_audio_consent_pending_invalidates_generation(
+    monkeypatch,
+) -> None:
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_model_curated_view import _descriptor, _registry_with
+    from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+    from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+    from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
+
+    monkeypatch.setattr(
+        LLMManagementWindow,
+        "_ollama_api_available",
+        lambda _self: asyncio.sleep(0, result=False),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.app.get_cli_setting",
+        lambda section, key=None, default=None: (
+            False
+            if section == "splash_screen" and key == "enabled"
+            else real_get_cli_setting(section, key, default)
+        ),
+    )
+    app = _build_test_app()
+    request = AudioCppModelLibraryRequest("consent-cancel", 13)
+    app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
+    reference = ArtifactRef("audio-cpp-consent", "e" * 40, "f16")
+    descriptor = _descriptor(reference, consumer="audio_cpp")
+    registry = _registry_with(descriptor)
+    report = PreflightReport(
+        root=reference,
+        closure_fingerprint=hashlib.sha256(b"consent-plan").hexdigest(),
+        entries=(),
+        download_bytes=0,
+        already_staged_bytes=0,
+        staging_overhead_bytes=0,
+        retained_bytes=0,
+        destination=Path("/managed/audio-cpp-consent"),
+        free_bytes=1,
+        required_bytes=0,
+        sufficient_space=True,
+        gating_errors=(),
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = LLMScreen(app)
+        await app.push_screen(screen)
+        screen._model_install_kind = "curated"
+        screen._model_install_reference = reference
+        screen._model_install_service = MagicMock()
+        screen._model_install_registry = registry
+        screen._model_install_sources = {}
+        screen._preflight_curated = AsyncMock(return_value=report)
+        screen._provision_curated = AsyncMock()
+        screen.notify = MagicMock()
+        screen._start_audio_cpp_preflight()
+        assert await _wait_for(
+            lambda: bool(app.screen.query("#model-install-confirm")), pilot
+        )
+        operation = screen._audio_cpp_model_install_operation
+        assert operation is not None
+
+        await screen.remove()
+        assert await _wait_for(
+            lambda: app.audio_cpp_model_install_owner.active_count == 0, pilot
+        )
+        replay = app.pending_handoffs.claim(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST
+        )
+
+    assert operation.task.done()
+    assert screen._model_install_worker is None
+    assert screen._audio_cpp_consent_modal is None
+    assert screen._audio_cpp_consent_future is None
+    assert replay is not None and replay.value == request
+    screen._provision_curated.assert_not_called()
+    screen.notify.assert_not_called()
+    assert (
+        app.pending_handoffs.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT)
+        is None
+    )
