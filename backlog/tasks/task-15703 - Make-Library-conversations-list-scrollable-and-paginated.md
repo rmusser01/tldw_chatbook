@@ -75,13 +75,17 @@ Detailed plan: `Docs/superpowers/plans/2026-08-12-library-conversations-paginati
   older local base. Hardened the feature's async UI assertions/polls to wait for
   mounted widgets instead of racing Textual recomposition.
 - Remote-base verification passed for Ruff, `git diff --check`, 30 focused
-  state/visibility tests, 21 focused conversation UI tests, and the destination
+  state/visibility tests, 22 focused conversation UI tests, and the destination
   conversation contract. The broader Library run completed with 1917 passed, 1
   skipped, and 2 unrelated failures; the broader Library shell run completed with
   579 passed and 5 unrelated failures. Every failure was reproduced with the exact
   test selection on an untouched detached `origin/dev` worktree, covering existing
   ingest-capability/logging drift plus note, ingest-placeholder, and settings-reset
-  UI drift. Final review found no Critical, Important, or Minor feature issues. No
-  generalized lesson entry was added because the only test trap encountered is
-  already documented in `lessons-testing-evidence.md`.
+  UI drift. Review found and the implementation fixed one off-page Persona deep
+  link regression: legacy `conversation_id` navigation now uses the guarded
+  point-lookup opener, with a 25-row regression proving conversation 25 is selected
+  instead of falling back to row 1. Final re-review found no Critical, Important,
+  or Minor issues and marked the branch ready to merge. No generalized lesson
+  entry was added because the only test trap encountered is already documented in
+  `lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->
