@@ -88,7 +88,7 @@ Detailed plan: `Docs/superpowers/plans/2026-08-12-library-conversations-paginati
   or Minor issues and marked the branch ready to merge. No generalized lesson
   entry was added because the only test trap encountered is already documented in
   `lessons-testing-evidence.md`.
-- Rebased PR #1601 onto `origin/dev` at `1c4d25fc5`. Review follow-up capped
+- Rebased PR #1601 onto `origin/dev` at `d5a002538`. Review follow-up capped
   selection carry-over at 20 rows, treats an omitted total as unknown instead of
   rendering `of 0`, and added the required pager-handler parameter docs. Both
   correctness findings were reproduced before their fixes; the two regressions,
