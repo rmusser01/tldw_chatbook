@@ -87,7 +87,7 @@ EXPECTED_RELEASE_FAMILY_COUNTS = {
     "outetts": 1,
     "vietneu_tts": 1,
 }
-EXPECTED_APPROVED_COUNT = 54
+EXPECTED_APPROVED_COUNT = 53
 QWEN_BASE_SAFETENSORS_FILES = (
     "config.json",
     "generation_config.json",
@@ -498,17 +498,6 @@ EXPECTED_NEW_RECIPES = {
         "optional",
         "optional_reference_only",
         "vibevoice-1.5b-q8_0.gguf",
-        "gguf",
-        "q8_0",
-    ),
-    "vietneu_tts_v3_turbo_q8_0": (
-        "vietneu_tts",
-        ("model.gguf",),
-        "tts",
-        ("tts", "clone"),
-        "optional",
-        "optional_reference_only",
-        "model.gguf",
         "gguf",
         "q8_0",
     ),
@@ -1148,7 +1137,7 @@ def test_release_accounting_is_complete_and_truthful_for_all_21_families() -> No
         if entry.state is support_state.EXPLICITLY_UNSUPPORTED
     )
     assert len(approved) == EXPECTED_APPROVED_COUNT
-    assert len(unsupported) == 13
+    assert len(unsupported) == 14
     assert {entry.package_variant for entry in unsupported} == {
         "chatterbox_q8_0",
         "chatterbox_f16",
@@ -1163,6 +1152,7 @@ def test_release_accounting_is_complete_and_truthful_for_all_21_families() -> No
         "qwen3_tts_1_7b_customvoice_bf16",
         "qwen3_tts_1_7b_voicedesign_q8_0",
         "qwen3_tts_1_7b_voicedesign_bf16",
+        "vietneu_tts_v3_turbo_q8_0",
     }
     assert {entry.package_variant for entry in approved} == {
         recipe.package_variant for recipe in registry.recipes

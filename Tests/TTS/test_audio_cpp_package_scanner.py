@@ -319,6 +319,23 @@ def test_new_qwen_extra_variant_signal_is_ambiguous_not_selected(
     }
 
 
+def test_unrelated_generic_model_gguf_is_not_classified_as_vietneu(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    root = tmp_path / "unrelated-model"
+    root.mkdir()
+    _write_gguf(root / "model.gguf")
+
+    result = api["scan_audio_cpp_package_root"](root)
+
+    assert all(
+        candidate.recipe.package_variant != "vietneu_tts_v3_turbo_q8_0"
+        for discovery in result.discoveries
+        for candidate in discovery.match.candidates
+    )
+
+
 def test_entry_and_depth_limits_return_partial_instead_of_absent(
     tmp_path: Path,
 ) -> None:

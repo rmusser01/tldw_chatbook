@@ -1011,7 +1011,6 @@ _ADDITIONAL_VOICE_POLICIES = {
     "moss_tts_local_v1_5_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
     "moss_tts_local_v1_5_bf16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
     "outetts_1_0_1b_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
-    "vietneu_tts_v3_turbo_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
     "inflect_micro_v2_orig": AudioCppVoiceReferencePolicy.TEXT_ONLY,
 }
 
@@ -1369,16 +1368,6 @@ _ADDITIONAL_GGUF_VARIANTS = (
         AudioCppReferenceRequirement.OPTIONAL,
         "tts",
     ),
-    (
-        "vietneu_tts",
-        "vietneu_tts_v3_turbo_q8_0",
-        "VieNeu-TTS v3 Turbo GGUF",
-        "q8_0",
-        "model.gguf",
-        ("tts", "clone"),
-        AudioCppReferenceRequirement.OPTIONAL,
-        "tts",
-    ),
 )
 
 
@@ -1648,6 +1637,10 @@ _UNSUPPORTED_RELEASE_PACKAGES = {
         "The exact vdes task token is outside the typed guided projection.",
         f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
         "/docs/models/qwen3.md#qwen3-tts-voicedesign",
+    ),
+    "vietneu_tts_v3_turbo_q8_0": (
+        "The official package exposes only generic model.gguf as a bounded signal.",
+        f"{_PINNED_MODEL_SPEC_BASE}/vietneu_tts.json",
     ),
 }
 
