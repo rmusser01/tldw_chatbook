@@ -221,7 +221,18 @@ FTS_MATCH_FORMS_BY_CONSTRUCTION: Dict[str, Tuple[str, Optional[str]]] = {
 # A small fixed English function-word list, consulted by every construction
 # EXCEPT the full AND (`and`, the pre-TASK-15400 construction) -- so it IS
 # consulted on the shipped default path, `and_stopword_trim`'s trimmed AND,
-# and on the OR form used by `or`/`and_then_or`'s fallback. The FULL AND
+# on the OR form used by `or`/`and_then_or`'s fallback, and on the PREFIX
+# form used by `prefix`/`and_then_prefix`'s fallback (TASK-15700).
+#
+# The PREFIX form is where this list is MOST load-bearing, by a distance. An
+# untrimmed OR admits every document containing "the"; an untrimmed prefix
+# term is worse still, because `"the"*` matches "the", "then", "there",
+# "their", "these" -- i.e. nearly a whole corpus -- and the prefix form ANDs
+# its terms, so one such term does not merely add noise, it makes the whole
+# expression match almost everything the other terms allow. That is why the
+# prefix constructions answer `""` (no rows) when trimming empties the token
+# list rather than falling back to the full AND the way `and_stopword_trim`
+# does. The FULL AND
 # never consults it: an implicit AND over function words is harmless, and
 # TASK-15400's census measured that trimming them rescues 1 of the 40
 # zero-row golden queries (`pm-vendor-chaser`, blocked solely by "about") --
@@ -3487,8 +3498,17 @@ class RAGService:
 
         Consulted by every construction except the full AND (``and``, the
         pre-TASK-15400 one) -- so it runs on the SHIPPED default path, the
-        content-token AND (``and_stopword_trim``), as well as on the
-        content-token OR (``or`` / ``and_then_or``'s fallback).
+        content-token AND (``and_stopword_trim``), on the content-token OR
+        (``or`` / ``and_then_or``'s fallback), and on the content-token
+        PREFIX form (``prefix`` / ``and_then_prefix``'s fallback, TASK-15700).
+
+        The prefix form is where trimming matters MOST: ``"the"*`` matches
+        "the", "then", "there", "their", "these" -- nearly a whole corpus --
+        and the prefix form ANDs its terms, so one untrimmed function word
+        does not merely add noise, it drags the whole expression toward
+        matching everything the other terms allow. That is why the prefix
+        constructions answer ``""`` when trimming empties the list instead of
+        falling back to the full AND (see ``_fts5_match_expressions``).
 
         Compared on the token's alphanumeric runs, because that is how FTS5
         reads a quoted token: ``About,`` indexes and matches exactly as

@@ -149,6 +149,7 @@ __all__ = [
     "fts_only_beats_vector_rank",
     "keyword_leg_census",
     "lever_rank",
+    "lost_census_queries",
     "near_probe_expression",
     "negative_composition",
     "prefix_probe_expression",
@@ -1062,7 +1063,7 @@ def keyword_leg_census(
     The call is the ASYNC keyed path, driven through ``runtime.run``. The
     sync cache twins (`simple_cache.py`'s `get_sync`/`set_sync`) render the
     ``and`` key for every construction, so a census that ever reached them
-    would report one number four times — the exact shape of the failure the
+    would report one number six times — the exact shape of the failure the
     control-row self-check exists to catch.
 
     Note for a future editor: do NOT turn this into a rank-ORDER assertion
@@ -1338,7 +1339,7 @@ def _validate_constructions(strategies: Sequence[Strategy]) -> None:
     own self-check would PASS, and the table would report "the construction makes
     no difference". That is the 4110 failure through a different door, so the
     vocabulary is checked against the engine's own tuple rather than trusted
-    as four string literals.
+    as six string literals.
 
     Args:
         strategies: The matrix about to run.
@@ -1394,6 +1395,50 @@ def rescued_zero_row_queries(
     found = set(entry.census.hit_queries)
     return tuple(
         query_id for query_id in control.zero_row_queries if query_id in found
+    )
+
+
+def lost_census_queries(
+    entry: StrategyReport, control: LegCensus
+) -> tuple[str, ...]:
+    """Which of the CONTROL's census hits this row's leg no longer answers.
+
+    THE COLUMN THE 15400 MATRIX DID NOT HAVE, and the one a widening row
+    has to be read against (TASK-15700 review). Every other number on the
+    table is blind to a self-inflicted loss:
+
+    * `census` is NET — three gains and three losses render as "no change".
+    * `resc` is gains-ONLY, and says so in its own docstring.
+    * `zero` counts legs that returned NOTHING, so a leg that returned ten
+      rows without the target is invisible to it.
+
+    The loss is not hypothetical. A widening form is a superset at the MATCH
+    level but NOT at the RETURNED-ROW level: each sub-leg's SQL is
+    bm25-ordered and LIMITED, so the widened rows compete for that sub-leg's
+    own slots before the merge is ever consulted. Measured during review —
+    12 prefix-competitor documents plus one exact-match document, query
+    "wombat log" at top_k=5 — `and_stopword_trim` finds the exact document
+    and `prefix` returns five rows with it ABSENT: self-displacement inside
+    ONE sub-leg, which the tiered merge cannot protect against because there
+    is only one tier involved.
+
+    Computed from the ids, exactly like `rescued_zero_row_queries` and for
+    the same reason: a row that gains three and loses one must not report as
+    "+2 and nothing lost".
+
+    Args:
+        entry: A row of an instrumented sweep.
+        control: The control row's census.
+
+    Returns:
+        The lost query ids, in the control's hit order; empty when the row
+        carries no census.
+    """
+    if entry.census is None:
+        return ()
+    found = set(entry.census.hit_queries)
+    return tuple(
+        query_id for query_id in control.hit_queries if query_id not in found
     )
 
 
@@ -1861,13 +1906,32 @@ def format_construction_matrix(report: SweepReport) -> str:
         "candidates per leg, so a query can be a census miss and still have "
         "its target inside the fused pool. 'resc' = how many of the CONTROL's "
         "zero-row queries this row's leg now answers (the number a probe's "
-        "count is comparable with); 'zero' = queries the leg returned nothing "
-        "for, negatives included."
+        "count is comparable with); 'lost' = how many of the CONTROL's census "
+        "hits this row's leg NO LONGER answers; 'zero' = queries the leg "
+        "returned nothing for, negatives included."
+    )
+    lines.append(
+        "'lost' is not derivable from the other columns and is the one to "
+        "read before crediting a widening row: 'census' is NET (three gains "
+        "and three losses render as no change), 'resc' is gains-only, and "
+        "'zero' only catches legs that returned NOTHING. A widening form is "
+        "a superset at the MATCH level but NOT at the returned-row level — "
+        "each sub-leg's query is bm25-ordered and LIMITED, so widened rows "
+        "compete for that sub-leg's own slots BEFORE the merge is consulted "
+        "(measured: 12 prefix-competitor docs + 1 exact-match doc, 'wombat "
+        "log' at top_k=5 — `and_stopword_trim` finds the exact doc, `prefix` "
+        "returns 5 rows without it). Hard constraint (a) is therefore NOT "
+        "structurally safe for a widening-PRIMARY row (`or`, `prefix`): it "
+        "can lose the vector-blind fixture's own keyword row inside one "
+        "sub-leg, where tiering has nothing to tier. `and_then_prefix` and "
+        "`and_then_or` are safe on that axis by construction — a non-empty "
+        "primary is never widened."
     )
     lines.append("")
 
     header = (
-        f"{'row':<10}{'construction':>19}{'census':>8}{'resc':>6}{'zero':>6}"
+        f"{'row':<10}{'construction':>19}{'census':>8}{'resc':>6}{'lost':>6}"
+        f"{'zero':>6}"
         f"{'P@k':>8}{'R@k':>8}{'MRR':>8}{'NDCG':>8}{'docs':>6}"
         f"{'rescue':>8}{'rank':>6}{'mech':>11}"
         f"{'neg-wide':>10}{'neg-fts':>8}{'secs':>7}"
@@ -1884,10 +1948,16 @@ def format_construction_matrix(report: SweepReport) -> str:
             if control.census is None or census is None
             else len(rescued_zero_row_queries(entry, control.census))
         )
+        lost = (
+            "-"
+            if control.census is None or census is None
+            else len(lost_census_queries(entry, control.census))
+        )
         lines.append(
             f"{strategy.name:<10}{strategy.fts_match_construction:>19}"
             f"{('-' if census is None else census.hits):>8}"
             f"{rescues:>6}"
+            f"{lost:>6}"
             f"{('-' if census is None else len(census.zero_row_queries)):>6}"
             f"{_cell(overall.get('precision'))}{_cell(overall.get('recall'))}"
             f"{_cell(overall.get('mrr'))}{_cell(overall.get('ndcg'))}"
@@ -1902,11 +1972,26 @@ def format_construction_matrix(report: SweepReport) -> str:
     lines.append(
         f"'neg-wide' = FTS-only rows carrying a WIDENING form "
         f"({'/'.join(WIDENING_FORMS)}) inside hybrid top-k across the "
-        "negatives ('neg-fts' = all FTS-only rows there). Under "
-        "`and_then_or`/`and_then_prefix` those rows are fallbacks; under "
-        "`or`/`prefix` they are that construction's primaries — the "
-        "construction column disambiguates. Recorded for the tie-break "
-        "(fewer is better), never gated."
+        "negatives ('neg-fts' = all FTS-only rows there). RENAMED from "
+        "TASK-15400's 'neg-or', and its vocabulary GREW: that column counted "
+        "the OR form alone, this one counts any widening form."
+    )
+    lines.append(
+        "READ neg-wide AGAINST THE CONSTRUCTION COLUMN, and do not tie-break "
+        "across the two kinds of row. Under `and_then_or`/`and_then_prefix` "
+        "these rows are fallbacks — the leg widened only where it found "
+        "nothing. Under `or`/`prefix` the widening form IS the primary, so "
+        "EVERY keyword row carries the widening stamp and neg-wide == "
+        "neg-fts by construction, not by measurement: the column then says "
+        "'this leg returned rows' rather than 'this leg added noise', and "
+        "the fewer-is-better tie-break cannot rank such a row against a "
+        "fallback row at all."
+    )
+    lines.append(
+        "The rename does NOT move the 15400 four rows' numbers: no "
+        "construction outside the two prefix-bearing ones can stamp the "
+        "prefix form, so those four rows count exactly what they counted "
+        "before. Recorded for the tie-break (fewer is better), never gated."
     )
     lines.append(
         "'rescue' is hard constraint (a): the vector-blind fixture must keep "
