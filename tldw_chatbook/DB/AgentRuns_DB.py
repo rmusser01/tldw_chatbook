@@ -198,7 +198,8 @@ class AgentRunsDB(BaseDB):
                     updated_at TEXT NOT NULL,
                     assistant_message_id TEXT,
                     agent_definition TEXT,
-                    definition_fingerprint TEXT
+                    definition_fingerprint TEXT,
+                    wake_delivered_at TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
@@ -286,6 +287,20 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     "ALTER TABLE agent_runs ADD COLUMN definition_fingerprint TEXT"
                 )
+            # v6->v7 (PR3a-2 Task 5, auto-wake): the per-run delivered
+            # ledger -- the UTC instant a wake turn carried this run's
+            # result to its supervisor, NULL while undelivered. Same
+            # idempotent-ALTER mechanism as above. Durable ON the run row
+            # (not in any in-memory registry) because exactly-once delivery
+            # must survive both screen teardown and an app restart; the
+            # conversation-level FLEET_UNSEEN mark cannot carry per-run
+            # identity, and a drain can mix children settled minutes apart
+            # (so no timestamp rule against the mark can recover which runs
+            # a wake already delivered).
+            if "wake_delivered_at" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN wake_delivered_at TEXT"
+                )
             # v3->v4 (TASK-1975): oversize disclosure count on snapshot
             # rows -- same idempotent-ALTER migration mechanism as above.
             snapshot_columns = {
@@ -324,6 +339,9 @@ class AgentRunsDB(BaseDB):
             )
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (6)"
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (7)"
             )
 
     def record_change_snapshot(
@@ -920,6 +938,85 @@ class AgentRunsDB(BaseDB):
         with self.connection() as conn:
             row = conn.execute(query, params).fetchone()
         return int(row["n"])
+
+    def undelivered_wake_runs(self, conversation_id: str) -> list[dict]:
+        """Sub-agent SURVIVOR runs whose result no wake has delivered yet.
+
+        PR3a-2 Task 5 (auto-wake). The durable definition of "owed to the
+        supervisor", composed entirely from run rows so it survives screen
+        teardown and app restart:
+
+        - a sub-agent run of ``conversation_id`` in a real terminal state
+          (``done``/``error``/``cancelled`` -- never ``superseded``: a
+          superseded row is retracted work, delivering it would announce a
+          result a retry already replaced);
+        - whose ``wake_delivered_at`` ledger column is still NULL;
+        - whose parent run is itself terminal AND terminal-stamped no later
+          than the child (``child.updated_at >= parent.updated_at``): a
+          child that settled BEFORE its parent's turn ended was collected
+          in-turn by ``wait_agents``/the end-of-turn net and is the turn's
+          own news, never a wake's. A survivor by construction settles
+          after its parent's terminal write. The comparison is on ISO-8601
+          UTC strings of one fixed format (``_now_iso``), where
+          lexicographic order IS chronological order. ``>=`` (not ``>``)
+          so a restart-reconcile sweep that stamps an orphaned child and
+          its parent in the same pass still reports the child.
+
+        Rows come back oldest-settled first, so a coalesced wake notice
+        reads in the order the children actually finished.
+
+        Args:
+            conversation_id: The bridge's durable conversation id.
+
+        Returns:
+            Matching run records (``steps``/``budget`` JSON-decoded),
+            oldest ``updated_at`` first.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT child.* FROM agent_runs AS child "
+                "JOIN agent_runs AS parent ON parent.id = child.parent_run_id "
+                "WHERE child.conversation_id = ? "
+                "AND child.agent_kind != 'primary' "
+                "AND child.wake_delivered_at IS NULL "
+                "AND child.status IN ('done', 'error', 'cancelled') "
+                f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
+                "AND child.updated_at >= parent.updated_at "
+                "ORDER BY child.updated_at ASC, child.id ASC",
+                (conversation_id, *sorted(TERMINAL_RUN_STATUSES)),
+            ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def mark_wake_delivered(self, run_ids: Sequence[str]) -> int:
+        """Stamp runs as wake-delivered; already-stamped rows are left alone.
+
+        PR3a-2 Task 5. Called by the wake coordinator ONLY after the wake
+        turn was actually accepted (never at compose/schedule time -- a
+        refused wake must leave every run undelivered so the retry still
+        finds it). First-writer-wins per row (``wake_delivered_at IS
+        NULL`` in the WHERE), so a duplicate stamp -- e.g. the immediate
+        path and a mount claim racing -- can never move an existing
+        delivery timestamp. ``updated_at`` is deliberately NOT bumped:
+        that column records the run's own lifecycle (terminal time), which
+        :meth:`undelivered_wake_runs`' survivor comparison depends on.
+
+        Args:
+            run_ids: The run ids the accepted wake actually carried.
+
+        Returns:
+            How many rows were newly stamped.
+        """
+        ids = [str(run_id) for run_id in run_ids if run_id]
+        if not ids:
+            return 0
+        placeholders = ", ".join("?" for _ in ids)
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE agent_runs SET wake_delivered_at = ? "
+                f"WHERE id IN ({placeholders}) AND wake_delivered_at IS NULL",
+                (_now_iso(), *ids),
+            )
+        return int(cursor.rowcount or 0)
 
     def count_subagent_runs(self, conversation_id: str) -> int:
         """Count a conversation's sub-agent runs (all statuses, historical).
