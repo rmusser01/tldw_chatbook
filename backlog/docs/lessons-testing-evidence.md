@@ -3579,3 +3579,86 @@ their hidden mass cost nothing to skip. Watchlists is genuinely widget-bound —
 statements and ~10 ms of application code for a whole push, everything else Textual's
 per-widget CSS apply and mount. The rule is the same in both cases: find out what the
 screen is bound by before choosing what to count.
+
+---
+
+## A test's stimulus can rely on the exact inefficiency your fix removes (task-15459, 2026-08-13)
+
+**Incident.** task-15459 made `LibraryScreen._apply_local_source_snapshot` skip its
+`refresh(recompose=True)` when the incoming snapshot is byte-for-byte identical to
+what is already rendered — the point of the task, since a warm revisit's reconcile
+fetch confirming the app-scoped cache verbatim no longer needs to repaint. Two full
+background suite runs afterward reported 14 failures. `test_library_note_recompose_
+and_fifty_route_cycles_return_to_baseline` was one: its stress loop called
+`_apply_local_source_snapshot` five times with a `dict()`-copied but otherwise
+UNCHANGED snapshot, purely to force a recompose and verify a dirty note-editor
+session survives being torn down and rebuilt repeatedly. That loop's own assertion
+("Generic source-snapshot completion never recomposed the Notes workbench") is
+exactly the behavior the fix intentionally removed — the test's PASS depended on
+the inefficiency, not on anything the task changed being wrong.
+
+Reflexively "fixing" this by loosening the guard, or by deleting/skipping the test,
+would both have been mistakes: the guard is correct (measured 2 composes → 1 for a
+real warm revisit), and the test's underlying intent (repeated recomposes must not
+corrupt a dirty session) is still a real requirement worth pinning — its STIMULUS
+was just now inert. The fix was to vary a harmless field (the notes count) each
+loop iteration, restoring a genuine data change that still forces the recompose
+under the new contract, matching what a real background refresh would look like.
+
+Of the other 13 reported failures, mutation-bisection (temporarily reverting BOTH
+halves of the production diff to their pre-task behavior with `Edit`, confirming
+the SAME failure still reproduces, then restoring — never `git checkout --`, which
+discards uncommitted work) showed 9 were pre-existing (reproduced identically with
+the diff neutralized, mostly drift from an unrelated recent merge) and 4 were
+load/order flakiness that passed reliably in isolation. Zero were real regressions.
+
+**What to do.** When an optimization correctly removes redundant work and a test
+goes red, do not assume either "the test is now wrong, ignore it" or "my change
+broke something" — read what the test's assertion is actually FOR. If it names the
+mechanism you just changed ("never recomposed", "recompose count", "refresh was
+called"), check whether that mechanism was the test's STIMULUS (how it drove the
+scenario) or its OUTCOME (what it was actually verifying). A stimulus that no
+longer fires needs a new stimulus that still exercises the real requirement; an
+outcome assertion that no longer holds needs the assertion updated to the new
+contract. Across a batch of full-suite failures, mutation-bisect each one against
+your own diff before writing any of them off as "pre-existing" or accepting any as
+"caused by my change" — a batch this size will usually contain both, plus plain
+flakiness, and a single red run distinguishes none of them.
+
+---
+
+## An unchanged-skip guard is only as reliable as its least reliable compared field (task-15459, 2026-08-13)
+
+**Incident.** task-15459's `_apply_local_source_snapshot` compared an incoming
+snapshot against the currently-rendered one and skipped a recompose when they were
+equal — the flagship AC test asserted this held across a reconcile fetch that
+should have confirmed the cache verbatim. Review reproduced the test failing
+intermittently at exactly that assertion. Root cause: the flat comparison included
+`study_counts` (`study_decks`/`flashcards_due`/`quizzes`) and two rail badge
+counts (Prompts, Skills) — every one fetched by a `..._or_none` helper whose own
+docstring says it swallows ANY exception and degrades to `None`. Under thread-pool
+contention, two fetches of the SAME unchanged data could legitimately disagree on
+one of these fields (one call transiently raised, the other did not), making the
+guard fire a full recompose for a coin-flip on a decorative badge — "fails safe"
+(a spurious recompose, not a missed one) but non-deterministic, which is exactly
+as unacceptable for an "exactly once" acceptance criterion as failing unsafe.
+
+The first attempt at writing THIS test only asserted the guard's happy path — it
+never modeled a field that changes independently of the state a user would call
+"the data." A single flat `==` over a snapshot dict is only as trustworthy as its
+least reliable member field.
+
+**What to do.** Before folding several fields into one equality check that gates
+an expensive operation, audit each field's OWN fetch contract, not just its type.
+A field fetched by a helper that swallows exceptions and degrades to a sentinel
+(`None`, `""`, an empty collection) is not equivalent in reliability to a field
+whose fetch either succeeds or aborts the whole call — the former can flap between
+two fetches of otherwise-identical state, the latter cannot (barring the state
+genuinely changing). Split the comparison into domains — STRUCTURAL fields that
+must gate the expensive operation, and DECORATIVE/best-effort fields that should
+be patched through a cheaper path (an in-place widget update, a `None`-tolerant
+merge) instead of ever gating it. To prove the split actually closes the gap, do
+not just re-run the flaky test and hope: inject the exact transient exception
+deterministically (a fake service that raises on its Nth call, not the Mth) so the
+flap is reproducible on demand, and mutation-test the fix by temporarily re-
+merging the domains to confirm the ORIGINAL failure message comes back verbatim.
