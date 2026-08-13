@@ -42,9 +42,12 @@ read `parsing · filename.pdf` or `writing · filename.pdf`. The secondary line:
 - uses sentence-style stage copy without repeating `parsing` or `writing`;
 - includes an integer percentage followed by ` · ` only when the event contains
   a trustworthy bounded value;
-- stays visible in the same location while a job is active, preventing layout
-  jitter when the first tick arrives;
-- is visually subordinate using the existing progress-detail treatment;
+- stays visible in the same location throughout `PARSING` and `WRITING`;
+  `Preparing import` is the honest pre-tick fallback, so the first worker event
+  updates a reserved line instead of moving neighboring rows;
+- is visually subordinate through a dedicated muted
+  `.library-ingest-progress` rule (the current widget has no specific CSS
+  treatment, so this task adds one);
 - has no animation, border, or color-only meaning;
 - is markup-disabled, single-line, and length-bounded.
 
@@ -146,10 +149,11 @@ persisted through their existing paths.
 
 ## UI update path
 
-Every active queue row mounts a stable progress `Static`, even before it has
-detail text. The progress listener formats and updates that widget in place.
-It also toggles display without replacing the widget. This preserves row,
-form-widget, focus, and scroll identity during rapid ticks.
+Every `PARSING` and `WRITING` queue row mounts a stable, visible progress
+`Static`; `PARSING` falls back to `Preparing import` before its first event.
+The progress listener formats and updates that widget in place without replacing
+it. This preserves row, form-widget, focus, scroll, and vertical layout identity
+during rapid ticks.
 
 If the before/after row projections differ in action availability or another
 structural property, the screen uses the existing dynamic-region recompose path
@@ -174,19 +178,23 @@ teardown are expected and quiet.
 
 ## Initial instrumentation scope
 
-All local parse branches report useful stage transitions at the shared seam:
+All local parse branches report useful stage transitions the current seams can
+observe truthfully:
 
 - inspect/classify source;
 - extract content;
 - transcribe audio/video where applicable;
-- chunk content when enabled;
-- analyze content when enabled;
+- chunk content when the shared text-tail performs chunking;
+- analyze content when the shared text-tail performs analysis;
 - complete parse and hand off to writing.
 
 Existing measurable transcription callbacks may supply percentages. Other
 extractors report a percentage only if their current API already exposes a real
-total. This task does not restructure PDF, document, ebook, or web extractors
-solely to manufacture page counts or progress values.
+total. A processor that internally combines extraction, chunking, and analysis
+behind one opaque call keeps one honest `Processing …` message rather than
+claiming unobservable internal phase changes. This task does not restructure
+PDF, document, ebook, or web extractors solely to manufacture page counts,
+progress values, or finer stages.
 
 ## Verification
 

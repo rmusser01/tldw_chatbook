@@ -37,3 +37,21 @@ Long-running Local ingest jobs expose only coarse parsing/writing states even th
 - ADR required: yes.
 - ADR path: `backlog/decisions/061-library-ingest-parse-progress-channel.md`.
 - Reason: the task adds a durable process boundary, backpressure policy, resource lifecycle, and shutdown contract while preserving ADR-014's ingest authority.
+
+## Implementation Plan
+
+1. Add a stdlib-only, spawn-safe progress event/sink and deterministic latest-per-job coalescer with bounded primitive normalization before and after IPC.
+2. Add progress-specific registry listeners, memory-only Local tick updates, writing-stage reset, and one pure readable progress formatter while preserving Server persistence.
+3. Bind job identity in the parse worker and instrument only stages observable through current parser/transcription seams; callback failure remains non-authoritative.
+4. Give each parse-pool generation an atomic queue/pool resource bundle, coalescing drain thread, Windows-safe construction, and off-Textual-thread cleanup.
+5. Fence progress by generation, generation membership, PARSING state, and absence of a payload-ready result before transient registry application.
+6. Mount stable active-row progress widgets, patch ordinary ticks in place, retain structural recomposition for action changes, and add dedicated muted styling with generated CSS.
+7. Run focused and real-spawn verification, static/CSS/backlog checks, document truthful behavior, self-review the failure boundaries, and close TASK-207 only with complete evidence.
+
+ADR required: yes.
+
+ADR path: `backlog/decisions/059-library-ingest-parse-progress-channel.md`.
+
+Reason: ADR-059 defines the new cross-process message, backpressure, resource lifecycle, shutdown, and UI projection contract; ADR-014 remains authoritative for ingest ownership and recovery.
+
+Detailed plan: `Docs/superpowers/plans/2026-08-12-task-207-live-ingest-progress.md`.
