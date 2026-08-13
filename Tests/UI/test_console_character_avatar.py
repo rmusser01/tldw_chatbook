@@ -248,6 +248,31 @@ async def test_character_section_empty_state_for_generic_session(
     assert "No character" in str(name.renderable)  # empty-state copy
 
 
+@pytest.mark.asyncio
+async def test_initial_and_recomposed_avatar_caption_treat_rich_tags_as_literal(
+    console_screen_with_character,
+):
+    screen = console_screen_with_character
+    raw_initial = "Nyx\n\t\x00[/broken]"
+    screen._active_character_avatar_name = raw_initial
+
+    await screen.recompose()
+    initial = screen.query_one("#console-character-name", Static)
+    initial_visual = initial.visual
+    assert initial._render_markup is False
+    assert initial_visual.plain == "Nyx ?[/broken]"
+    assert "\n" not in initial_visual.plain
+    assert "\t" not in initial_visual.plain
+
+    raw_recomposed = "Lady\t[bold]Nyx[/bold]"
+    screen._active_character_avatar_name = raw_recomposed
+    await screen.recompose()
+    recomposed = screen.query_one("#console-character-name", Static)
+    assert recomposed._render_markup is False
+    assert recomposed.visual.plain == "Lady [bold]Nyx[/bold]"
+    assert screen._active_character_avatar_name == raw_recomposed
+
+
 # --- P3c Task 3: avatar cache + scope-guarded off-thread refresh + render ---
 #
 # Real screen + real ``CharactersRAGDB``: only a real DB round-trip proves

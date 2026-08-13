@@ -9190,7 +9190,10 @@ class ChatScreen(BaseAppScreen):
                     (item.source_type, item.source_id) for item in ws_scope.items
                 )
 
-        title = session.title.strip() if session.title else ""
+        title = sanitize_character_display_label(
+            session.title,
+            max_characters=500,
+        )
         target_label = title or "this conversation"
         media_lister, notes_lister, tag_lister = self._console_scope_picker_listers()
 
@@ -12787,12 +12790,18 @@ class ChatScreen(BaseAppScreen):
             )
 
         workspace_state = self._workspace._build_console_workspace_context_state()
-        workspace_label = str(workspace_state.workspace_label or "").strip()
-        if workspace_label.startswith("Workspace: "):
-            workspace_label = workspace_label.removeprefix("Workspace: ").strip()
-        workspace_label = workspace_label or str(
-            active_session.workspace_id or "Default"
-        )
+        workspace_value = workspace_state.workspace_label
+        if isinstance(workspace_value, str) and workspace_value.startswith(
+            "Workspace: "
+        ):
+            workspace_value = workspace_value.removeprefix("Workspace: ")
+        workspace_label = sanitize_character_display_label(
+            workspace_value,
+            max_characters=500,
+        ) or sanitize_character_display_label(
+            active_session.workspace_id,
+            max_characters=500,
+        ) or "Default"
         persisted_id = str(active_session.persisted_conversation_id or "").strip()
         source = "saved conversation" if persisted_id else "native Console session"
         resume_state = (
@@ -12817,7 +12826,13 @@ class ChatScreen(BaseAppScreen):
                 ConsoleDisplayRow("Prefill (pinned)", describe_prefill_preview(pinned))
             )
         return (
-            ConsoleDisplayRow("Selected conversation", active_session.title),
+            ConsoleDisplayRow(
+                "Selected conversation",
+                sanitize_character_display_label(
+                    active_session.title,
+                    max_characters=500,
+                ),
+            ),
             ConsoleDisplayRow("Conversation source", source),
             ConsoleDisplayRow("Workspace", workspace_label),
             ConsoleDisplayRow("Resume state", resume_state),
@@ -22298,6 +22313,12 @@ class ChatScreen(BaseAppScreen):
                 controller, session_id
             )
         )
+        session_title = escape_markup(
+            sanitize_character_display_label(session_title, max_characters=500)
+        )
+        workspace_name = escape_markup(
+            sanitize_character_display_label(workspace_name, max_characters=500)
+        )
         self.app_instance.notify(
             f"Agent in {session_title} ({workspace_name}) needs approval."
         )
@@ -22379,6 +22400,12 @@ class ChatScreen(BaseAppScreen):
             self._workspace._console_session_title_and_workspace_name(
                 controller, session_id
             )
+        )
+        session_title = escape_markup(
+            sanitize_character_display_label(session_title, max_characters=500)
+        )
+        workspace_name = escape_markup(
+            sanitize_character_display_label(workspace_name, max_characters=500)
         )
         verb = "finished" if status is ConsoleRunStatus.COMPLETED else "failed"
         self.app_instance.notify(f"Agent in {session_title} ({workspace_name}) {verb}.")

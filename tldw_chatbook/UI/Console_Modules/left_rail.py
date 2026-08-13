@@ -619,6 +619,7 @@ class ConsoleLeftRail(Vertical):
                     yield Static(
                         self._character_avatar_name,
                         id="console-character-name",
+                        markup=False,
                     )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

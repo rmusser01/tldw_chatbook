@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 
+from textual.content import Content
 from textual.widgets import Static
 
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -821,6 +822,101 @@ async def test_background_completion_fires_single_toast() -> None:
             ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"), session_id=background
         )
         assert len([n for n in notifications if "finished" in n]) == 1
+
+
+@pytest.mark.asyncio
+async def test_fleet_toast_resolver_projects_raw_session_and_workspace_names():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    raw_title = "Ops\n\t\x00[bold]Alpha[/bold][/broken]"
+    raw_workspace = "Lab\t\n\x00[green]North[/green][/bad]"
+
+    async with host.run_test(size=(160, 44)):
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        session = controller.new_session()
+        session.title = raw_title
+        session.workspace_id = "workspace-raw"
+        console._workspace._console_workspace_display_name = lambda _id: raw_workspace
+
+        title, workspace = console._workspace._console_session_title_and_workspace_name(
+            controller, session.id
+        )
+
+        assert title == "Ops ?[bold]Alpha[/bold][/broken]"
+        assert workspace == "Lab ?[green]North[/green][/bad]"
+        assert session.title == raw_title
+        assert session.workspace_id == "workspace-raw"
+
+
+@pytest.mark.asyncio
+async def test_background_approval_toast_escapes_projected_raw_identity():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    raw_title = "Ops\n\t\x00[bold]Alpha[/bold][/broken]"
+    raw_workspace = "Lab\t\n\x00[green]North[/green][/bad]"
+
+    async with host.run_test(size=(160, 44)):
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        session = controller.new_session()
+        session.title = raw_title
+        console._workspace._console_session_title_and_workspace_name = (
+            lambda _controller, _session_id: (raw_title, raw_workspace)
+        )
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        console._park_console_approval(session.id)
+
+        assert len(notifications) == 1
+        assert Content.from_markup(notifications[0]).plain == (
+            "Agent in Ops ?[bold]Alpha[/bold][/broken] "
+            "(Lab ?[green]North[/green][/bad]) needs approval."
+        )
+        assert "\n" not in notifications[0]
+        assert "\t" not in notifications[0]
+        assert session.title == raw_title
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "verb"),
+    (
+        (ConsoleRunStatus.COMPLETED, "finished"),
+        (ConsoleRunStatus.FAILED, "failed"),
+    ),
+)
+async def test_background_run_toast_escapes_projected_raw_identity(
+    status: ConsoleRunStatus,
+    verb: str,
+) -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    raw_title = "Ops\n\t\x00[bold]Alpha[/bold][/broken]"
+    raw_workspace = "Lab\t\n\x00[green]North[/green][/bad]"
+
+    async with host.run_test(size=(160, 44)):
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        session = controller.new_session()
+        session.title = raw_title
+        console._workspace._console_session_title_and_workspace_name = (
+            lambda _controller, _session_id: (raw_title, raw_workspace)
+        )
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        console._notify_console_run_outcome(session.id, status)
+
+        assert len(notifications) == 1
+        assert Content.from_markup(notifications[0]).plain == (
+            "Agent in Ops ?[bold]Alpha[/bold][/broken] "
+            f"(Lab ?[green]North[/green][/bad]) {verb}."
+        )
+        assert "\n" not in notifications[0]
+        assert "\t" not in notifications[0]
+        assert session.title == raw_title
 
 
 def _assert_widget_and_ancestors_displayed(widget) -> None:
