@@ -207,6 +207,9 @@ async def test_apply_library_export_counts_patches_tooltip_alongside_disabled():
             _library_selected_row_id=LIBRARY_ROW_INGEST_EXPORT,
             _library_export_scope=scope,
             _library_export_counts=None,
+            _library_export_counts_request_id=1,
+            _library_snapshot_state_generation=0,
+            _library_export_quality_choices_visible=False,
             _library_export_form={
                 "name": "x",
                 "description": "",
@@ -224,12 +227,17 @@ async def test_apply_library_export_counts_patches_tooltip_alongside_disabled():
             _library_export_last_at=None,
             query_one=pilot.app.query_one,
         )
+        fake._library_entry_route_key = lambda: (LIBRARY_ROW_INGEST_EXPORT,)
+        fake._library_entry_reconcile_is_current = lambda *_args: True
         fake._build_library_export_state = (
             lambda: LibraryScreen._build_library_export_state(fake)
         )
 
         LibraryScreen._apply_library_export_counts(
-            fake, scope, {"media": 1, "conversations": 0, "notes": 0}
+            fake,
+            scope,
+            {"media": 1, "conversations": 0, "notes": 0},
+            request_id=1,
         )
 
         assert button.disabled is True  # still blocked: no destination now
@@ -265,6 +273,7 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
             _library_selected_row_id=LIBRARY_ROW_INGEST_EXPORT,
             _library_export_scope=scope,
             _library_export_counts={"media": 1, "conversations": 0, "notes": 0},
+            _library_export_quality_choices_visible=False,
             _library_export_form={
                 "name": "x",
                 "description": "",

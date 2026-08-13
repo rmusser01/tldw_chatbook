@@ -770,6 +770,82 @@ async def test_replace_canvas_child_repairs_current_route_after_remove_race(
 
 
 @pytest.mark.asyncio
+async def test_entry_reconcile_repairs_current_route_after_remove_race(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The entry reconciler itself must not strand an empty canvas host."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+
+        screen._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
+        generation = screen._library_snapshot_state_generation
+        route_key = screen._library_entry_route_key()
+        screen._library_entry_reconcile_dirty = True
+        screen._library_entry_reconcile_pending = (generation, route_key)
+        canvas_host = screen.query_one("#library-canvas")
+        original_remove = canvas_host.remove_children
+
+        def route_switching_remove(*children):
+            removal = original_remove(*children)
+            screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+            screen._library_snapshot_state_generation += 1
+            return removal
+
+        monkeypatch.setattr(canvas_host, "remove_children", route_switching_remove)
+        result = await screen._reconcile_library_entry_state(generation, route_key)
+        await pilot.pause()
+
+        assert result is LibraryEntryReconcileResult.SUPERSEDED
+        assert isinstance(screen._library_entry_canvas_owner(), LibraryMediaCanvas)
+
+
+@pytest.mark.asyncio
+async def test_entry_reconcile_repairs_current_route_after_mount_race(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale child mounted by entry reconcile must yield to the latest route."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+
+        screen._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
+        generation = screen._library_snapshot_state_generation
+        route_key = screen._library_entry_route_key()
+        screen._library_entry_reconcile_dirty = True
+        screen._library_entry_reconcile_pending = (generation, route_key)
+        canvas_host = screen.query_one("#library-canvas")
+        original_mount = canvas_host.mount
+        mounts = 0
+
+        def route_switching_mount(*widgets, **kwargs):
+            nonlocal mounts
+            mounted = original_mount(*widgets, **kwargs)
+            mounts += 1
+            if mounts == 1:
+                screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+                screen._library_snapshot_state_generation += 1
+            return mounted
+
+        monkeypatch.setattr(canvas_host, "mount", route_switching_mount)
+        result = await screen._reconcile_library_entry_state(generation, route_key)
+        await pilot.pause()
+
+        assert result is LibraryEntryReconcileResult.SUPERSEDED
+        assert isinstance(screen._library_entry_canvas_owner(), LibraryMediaCanvas)
+
+
+@pytest.mark.asyncio
 async def test_replace_canvas_child_repairs_owner_after_mount_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1037,10 +1113,10 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
 
 
 @pytest.mark.asyncio
-async def test_pending_conversation_open_rejects_same_route_stale_generation(
+async def test_pending_conversation_open_retries_initial_snapshot_generation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Generation alone supersedes a pending fetch on the retained route."""
+    """An initial snapshot race must still open an out-of-page deep link."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -1051,10 +1127,14 @@ async def test_pending_conversation_open_rejects_same_route_stale_generation(
         focus = await _wait_for_selector(screen, pilot, "#library-conversations-filter")
         started = asyncio.Event()
         release = asyncio.Event()
+        fetch_calls = 0
 
         async def gated_fetch(_conversation_id: str):
-            started.set()
-            await release.wait()
+            nonlocal fetch_calls
+            fetch_calls += 1
+            if fetch_calls == 1:
+                started.set()
+                await release.wait()
             return {
                 "conversation_id": "chat-pending",
                 "title": "Late pending conversation",
@@ -1075,14 +1155,40 @@ async def test_pending_conversation_open_rejects_same_route_stale_generation(
         task = asyncio.create_task(screen._open_pending_library_source())
         await started.wait()
 
-        screen._library_snapshot_state_generation += 1
+        snapshot_records = dict(screen._local_source_records)
+        snapshot_records["conversations"] = (
+            {
+                **_two_conversations()[0],
+                "title": "Initial snapshot landed while point fetch waited",
+            },
+        )
+        snapshot_counts = dict(screen._local_source_counts)
+        snapshot_counts["conversations"] = 1
+        changed = screen._apply_local_source_snapshot(
+            snapshot_records,
+            snapshot_counts,
+            dict(screen._local_source_total_known),
+        )
+        generation = screen._library_snapshot_state_generation
+        assert changed is True
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_snapshot_rendered_generation == generation,
+            message="Initial source snapshot did not finish reconciling.",
+        )
         release.set()
         result = await task
+        await pilot.pause()
 
-        assert result is LibraryEntryReconcileResult.SUPERSEDED
+        assert result is LibraryEntryReconcileResult.APPLIED
+        assert fetch_calls == 2
         assert screen._selected_conversation_id == "chat-pending"
-        assert screen._library_entry_canvas_owner() is owner
-        assert screen.focused is focus
+        assert screen._conversation_record_id(
+            screen._local_source_records["conversations"][0], 0
+        ) == "chat-pending"
+        assert isinstance(
+            screen._library_entry_canvas_owner(), LibraryConversationsCanvas
+        )
 
 
 @pytest.mark.asyncio
@@ -1182,8 +1288,10 @@ async def test_export_counts_reject_same_route_stale_generation(tmp_path: Path) 
             message="Initial Export counts did not settle.",
         )
         rendered_before = str(scope_line.renderable)
+        counts_before = dict(active_screen._library_export_counts or {})
         generation = active_screen._library_snapshot_state_generation
         route_key = active_screen._library_entry_route_key()
+        request_id = active_screen._library_export_counts_request_id
         active_screen._library_snapshot_state_generation += 1
 
         result = active_screen._apply_library_export_counts(
@@ -1191,10 +1299,90 @@ async def test_export_counts_reject_same_route_stale_generation(tmp_path: Path) 
             {"media": 99, "conversations": 99, "notes": 99, "prompts": 99},
             generation=generation,
             route_key=route_key,
+            request_id=request_id,
         )
 
         assert result is LibraryEntryReconcileResult.SUPERSEDED
+        assert active_screen._library_export_counts == counts_before
         assert str(scope_line.renderable) == rendered_before
+
+
+@pytest.mark.asyncio
+async def test_export_counts_leave_return_same_scope_rejects_older_request(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A same-route/same-scope ABA visit keeps the newest landed counts."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    _wire_entry_export_databases(app, tmp_path)
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_snapshot_rendered_generation
+            == screen._library_snapshot_state_generation,
+            message="Export ABA setup did not settle its source snapshot.",
+        )
+        requests: list[tuple[Any, ...]] = []
+
+        def capture_counts_request(*args: Any) -> None:
+            requests.append(args)
+
+        monkeypatch.setattr(
+            screen, "_run_library_export_counts_worker", capture_counts_request
+        )
+
+        await screen._select_library_rail_row(LIBRARY_ROW_INGEST_EXPORT)
+        await _wait_for_selector(screen, pilot, "#library-export-canvas")
+        assert len(requests) == 1
+        old_request = requests[-1]
+
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
+        await screen._select_library_rail_row(LIBRARY_ROW_INGEST_EXPORT)
+        await _wait_for_selector(screen, pilot, "#library-export-canvas")
+        assert len(requests) == 2
+        new_request = requests[-1]
+        assert len(old_request) == len(new_request) == 7
+        old_scope, *_, old_generation, old_route_key, old_request_id = old_request
+        new_scope, *_, new_generation, new_route_key, new_request_id = new_request
+        assert old_scope == new_scope
+        assert old_route_key == new_route_key
+        assert old_request_id < new_request_id
+
+        newest_counts = {
+            "media": 2,
+            "conversations": 3,
+            "notes": 5,
+            "prompts": 7,
+        }
+        newest_result = screen._apply_library_export_counts(
+            new_scope,
+            newest_counts,
+            generation=new_generation,
+            route_key=new_route_key,
+            request_id=new_request_id,
+        )
+        scope_line = screen.query_one("#library-export-scope-line")
+        rendered_newest = str(scope_line.renderable)
+        stale_result = screen._apply_library_export_counts(
+            old_scope,
+            {"media": 99, "conversations": 99, "notes": 99, "prompts": 99},
+            generation=old_generation,
+            route_key=old_route_key,
+            request_id=old_request_id,
+        )
+
+        assert newest_result is LibraryEntryReconcileResult.APPLIED
+        assert stale_result is LibraryEntryReconcileResult.SUPERSEDED
+        assert screen._library_export_counts == newest_counts
+        assert (
+            screen.query_one("#library-export-canvas").state.scope_line
+            == rendered_newest
+        )
+        assert str(scope_line.renderable) == rendered_newest
 
 
 def _compositor_text(screen: LibraryScreen) -> str:

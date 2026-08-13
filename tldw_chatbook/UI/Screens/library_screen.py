@@ -3525,6 +3525,11 @@ class LibraryScreen(BaseAppScreen):
         # plan's screen-attrs contract.
         self._library_export_scope: ExportScope = ExportScope(kind="everything")
         self._library_export_counts: dict[str, int] | None = None
+        # Monotonic ownership for the counts request, separate from the export
+        # execution token below.  Scope/route/generation can all repeat after a
+        # leave -> return ABA visit, so none of them can identify the newest
+        # counts worker on its own.
+        self._library_export_counts_request_id: int = 0
         self._library_export_form: dict[str, Any] = self._default_library_export_form()
         # task-14902: True while the export quality chooser's direct-pick
         # strip renders below its (still-visible) opener button.
@@ -6629,16 +6634,61 @@ class LibraryScreen(BaseAppScreen):
     async def _open_pending_library_source(
         self,
     ) -> LibraryEntryReconcileResult | None:
-        """Consume one validated navigation target through Library's opener."""
+        """Consume one validated navigation target through Library's opener.
+
+        A conversation point lookup may overlap the initial paged snapshot.
+        That snapshot advances entry generation, so the first lookup result is
+        correctly rejected; while the same pending target still owns the same
+        conversation selection, retry under the new generation instead of
+        permanently falling back to the first loaded row.
+        """
 
         if self._library_prompts_mutation_in_flight:
             return
 
         pending = self._pending_library_source_open
-        self._pending_library_source_open = None
         if pending is None:
             return
-        return await self._open_library_item_by_id(*pending, entry_origin=True)
+        while self._pending_library_source_open == pending:
+            result = await self._open_library_item_by_id(*pending, entry_origin=True)
+            if result is not LibraryEntryReconcileResult.SUPERSEDED:
+                if self._pending_library_source_open == pending:
+                    self._pending_library_source_open = None
+                return result
+            if not self._pending_library_conversation_open_is_current(pending):
+                if self._pending_library_source_open == pending:
+                    self._pending_library_source_open = None
+                return result
+            # Let a scheduled snapshot reconcile finish before recapturing the
+            # current generation in the next point-lookup attempt.
+            await asyncio.sleep(0)
+        return LibraryEntryReconcileResult.SUPERSEDED
+
+    def _pending_library_conversation_open_is_current(
+        self, pending: tuple[str, str]
+    ) -> bool:
+        """Return whether a generation-only retry still owns its deep link."""
+
+        source_type, record_id = pending
+        return (
+            source_type == "conversations"
+            and self._pending_library_source_open == pending
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+            and self._selected_conversation_id == record_id
+        )
+
+    def _adopt_library_conversation_state_selection(self, selected_id: str) -> None:
+        """Adopt list normalization unless it would consume a pending deep link."""
+
+        pending = self._pending_library_source_open
+        if (
+            pending is not None
+            and pending[0] == "conversations"
+            and self._selected_conversation_id == pending[1]
+            and selected_id != pending[1]
+        ):
+            return
+        self._selected_conversation_id = selected_id
 
     # Own group, deliberately separate from the "default" group the plain
     # `self.run_worker(self._sync_collections_panel(...))` calls above use
@@ -7079,7 +7129,7 @@ class LibraryScreen(BaseAppScreen):
         )
         if shell.canvas_kind == "conversations":
             state = self._build_library_conversations_state()
-            self._selected_conversation_id = state.selected_id
+            self._adopt_library_conversation_state_selection(state.selected_id)
             return LibraryConversationsCanvas(
                 state, id="library-conversations-canvas"
             )
@@ -7426,7 +7476,9 @@ class LibraryScreen(BaseAppScreen):
             expected_selector = "#library-conversations-canvas"
             if self._library_lookup_error is None:
                 conversations_state = self._build_library_conversations_state()
-                self._selected_conversation_id = conversations_state.selected_id
+                self._adopt_library_conversation_state_selection(
+                    conversations_state.selected_id
+                )
                 sync_kind = "conversations"
                 replacement = LibraryConversationsCanvas(
                     conversations_state,
@@ -7518,10 +7570,12 @@ class LibraryScreen(BaseAppScreen):
                 if outgoing:
                     await canvas_host.remove_children(outgoing)
                 if generation != self._library_snapshot_state_generation:
+                    await self._repair_library_entry_canvas_owner()
                     return self._supersede_library_entry_reconcile(
                         generation, route_key
                     )
                 if route_key != self._library_entry_route_key():
+                    await self._repair_library_entry_canvas_owner()
                     return self._supersede_library_entry_reconcile(
                         generation, route_key
                     )
@@ -7534,10 +7588,12 @@ class LibraryScreen(BaseAppScreen):
                     generation, route_key
                 )
             if generation != self._library_snapshot_state_generation:
+                await self._repair_library_entry_canvas_owner()
                 return self._supersede_library_entry_reconcile(
                     generation, route_key
                 )
             if route_key != self._library_entry_route_key():
+                await self._repair_library_entry_canvas_owner()
                 return self._supersede_library_entry_reconcile(
                     generation, route_key
                 )
@@ -9330,7 +9386,9 @@ class LibraryScreen(BaseAppScreen):
                     )
                 elif shell.canvas_kind == "conversations":
                     conversations_state = self._build_library_conversations_state()
-                    self._selected_conversation_id = conversations_state.selected_id
+                    self._adopt_library_conversation_state_selection(
+                        conversations_state.selected_id
+                    )
                     yield LibraryConversationsCanvas(
                         conversations_state,
                         id="library-conversations-canvas",
@@ -11760,6 +11818,8 @@ class LibraryScreen(BaseAppScreen):
         A real (file-backed) deployment always takes the
         ``group="library_export_counts"`` worker-thread path.
         """
+        self._library_export_counts_request_id += 1
+        request_id = self._library_export_counts_request_id
         scope = self._library_export_scope
         generation = self._library_snapshot_state_generation
         route_key = self._library_entry_route_key()
@@ -11779,6 +11839,7 @@ class LibraryScreen(BaseAppScreen):
                 counts,
                 generation=generation,
                 route_key=route_key,
+                request_id=request_id,
             )
             if (
                 result is not LibraryEntryReconcileResult.APPLIED
@@ -11795,6 +11856,7 @@ class LibraryScreen(BaseAppScreen):
                     counts,
                     generation=generation,
                     route_key=route_key,
+                    request_id=request_id,
                 )
             return
         self._run_library_export_counts_worker(
@@ -11804,6 +11866,7 @@ class LibraryScreen(BaseAppScreen):
             prompts_db,
             generation,
             route_key,
+            request_id,
         )
 
     @work(thread=True, exclusive=True, group="library_export_counts")
@@ -11815,6 +11878,7 @@ class LibraryScreen(BaseAppScreen):
         prompts_db: Any,
         generation: int,
         route_key: tuple[object, ...],
+        request_id: int,
     ) -> None:
         counts = self._compute_library_export_counts(
             scope, media_db, chachanotes_db, prompts_db
@@ -11832,6 +11896,7 @@ class LibraryScreen(BaseAppScreen):
                 counts,
                 generation=generation,
                 route_key=route_key,
+                request_id=request_id,
             )
         except Exception:
             # A shutdown/detach mid-marshal can raise RuntimeError OR
@@ -11846,6 +11911,7 @@ class LibraryScreen(BaseAppScreen):
         *,
         generation: int | None = None,
         route_key: tuple[object, ...] | None = None,
+        request_id: int,
     ) -> LibraryEntryReconcileResult:
         """Marshal a landed counts result onto the export form (UI thread).
 
@@ -11875,10 +11941,12 @@ class LibraryScreen(BaseAppScreen):
             scope: The scope the landed ``counts`` were computed for.
             counts: The landed counts (keys "media"/"conversations"/"notes"/
                 "prompts").
+            request_id: Monotonic identity of the Export visit/count request.
         """
+        if request_id != self._library_export_counts_request_id:
+            return LibraryEntryReconcileResult.SUPERSEDED
         if scope != self._library_export_scope:
             return LibraryEntryReconcileResult.SUPERSEDED
-        self._library_export_counts = counts
         if (
             generation is not None
             and generation != self._library_snapshot_state_generation
@@ -11907,6 +11975,7 @@ class LibraryScreen(BaseAppScreen):
         active_route_key = self._library_entry_route_key()
         if not self._library_entry_reconcile_is_current(generation, active_route_key):
             return LibraryEntryReconcileResult.SUPERSEDED
+        self._library_export_counts = counts
         state = self._build_library_export_state()
         try:
             canvas = self.query_one("#library-export-canvas", LibraryExportCanvas)
@@ -30378,7 +30447,9 @@ class LibraryScreen(BaseAppScreen):
         if entry_origin:
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
             conversations_state = self._build_library_conversations_state()
-            self._selected_conversation_id = conversations_state.selected_id
+            self._adopt_library_conversation_state_selection(
+                conversations_state.selected_id
+            )
             generation = self._library_snapshot_state_generation
             route_key = self._library_entry_route_key()
             return await self._replace_library_canvas_child(
