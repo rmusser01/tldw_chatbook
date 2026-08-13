@@ -17,11 +17,13 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from rich.text import Text
 from textual.message import Message
 from textual.widgets import Button, Select, Static
 
+from tldw_chatbook.Constants import TAB_PERSONAS
 from tldw_chatbook.TTS import (
     LoadedTTSProfile,
     ProfileAvailabilityState,
@@ -32,9 +34,8 @@ from tldw_chatbook.TTS import (
     TTSProfilePageSnapshot,
 )
 from tldw_chatbook.TTS.adapter_types import TTSRegistryClosedError
-from tldw_chatbook.Constants import TAB_PERSONAS
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-
+from tldw_chatbook.UI.Speech.speech_axis_row import axis_chip_id
 from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
     CatalogRequestToken,
@@ -44,19 +45,19 @@ from tldw_chatbook.UI.stts_playground_catalog import (
 from tldw_chatbook.UI.stts_profile_library import (
     PROFILE_ACTION_FAILED_COPY,
     PROFILE_STORE_UNAVAILABLE_COPY,
+    ProfileTestVerified,
+    ProfileVerificationResult,
     TTSCloneProfileSaveReview,
     TTSCloneProfileSaveReviewModal,
     TTSProfileNameModal,
-    ProfileTestVerified,
-    ProfileVerificationResult,
+    _consume_profile_test_context,
     _resolve_profile_test_context,
+    _retire_profile_test_context,
     profile_action_error_copy,
 )
-from tldw_chatbook.UI.Speech.speech_axis_row import axis_chip_id
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_tts_widget import (
     CharacterTTSProfileSuggestion,
 )
-
 
 #: Copy shown when the generated audio predates the current settings, so
 #: saving it as a profile would record something the user did not hear.
@@ -106,7 +107,11 @@ class SpeechProfileMixin:
 
         def _apply_controls(self, controls: Any) -> None: ...
 
-    def init_profile_state(self, profile_preset: Any = None) -> None:
+    def init_profile_state(
+        self,
+        profile_preset: Any = None,
+        profile_context_token: UUID | None = None,
+    ) -> None:
         """Initialise the state the profile path reads.
 
         Call from the host's ``__init__``. Same contract shape as the other
@@ -144,8 +149,9 @@ class SpeechProfileMixin:
         self._profile_save_suppressed = False
         #: The open name modal, so a second one is not stacked.
         self._active_profile_name_modal: Any = None
+        self._profile_test_context_token = profile_context_token
         self._profile_test_context = (
-            _resolve_profile_test_context(profile_preset)
+            _resolve_profile_test_context(profile_context_token, profile_preset)
             if type(profile_preset) is TTSPlaygroundSelectionPreset
             else None
         )
@@ -177,6 +183,7 @@ class SpeechProfileMixin:
             return False
         if not before_controls and not self._profile_controls_applied:
             return False
+        self._retire_profile_test_authority()
         self._profile_preset = None
         self._profile_effective_availability = None
         self._profile_preview_loading = False
@@ -191,6 +198,13 @@ class SpeechProfileMixin:
         self._sync_profile_preview_status()
         self._sync_generate_enabled()
         return True
+
+    def _retire_profile_test_authority(self) -> None:
+        """Release this pane's active context without touching replacements."""
+
+        _retire_profile_test_context(self._profile_test_context_token)
+        self._profile_test_context_token = None
+        self._profile_test_context = None
 
     def _prime_profile_preset_controls(self) -> None:
         """Show one exact preset disabled before service discovery completes."""
@@ -392,13 +406,20 @@ class SpeechProfileMixin:
         generation = self._profile_evidence_generation
         if type(artifact) is not STTSPlaygroundResultProjection:
             self._profile_exact_artifacts.clear()
+            self._retire_profile_test_authority()
             self._sync_profile_preview_status()
             self._sync_save_profile_action()
             return
         projection = artifact
         exact = self._profile_exact_artifacts.pop(projection.operation_id, None)
-        context = self._profile_test_context
+        context = _consume_profile_test_context(
+            self._profile_test_context_token,
+            preset,
+        )
+        self._profile_test_context_token = None
+        self._profile_test_context = None
         if exact is None or context is None:
+            self._profile_exact_artifacts.clear()
             self._sync_profile_preview_status()
             self._sync_save_profile_action()
             return

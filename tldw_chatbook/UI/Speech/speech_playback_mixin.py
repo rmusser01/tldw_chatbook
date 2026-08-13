@@ -1176,6 +1176,20 @@ class SpeechPlaybackMixin:
     async def on_unmount(self) -> None:
         """Clean up resources when widget is unmounted"""
         try:
+            invalidate_profile_mount = getattr(
+                self,
+                "invalidate_profile_mount_callbacks",
+                None,
+            )
+            if callable(invalidate_profile_mount):
+                invalidate_profile_mount()
+            retire_profile_test = getattr(
+                self,
+                "_retire_profile_test_authority",
+                None,
+            )
+            if callable(retire_profile_test):
+                retire_profile_test()
             close_clone_setup = getattr(self, "_close_clone_setup", None)
             if callable(close_clone_setup):
                 await close_clone_setup()

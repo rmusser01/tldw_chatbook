@@ -18,14 +18,14 @@ from tldw_chatbook.TTS import (
     LoadedTTSProfile,
     STTSGeneratedAudio,
     STTSPlaygroundResultProjection,
+    TTSPlaygroundSelectionPreset,
     TTSProfileDraft,
     TTSProfileService,
-    TTSPlaygroundSelectionPreset,
     TTSRequestedSelectionSnapshot,
 )
 from tldw_chatbook.TTS.adapter_types import TTSNativeCapabilitySnapshot
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
-from tldw_chatbook.UI.STTS_Window import VoiceProfilePickerModal
+from tldw_chatbook.UI import stts_profile_library as profile_library_module
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import (
     OpenVoiceProfilesRequested,
@@ -35,6 +35,17 @@ from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSNavigationIntent,
 )
 from tldw_chatbook.UI.stts_profile_library import STTSProfileLibrary
+from tldw_chatbook.UI.STTS_Window import VoiceProfilePickerModal
+
+
+@pytest.fixture(autouse=True)
+def _isolated_profile_test_contexts():
+    """Every navigation test must release process-local profile authority."""
+
+    profile_library_module._PROFILE_TEST_CONTEXTS.clear()
+    yield
+    assert profile_library_module._profile_test_context_count() == 0
+    profile_library_module._PROFILE_TEST_CONTEXTS.clear()
 
 
 def _preset() -> TTSPlaygroundSelectionPreset:
@@ -387,6 +398,7 @@ async def test_real_profile_verification_reconciles_on_library_remount(
             assert getattr(app.focused, "id", None) == "stts-profile-table"
             assert restored_table.scroll_offset.y == selected_scroll
             assert reconciled_rows == [str(target.profile.profile_id)]
+            assert profile_library_module._profile_test_context_count() == 0
     finally:
         await repository.close()
 
@@ -607,6 +619,197 @@ async def test_mismatched_sample_never_updates_real_profile_row(
                 restored.query_one("#stts-profile-table", DataTable).get_row_at(row)[3]
             ) == "Needs test"
             assert reconciled_rows == []
+            assert profile_library_module._profile_test_context_count() == 0
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_profile_test_cancel_retires_context_and_restores_library(
+    tmp_path: Path,
+) -> None:
+    service, repository, target = await _real_openai_profile_service(tmp_path)
+    app = _SpeechHost({"view": "profiles"}, profile_service=service)
+    screen = app.screen_under_test
+
+    try:
+        async with app.run_test(size=(100, 32)) as pilot:
+            selected_scroll, _playground = await _open_real_profile_test(
+                screen,
+                pilot,
+                target,
+            )
+            assert profile_library_module._profile_test_context_count() == 1
+
+            screen.stts_window.select_view("profiles")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    len(screen.query(STTSProfileLibrary)) == 1
+                    and profile_library_module._profile_test_context_count() == 0
+                ),
+            )
+            restored = screen.query_one(STTSProfileLibrary)
+            restored_table = restored.query_one("#stts-profile-table", DataTable)
+            await _wait_until(
+                pilot,
+                lambda: restored_table.scroll_offset.y == selected_scroll,
+            )
+
+            assert restored._selected_profile is not None
+            assert restored._selected_profile.profile.profile_id == target.profile.profile_id
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_profile_completion_retires_context_without_verification(
+    tmp_path: Path,
+) -> None:
+    service, repository, target = await _real_openai_profile_service(tmp_path)
+    app = _SpeechHost({"view": "profiles"}, profile_service=service)
+    screen = app.screen_under_test
+
+    try:
+        async with app.run_test(size=(100, 32)) as pilot:
+            _scroll, playground = await _open_real_profile_test(screen, pilot, target)
+            profile = target.profile
+            await service.update_profile(
+                target,
+                TTSProfileDraft(
+                    display_name="Edited before completion",
+                    provider_id=profile.provider_id,
+                    model_id=profile.model_id,
+                    voice_id=profile.voice_id,
+                    response_format=profile.response_format,
+                    speed=profile.speed,
+                    options=profile.options,
+                ),
+            )
+
+            await _deliver_profile_sample(
+                pilot,
+                playground,
+                _valid_openai_artifact(tmp_path, target),
+                expect_save=False,
+            )
+            await _wait_until(
+                pilot,
+                lambda: profile_library_module._profile_test_context_count() == 0,
+            )
+
+            assert screen.stts_window._pending_profile_verification is None
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_deleted_profile_completion_retires_context_without_verification(
+    tmp_path: Path,
+) -> None:
+    service, repository, target = await _real_openai_profile_service(tmp_path)
+    app = _SpeechHost({"view": "profiles"}, profile_service=service)
+    screen = app.screen_under_test
+
+    try:
+        async with app.run_test(size=(100, 32)) as pilot:
+            _scroll, playground = await _open_real_profile_test(screen, pilot, target)
+            await service.delete_profile(target)
+
+            await _deliver_profile_sample(
+                pilot,
+                playground,
+                _valid_openai_artifact(tmp_path, target),
+                expect_save=False,
+            )
+            await _wait_until(
+                pilot,
+                lambda: profile_library_module._profile_test_context_count() == 0,
+            )
+
+            assert screen.stts_window._pending_profile_verification is None
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_profile_test_context_retires_when_screen_unmounts(
+    tmp_path: Path,
+) -> None:
+    service, repository, target = await _real_openai_profile_service(tmp_path)
+    app = _SpeechHost({"view": "profiles"}, profile_service=service)
+    screen = app.screen_under_test
+
+    try:
+        async with app.run_test(size=(100, 32)) as pilot:
+            await _open_real_profile_test(screen, pilot, target)
+            assert profile_library_module._profile_test_context_count() == 1
+
+        assert profile_library_module._profile_test_context_count() == 0
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_out_of_order_superseded_callback_cannot_consume_newer_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, repository, target = await _real_openai_profile_service(tmp_path)
+    app = _SpeechHost({"view": "profiles"}, profile_service=service)
+    screen = app.screen_under_test
+
+    try:
+        async with app.run_test(size=(100, 32)) as pilot:
+            _scroll, playground = await _open_real_profile_test(screen, pilot, target)
+            stale_token = playground._profile_test_context_token
+            stale_preset = playground._profile_preset
+            stale_mount_generation = playground._profile_mount_generation
+            registration = profile_library_module._remember_profile_test_context(
+                service,
+                target,
+                stale_preset,
+            )
+
+            playground.apply_profile_preset(
+                registration.preset,
+                context_token=registration.context_token,
+            )
+            current_mount_generation = playground._profile_mount_generation
+            stale_prime = Mock()
+            stale_catalog_load = Mock()
+            monkeypatch.setattr(
+                playground,
+                "_prime_profile_preset_controls",
+                stale_prime,
+            )
+            monkeypatch.setattr(
+                playground,
+                "_load_provider_catalog",
+                stale_catalog_load,
+            )
+
+            playground._finish_profile_preset_mount(stale_mount_generation)
+
+            stale_prime.assert_not_called()
+            stale_catalog_load.assert_not_called()
+            assert profile_library_module._profile_test_context_count() == 1
+            assert playground._profile_mount_generation == current_mount_generation
+            assert playground._profile_test_context_token == registration.context_token
+            assert profile_library_module._consume_profile_test_context(
+                stale_token,
+                stale_preset,
+            ) is None
+            assert profile_library_module._resolve_profile_test_context(
+                registration.context_token,
+                registration.preset,
+            ) is not None
+
+            screen.stts_window.select_view("profiles")
+            await _wait_until(
+                pilot,
+                lambda: profile_library_module._profile_test_context_count() == 0,
+            )
     finally:
         await repository.close()
 

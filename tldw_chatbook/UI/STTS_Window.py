@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Optional, Dict, Any, List
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Container, Vertical
 from textual.widgets import (
@@ -80,6 +80,7 @@ from tldw_chatbook.UI.stts_profile_library import (
     ProfileVerificationReconciled,
     ProfileVerificationResult,
     STTSProfileLibrary,
+    _retire_profile_test_context,
 )
 from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
 from tldw_chatbook.Widgets.enhanced_file_picker import (
@@ -115,7 +116,9 @@ STTS_VIEW_KEYS = frozenset(
 )
 
 
-class VoiceProfilePickerModal(ModalScreen[TTSPlaygroundSelectionPreset | None]):
+class VoiceProfilePickerModal(
+    ModalScreen[tuple[TTSPlaygroundSelectionPreset, UUID] | None]
+):
     """Reuse the Voice Profiles library without unmounting clone setup."""
 
     DEFAULT_CSS = """
@@ -178,8 +181,11 @@ class VoiceProfilePickerModal(ModalScreen[TTSPlaygroundSelectionPreset | None]):
         """Return the exact existing-library preview preset to the Playground."""
 
         message.stop()
-        if type(message.preset) is TTSPlaygroundSelectionPreset:
-            self.dismiss(message.preset)
+        if (
+            type(message.preset) is TTSPlaygroundSelectionPreset
+            and type(message.context_token) is UUID
+        ):
+            self.dismiss((message.preset, message.context_token))
 
     @on(Button.Pressed, "#speech-voice-profile-picker-cancel")
     def _cancel(self, event: Button.Pressed) -> None:
@@ -1454,6 +1460,7 @@ class STTSWindow(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self._pending_playground_preset: TTSPlaygroundSelectionPreset | None = None
+        self._pending_profile_context_token: UUID | None = None
         self._pending_playground_navigation: SpeechTTSNavigationTarget | None = None
         self._pending_adopted_preset: TTSPlaygroundSelectionPreset | None = None
         self._profile_library_continuity: ProfileLibraryContinuity | None = None
@@ -1605,6 +1612,7 @@ class STTSWindow(Container):
         view: str,
         *,
         profile_preset: TTSPlaygroundSelectionPreset | None = None,
+        profile_context_token: UUID | None = None,
         navigation_target: SpeechTTSNavigationTarget | None = None,
     ) -> None:
         """Select an existing view and apply an exact one-shot preset."""
@@ -1616,16 +1624,25 @@ class STTSWindow(Container):
             or type(profile_preset) is not TTSPlaygroundSelectionPreset
         ):
             raise ValueError("invalid Speech profile preset")
+        if profile_context_token is not None and (
+            profile_preset is None or type(profile_context_token) is not UUID
+        ):
+            raise ValueError("invalid Speech profile context token")
         if navigation_target is not None and (
             view != "playground"
             or type(navigation_target) is not SpeechTTSNavigationTarget
         ):
             raise ValueError("invalid Speech navigation target")
         if view == "playground":
+            if self._pending_profile_context_token != profile_context_token:
+                _retire_profile_test_context(self._pending_profile_context_token)
             self._pending_playground_preset = profile_preset
+            self._pending_profile_context_token = profile_context_token
             self._pending_playground_navigation = navigation_target
         else:
+            _retire_profile_test_context(self._pending_profile_context_token)
             self._pending_playground_preset = None
+            self._pending_profile_context_token = None
             self._pending_playground_navigation = None
         if self.current_view != view:
             self.current_view = view
@@ -1641,6 +1658,7 @@ class STTSWindow(Container):
         view: str,
         *,
         profile_preset: TTSPlaygroundSelectionPreset | None = None,
+        profile_context_token: UUID | None = None,
         navigation_target: SpeechTTSNavigationTarget | None = None,
     ) -> bool:
         """Select a view after resolving any dirty Studio preference draft."""
@@ -1650,6 +1668,7 @@ class STTSWindow(Container):
         self.select_view(
             view,
             profile_preset=profile_preset,
+            profile_context_token=profile_context_token,
             navigation_target=navigation_target,
         )
         return True
@@ -1715,6 +1734,7 @@ class STTSWindow(Container):
         # Give widgets a chance to clean up before removal
         for child in content_container.children:
             if isinstance(child, SpeechPlaygroundPane):
+                child.invalidate_profile_mount_callbacks()
                 self._playground_axis_values = dict(child.axis_values)
             if hasattr(child, "cleanup") and callable(child.cleanup):
                 try:
@@ -1729,11 +1749,13 @@ class STTSWindow(Container):
         self._mounted_view = new_view
         if new_view == "playground":
             preset = self._pending_playground_preset
+            profile_context_token = self._pending_profile_context_token
             navigation_target = self._pending_playground_navigation
             content_container.mount(
                 SpeechPlaygroundPane(
                     id="speech-playground-pane",
                     profile_preset=preset,
+                    profile_context_token=profile_context_token,
                     axis_values=self._playground_axis_values,
                     axis_defaults=_seed_axis_defaults(
                         load_result.snapshot,
@@ -1752,6 +1774,8 @@ class STTSWindow(Container):
             )
             if self._pending_playground_preset is preset:
                 self._pending_playground_preset = None
+            if self._pending_profile_context_token == profile_context_token:
+                self._pending_profile_context_token = None
             if self._pending_playground_navigation is navigation_target:
                 self._pending_playground_navigation = None
         elif new_view == "profiles":
@@ -1830,11 +1854,17 @@ class STTSWindow(Container):
                 )
             return
         preset = self._pending_playground_preset
+        profile_context_token = self._pending_profile_context_token
         if preset is None:
             return
-        playground.apply_profile_preset(preset)
+        playground.apply_profile_preset(
+            preset,
+            context_token=profile_context_token,
+        )
         if self._pending_playground_preset is preset:
             self._pending_playground_preset = None
+        if self._pending_profile_context_token == profile_context_token:
+            self._pending_profile_context_token = None
 
     def _apply_pending_playground_navigation(self) -> None:
         """Apply a same-view provider/intent target without invoking it."""
@@ -1863,7 +1893,11 @@ class STTSWindow(Container):
         if type(message.continuity) is not ProfileLibraryContinuity:
             return
         self._profile_library_continuity = message.continuity
-        self.select_view("playground", profile_preset=message.preset)
+        self.select_view(
+            "playground",
+            profile_preset=message.preset,
+            profile_context_token=message.context_token,
+        )
 
     @on(ProfileTestVerified)
     def on_profile_test_verified(self, message: ProfileTestVerified) -> None:
@@ -1994,19 +2028,33 @@ class STTSWindow(Container):
 
     def _apply_voice_profile_picker_result(
         self,
-        preset: TTSPlaygroundSelectionPreset | None,
+        result: tuple[TTSPlaygroundSelectionPreset, UUID] | None,
     ) -> None:
         """Apply one exact Preview result to the still-mounted Playground."""
 
-        if type(preset) is not TTSPlaygroundSelectionPreset:
+        if (
+            type(result) is not tuple
+            or len(result) != 2
+            or type(result[0]) is not TTSPlaygroundSelectionPreset
+            or type(result[1]) is not UUID
+        ):
             return
+        preset, context_token = result
         if self.current_view != "playground":
+            _retire_profile_test_context(context_token)
             return
         try:
             playground = self.query_one(SpeechPlaygroundPane)
         except QueryError:
+            _retire_profile_test_context(context_token)
             return
-        playground.apply_profile_preset(preset)
+        playground.apply_profile_preset(preset, context_token=context_token)
+
+    def on_unmount(self) -> None:
+        """Release any profile authority not yet transferred to a pane."""
+
+        _retire_profile_test_context(self._pending_profile_context_token)
+        self._pending_profile_context_token = None
 
     @on(StudioPreferencesSaved)
     def on_studio_preferences_saved(self, message: StudioPreferencesSaved) -> None:

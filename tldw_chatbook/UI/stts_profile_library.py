@@ -17,8 +17,9 @@ import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
+from threading import Lock
 from typing import Literal, Protocol, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from rich.text import Text
 from textual import on
@@ -433,7 +434,16 @@ class _ProfileTestContext:
     loaded: LoadedTTSProfile
 
 
-_PROFILE_TEST_CONTEXTS: dict[tuple[UUID, int, int], _ProfileTestContext] = {}
+@dataclass(frozen=True, slots=True)
+class _ProfileTestRegistration:
+    """One immutable preset paired with opaque process-local authority."""
+
+    preset: TTSPlaygroundSelectionPreset
+    context_token: UUID
+
+
+_PROFILE_TEST_CONTEXTS: dict[UUID, _ProfileTestContext] = {}
+_PROFILE_TEST_CONTEXTS_LOCK = Lock()
 
 
 def _profile_test_key(
@@ -478,7 +488,7 @@ def _remember_profile_test_context(
     service: _ProfileService,
     loaded: LoadedTTSProfile,
     preset: TTSPlaygroundSelectionPreset,
-) -> TTSPlaygroundSelectionPreset:
+) -> _ProfileTestRegistration:
     """Attach exact repository identity and retain bounded process authority."""
 
     profile = loaded.profile
@@ -490,24 +500,56 @@ def _remember_profile_test_context(
     )
     if not _preset_matches_loaded(exact, loaded):
         raise ValueError("Profile test preset does not match the selected profile")
-    key = _profile_test_key(exact)
-    assert key is not None
-    _PROFILE_TEST_CONTEXTS[key] = _ProfileTestContext(service, loaded)
-    while len(_PROFILE_TEST_CONTEXTS) > _PROFILE_TEST_CONTEXT_LIMIT:
-        _PROFILE_TEST_CONTEXTS.pop(next(iter(_PROFILE_TEST_CONTEXTS)))
-    return exact
+    context_token = uuid4()
+    with _PROFILE_TEST_CONTEXTS_LOCK:
+        _PROFILE_TEST_CONTEXTS[context_token] = _ProfileTestContext(service, loaded)
+        while len(_PROFILE_TEST_CONTEXTS) > _PROFILE_TEST_CONTEXT_LIMIT:
+            _PROFILE_TEST_CONTEXTS.pop(next(iter(_PROFILE_TEST_CONTEXTS)))
+    return _ProfileTestRegistration(exact, context_token)
 
 
 def _resolve_profile_test_context(
+    context_token: UUID | None,
     preset: TTSPlaygroundSelectionPreset,
 ) -> _ProfileTestContext | None:
-    key = _profile_test_key(preset)
-    if key is None:
+    if type(context_token) is not UUID or _profile_test_key(preset) is None:
         return None
-    context = _PROFILE_TEST_CONTEXTS.get(key)
+    with _PROFILE_TEST_CONTEXTS_LOCK:
+        context = _PROFILE_TEST_CONTEXTS.get(context_token)
     if context is None or not _preset_matches_loaded(preset, context.loaded):
         return None
     return context
+
+
+def _consume_profile_test_context(
+    context_token: UUID | None,
+    preset: TTSPlaygroundSelectionPreset,
+) -> _ProfileTestContext | None:
+    """Atomically consume one matching context exactly once."""
+
+    if type(context_token) is not UUID or _profile_test_key(preset) is None:
+        return None
+    with _PROFILE_TEST_CONTEXTS_LOCK:
+        context = _PROFILE_TEST_CONTEXTS.get(context_token)
+        if context is None or not _preset_matches_loaded(preset, context.loaded):
+            return None
+        return _PROFILE_TEST_CONTEXTS.pop(context_token)
+
+
+def _retire_profile_test_context(context_token: UUID | None) -> bool:
+    """Release one owned context without affecting newer sessions."""
+
+    if type(context_token) is not UUID:
+        return False
+    with _PROFILE_TEST_CONTEXTS_LOCK:
+        return _PROFILE_TEST_CONTEXTS.pop(context_token, None) is not None
+
+
+def _profile_test_context_count() -> int:
+    """Return the bounded registry size for lifecycle verification."""
+
+    with _PROFILE_TEST_CONTEXTS_LOCK:
+        return len(_PROFILE_TEST_CONTEXTS)
 
 
 class ProfilePreviewRequested(Message):
@@ -517,10 +559,12 @@ class ProfilePreviewRequested(Message):
         self,
         preset: TTSPlaygroundSelectionPreset,
         continuity: ProfileLibraryContinuity,
+        context_token: UUID,
     ) -> None:
         super().__init__()
         self.preset = preset
         self.continuity = continuity
+        self.context_token = context_token
 
 
 class ProfileTestVerified(Message):
@@ -3089,11 +3133,21 @@ class STTSProfileLibrary(Widget):
             self._set_status(PROFILE_ACTION_FAILED_COPY)
             return
         try:
-            preset = _remember_profile_test_context(self._service, loaded, preset)
+            registration = _remember_profile_test_context(
+                self._service,
+                loaded,
+                preset,
+            )
         except Exception:  # noqa: BLE001 - never expose profile-owned values
             self._set_status(PROFILE_ACTION_FAILED_COPY)
             return
-        self.post_message(ProfilePreviewRequested(preset, self.navigation_continuity()))
+        self.post_message(
+            ProfilePreviewRequested(
+                registration.preset,
+                self.navigation_continuity(),
+                registration.context_token,
+            )
+        )
 
     @on(
         Button.Pressed,

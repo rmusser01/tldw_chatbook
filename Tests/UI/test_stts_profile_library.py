@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-
-from Tests.UI.background_signals import wait_for_background_signal
+import concurrent.futures
 import json
 import sys
 import wave
@@ -20,6 +19,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static, TextArea
 from textual.worker import WorkerFailed
 
+from Tests.UI.background_signals import wait_for_background_signal
 from tldw_chatbook.TTS import (
     LoadedTTSProfile,
     ProfileRepositoryError,
@@ -47,6 +47,8 @@ from tldw_chatbook.TTS.profile_portability import (
 from tldw_chatbook.UI import STTS_Window as stts_window_module
 from tldw_chatbook.UI import stts_profile_library as profile_library_module
 from tldw_chatbook.UI.Dictation_Window_Improved import ImprovedDictationWindow
+from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
 from tldw_chatbook.UI.stts_profile_library import (
     PROFILE_STORE_UNAVAILABLE_COPY,
     STTSProfileLibrary,
@@ -58,8 +60,6 @@ from tldw_chatbook.UI.stts_profile_library import (
     voice_bundle_review_action,
 )
 from tldw_chatbook.UI.tts_profile_recovery import dependency_recovery_actions
-from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
-from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
 from tldw_chatbook.UI.STTS_Window import (
     AudioBookGenerationWidget,
     STTSWindow,
@@ -83,6 +83,80 @@ def _profile(index: int) -> TTSGenerationProfile:
         created_at=timestamp,
         updated_at=timestamp,
     )
+
+
+def test_profile_test_context_consume_is_atomic_and_idempotent() -> None:
+    profile_library_module._PROFILE_TEST_CONTEXTS.clear()
+    service = _ControlledProfileService()
+    loaded = LoadedTTSProfile(repository_generation=3, profile=_profile(0))
+    registration = profile_library_module._remember_profile_test_context(
+        service,
+        loaded,
+        TTSPlaygroundSelectionPreset(
+            provider_id=loaded.profile.provider_id,
+            model_id=loaded.profile.model_id,
+            voice_id=loaded.profile.voice_id,
+            response_format=loaded.profile.response_format,
+            speed=loaded.profile.speed,
+            options=loaded.profile.options,
+            availability="unverified",
+        ),
+    )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        consumed = list(
+            executor.map(
+                lambda _index: profile_library_module._consume_profile_test_context(
+                    registration.context_token,
+                    registration.preset,
+                ),
+                range(2),
+            )
+        )
+
+    assert sum(context is not None for context in consumed) == 1
+    assert profile_library_module._profile_test_context_count() == 0
+
+
+def test_stale_profile_test_token_cannot_consume_newer_same_profile_context() -> None:
+    profile_library_module._PROFILE_TEST_CONTEXTS.clear()
+    service = _ControlledProfileService()
+    loaded = LoadedTTSProfile(repository_generation=3, profile=_profile(0))
+    preset = TTSPlaygroundSelectionPreset(
+        provider_id=loaded.profile.provider_id,
+        model_id=loaded.profile.model_id,
+        voice_id=loaded.profile.voice_id,
+        response_format=loaded.profile.response_format,
+        speed=loaded.profile.speed,
+        options=loaded.profile.options,
+        availability="unverified",
+    )
+    stale = profile_library_module._remember_profile_test_context(
+        service,
+        loaded,
+        preset,
+    )
+    current = profile_library_module._remember_profile_test_context(
+        service,
+        loaded,
+        preset,
+    )
+
+    assert profile_library_module._retire_profile_test_context(
+        stale.context_token
+    )
+    assert profile_library_module._resolve_profile_test_context(
+        current.context_token,
+        current.preset,
+    ) is not None
+    assert not profile_library_module._retire_profile_test_context(
+        stale.context_token
+    )
+    assert profile_library_module._consume_profile_test_context(
+        current.context_token,
+        current.preset,
+    ) is not None
+    assert profile_library_module._profile_test_context_count() == 0
 
 
 class _ControlledProfileService:

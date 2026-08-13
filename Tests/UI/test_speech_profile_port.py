@@ -101,6 +101,7 @@ async def test_the_profile_state_exists_before_any_action():
             "_profile_save_suppressed",
             "_active_profile_name_modal",
             "_profile_voice_validation_token",
+            "_profile_test_context_token",
             "_profile_test_context",
             "_profile_exact_artifacts",
             "_profile_matching_artifact_operation",

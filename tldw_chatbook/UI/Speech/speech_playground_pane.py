@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from textual import on
 from textual.binding import Binding
@@ -286,6 +287,7 @@ class SpeechPlaygroundPane(
         *,
         provider: str = "audio_cpp",
         profile_preset: Any = None,
+        profile_context_token: UUID | None = None,
         axis_values: dict[str, str] | None = None,
         axis_defaults: dict[str, str] | None = None,
         capability_line: str = "",
@@ -369,11 +371,12 @@ class SpeechPlaygroundPane(
         self._clone_setup_retained_tasks: set[asyncio.Task[None]] = set()
         self._clone_setup_validation_lock = asyncio.Lock()
         self._clone_setup_error: str | None = None
+        self._profile_mount_generation = 0
         self.init_synthesis_state()
         self.init_catalog_state()
         self._seed_session_control_snapshot()
         self.init_playback_state()
-        self.init_profile_state(profile_preset)
+        self.init_profile_state(profile_preset, profile_context_token)
 
     def _generation_complete(self, artifact: Any) -> None:
         """Retain exact profile-test provenance before playback sanitizes it."""
@@ -2622,7 +2625,7 @@ class SpeechPlaygroundPane(
         # discovery runs, rather than showing a catalog the user did not ask
         # for and then replacing it.
         if self._profile_preset is not None:
-            self.call_after_refresh(self._finish_profile_preset_mount)
+            self._schedule_profile_preset_mount()
         else:
             self._sync_profile_preview_status()
             self.call_after_refresh(
@@ -2632,21 +2635,46 @@ class SpeechPlaygroundPane(
         if self._navigation_target is not None:
             self.call_after_refresh(self._focus_navigation_target)
 
-    def _finish_profile_preset_mount(self) -> None:
+    def _schedule_profile_preset_mount(self) -> None:
+        """Schedule one callback owned by the current pane/preset generation."""
+
+        self._profile_mount_generation += 1
+        self.call_after_refresh(
+            self._finish_profile_preset_mount,
+            self._profile_mount_generation,
+        )
+
+    def invalidate_profile_mount_callbacks(self) -> None:
+        """Fence callbacks queued by a superseded preset or pane mount."""
+
+        self._profile_mount_generation += 1
+
+    def _profile_mount_callback_is_current(self, generation: int) -> bool:
+        return self.is_mounted and generation == self._profile_mount_generation
+
+    def _finish_profile_preset_mount(self, generation: int) -> None:
         """Prime an exact preset after nested Select children are mounted."""
 
-        if not self.is_mounted:
+        if not self._profile_mount_callback_is_current(generation):
             return
         if self._profile_preset is not None:
+            if not self._profile_mount_callback_is_current(generation):
+                return
             self._prime_profile_preset_controls()
+            if not self._profile_mount_callback_is_current(generation):
+                return
             self.query_one("#tts-text-input", TextArea).focus()
         else:
             self._sync_profile_preview_status()
+        if not self._profile_mount_callback_is_current(generation):
+            return
         self._load_provider_catalog(initialize=True)
 
     def apply_profile_preset(
         self,
         preset: TTSPlaygroundSelectionPreset,
+        *,
+        context_token: UUID | None = None,
     ) -> None:
         """Apply one exact process-local preset to this mounted Playground.
 
@@ -2659,10 +2687,12 @@ class SpeechPlaygroundPane(
 
         if type(preset) is not TTSPlaygroundSelectionPreset:
             raise TypeError("preset must be TTSPlaygroundSelectionPreset")
+        self.invalidate_profile_mount_callbacks()
         self._retire_profile_generation_context()
-        self.init_profile_state(preset)
+        self._retire_profile_test_authority()
+        self.init_profile_state(preset, context_token)
         if self.is_mounted:
-            self.call_after_refresh(self._finish_profile_preset_mount)
+            self._schedule_profile_preset_mount()
 
     def _sync_split_layout(self) -> None:
         """Toggle the stacked class from the pane's measured width."""
