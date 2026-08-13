@@ -1533,6 +1533,16 @@ class RAGService:
         different tables are not comparable, and concatenation would let one
         well-stocked source consume every ``top_k`` slot.
 
+        TASK-15700 tiers that merge by FORM: sub-legs whose rows came from
+        the construction's primary expression round-robin among themselves
+        first, and sub-legs that FELL BACK round-robin after them, filling
+        only the slots the primary tier left. Fusion consumes this leg's
+        RANK, so before the tiering a widening sub-leg's row count could
+        demote another sub-leg's untouched rank-1 row purely by source
+        order -- see the merge site's comment for the measured incident.
+        Under a construction with no fallback (every shipped default to
+        date) there is exactly one tier and the order is unchanged.
+
         TASK-14751 narrows *which* sub-legs run without touching that
         merge. ``keyword_source_types`` names the types the caller will
         actually keep (``None`` = all four, i.e. unchanged for every caller
@@ -1653,9 +1663,66 @@ class RAGService:
         if not rankings:
             return []
 
-        # Deduplicate on the same document identity fusion uses, so a
-        # document that somehow appears in two sub-legs occupies one slot.
-        results = interleave_rankings(rankings, key=_fusion_doc_key)[:top_k]
+        # THE MERGE RULE (TASK-15700). Sub-legs whose rows came from the
+        # construction's PRIMARY form are merged FIRST, as one tier;
+        # sub-legs that FELL BACK are merged after them, as a second tier.
+        # Round robin runs within each tier exactly as it always has (raw
+        # FTS5 scores are not comparable across sources, so rank position
+        # stays the only cross-source signal); the tiers themselves are
+        # concatenated, and the `[:top_k]` truncation happens AFTER that --
+        # so a fallback row can only ever occupy a slot the primary tier
+        # left empty. Tier 2 FILLS; it never displaces.
+        #
+        # THE INCIDENT (TASK-15400 Task 3, measured over the 172-doc golden
+        # corpus). This merge feeds hybrid fusion, which consumes the LEG
+        # rank -- so before the tiering, one sub-leg's ROW COUNT decided
+        # every other sub-leg's leg rank. Under `and_then_or`,
+        # `kw-plant-maintenance-record` -> `note-saltmarsh-hide` had the
+        # notes sub-leg's untouched rank-1 AND row; media and conversations
+        # found zero AND rows, fell back to OR, injected 10 rows each, and
+        # the round robin -- media first, by source order alone -- demoted
+        # the untouched notes row to leg rank 2. At alpha 0.7 / rrf_k 5 the
+        # vector rank-9 row then beat it by 6.94e-18 and the fixture lost
+        # its hybrid rescue. The scoped category decomposed the same way to
+        # the digit: the four NOTE-targeted scoped queries each fell behind
+        # a media fallback row while the three MEDIA-targeted ones kept leg
+        # rank 1 -- 3 of 7 = 0.429, recall 1.000 -> 0.429.
+        #
+        # Fallback-ness is f(construction, form), never the stamp alone:
+        # under `or` the OR form IS the primary and belongs in tier 1. That
+        # is `_fts5_primary_form()`, the single definition this partition
+        # and the row stamp in `_fts_rows_with_fallback` share, so the two
+        # cannot drift apart about which form was the primary. A row missing
+        # the stamp defaults to the primary, so an unstamped row is never
+        # demoted by accident.
+        #
+        # The partition is over SUB-LEGS, not rows: the fallback fires only
+        # when a sub-leg's primary returns zero rows, so within one query a
+        # sub-leg's rows are all-primary or all-fallback (pinned per sub-leg
+        # by `test_*_falls_back_independently`). Reading row 0 is therefore
+        # reading the whole sub-leg.
+        #
+        # Cross-tier deduplication is STRUCTURALLY VACUOUS and deliberately
+        # absent: each sub-leg emits exactly one `source_type` and
+        # `_fusion_doc_key` keys on it, so no document can appear in both
+        # tiers. Within a tier, `interleave_rankings`' own `seen` set still
+        # deduplicates on that same document identity fusion uses, so a
+        # document appearing in two sub-legs occupies one slot.
+        primary_form = self._fts5_primary_form()
+        primary_tier: List[Any] = []
+        fallback_tier: List[Any] = []
+        for ranking in rankings:
+            tier = (
+                primary_tier
+                if ranking[0].metadata.get("fts_match", primary_form) == primary_form
+                else fallback_tier
+            )
+            tier.append(ranking)
+
+        results = (
+            interleave_rankings(primary_tier, key=_fusion_doc_key)
+            + interleave_rankings(fallback_tier, key=_fusion_doc_key)
+        )[:top_k]
         logger.info(
             "Keyword search found {} results across {} sub-leg(s)",
             len(results),
@@ -3431,6 +3498,29 @@ class RAGService:
             )
         return FTS_MATCH_CONSTRUCTION_AND
 
+    def _fts5_primary_form(self) -> str:
+        """The FORM the active construction's PRIMARY expression runs.
+
+        ONE definition of "which form is not a fallback" (TASK-15700). Two
+        consumers must never disagree about it: `_keyword_search`'s tier
+        partition, which puts primary-form sub-legs ahead of fallback ones,
+        and `_fts_rows_with_fallback`, which stamps the rows.
+
+        Fallback-ness is f(construction, form), never the stamp alone --
+        under the `or` construction the OR form IS the primary, so tiering
+        on the stamp by itself would demote every row that construction
+        returns. Resolved through `_resolved_fts_match_construction`, so an
+        unrecognized value takes the same conservative `and` the leg
+        actually ran rather than a form nothing produced.
+
+        Returns:
+            ``FTS_MATCH_OR`` under the ``or`` construction, otherwise
+            ``FTS_MATCH_AND``.
+        """
+        if self._resolved_fts_match_construction() == FTS_MATCH_CONSTRUCTION_OR:
+            return FTS_MATCH_OR
+        return FTS_MATCH_AND
+
     def _fts5_match_expressions(self, query: str) -> Tuple[str, Optional[str]]:
         """Build the MATCH expression(s) one search runs (TASK-15400).
 
@@ -3523,8 +3613,18 @@ class RAGService:
         Wraps a sub-leg's SQL-executing helper (never the tokenizer), so
         each sub-leg decides independently whether to widen: one query can
         legitimately carry AND rows from one sub-leg and OR rows from
-        another (the spec's deliberate mixed-mode interleave), which is why
-        every row is stamped with the form that matched it.
+        another, which is why every row is stamped with the form that
+        matched it. That mix is TIERED, not interleaved (TASK-15700): the
+        merge in `_keyword_search` puts every primary-form sub-leg ahead of
+        every fallback sub-leg, because a fallback row taking leg rank 1
+        from an untouched primary row is what cost the vector-blind fixture
+        its hybrid rescue. Widening is still decided per sub-leg here; where
+        the widened rows LAND is decided there.
+
+        Because the fallback runs only when the primary returned zero rows,
+        a sub-leg's rows are all-primary or all-fallback within one query --
+        the all-or-nothing fact that lets the merge tier whole sub-legs
+        instead of individual rows.
 
         Args:
             run_expression: Executes ONE MATCH expression and returns its
@@ -3542,12 +3642,11 @@ class RAGService:
         primary, fallback = expressions
         rows = run_expression(primary) if primary else []
         # The primary is an OR form only under the `or` construction; the
-        # stamp names the form, not the position (see FTS_MATCH_AND).
-        form = (
-            FTS_MATCH_OR
-            if self._resolved_fts_match_construction() == FTS_MATCH_CONSTRUCTION_OR
-            else FTS_MATCH_AND
-        )
+        # stamp names the form, not the position (see FTS_MATCH_AND). Read
+        # from `_fts5_primary_form`, the one definition the merge's tier
+        # partition reads too -- the stamp and the tiering cannot disagree
+        # about which form was the primary if they share the source.
+        form = self._fts5_primary_form()
 
         if not rows and fallback:
             rows = run_expression(fallback)

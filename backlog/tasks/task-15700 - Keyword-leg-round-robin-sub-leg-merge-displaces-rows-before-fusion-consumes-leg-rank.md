@@ -3,9 +3,11 @@ id: TASK-15700
 title: >-
   Keyword leg round-robin sub-leg merge displaces rows before fusion consumes
   leg rank
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-12 22:58'
+updated_date: '2026-08-13 14:14'
 labels:
   - rag
   - retrieval
@@ -15,6 +17,7 @@ priority: high
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 The RAG engine's keyword leg (`RAGService._keyword_search`) runs four
 source sub-legs — media, notes, conversations, prompts — and merges them
 with `interleave_rankings`: a **round-robin over sub-leg position**, not a
@@ -86,9 +89,9 @@ caveats are load-bearing: the probe is **leg-level only** (its hybrid cells
 were never measured), and it widens rows exactly the way the OR forms do —
 so it carries **the same displacement risk described above, unmeasured**.
 It is a candidate for the sweep this task re-runs, not a shortcut around it.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [ ] #1 The keyword leg's cross-sub-leg merge no longer lets one sub-leg's row count decide another sub-leg's leg rank: the merged order is derived from a stated, attributable property of the rows (e.g. per-sub-leg rank with AND rows ahead of fallback rows, or a real score), and the rule is written down where the merge happens
 - [ ] #2 The behaviour is pinned by a test that fails on the CURRENT round-robin: a query where one sub-leg returns a rank-1 row and another returns many rows must keep the rank-1 row ahead of them in the merged output
@@ -99,15 +102,12 @@ It is a candidate for the sweep this task re-runs, not a shortcut around it.
 - [ ] #7 The residual "keyword leg returns zero rows for 39 of 60 golden queries" figure is re-measured and reported after the change, per category, alongside the leg-level census (21 of 53 today)
 <!-- AC:END -->
 
-## Related
+## Implementation Plan
 
-- **TASK-15400** — the MATCH-construction arc that found this. Its sweep
-  table, the disqualification mechanism and the counterfactual are in
-  `Tests/RAG_Eval/README.md` ("The fourth real re-stamp") and in
-  `.superpowers/sdd/2026-08-11-rag-keyword-leg-match-construction/`.
-  `RAGService._escape_fts5_query`'s docstring names this task as the owner
-  of the residual.
-- **TASK-3997** — the Library four-seam keyword path's AND-strictness. A
-  different path with no fusion and no leg to be displaced in; the two are
-  deliberately decided separately (the reasoning is recorded in the harness
-  README's known-defects list).
+<!-- SECTION:PLAN:BEGIN -->
+Spec: Docs/superpowers/specs/2026-08-13-rag-keyword-leg-tiered-merge-design.md
+Plan: Docs/superpowers/plans/2026-08-13-rag-keyword-leg-tiered-merge.md
+Part A (Task 1): form-tiered sub-leg merge at _keyword_search's gather site (tier 1 = primary-form sub-legs, tier 2 = fallback sub-legs; interleave within each tier; tier 1 wholly precedes tier 2; truncate to top_k). Pre-registered intermediate gate: 105/105 at (+0.000) and control census 20.
+Part B (Tasks 2-4): prefix + and_then_prefix constructions, six-row sweep under the 15400 decision rule verbatim, conditional default flip.
+Task 5: conditional re-stamp, README/AC#4 margin, live check, closure.
+<!-- SECTION:PLAN:END -->
