@@ -3684,3 +3684,29 @@ callback must no-op when its original widget has detached. Verify both paths: a 
 recompose must kill the synchronous-only implementation, while an immediate normal-mount
 assertion must kill unconditional deferral. TASK-2702's final full Prompt-canvas run passed
 279 tests only after both boundaries were pinned together.
+
+## A full-suite sweep is a checkpointed pipeline, not a command (task-15211)
+
+**Incident.** Three attempts to run all of `Tests/UI` in one pytest invocation
+died at 25-32%, each time losing everything. The fourth attempt split the 503
+modules into 16 chunks, appended each chunk's summary and failures to a results
+file as it completed, and skipped already-recorded chunks on relaunch. It
+survived a hung chunk, an environment process-kill, and a TCC lockout, and
+finished: 10,811 passed, 117 attributed failures.
+
+**What the monoliths actually died of.** Not slowness: a product defect. The
+Lab/LLM screen's Ollama probe held two event-loop threads open, so pytest
+PRINTED ITS FINAL SUMMARY and then never exited -- zero CPU, main thread
+joining a non-daemon thread. A wrapper waiting on the child sees an eternal
+hang after a successful-looking run. Diagnosis that worked without root:
+compare `ps -o time` across an interval (zero accrual = hung, not slow), then
+`sample <pid>` for native thread stacks -- two threads parked in kevent were
+the loops that should have died with their screen.
+
+**Rules.** (1) Never run a >20-minute suite as one process; checkpoint per
+chunk and make relaunch skip recorded work. (2) "The log stopped growing" has
+two different causes -- a hung TEST (mid-run) and a hung EXIT (summary already
+printed); check for the summary line before assuming the former. (3) Keep the
+sweep's worktree frozen and ship fixes from another one; the sweep's chunk
+results stay comparable, and later chunks re-finding an already-fixed class is
+CONFIRMATION, not new work.
