@@ -423,9 +423,34 @@ async def test_submit_reaches_done_with_real_media_id(tmp_path: Path) -> None:
         assert row is not None
         assert row["title"] == "Note A"
         assert "moon's gravity" in row["content"]
-
         await _wait_for_runner_idle(app, pilot)
 
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_writer_passes_claimed_generate_embeddings_snapshot_to_persistence(
+    tmp_path: Path,
+) -> None:
+    """Changing the writer's option forwarding must make this persistence call true."""
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "embeddings-off.txt", "Persist this source.")
+    app = _IngestRunnerHarness(db)
+
+    with patch.object(
+        _app_module, "persist_parsed_media", return_value=(777, "media-777", "saved")
+    ) as persist:
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(
+                source_path=str(source),
+                ingest_options={"generic": {"generate_embeddings": False}},
+            )
+            done = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.DONE
+            )
+            await _wait_for_runner_idle(app, pilot)
+
+    assert done.media_id == 777
+    assert persist.call_args.kwargs["generate_embeddings"] is False
 
 @pytest.mark.asyncio
 async def test_submitting_a_directory_queues_one_job_per_file(

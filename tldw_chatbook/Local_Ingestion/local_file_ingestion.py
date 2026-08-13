@@ -112,6 +112,7 @@ def _ensure_local_video_processor():
 
 # Import database
 from ..DB.Client_Media_DB_v2 import MediaDatabase  # noqa: E402
+from ..RAG_Search.ingestion_indexing import suppress_ingestion_indexing  # noqa: E402
 
 # Import metrics
 from ..Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
@@ -1591,8 +1592,8 @@ def persist_parsed_media(
         media_db: The ``MediaDatabase`` instance to write to.
         overwrite_existing: Whether a live matching row is updated in place.
             Defaults to the historical duplicate-skip behavior.
-        generate_embeddings: Reserved for the Local RAG writer behavior. It
-            intentionally has no persistence effect here yet.
+        generate_embeddings: Whether this write should enqueue best-effort
+            semantic indexing. Source persistence is unaffected.
 
     Returns:
         ``(media_id, media_uuid, message)`` -- exactly
@@ -1634,22 +1635,29 @@ def persist_parsed_media(
     try:
         logger.debug(f"Storing {file_type} content in database...")
         # Note: add_media_with_keywords returns tuple: (media_id, media_uuid, message)
-        media_id, media_uuid, message = media_db.add_media_with_keywords(
-            title=payload["title"],
-            media_type=payload["media_type"],
-            content=payload["content"],
-            keywords=payload["keywords"] or None,
-            url=payload["url"],
-            analysis_content=payload["analysis_content"],
-            author=payload["author"],
-            transcription_model=payload.get("transcription_model"),
-            transcription_provenance=payload.get("transcription_provenance"),
-            ingestion_date=datetime.now().strftime("%Y-%m-%d"),
-            chunks=payload["chunks"],
-            chunk_options=payload["chunk_options"],
-            overwrite=overwrite_existing,
-            restore_trashed=True,
-        )
+        def _persist() -> tuple[Optional[int], Optional[str], str]:
+            return media_db.add_media_with_keywords(
+                title=payload["title"],
+                media_type=payload["media_type"],
+                content=payload["content"],
+                keywords=payload["keywords"] or None,
+                url=payload["url"],
+                analysis_content=payload["analysis_content"],
+                author=payload["author"],
+                transcription_model=payload.get("transcription_model"),
+                transcription_provenance=payload.get("transcription_provenance"),
+                ingestion_date=datetime.now().strftime("%Y-%m-%d"),
+                chunks=payload["chunks"],
+                chunk_options=payload["chunk_options"],
+                overwrite=overwrite_existing,
+                restore_trashed=True,
+            )
+
+        if generate_embeddings:
+            media_id, media_uuid, message = _persist()
+        else:
+            with suppress_ingestion_indexing():
+                media_id, media_uuid, message = _persist()
         logger.info(f"Successfully ingested {file_type} file with media_id: {media_id}")
         return media_id, media_uuid, message
     except Exception as e:

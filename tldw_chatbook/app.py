@@ -4607,10 +4607,16 @@ class LibraryIngestQueueMixin:
                         if isinstance(generic_options, dict)
                         else False
                     )
+                    generate_embeddings = bool(
+                        generic_options.get("generate_embeddings", True)
+                        if isinstance(generic_options, dict)
+                        else True
+                    )
                     media_id, _media_uuid, _message = persist_parsed_media(
                         payload,
                         self.media_db,
                         overwrite_existing=overwrite_existing,
+                        generate_embeddings=generate_embeddings,
                     )
                     # ``add_media_with_keywords`` returns ``media_id=None`` on
                     # exactly one success path: the duplicate skip ("already
