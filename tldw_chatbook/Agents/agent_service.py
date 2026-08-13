@@ -545,6 +545,7 @@ class AgentService:
         revoke_approvals: Callable[[str], object] | None = None,
         child_model_scope: Callable[[], "contextlib.AbstractContextManager"]
         | None = None,
+        on_child_settled: Callable[[str | None, str], None] | None = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -692,6 +693,34 @@ class AgentService:
         # construction, and a second loop would only cost a second HTTP
         # client for no reachable benefit.
         self._child_model_scope = child_model_scope or contextlib.nullcontext
+        # PR3a-2 Task 2 -- THE TERMINAL-ON-BOTH-PATHS SETTLE SIGNAL.
+        #
+        # Called with ``(child_run_id, status)`` as the LAST act of a fleet
+        # child's teardown (`run_child`'s finally), on the child's own
+        # thread, strictly after `fleet.finish` AND after the terminal-
+        # status fallback write. That placement is the whole point:
+        # `child_model_scope` exits BEFORE `fleet.finish`, and on the
+        # setup-phase-exception path before the run row is terminal (it
+        # settles via the finally's `set_status`, i.e. AFTER the scope) --
+        # so a consumer that needs "this child is DONE and its `agent_runs`
+        # row is terminal" cannot hang off the scope. Waiting inside a
+        # scope-exit consumer can never work either: on the raise path the
+        # terminal write happens later ON THE SAME THREAD, so any bounded
+        # DB-settle wait there would time out by construction, every time.
+        # This hook is the one point where both facts hold on both paths
+        # (barring a logged DB write failure, which the fallback already
+        # tolerates).
+        #
+        # ``child_run_id`` is ``None`` for a child that died before
+        # `create_run` could attach one -- there is then no row to read.
+        # Fleet children only: an inline child (`max_live_subagents == 1`)
+        # settles synchronously inside its parent's turn, which still owns
+        # delivery. The call is wrapped never-raise at its call site: it
+        # is a daemon thread's last act, and an escaping exception would
+        # kill that thread through the default excepthook with nothing
+        # else noticing. The Console bridge's fan-out additionally
+        # isolates its consumers from EACH OTHER (see `FleetDrainFanout`).
+        self._on_child_settled = on_child_settled
         # Per-TURN fleet state, all owned by the primary run's thread (a
         # child never spawns -- contain_child_budget zeroes max_subagents,
         # PR3a-1 Task 5's replacement for clamp_child_budget), so no lock
@@ -1882,6 +1911,24 @@ class AgentService:
                         except Exception:  # noqa: BLE001
                             logger.opt(exception=True).warning(
                                 "could not persist terminal status for "
+                                f"sub-agent run {child_run_id}"
+                            )
+                    # PR3a-2 Task 2: the settle signal, LAST -- after
+                    # `fleet.finish` and after the terminal-status
+                    # fallback, so at fire time the row is terminal on
+                    # the happy path (`_persist` wrote it) AND on the
+                    # setup-exception path (`set_status` just did). See
+                    # `on_child_settled`'s __init__ comment for why no
+                    # earlier point can offer that. Wrapped never-raise:
+                    # this is a daemon thread's teardown, and a notifier
+                    # bug must not kill it (same containment rule as the
+                    # `except BaseException` above).
+                    if self._on_child_settled is not None:
+                        try:
+                            self._on_child_settled(child_run_id, status)
+                        except Exception:  # noqa: BLE001
+                            logger.opt(exception=True).warning(
+                                "on_child_settled consumer raised for "
                                 f"sub-agent run {child_run_id}"
                             )
 
