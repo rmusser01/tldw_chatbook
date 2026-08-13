@@ -9062,23 +9062,17 @@ class LibraryScreen(BaseAppScreen):
         """Recompose only the Prompt canvas from the screen-owned basket."""
         if not self._library_list_canvas_showing_list():
             return
-        try:
-            canvas = self.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
-        except (NoMatches, QueryError):
-            return
         focused = getattr(self, "focused", None)
         filter_cursor = (
             focused.cursor_position
             if focus_identity == "library-prompts-filter" and isinstance(focused, Input)
             else None
         )
-        canvas.state = self._build_library_prompts_state()
-        canvas.refresh(recompose=True)
-        canvas.call_after_refresh(
-            self._restore_library_prompts_focus,
-            focus_identity,
-            filter_cursor,
-        )
+
+        def restore_focus() -> None:
+            self._restore_library_prompts_focus(focus_identity, filter_cursor)
+
+        _sync_library_canvas(self, "prompts", then=restore_focus)
 
     def _clear_library_prompt_selection(self, *, announce: bool) -> None:
         """End Prompt selection and optionally announce the bounded count."""
