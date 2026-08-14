@@ -383,6 +383,27 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError("Active workspace update failed.")
         return active
 
+    def clear_active_workspace(self) -> None:
+        """Deselect every workspace, leaving no active record.
+
+        task-15120 (owner ruling): the workspace context follows the
+        conversation being viewed, and a GLOBAL conversation's context is the
+        global scope -- which this registry represents as "no active
+        workspace" (`get_active_workspace()` -> None), the same state a fresh
+        registry starts in. Capability gates that require an explicit active
+        workspace read exactly that, so a global conversation carries global
+        capabilities rather than borrowing the previous workspace's.
+
+        Raises:
+            WorkspaceRegistryServiceError: If workspace storage cannot be
+                updated.
+        """
+        try:
+            with self.db.transaction() as conn:
+                conn.execute("UPDATE workspace_records SET active = 0")
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+
     def get_active_workspace(self) -> WorkspaceRecord | None:
         """Return the active workspace if one is selected."""
 

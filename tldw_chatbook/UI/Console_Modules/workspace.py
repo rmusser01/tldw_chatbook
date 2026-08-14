@@ -118,6 +118,7 @@ from ...Chat.console_display_state import evidence_bundle_from_launch
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
 from ...Chat.console_roleplay_metadata import parse_console_roleplay_context
 from ...Chat.rag_scope import RagScope
+from ...Workspaces.models import DEFAULT_WORKSPACE_ID
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
@@ -1099,8 +1100,6 @@ class ConsoleWorkspaceController:
         if target_session is None:
             return
         workspace_id = str(target_session.workspace_id or "").strip()
-        if not workspace_id or workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
-            return
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
@@ -1108,6 +1107,29 @@ class ConsoleWorkspaceController:
             return
         try:
             active_workspace = registry_service.get_active_workspace()
+            if not workspace_id or workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
+                # task-15120 (owner ruling): the workspace context follows the
+                # conversation -- a global conversation's context IS the
+                # global scope, on both layers. This used to early-return,
+                # leaving the registry on the previous workspace while the
+                # store's context flipped to "global": two sources of truth
+                # disagreeing, and the previous workspace's capabilities
+                # bleeding into a global conversation. The registry's stable
+                # representation of "no explicit workspace" is the built-in
+                # Default (`ensure_default_workspace` floors every context
+                # read to it, deliberately -- capability-less, safe), so a
+                # global conversation lands there, not on bare None.
+                if (
+                    active_workspace is not None
+                    and active_workspace.workspace_id != DEFAULT_WORKSPACE_ID
+                ):
+                    registry_service.clear_active_workspace()
+                    ensure_default = getattr(
+                        registry_service, "ensure_default_workspace", None
+                    )
+                    if callable(ensure_default):
+                        ensure_default()
+                return
             if (
                 active_workspace is not None
                 and active_workspace.workspace_id == workspace_id
