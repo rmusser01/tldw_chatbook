@@ -53,20 +53,20 @@ CREATE TABLE IF NOT EXISTS message_trajectory_metadata(
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   turn_id         TEXT NOT NULL,
   seq             INTEGER NOT NULL,           -- per-conversation monotonic order
-  event_kind      TEXT NOT NULL,              -- assistant | tool_call | tool_result |
-                                              -- user | compaction
+  event_kind      TEXT NOT NULL,              -- user | assistant | tool_call | tool_result
   step_started_at REAL,                       -- unix seconds; NULL when unknown
   first_token_at  REAL,
   completed_at    REAL,
   model           TEXT,
   provider        TEXT,
-  PRIMARY KEY (message_id, event_kind)
-  first_token_at  REAL,
-  completed_at    REAL,
-  model           TEXT,
-  provider        TEXT
+  payload_json    TEXT,                       -- tool records ONLY: name/args/result
+                                              -- (incl. full untruncated output);
+                                              -- NULL for user/assistant rows
+  PRIMARY KEY (message_id, event_kind, seq)
 );
-CREATE INDEX IF NOT EXISTS idx_trajmeta_conv_seq ON message_trajectory_metadata(conversation_id, seq);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trajmeta_conv_seq
+  ON message_trajectory_metadata(conversation_id, seq);
+CREATE INDEX IF NOT EXISTS idx_trajmeta_msg ON message_trajectory_metadata(message_id);
 ```
 
 Design points:
@@ -76,18 +76,39 @@ Design points:
   seqs, cost roll-ups) are added here via new migrations without touching sync
   triggers. This is the long-term-stability/extendability trade: stable synced
   core, evolvable local edge.
+- **The sidecar is the sole persisted home for tool records.** Verified:
+  TOOL-role messages are deliberately session-only display markers in
+  `console_chat_store.py` (never persisted, never tree nodes — the
+  TOOL-marker invariant), and `tool_output_full` is likewise session-only.
+  Writing tool records into `messages` would violate that invariant, so
+  `tool_call`/`tool_result` rows live entirely in this table, with
+  `payload_json` carrying the full untruncated result. The trajectory view
+  becomes the only place historical tool output is reviewable — a feature,
+  not a workaround. Both kinds key on the *parent assistant message's*
+  `message_id`; `seq` orders multiple tool calls within one assistant step.
+- **PK is `(message_id, event_kind, seq)`**: one assistant message may emit
+  several tool calls, so `(message_id, event_kind)` alone would collide. The
+  unique `(conversation_id, seq)` index enforces ledger ordering; writes are
+  upsert-by-seq.
 - **NULLable timing**: older messages and non-streamed records simply have
   NULL timing; the view renders blanks (mirrors dsh: never fabricate
   durations for in-flight rows).
-- **`seq`** is assigned at write time (max+1 per conversation) so the ledger
-  has a stable total order even when wall-clock timestamps tie.
+- **`seq`** is assigned at write time (max+1 per conversation) *inside the
+  same transaction as the insert*, so concurrent writers (hands-free,
+  compaction auxiliary turns) cannot collide.
 - **Turn boundaries are derived, not stored as rows**: a turn starts at each
-  user (or compaction) record; no `turn_marker` rows exist.
-- **Tool calls are not message rows** (they are embedded in assistant
-  content). A sidecar row with `event_kind='tool_call'` reuses the *parent
-  assistant message's* `message_id` — `(message_id, event_kind)` is the
-  effective identity — and `seq` orders multiple tool calls within one
-  assistant step. `tool_result` rows key on the tool message's own id.
+  user record. Compaction markers are likewise NOT sidecar rows — compaction
+  produces no persisted message row; the projection reads compaction
+  transactions from `console_context_repository` and renders them as
+  between-turn markers.
+- **Branch semantics**: the ledger renders the **active path** by default.
+  Superseded variants (tree siblings off the active path) are not top-level
+  rows; the inspector of a record with variants lists them (contents +
+  selection state), keeping forking history visible without cluttering the
+  ledger.
+- **Soft-deleted messages are excluded**: the projection joins `messages`
+  and filters `deleted = 0`; orphaned sidecar rows are ignored (`ON DELETE
+  CASCADE` only fires on hard deletes).
 - Migration: `chachanotes_v37_to_v38_message_trajectory_metadata.sql` +
   PRAGMA-checked Python runner + per-migration test (existing pattern).
 
@@ -127,7 +148,9 @@ ADR-031; footer hint registered via `register_footer_shortcuts`):
   (per-turn collapse state), nested tool rows indented under assistant steps.
 - Selection inspector pane: tokens (input / cache read / cache write /
   output), timing (step start → first token → completion, derived duration),
-  model/provider, full tool payload access (`tool_output_full`).
+  model/provider, full tool payload access (from the sidecar's `payload_json`
+  for history; the live in-memory `tool_output_full` while the session is
+  open).
 - Search box filtering rows (turn headers match if any child matches).
 - Live tail-follow: subscribes to the Console store/stream completion events;
   follows the tail unless the user has scrolled up (follow suspends, resumes
