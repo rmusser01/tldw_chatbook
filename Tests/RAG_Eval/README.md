@@ -773,7 +773,19 @@ at k=200 separates "the expansion never reached the document" from "it reached
 it and lost its slot". **0 of the 10 are unmatched** — 8 seam-displaced, 2
 merge-displaced (**re-measured under the rank-fair merge, 2026-08-14: still 10
 lost, now 9 seam-displaced / 1 merge-displaced, and 2 of the 10 are different
-queries — see the staleness marker**). The loss channel is **pure dilution**:
+queries: pre-fix lost `kw-ashgrove-pump`/`kw-drayton-conveyor` — conversation
+targets, merge-displaced at position 21; post-fix loses
+`kw-plant-maintenance-record`/`sc-meter-box-key` — NOTE targets. The swap's
+direction is the rank-fair rotation's cost: media/conversation rows now take
+top-M slots a full notes seam used to monopolise, so in a widened-feed regime
+the displacement cost lands on the notes seam. Net-neutral on the verdict's
+loss clause; named so it is a disclosed cost, not a quiet count**). Under a
+rank-fair three-seam rotation a within-seam rank `r` row lands at merged
+position at most `3r-1`, so a merged-position-`p` row has `r ≥ (p+1)/3` — the
+shallowest post-fix media miss sits at within-seam rank ≥7 against a reachable
+depth of 3 at k=10; no ORDERING change can surface it (the bound is rank-fair-
+qualified: a media-first concatenation could, but is not on the table). The
+loss channel is **pure dilution**:
 expansion-term rows
 evicting a rank-1 target from a 10-row per-seam budget. (This refuted the
 implementer's own prior, which was that the probe's expression — the engine's
