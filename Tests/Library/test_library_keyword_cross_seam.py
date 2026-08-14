@@ -229,6 +229,16 @@ async def _seam_ranking(app, source: str, query: str, *, top_k: int = 5):
     against itself. Caught exactly that way -- a mutation reversing each
     seam's ranking before the interleave went undetected until this helper
     stopped going through `search()`.
+
+    THE TRADE (review, 2026-08-14): this helper hand-duplicates
+    `_search_keyword`'s seam-call recipe instead of sharing code with it.
+    Today the duplication is exact -- `outcomes[source_type][1]` reaches
+    `interleave_rankings` with NO transformation between the seam call and
+    the merge -- so the reference is byte-identical to what the merge
+    consumes. If a future change inserts ANY post-seam, pre-merge step in
+    `_search_keyword` (a filter, a threaded kwarg, a normalization), this
+    helper goes silently stale: update it in the same commit, or the pins
+    compare against a reference the merge no longer sees.
     """
     service = LibraryLocalRagSearchService(app)
     if source == "notes":
