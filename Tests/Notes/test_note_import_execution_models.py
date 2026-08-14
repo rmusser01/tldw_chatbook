@@ -2,11 +2,12 @@
 
 import inspect
 from dataclasses import FrozenInstanceError, asdict, replace
+from itertools import repeat
 from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.Notes import note_import_execution_models
+from tldw_chatbook.Notes import note_import_execution_models, note_import_planner
 from tldw_chatbook.Notes.note_import_execution_models import (
     MAX_IMPORT_REASON_CODE_LENGTH,
     ApprovedNoteImportPlan,
@@ -20,6 +21,7 @@ from tldw_chatbook.Notes.note_import_execution_models import (
     approve_note_import_plan,
 )
 from tldw_chatbook.Notes.note_import_plan_models import (
+    MAX_IMPORT_ENTRIES,
     ImportAction,
     ImportBounds,
     ImportClassification,
@@ -331,6 +333,27 @@ def test_plan_digest_is_deterministic_for_the_same_authority() -> None:
     assert first._private_plan_digest() == second._private_plan_digest()
 
 
+def test_execution_payload_fingerprint_matches_the_planner_contract() -> None:
+    payloads = (
+        ParsedNotePayload(
+            title="Cafe\u0301 notes",
+            content="Re\u0301sume\u0301 body",
+            keywords=("na\u0308ive", "東京"),
+            template_name="Re\u0301union",
+        ),
+        ParsedNotePayload(
+            title="Second",
+            content="Emoji 📝",
+            keywords=("two",),
+            template_name=None,
+        ),
+    )
+
+    assert note_import_execution_models._private_payload_fingerprint(
+        payloads
+    ) == note_import_planner._private_payload_fingerprint(payloads)
+
+
 def _authority_variants() -> tuple[NoteImportPlan, ...]:
     base_item = _item()
     base_payload = base_item.payloads[0]
@@ -339,6 +362,15 @@ def _authority_variants() -> tuple[NoteImportPlan, ...]:
     base_bounds = _plan().bounds
     return (
         _plan(item=replace(base_item, item_id="item-2")),
+        _plan(
+            item=replace(
+                base_item,
+                source=replace(
+                    base_item.source,
+                    kind=ImportSourceKind.SELECTED_FILE,
+                ),
+            )
+        ),
         _plan(item=_item(source_path=Path("/private/user/Project/other.json"))),
         _plan(item=_item(display_path="Project/other.json")),
         _plan(item=_item(payload=replace(base_payload, title="Different title"))),
@@ -358,8 +390,16 @@ def _authority_variants() -> tuple[NoteImportPlan, ...]:
             )
         ),
         _plan(item=_item(replace_content=False, add_membership=True)),
+        _plan(item=_item(replace_content=True, add_membership=False)),
         _plan(item=_item(match=replace(base_match, note_id="other-note-id"))),
         _plan(item=_item(match=replace(base_match, note_version=8))),
+        _plan(
+            item=replace(
+                base_item,
+                classification=ImportClassification.UNCERTAIN_MATCH,
+                match=replace(base_match, kind=ImportMatchKind.USER_CONFIRMED),
+            )
+        ),
         _plan(item=_item(membership_segments=("Imported Project", "Different folder"))),
         _plan(
             proposed_folder_paths=(
@@ -368,6 +408,13 @@ def _authority_variants() -> tuple[NoteImportPlan, ...]:
             )
         ),
         _plan(bounds=replace(base_bounds, max_files=51)),
+        _plan(bounds=replace(base_bounds, max_file_bytes=1_000_001)),
+        _plan(bounds=replace(base_bounds, max_total_bytes=5_000_001)),
+        _plan(bounds=replace(base_bounds, max_depth=9)),
+        _plan(bounds=replace(base_bounds, max_reason_length=241)),
+        _plan(bounds=replace(base_bounds, max_entries=1_001)),
+        _plan(bounds=replace(base_bounds, max_notes_per_file=101)),
+        _plan(bounds=replace(base_bounds, max_keywords_per_note=51)),
         _plan(
             root_collision=RootCollisionState(
                 proposed_label="Project",
@@ -375,6 +422,26 @@ def _authority_variants() -> tuple[NoteImportPlan, ...]:
                 choice=RootCollisionChoice.UNIQUE_SIBLING,
                 resolved_label="Imported Project",
             )
+        ),
+        _plan(
+            root_collision=RootCollisionState(
+                proposed_label="Different Project",
+                collides=True,
+                choice=RootCollisionChoice.RENAMED_ROOT,
+                resolved_label="Imported Project",
+            )
+        ),
+        _plan(
+            proposed_folder_paths=(
+                ("Different Imported",),
+                ("Different Imported", "Meetings"),
+            ),
+            root_collision=RootCollisionState(
+                proposed_label="Project",
+                collides=True,
+                choice=RootCollisionChoice.RENAMED_ROOT,
+                resolved_label="Different Imported",
+            ),
         ),
     )
 
@@ -387,6 +454,54 @@ def test_plan_digest_changes_for_each_authority_bearing_field(
     changed = approve_note_import_plan(variant, approval_id=_APPROVAL_ID)
 
     assert baseline._private_plan_digest() != changed._private_plan_digest()
+
+
+def test_plan_digest_is_sensitive_to_membership_payload_indexes() -> None:
+    payloads = (
+        ParsedNotePayload(title="First", content="First body"),
+        ParsedNotePayload(title="Second", content="Second body"),
+    )
+    source = ImportSource(
+        kind=ImportSourceKind.DIRECTORY_MEMBER,
+        display_path="Project/two-notes.json",
+        source_path=Path("/private/user/Project/two-notes.json"),
+    )
+
+    def item_with_indexes(first: int, second: int) -> ImportPreviewItem:
+        return ImportPreviewItem(
+            item_id="two-notes",
+            source=source,
+            payloads=payloads,
+            memberships=(
+                ProposedFolderMembership(
+                    payload_index=first,
+                    folder_segments=("Imported Project", "First"),
+                ),
+                ProposedFolderMembership(
+                    payload_index=second,
+                    folder_segments=("Imported Project", "Second"),
+                ),
+            ),
+            classification=ImportClassification.NEW,
+            reason="Ready to import.",
+            default_action=ImportAction.CREATE_NEW,
+            selected_action=ImportAction.CREATE_NEW,
+            allowed_actions=(ImportAction.SKIP, ImportAction.CREATE_NEW),
+            match=None,
+            replace_content=False,
+            add_membership=True,
+        )
+
+    first = approve_note_import_plan(
+        _plan(item=item_with_indexes(0, 1)),
+        approval_id=_APPROVAL_ID,
+    )
+    second = approve_note_import_plan(
+        _plan(item=item_with_indexes(1, 0)),
+        approval_id=_APPROVAL_ID,
+    )
+
+    assert first._private_plan_digest() != second._private_plan_digest()
 
 
 def test_execution_projection_enums_have_stable_values() -> None:
@@ -528,6 +643,55 @@ def test_private_collection_type_dispatch_and_iterator_errors_are_sanitized() ->
     assert caught.value.__context__ is None
 
 
+def test_private_collection_ceiling_matches_the_planner_entry_limit() -> None:
+    assert (
+        note_import_execution_models.MAX_PRIVATE_IMPORT_COLLECTION_ITEMS
+        == MAX_IMPORT_ENTRIES
+    )
+
+
+def test_private_collection_accepts_exactly_the_public_safety_ceiling() -> None:
+    receipt = _receipt(_note_ids=repeat("note-id", MAX_IMPORT_ENTRIES))
+
+    assert len(receipt._note_ids) == MAX_IMPORT_ENTRIES
+
+
+def test_private_collection_rejects_one_item_over_the_public_safety_ceiling() -> None:
+    with pytest.raises(ValueError, match="safety ceiling") as caught:
+        _receipt(_note_ids=repeat("note-id", MAX_IMPORT_ENTRIES + 1))
+
+    assert "_note_ids" not in str(caught.value)
+    assert caught.value.__context__ is None
+
+
+def test_private_collection_stops_an_infinite_iterator_at_ceiling_plus_one() -> None:
+    class CountingInfinitePrivateValues:
+        def __init__(self) -> None:
+            self.pulls = 0
+
+        def __iter__(self) -> "CountingInfinitePrivateValues":
+            return self
+
+        def __next__(self) -> str:
+            self.pulls += 1
+            if self.pulls > MAX_IMPORT_ENTRIES + 1:
+                raise RuntimeError(_HOSTILE_TEXT_SECRET)
+            return "note-id"
+
+        def __repr__(self) -> str:
+            return _HOSTILE_TEXT_SECRET
+
+    values = CountingInfinitePrivateValues()
+
+    with pytest.raises(ValueError, match="safety ceiling") as caught:
+        _receipt(_note_ids=values)
+
+    assert values.pulls == MAX_IMPORT_ENTRIES + 1
+    assert _HOSTILE_TEXT_SECRET not in str(caught.value)
+    assert "_note_ids" not in str(caught.value)
+    assert caught.value.__context__ is None
+
+
 def test_private_receipt_ids_require_exact_builtin_strings() -> None:
     class HostilePrivateId(str):
         def __repr__(self) -> str:
@@ -637,6 +801,116 @@ def test_execution_projections_reject_hostile_reason_code_subclasses(
 def test_execution_counts_and_state_fail_closed(overrides: dict[str, object]) -> None:
     with pytest.raises((TypeError, ValueError)):
         _receipt(**overrides)
+
+
+@pytest.mark.parametrize(
+    "projection_type",
+    [
+        ImportExecutionProgress,
+        ImportExecutionDiagnostic,
+        ImportExecutionReceipt,
+    ],
+)
+@pytest.mark.parametrize(
+    "invalid_counts",
+    [
+        {
+            "state": ImportSessionState.PENDING,
+            "total": 1,
+            "completed": 1,
+            "imported": 1,
+        },
+        {
+            "state": ImportSessionState.COMPLETED,
+            "total": 2,
+            "completed": 1,
+            "imported": 1,
+        },
+        {
+            "state": ImportSessionState.COMPLETED,
+            "total": 1,
+            "completed": 1,
+            "failed": 1,
+            "retryable": 1,
+        },
+    ],
+)
+def test_execution_projections_reject_counts_that_contradict_their_state(
+    projection_type: type[
+        ImportExecutionProgress | ImportExecutionDiagnostic | ImportExecutionReceipt
+    ],
+    invalid_counts: dict[str, object],
+) -> None:
+    values: dict[str, object] = {
+        "state": ImportSessionState.RUNNING,
+        "total": 1,
+        "completed": 0,
+        "imported": 0,
+        "updated": 0,
+        "skipped": 0,
+        "failed": 0,
+        "retryable": 0,
+        "reason_code": None,
+    }
+    values.update(invalid_counts)
+    if projection_type is ImportExecutionReceipt:
+        values["approval_id"] = _APPROVAL_ID
+
+    with pytest.raises(ValueError):
+        projection_type(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "projection_type",
+    [
+        ImportExecutionProgress,
+        ImportExecutionDiagnostic,
+        ImportExecutionReceipt,
+    ],
+)
+@pytest.mark.parametrize(
+    "valid_counts",
+    [
+        {
+            "state": ImportSessionState.COMPLETED,
+            "total": 0,
+            "completed": 0,
+        },
+        {
+            "state": ImportSessionState.NEEDS_ATTENTION,
+            "total": 2,
+            "completed": 1,
+            "failed": 1,
+            "retryable": 1,
+            "reason_code": "target_conflict",
+        },
+    ],
+)
+def test_execution_projections_accept_truthful_terminal_states(
+    projection_type: type[
+        ImportExecutionProgress | ImportExecutionDiagnostic | ImportExecutionReceipt
+    ],
+    valid_counts: dict[str, object],
+) -> None:
+    values: dict[str, object] = {
+        "state": ImportSessionState.RUNNING,
+        "total": 0,
+        "completed": 0,
+        "imported": 0,
+        "updated": 0,
+        "skipped": 0,
+        "failed": 0,
+        "retryable": 0,
+        "reason_code": None,
+    }
+    values.update(valid_counts)
+    if projection_type is ImportExecutionReceipt:
+        values["approval_id"] = _APPROVAL_ID
+
+    projection = projection_type(**values)  # type: ignore[arg-type]
+
+    assert projection.state is valid_counts["state"]
+    assert projection.completed == valid_counts["completed"]
 
 
 def test_execution_state_rejects_a_spoofed_import_session_state_class() -> None:

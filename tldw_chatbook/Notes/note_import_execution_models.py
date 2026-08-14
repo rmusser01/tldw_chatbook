@@ -13,10 +13,12 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from itertools import islice
 from unicodedata import normalize
 from uuid import UUID, uuid4
 
 from tldw_chatbook.Notes.note_import_plan_models import (
+    MAX_IMPORT_ENTRIES,
     ImportPreviewItem,
     NoteImportPlan,
     ParsedNotePayload,
@@ -25,6 +27,9 @@ from tldw_chatbook.Notes.note_import_plan_models import (
 
 MAX_IMPORT_REASON_CODE_LENGTH = 64
 """Absolute ceiling for a public execution reason code."""
+
+MAX_PRIVATE_IMPORT_COLLECTION_ITEMS = MAX_IMPORT_ENTRIES
+"""Absolute item ceiling for each private execution receipt collection."""
 
 _MAX_PRIVATE_IMPORT_ID_LENGTH = 256
 _MAX_PRIVATE_IMPORT_ERROR_LENGTH = 4_096
@@ -330,6 +335,12 @@ def _validate_execution_counts(
         raise ValueError("completed cannot exceed total.")
     if retryable > failed:
         raise ValueError("retryable cannot exceed failed.")
+    if state is ImportSessionState.PENDING and completed != 0:
+        raise ValueError("Pending sessions cannot report completed outcomes.")
+    if state is ImportSessionState.COMPLETED and (
+        completed != total or failed != 0 or retryable != 0
+    ):
+        raise ValueError("Completed sessions must finish every item without failures.")
     _validate_reason_code(reason_code)
 
 
@@ -343,11 +354,18 @@ def _copy_private_collection(
         raise TypeError("Private receipt data must be a collection.")
     copied: tuple[object, ...] | None
     try:
-        copied = tuple(values)  # type: ignore[arg-type]
+        copied = tuple(
+            islice(
+                values,  # type: ignore[arg-type]
+                MAX_PRIVATE_IMPORT_COLLECTION_ITEMS + 1,
+            )
+        )
     except Exception:  # noqa: BLE001 - validation boundary must redact iterator errors
         copied = None
     if copied is None:
         raise ValueError("The private collection could not be read safely.")
+    if len(copied) > MAX_PRIVATE_IMPORT_COLLECTION_ITEMS:
+        raise ValueError("Private receipt data exceeds its safety ceiling.")
     try:
         valid = all(type(value) is str and validator(value) for value in copied)
     except Exception:  # noqa: BLE001 - validation boundary must redact validator errors
