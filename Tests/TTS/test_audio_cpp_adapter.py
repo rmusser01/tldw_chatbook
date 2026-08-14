@@ -174,6 +174,31 @@ def _managed_config(tmp_path: Path, **updates: Any) -> AudioCppConfig:
     return AudioCppConfig.from_mapping(values)
 
 
+def _guided_settings(tmp_path: Path):
+    from tldw_chatbook.TTS.audio_cpp_guided_config import AudioCppSettingsConfig
+    from tldw_chatbook.TTS.audio_cpp_package_scanner import (
+        scan_audio_cpp_package_root,
+    )
+
+    root = tmp_path / "guided-model"
+    root.mkdir()
+    (root / "supertonic-3-orig.gguf").write_bytes(b"GGUF" + (3).to_bytes(4, "little"))
+    candidate = scan_audio_cpp_package_root(root).discoveries[0].match.candidates[0]
+    package = candidate.accept(public_model_id="model")
+    binary = tmp_path / "audiocpp_server"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o700)
+    return AudioCppSettingsConfig.from_mapping(
+        {
+            "mode": "managed",
+            "managed_setup_source": "guided",
+            "guided_binary_path": str(binary),
+            "guided_packages": [package.model_dump(mode="json")],
+            "guided_default_model_id": "model",
+        }
+    )
+
+
 class _StubSupervisor:
     def __init__(self, events: list[str] | None = None) -> None:
         self.events = events
@@ -4079,6 +4104,68 @@ async def test_managed_adapter_close_failure_retries_only_remaining_cleanup(
 
     assert supervisor.stop_calls == [1]
     assert close_calls == {"request": 1, "health": 2}
+
+
+@pytest.mark.asyncio
+async def test_guided_materialization_cleanup_owner_seals_launch_until_close_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-spawn cleanup owner remains reachable until close succeeds."""
+
+    class Owner:
+        def __init__(self) -> None:
+            self.cleanup_calls = 0
+
+        def cleanup(self) -> None:
+            self.cleanup_calls += 1
+            if self.cleanup_calls == 1:
+                raise RuntimeError("private retained cleanup failure")
+
+    owner = Owner()
+
+    class GuidedFailure(ValueError):
+        code = "artifact_cleanup_failed"
+
+        def __init__(self) -> None:
+            super().__init__("stable guided failure")
+            self._owner = owner
+
+        def take_cleanup_owner(self):
+            retained, self._owner = self._owner, None
+            return retained
+
+    materialize_calls = 0
+
+    async def fail_materialization(_settings: object) -> None:
+        nonlocal materialize_calls
+        materialize_calls += 1
+        raise GuidedFailure
+
+    monkeypatch.setattr(audio_cpp_module, "AudioCppGuidedLaunchError", GuidedFailure)
+    monkeypatch.setattr(
+        audio_cpp_module,
+        "materialize_audio_cpp_guided_launch",
+        fail_materialization,
+    )
+    adapter = AudioCppAdapter(
+        _managed_config(tmp_path),
+        supervisor=_StubSupervisor(),
+        guided_settings=_guided_settings(tmp_path),
+    )
+
+    with pytest.raises(TTSOperationError) as first:
+        await adapter.get_catalog(refresh=True)
+    with pytest.raises(TTSOperationError):
+        await adapter.get_catalog(refresh=True)
+    assert materialize_calls == 1
+    assert first.value.code == "process_spawn_failed"
+
+    with pytest.raises(RuntimeError, match="audio.cpp generation cleanup failed"):
+        await adapter.close()
+    await adapter.close()
+
+    assert owner.cleanup_calls == 2
 
 
 @pytest.mark.asyncio

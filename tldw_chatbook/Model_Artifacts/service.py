@@ -1076,16 +1076,16 @@ class _LeasedArtifactHandle(Generic[_HandleT]):
         handle: _HandleT,
         lease_set: ArtifactOperationLeaseSet,
     ) -> None:
-        self.handle = handle
+        self.handle: _HandleT = handle
         self._lease_set: ArtifactOperationLeaseSet | None = lease_set
 
     def close(self) -> None:
         """Release the owned shared lease set idempotently."""
 
         lease_set = self._lease_set
-        self._lease_set = None
         if lease_set is not None:
             lease_set.release()
+            self._lease_set = None
 
     def __enter__(self) -> Self:
         """Return this already acquired handle without reacquiring leases."""
@@ -1765,9 +1765,7 @@ class ModelArtifactService:
             for candidate in self._state_files(managed_root, 3):
                 if self._is_valid_managed_staging_entry(managed_root, candidate):
                     continue
-                self._remove_state_path(
-                    candidate, "failed to remove staging orphan"
-                )
+                self._remove_state_path(candidate, "failed to remove staging orphan")
                 removed.append(candidate.relative_to(self._staging_path).as_posix())
             return tuple(removed)
         finally:
@@ -2027,7 +2025,9 @@ class ModelArtifactService:
         try:
             entries = tuple(os.scandir(directory))
         except OSError as error:
-            raise ArtifactPathError("failed to scan download staging payload") from error
+            raise ArtifactPathError(
+                "failed to scan download staging payload"
+            ) from error
         for entry in entries:
             path = Path(entry.path)
             try:
@@ -2528,7 +2528,9 @@ class ModelArtifactService:
                 directory=True,
             )
         except OSError as error:
-            raise ArtifactStateError("failed to create download staging operation") from error
+            raise ArtifactStateError(
+                "failed to create download staging operation"
+            ) from error
         try:
             temporary_marker = temporary / marker.name
             temporary_payload = temporary / payload.name
@@ -2598,7 +2600,9 @@ class ModelArtifactService:
                     temporary / payload.name,
                     temporary / state.name,
                 )
-            raise ArtifactStateError("failed to initialize download staging operation") from error
+            raise ArtifactStateError(
+                "failed to initialize download staging operation"
+            ) from error
 
     def _finalize_download_stage(
         self,
@@ -2693,9 +2697,13 @@ class ModelArtifactService:
         try:
             shutil.rmtree(self._retire_download_stage_operation(stage.operation))
         except FileNotFoundError:
-            raise ArtifactPathError("download staging operation disappeared during discard")
+            raise ArtifactPathError(
+                "download staging operation disappeared during discard"
+            )
         except OSError as error:
-            raise ArtifactStateError("failed to discard download staging operation") from error
+            raise ArtifactStateError(
+                "failed to discard download staging operation"
+            ) from error
 
     def _discard_temporary_download_stage(self, stage: _ManagedDownloadStage) -> None:
         """Remove one verified losing temporary publication candidate."""
@@ -2741,7 +2749,9 @@ class ModelArtifactService:
         try:
             shutil.rmtree(stage.operation)
         except OSError as error:
-            raise ArtifactStateError("failed to discard download staging temporary") from error
+            raise ArtifactStateError(
+                "failed to discard download staging temporary"
+            ) from error
 
     def _download_stage_paths(
         self,
@@ -2861,9 +2871,15 @@ class ModelArtifactService:
     ) -> None:
         self._validate_download_stage_handle_paths(stage)
         operation = stage.operation
-        operation_identity = self._download_stage_node_identity(operation, directory=True)
-        marker_identity = self._download_stage_node_identity(stage.marker, directory=False)
-        payload_identity = self._download_stage_node_identity(stage.payload, directory=True)
+        operation_identity = self._download_stage_node_identity(
+            operation, directory=True
+        )
+        marker_identity = self._download_stage_node_identity(
+            stage.marker, directory=False
+        )
+        payload_identity = self._download_stage_node_identity(
+            stage.payload, directory=True
+        )
         state_identity = self._download_stage_node_identity(stage.state, directory=True)
         if (
             operation_identity != stage.operation_identity
@@ -2897,7 +2913,9 @@ class ModelArtifactService:
         try:
             info = path.stat(follow_symlinks=False)
         except OSError as error:
-            raise ArtifactPathError("failed to inspect download staging path") from error
+            raise ArtifactPathError(
+                "failed to inspect download staging path"
+            ) from error
         if stat.S_ISLNK(info.st_mode) or (
             not stat.S_ISDIR(info.st_mode)
             if directory
@@ -2919,7 +2937,9 @@ class ModelArtifactService:
         try:
             entries = {entry.name: Path(entry.path) for entry in os.scandir(operation)}
         except OSError as error:
-            raise ArtifactPathError("failed to scan download staging operation") from error
+            raise ArtifactPathError(
+                "failed to scan download staging operation"
+            ) from error
         expected = {
             marker.name: marker,
         }
@@ -2993,10 +3013,13 @@ class ModelArtifactService:
         """
 
         try:
-            if self._download_stage_node_identity(
-                operation,
-                directory=True,
-            ) != operation_identity:
+            if (
+                self._download_stage_node_identity(
+                    operation,
+                    directory=True,
+                )
+                != operation_identity
+            ):
                 return
             entries = {entry.name: Path(entry.path) for entry in os.scandir(operation)}
             if set(entries) - {marker.name, payload.name, state.name}:
@@ -3040,7 +3063,9 @@ class ModelArtifactService:
                 or type(raw["descriptor_fingerprint"]) is not str
                 or raw["descriptor_fingerprint"] != fingerprint
             ):
-                raise ArtifactPathError("download stage marker does not match descriptor")
+                raise ArtifactPathError(
+                    "download stage marker does not match descriptor"
+                )
         except ArtifactPathError:
             raise
         except (
@@ -3058,7 +3083,9 @@ class ModelArtifactService:
             try:
                 entries = tuple(os.scandir(directory))
             except OSError as error:
-                raise ArtifactPathError("failed to scan download staging state") from error
+                raise ArtifactPathError(
+                    "failed to scan download staging state"
+                ) from error
             for entry in entries:
                 path = Path(entry.path)
                 try:
@@ -3074,7 +3101,9 @@ class ModelArtifactService:
                 elif stat.S_ISREG(info.st_mode) and path.suffix == ".json":
                     try:
                         with path.open("r", encoding="utf-8") as handle:
-                            json.load(handle, object_pairs_hook=_reject_duplicate_json_keys)
+                            json.load(
+                                handle, object_pairs_hook=_reject_duplicate_json_keys
+                            )
                     except (
                         OSError,
                         UnicodeError,
@@ -3094,7 +3123,9 @@ class ModelArtifactService:
         try:
             shutil.rmtree(self._retire_download_stage_operation(stage.operation))
         except OSError as error:
-            raise ArtifactStateError("failed to clean finalized download staging") from error
+            raise ArtifactStateError(
+                "failed to clean finalized download staging"
+            ) from error
 
     def _retire_download_stage_operation(self, operation: Path) -> Path:
         """Atomically move one validated canonical operation off its stable path."""
@@ -3142,7 +3173,9 @@ class ModelArtifactService:
         try:
             entries = {entry.name for entry in os.scandir(stage.operation)}
         except OSError as error:
-            raise ArtifactPathError("failed to scan finalized download staging") from error
+            raise ArtifactPathError(
+                "failed to scan finalized download staging"
+            ) from error
         expected_entries = {stage.marker.name}
         if state_identity is not None:
             expected_entries.add(stage.state.name)
@@ -3972,7 +4005,7 @@ class ModelArtifactService:
             for index in range(1, len(Path(path).parts))
         }
         actual_files: set[str] = set()
-        snapshots = [("", _path_snapshot(root_info))]
+        source_snapshots = [("", _path_snapshot(root_info))]
 
         def scan(directory: Path, prefix: str = "") -> None:
             try:
@@ -4006,7 +4039,7 @@ class ModelArtifactService:
                     raise ArtifactPathError(
                         f"source contains a special entry: {relative}"
                     )
-                snapshots.append((relative, _path_snapshot(entry_info)))
+                source_snapshots.append((relative, _path_snapshot(entry_info)))
 
         scan(lexical_root)
         missing = expected_files - actual_files
@@ -4014,7 +4047,7 @@ class ModelArtifactService:
             raise ArtifactPathError(
                 f"source is missing declared files: {sorted(missing)}"
             ) from FileNotFoundError("declared payload file is missing")
-        return tuple(snapshots)
+        return tuple(source_snapshots)
 
     def _copy_payload(
         self,

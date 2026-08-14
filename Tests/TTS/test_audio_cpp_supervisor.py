@@ -965,9 +965,10 @@ async def test_generated_artifact_cleanup_failure_is_safe_and_blocks_relaunch(
         port_preflight=_available_preflight,
     )
     launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
+    hooks = _HooksFactory()
     await supervisor.ensure_running(
         launch,
-        generation_hooks_factory=_HooksFactory(),
+        generation_hooks_factory=hooks,
     )
 
     try:
@@ -989,6 +990,8 @@ async def test_generated_artifact_cleanup_failure_is_safe_and_blocks_relaunch(
         assert supervisor.admission_snapshot().stage_application_eligible is False
         assert artifact.cleanup_calls == 1
         assert process.wait_calls == 1
+        retained = supervisor._generation
+        assert retained is not None
 
         with pytest.raises(TTSOperationError) as retried:
             await supervisor.ensure_running(
@@ -997,6 +1000,13 @@ async def test_generated_artifact_cleanup_failure_is_safe_and_blocks_relaunch(
             )
         assert retried.value.code == "cleanup_failed"
         assert _exception_graph(retried.value) == [retried.value]
+
+        artifact.cleanup_failure = None
+        await supervisor.stop()
+        assert artifact.cleanup_calls == 2
+        assert hooks.cleanup_calls == 1
+        assert supervisor._generation is None
+        assert process.wait_calls == 1
     finally:
         await asyncio.gather(supervisor.close(), return_exceptions=True)
         await asyncio.gather(supervisor.wait_closed(), return_exceptions=True)

@@ -8,6 +8,7 @@ import os
 import stat
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -56,6 +57,55 @@ def _managed_identity():
         revision=AUDIO_CPP_ARTIFACT_COMMIT,
         variant="orig",
     )
+
+
+def _pocket_managed_identity():
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        AUDIO_CPP_ARTIFACT_COMMIT,
+    )
+    from tldw_chatbook.TTS.audio_cpp_guided_config import (
+        AudioCppManagedArtifactIdentity,
+    )
+
+    return AudioCppManagedArtifactIdentity(
+        artifact_id="audio-cpp-pocket-tts-english-q8-0",
+        revision=AUDIO_CPP_ARTIFACT_COMMIT,
+        variant="q8_0",
+    )
+
+
+class _ManagedLeaseSpy:
+    def __init__(self, reference: object, root: Path) -> None:
+        self.handle = SimpleNamespace(
+            root=reference,
+            closure=(reference,),
+            paths=((reference, root),),
+        )
+        self.close_calls = 0
+        self.fail_close = False
+
+    def close(self) -> None:
+        self.close_calls += 1
+        if self.fail_close:
+            raise RuntimeError("PRIVATE_LEASE_CLOSE_DETAIL")
+
+
+class _ManagedServiceSpy:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.activate_calls: list[object] = []
+        self.acquire_calls: list[object] = []
+        self.leases: list[_ManagedLeaseSpy] = []
+
+    def activate(self, reference: object) -> object:
+        self.activate_calls.append(reference)
+        return reference
+
+    def acquire(self, reference: object) -> _ManagedLeaseSpy:
+        self.acquire_calls.append(reference)
+        lease = _ManagedLeaseSpy(reference, self.root)
+        self.leases.append(lease)
+        return lease
 
 
 def _binary(tmp_path: Path) -> Path:
@@ -205,9 +255,13 @@ async def test_materializes_exact_private_multi_model_server_json(
 
 
 @pytest.mark.asyncio
-async def test_managed_identity_does_not_change_guided_launch_projection(
+async def test_managed_launch_activates_acquires_and_retains_exact_root_lease(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
     _, materialize = _launch_api()
     root = tmp_path / "models" / "managed-supertonic"
     _write_gguf(root, "supertonic-3-orig.gguf")
@@ -217,6 +271,8 @@ async def test_managed_identity_does_not_change_guided_launch_projection(
         public_model_id="managed-narrator",
         managed_artifact=_managed_identity(),
     )
+    service = _ManagedServiceSpy(root)
+    monkeypatch.setattr(launch_module, "managed_service", lambda: service)
 
     launch = await materialize(
         _settings(_binary(tmp_path), [accepted]),
@@ -229,7 +285,278 @@ async def test_managed_identity_does_not_change_guided_launch_projection(
     assert launch.expected_models[0].model_id == "managed-narrator"
     assert launch.expected_models[0].family == "supertonic"
     assert launch.server_json_path.is_file()
+    identity = _managed_identity()
+    reference = ArtifactRef(identity.artifact_id, identity.revision, identity.variant)
+    assert service.activate_calls == [reference]
+    assert service.acquire_calls == [reference]
+    assert service.leases[0].close_calls == 0
+    assert json.loads(launch.server_json_path.read_text())["models"][0]["path"] == str(
+        root / "supertonic-3-orig.gguf"
+    )
     launch.generated_artifact.cleanup()
+    assert service.leases[0].close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_local_launch_does_not_construct_managed_artifact_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    root = tmp_path / "models" / "local-supertonic"
+    _write_gguf(root, "supertonic-3-orig.gguf")
+    accepted = _accept(root, "supertonic_3_orig", "local-narrator")
+
+    def unexpected_service() -> object:
+        raise AssertionError("local packages must not touch the managed store")
+
+    monkeypatch.setattr(launch_module, "managed_service", unexpected_service)
+    launch = await launch_module.materialize_audio_cpp_guided_launch(
+        _settings(_binary(tmp_path), [accepted]),
+        artifact_root=tmp_path / "runtime-local",
+        port_selector=lambda: 54_327,
+        system="darwin",
+        architecture="arm64",
+    )
+
+    assert launch.generated_artifact is not None
+    launch.generated_artifact.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_generated_cleanup_retries_before_releasing_managed_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    root = tmp_path / "models" / "managed-supertonic"
+    _write_gguf(root, "supertonic-3-orig.gguf")
+    accepted = _accept(root, "supertonic_3_orig", "managed-narrator").model_copy(
+        update={"managed_artifact": _managed_identity()}
+    )
+    service = _ManagedServiceSpy(root)
+    monkeypatch.setattr(launch_module, "managed_service", lambda: service)
+    launch = await launch_module.materialize_audio_cpp_guided_launch(
+        _settings(_binary(tmp_path), [accepted]),
+        artifact_root=tmp_path / "runtime-retry",
+        port_selector=lambda: 54_328,
+        system="darwin",
+        architecture="arm64",
+    )
+    artifact = launch.generated_artifact
+    assert artifact is not None
+    real_rmdir = launch_module.os.rmdir
+    attempts = 0
+
+    def fail_once(*args: object, **kwargs: object) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("PRIVATE_CONFIG_CLEANUP_DETAIL")
+        real_rmdir(*args, **kwargs)
+
+    monkeypatch.setattr(launch_module.os, "rmdir", fail_once)
+
+    with pytest.raises(launch_module.AudioCppGuidedLaunchError) as first:
+        artifact.cleanup()
+    assert first.value.code == "artifact_cleanup_failed"
+    assert service.leases[0].close_calls == 0
+
+    artifact.cleanup()
+    assert service.leases[0].close_calls == 1
+    assert not launch.working_directory.exists()
+
+
+@pytest.mark.asyncio
+async def test_generated_cleanup_preserves_control_flow_and_retains_handle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    root = tmp_path / "models" / "managed-supertonic"
+    _write_gguf(root, "supertonic-3-orig.gguf")
+    accepted = _accept(root, "supertonic_3_orig", "managed-narrator").model_copy(
+        update={"managed_artifact": _managed_identity()}
+    )
+    service = _ManagedServiceSpy(root)
+    monkeypatch.setattr(launch_module, "managed_service", lambda: service)
+    launch = await launch_module.materialize_audio_cpp_guided_launch(
+        _settings(_binary(tmp_path), [accepted]),
+        artifact_root=tmp_path / "runtime-control",
+        port_selector=lambda: 54_331,
+        system="darwin",
+        architecture="arm64",
+    )
+    lease = service.leases[0]
+    real_close = lease.close
+    attempts = 0
+
+    def interrupt_once() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise KeyboardInterrupt
+        real_close()
+
+    monkeypatch.setattr(lease, "close", interrupt_once)
+
+    with pytest.raises(KeyboardInterrupt):
+        launch.generated_artifact.cleanup()
+    launch.generated_artifact.cleanup()
+
+    assert attempts == 2
+    assert lease.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_descriptor_close_error_is_not_unsafely_retried(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POSIX close ambiguity is terminal after the fd number loses authority."""
+
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    root = tmp_path / "models" / "supertonic"
+    _write_gguf(root, "supertonic-3-orig.gguf")
+    accepted = _accept(root, "supertonic_3_orig", "narrator")
+    launch = await launch_module.materialize_audio_cpp_guided_launch(
+        _settings(_binary(tmp_path), [accepted]),
+        artifact_root=tmp_path / "runtime-close",
+        port_selector=lambda: 54_332,
+        system="darwin",
+        architecture="arm64",
+    )
+    real_close = launch_module.os.close
+    closed: list[int] = []
+
+    def ambiguous_close(descriptor: int) -> None:
+        closed.append(descriptor)
+        real_close(descriptor)
+        if len(closed) == 1:
+            raise OSError("PRIVATE_AMBIGUOUS_CLOSE_DETAIL")
+
+    monkeypatch.setattr(launch_module.os, "close", ambiguous_close)
+
+    launch.generated_artifact.cleanup()
+    launch.generated_artifact.cleanup()
+
+    assert len(closed) == 2
+    assert not launch.working_directory.exists()
+
+
+@pytest.mark.asyncio
+async def test_partial_managed_acquisition_failure_retains_failed_cleanup_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    supertonic_root = tmp_path / "models" / "supertonic"
+    pocket_root = tmp_path / "models" / "pocket"
+    _write_gguf(supertonic_root, "supertonic-3-orig.gguf")
+    _write_gguf(pocket_root, "pocket-tts-english-q8_0.gguf")
+    first = _accept(supertonic_root, "supertonic_3_orig", "narrator").model_copy(
+        update={"managed_artifact": _managed_identity()}
+    )
+    second = _accept(pocket_root, "pocket_tts_english_q8_0", "clone").model_copy(
+        update={"managed_artifact": _pocket_managed_identity()}
+    )
+    roots = {
+        ArtifactRef(
+            first.managed_artifact.artifact_id,
+            first.managed_artifact.revision,
+            first.managed_artifact.variant,
+        ): supertonic_root,
+        ArtifactRef(
+            second.managed_artifact.artifact_id,
+            second.managed_artifact.revision,
+            second.managed_artifact.variant,
+        ): pocket_root,
+    }
+    first_lease: _ManagedLeaseSpy | None = None
+
+    class PartialService:
+        def activate(self, reference: object) -> object:
+            return reference
+
+        def acquire(self, reference: object) -> _ManagedLeaseSpy:
+            nonlocal first_lease
+            if first_lease is None:
+                first_lease = _ManagedLeaseSpy(reference, roots[reference])
+                first_lease.fail_close = True
+                return first_lease
+            raise RuntimeError("PRIVATE_SECOND_ACQUIRE_DETAIL")
+
+    monkeypatch.setattr(launch_module, "managed_service", PartialService)
+
+    with pytest.raises(launch_module.AudioCppGuidedLaunchError) as caught:
+        await launch_module.materialize_audio_cpp_guided_launch(
+            _settings(_binary(tmp_path), [first, second]),
+            artifact_root=tmp_path / "runtime-partial",
+            port_selector=lambda: 54_329,
+            system="darwin",
+            architecture="arm64",
+        )
+
+    assert caught.value.code == "artifact_cleanup_failed"
+    assert "PRIVATE" not in str(caught.value)
+    cleanup_owner = caught.value.take_cleanup_owner()
+    assert cleanup_owner is not None
+    assert first_lease is not None
+    assert first_lease.close_calls == 1
+    first_lease.fail_close = False
+    cleanup_owner.cleanup()
+    assert first_lease.close_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_cancellation_waits_for_managed_acquisition_then_releases_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    root = tmp_path / "models" / "managed-supertonic"
+    _write_gguf(root, "supertonic-3-orig.gguf")
+    accepted = _accept(root, "supertonic_3_orig", "managed-narrator").model_copy(
+        update={"managed_artifact": _managed_identity()}
+    )
+    service = _ManagedServiceSpy(root)
+    acquired = threading.Event()
+    release = threading.Event()
+    real_acquire = service.acquire
+
+    def blocked_acquire(reference: object) -> _ManagedLeaseSpy:
+        lease = real_acquire(reference)
+        acquired.set()
+        release.wait(timeout=2)
+        return lease
+
+    service.acquire = blocked_acquire  # type: ignore[method-assign]
+    monkeypatch.setattr(launch_module, "managed_service", lambda: service)
+    task = asyncio.create_task(
+        launch_module.materialize_audio_cpp_guided_launch(
+            _settings(_binary(tmp_path), [accepted]),
+            artifact_root=tmp_path / "runtime-cancel-acquire",
+            port_selector=lambda: 54_330,
+            system="darwin",
+            architecture="arm64",
+        )
+    )
+    assert await asyncio.to_thread(acquired.wait, 2)
+
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert service.leases[0].close_calls == 1
+    assert tuple((tmp_path / "runtime-cancel-acquire").iterdir()) == ()
 
 
 @pytest.mark.asyncio

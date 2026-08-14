@@ -40,6 +40,7 @@ from tldw_chatbook.TTS.audio_cpp_guided_config import (
     AudioCppSettingsConfig,
 )
 from tldw_chatbook.TTS.audio_cpp_guided_launch import (
+    AudioCppGeneratedLaunchArtifact,
     AudioCppGuidedLaunchError,
     materialize_audio_cpp_guided_launch,
 )
@@ -374,6 +375,7 @@ class AudioCppAdapter:
         )
         self._managed_bundle: _ManagedGenerationBundle | None = None
         self._managed_launch: AudioCppManagedLaunchConfig | None = None
+        self._pending_guided_cleanup: AudioCppGeneratedLaunchArtifact | None = None
         self._managed_preparation_lock = asyncio.Lock()
         self._managed_process_generation: int | None = None
         self._managed_catalog_process_generation: int | None = None
@@ -1265,12 +1267,29 @@ class AudioCppAdapter:
             )
             self._managed_stop_complete = True
 
-        if bundle is None:
+        if bundle is not None:
+            if bundle.supervisor_cleanup_failed:
+                bundle.supervisor_cleanup_failed = False
+                raise RuntimeError(_MANAGED_CLEANUP_FAILURE_MESSAGE)
+            await bundle.close_remaining()
+
+        pending = self._pending_guided_cleanup
+        if pending is None:
             return
-        if bundle.supervisor_cleanup_failed:
-            bundle.supervisor_cleanup_failed = False
-            raise RuntimeError(_MANAGED_CLEANUP_FAILURE_MESSAGE)
-        await bundle.close_remaining()
+        cleanup_task = asyncio.create_task(asyncio.to_thread(pending.cleanup))
+        try:
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            try:
+                await asyncio.shield(cleanup_task)
+            except BaseException:
+                pass
+            raise
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                raise
+            raise RuntimeError(_MANAGED_CLEANUP_FAILURE_MESSAGE) from None
+        self._pending_guided_cleanup = None
 
     async def _refresh_catalog(self, *, force: bool) -> None:
         if self._config.mode == "managed":
@@ -1542,17 +1561,35 @@ class AudioCppAdapter:
             self._managed_launch = None
             guided_failure: _OperationFailure | None = None
             if self._uses_guided_launch():
+                if self._pending_guided_cleanup is not None:
+                    raise self._operation_error(
+                        _MANAGED_ARTIFACT_FAILURE,
+                        uuid4().hex,
+                    ) from None
                 settings = self._guided_settings
                 assert settings is not None
                 try:
                     launch = await materialize_audio_cpp_guided_launch(settings)
                 except AudioCppGuidedLaunchError as error:
+                    cleanup_owner = error.take_cleanup_owner()
+                    if cleanup_owner is not None:
+                        self._pending_guided_cleanup = cleanup_owner
                     if error.code == "port_unavailable":
                         guided_failure = _MANAGED_PORT_UNAVAILABLE
-                    elif error.code == "artifact_create_failed":
+                    elif error.code in {
+                        "artifact_create_failed",
+                        "artifact_cleanup_failed",
+                    }:
                         guided_failure = _MANAGED_ARTIFACT_FAILURE
                     else:
                         guided_failure = _MANAGED_CONFIGURATION_INVALID
+                except asyncio.CancelledError as error:
+                    take_cleanup_owner = getattr(error, "take_cleanup_owner", None)
+                    if callable(take_cleanup_owner):
+                        cleanup_owner = take_cleanup_owner()
+                        if cleanup_owner is not None:
+                            self._pending_guided_cleanup = cleanup_owner
+                    raise
                 if guided_failure is not None:
                     raise self._operation_error(
                         guided_failure,

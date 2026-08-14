@@ -45,6 +45,8 @@ from tldw_chatbook.Chat.console_voice_input import (
     realtime_voice as _read_realtime_voice,
 )
 from tldw_chatbook.config import get_cli_setting, save_settings_to_cli_config
+from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+from tldw_chatbook.Model_Artifacts.store import managed_service
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
     STTSSettingsSaveResult,
@@ -75,6 +77,10 @@ from tldw_chatbook.Third_Party.textual_fspicker import (
     SelectDirectory,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+    AudioCppManagedLeaseHold,
+    AudioCppModelInstallOwner,
+)
 from tldw_chatbook.UI.Lab_Modules.lab_speech_status import (
     speech_local_dependency_availability,
 )
@@ -997,6 +1003,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_displaced_focus_control_id: str | None = None
         self._pending_focus_moved_after_displacement = False
         self._leave_save_waiters: dict[int, asyncio.Future[bool]] = {}
+        self._managed_lease_hold: AudioCppManagedLeaseHold | None = None
         self._last_focused_control_id: str | None = None
         self._audio_cpp_scan_revision = 0
         self._audio_cpp_result_cleanup_pending = audio_cpp_result_cleanup_pending or (
@@ -1016,9 +1023,21 @@ class SpeechTTSSettingsPanel(Vertical):
         """Return whether package-review cleanup currently fences this draft."""
 
         try:
-            return bool(self._audio_cpp_result_cleanup_pending())
+            owner = self._managed_cleanup_owner()
+            return bool(
+                self._audio_cpp_result_cleanup_pending()
+                or self._managed_lease_hold is not None
+                or (owner is not None and owner.cleanup_pending)
+            )
         except Exception:
             return True
+
+    def _managed_cleanup_owner(self) -> AudioCppModelInstallOwner | None:
+        try:
+            owner = getattr(self.app, "audio_cpp_model_install_owner", None)
+        except Exception:
+            return None
+        return owner if isinstance(owner, AudioCppModelInstallOwner) else None
 
     def _fence_audio_cpp_result_cleanup(self) -> bool:
         if not self.audio_cpp_result_cleanup_pending():
@@ -1174,6 +1193,9 @@ class SpeechTTSSettingsPanel(Vertical):
     def on_mount(self) -> None:
         """Apply responsive layout without performing provider work."""
 
+        owner = self._managed_cleanup_owner()
+        if owner is not None:
+            owner.retry_cleanup()
         self._sync_responsive_layout()
         self._apply_audio_cpp_mode_visibility()
 
@@ -1208,6 +1230,7 @@ class SpeechTTSSettingsPanel(Vertical):
         """Fence and cancel any package scan owned by this Settings panel."""
 
         self._fence_audio_cpp_package_scan()
+        self._transfer_managed_refs()
 
     def _fence_audio_cpp_package_scan(self) -> None:
         """Invalidate even an uncooperative late scan before changing its owner."""
@@ -1755,6 +1778,78 @@ class SpeechTTSSettingsPanel(Vertical):
             except ValueError:
                 continue
         return tuple(packages)
+
+    @staticmethod
+    def _managed_refs_from_values(values: Mapping[str, object]) -> set[ArtifactRef]:
+        """Return exact managed refs retained in one provider value mapping."""
+
+        raw = values.get("guided_packages", ())
+        if not isinstance(raw, (list, tuple)):
+            return set()
+        references: set[ArtifactRef] = set()
+        for item in raw:
+            try:
+                package = AudioCppAcceptedPackage.model_validate(item)
+            except ValueError:
+                continue
+            identity = package.managed_artifact
+            if identity is not None:
+                references.add(
+                    ArtifactRef(
+                        identity.artifact_id,
+                        identity.revision,
+                        identity.variant,
+                    )
+                )
+        return references
+
+    @staticmethod
+    def _sorted_managed_refs(references: set[ArtifactRef]) -> tuple[ArtifactRef, ...]:
+        return tuple(
+            sorted(
+                references,
+                key=lambda item: (item.artifact_id, item.revision, item.variant),
+            )
+        )
+
+    async def _acquire_managed_refs(self, references: set[ArtifactRef]) -> bool:
+        """Acquire inactive-root shared leases without activating any selector."""
+
+        owner = self._managed_cleanup_owner()
+        if owner is not None and owner.cleanup_pending:
+            owner.retry_cleanup()
+            return False
+        if self._managed_lease_hold is not None:
+            return False
+        if not references:
+            return True
+        if owner is None:
+            return False
+        try:
+            self._managed_lease_hold = await owner.acquire_lease_hold(
+                self._sorted_managed_refs(references),
+                managed_service,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                raise
+            return False
+        return True
+
+    def _transfer_managed_refs(self) -> bool:
+        """Transfer exact handles to the app-owned off-loop cleanup lane."""
+
+        hold = self._managed_lease_hold
+        if hold is None:
+            return True
+        owner = self._managed_cleanup_owner()
+        if owner is None:
+            return False
+        owner.request_lease_release(hold)
+        self._managed_lease_hold = None
+        return True
 
     @staticmethod
     def _audio_cpp_safe_package_name(package: AudioCppAcceptedPackage) -> str:
@@ -3724,10 +3819,14 @@ class SpeechTTSSettingsPanel(Vertical):
             return None
         realtime_changed = realtime_payload is not None
         guided_packages: tuple[AudioCppAcceptedPackage, ...] = ()
+        guided_lease_refs: set[ArtifactRef] = set()
         if "audio_cpp" in proposal.changed_provider_ids:
             saved_audio_cpp = proposal.settings.get("audio_cpp")
             if not isinstance(saved_audio_cpp, Mapping):
                 raise AssertionError("validated audio.cpp settings are unavailable")
+            guided_lease_refs = self._managed_refs_from_values(
+                self.original_state.providers["audio_cpp"]
+            ) | self._managed_refs_from_values(saved_audio_cpp)
             if (
                 saved_audio_cpp.get("mode") == "managed"
                 and saved_audio_cpp.get("managed_setup_source") == "guided"
@@ -3747,7 +3846,7 @@ class SpeechTTSSettingsPanel(Vertical):
         provider_save_required = bool(
             defaults_changed or proposal.settings or proposal.delete_setting_keys
         )
-        if realtime_payload is not None and not guided_packages:
+        if realtime_payload is not None and not (guided_packages or guided_lease_refs):
             if not self._persist_realtime_draft(realtime_payload):
                 self._set_result(
                     "Realtime engine settings were not saved.",
@@ -3803,12 +3902,13 @@ class SpeechTTSSettingsPanel(Vertical):
             or "OPENAI_NONE_HTTP_CONFIRMATION" in proposal.delete_setting_keys
             else None
         )
-        if guided_packages:
+        if guided_packages or guided_lease_refs:
             self._set_result("Rechecking reviewed model packages locally before Save…")
             self.run_worker(
                 self._revalidate_guided_save(
                     request_id=request_id,
                     packages=guided_packages,
+                    lease_refs=guided_lease_refs,
                     proposal=proposal,
                     realtime_payload=realtime_payload,
                 ),
@@ -3851,16 +3951,25 @@ class SpeechTTSSettingsPanel(Vertical):
         *,
         request_id: int,
         packages: tuple[AudioCppAcceptedPackage, ...],
+        lease_refs: set[ArtifactRef],
         proposal: GlobalSpeechTTSSaveProposal,
         realtime_payload: _RealtimeSavePayload | None,
     ) -> None:
         """Recheck exact local package identities off the Textual message loop."""
 
+        if not await self._acquire_managed_refs(lease_refs):
+            self._abort_pending_save(
+                request_id,
+                "Managed model packages are busy or cleanup is still pending.",
+            )
+            return
         try:
             await revalidate_audio_cpp_guided_packages(packages)
         except asyncio.CancelledError:
+            self._transfer_managed_refs()
             raise
         except AudioCppGuidedLaunchError:
+            self._transfer_managed_refs()
             self._abort_pending_save(
                 request_id,
                 GlobalSpeechTTSValidationError(
@@ -3871,8 +3980,12 @@ class SpeechTTSSettingsPanel(Vertical):
                 ),
             )
             return
+        except BaseException:
+            self._transfer_managed_refs()
+            raise
 
         if request_id != self._latest_request_id or not self.is_mounted:
+            self._transfer_managed_refs()
             return
         if realtime_payload is not None:
             if not self._persist_realtime_draft(realtime_payload):
@@ -3882,7 +3995,11 @@ class SpeechTTSSettingsPanel(Vertical):
                 )
                 return
             self._realtime_original = replace(realtime_payload.persisted_draft)
-        self._post_settings_save(request_id, proposal)
+        try:
+            self._post_settings_save(request_id, proposal)
+        except BaseException:
+            self._transfer_managed_refs()
+            raise
 
     def _abort_pending_save(
         self,
@@ -3893,6 +4010,7 @@ class SpeechTTSSettingsPanel(Vertical):
 
         if request_id != self._latest_request_id:
             return
+        cleanup_succeeded = self._transfer_managed_refs()
         focus_id = self._completion_focus_id(self._pending_focus_control_id)
         leave_waiter = self._leave_save_waiters.pop(request_id, None)
         self._latest_request_id = None
@@ -3907,7 +4025,12 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_saved_openai_confirmation = None
         self._pending_saved_openai_confirmation_cleanup_needed = None
         self._set_save_pending(False)
-        if isinstance(failure, GlobalSpeechTTSValidationError):
+        if not cleanup_succeeded:
+            self._set_result(
+                "Managed model package cleanup is still pending.",
+                severity="error",
+            )
+        elif isinstance(failure, GlobalSpeechTTSValidationError):
             self._show_validation_error(failure)
         else:
             self._set_result(failure, severity="error")
@@ -4243,6 +4366,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 severity="error",
             )
             self._refresh_status_rows()
+            self._transfer_managed_refs()
             if leave_waiter is not None and not leave_waiter.done():
                 leave_waiter.set_result(False)
             self.call_later(self._restore_focus, focus_id)
@@ -4407,6 +4531,7 @@ class SpeechTTSSettingsPanel(Vertical):
             ),
         )
         self._announce_draft_state()
+        self._transfer_managed_refs()
         if leave_waiter is not None and not leave_waiter.done():
             leave_waiter.set_result(result.failure_phase is None)
         if mutation is not None or saved_provider_id == "audio_cpp":
@@ -4722,7 +4847,21 @@ class SpeechTTSSettingsPanel(Vertical):
             return True
         choice = await self._ask_leave_choice()
         if choice == "discard":
-            self._reset_to_saved()
+            references = self._managed_refs_from_values(
+                self.state.providers["audio_cpp"]
+            ) | self._managed_refs_from_values(
+                self.original_state.providers["audio_cpp"]
+            )
+            if not await self._acquire_managed_refs(references):
+                self._set_result(
+                    "Managed model packages are busy or cleanup is still pending.",
+                    severity="error",
+                )
+                return False
+            try:
+                self._reset_to_saved()
+            finally:
+                self._transfer_managed_refs()
             self.post_message(
                 self.DraftModified(
                     False,
@@ -5154,6 +5293,19 @@ class SpeechTTSSettingsPanel(Vertical):
             if package.package_uuid != package_uuid
         ]
         values = self.state.providers["audio_cpp"]
+        proposed_values = dict(values)
+        proposed_values["guided_packages"] = [
+            package.model_dump(mode="json") for package in packages
+        ]
+        references = self._managed_refs_from_values(
+            values
+        ) | self._managed_refs_from_values(proposed_values)
+        if not await self._acquire_managed_refs(references):
+            self._set_result(
+                "Managed model packages are busy or cleanup is still pending.",
+                severity="error",
+            )
+            return
         values["guided_packages"] = [
             package.model_dump(mode="json") for package in packages
         ]
@@ -5162,19 +5314,22 @@ class SpeechTTSSettingsPanel(Vertical):
             values["guided_default_model_id"] = (
                 packages[0].public_model_id if packages else None
             )
-        await self.recompose()
-        self._apply_audio_cpp_mode_visibility()
         try:
-            self.query_one(
-                "#settings-speech-audio-cpp-guided-add-package",
-                Button,
-            ).focus()
-        except QueryError:
-            pass
-        self._set_result(
-            "Removed the package from the unsaved draft. No local files were deleted."
-        )
-        self._announce_draft_state()
+            await self.recompose()
+            self._apply_audio_cpp_mode_visibility()
+            try:
+                self.query_one(
+                    "#settings-speech-audio-cpp-guided-add-package",
+                    Button,
+                ).focus()
+            except QueryError:
+                pass
+            self._set_result(
+                "Removed the package from the unsaved draft. No local files were deleted."
+            )
+            self._announce_draft_state()
+        finally:
+            self._transfer_managed_refs()
 
     @on(Input.Changed, ".settings-speech-draft-field")
     @on(Select.Changed, ".settings-speech-draft-field")
@@ -5205,17 +5360,30 @@ class SpeechTTSSettingsPanel(Vertical):
         if self._fence_audio_cpp_result_cleanup():
             return
 
-        self._reset_to_saved()
+        references = self._managed_refs_from_values(
+            self.state.providers["audio_cpp"]
+        ) | self._managed_refs_from_values(self.original_state.providers["audio_cpp"])
+        if not await self._acquire_managed_refs(references):
+            self._set_result(
+                "Managed model packages are busy or cleanup is still pending.",
+                severity="error",
+            )
+            return
         try:
+            self._reset_to_saved()
             get_current_worker()
         except NoActiveWorker:
-            await self.recompose()
-            self._announce_draft_state()
+            try:
+                await self.recompose()
+                self._announce_draft_state()
+            finally:
+                self._transfer_managed_refs()
         else:
             # A worker awaiting recompose can deadlock against the same
             # message pump that owns guarded navigation. Schedule that path.
             self.refresh(recompose=True)
             self.call_after_refresh(self._announce_draft_state)
+            self._transfer_managed_refs()
 
     @on(Button.Pressed, "#settings-speech-revert")
     async def handle_revert(self, event: Button.Pressed) -> None:
@@ -5234,15 +5402,28 @@ class SpeechTTSSettingsPanel(Vertical):
             return
         self._collect_visible_state()
         self._clear_validation_errors()
-        self.state = restore_non_secret_defaults(
+        restored = restore_non_secret_defaults(
             self.state,
             configure_provider=self.configure_provider,
         )
+        references = self._managed_refs_from_values(
+            self.state.providers["audio_cpp"]
+        ) | self._managed_refs_from_values(restored.providers["audio_cpp"])
+        if not await self._acquire_managed_refs(references):
+            self._set_result(
+                "Managed model packages are busy or cleanup is still pending.",
+                severity="error",
+            )
+            return
+        self.state = restored
         self.result_text = (
             "Non-secret defaults restored in the draft; choose Save to persist them."
         )
-        await self.recompose()
-        self._announce_draft_state()
+        try:
+            await self.recompose()
+            self._announce_draft_state()
+        finally:
+            self._transfer_managed_refs()
 
     @on(Button.Pressed, "#settings-speech-open-lab")
     @on(Button.Pressed, "#settings-speech-open-lab-bottom")

@@ -11,7 +11,7 @@ import threading
 from typing import Awaitable, Callable
 import unicodedata
 
-from ...Model_Artifacts.service import ArtifactRef
+from ...Model_Artifacts.service import ArtifactRef, LeasedArtifactHandle
 
 
 _TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z", re.ASCII)
@@ -104,12 +104,175 @@ class AudioCppModelInstallOperation:
     task: asyncio.Task[None] = field(init=False, repr=False)
 
 
+@dataclass(eq=False, slots=True)
+class AudioCppManagedLeaseHold:
+    """One exact app-owned Settings lease hold and its cleanup state."""
+
+    handles: list[LeasedArtifactHandle] = field(default_factory=list, repr=False)
+    acquisition_task: asyncio.Task[None] = field(init=False, repr=False)
+    cleanup_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    release_requested: bool = False
+    acquisition_error: BaseException | None = field(default=None, repr=False)
+    cleanup_control_error: BaseException | None = field(default=None, repr=False)
+
+
 class AudioCppModelInstallOwner:
-    """Retain audio.cpp installation work through screen and app teardown."""
+    """Retain audio.cpp installation and lease work through app teardown."""
 
     def __init__(self) -> None:
         self._active: set[AudioCppModelInstallOperation] = set()
+        self._lease_holds: set[AudioCppManagedLeaseHold] = set()
         self._sealed = False
+
+    @property
+    def cleanup_pending(self) -> bool:
+        """Return whether exact managed lease cleanup remains owned."""
+
+        return bool(self._lease_holds)
+
+    @staticmethod
+    def _close_cleanup_handles(
+        handles: tuple[LeasedArtifactHandle, ...],
+    ) -> tuple[list[LeasedArtifactHandle], BaseException | None]:
+        remaining: list[LeasedArtifactHandle] = []
+        first_error: BaseException | None = None
+        for handle in handles:
+            try:
+                handle.close()
+            except BaseException as error:
+                remaining.append(handle)
+                if first_error is None or (
+                    isinstance(first_error, Exception)
+                    and not isinstance(error, Exception)
+                ):
+                    first_error = error
+        return remaining, first_error
+
+    async def acquire_lease_hold(
+        self,
+        references: tuple[ArtifactRef, ...],
+        service_factory: Callable[[], object],
+    ) -> AudioCppManagedLeaseHold:
+        """Acquire exact inactive roots under immediate app ownership.
+
+        Args:
+            references: Exact managed artifact identities to lease.
+            service_factory: Factory for the app's model-artifact service.
+
+        Returns:
+            The registered hold controlling release of the acquired handles.
+
+        Raises:
+            asyncio.CancelledError: If the waiting panel operation is cancelled.
+            RuntimeError: If acquisition fails or the owner is shut down.
+            BaseException: If acquisition reports interpreter control flow.
+        """
+
+        if self._sealed:
+            raise RuntimeError("audio.cpp model cleanup owner is shut down")
+        hold = AudioCppManagedLeaseHold()
+        self._lease_holds.add(hold)
+
+        async def acquire() -> None:
+            try:
+                service = await asyncio.to_thread(service_factory)
+                acquire_root = getattr(service, "acquire_installed_root")
+                for reference in references:
+                    handle = await asyncio.to_thread(acquire_root, reference)
+                    hold.handles.append(handle)
+            except BaseException as error:
+                hold.acquisition_error = error
+            finally:
+                if hold.release_requested or hold.acquisition_error is not None:
+                    self._start_hold_cleanup(hold)
+
+        hold.acquisition_task = asyncio.create_task(
+            acquire(),
+            name="audio-cpp-model-lease-acquire",
+        )
+        try:
+            await asyncio.shield(hold.acquisition_task)
+        except asyncio.CancelledError:
+            self.request_lease_release(hold)
+            try:
+                await asyncio.shield(hold.acquisition_task)
+                await self.wait_lease_hold(hold)
+            except BaseException:
+                # The original cancellation remains authoritative. Any failed
+                # cleanup stays registered for the app lifecycle to retry.
+                pass
+            raise
+        if hold.acquisition_error is not None:
+            self.request_lease_release(hold)
+            await self.wait_lease_hold(hold)
+            error = hold.acquisition_error
+            if error is not None and not isinstance(error, Exception):
+                raise error
+            raise RuntimeError("audio.cpp model lease acquisition failed") from None
+        return hold
+
+    def request_lease_release(self, hold: AudioCppManagedLeaseHold) -> None:
+        """Request cleanup of one exact registered hold idempotently.
+
+        Args:
+            hold: The exact operation returned by :meth:`acquire_lease_hold`.
+        """
+
+        if type(hold) is not AudioCppManagedLeaseHold or hold not in self._lease_holds:
+            return
+        hold.release_requested = True
+        if hold.acquisition_task.done():
+            self._start_hold_cleanup(hold)
+
+    def retry_cleanup(self) -> None:
+        """Start one bounded retry when retained cleanup is idle."""
+
+        for hold in tuple(self._lease_holds):
+            if hold.release_requested and hold.acquisition_task.done():
+                self._start_hold_cleanup(hold)
+
+    def _start_hold_cleanup(self, hold: AudioCppManagedLeaseHold) -> None:
+        if hold.cleanup_task is not None and not hold.cleanup_task.done():
+            return
+        if not hold.handles:
+            self._lease_holds.discard(hold)
+            return
+        claimed = tuple(hold.handles)
+        hold.cleanup_control_error = None
+
+        async def owned_cleanup() -> None:
+            remaining, error = await asyncio.to_thread(
+                self._close_cleanup_handles,
+                claimed,
+            )
+            hold.handles = remaining
+            hold.cleanup_task = None
+            if error is not None and not isinstance(error, Exception):
+                hold.cleanup_control_error = error
+            if not remaining:
+                self._lease_holds.discard(hold)
+
+        hold.cleanup_task = asyncio.create_task(
+            owned_cleanup(),
+            name="audio-cpp-model-lease-cleanup",
+        )
+
+    async def wait_lease_hold(self, hold: AudioCppManagedLeaseHold) -> None:
+        """Wait for the hold's current acquisition and cleanup attempts.
+
+        Args:
+            hold: The exact registered hold to observe.
+
+        Raises:
+            BaseException: If handle cleanup reports interpreter control flow.
+        """
+
+        await asyncio.shield(hold.acquisition_task)
+        task = hold.cleanup_task
+        if task is not None:
+            await asyncio.shield(asyncio.gather(task, return_exceptions=True))
+        if hold.cleanup_control_error is not None:
+            raise hold.cleanup_control_error
 
     @property
     def active_count(self) -> int:
@@ -175,16 +338,28 @@ class AudioCppModelInstallOwner:
     async def wait_until_idle(self) -> None:
         """Wait until every operation active at each observation has settled."""
 
-        while self._active:
-            await asyncio.shield(
-                asyncio.gather(
-                    *(operation.task for operation in tuple(self._active)),
-                    return_exceptions=True,
-                )
-            )
+        while self._active or any(
+            not hold.acquisition_task.done() or hold.cleanup_task is not None
+            for hold in self._lease_holds
+        ):
+            tasks = [operation.task for operation in tuple(self._active)]
+            for hold in self._lease_holds:
+                if not hold.acquisition_task.done():
+                    tasks.append(hold.acquisition_task)
+                if hold.cleanup_task is not None:
+                    tasks.append(hold.cleanup_task)
+            await asyncio.shield(asyncio.gather(*tasks, return_exceptions=True))
+            for hold in self._lease_holds:
+                if hold.cleanup_control_error is not None:
+                    raise hold.cleanup_control_error
 
     async def shutdown(self) -> None:
-        """Seal the owner, request cancellation, and drain every operation."""
+        """Seal the owner, request cancellation, and drain every operation.
+
+        Raises:
+            RuntimeError: If exact managed handles remain after bounded retries.
+            BaseException: If cleanup reports interpreter control flow.
+        """
 
         self._sealed = True
         operations = tuple(self._active)
@@ -197,3 +372,10 @@ class AudioCppModelInstallOwner:
                     return_exceptions=True,
                 )
             )
+        for hold in tuple(self._lease_holds):
+            self.request_lease_release(hold)
+        if self._lease_holds:
+            self.retry_cleanup()
+            await self.wait_until_idle()
+        if self._lease_holds:
+            raise RuntimeError("audio.cpp model cleanup failed")

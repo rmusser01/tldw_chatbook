@@ -92,6 +92,38 @@ def _result(root: Path) -> AudioCppModelLibraryResult:
     )
 
 
+def _managed_package(
+    root: Path,
+    *,
+    filename: str,
+    artifact_id: str,
+    variant: str,
+):
+    """Create one tiny exact package carrying a valid managed identity."""
+
+    import struct
+
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        AUDIO_CPP_ARTIFACT_COMMIT,
+    )
+    from tldw_chatbook.TTS.audio_cpp_guided_config import (
+        AudioCppManagedArtifactIdentity,
+    )
+    from tldw_chatbook.TTS.audio_cpp_package_scanner import (
+        scan_audio_cpp_package_root,
+    )
+
+    root.mkdir()
+    (root / filename).write_bytes(b"GGUF" + struct.pack("<I", 3))
+    identity = AudioCppManagedArtifactIdentity(
+        artifact_id=artifact_id,
+        revision=AUDIO_CPP_ARTIFACT_COMMIT,
+        variant=variant,
+    )
+    scan = scan_audio_cpp_package_root(root)
+    return scan.discoveries[0].match.candidates[0].accept(managed_artifact=identity)
+
+
 def test_handoff_values_are_frozen_slotted_and_root_redacted(tmp_path: Path) -> None:
     request = _request()
     result = _result(tmp_path.resolve())
@@ -112,6 +144,262 @@ def test_handoff_values_are_frozen_slotted_and_root_redacted(tmp_path: Path) -> 
     with pytest.raises(FrozenInstanceError):
         result.variant = "q8"  # type: ignore[misc]
     assert result.canonical_root not in repr(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("persisted", (True, False))
+async def test_guided_save_holds_before_after_managed_union_without_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    persisted: bool,
+) -> None:
+    """Save retains inactive-root leases until publication or rollback settles."""
+
+    from types import SimpleNamespace
+
+    from Tests.UI.test_settings_speech_tts_panel import (
+        _StyledPanelHarness,
+        _audio_cpp_state,
+    )
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+        STTSSettingsSaveResult,
+    )
+    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+        AudioCppModelInstallOwner,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets import (
+        speech_tts_settings_panel as panel_module,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    roots = (tmp_path / "before", tmp_path / "after")
+    filenames = ("supertonic-3-orig.gguf", "pocket-tts-english-q8_0.gguf")
+    artifact_ids = (
+        "audio-cpp-supertonic-3-orig",
+        "audio-cpp-pocket-tts-english-q8-0",
+    )
+    variants = ("orig", "q8_0")
+    packages = [
+        _managed_package(
+            root,
+            filename=filename,
+            artifact_id=artifact_id,
+            variant=variant,
+        )
+        for root, filename, artifact_id, variant in zip(
+            roots, filenames, artifact_ids, variants, strict=True
+        )
+    ]
+
+    binary = tmp_path / "audiocpp_server"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o700)
+    state = _audio_cpp_state(saved_provider=True)
+    values = state.providers["audio_cpp"]
+    values.update(
+        {
+            "mode": "managed",
+            "managed_setup_source": "guided",
+            "guided_binary_path": str(binary),
+            "guided_packages": [packages[0].model_dump(mode="json")],
+            "guided_default_model_id": packages[0].public_model_id,
+        }
+    )
+    active: dict[ArtifactRef, bool] = {}
+    close_calls: dict[ArtifactRef, int] = {}
+    acquire_calls: list[ArtifactRef] = []
+
+    class Lease:
+        def __init__(self, reference: ArtifactRef) -> None:
+            self.reference = reference
+            self.handle = SimpleNamespace(
+                root=reference,
+                closure=(reference,),
+                paths=((reference, roots[artifact_ids.index(reference.artifact_id)]),),
+            )
+            active[reference] = True
+
+        def close(self) -> None:
+            close_calls[self.reference] = close_calls.get(self.reference, 0) + 1
+            active[self.reference] = False
+
+    class Service:
+        def acquire_installed_root(self, reference: ArtifactRef) -> Lease:
+            acquire_calls.append(reference)
+            return Lease(reference)
+
+        def activate(self, _reference: ArtifactRef) -> None:
+            raise AssertionError("Save must not activate managed packages")
+
+    async def assert_union_held(_packages: object) -> tuple[()]:
+        assert len(active) == 2
+        assert all(active.values())
+        return ()
+
+    monkeypatch.setattr(panel_module, "managed_service", Service)
+    monkeypatch.setattr(
+        panel_module,
+        "revalidate_audio_cpp_guided_packages",
+        assert_union_held,
+    )
+    app = _StyledPanelHarness(state=state, configure_provider="audio_cpp")
+    owner = AudioCppModelInstallOwner()
+    app.audio_cpp_model_install_owner = owner
+    async with app.run_test(size=(170, 80)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        panel.state.providers["audio_cpp"]["guided_packages"] = [
+            packages[1].model_dump(mode="json")
+        ]
+        panel.state.providers["audio_cpp"]["guided_default_model_id"] = packages[
+            1
+        ].public_model_id
+        panel.refresh(recompose=True)
+        await pilot.pause()
+
+        request_id = panel.request_save()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert request_id is not None
+        assert len(app.events) == 1
+        assert all(active.values())
+        assert close_calls == {}
+        assert acquire_calls == sorted(active)
+
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=request_id,
+                persisted=persisted,
+                provider_statuses={"audio_cpp": "pending"},
+                provider_configuration_revisions={"audio_cpp": 2},
+                provider_runtime_revisions={"audio_cpp": 1},
+                staged_provider_ids=frozenset({"audio_cpp"}),
+            )
+        )
+        await owner.wait_until_idle()
+
+        assert not any(active.values())
+        assert set(close_calls.values()) == {1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ("remove", "revert", "restore_defaults"))
+async def test_identity_changing_draft_action_holds_managed_union(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+) -> None:
+    """Managed roots stay leased across whole-draft identity mutations."""
+
+    from types import SimpleNamespace
+
+    from Tests.UI.test_settings_speech_tts_panel import (
+        _StyledPanelHarness,
+        _audio_cpp_state,
+    )
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+        AudioCppModelInstallOwner,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets import (
+        speech_tts_settings_panel as panel_module,
+    )
+
+    before = _managed_package(
+        tmp_path / "before",
+        filename="supertonic-3-orig.gguf",
+        artifact_id="audio-cpp-supertonic-3-orig",
+        variant="orig",
+    )
+    after = _managed_package(
+        tmp_path / "after",
+        filename="pocket-tts-english-q8_0.gguf",
+        artifact_id="audio-cpp-pocket-tts-english-q8-0",
+        variant="q8_0",
+    )
+    state = _audio_cpp_state(saved_provider=True)
+    values = state.providers["audio_cpp"]
+    values.update(
+        {
+            "mode": "managed",
+            "managed_setup_source": "guided",
+            "guided_packages": [
+                (after if action == "revert" else before).model_dump(mode="json")
+            ],
+            "guided_default_model_id": (
+                after.public_model_id if action == "revert" else before.public_model_id
+            ),
+        }
+    )
+    active: set[ArtifactRef] = set()
+    acquired: list[ArtifactRef] = []
+
+    class Lease:
+        def __init__(self, reference: ArtifactRef) -> None:
+            self.reference = reference
+            active.add(reference)
+
+        def close(self) -> None:
+            active.remove(self.reference)
+
+    class Service:
+        def acquire_installed_root(self, reference: ArtifactRef) -> Lease:
+            acquired.append(reference)
+            return Lease(reference)
+
+        def activate(self, _reference: ArtifactRef) -> None:
+            raise AssertionError("Draft mutations must not activate managed packages")
+
+    monkeypatch.setattr(panel_module, "managed_service", Service)
+    app = _StyledPanelHarness(state=state)
+    owner = AudioCppModelInstallOwner()
+    app.audio_cpp_model_install_owner = owner
+    async with app.run_test(size=(150, 55)) as pilot:
+        panel = app.query_one("#panel")
+        await pilot.pause()
+        if action == "revert":
+            panel.original_state.providers["audio_cpp"].update(
+                {
+                    "mode": "managed",
+                    "managed_setup_source": "guided",
+                    "guided_packages": [before.model_dump(mode="json")],
+                    "guided_default_model_id": before.public_model_id,
+                }
+            )
+        real_recompose = panel.recompose
+        recomposed = 0
+
+        async def checked_recompose() -> None:
+            nonlocal recomposed
+            recomposed += 1
+            assert len(active) == (2 if action == "revert" else 1)
+            await real_recompose()
+
+        monkeypatch.setattr(panel, "recompose", checked_recompose)
+        if action == "remove":
+            event = SimpleNamespace(
+                button=SimpleNamespace(
+                    id=(
+                        "settings-speech-audio-cpp-guided-package-remove-"
+                        f"{before.package_uuid}"
+                    )
+                ),
+                stop=lambda: None,
+            )
+            await panel.handle_audio_cpp_remove_package(event)
+        elif action == "revert":
+            await panel.revert_to_saved()
+        else:
+            event = SimpleNamespace(stop=lambda: None)
+            await panel.handle_restore_defaults(event)
+
+        await owner.wait_until_idle()
+        assert recomposed == 1
+        assert len(acquired) == (2 if action == "revert" else 1)
+        assert not active
 
 
 @pytest.mark.parametrize(
@@ -659,6 +947,329 @@ async def test_install_owner_shutdown_drains_and_seals_all_work(tmp_path: Path) 
     assert owner.active_count == 0
     with pytest.raises(RuntimeError, match="shut down"):
         owner.start(runner, lambda *_args: None)
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_owns_active_lease_before_panel_unmount() -> None:
+    """Shutdown can drain a hold registered before acquisition settles."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    owner = AudioCppModelInstallOwner()
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    acquisition_started = threading.Event()
+    allow_acquisition = threading.Event()
+    close_calls = 0
+
+    class Lease:
+        def close(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+
+    class Service:
+        def acquire_installed_root(self, _reference: ArtifactRef) -> Lease:
+            acquisition_started.set()
+            assert allow_acquisition.wait(2)
+            return Lease()
+
+    acquire_task = asyncio.create_task(owner.acquire_lease_hold((reference,), Service))
+    assert await asyncio.to_thread(acquisition_started.wait, 2)
+    assert owner.cleanup_pending
+
+    shutdown_task = asyncio.create_task(owner.shutdown())
+    await asyncio.sleep(0)
+    allow_acquisition.set()
+    hold = await acquire_task
+    await shutdown_task
+
+    assert hold.release_requested
+    assert close_calls == 1
+    assert not owner.cleanup_pending
+
+
+@pytest.mark.asyncio
+async def test_app_owner_shutdown_failure_retains_exact_hold_for_later_retry() -> None:
+    """A stable shutdown failure leaves the exact handle retryable."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    owner = AudioCppModelInstallOwner()
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    fail_close = True
+    close_calls = 0
+
+    class Lease:
+        def close(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+            if fail_close:
+                raise RuntimeError("private-close-canary")
+
+    await owner.acquire_lease_hold(
+        (reference,),
+        lambda: type(
+            "Service",
+            (),
+            {"acquire_installed_root": lambda _self, _ref: Lease()},
+        )(),
+    )
+
+    with pytest.raises(RuntimeError) as captured:
+        await owner.shutdown()
+
+    assert str(captured.value) == "audio.cpp model cleanup failed"
+    assert "private" not in str(captured.value)
+    assert close_calls == 1
+    assert owner.cleanup_pending
+
+    fail_close = False
+    await owner.shutdown()
+
+    assert close_calls == 2
+    assert not owner.cleanup_pending
+
+
+@pytest.mark.asyncio
+async def test_app_owner_cleanup_control_flow_is_retained_without_stale_rethrow() -> (
+    None
+):
+    """Control flow is reported once while exact cleanup remains retryable."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    owner = AudioCppModelInstallOwner()
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    close_calls = 0
+
+    class Lease:
+        def close(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+            if close_calls == 1:
+                raise GeneratorExit("private-control-canary")
+
+    hold = await owner.acquire_lease_hold(
+        (reference,),
+        lambda: type(
+            "Service",
+            (),
+            {"acquire_installed_root": lambda _self, _ref: Lease()},
+        )(),
+    )
+    owner.request_lease_release(hold)
+
+    with pytest.raises(GeneratorExit, match="private-control-canary"):
+        await owner.wait_lease_hold(hold)
+    assert owner.cleanup_pending
+
+    owner.retry_cleanup()
+    await owner.wait_lease_hold(hold)
+
+    assert close_calls == 2
+    assert not owner.cleanup_pending
+
+
+@pytest.mark.asyncio
+async def test_cancelled_app_owned_lease_acquisition_joins_and_releases() -> None:
+    """Cancellation cannot detach an acquisition that later returns a handle."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    owner = AudioCppModelInstallOwner()
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    acquisition_started = threading.Event()
+    allow_acquisition = threading.Event()
+    closed = threading.Event()
+
+    class Lease:
+        def close(self) -> None:
+            closed.set()
+
+    class Service:
+        def acquire_installed_root(self, _reference: ArtifactRef) -> Lease:
+            acquisition_started.set()
+            assert allow_acquisition.wait(2)
+            return Lease()
+
+    task = asyncio.create_task(owner.acquire_lease_hold((reference,), Service))
+    assert await asyncio.to_thread(acquisition_started.wait, 2)
+    task.cancel()
+    allow_acquisition.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await owner.wait_until_idle()
+
+    assert closed.is_set()
+    assert not owner.cleanup_pending
+
+
+@pytest.mark.asyncio
+async def test_panel_unmount_transfers_hold_and_replacement_mount_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Panel replacement retries app-owned cleanup without UI-loop release."""
+
+    from Tests.UI.test_settings_speech_tts_panel import (
+        _StyledPanelHarness,
+        _audio_cpp_state,
+    )
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.Widgets.Settings_Widgets import (
+        speech_tts_settings_panel as panel_module,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    owner = AudioCppModelInstallOwner()
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    ui_thread = threading.get_ident()
+    close_threads: list[int] = []
+
+    class Lease:
+        def close(self) -> None:
+            close_threads.append(threading.get_ident())
+            if len(close_threads) == 1:
+                raise RuntimeError("private-first-close-canary")
+
+    class Service:
+        def acquire_installed_root(self, _reference: ArtifactRef) -> Lease:
+            return Lease()
+
+        def activate(self, _reference: ArtifactRef) -> None:
+            raise AssertionError("Lease fencing must not activate a package")
+
+    monkeypatch.setattr(panel_module, "managed_service", Service)
+    first_app = _StyledPanelHarness(state=_audio_cpp_state(saved_provider=True))
+    first_app.audio_cpp_model_install_owner = owner
+    async with first_app.run_test(size=(150, 55)):
+        panel = first_app.query_one("#panel", SpeechTTSSettingsPanel)
+        assert await panel._acquire_managed_refs({reference})
+        assert owner.cleanup_pending
+
+    await owner.wait_until_idle()
+    assert owner.cleanup_pending
+    assert len(close_threads) == 1
+
+    replacement_app = _StyledPanelHarness(state=_audio_cpp_state(saved_provider=True))
+    replacement_app.audio_cpp_model_install_owner = owner
+    async with replacement_app.run_test(size=(150, 55)) as pilot:
+        await pilot.pause()
+        await owner.wait_until_idle()
+        assert not owner.cleanup_pending
+
+    assert len(close_threads) == 2
+    assert all(thread_id != ui_thread for thread_id in close_threads)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ("save", "remove"))
+async def test_cancelled_settings_identity_worker_releases_app_owned_hold(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    """Save and identity-action cancellation transfer their exact hold."""
+
+    from types import SimpleNamespace
+
+    from Tests.UI.test_settings_speech_tts_panel import (
+        _StyledPanelHarness,
+        _audio_cpp_state,
+    )
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.Widgets.Settings_Widgets import (
+        speech_tts_settings_panel as panel_module,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    package = _managed_package(
+        tmp_path / "managed",
+        filename="supertonic-3-orig.gguf",
+        artifact_id="audio-cpp-supertonic-3-orig",
+        variant="orig",
+    )
+    identity = package.managed_artifact
+    assert identity is not None
+    reference = ArtifactRef(identity.artifact_id, identity.revision, identity.variant)
+    state = _audio_cpp_state(saved_provider=True)
+    state.providers["audio_cpp"].update(
+        {
+            "mode": "managed",
+            "managed_setup_source": "guided",
+            "guided_packages": [package.model_dump(mode="json")],
+            "guided_default_model_id": package.public_model_id,
+        }
+    )
+    closed = threading.Event()
+
+    class Lease:
+        def close(self) -> None:
+            closed.set()
+
+    monkeypatch.setattr(
+        panel_module,
+        "managed_service",
+        lambda: SimpleNamespace(acquire_installed_root=lambda _ref: Lease()),
+    )
+    owner = AudioCppModelInstallOwner()
+    app = _StyledPanelHarness(state=state, configure_provider="audio_cpp")
+    app.audio_cpp_model_install_owner = owner
+    blocked = asyncio.Event()
+    entered = asyncio.Event()
+    async with app.run_test(size=(150, 55)):
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        if operation == "save":
+
+            async def wait_for_cancel(_packages: object) -> tuple[()]:
+                entered.set()
+                await blocked.wait()
+                return ()
+
+            monkeypatch.setattr(
+                panel_module,
+                "revalidate_audio_cpp_guided_packages",
+                wait_for_cancel,
+            )
+            panel._latest_request_id = 1
+            task = asyncio.create_task(
+                panel._revalidate_guided_save(
+                    request_id=1,
+                    packages=(package,),
+                    lease_refs={reference},
+                    proposal=MagicMock(),
+                    realtime_payload=None,
+                )
+            )
+        else:
+
+            async def wait_for_cancel() -> None:
+                entered.set()
+                await blocked.wait()
+
+            monkeypatch.setattr(panel, "recompose", wait_for_cancel)
+            event = SimpleNamespace(
+                button=SimpleNamespace(
+                    id=(
+                        "settings-speech-audio-cpp-guided-package-remove-"
+                        f"{package.package_uuid}"
+                    )
+                ),
+                stop=lambda: None,
+            )
+            task = asyncio.create_task(panel.handle_audio_cpp_remove_package(event))
+
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await owner.wait_until_idle()
+
+        assert closed.is_set()
+        assert not owner.cleanup_pending
 
 
 async def _wait_for(condition, pilot, *, attempts: int = 160) -> bool:

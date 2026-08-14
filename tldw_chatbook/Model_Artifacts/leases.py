@@ -289,7 +289,6 @@ class ArtifactOperationLease:
         """
 
         handle = self._handle
-        self._handle = None
         if handle is None:
             return
         try:
@@ -298,23 +297,13 @@ class ArtifactOperationLease:
             release_error = ArtifactLeaseError(
                 f"failed releasing {self.mode.value} lease for {self.key.artifact_id}"
             )
-            _close_handle(
-                handle,
-                primary_error=release_error,
-                failure_message=(
-                    f"failed closing {self.mode.value} lease for {self.key.artifact_id}"
-                ),
-            )
             raise release_error from error
-        except BaseException as error:
-            _close_handle(
-                handle,
-                primary_error=error,
-                failure_message=(
-                    f"failed closing {self.mode.value} lease for {self.key.artifact_id}"
-                ),
-            )
+        except BaseException:
             raise
+        # Unlock succeeded, so the OS lock authority is gone. Clear the numeric
+        # handle before close: a failed close is terminal and retrying the fd may
+        # close an unrelated file if the OS already released and reused it.
+        self._handle = None
         _close_handle(
             handle,
             primary_error=None,
@@ -464,14 +453,21 @@ class ArtifactOperationLeaseSet:
         """
 
         first_error: BaseException | None = None
-        while self._leases:
+        for lease in reversed(tuple(self._leases)):
             try:
-                self._leases.pop().release()
+                lease.release()
             except BaseException as error:
-                if first_error is None:
+                if not lease.acquired:
+                    self._leases.remove(lease)
+                if first_error is None or (
+                    isinstance(first_error, Exception)
+                    and not isinstance(error, Exception)
+                ):
                     first_error = error
                 else:
                     first_error.add_note(f"additional lease release failure: {error!r}")
+            else:
+                self._leases.remove(lease)
         if first_error is not None:
             raise first_error
 

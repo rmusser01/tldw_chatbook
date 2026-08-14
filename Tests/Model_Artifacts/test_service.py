@@ -2580,7 +2580,9 @@ def test_download_stage_finalizes_only_verified_payload(tmp_path: Path) -> None:
     assert not stage.operation.exists()
 
 
-def test_download_stage_create_false_is_non_mutating_when_absent(tmp_path: Path) -> None:
+def test_download_stage_create_false_is_non_mutating_when_absent(
+    tmp_path: Path,
+) -> None:
     service = service_module.ModelArtifactService(tmp_path / "store")
     item = descriptor()
 
@@ -2624,7 +2626,9 @@ def test_invalid_download_stage_payload_never_creates_final_directory(
             target_is_directory=False,
         )
 
-    with pytest.raises((service_module.ArtifactIntegrityError, service_module.ArtifactPathError)):
+    with pytest.raises(
+        (service_module.ArtifactIntegrityError, service_module.ArtifactPathError)
+    ):
         service._finalize_download_stage(item, stage)
 
     assert service.artifact_path(item.reference).exists() is False
@@ -2768,7 +2772,9 @@ def test_download_stage_validates_before_identical_destination_convergence(
         external.write_bytes(b"model")
         symlink_or_skip(payload, external, target_is_directory=False)
 
-    with pytest.raises((service_module.ArtifactIntegrityError, service_module.ArtifactPathError)):
+    with pytest.raises(
+        (service_module.ArtifactIntegrityError, service_module.ArtifactPathError)
+    ):
         service._finalize_download_stage(item, stage)
 
     assert stage.operation.exists()
@@ -2941,10 +2947,14 @@ def test_download_stage_never_publishes_partial_canonical_operation(
 
     def fail_temporary_identity(path: Path, *, directory: bool) -> tuple[int, int, int]:
         if path.parent == service.staging_path and path.name.startswith(".download-"):
-            raise service_module.ArtifactPathError("injected temporary identity failure")
+            raise service_module.ArtifactPathError(
+                "injected temporary identity failure"
+            )
         return original_identity(path, directory=directory)
 
-    monkeypatch.setattr(service, "_download_stage_node_identity", fail_temporary_identity)
+    monkeypatch.setattr(
+        service, "_download_stage_node_identity", fail_temporary_identity
+    )
     with pytest.raises(service_module.ArtifactPathError):
         service._download_stage_for(item, create=True)
 
@@ -2984,11 +2994,14 @@ def test_download_stage_discards_losing_temporary_publication_candidate(
 
     assert stage is not None
     assert stage.operation == operation
-    assert tuple(
-        candidate
-        for candidate in service.staging_path.iterdir()
-        if candidate.name.startswith(".download-")
-    ) == ()
+    assert (
+        tuple(
+            candidate
+            for candidate in service.staging_path.iterdir()
+            if candidate.name.startswith(".download-")
+        )
+        == ()
+    )
 
 
 def test_download_stage_retries_after_marker_write_failure(
@@ -4955,10 +4968,17 @@ def test_leased_handle_release_error_preserves_body_exception() -> None:
     )
 
     class FailingLeaseSet:
-        def release(self) -> None:
-            raise service_module.ArtifactLeaseError("injected release failure")
+        def __init__(self, *, fail_once: bool = False) -> None:
+            self.calls = 0
+            self.fail_once = fail_once
 
-    leased = service_module.LeasedArtifactHandle(handle, FailingLeaseSet())
+        def release(self) -> None:
+            self.calls += 1
+            if not self.fail_once or self.calls == 1:
+                raise service_module.ArtifactLeaseError("injected release failure")
+
+    lease_set = FailingLeaseSet(fail_once=True)
+    leased = service_module.LeasedArtifactHandle(handle, lease_set)
     body_error = ValueError("body failure")
 
     with pytest.raises(ValueError) as caught:
@@ -4971,11 +4991,19 @@ def test_leased_handle_release_error_preserves_body_exception() -> None:
         for note in getattr(body_error, "__notes__", ())
     )
     leased.close()
+    leased.close()
+    assert lease_set.calls == 2
+
+    with pytest.raises(service_module.ArtifactStateError, match="closed"):
+        with leased:
+            pass
 
     cleanup_only = service_module.LeasedArtifactHandle(handle, FailingLeaseSet())
     with pytest.raises(service_module.ArtifactLeaseError, match="release failure"):
         with cleanup_only:
             pass
+    with pytest.raises(service_module.ArtifactLeaseError, match="release failure"):
+        cleanup_only.close()
 
 
 def test_inventory_reports_exact_ready_and_active_revision_flags(
