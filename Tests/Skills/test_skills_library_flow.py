@@ -805,6 +805,11 @@ async def test_flush_pending_work_vetoes_dirty_skill_editor(tmp_path):
         await _wait_for_library_shell(screen, pilot)
         await _open_skill_editor(screen, pilot, "dirty-check")
 
+        # This node isolates the explicit-save navigation veto. The editor's
+        # normal post-recompose callback owns arming in production; arm it
+        # directly here so canvas scheduling is not part of this assertion.
+        screen._arm_library_skill_editor()
+
         screen.query_one(
             "#library-skill-description", Input
         ).value = "Changed mid switch"

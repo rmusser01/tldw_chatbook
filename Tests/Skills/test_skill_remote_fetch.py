@@ -901,6 +901,21 @@ def _fence(name, args):
     return f"{FENCE_OPEN}\n{json.dumps({'name': name, 'arguments': args})}\n```"
 
 
+def _provider_resolution():
+    """Return the contract-valid provider metadata consumed by the bridge."""
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderResolution,
+    )
+
+    return ConsoleProviderResolution(
+        provider="Groq",
+        base_url="",
+        model="test-model",
+        ready=True,
+        execution_key="groq",
+    )
+
+
 class _ChunkGateway:
     """A provider gateway whose stream_chat replays a script per call index."""
 
@@ -999,7 +1014,9 @@ def test_e2e_agent_install_skill_confirm_allow(tmp_path, monkeypatch):
         skills_service=scope_service,
     )
     _rid, outcome = bridge.run_reply(
-        conversation_id="conv-e2e", session_id=session.id, resolution=object(),
+        conversation_id="conv-e2e",
+        session_id=session.id,
+        resolution=_provider_resolution(),
         assistant_message_id=assistant.id, model="m", session_system_prompt="",
         agent_messages=[{"role": "user", "content": "install it"}],
         should_cancel=lambda: False,
@@ -1073,7 +1090,9 @@ def test_e2e_agent_install_skill_confirm_deny(tmp_path, monkeypatch):
         skills_service=scope_service,
     )
     _rid, outcome = bridge.run_reply(
-        conversation_id="conv-e2e-deny", session_id=session.id, resolution=object(),
+        conversation_id="conv-e2e-deny",
+        session_id=session.id,
+        resolution=_provider_resolution(),
         assistant_message_id=assistant.id, model="m", session_system_prompt="",
         agent_messages=[{"role": "user", "content": "install it"}],
         should_cancel=lambda: False,
