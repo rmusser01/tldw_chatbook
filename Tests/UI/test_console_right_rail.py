@@ -99,9 +99,7 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
         await _wait_for_selector(
             pilot.app.screen, pilot, "#console-inspector-rail-open"
         )
-        open_button = pilot.app.screen.query_one(
-            "#console-inspector-rail-open", Button
-        )
+        open_button = pilot.app.screen.query_one("#console-inspector-rail-open", Button)
         assert str(open_button.label) == "Inspect->"
         arrow_end = (
             open_button.region.width - 1,
