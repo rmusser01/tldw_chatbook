@@ -122,6 +122,7 @@ def test_target_constructor_rejects_a_different_repository_database_safely(
 
     rendered = "".join(loguru_messages) + caplog.text + repr(caught.value)
     assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
     for private_value in private_values:
         assert private_value not in rendered
 
@@ -645,7 +646,7 @@ def test_target_replace_note_translates_an_optimistic_race(
         )
 
 
-def test_target_create_rolls_back_note_when_keyword_sync_fails(
+def test_target_create_rolls_back_note_on_internal_keyword_sync_failure(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     target, _service, _folders, db = target_harness
@@ -655,8 +656,11 @@ def test_target_create_rolls_back_note_when_keyword_sync_fails(
 
     monkeypatch.setattr(target, "_sync_keywords", failing_sync)
 
-    with pytest.raises(ImportTargetPermanentError):
+    with pytest.raises(ImportTargetInternalError) as caught:
         target.create_note(note_id=_NOTE_ID, payload=_payload())
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
     row = (
         db.get_connection()
@@ -666,7 +670,7 @@ def test_target_create_rolls_back_note_when_keyword_sync_fails(
     assert row is None
 
 
-def test_target_replace_rolls_back_text_when_keyword_sync_fails(
+def test_target_replace_rolls_back_text_on_internal_keyword_sync_failure(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     target, _service, _folders, _db = target_harness
@@ -677,12 +681,15 @@ def test_target_replace_rolls_back_text_when_keyword_sync_fails(
 
     monkeypatch.setattr(target, "_sync_keywords", failing_sync)
 
-    with pytest.raises(ImportTargetPermanentError):
+    with pytest.raises(ImportTargetInternalError) as caught:
         target.replace_note(
             note_id=_NOTE_ID,
             expected_version=1,
             payload=_payload(title="Must roll back", keywords=("replacement",)),
         )
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
     assert target.read_note(note_id=_NOTE_ID) == original
 
@@ -852,11 +859,17 @@ def test_target_exception_translation_is_safe_and_does_not_chain_raw_errors(
         target.read_note(note_id=_NOTE_ID)
 
     assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
     assert hostile not in str(caught.value)
     assert hostile not in repr(caught.value)
+    assert hostile not in "".join(
+        traceback.format_exception(
+            type(caught.value), caught.value, caught.value.__traceback__
+        )
+    )
 
 
-def test_target_validation_translation_is_permanent_and_baseexceptions_escape(
+def test_target_internal_value_errors_are_fatal_and_baseexceptions_escape(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     target, _service, _folders, _db = target_harness
@@ -865,9 +878,10 @@ def test_target_validation_translation_is_permanent_and_baseexceptions_escape(
         raise ValueError("hostile /private/path note-secret")
 
     monkeypatch.setattr(target, "_read_note", invalid_read)
-    with pytest.raises(ImportTargetPermanentError) as caught:
+    with pytest.raises(ImportTargetInternalError) as caught:
         target.read_note(note_id=_NOTE_ID)
     assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
     assert "hostile" not in repr(caught.value)
 
     def interrupted_read(*_args, **_kwargs):
@@ -881,8 +895,6 @@ def test_target_validation_translation_is_permanent_and_baseexceptions_escape(
 @pytest.mark.parametrize(
     ("fault", "expected_type"),
     [
-        (ValueError("private validation detail"), ImportTargetPermanentError),
-        (TypeError("private type detail"), ImportTargetPermanentError),
         (
             FolderValidationError("private folder validation detail"),
             ImportTargetPermanentError,
@@ -921,8 +933,14 @@ def test_target_expected_faults_keep_their_item_level_translation(
         target.read_note(note_id=_NOTE_ID)
 
     assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
     assert "private" not in str(caught.value)
     assert "private" not in repr(caught.value)
+    assert "private" not in "".join(
+        traceback.format_exception(
+            type(caught.value), caught.value, caught.value.__traceback__
+        )
+    )
 
 
 class _UnexpectedRuntimeFault(RuntimeError):
@@ -931,7 +949,7 @@ class _UnexpectedRuntimeFault(RuntimeError):
 
 @pytest.mark.parametrize(
     "fault_type",
-    [AssertionError, MemoryError, _UnexpectedRuntimeFault],
+    [AssertionError, MemoryError, TypeError, ValueError, _UnexpectedRuntimeFault],
 )
 def test_target_unexpected_faults_abort_as_safe_internal_errors(
     target_harness,
@@ -957,6 +975,7 @@ def test_target_unexpected_faults_abort_as_safe_internal_errors(
     assert type(caught.value) is ImportTargetInternalError
     assert not isinstance(caught.value, ImportTargetError)
     assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
     assert caught.value.__suppress_context__ is True
     rendered_traceback = "".join(
         traceback.format_exception(
@@ -992,6 +1011,7 @@ def test_unexpected_fault_cannot_borrow_item_level_sqlite_classification(
         target.read_note(note_id=_NOTE_ID)
 
     assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
     assert caught.value.__suppress_context__ is True
     rendered_traceback = "".join(
         traceback.format_exception(
@@ -999,6 +1019,142 @@ def test_unexpected_fault_cannot_borrow_item_level_sqlite_classification(
         )
     )
     assert private_detail not in rendered_traceback
+
+
+def test_unknown_fault_chain_is_not_inspected_for_sqlite_contention(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, _service, _folders, _db = target_harness
+    private_detail = "PRIVATE-HOSTILE-SQLITE /private/source note-secret"
+
+    class HostileOperationalError(sqlite3.OperationalError):
+        def __str__(self) -> str:
+            raise ValueError(private_detail)
+
+    def unexpected_failure(*_args, **_kwargs):
+        try:
+            raise HostileOperationalError
+        except HostileOperationalError as exc:
+            raise _UnexpectedRuntimeFault(private_detail) from exc
+
+    monkeypatch.setattr(target, "_read_note", unexpected_failure)
+
+    with pytest.raises(ImportTargetInternalError) as caught:
+        target.read_note(note_id=_NOTE_ID)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert private_detail not in "".join(
+        traceback.format_exception(
+            type(caught.value), caught.value, caught.value.__traceback__
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda target: target.read_note(note_id=""),
+        lambda target: target.replace_note(
+            note_id=_NOTE_ID,
+            expected_version=0,
+            payload=_payload(),
+        ),
+        lambda target: target.keywords_match(note_id=_NOTE_ID, keywords="invalid"),
+        lambda target: target.ensure_folder(
+            segments=("Private",),
+            folder_id=_FOLDER_ID,
+            allow_existing="invalid",  # type: ignore[arg-type]
+        ),
+    ],
+)
+def test_explicit_target_input_validation_remains_permanent_without_context(
+    target_harness,
+    operation,
+) -> None:
+    target, _service, _folders, _db = target_harness
+
+    with pytest.raises(ImportTargetPermanentError) as caught:
+        operation(target)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_constructor_explicit_validation_remains_permanent_without_context() -> None:
+    with pytest.raises(ImportTargetPermanentError) as caught:
+        LocalNoteImportTarget(
+            db=object(),  # type: ignore[arg-type]
+            folder_repository=object(),  # type: ignore[arg-type]
+        )
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_constructor_component_access_faults_are_safe_fatal_errors(
+    target_harness,
+) -> None:
+    _target, _service, _folders, db = target_harness
+    private_detail = "PRIVATE-CONSTRUCTOR-FAULT /private/database"
+
+    class FailingRepository(LocalNoteFolderRepository):
+        @property
+        def db(self):
+            raise ValueError(private_detail)
+
+    repository = object.__new__(FailingRepository)
+
+    with pytest.raises(ImportTargetInternalError) as caught:
+        LocalNoteImportTarget(db=db, folder_repository=repository)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert private_detail not in str(caught.value)
+    assert private_detail not in repr(caught.value)
+    assert private_detail not in "".join(
+        traceback.format_exception(
+            type(caught.value), caught.value, caught.value.__traceback__
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("helper_name", "operation"),
+    [
+        ("_keyword_rows", lambda target: target.read_note(note_id=_NOTE_ID)),
+        (
+            "_linked_keyword_rows",
+            lambda target: target.sync_keywords(
+                note_id=_NOTE_ID,
+                keywords=("replacement",),
+            ),
+        ),
+        (
+            "_keyword_rows",
+            lambda target: target.keywords_match(
+                note_id=_NOTE_ID,
+                keywords=("Project", "draft"),
+            ),
+        ),
+    ],
+)
+def test_internal_db_row_type_errors_are_safe_fatal_errors(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+    helper_name: str,
+    operation,
+) -> None:
+    target, _service, _folders, _db = target_harness
+    target.create_note(note_id=_NOTE_ID, payload=_payload())
+    monkeypatch.setattr(target, helper_name, lambda *_args, **_kwargs: [object()])
+
+    with pytest.raises(ImportTargetInternalError) as caught:
+        operation(target)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 @pytest.mark.parametrize(

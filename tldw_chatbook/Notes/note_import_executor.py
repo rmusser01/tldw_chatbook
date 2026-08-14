@@ -11,7 +11,6 @@ import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import NoReturn
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
@@ -77,6 +76,18 @@ class ImportTargetInternalError(RuntimeError):
         return f"{type(self).__name__}()"
 
 
+class _ImportTargetValidationError(Exception):
+    """Private marker for explicit target-boundary input validation failures."""
+
+    message = "The import target input is invalid."
+
+    def __init__(self) -> None:
+        super().__init__(self.message)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}()"
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class LocalTargetFolder:
     """Private-safe immutable folder state used by import execution."""
@@ -113,20 +124,21 @@ class LocalNoteImportTarget:
         db: CharactersRAGDB,
         folder_repository: LocalNoteFolderRepository,
     ) -> None:
+        translated_error: ImportTargetError | ImportTargetInternalError | None = None
         try:
             if not isinstance(db, CharactersRAGDB):
-                raise TypeError("db must be a CharactersRAGDB instance.")
+                raise _ImportTargetValidationError
             if not isinstance(folder_repository, LocalNoteFolderRepository):
-                raise TypeError(
-                    "folder_repository must be a LocalNoteFolderRepository instance."
-                )
+                raise _ImportTargetValidationError
             if folder_repository.db is not db:
-                raise ValueError("Target components must share one database.")
+                raise _ImportTargetValidationError
+            self._folders = folder_repository
+            self._user_id = db.client_id
+            self._db = db
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
-            _raise_translated(exc)
-        self._folders = folder_repository
-        self._user_id = db.client_id
-        self._db = db
+            translated_error = _translate_exception(exc)
+        if translated_error is not None:
+            raise translated_error from None
 
     def __repr__(self) -> str:
         return "LocalNoteImportTarget(<private>)"
@@ -139,10 +151,11 @@ class LocalNoteImportTarget:
         allow_existing: bool,
     ) -> LocalTargetFolder:
         """Ensure one exact folder path has an approved identity or reuse policy."""
+        translated_error: ImportTargetError | ImportTargetInternalError | None = None
         try:
             validate_deterministic_folder_id(folder_id)
             if not isinstance(allow_existing, bool):
-                raise TypeError("allow_existing must be a boolean.")
+                raise _ImportTargetValidationError
             copied_segments = _copy_segments(segments)
             existing = self._folders.get_folder_by_path(copied_segments)
             if existing is not None:
@@ -189,26 +202,30 @@ class LocalNoteImportTarget:
                 ):
                     raise ImportTargetConflictError from None
                 raise
-        except (ImportTargetError, ImportTargetInternalError):
-            raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
-            _raise_translated(exc)
+            translated_error = _translate_exception(exc)
+        if translated_error is not None:
+            raise translated_error from None
+        raise ImportTargetInternalError from None  # pragma: no cover
 
     def read_note(self, *, note_id: str) -> LocalTargetNote | None:
         """Read one active note as a frozen private reconciliation projection."""
+        translated_error: ImportTargetError | ImportTargetInternalError | None = None
         try:
             _validate_opaque_id(note_id)
             with self._db.transaction() as cursor:
                 return self._read_note(cursor, note_id)
-        except (ImportTargetError, ImportTargetInternalError):
-            raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
-            _raise_translated(exc)
+            translated_error = _translate_exception(exc)
+        if translated_error is not None:
+            raise translated_error from None
+        raise ImportTargetInternalError from None  # pragma: no cover
 
     def create_note(
         self, *, note_id: str, payload: ParsedNotePayload
     ) -> LocalTargetNote:
         """Create a deterministic note and its exact keywords, or reconcile it."""
+        translated_error: ImportTargetError | ImportTargetInternalError | None = None
         try:
             _validate_opaque_id(note_id)
             _validate_payload(payload)
@@ -225,10 +242,11 @@ class LocalNoteImportTarget:
                 if created is None or not _note_matches(created, payload):
                     raise ImportTargetPermanentError from None
                 return created
-        except (ImportTargetError, ImportTargetInternalError):
-            raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
-            _raise_translated(exc)
+            translated_error = _translate_exception(exc)
+        if translated_error is not None:
+            raise translated_error from None
+        raise ImportTargetInternalError from None  # pragma: no cover
 
     def replace_note(
         self,
@@ -238,6 +256,7 @@ class LocalNoteImportTarget:
         payload: ParsedNotePayload,
     ) -> LocalTargetNote:
         """Optimistically replace note text and exact keywords once."""
+        translated_error: ImportTargetError | ImportTargetInternalError | None = None
         try:
             _validate_opaque_id(note_id)
             _validate_expected_version(expected_version)
@@ -269,13 +288,15 @@ class LocalNoteImportTarget:
                 ):
                     raise ImportTargetConflictError from None
                 return result
-        except (ImportTargetError, ImportTargetInternalError):
-            raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
-            _raise_translated(exc)
+            translated_error = _translate_exception(exc)
+        if translated_error is not None:
+            raise translated_error from None
+        raise ImportTargetInternalError from None  # pragma: no cover
 
     def keywords_match(self, *, note_id: str, keywords: Iterable[str]) -> bool:
         """Return whether a note has exactly the desired canonical keyword set."""
+        translated_error: ImportTargetError | ImportTargetInternalError | None = None
         try:
             _validate_opaque_id(note_id)
             desired = _normalize_keywords(keywords)
@@ -284,13 +305,15 @@ class LocalNoteImportTarget:
                     raise ImportTargetPermanentError from None
                 current = self._keyword_rows(cursor, note_id)
                 return _keyword_keys_from_rows(current) == set(desired)
-        except (ImportTargetError, ImportTargetInternalError):
-            raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
-            _raise_translated(exc)
+            translated_error = _translate_exception(exc)
+        if translated_error is not None:
+            raise translated_error from None
+        raise ImportTargetInternalError from None  # pragma: no cover
 
     def sync_keywords(self, *, note_id: str, keywords: Iterable[str]) -> None:
         """Make one active note's canonical keyword links exactly match desired."""
+        translated_error: ImportTargetError | ImportTargetInternalError | None = None
         try:
             _validate_opaque_id(note_id)
             desired = _normalize_keywords(keywords)
@@ -298,21 +321,22 @@ class LocalNoteImportTarget:
                 if not self._active_note_exists(cursor, note_id):
                     raise ImportTargetPermanentError from None
                 self._sync_normalized_keywords(cursor, note_id, desired)
-        except (ImportTargetError, ImportTargetInternalError):
-            raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
-            _raise_translated(exc)
+            translated_error = _translate_exception(exc)
+        if translated_error is not None:
+            raise translated_error from None
 
     def attach_membership(self, *, folder_id: str, note_id: str) -> None:
         """Idempotently attach one active note to one active manual folder."""
+        translated_error: ImportTargetError | ImportTargetInternalError | None = None
         try:
             _validate_opaque_id(folder_id)
             _validate_opaque_id(note_id)
             self._folders.attach_manual(folder_id=folder_id, note_id=note_id)
-        except (ImportTargetError, ImportTargetInternalError):
-            raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
-            _raise_translated(exc)
+            translated_error = _translate_exception(exc)
+        if translated_error is not None:
+            raise translated_error from None
 
     def _read_note(
         self, cursor: sqlite3.Cursor, note_id: str
@@ -331,7 +355,7 @@ class LocalNoteImportTarget:
             content = row["content"]
             version = row["version"]
             keyword_values = tuple(keyword["keyword"] for keyword in keywords)
-        except (KeyError, TypeError):
+        except KeyError:
             raise ImportTargetPermanentError from None
         if (
             not isinstance(row_note_id, str)
@@ -459,7 +483,7 @@ class LocalNoteImportTarget:
                 keyword_id = row["id"]
                 keyword_text = row["keyword"]
                 deleted = row["deleted"]
-            except (KeyError, TypeError):
+            except KeyError:
                 raise ImportTargetPermanentError from None
             if isinstance(keyword_id, bool) or not isinstance(keyword_id, int):
                 raise ImportTargetPermanentError from None
@@ -663,36 +687,36 @@ def _validate_opaque_id(value: object) -> None:
         or len(value) > _OPAQUE_ID_MAX_LENGTH
         or "\x00" in value
     ):
-        raise ValueError("Opaque identifier is invalid.")
+        raise _ImportTargetValidationError
 
 
 def _validate_expected_version(value: object) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError("Expected version is invalid.")
+        raise _ImportTargetValidationError
 
 
 def _validate_payload(payload: object) -> None:
     if not isinstance(payload, ParsedNotePayload):
-        raise TypeError("payload must be a ParsedNotePayload instance.")
+        raise _ImportTargetValidationError
     _normalize_keywords(payload.keywords)
 
 
 def _normalize_keywords(keywords: Iterable[str]) -> dict[str, str]:
     if isinstance(keywords, (str, bytes)):
-        raise TypeError("Keywords must be a collection of text values.")
+        raise _ImportTargetValidationError
     try:
         iterator = iter(keywords)
     except TypeError:
-        raise TypeError("Keywords must be a collection of text values.") from None
+        raise _ImportTargetValidationError from None
     normalized: dict[str, str] = {}
     for count, value in enumerate(iterator, start=1):
         if count > MAX_IMPORT_KEYWORDS_PER_NOTE:
-            raise ValueError("Keywords exceed the allowed range.")
+            raise _ImportTargetValidationError
         if not isinstance(value, str):
-            raise TypeError("Keywords must contain text values.")
+            raise _ImportTargetValidationError
         display = value.strip()
         if not display or len(display) > MAX_IMPORT_KEYWORD_LENGTH or "\x00" in display:
-            raise ValueError("Keyword is invalid.")
+            raise _ImportTargetValidationError
         normalized.setdefault(_sqlite_nocase_key(display), display)
     return dict(sorted(normalized.items()))
 
@@ -714,7 +738,7 @@ def _keyword_keys_from_rows(rows: object) -> set[str]:
     for row in rows:
         try:
             value = row["keyword"]
-        except (KeyError, TypeError):
+        except KeyError:
             raise ImportTargetPermanentError from None
         if not isinstance(value, str):
             raise ImportTargetPermanentError from None
@@ -755,23 +779,36 @@ def _contains_sqlite_contention(exc: Exception) -> bool:
     return False
 
 
-def _raise_translated(exc: Exception) -> NoReturn:
-    if not isinstance(
-        exc,
-        (
-            CharactersRAGDBError,
-            FolderCapabilityError,
-            FolderCollisionError,
-            FolderConflictError,
-            FolderValidationError,
-            sqlite3.Error,
-            TypeError,
-            ValueError,
-        ),
-    ):
-        raise ImportTargetInternalError from None
-    if _contains_sqlite_contention(exc):
-        raise ImportTargetRetryableError from None
+def _translate_exception(
+    exc: Exception,
+) -> ImportTargetError | ImportTargetInternalError:
+    if isinstance(exc, ImportTargetRetryableError):
+        return ImportTargetRetryableError()
+    if isinstance(exc, ImportTargetConflictError):
+        return ImportTargetConflictError()
+    if isinstance(exc, ImportTargetPermanentError):
+        return ImportTargetPermanentError()
+    if isinstance(exc, ImportTargetError):
+        return ImportTargetError()
+    if isinstance(exc, ImportTargetInternalError):
+        return ImportTargetInternalError()
+    if isinstance(exc, _ImportTargetValidationError):
+        return ImportTargetPermanentError()
+    expected_family = (
+        CharactersRAGDBError,
+        FolderCapabilityError,
+        FolderCollisionError,
+        FolderConflictError,
+        FolderValidationError,
+        sqlite3.Error,
+    )
+    if not isinstance(exc, expected_family):
+        return ImportTargetInternalError()
+    try:
+        if _contains_sqlite_contention(exc):
+            return ImportTargetRetryableError()
+    except Exception:  # noqa: BLE001 - exception inspection must remain privacy-safe
+        return ImportTargetInternalError()
     if isinstance(
         exc,
         (
@@ -780,7 +817,7 @@ def _raise_translated(exc: Exception) -> NoReturn:
             sqlite3.IntegrityError,
         ),
     ):
-        raise ImportTargetConflictError from None
+        return ImportTargetConflictError()
     if isinstance(
         exc,
         (
@@ -788,12 +825,10 @@ def _raise_translated(exc: Exception) -> NoReturn:
             FolderCapabilityError,
             FolderValidationError,
             sqlite3.Error,
-            TypeError,
-            ValueError,
         ),
     ):
-        raise ImportTargetPermanentError from None
-    raise ImportTargetInternalError from None
+        return ImportTargetPermanentError()
+    return ImportTargetInternalError()
 
 
 __all__ = [
