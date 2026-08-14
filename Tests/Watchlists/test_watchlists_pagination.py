@@ -801,6 +801,79 @@ async def test_interrupted_search_presentation_restores_provisional_authority(
 
 
 @pytest.mark.asyncio
+async def test_context_round_trip_does_not_coalesce_with_cancelled_rollback(
+    monkeypatch,
+):
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(0, 1)
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items() is True
+        prior_rows = screen._loaded_items
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        original_apply = pane.apply_page_items
+        presentation_started = asyncio.Event()
+        rollback_started = asyncio.Event()
+        release_rollback = asyncio.Event()
+        never_release_presentation = asyncio.Event()
+        replacement_worker_started = asyncio.Event()
+        replacement_results = []
+
+        async def block_presentation_and_rollback(items, *, focus_first=False):
+            first_id = str(items[0]["id"])
+            if first_id == "100":
+                await original_apply(items, focus_first=focus_first)
+                presentation_started.set()
+                await never_release_presentation.wait()
+                return
+            if items is prior_rows and presentation_started.is_set():
+                rollback_started.set()
+                await release_rollback.wait()
+            await original_apply(items, focus_first=focus_first)
+
+        monkeypatch.setattr(pane, "apply_page_items", block_presentation_and_rollback)
+        a_backend_calls = 0
+        backend_calls = []
+
+        async def context_pages(**kwargs):
+            nonlocal a_backend_calls
+            backend_calls.append(kwargs)
+            a_backend_calls += 1
+            return _items(100 if a_backend_calls == 1 else 200, 1)
+
+        async def replacement_context_a_load():
+            replacement_worker_started.set()
+            replacement_results.append(await screen._load_items())
+
+        controller.list_items.reset_mock()
+        controller.list_items.side_effect = context_pages
+        screen.run_worker(
+            screen._load_items(), exclusive=True, group="wc_items"
+        )
+        await _wait_until(pilot, presentation_started.is_set)
+
+        screen._items_search_query = "temporary"
+        screen._reset_items_paging_for_context(loading=True)
+        screen._items_search_query = ""
+        screen._reset_items_paging_for_context(loading=True)
+        screen.run_worker(
+            replacement_context_a_load(), exclusive=True, group="wc_items"
+        )
+        await _wait_until(pilot, rollback_started.is_set)
+        await _wait_until(pilot, replacement_worker_started.is_set)
+        release_rollback.set()
+
+        await _wait_until(
+            pilot,
+            lambda: not screen._items_page_loading
+            and [str(item["id"]) for item in screen._loaded_items] == ["200"],
+        )
+        assert replacement_results == [True]
+        assert a_backend_calls == 2
+        assert all("search" not in call for call in backend_calls)
+
+
+@pytest.mark.asyncio
 async def test_older_context_result_cannot_paint_after_newer_result():
     controller = AsyncMock()
     controller.list_items.return_value = _items(0, 1)

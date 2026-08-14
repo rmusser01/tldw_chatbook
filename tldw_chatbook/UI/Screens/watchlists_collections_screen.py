@@ -2205,6 +2205,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_page_loading = loading
         self._items_search_results_authoritative = False
         self._items_load_generation += 1
+        self._items_inflight_page_load = None
         self._push_items_pager_state()
 
     def _build_content_pane(self) -> ContentPane:
