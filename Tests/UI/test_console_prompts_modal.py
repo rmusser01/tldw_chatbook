@@ -1168,7 +1168,6 @@ async def _open_dirty_prompt_mode(
     editor = modal.query_one("#prompt-block-content-role", TextArea)
     editor.focus()
     await pilot.pause()
-    modal._remember_current_focus()
     modal.mark_dirty()
     return editor
 
@@ -1200,8 +1199,10 @@ async def test_prompts_dirty_dismissal_reveals_guard(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["edit", "recipe"])
 @pytest.mark.parametrize("gesture", ["escape", "backdrop"])
 async def test_prompts_guard_visible_cannot_be_bypassed(
+    mode: str,
     gesture: str,
 ) -> None:
     backend = _PromptBackend()
@@ -1210,7 +1211,7 @@ async def test_prompts_guard_visible_cannot_be_bypassed(
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         modal = app.screen
-        editor = await _open_dirty_prompt_mode(modal, pilot, "edit")
+        editor = await _open_dirty_prompt_mode(modal, pilot, mode)
         await pilot.press("escape")
         await pilot.pause()
         guard = modal.query_one("#console-prompts-dirty-guard")

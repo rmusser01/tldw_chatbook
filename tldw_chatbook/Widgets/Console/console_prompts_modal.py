@@ -1397,6 +1397,7 @@ class ConsolePromptsModal(
         )
 
     def _show_dirty_guard(self) -> None:
+        self._remember_current_focus()
         guard = self.query_one("#console-prompts-dirty-guard", Vertical)
         guard.add_class("visible")
         guard.display = True
