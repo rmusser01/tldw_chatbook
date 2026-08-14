@@ -8,13 +8,14 @@ change rather than a dynamic schema side effect.
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Literal
+from typing import Any, Callable, ClassVar, Literal, cast
 
 from loguru import logger
 from rich.text import Text
@@ -104,6 +105,8 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     CredentialSource,
     GlobalSpeechTTSEffectiveSource,
     GlobalSpeechTTSCredentialMutation,
+    GlobalSpeechTTSCredentialState,
+    GlobalSpeechTTSDefaults,
     GlobalSpeechTTSSaveProposal,
     GlobalSpeechTTSState,
     GlobalSpeechTTSValidationError,
@@ -125,6 +128,20 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
 
 _MAX_DRAFT_REVISION = 2**63 - 1
 _MAX_DRAFT_TEXT_CHARACTERS = 4096
+_MAX_DRAFT_GRAPH_DEPTH = 8
+_MAX_DRAFT_GRAPH_NODES = 4096
+_MAX_DRAFT_GRAPH_TEXT_CHARACTERS = 262_144
+_PRIVATE_DRAFT_KEYS = frozenset(
+    {
+        "api_key",
+        "access_token",
+        "refresh_token",
+        "password",
+        "secret",
+        "credential",
+        "handoff_token",
+    }
+)
 
 _PROVIDER_OPTIONS = [
     (TTS_PROVIDER_LABELS[provider_id], provider_id)
@@ -178,6 +195,17 @@ _AUDIO_CPP_GUIDED_FIELD_IDS = frozenset(
 _AUDIO_CPP_MANAGED_DEFAULTS = AudioCppSettingsConfig(mode="managed").to_mapping()
 _AUDIO_CPP_PACKAGE_SCAN_GROUP = "settings-audio-cpp-package-scan"
 _AUDIO_CPP_PACKAGE_SAVE_VALIDATION_GROUP = "settings-audio-cpp-package-save-validation"
+_SEMANTIC_DRAFT_CONTROL_IDS = frozenset(
+    {
+        "settings-speech-configure-provider",
+        "settings-speech-default-provider",
+        "settings-speech-model-policy",
+        "settings-speech-voice-policy",
+        "settings-speech-model-value",
+        "settings-speech-audio_cpp-mode",
+        "settings-speech-audio_cpp-managed-setup-source",
+    }
+)
 # The panel's own blank sentinel for "no default voice profile chosen" in the
 # `#settings-speech-default-profile` Select. Never a real saved value: Task 2's
 # loader normalizes an absent/blank/whitespace-only `default_profile_id` to
@@ -284,24 +312,176 @@ def _validated_realtime_draft_copy(value: object) -> _RealtimeSettingsDraft:
     return replace(value)
 
 
+def _detached_draft_data(value: object) -> object:
+    """Detach one bounded JSON-like provider tree without private payloads."""
+
+    nodes = 0
+    text_characters = 0
+
+    def detach(item: object, depth: int) -> object:
+        nonlocal nodes, text_characters
+        nodes += 1
+        if depth > _MAX_DRAFT_GRAPH_DEPTH or nodes > _MAX_DRAFT_GRAPH_NODES:
+            raise ValueError("Global Speech & TTS draft is too large")
+        if item is None or type(item) is bool or type(item) is int:
+            return item
+        if type(item) is float:
+            if not math.isfinite(item):
+                raise ValueError("Global Speech & TTS draft is invalid")
+            return item
+        if type(item) is str:
+            text_characters += len(item)
+            if (
+                len(item) > _MAX_DRAFT_TEXT_CHARACTERS
+                or text_characters > _MAX_DRAFT_GRAPH_TEXT_CHARACTERS
+            ):
+                raise ValueError("Global Speech & TTS draft is too large")
+            return item
+        if type(item) is list:
+            return [detach(child, depth + 1) for child in item]
+        if type(item) is tuple:
+            return tuple(detach(child, depth + 1) for child in item)
+        if type(item) is dict:
+            detached: dict[str, object] = {}
+            for key, child in item.items():
+                if type(key) is not str:
+                    raise TypeError("Global Speech & TTS draft key is invalid")
+                normalized = key.casefold()
+                if normalized in _PRIVATE_DRAFT_KEYS or normalized.endswith(
+                    ("_api_key", "_access_token", "_refresh_token", "_password")
+                ):
+                    raise ValueError("Global Speech & TTS draft is private")
+                detached[key] = detach(child, depth + 1)
+            return detached
+        raise TypeError("Global Speech & TTS draft value is invalid")
+
+    return detach(value, 0)
+
+
 def _validated_global_speech_tts_state_copy(value: object) -> GlobalSpeechTTSState:
     """Return one detached complete state after existing pure field validation."""
 
     if type(value) is not GlobalSpeechTTSState:
         raise TypeError("Global Speech & TTS draft is invalid")
-    copied: GlobalSpeechTTSState = deepcopy(value)
-    if type(copied.providers) is not dict or set(copied.providers) != set(
+    validated = cast(GlobalSpeechTTSState, value)
+    defaults = validated.defaults
+    if type(defaults) is not GlobalSpeechTTSDefaults:
+        raise TypeError("Global Speech & TTS defaults are invalid")
+    default_values = (
+        defaults.provider_id,
+        defaults.model_mode,
+        defaults.model_id,
+        defaults.voice_mode,
+        defaults.voice_id,
+        defaults.response_format,
+        defaults.speed,
+        defaults.default_profile_id,
+    )
+    detached_defaults = _detached_draft_data(default_values)
+    assert isinstance(detached_defaults, tuple)
+    copied_defaults = GlobalSpeechTTSDefaults(*detached_defaults)
+
+    if type(validated.providers) is not dict or set(validated.providers) != set(
         BUILT_IN_TTS_PROVIDER_ORDER
     ):
         raise ValueError("Global Speech & TTS draft is invalid")
-    if any(type(values) is not dict for values in copied.providers.values()):
+    copied_providers: dict[str, dict[str, object]] = {}
+    for provider_id, provider_values in validated.providers.items():
+        if type(provider_values) is not dict or any(
+            type(key) is not str for key in provider_values
+        ):
+            raise ValueError("Global Speech & TTS draft is invalid")
+        allowed = set(GLOBAL_TTS_PROVIDER_FIELD_IDS[provider_id]) - {"credential"}
+        if not set(provider_values).issubset(allowed):
+            raise ValueError("Global Speech & TTS draft is invalid")
+        detached = _detached_draft_data(provider_values)
+        assert isinstance(detached, dict)
+        copied_providers[provider_id] = detached
+
+    provider_ids = set(BUILT_IN_TTS_PROVIDER_ORDER)
+    if type(validated.credentials) is not dict or not set(
+        validated.credentials
+    ).issubset(provider_ids):
         raise ValueError("Global Speech & TTS draft is invalid")
-    if type(copied.credentials) is not dict:
+    credential_metadata: list[tuple[object, ...]] = []
+    for provider_id, credential in validated.credentials.items():
+        if (
+            type(provider_id) is not str
+            or type(credential) is not GlobalSpeechTTSCredentialState
+            or credential.provider_id != provider_id
+        ):
+            raise ValueError("Global Speech & TTS credential metadata is invalid")
+        credential_metadata.append(
+            (
+                provider_id,
+                credential.provider_id,
+                credential.setting_key,
+                credential.environment_variable,
+                credential.source.value,
+                credential.local_saved,
+                credential.local_shadowed,
+            )
+        )
+    if type(validated.defaults_source) is not GlobalSpeechTTSEffectiveSource:
         raise ValueError("Global Speech & TTS draft is invalid")
-    if type(copied.provider_sources) is not dict:
+    if (
+        type(validated.provider_sources) is not dict
+        or set(validated.provider_sources) != provider_ids
+        or any(
+            type(key) is not str or type(source) is not GlobalSpeechTTSEffectiveSource
+            for key, source in validated.provider_sources.items()
+        )
+    ):
         raise ValueError("Global Speech & TTS draft is invalid")
-    if type(copied.provider_field_sources) is not dict:
+    if (
+        type(validated.provider_field_sources) is not dict
+        or set(validated.provider_field_sources) != provider_ids
+        or any(
+            type(provider_id) is not str
+            or type(sources) is not dict
+            or not set(sources).issubset(GLOBAL_TTS_PROVIDER_FIELD_IDS[provider_id])
+            or any(
+                type(field_id) is not str
+                or type(source) is not GlobalSpeechTTSEffectiveSource
+                for field_id, source in sources.items()
+            )
+            for provider_id, sources in validated.provider_field_sources.items()
+        )
+    ):
         raise ValueError("Global Speech & TTS draft is invalid")
+    _detached_draft_data(
+        (
+            credential_metadata,
+            validated.defaults_source.value,
+            tuple(
+                (provider_id, source.value)
+                for provider_id, source in validated.provider_sources.items()
+            ),
+            tuple(
+                (
+                    provider_id,
+                    tuple(
+                        (field_id, source.value) for field_id, source in sources.items()
+                    ),
+                )
+                for provider_id, sources in validated.provider_field_sources.items()
+            ),
+        )
+    )
+    copied = replace(
+        validated,
+        defaults=copied_defaults,
+        providers=copied_providers,
+        credentials={},
+        defaults_source=GlobalSpeechTTSEffectiveSource.DEFAULT,
+        provider_sources={
+            provider_id: GlobalSpeechTTSEffectiveSource.DEFAULT
+            for provider_id in BUILT_IN_TTS_PROVIDER_ORDER
+        },
+        provider_field_sources={
+            provider_id: {} for provider_id in BUILT_IN_TTS_PROVIDER_ORDER
+        },
+    )
     # These existing pure validators cover every provider field plus the
     # defaults axes without performing provider, filesystem, or config I/O.
     # A draft snapshot must also preserve an intentionally invalid field so
@@ -696,6 +876,17 @@ class SpeechTTSSettingsPanel(Vertical):
             )
             self.original_state = deepcopy(restored.original_state)
             self.state = deepcopy(restored.state)
+            metadata_original = original_state or state
+            for target, metadata in (
+                (self.state, state),
+                (self.original_state, metadata_original),
+            ):
+                target.credentials = deepcopy(metadata.credentials)
+                target.defaults_source = metadata.defaults_source
+                target.provider_sources = deepcopy(metadata.provider_sources)
+                target.provider_field_sources = deepcopy(
+                    metadata.provider_field_sources
+                )
         else:
             restored = None
             self.original_state = deepcopy(original_state or state)
@@ -829,6 +1020,7 @@ class SpeechTTSSettingsPanel(Vertical):
         """Collect mounted values and return one detached complete snapshot."""
 
         self._collect_visible_state()
+        self._synchronize_draft_revision()
         return SpeechTTSPanelDraftSnapshot(
             state=self.state,
             original_state=self.original_state,
@@ -857,8 +1049,18 @@ class SpeechTTSSettingsPanel(Vertical):
             draft_revision=snapshot.draft_revision,
         )
         focus_id = self._focused_id() if self.is_mounted else None
+        live_metadata = self.state
+        original_metadata = self.original_state
         self.state = deepcopy(restored.state)
         self.original_state = deepcopy(restored.original_state)
+        for target, metadata in (
+            (self.state, live_metadata),
+            (self.original_state, original_metadata),
+        ):
+            target.credentials = deepcopy(metadata.credentials)
+            target.defaults_source = metadata.defaults_source
+            target.provider_sources = deepcopy(metadata.provider_sources)
+            target.provider_field_sources = deepcopy(metadata.provider_field_sources)
         self._realtime_draft = replace(restored.realtime_draft)
         self._realtime_original = replace(restored.realtime_original)
         self.configure_provider = restored.configure_provider
@@ -3218,7 +3420,6 @@ class SpeechTTSSettingsPanel(Vertical):
                 values[field_id] = widget.value
 
         self._collect_realtime_visible_state()
-        self._synchronize_draft_revision()
 
     def _collect_realtime_visible_state(self) -> None:
         """Copy the Realtime block's mounted widget values into its draft."""
@@ -4651,6 +4852,7 @@ class SpeechTTSSettingsPanel(Vertical):
             except QueryError:
                 pass
         self._apply_audio_cpp_mode_visibility()
+        self._announce_draft_state()
 
     @on(Select.Changed, "#settings-speech-audio_cpp-managed-setup-source")
     def handle_audio_cpp_setup_source_changed(self, event: Select.Changed) -> None:
@@ -4659,6 +4861,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._fence_audio_cpp_package_scan()
         self.state.providers["audio_cpp"]["managed_setup_source"] = event.value
         self._apply_audio_cpp_mode_visibility()
+        self._announce_draft_state()
 
     @on(Button.Pressed, "#settings-speech-audio-cpp-use-detected")
     @on(Button.Pressed, "#settings-speech-audio-cpp-manual-use-detected")
@@ -4895,9 +5098,13 @@ class SpeechTTSSettingsPanel(Vertical):
     @on(Switch.Changed, ".settings-speech-draft-field")
     def handle_draft_field_changed(
         self,
-        _event: Input.Changed | Select.Changed | Switch.Changed,
+        event: Input.Changed | Select.Changed | Switch.Changed,
     ) -> None:
-        if not self._syncing:
+        control = getattr(event, "control", None)
+        if (
+            not self._syncing
+            and getattr(control, "id", None) not in _SEMANTIC_DRAFT_CONTROL_IDS
+        ):
             self._announce_draft_state()
 
     def _reset_to_saved(self) -> None:
