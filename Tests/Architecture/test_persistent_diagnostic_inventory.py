@@ -116,6 +116,14 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Pending sidebar-state write failed": ("type(error).__name__",),
     },
     "tldw_chatbook/UI/Screens/library_screen.py": {
+        "canvas sync failed": ("kind",),
+        "Library entry canvas repair attempt failed": (),
+        "Strict Library entry shell synchronization failed": (),
+        "Strict Library entry canvas removal failed": (),
+        "Strict Library entry canvas mount failed": (),
+        "Library snapshot shell reconciliation failed": (),
+        "Library snapshot canvas replacement failed": (),
+        "Library Search/RAG snapshot sync failed": (),
         "Failed to continue the Database Notes folder navigator": (
             "type(exc).__name__",
         ),
