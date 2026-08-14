@@ -2,7 +2,7 @@
 id: TASK-15120
 title: >-
   Store workspace context and workspace service disagree when a global conversation opens
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-11 05:00'
 labels:
@@ -32,7 +32,49 @@ The test is marked `xfail(strict=True)` pointing here, so the divergence stays v
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 A ruling is recorded on what `store.workspace_context.active_workspace_id` means when the open conversation is globally scoped
-- [ ] #2 The store and the workspace service cannot report different active workspaces for the same state
-- [ ] #3 The `xfail(strict=True)` on `test_console_browser_selecting_global_persisted_row_preserves_active_workspace` is removed and the test asserts the ruled behaviour
+- [x] #1 A ruling is recorded on what `store.workspace_context.active_workspace_id` means when the open conversation is globally scoped
+- [x] #2 The store and the workspace service cannot report different active workspaces for the same state
+- [x] #3 The `xfail(strict=True)` on `test_console_browser_selecting_global_persisted_row_preserves_active_workspace` is removed and the test asserts the ruled behaviour
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Record the owner ruling; identify which layer violates it
+2. Find why the follow-the-conversation seam skips global conversations
+3. Map "global" onto the registry's own representation; mutation-check
+
+## Implementation Notes
+
+**Owner ruling (2026-08-13): the workspace context FOLLOWS the conversation.**
+A user keeps conversations open across multiple workspaces at once; selecting
+one switches the context to that conversation's workspace. So the STORE's
+behaviour (context flipping to "global") was right and the SERVICE staying on
+ws-a was the bug -- the pinning test's "preserves active workspace" premise
+was wrong per the ruling, and it is rewritten, not just unmarked.
+
+The seam already followed the ruling for real workspaces
+(`_set_active_workspace_for_console_session`); it simply early-returned for
+global conversations, leaving the previous workspace -- and its capabilities
+-- active under a global conversation.
+
+**One design correction along the way**: the first fix represented global as
+"no active workspace" (registry -> None). That fights a deliberate design --
+`_current_console_workspace_context` floors every read through
+`ensure_default_workspace()`, which resurrects the built-in Default whenever
+no workspace is active, precisely so a concrete-but-capability-less workspace
+always exists. So the registry's stable representation of "no explicit
+workspace" IS the Default workspace, and a global conversation now lands
+there (clear + ensure), while the store's context reads "global". The two
+layers agree by design rather than by accident: store="global" <->
+registry=Default-with-no-capabilities.
+
+Added `LocalWorkspaceRegistryService.clear_active_workspace()` as the
+primitive. Mutation-checked: restoring the early-return turns the rewritten
+test red. Both directions verified: global->Default (rewritten test) and
+ws->ws (`test_activate_native_console_session_realigns_active_workspace`,
+unchanged). 309 passed in the native module -- its last xfail is gone; 305
+passed across session-controller/Workspaces/workbench modules.
+
+Modified: `tldw_chatbook/Workspaces/registry_service.py`,
+`tldw_chatbook/UI/Console_Modules/workspace.py`,
+`Tests/UI/test_console_native_chat_flow.py`.
