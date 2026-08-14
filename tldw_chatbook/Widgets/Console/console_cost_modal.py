@@ -22,12 +22,13 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRow, ConsoleCostRowTotals
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 MODAL_ID = "console-cost-modal"
 CLOSE_BUTTON_ID = "console-cost-modal-close"
 
 
-class ConsoleCostModal(ModalScreen[None]):
+class ConsoleCostModal(SafeModalDismissMixin, ModalScreen[None]):
     """Show the active Console session's per-message cost breakdown."""
 
     DEFAULT_CSS = """
@@ -43,7 +44,8 @@ class ConsoleCostModal(ModalScreen[None]):
     #console-cost-modal-actions { height: auto; margin-top: 1; }
     """
 
-    BINDINGS = [("escape", "dismiss", "Close")]
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
+    SAFE_MODAL_CONTENT = "#console-cost-modal"
 
     def __init__(
         self,
@@ -66,14 +68,10 @@ class ConsoleCostModal(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         """Build the header, scrollable row list, totals line, and Close action."""
         with Vertical(id=MODAL_ID):
-            yield Static(
-                "Cost breakdown", id="console-cost-modal-header", markup=False
-            )
+            yield Static("Cost breakdown", id="console-cost-modal-header", markup=False)
             with VerticalScroll(id="console-cost-modal-rows"):
                 if not self._rows:
-                    yield Static(
-                        "No priced or estimated messages yet.", markup=False
-                    )
+                    yield Static("No priced or estimated messages yet.", markup=False)
                 for row in self._rows:
                     yield Static(
                         self._format_row(row),
@@ -127,11 +125,11 @@ class ConsoleCostModal(ModalScreen[None]):
             f"({totals.row_count} rows)"
         )
 
-    def action_dismiss(self) -> None:
+    async def action_dismiss(self) -> None:
         """Dismiss, bound to the Escape key."""
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")
 
     @on(Button.Pressed, f"#{CLOSE_BUTTON_ID}")
-    def _close(self, event: Button.Pressed) -> None:
+    async def _close(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")

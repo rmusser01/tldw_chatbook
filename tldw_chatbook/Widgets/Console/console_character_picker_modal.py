@@ -23,6 +23,7 @@ from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
 from ...UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 CharacterPlacement = Literal["swap", "new"]
 
@@ -84,13 +85,14 @@ def filter_character_options(
     secondary = [
         o
         for o in options
-        if text not in o.name.casefold()
-        and text in (o.description or "").casefold()
+        if text not in o.name.casefold() and text in (o.description or "").casefold()
     ]
     return tuple((primary + secondary)[:limit])
 
 
-class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
+class ConsoleCharacterPickerModal(
+    SafeModalDismissMixin, ModalScreen["ConsoleCharacterChoice | None"]
+):
     """Search saved characters, then place the pick in this chat or a new one."""
 
     DEFAULT_CSS = """
@@ -131,10 +133,11 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
     """
 
     BINDINGS = [
-        ("escape", "dismiss_picker", "Cancel"),
+        ("escape", "request_safe_cancel", "Cancel"),
         ("down", "cursor_down", "Next"),
         ("up", "cursor_up", "Previous"),
     ]
+    SAFE_MODAL_CONTENT = "#console-character-picker"
 
     def __init__(
         self,
@@ -184,6 +187,7 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
             )
 
     async def on_mount(self) -> None:
+        super().on_mount()
         self.query_one("#console-character-picker-query", Input).focus()
         await self._refresh_results("")
 
@@ -335,6 +339,14 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
                 continue
             row.update(f"{marker}{display_name}{current}")
 
-    def action_dismiss_picker(self) -> None:
-        self._cancel_query_debounce()
-        self.dismiss(None)
+    async def action_dismiss_picker(self) -> None:
+        await self.request_safe_cancel(source="visible")
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+
+        async def cancel_debounce() -> None:
+            self._cancel_query_debounce()
+
+        await self.run_cancel_effect_once(cancel_debounce)
+        self.dismiss_safe_once(None)

@@ -84,6 +84,8 @@ from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
 from tldw_chatbook.Chat.console_glyphs import GLYPH_SOURCE_MEDIA, GLYPH_SOURCE_NOTE
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Chat.rag_scope import (
@@ -236,10 +238,11 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-class ConsoleScopePickerModal(ModalScreen[None]):
+class ConsoleScopePickerModal(SafeModalDismissMixin, ModalScreen[None]):
     """Pick a static media/note item set to narrow RAG retrieval scope."""
 
-    BINDINGS = [("escape", "dismiss_picker", "Cancel")]
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-scope-picker-modal"
 
     def __init__(
         self,
@@ -320,17 +323,23 @@ class ConsoleScopePickerModal(ModalScreen[None]):
             )
 
             with Horizontal(classes="console-scope-picker-tabs"):
-                yield Button("All", id=TAB_ALL_BTN_ID, classes=TAB_BUTTON_CLASS, compact=True)
-                yield Button("Media", id=TAB_MEDIA_BTN_ID, classes=TAB_BUTTON_CLASS, compact=True)
-                yield Button("Notes", id=TAB_NOTE_BTN_ID, classes=TAB_BUTTON_CLASS, compact=True)
+                yield Button(
+                    "All", id=TAB_ALL_BTN_ID, classes=TAB_BUTTON_CLASS, compact=True
+                )
+                yield Button(
+                    "Media", id=TAB_MEDIA_BTN_ID, classes=TAB_BUTTON_CLASS, compact=True
+                )
+                yield Button(
+                    "Notes", id=TAB_NOTE_BTN_ID, classes=TAB_BUTTON_CLASS, compact=True
+                )
 
             yield Input(placeholder="Filter by title…", id=TEXT_FILTER_ID)
 
             with Vertical(classes="console-scope-picker-tag-row"):
-                yield Horizontal(id=TAG_CHIPS_ID, classes="console-scope-picker-chip-row")
-                yield Input(
-                    placeholder="Search tags…", id=TAG_SEARCH_ID
+                yield Horizontal(
+                    id=TAG_CHIPS_ID, classes="console-scope-picker-chip-row"
                 )
+                yield Input(placeholder="Search tags…", id=TAG_SEARCH_ID)
                 yield Horizontal(
                     id=TAG_SUGGESTIONS_ID, classes="console-scope-picker-chip-row"
                 )
@@ -338,7 +347,11 @@ class ConsoleScopePickerModal(ModalScreen[None]):
             with Horizontal(classes="console-scope-picker-sort-row"):
                 yield Static("Sort:", classes="console-scope-picker-sort-label")
                 yield Select(
-                    [("Recent", SORT_RECENT), ("Title", SORT_TITLE), ("Type", SORT_TYPE)],
+                    [
+                        ("Recent", SORT_RECENT),
+                        ("Title", SORT_TITLE),
+                        ("Type", SORT_TYPE),
+                    ],
                     value=SORT_RECENT,
                     allow_blank=False,
                     id=SORT_SELECT_ID,
@@ -385,6 +398,7 @@ class ConsoleScopePickerModal(ModalScreen[None]):
                 yield Button("Cancel", id=CANCEL_BTN_ID, compact=True)
 
     async def on_mount(self) -> None:
+        super().on_mount()
         self._sync_tab_buttons()
         self._sync_view_buttons()
         # Selected view needs no lister I/O -- render synchronously so it's
@@ -402,10 +416,16 @@ class ConsoleScopePickerModal(ModalScreen[None]):
         fetched (e.g. restored from ``initial``, or added via select-all-
         matching before its page was ever paged into view)."""
         _source_type, source_id = key
-        return ScopeListItem(source_id=source_id, title=source_id, updated_at="", tags=())
+        return ScopeListItem(
+            source_id=source_id, title=source_id, updated_at="", tags=()
+        )
 
     def _lister_for(self, source_type: str) -> SourceLister:
-        return self._media_lister if source_type == SOURCE_TYPE_MEDIA else self._notes_lister
+        return (
+            self._media_lister
+            if source_type == SOURCE_TYPE_MEDIA
+            else self._notes_lister
+        )
 
     def _active_types(self) -> tuple[str, ...]:
         if self._tab == TAB_MEDIA:
@@ -458,7 +478,11 @@ class ConsoleScopePickerModal(ModalScreen[None]):
 
             try:
                 page = await lister.list_page(
-                    text=text, tags=tags, sort=sort, offset=self._offset, limit=self._page_size
+                    text=text,
+                    tags=tags,
+                    sort=sort,
+                    offset=self._offset,
+                    limit=self._page_size,
                 )
             except Exception:
                 page = ScopeListPage(items=(), total_matching=0)
@@ -529,7 +553,9 @@ class ConsoleScopePickerModal(ModalScreen[None]):
         await container.remove_children()
         self._rendered_keys = []
         if not self._page_items:
-            await container.mount(Static(EMPTY_ALL_COPY, id=EMPTY_STATIC_ID, markup=False))
+            await container.mount(
+                Static(EMPTY_ALL_COPY, id=EMPTY_STATIC_ID, markup=False)
+            )
             return
         rows = []
         for index, (source_type, item) in enumerate(self._page_items):
@@ -544,7 +570,9 @@ class ConsoleScopePickerModal(ModalScreen[None]):
         await container.remove_children()
         self._rendered_keys = []
         if not self._selected:
-            await container.mount(Static(EMPTY_SELECTED_COPY, id=EMPTY_STATIC_ID, markup=False))
+            await container.mount(
+                Static(EMPTY_SELECTED_COPY, id=EMPTY_STATIC_ID, markup=False)
+            )
             return
         rows = []
         for index, key in enumerate(sorted(self._selected.keys())):
@@ -559,7 +587,9 @@ class ConsoleScopePickerModal(ModalScreen[None]):
         self, index: int, item: ScopeListItem, source_type: str, *, greyed: bool
     ) -> Checkbox:
         glyph = resolve_glyph(
-            GLYPH_SOURCE_MEDIA if source_type == SOURCE_TYPE_MEDIA else GLYPH_SOURCE_NOTE
+            GLYPH_SOURCE_MEDIA
+            if source_type == SOURCE_TYPE_MEDIA
+            else GLYPH_SOURCE_NOTE
         )
         title = escape_markup(item.title or item.source_id)
         label = f"{glyph} {title}"
@@ -567,7 +597,10 @@ class ConsoleScopePickerModal(ModalScreen[None]):
             label += OUTSIDE_UNIVERSE_SUFFIX
         key = (source_type, item.source_id)
         checkbox = Checkbox(
-            label, value=key in self._selected, id=f"{ROW_ID_PREFIX}{index}", classes=ROW_CLASS
+            label,
+            value=key in self._selected,
+            id=f"{ROW_ID_PREFIX}{index}",
+            classes=ROW_CLASS,
         )
         checkbox.set_class(greyed, ROW_GREYED_CLASS)
         return checkbox
@@ -694,7 +727,9 @@ class ConsoleScopePickerModal(ModalScreen[None]):
         if all_btn is not None:
             all_btn.set_class(self._view == VIEW_ALL, VIEW_BUTTON_ACTIVE_CLASS)
         if selected_btn is not None:
-            selected_btn.set_class(self._view == VIEW_SELECTED, VIEW_BUTTON_ACTIVE_CLASS)
+            selected_btn.set_class(
+                self._view == VIEW_SELECTED, VIEW_BUTTON_ACTIVE_CLASS
+            )
 
     # -- events: tags ---------------------------------------------------------------
 
@@ -764,14 +799,16 @@ class ConsoleScopePickerModal(ModalScreen[None]):
             return
         event.stop()
         try:
-            index = int(checkbox_id[len(ROW_ID_PREFIX):])
+            index = int(checkbox_id[len(ROW_ID_PREFIX) :])
         except ValueError:
             return
         if not (0 <= index < len(self._rendered_keys)):
             return
         key = self._rendered_keys[index]
         if event.value:
-            self._selected[key] = self._details_cache.get(key) or self._placeholder_item(key)
+            self._selected[key] = self._details_cache.get(
+                key
+            ) or self._placeholder_item(key)
         else:
             self._selected.pop(key, None)
         self._render_footer()
@@ -816,7 +853,9 @@ class ConsoleScopePickerModal(ModalScreen[None]):
     async def _select_all_confirmed(self, event: Button.Pressed) -> None:
         event.stop()
         for key in self._matching_keys:
-            self._selected[key] = self._details_cache.get(key) or self._placeholder_item(key)
+            self._selected[key] = self._details_cache.get(
+                key
+            ) or self._placeholder_item(key)
         self._hide_confirm()
         self._render_footer()
         await self._render_current_view()
@@ -877,9 +916,9 @@ class ConsoleScopePickerModal(ModalScreen[None]):
         self.dismiss(None)
 
     @on(Button.Pressed, f"#{CANCEL_BTN_ID}")
-    def _cancel_pressed(self, event: Button.Pressed) -> None:
+    async def _cancel_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")
 
-    def action_dismiss_picker(self) -> None:
-        self.dismiss(None)
+    async def action_dismiss_picker(self) -> None:
+        await self.request_safe_cancel(source="visible")

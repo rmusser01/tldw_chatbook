@@ -62,7 +62,9 @@ class ModalHarness(App[None]):
     CSS = """
     Screen {
         layout: vertical;
+        align: center middle;
     }
+    #console-skill-picker-modal { width: 60; height: 20; }
     """
 
     def __init__(self) -> None:
@@ -188,6 +190,42 @@ async def test_escape_dismisses_none() -> None:
         await pilot.press("escape")
 
     assert app.dismissed_with is None
+
+
+@pytest.mark.parametrize("source", ["escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_cancel_gestures_dismiss_typed_picker_with_none(source: str) -> None:
+    app = ModalHarness()
+    fake_search = FakeSkillSearch([_record(name="code-review")])
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSkillPickerModal(skill_search=fake_search), callback=app.capture
+        )
+        await pilot.pause()
+        if source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+    assert app.dismissed_with is None
+
+
+@pytest.mark.asyncio
+async def test_inside_click_keeps_typed_picker_open() -> None:
+    app = ModalHarness()
+    fake_search = FakeSkillSearch([_record(name="code-review")])
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        modal = ConsoleSkillPickerModal(skill_search=fake_search)
+        await app.push_screen(modal, callback=app.capture)
+        await pilot.pause()
+        await pilot.click(f"#{FILTER_INPUT_ID}")
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert app.dismissed_with == "not-called"
 
 
 @pytest.mark.asyncio

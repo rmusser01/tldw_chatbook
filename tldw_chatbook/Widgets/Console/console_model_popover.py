@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_context_policy import (
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from .console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
@@ -65,7 +66,8 @@ def _temperature_in_range(value: float) -> bool:
 
 
 class ConsoleModelPopover(
-    ModalScreen["ConsoleModelPopoverResult | ConsoleSessionSettings | str | None"]
+    SafeModalDismissMixin,
+    ModalScreen["ConsoleModelPopoverResult | ConsoleSessionSettings | str | None"],
 ):
     """Quick provider/model/temperature/streaming switcher for the session."""
 
@@ -124,7 +126,8 @@ class ConsoleModelPopover(
     }
     """
 
-    BINDINGS = [("escape", "dismiss_popover", "Cancel")]
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-model-popover"
 
     def __init__(
         self,
@@ -194,9 +197,7 @@ class ConsoleModelPopover(
                 model_select = Select(
                     model_options,
                     value=(
-                        self._settings.model
-                        if self._settings.model
-                        else Select.BLANK
+                        self._settings.model if self._settings.model else Select.BLANK
                     ),
                     id="console-popover-model",
                     allow_blank=True,
@@ -298,6 +299,7 @@ class ConsoleModelPopover(
 
     def on_mount(self) -> None:
         """Settle the narrow-height fold affordance after first layout."""
+        super().on_mount()
         self.call_after_refresh(self._sync_fold_hint)
 
     def on_resize(self, _event: events.Resize) -> None:
@@ -425,6 +427,6 @@ class ConsoleModelPopover(
             return
         self.dismiss(ConsoleModelPopoverResult(settings=settings, compaction_mode=mode))
 
-    def action_dismiss_popover(self) -> None:
+    async def action_dismiss_popover(self) -> None:
         """Dismiss the popover with no result (Escape)."""
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")

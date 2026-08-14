@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+import inspect
+from typing import Any
 
 import pytest
 from textual import events, on
@@ -14,10 +16,323 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
+    ConsoleCharacterOption,
+    ConsoleCharacterPickerModal,
+)
+from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
+    ConsoleCitationSourcesModal,
+)
+from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
+from tldw_chatbook.Widgets.Console.console_cost_modal import ConsoleCostModal
+from tldw_chatbook.Widgets.Console.console_image_viewer_modal import (
+    ConsoleImageViewerModal,
+)
+from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
+from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
+    ConsolePromptPickerModal,
+)
+from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
+    ConsolePromptQueueModal,
+)
+from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
+from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
+    ConsoleScopePickerModal,
+)
+from tldw_chatbook.Widgets.Console.console_skill_picker_modal import (
+    ConsoleSkillPickerModal,
+)
+from tldw_chatbook.Widgets.Console.console_style_picker_modal import (
+    ConsoleStylePickerModal,
+)
 from tldw_chatbook.Widgets.modal_dismissal import (
     SafeModalDismissMixin,
     is_modal_backdrop_click,
 )
+
+
+@dataclass(frozen=True)
+class _Task2ModalContract:
+    modal_type: type[ModalScreen[Any]]
+    content_selector: str
+    cancel_result: object
+    opener: str
+    pre_cancel_hook: str | None
+    guard: str
+    focus_postcondition: str
+
+
+_RESTORE_OPENER = "restore opener or Console composer fallback"
+TASK2_MODAL_CONTRACTS = (
+    _Task2ModalContract(
+        ConsoleCharacterPickerModal,
+        "#console-character-picker",
+        None,
+        "Console character chip",
+        "_cancel_query_debounce",
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleCitationSourcesModal,
+        "#console-citation-sources-modal",
+        None,
+        "Console citation marker",
+        "increment _request_generation",
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleContextModal,
+        "#console-context-modal",
+        None,
+        "Console context action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleCostModal,
+        "#console-cost-modal",
+        None,
+        "Console cost action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleImageViewerModal,
+        "#console-image-viewer",
+        None,
+        "Console avatar",
+        None,
+        "intentional click-anywhere cancel",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleModelPopover,
+        "#console-model-popover",
+        None,
+        "Console model chip",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsolePromptPickerModal,
+        "#console-prompt-picker-modal",
+        None,
+        "Console composer prompt command",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsolePromptQueueModal,
+        "#console-prompt-queue-dialog",
+        None,
+        "Console prompt queue",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleRunLogModal,
+        "#console-run-log-modal",
+        None,
+        "Console run log action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleScopePickerModal,
+        "#console-scope-picker-modal",
+        None,
+        "Console RAG scope action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleSkillPickerModal,
+        "#console-skill-picker-modal",
+        None,
+        "Console composer skill command",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleStylePickerModal,
+        "#console-style-picker-modal",
+        None,
+        "Console image style action",
+        "_cancel_search_debounce",
+        "none",
+        _RESTORE_OPENER,
+    ),
+)
+
+
+def _binding_action(binding: object) -> str:
+    return binding.action if isinstance(binding, Binding) else binding[1]  # type: ignore[index,return-value]
+
+
+def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
+    assert len(TASK2_MODAL_CONTRACTS) == 12
+    assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
+        "ConsoleCharacterPickerModal",
+        "ConsoleCitationSourcesModal",
+        "ConsoleContextModal",
+        "ConsoleCostModal",
+        "ConsoleImageViewerModal",
+        "ConsoleModelPopover",
+        "ConsolePromptPickerModal",
+        "ConsolePromptQueueModal",
+        "ConsoleRunLogModal",
+        "ConsoleScopePickerModal",
+        "ConsoleSkillPickerModal",
+        "ConsoleStylePickerModal",
+    }
+    for contract in TASK2_MODAL_CONTRACTS:
+        assert issubclass(contract.modal_type, SafeModalDismissMixin)
+        assert contract.modal_type.SAFE_MODAL_CONTENT == contract.content_selector
+        assert "request_safe_cancel" in {
+            _binding_action(binding) for binding in contract.modal_type.BINDINGS
+        }
+
+
+class _Task2Harness(App[None]):
+    CSS = """
+    Screen { align: center middle; }
+    #console-citation-sources-modal,
+    #console-style-picker-modal { width: 60; height: 20; }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.results: list[object] = []
+
+
+class _TrackedCharacterModal(ConsoleCharacterPickerModal):
+    def __init__(self) -> None:
+        super().__init__(options=[ConsoleCharacterOption(1, "Ada")])
+        self.cleanup_calls = 0
+        self.order: list[str] = []
+
+    def _cancel_query_debounce(self) -> None:
+        self.cleanup_calls += 1
+        self.order.append("cleanup")
+        super()._cancel_query_debounce()
+
+    def dismiss(self, result=None):  # type: ignore[no-untyped-def]
+        self.order.append("dismiss")
+        return super().dismiss(result)
+
+
+class _TrackedCitationModal(ConsoleCitationSourcesModal):
+    def __init__(self) -> None:
+        super().__init__(
+            native_message_id="native-1",
+            persisted_message_id="persisted-1",
+            current_body="body",
+            repository=object(),
+            request_is_current=lambda: True,
+        )
+        self._worker_started = True
+        self.generation_at_dismiss: list[int] = []
+
+    def dismiss(self, result=None):  # type: ignore[no-untyped-def]
+        self.generation_at_dismiss.append(self._request_generation)
+        return super().dismiss(result)
+
+
+class _TrackedStyleModal(ConsoleStylePickerModal):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cleanup_calls = 0
+        self.order: list[str] = []
+
+    def _cancel_search_debounce(self) -> None:
+        self.cleanup_calls += 1
+        self.order.append("cleanup")
+        super()._cancel_search_debounce()
+
+    def dismiss(self, result=None):  # type: ignore[no-untyped-def]
+        self.order.append("dismiss")
+        return super().dismiss(result)
+
+
+async def _request_task2_cancel(modal, pilot, source: str) -> None:  # type: ignore[no-untyped-def]
+    if source == "visible":
+        if isinstance(modal, _TrackedCitationModal):
+            await pilot.click("#console-citation-sources-close")
+        else:
+            result = modal.action_dismiss_picker()
+            if inspect.isawaitable(result):
+                await result
+    elif source == "escape":
+        await pilot.press("escape")
+    else:
+        await pilot.click(offset=(0, 0))
+    await pilot.pause()
+
+
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_character_cancel_sources_run_debounce_cleanup_once(source: str) -> None:
+    app = _Task2Harness()
+    modal = _TrackedCharacterModal()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        modal._query_debounce_timer = modal.set_timer(60, lambda: None)
+        modal.cleanup_calls = 0
+        modal.order.clear()
+
+        await _request_task2_cancel(modal, pilot, source)
+
+    assert app.results == [None]
+    assert modal.cleanup_calls == 1
+    assert modal.order[:2] == ["cleanup", "dismiss"]
+
+
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_citation_cancel_sources_invalidate_generation_once_before_dismiss(
+    source: str,
+) -> None:
+    app = _Task2Harness()
+    modal = _TrackedCitationModal()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        modal._request_generation = 10
+
+        await _request_task2_cancel(modal, pilot, source)
+
+    assert app.results == [None]
+    assert modal.generation_at_dismiss == [11]
+
+
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_style_cancel_sources_run_debounce_cleanup_once(source: str) -> None:
+    app = _Task2Harness()
+    modal = _TrackedStyleModal()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        modal._search_debounce_timer = modal.set_timer(60, lambda: None)
+        modal.cleanup_calls = 0
+        modal.order.clear()
+
+        await _request_task2_cancel(modal, pilot, source)
+
+    assert app.results == [None]
+    assert modal.cleanup_calls == 1
+    assert modal.order[:2] == ["cleanup", "dismiss"]
 
 
 @dataclass(frozen=True)
