@@ -86,7 +86,7 @@ Run:
 git diff --check
 ```
 
-- [ ] **Step 5: Commit, push, review, and merge**
+- [x] **Step 5: Commit, push, review, and merge**
 
 Record the correction and evidence in TASK-15676's Implementation Notes, check
 its acceptance criteria, return it to `Done` through the Backlog CLI, commit the
