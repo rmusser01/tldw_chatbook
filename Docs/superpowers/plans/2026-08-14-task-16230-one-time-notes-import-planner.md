@@ -79,11 +79,11 @@
 
 **Files:**
 
-- Modify: `backlog/tasks/task-16200 - Build-one-time-Database-Notes-import-planner-and-preview-model.md`
+- Modify: `backlog/tasks/task-16230 - Build-one-time-Database-Notes-import-planner-and-preview-model.md`
 
 - [ ] Run `../../.venv/bin/python -m pytest -q Tests/Notes/test_note_import_planner.py`.
 - [ ] Run the focused Notes/Library regression gate used at baseline.
 - [ ] Run the relevant formatter/linter/type checks available in the repository for the new modules and test.
 - [ ] Review the diff for filesystem writes, repository/service dependencies, sensitive logging, symlink traversal, unbounded reads, mutable nested values, and behavior outside the acceptance criteria.
 - [ ] Update acceptance criteria, Definition of Done, and concise Implementation Notes with exact verification evidence and the ADR decision.
-- [ ] Mark TASK-16200 Done only after all completion checks pass.
+- [ ] Mark TASK-16230 Done only after all completion checks pass.

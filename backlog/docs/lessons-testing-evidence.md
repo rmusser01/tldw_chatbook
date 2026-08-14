@@ -3663,7 +3663,7 @@ meaning across pathname and handle APIs. Preserve strict handle rechecks, test
 each stable identity field, and require native-platform evidence for filesystem
 security claims.
 
-**TASK-16200 follow-up (2026-08-14).** Host-independent Windows doubles initially
+**TASK-16230 follow-up (2026-08-14).** Host-independent Windows doubles initially
 made the one-time Notes import reader look race-safe while its real `CreateFileW`
 call still included `FILE_SHARE_WRITE`, and its pathname-to-handle check accepted
 `st_ino == 0`. Review showed that a same-size rewrite with restored mtime could be
