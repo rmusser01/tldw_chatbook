@@ -1365,6 +1365,17 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
             await window.on_button_pressed(Button.Pressed(browse_button))
             assert pushed[-1][0].location == str(cache_root)
 
+            cache_parent = tmp_path / "existing-cache-parent"
+            cache_parent.mkdir()
+            missing_cache = cache_parent / "missing-hub"
+            monkeypatch.setattr(
+                transformers_events,
+                "hf_constants",
+                SimpleNamespace(HF_HUB_CACHE=str(missing_cache)),
+            )
+            await window.on_button_pressed(Button.Pressed(browse_button))
+            assert pushed[-1][0].location == str(cache_parent)
+
             missing_cache = tmp_path / "missing-cache-parent" / "hub"
             monkeypatch.setattr(
                 transformers_events,
@@ -1378,13 +1389,52 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
 
             selected_root = tmp_path / "arbitrary-external-transformers-root"
             selected_root.mkdir()
-            other_input = window.query_one("#vllm-model-path", Input)
-            other_input.value = "org/unchanged"
+            expected_unrelated_model_path_inputs = {
+                "llamacpp-exec-path",
+                "llamacpp-model-path",
+                "llamafile-exec-path",
+                "llamafile-model-path",
+                "mlx-model-path",
+                "ollama-copy-destination-model",
+                "ollama-copy-source-model",
+                "ollama-create-model-name",
+                "ollama-create-modelfile-path",
+                "ollama-delete-model-name",
+                "ollama-embeddings-model-name",
+                "ollama-exec-path",
+                "ollama-pull-model-name",
+                "ollama-push-model-name",
+                "ollama-show-model-name",
+                "onnx-model-path",
+                "onnx-python-path",
+                "onnx-script-path",
+                "remote-model-query",
+                "vllm-model-path",
+                "vllm-python-path",
+            }
+            unrelated_model_path_inputs = {
+                widget.id: widget
+                for widget in window.query(Input)
+                if widget.id != "transformers-models-dir-path"
+                and ("model" in widget.id or widget.id.endswith("-path"))
+            }
+            assert (
+                set(unrelated_model_path_inputs) == expected_unrelated_model_path_inputs
+            )
+            for index, widget in enumerate(unrelated_model_path_inputs.values()):
+                widget.value = f"unchanged-{index}"
+            unrelated_values_before = {
+                widget_id: widget.value
+                for widget_id, widget in unrelated_model_path_inputs.items()
+            }
             await callback(selected_root)
             assert window.query_one(
                 "#transformers-models-dir-path", Input
             ).value == str(selected_root)
-            assert other_input.value == "org/unchanged"
+            assert {
+                widget_id: widget.value
+                for widget_id, widget in unrelated_model_path_inputs.items()
+            } == unrelated_values_before
 
             scanned_paths: list[Path] = []
 
