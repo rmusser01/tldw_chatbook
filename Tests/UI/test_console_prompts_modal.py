@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
@@ -258,6 +259,10 @@ class _StyledHarness(_Harness):
     """Modal harness with the same bundled stylesheet as the real Console."""
 
     CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+
+class _ApplyOverlay(ModalScreen[None]):
+    """Top-screen sentinel used to prove stale apply completion is harmless."""
 
 
 class _ImprovementDriver:
@@ -2404,6 +2409,201 @@ async def test_active_improvement_disables_duplicate_model_launches() -> None:
         await pilot.pause()
         assert auto.disabled is False
         assert review.disabled is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["auto", "review"])
+@pytest.mark.parametrize("close_source", ["escape", "backdrop", "close", "back"])
+async def test_apply_transaction_blocks_every_close_path_until_commit_finishes(
+    mode: str,
+    close_source: str,
+) -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    driver.outcomes.append(
+        PromptImprovementOutcome(
+            request_id="ignored",
+            kind="success",
+            rewritten_prompt=driver.preview.text.replace(
+                "Draft question", "Committed candidate"
+            ),
+        )
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    apply_calls = 0
+
+    async def apply(result: Any, snapshot: Any) -> Any:
+        nonlocal apply_calls
+        apply_calls += 1
+        started.set()
+        await release.wait()
+        return SimpleNamespace(kind="applied", user_message="")
+
+    kwargs = driver.kwargs()
+    kwargs["apply_improvement_result"] = apply
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        modal.query_one(
+            "#console-prompts-auto-improve"
+            if mode == "auto"
+            else "#console-prompts-review-improve",
+            Button,
+        ).press()
+        await pilot.pause()
+        await pilot.pause()
+        if mode == "review":
+            modal.query_one("#console-prompts-review-apply", Button).press()
+        await wait_for_signal(started, what=f"the {mode} apply commit starting")
+        await pilot.pause()
+
+        assert modal._apply_in_progress is True
+        assert "Applying" in str(
+            modal.query_one("#console-prompts-improvement-status", Static).renderable
+        )
+        assert getattr(app.focused, "id", None) == "console-prompts-improvement-status"
+        assert modal.query_one("#console-prompts-close", Button).disabled
+        assert modal.query_one("#console-prompts-back", Button).disabled
+        duplicate_apply = next(
+            (
+                button
+                for selector in (
+                    "#console-prompts-review-apply",
+                    "#console-prompts-auto-improve",
+                )
+                for button in modal.query(selector)
+            ),
+            None,
+        )
+        assert duplicate_apply is not None and duplicate_apply.disabled
+        duplicate_apply.press()
+        await pilot.pause()
+        assert apply_calls == 1
+
+        if close_source == "escape":
+            await pilot.press("escape")
+        elif close_source == "backdrop":
+            await pilot.click(offset=(0, 0))
+        elif close_source == "close":
+            modal.query_one("#console-prompts-close", Button).press()
+        else:
+            modal.query_one("#console-prompts-back", Button).press()
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert apply_calls == 1
+        assert app.results == []
+
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert apply_calls == 1
+        assert len(app.results) == 1
+        assert app.results[0].kind == "apply"
+
+
+@pytest.mark.asyncio
+async def test_stale_apply_completion_cannot_dismiss_a_new_top_screen() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver(
+        PromptImprovementOutcome(
+            request_id="ignored",
+            kind="success",
+            rewritten_prompt="Committed candidate",
+        )
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def apply(_result: Any, _snapshot: Any) -> Any:
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None:
+                task.uncancel()
+            await release.wait()
+        return SimpleNamespace(kind="applied", user_message="")
+
+    kwargs = driver.kwargs()
+    kwargs["apply_improvement_result"] = apply
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        await wait_for_signal(started, what="the stale apply commit starting")
+
+        modal.dismiss(None)
+        await pilot.pause()
+        overlay = _ApplyOverlay()
+        await app.push_screen(overlay)
+        await pilot.pause()
+
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen is overlay
+        assert app.results == [None]
+
+
+@pytest.mark.asyncio
+async def test_apply_completion_keeps_nested_top_and_reports_committed_state() -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver(
+        PromptImprovementOutcome(
+            request_id="ignored",
+            kind="success",
+            rewritten_prompt="Committed candidate",
+        )
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def apply(_result: Any, _snapshot: Any) -> Any:
+        started.set()
+        await release.wait()
+        return SimpleNamespace(kind="applied", user_message="")
+
+    kwargs = driver.kwargs()
+    kwargs["apply_improvement_result"] = apply
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        await wait_for_signal(started, what="the nested apply commit starting")
+
+        overlay = _ApplyOverlay()
+        await app.push_screen(overlay)
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen is overlay
+        overlay.dismiss(None)
+        await pilot.pause()
+        assert app.screen is modal
+        assert modal._apply_in_progress is False
+        assert (
+            str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            )
+            == "Applied to the Console."
+        )
 
 
 @pytest.mark.asyncio

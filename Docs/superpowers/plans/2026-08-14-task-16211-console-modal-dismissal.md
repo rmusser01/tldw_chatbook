@@ -720,16 +720,26 @@ Check all acceptance criteria, add concise Implementation Notes with the exact r
 **Task 8 closeout evidence (2026-08-14):**
 
 - Runtime plus AST discovery found exactly 27 `Widgets/Console` `ModalScreen`
-  classes, matched them to explicit contract rows, and walked the direct/nested
-  launch graph to all 36 contracted modal types. Both enhanced file variants,
-  `CancelConfirmationDialog`, and `ChangeRevertConfirmModal` were reached;
-  `ConsoleSetupModal` was proven to be an excluded `Vertical`.
-- The exact 15-file matrix passed 614 tests. Focused final Textual MRO/lifecycle
-  coverage passed 29 tests.
-- Ruff check, compileall, and `git diff --check` passed. Ruff format reported
-  the same 25 legacy files at archived base `733f03d2d` and final. MyPy improved
-  from 26 errors in 7 base files to 24 errors in 6 final files; no new or
-  changed-line diagnostic remains.
+  classes and walked the direct/nested launch graph to exactly 36 contracted
+  modal types. Final review hardened this to resolve the actual constructed
+  runtime classes from AST imports, aliases, attributes, and same-module
+  definitions, with exact equality per fixed-point edge. A synthetic extra
+  constructed modal proved the assertion rejects uncontracted launch edges.
+- Prompt Workbench apply now claims a mount-scoped transaction before its
+  callback worker starts. Escape, backdrop, Close, Back, and duplicate Apply
+  remain inert until the callback completes, while the applying status owns
+  focus. Applied results use `dismiss_safe_once`; stale unmounts and nested top
+  screens cannot be popped, and a blocked nested dismissal reports the
+  committed state truthfully. Explicit lifecycle `super()` calls were removed,
+  with mount/unmount/remount dispatch proven once per lifecycle.
+- The final exact 15-file matrix passed 626 tests. The final correction-focused
+  set passed 14 tests after the nested-top RED/GREEN proof; the complete two-file
+  Prompt Workbench/modal dismissal sweep passed 212 before that final one-line
+  status refinement.
+- Ruff check, Ruff format, compileall, and `git diff --check` passed for all
+  changed code/test files. Targeted MyPy retained only two pre-existing
+  diagnostics on untouched 2026-08-02 callback sites; no changed-line
+  diagnostic remains.
 - The outside-backdrop branch, pending latch, top-screen check, and
   `False`-confirmation result each produced the named RED failure separately,
   then passed GREEN after immediate restoration.

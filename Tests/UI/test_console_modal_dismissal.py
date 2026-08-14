@@ -193,6 +193,7 @@ class _ModalLaunchEdge:
     owner: str | type[Screen[Any]]
     launched: tuple[type[Screen[Any]], ...]
     source_paths: tuple[str, ...]
+    source_functions: tuple[str, ...] | None = None
 
 
 _RESTORE_OPENER = "restore opener or Console composer fallback"
@@ -769,6 +770,7 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
         ConsoleWorkspaceSwitcherModal,
         (ConsoleWorkspaceRenameModal,),
         ("tldw_chatbook/UI/Console_Modules/workspace.py",),
+        ("_open_console_workspace_rename",),
     ),
     _ModalLaunchEdge(
         ConsolePromptQueueModal,
@@ -811,19 +813,91 @@ def _discover_console_modal_types() -> set[type[ModalScreen[Any]]]:
     return discovered
 
 
-def _constructed_type_names(source_paths: tuple[str, ...]) -> set[str]:
-    names: set[str] = set()
+def _resolve_ast_reference(
+    node: ast.expr, bindings: dict[str, object]
+) -> object | None:
+    if isinstance(node, ast.Name):
+        return bindings.get(node.id)
+    if isinstance(node, ast.Attribute):
+        owner = _resolve_ast_reference(node.value, bindings)
+        return getattr(owner, node.attr, None)
+    return None
+
+
+def _constructed_modal_types(
+    source_paths: tuple[str, ...],
+    *,
+    source_overrides: dict[str, str] | None = None,
+    included_functions: set[str] | None = None,
+    excluded_functions: set[str] | None = None,
+) -> set[type[ModalScreen[Any]]]:
+    """Resolve actual modal constructors in source, including imported aliases."""
+    constructed: set[type[ModalScreen[Any]]] = set()
+    overrides = source_overrides or {}
     for relative_path in source_paths:
         source_path = _REPO_ROOT / relative_path
-        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=source_path)
+        source = overrides.get(relative_path)
+        if source is None:
+            source = source_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=source_path)
+        bindings: dict[str, object] = {}
+        module_name = ".".join(Path(relative_path).with_suffix("").parts)
+        if relative_path not in overrides:
+            runtime_module = importlib.import_module(module_name)
+            bindings.update(vars(runtime_module))
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            if isinstance(node.func, ast.Name):
-                names.add(node.func.id)
-            elif isinstance(node.func, ast.Attribute):
-                names.add(node.func.attr)
-    return names
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported = importlib.import_module(alias.name)
+                    binding_name = alias.asname or alias.name.split(".")[0]
+                    bindings[binding_name] = (
+                        imported
+                        if alias.asname
+                        else importlib.import_module(binding_name)
+                    )
+            elif isinstance(node, ast.ImportFrom):
+                imported_name = node.module or ""
+                if node.level:
+                    package = module_name.rpartition(".")[0]
+                    imported_name = importlib.util.resolve_name(
+                        f"{'.' * node.level}{imported_name}", package
+                    )
+                imported = importlib.import_module(imported_name)
+                for alias in node.names:
+                    if alias.name == "*":
+                        continue
+                    bindings[alias.asname or alias.name] = getattr(imported, alias.name)
+
+        class _ConstructorVisitor(ast.NodeVisitor):
+            def __init__(self) -> None:
+                self.function_stack: list[str] = []
+
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+                self.function_stack.append(node.name)
+                self.generic_visit(node)
+                self.function_stack.pop()
+
+            visit_AsyncFunctionDef = visit_FunctionDef
+
+            def visit_Call(self, node: ast.Call) -> None:
+                functions = set(self.function_stack)
+                if included_functions is not None and not (
+                    functions & included_functions
+                ):
+                    self.generic_visit(node)
+                    return
+                if excluded_functions and functions & excluded_functions:
+                    self.generic_visit(node)
+                    return
+                runtime_type = _resolve_ast_reference(node.func, bindings)
+                if inspect.isclass(runtime_type) and issubclass(
+                    runtime_type, ModalScreen
+                ):
+                    constructed.add(runtime_type)
+                self.generic_visit(node)
+
+        _ConstructorVisitor().visit(tree)
+    return constructed
 
 
 def _binding_key_action(binding: object) -> tuple[str, str]:
@@ -854,8 +928,26 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         edge = edges_by_owner.get(owner)
         if edge is None:
             continue
-        constructed_names = _constructed_type_names(edge.source_paths)
-        assert {launched.__name__ for launched in edge.launched} <= constructed_names
+        nested_functions = {
+            function
+            for other_edge in CONSOLE_MODAL_LAUNCH_EDGES
+            if other_edge is not edge
+            and set(other_edge.source_paths) & set(edge.source_paths)
+            for function in (other_edge.source_functions or ())
+        }
+        actual_modal_types = _constructed_modal_types(
+            edge.source_paths,
+            included_functions=(
+                set(edge.source_functions) if edge.source_functions else None
+            ),
+            excluded_functions=nested_functions,
+        )
+        expected_modal_types = {
+            launched
+            for launched in edge.launched
+            if inspect.isclass(launched) and issubclass(launched, ModalScreen)
+        }
+        assert actual_modal_types == expected_modal_types
         for launched in edge.launched:
             if launched not in reachable:
                 reachable.add(launched)
@@ -866,6 +958,7 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
+    assert len(reachable_modal_types) == 36
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     }
@@ -877,6 +970,26 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     assert issubclass(ConsoleSetupModal, Vertical)
     assert not issubclass(ConsoleSetupModal, ModalScreen)
     assert ConsoleSetupModal not in reachable
+
+
+def test_launch_inventory_rejects_an_uncontracted_constructed_modal() -> None:
+    synthetic_path = "synthetic_console_launch.py"
+    source = """
+def launch():
+    from tldw_chatbook.Widgets.Console.console_cost_modal import ConsoleCostModal as Cost
+    import tldw_chatbook.Widgets.Console.console_run_log_modal as run_log
+
+    Cost([], None)
+    run_log.ConsoleRunLogModal(run_id='extra', log_text='extra')
+"""
+
+    actual = _constructed_modal_types(
+        (synthetic_path,), source_overrides={synthetic_path: source}
+    )
+
+    assert actual == {ConsoleCostModal, ConsoleRunLogModal}
+    with pytest.raises(AssertionError):
+        assert actual == {ConsoleCostModal}
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
@@ -1656,6 +1769,47 @@ async def test_textual_mro_runs_citation_mixin_unmount_once(monkeypatch) -> None
 
         assert mixin_unmount_calls == 1
         assert modal._request_generation == generation + 1
+
+
+@pytest.mark.asyncio
+async def test_prompt_workbench_lifecycle_dispatches_mixin_once_per_mount(
+    monkeypatch,
+) -> None:
+    mixin_mount_calls = 0
+    mixin_unmount_calls = 0
+    original_mixin_mount = SafeModalDismissMixin.on_mount
+    original_mixin_unmount = SafeModalDismissMixin.on_unmount
+
+    def count_mixin_mount(self) -> None:  # type: ignore[no-untyped-def]
+        nonlocal mixin_mount_calls
+        mixin_mount_calls += 1
+        original_mixin_mount(self)
+
+    def count_mixin_unmount(self) -> None:  # type: ignore[no-untyped-def]
+        nonlocal mixin_unmount_calls
+        mixin_unmount_calls += 1
+        original_mixin_unmount(self)
+
+    monkeypatch.setattr(SafeModalDismissMixin, "on_mount", count_mixin_mount)
+    monkeypatch.setattr(SafeModalDismissMixin, "on_unmount", count_mixin_unmount)
+    app = _Task2Harness()
+    modal = ConsolePromptsModal(
+        capabilities=lambda _source: object(),
+        list_page=lambda _source, _page: [],
+        search=lambda _source, _query: [],
+        detail=lambda _source, _identifier: {},
+        save=lambda **_payload: {},
+    )
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        for expected_mounts in (1, 2):
+            await app.push_screen(modal)
+            await pilot.pause()
+            assert mixin_mount_calls == expected_mounts
+
+            modal.dismiss(None)
+            await pilot.pause()
+            assert mixin_unmount_calls == expected_mounts
 
 
 class _TrackedCharacterModal(ConsoleCharacterPickerModal):

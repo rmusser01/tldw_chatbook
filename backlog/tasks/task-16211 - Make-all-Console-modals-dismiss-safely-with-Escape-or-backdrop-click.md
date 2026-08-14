@@ -4,7 +4,7 @@ title: Make all Console modals dismiss safely with Escape or backdrop click
 status: Done
 assignee: []
 created_date: '2026-08-14 05:54'
-updated_date: '2026-08-14 19:39'
+updated_date: '2026-08-14 20:24'
 labels:
   - console
   - ui
@@ -51,5 +51,5 @@ Reason: the shared cross-module cancellation interface and long-lived modal gram
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented a shared safe-modal dismissal boundary across all 27 Console modal screens and transitively reachable shared dialogs, with typed cancel results, dirty/reset/compaction/staged-video guards, single-shot top-screen dismissal, click-through shielding, and focus restoration. Task 8 added AST plus runtime inventory and fixed-point launch-edge coverage, real non-primary dispatch checks, and narrow Textual 8 MRO typing suppressions with no runtime change. Verification: exact 15-file matrix 614 passed; Ruff check, compileall, and diff check passed; Ruff-format matched the archived 733f03d2d baseline list exactly; MyPy improved from 26 baseline errors in 7 files to 24 errors in 6 files with no new or changed-line diagnostics; four required mutations each went RED then GREEN after restoration. ADR: backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md refinement for task-16211.
+Implemented a shared safe-modal dismissal boundary across all 27 Console modal screens and transitively reachable shared dialogs, with typed cancel results, dirty/reset/compaction/staged-video guards, single-shot top-screen dismissal, click-through shielding, and focus restoration. Final review added a mount-scoped Prompt Workbench apply latch, responsive worker-based review/editor commits, truthful applying focus/status, top-screen-safe applied results, stale-unmount protection, and once-per-lifecycle MRO coverage. Launch inventory now resolves actual constructed runtime modal classes from AST imports, aliases, attributes, and same-module definitions, asserts exact equality at every fixed-point edge, and includes an extra-edge mutation proof; counts remain exactly 27 Console and 36 reachable modal types. Verification: final exact 15-file matrix 626 passed; correction-focused set 14 passed; Ruff check/format, compileall, and diff check passed; targeted MyPy retained only two pre-existing untouched-line diagnostics and added none. ADR: backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md refinement for task-16211.
 <!-- SECTION:NOTES:END -->
