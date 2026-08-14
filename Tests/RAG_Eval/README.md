@@ -709,6 +709,24 @@ imports `library_local_rag_search_service`. Those two numbers were therefore
 not re-measured and cannot have moved; the observable consequence that *was*
 measured is that hybrid's gated cells are bit-exact unchanged.
 
+**The production consumer with a hard cut, named (final review, 2026-08-14).**
+Enumerating consumers of the private `_search_keyword` was one level too low:
+the public `search()` has a second production caller —
+`Agents/library_rag_tool_provider.py:216-219` issues `mode="rag"` and `:250-252`
+truncates to `_MAX_TOP_K` (10). It is the DEFAULT Console Library retrieval
+tool (bound whenever `direct_library_tools` is off) over notes/media/
+conversations. Under a plain profile this is the one place in production where
+**set membership**, not merely order, changes: the pre-fix window could be ten
+note rows carrying real `content`; the post-fix window is a ~4/3/3 rotation
+whose media and conversation rows carry `"Matched media · {type}"` /
+`"Matched conversation · N messages"` and no document text. That is the same
+mechanism as the probe's 18% → 54% label-only inversion, landing on an LLM's
+evidence rather than a probe's feed — an anticipated cost of rank-fairness on a
+path whose rows are not all text-bearing, and the sharpest argument for
+TASK-16174's expansion/fetch work. Not a regression of this arc's ACs (order
+was the change; the label-only rows were always in the corpus), but it belongs
+in the record rather than only in a probe's price line.
+
 ## Fail-first authoring: the admission protocol
 
 A fixture that the pipeline already answers measures nothing. P2ab

@@ -343,8 +343,12 @@ Notes break ties at equal rank, so a note still holds row 1 whenever notes
 matched at all; what changed is that a media or conversation hit no longer
 waits behind *every* note. Concretely, on a library where twelve notes mention
 your words in passing and one media document is squarely about them, that
-document is now row 2 instead of row 13. RAG Answer mode is unaffected: it runs
-one merged query and orders its rows by their own score.
+document is now row 2 instead of row 13. **Which modes this reaches:** the
+reorder belongs to the plain (keyword) retrieval path, so it applies to Search
+mode always, and to RAG Answer mode whenever your active profile's search mode
+is plain — the shipped "BM25 Only" profile is exactly that case. Hybrid and
+semantic profiles are untouched: their retrieval runs the engine's own leg,
+which has ranked across sources since well before this change.
 
 Before any search the region shows "No evidence yet. Run Search/RAG to
 populate results." A search that runs cleanly but finds nothing is a quiet
@@ -710,7 +714,10 @@ source" and **14 results** in both arms, same data, one code constant apart:*
 
 *So the document the query is actually about moved from row 13 to row 2 on
 identical data, and the row count did not change (nothing is truncated here).
-**What was NOT exercised:** RAG Answer mode — it ranks on its own score and
-this change does not touch it — so the TASK-15810 first-query stall, which
-belongs to that path, was never in play; the keyword-only Search run had its
-full list on screen at the first capture after Enter, in both arms.*
+**What was NOT exercised:** RAG Answer mode on a plain profile, which inherits
+this same reorder and was not run live (only Search mode was) — so the
+TASK-15810 first-query stall, which belongs to the embedding path, was never in
+play; the keyword-only Search run had its full list on screen at the first
+capture after Enter, in both arms. Hybrid and semantic profiles are untouched
+by the change rather than merely unexercised: their retrieval never enters this
+merge.*

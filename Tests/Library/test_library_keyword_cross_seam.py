@@ -396,6 +396,56 @@ async def test_d_the_merge_truncates_nothing(four_seams):
 
 
 @pytest.mark.asyncio
+async def test_d2_rows_with_an_empty_source_id_are_not_collapsed(four_seams):
+    """(d2) THE DEGENERATE-KEY ARM of the no-truncation contract.
+
+    `interleave_rankings` dedups on ONE `seen` set spanning the whole merge.
+    The site argues cross-seam collisions are structurally impossible because
+    the seams are disjoint by source type -- true for DISTINCT ids, and
+    silent about MISSING ones. Every row builder falls back to `""` when its
+    id is absent (`str(item.get("id", ""))` and siblings), and the prompts
+    normalizer yields `local_id=None` for any non-local backend, so a future
+    change threading a non-local prompt mode through this path would make
+    every such row after the first collide on `("prompt", "")` and vanish --
+    a silent truncation at the one site whose comment promises it truncates
+    nothing. Pinned at the merge helper directly: the fixtures upstream are
+    all well-formed by construction, which is exactly why (d) cannot see it.
+    """
+    from tldw_chatbook.RAG_Search.fusion import interleave_rankings
+    from tldw_chatbook.Library.library_local_rag_search_service import (
+        _keyword_row_identity,
+    )
+
+    def _row(source_type: str, source_id: str, title: str) -> dict:
+        return {
+            "source_id": source_id,
+            "chunk_id": "",
+            "title": title,
+            "snippet": "",
+            "score": None,
+            "provenance": {"source_type": source_type},
+        }
+
+    degenerate = [
+        [_row("prompt", "", "first"), _row("prompt", "", "second")],
+        [_row("note", "7", "note seven")],
+    ]
+
+    # The PRODUCTION key, not a lambda restating it -- the hole lives in
+    # what the merge site actually passes.
+    merged = interleave_rankings(degenerate, key=_keyword_row_identity)
+
+    titles = [row["title"] for row in merged]
+    assert titles.count("second") == 1, (
+        "a row whose source_id is empty was collapsed into its sibling: "
+        f"{titles}. The merge site promises no truncation; an id-less row "
+        "must keep its slot (give the key a positional tiebreak, or make the "
+        "builders refuse an empty source_id)."
+    )
+    assert len(merged) == 3, titles
+
+
+@pytest.mark.asyncio
 async def test_e_the_prompts_seam_participates_instead_of_being_appended_last(
     four_seams,
 ):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Any, Optional
+from typing import Any, Hashable, Optional
 
 from loguru import logger
 
@@ -512,10 +512,7 @@ class LibraryLocalRagSearchService:
                 for source_type in _KNOWN_KEYWORD_SOURCE_TYPES
                 if source_type in outcomes
             ],
-            key=lambda row: (
-                (row.get("provenance") or {}).get("source_type"),
-                row.get("source_id"),
-            ),
+            key=_keyword_row_identity,
         )
 
         if is_scoped and not rows:
@@ -1143,6 +1140,31 @@ def _retrieval_payload(
             "semantic_scope_coverage": _semantic_scope_coverage(source_types, rows)
         }
     return result
+
+
+def _keyword_row_identity(row: Mapping[str, Any]) -> Hashable:
+    """The dedup identity `interleave_rankings` merges the four seams on.
+
+    `(source_type, source_id)` is the identity every row builder stamps, and
+    the pair -- not the bare id -- is required because the seams number
+    independently: a note 7 and a media 7 are different documents.
+
+    THE DEGENERATE ARM (final review, TASK-16071): every builder falls back
+    to `""` when its id is missing (`str(item.get("id", ""))` and siblings;
+    the prompts normalizer yields `local_id=None` for any non-local
+    backend). `interleave_rankings` dedups on ONE `seen` set spanning the
+    whole merge, so two id-less rows of the same source type would collide
+    and the second would be SILENTLY DROPPED -- a truncation at the one site
+    whose contract is that it truncates nothing. An id-less row is therefore
+    keyed by its own object identity: it can never be deduped against
+    anything, which is the honest reading of "we do not know what document
+    this is". Pinned by `test_d2_rows_with_an_empty_source_id_are_not_
+    collapsed`.
+    """
+    source_id = row.get("source_id")
+    if not source_id:
+        return ("", "", id(row))
+    return ((row.get("provenance") or {}).get("source_type"), source_id)
 
 
 def _note_row(item: Mapping[str, Any]) -> dict[str, Any]:
