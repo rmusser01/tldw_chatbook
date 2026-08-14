@@ -357,10 +357,12 @@ Faulty mechanism: stale queued A/B `Input.Changed` events alternate shared
 state, and each unguarded programmatic `sibling.value = value` emits a fresh
 sibling `Input.Changed`, replenishing the queue instead of letting it drain.
 
-Separately, the required real-Run B-to-C RED discovered a supersession-contract
-defect rather than another cause of the profiled spin: Textual cancels B's
-worker coroutine, but B's already-admitted `asyncio.to_thread` call continues
-while C enters another underlying retrieval.
+Separately, the required real-Run B-to-C-to-D RED discovered a
+supersession-contract defect rather than another cause of the profiled spin:
+Textual cancels B's worker coroutine, but B's already-admitted
+`asyncio.to_thread` call continues while newer Runs can enter underlying
+retrievals. D also cancels B a second time while superseding C, so the retained
+cancellation loop must survive repeated cancellation until B really settles.
 
 Lowest shared owner:
 `LibraryScreen._patch_sibling_library_search_input()` in
@@ -384,13 +386,19 @@ Add this helper near the existing `_GatedLibraryRagSearchService` fakes in
 
 ```python
 class _SequencedGatedLibraryRagSearchService:
-    """Gate B and C independently while recording real thread overlap."""
+    """Gate B, C, and D independently while recording real thread overlap."""
 
     def __init__(self):
         self.calls: list[str] = []
-        self.entered = {query: threading.Event() for query in ("B", "C")}
-        self.release = {query: threading.Event() for query in ("B", "C")}
-        self.finished = {query: threading.Event() for query in ("B", "C")}
+        self.entered = {
+            query: threading.Event() for query in ("B", "C", "D")
+        }
+        self.release = {
+            query: threading.Event() for query in ("B", "C", "D")
+        }
+        self.finished = {
+            query: threading.Event() for query in ("B", "C", "D")
+        }
         self._lock = threading.Lock()
         self._active_calls = 0
         self._max_active_calls = 0
@@ -572,9 +580,16 @@ async def test_library_shell_gated_search_keeps_heartbeat_and_navigation_live():
                 service.finished["B"].is_set,
                 message="The gated Library search did not terminate after release.",
             )
-            await asyncio.wait_for(
-                screen.workers.wait_for_complete(), timeout=5.0
+            await _wait_for_condition(
+                pilot,
+                lambda: not any(
+                    worker.node is screen
+                    and worker.group == "library_rag_search"
+                    for worker in host.workers
+                ),
+                message="The gated Library search worker did not terminate.",
             )
+            await screen.workers.wait_for_complete()
             await pilot.pause()
 ```
 
@@ -588,19 +603,19 @@ Expected before and after the input-mirror fix: PASS. This is a mandatory
 regression protecting the already-correct worker/event-loop boundary; the
 profile does not authorize changing that boundary.
 
-- [ ] **Step 4: Add the mandatory real-Run supersession/no-overlap RED**
+- [ ] **Step 4: Add the mandatory repeated-supersession/no-overlap RED**
 
-This starts B through the real Run button and blocks its underlying service
-thread, changes the mounted query input to C, and presses the real Run button
-again. Textual cancels B's worker coroutine, but the service's B thread remains
-admitted until its gate opens. C must wait asynchronously without blocking a
-heartbeat or Browse ▸ Media navigation; only after B's real thread finishes may
-C enter. The spy on `_apply_library_rag_search_outcome()` separately proves the
-canceled B outcome never applies.
+This starts gated B through the real Run button, submits C while B drains, then
+submits D while C waits. D supersedes C and cancels B's retained worker a second
+time. Before B is released, C and D must remain outside the underlying service
+while heartbeat and Browse ▸ Media navigation stay live. After B settles, C
+must never enter and D alone may run. The spy on
+`_apply_library_rag_search_outcome()` separately proves canceled B and C never
+apply, then the test navigates back to Search and asserts mounted D evidence.
 
 ```python
 @pytest.mark.asyncio
-async def test_library_shell_superseded_search_waits_for_underlying_retrieval(
+async def test_library_shell_repeated_supersession_serializes_retrieval(
     monkeypatch,
 ):
     app = _build_test_app()
@@ -639,6 +654,44 @@ async def test_library_shell_superseded_search_waits_for_underlying_retrieval(
             canvas.value = "C"
             await _wait_for_library_rag_query_ready(screen, pilot, "C")
             screen.query_one("#library-rag-run-query", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    service.entered["C"].is_set()
+                    or sum(
+                        worker.node is screen
+                        and worker.group == "library_rag_search"
+                        for worker in host.workers
+                    )
+                    >= 2
+                ),
+                message=(
+                    "Query C neither entered nor registered while B drained."
+                ),
+            )
+            workers_before_d = {
+                id(worker)
+                for worker in host.workers
+                if worker.node is screen
+                and worker.group == "library_rag_search"
+            }
+
+            canvas.value = "D"
+            await _wait_for_library_rag_query_ready(screen, pilot, "D")
+            screen.query_one("#library-rag-run-query", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    service.entered["D"].is_set()
+                    or any(
+                        worker.node is screen
+                        and worker.group == "library_rag_search"
+                        and id(worker) not in workers_before_d
+                        for worker in host.workers
+                    )
+                ),
+                message="Query D never registered after superseding C.",
+            )
 
             heartbeat = asyncio.Event()
             screen.call_later(heartbeat.set)
@@ -649,64 +702,93 @@ async def test_library_shell_superseded_search_waits_for_underlying_retrieval(
                     heartbeat.is_set()
                     and screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
                 ),
-                message="Heartbeat/navigation stalled while query C waited for B.",
+                message="Heartbeat/navigation stalled while query D waited for B.",
             )
             for _ in range(8):
                 await pilot.pause()
 
             assert service.snapshot() == (("B",), 1, 1)
             assert not service.entered["C"].is_set()
+            assert not service.entered["D"].is_set()
             assert not service.release["B"].is_set()
             assert applied_queries == []
 
             service.release["B"].set()
             await _wait_for_condition(
                 pilot,
-                service.entered["C"].is_set,
-                message="Query C did not enter after query B settled.",
+                service.entered["D"].is_set,
+                message="Query D did not enter after query B settled.",
             )
             assert service.finished["B"].is_set()
-            assert service.snapshot() == (("B", "C"), 1, 1)
+            assert not service.entered["C"].is_set()
+            assert not service.finished["C"].is_set()
+            assert service.snapshot() == (("B", "D"), 1, 1)
             assert applied_queries == []
 
-            service.release["C"].set()
+            service.release["D"].set()
             await _wait_for_condition(
                 pilot,
-                service.finished["C"].is_set,
-                message="Query C did not finish after release.",
+                service.finished["D"].is_set,
+                message="Query D did not finish after release.",
             )
-            await asyncio.wait_for(
-                screen.workers.wait_for_complete(), timeout=5.0
+            await _wait_for_condition(
+                pilot,
+                lambda: not any(
+                    worker.node is screen
+                    and worker.group == "library_rag_search"
+                    for worker in host.workers
+                ),
+                message="Library RAG workers did not terminate after D settled.",
             )
+            await screen.workers.wait_for_complete()
+            screen.query_one("#library-row-browse-search", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-rag-result-0")
             await pilot.pause()
         finally:
-            service.release["B"].set()
-            service.release["C"].set()
+            for query in ("B", "C", "D"):
+                service.release[query].set()
             await _wait_for_condition(
                 pilot,
                 lambda: service.snapshot()[1] == 0,
                 message="A gated retrieval thread remained active at teardown.",
             )
-            await asyncio.wait_for(
-                screen.workers.wait_for_complete(), timeout=5.0
+            await _wait_for_condition(
+                pilot,
+                lambda: not any(
+                    worker.node is screen
+                    and worker.group == "library_rag_search"
+                    for worker in host.workers
+                ),
+                message="A Library RAG worker remained active at teardown.",
             )
+            await screen.workers.wait_for_complete()
 
-        assert service.snapshot() == (("B", "C"), 0, 1)
-        assert applied_queries == ["C"]
-        assert [row.title for row in screen._library_rag_results] == ["C"]
-        assert screen._library_rag_query == "C"
+        assert service.snapshot() == (("B", "D"), 0, 1)
+        assert not service.entered["C"].is_set()
+        assert not service.finished["C"].is_set()
+        assert applied_queries == ["D"]
+        assert [row.title for row in screen._library_rag_results] == ["D"]
+        assert screen._library_rag_query == "D"
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        assert screen.query_one("#library-rag-query-input", Input).value == "D"
+        assert screen.query("#library-rag-result-0")
 ```
 
 Run:
 
 ```bash
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_superseded_search_waits_for_underlying_retrieval -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_retrieval -q --tb=short
 ```
 
-Expected before serialization: FAIL before B is released because the real C
-Run already entered its thread: calls are `("B", "C")`, active/max are `2`,
-and `service.entered["C"]` is set. The `finally` block opens both gates and
-drains workers, so the RED is bounded and cannot leak executor threads.
+Expected before serialization: FAIL before B is released because C and D enter
+underlying calls instead of waiting; calls differ from `("B",)` and max active
+exceeds one. The `finally` block opens all three gates, polls real worker
+registration without canceling a worker, then performs the now-immediate plain
+worker wait, so the RED is bounded and cannot leak executor threads.
+
+The mounted-harness prototype of the approved retained loop observed
+`(("B",), active=1, max=1)` before release, then `("B", "D")` with
+active/max still one, and terminal active zero with only D applied and mounted.
 
 - [ ] **Step 5: Independently re-review the amended plan**
 
@@ -727,14 +809,14 @@ required or permitted for these screen-owned corrections.
 Run the three exact node commands above, then the combined command:
 
 ```bash
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_superseded_search_waits_for_underlying_retrieval -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_retrieval -q --tb=short
 ```
 
 Expected: two failures and one pass. The mechanism test fails because
 `mirror_calls` contains the reproduced 10-call A/B chain. The supersession test
-fails before B release because C already entered and max active calls reached
-two. Neither failure may be a timeout, fixture error, selector error, or
-dependency failure.
+fails before B release because C/D entered and max active calls exceeded one.
+Neither failure may be a timeout, fixture error, selector error, or dependency
+failure.
 
 - [ ] **Step 8: Pin the complete minimal production edit and inverse mutation**
 
@@ -764,6 +846,12 @@ In `LibraryScreen.__init__`, immediately after
 Replace `_execute_library_rag_search()`'s body with:
 
 ```python
+        """Serialize retrieval admission and retain repeated cancellation.
+
+        Canceled workers drain admitted retrievals under the lock, then
+        re-raise before outcome application so stale work cannot overlap or
+        apply after a newer request.
+        """
         async with self._library_rag_search_execution_lock:
             retrieval_task = asyncio.create_task(
                 run_library_rag_search(self.app_instance, request)
@@ -788,16 +876,28 @@ until the task settles, then re-raised before stale outcome application. This
 is the same retained-shield pattern already used by
 `_await_library_prompt_durable_call()` in this screen.
 
-Inverse mutation: remove the `with sibling.prevent(Input.Changed):` context
-and restore the direct `sibling.value = value`. Run the mechanism node and
-prove it fails with the bounded 10-call chain.
+Mirror inverse mutation: remove the `with sibling.prevent(Input.Changed):`
+context and restore the direct `sibling.value = value`. Run the mechanism node
+and prove it fails with the bounded 10-call chain.
 
-Serialization inverse mutation: remove
-`async with self._library_rag_search_execution_lock:` and de-indent its body,
-leaving the retained shield/cancellation logic otherwise intact. Run the
-real-Run supersession node and prove C enters before B release with active/max
-equal to two. Restore both approved snippets only through `apply_patch`, rerun
-all three nodes, and inspect the diff.
+Repeated-cancellation inverse mutation: replace the `while` loop only with this
+one-shot catch, leaving the lock and owned retrieval task intact:
+
+```python
+            try:
+                await asyncio.shield(retrieval_task)
+            except asyncio.CancelledError as error:
+                cancellation = error
+                await asyncio.shield(retrieval_task)
+```
+
+Keep `outcome = retrieval_task.result()` immediately after this mutated block.
+Run the repeated-supersession node. D's second cancellation escapes the
+one-shot catch, releases B's admission lock while B's underlying thread still
+runs, and admits D: the prototype observed calls `("B", "D")` with
+active/max equal to two before B release. Restore the retained `while` loop and
+mirror snippet only through `apply_patch`, rerun all three nodes, and inspect
+the diff.
 
 Expected: each mutation fails only its named mechanism; restoring both snippets
 makes all three nodes pass.
@@ -814,9 +914,10 @@ makes all three nodes pass.
 - [ ] **Step 1: Implement only the amended code snippets**
 
 Apply the `prevent(Input.Changed)` mirror fix, one execution-lock constructor
-line, and the retained shield loop exactly as amended. Keep request/outcome
-contracts, active-profile routing, ranking, source filtering, citations, and
-error shapes unchanged. Do not add a second retrieval path.
+line, the concise worker-orchestration docstring, and the retained shield loop
+exactly as amended. Keep request/outcome contracts, active-profile routing,
+ranking, source filtering, citations, and error shapes unchanged. Do not add a
+second retrieval path.
 
 - [ ] **Step 2: Run the RED node to GREEN**
 
@@ -825,7 +926,7 @@ Run:
 ```bash
 PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic -q --tb=short
 PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live -q --tb=short
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_superseded_search_waits_for_underlying_retrieval -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_retrieval -q --tb=short
 ```
 
 Expected: PASS with the measured operation bounded/terminated as asserted.
@@ -870,7 +971,9 @@ Confirm
 real Library Run control and worker, holds its gated service active, then
 records a scheduled Textual heartbeat and Media-row navigation before opening
 the release event. The `finally` block always releases the blocking thread and
-bounds `screen.workers.wait_for_complete()` so outcome application is terminal.
+polls `host.workers` for terminal group registration before the plain,
+now-immediate `screen.workers.wait_for_complete()`, so the bound never cancels
+the retained worker it is trying to observe.
 
 Expected: the observation is exactly `(release_open=False, active=1,
 max_active=1, calls=("B",))`, the Media row is selected, and the service has
@@ -880,28 +983,30 @@ fix because the profile rejected an event-loop offloading defect.
 - [ ] **Step 2: Confirm the prewritten supersession/serialization regression**
 
 Confirm
-`test_library_shell_superseded_search_waits_for_underlying_retrieval` tracks
-active underlying service threads with a lock-protected counter. Start B, Run C
-while B remains gated, and assert:
+`test_library_shell_repeated_supersession_serializes_retrieval` tracks active
+underlying service threads with a lock-protected counter. Start B, Run C while
+B remains gated, then Run D while C waits, and assert:
 
 ```text
 calls == ("B",)
 active_calls == max_active_calls == 1 before release
-C has not entered; heartbeat and Browse ▸ Media navigation complete
-after B release: calls == ("B", "C"), active == max_active == 1
-after C release: active == 0, only C applied, visible result/query == C
+C and D have not entered; heartbeat and Browse ▸ Media navigation complete
+after B release: C never enters; calls == ("B", "D"), active == max_active == 1
+after D release: active == 0, only D applied
+after navigating back to Search: mounted input/result and shared query == D
 ```
 
-The test enters twice through the real Run seam. Its `finally` block opens both
-gates, waits for active thread count zero, and bounds
-`screen.workers.wait_for_complete()` before final state assertions.
+The test enters three times through the real Run seam. Its `finally` block
+opens all three gates first, waits for active thread count zero, polls the real
+worker-group registration to empty, and only then performs the plain immediate
+`screen.workers.wait_for_complete()` before final mounted-state assertions.
 
 - [ ] **Step 3: Run RED where applicable**
 
 Run:
 
 ```bash
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_superseded_search_waits_for_underlying_retrieval -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_retrieval -q --tb=short
 ```
 
 Expected before serialization: heartbeat PASS and supersession FAIL on
@@ -921,7 +1026,7 @@ process, or retrieval implementation.
 Run:
 
 ```bash
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_superseded_search_waits_for_underlying_retrieval -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_retrieval -q --tb=short
 PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py -q --tb=short
 PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/UI/Screens/library_screen.py Tests/UI/test_library_shell.py
 git diff --check
@@ -930,9 +1035,9 @@ git diff --check
 Task 3 already commits these prewritten tests with the fix; Task 4 makes no
 separate commit.
 
-Expected: heartbeat/navigation processed while C waits, max active calls one,
-stale B never applied, C applied after B settled, all work terminal, owner suite
-and Ruff green.
+Expected: heartbeat/navigation processed while D waits, C never enters, max
+active calls one, stale B/C never apply, mounted D evidence appears after B
+settles, all work is terminal, and the owner suite and Ruff are green.
 
 ---
 
@@ -953,7 +1058,7 @@ and Ruff green.
 Run:
 
 ```bash
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_superseded_search_waits_for_underlying_retrieval -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_retrieval -q --tb=short
 PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Library/test_library_local_rag_search_service.py Tests/Library/test_library_rag_service.py Tests/Library/test_library_rag_mode_resolution.py Tests/UI/test_product_maturity_gate16_library_search_rag.py Tests/UI/test_library_shell.py -q --tb=short
 PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/UI/Screens/library_screen.py Tests/UI/test_library_shell.py
 git diff --check
@@ -975,25 +1080,27 @@ Record any truthful named initialization phase; if none remains, keep ordinary
 
 Launch another new TUI process against the same scratch index. Label the
 already-approved query `how do I schedule a watchlist brief` as B and the
-distinct fixture query `how do I schedule a watchlist brief?` as C. Run B,
-confirm its visible status is still `searching`, immediately replace the input
-with C, and activate the real Run control again. While C is waiting/running,
-activate Browse ▸ Media, the exact navigation action pinned by Task 4, and
-record acknowledgement within one second. After the work settles, return to
-Browse ▸ Search and verify the input, terminal status, and Evidence belong to C;
-observe one additional message-pump turn and verify no B outcome overwrites it.
-Record only the B/C labels and action/status timestamps in live evidence, not
-the query bodies again.
+distinct fixture query `how do I schedule a watchlist brief?` as C and
+`how do I schedule recurring watchlist briefs?` as D. Run B, confirm its
+visible status is still `searching`, immediately replace the input with C and
+activate the real Run control, then replace it with D and Run a third time
+while the status remains `searching`. While D is waiting/running, activate
+Browse ▸ Media, the exact navigation action pinned by Task 4, and record
+acknowledgement within one second. After the work settles, return to Browse ▸
+Search and verify the mounted input, terminal status, and Evidence belong to D;
+observe one additional message-pump turn and verify no B/C outcome overwrites
+it. Record only the B/C/D labels and action/status timestamps in live evidence,
+not the query bodies again.
 
 The live process proves real-control responsiveness and no stale overwrite; it
 must not infer underlying call overlap from CPU shape. The lock-protected
-`test_library_shell_superseded_search_waits_for_underlying_retrieval` in Task 4
-is the authoritative serialization evidence (`max_active_calls == 1`).
+`test_library_shell_repeated_supersession_serializes_retrieval` in Task 4 is
+the authoritative serialization evidence (`max_active_calls == 1`).
 
-Expected: Media acknowledges within one second while the real B-to-C sequence
-is pending, terminal Search state belongs only to C, no B overwrite appears,
-and all residual work is terminal. Task 4 supplies the separate deterministic
-no-overlap proof.
+Expected: Media acknowledges within one second while the real B-to-C-to-D
+sequence is pending, terminal mounted Search state belongs only to D, no B/C
+overwrite appears, and all residual work is terminal. Task 4 supplies the
+separate deterministic no-overlap and repeated-cancellation proof.
 
 - [ ] **Step 4: Prove isolation and write live evidence**
 
@@ -1026,7 +1133,18 @@ the exact task file with `apply_patch` and verify with
 
 - [ ] **Step 6: Self-review and final commit**
 
-Review `origin/dev...HEAD` for correctness, privacy, cancellation, event-loop behavior, unnecessary complexity, unrelated diffs, and task hygiene. Run the final changed-file battery again after documentation edits. Commit:
+Review `origin/dev...HEAD` for correctness, privacy, cancellation, event-loop
+behavior, unnecessary complexity, unrelated diffs, and task hygiene. Run the
+final changed-file battery again after documentation edits, then run the full
+suite before any PR-readiness or completion claim:
+
+```bash
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q --tb=short
+```
+
+If the full suite is red, stop, report the exact failing node(s) and output,
+and do not commit closeout documentation or claim PR readiness. If it is green,
+commit:
 
 ```bash
 git add Docs/superpowers/qa/task-15810-library-rag-first-query/live-verification.md "backlog/tasks/task-15810 - Library-RAG-Answers-first-query-on-a-fresh-profile-never-returns-CPU-bound-reproduced-twice.md"
@@ -1052,9 +1170,10 @@ Expected: clean worktree, complete task notes/AC/status, profiler and live evide
   worker-orchestration gap.
 - Event loop: deterministic heartbeat/navigation ordering plus separate live
   acknowledgement, not inferred from final completion.
-- Supersession: real Run B then Run C keeps C waiting without blocking the UI,
-  never exceeds one underlying retrieval, never applies stale B, and drains to
-  terminal C.
+- Supersession: real Runs B, C, then D keep C/D outside admission while B
+  drains through repeated cancellation without blocking the UI, never exceed
+  one underlying retrieval, never apply stale B/C, and return to mounted
+  terminal D evidence.
 - Privacy: artifacts allow only symbols, timing, aggregate counts, IDs, paths, and fingerprints.
 - ADR: no new decision under current boundaries; explicit stop if the profile requires one.
 - YAGNI: one measured owner, one retrieval path, no new dependency or scheduler.
