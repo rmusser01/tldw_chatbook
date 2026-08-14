@@ -21,6 +21,7 @@ from PIL import Image as PILImage
 from textual.widgets import Button
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.console_controller_stubs import stub_image_controller
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -48,8 +49,15 @@ from tldw_chatbook.Image_Generation.exceptions import (
     ComfyUIImageEditError,
     ImageGenerationCancelled,
 )
-from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.UI.Console_Modules import image as image_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+
+def _attach_image_controller(screen: ChatScreen) -> None:
+    stub_image_controller(
+        screen,
+        context="test_console_pending_attachment_stash",
+    )
 
 
 def _image_pending(name: str, *, path: str) -> PendingAttachment:
@@ -100,9 +108,9 @@ def _h3_config() -> SimpleNamespace:
 
 
 def _patch_h3_enabled(monkeypatch) -> None:
-    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _h3_config)
+    monkeypatch.setattr(image_module, "get_image_generation_config", _h3_config)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
@@ -224,6 +232,7 @@ def test_adopt_resets_malformed_stash_without_crashing():
 
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = _NS(_console_pending_attachment_stash="not-a-dict")
+    _attach_image_controller(screen)
     store = ConsoleChatStore()
     screen._adopt_console_pending_attachments(store)
     assert screen.app_instance._console_pending_attachment_stash == {}
@@ -262,6 +271,7 @@ def test_h3_completion_reconciliation_filters_exact_attachment_and_is_idempotent
     }
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = app
+    _attach_image_controller(screen)
 
     hydrated: list[tuple[str, str]] = []
 
@@ -270,8 +280,8 @@ def test_h3_completion_reconciliation_filters_exact_attachment_and_is_idempotent
         return type("Message", (), {"persisted_message_id": message_id})()
 
     store.merge_persisted_generation_message = _merge
-    screen._reconcile_h3_image_edit_completions(store)
-    screen._reconcile_h3_image_edit_completions(store)
+    screen._image._reconcile_h3_image_edit_completions(store)
+    screen._image._reconcile_h3_image_edit_completions(store)
 
     assert hydrated == [(session.id, "persisted-message-1")]
     assert store.pending_attachments(session.id) == [other]
@@ -306,11 +316,12 @@ def test_h3_completion_preserves_replacement_draft_after_message_presence():
             "_console_pending_attachment_stash": {},
         },
     )()
+    _attach_image_controller(screen)
     store.merge_persisted_generation_message = lambda *_args: type(
         "Message", (), {"persisted_message_id": "persisted-message-2"}
     )()
 
-    screen._reconcile_h3_image_edit_completions(store)
+    screen._image._reconcile_h3_image_edit_completions(store)
 
     assert registry.completion(session.id) is None
     assert store.pending_attachments(session.id) == []
@@ -342,9 +353,10 @@ def test_h3_completion_waits_for_durable_message_presence_before_cleanup():
             "_console_pending_attachment_stash": {},
         },
     )()
+    _attach_image_controller(screen)
     store.merge_persisted_generation_message = lambda *_args: None
 
-    screen._reconcile_h3_image_edit_completions(store)
+    screen._image._reconcile_h3_image_edit_completions(store)
 
     assert registry.completion(session.id) is not None
     assert store.pending_attachments(session.id) == [source]
@@ -413,7 +425,7 @@ async def test_h3_completion_for_session_a_never_clears_identical_visible_draft_
                 )
             )
 
-            screen._reconcile_h3_image_edit_completions(store)
+            screen._image._reconcile_h3_image_edit_completions(store)
 
             assert store.pending_attachments(session_a.id) == []
             assert store.session_draft(session_a.id) == ""
@@ -473,9 +485,7 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
         batch_calls += 1
         raise AssertionError("cancelled canonical decode reached dispatch")
 
-    monkeypatch.setattr(
-        chat_screen_module, "run_generation_batch", _canonical_then_dispatch
-    )
+    monkeypatch.setattr(image_module, "run_generation_batch", _canonical_then_dispatch)
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
@@ -513,9 +523,7 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
             stop = console.query_one("#console-stop-generation", Button)
             assert stop.styles.display != "none"
             assert not stop.disabled
-            await asyncio.wait_for(
-                pilot.click("#console-stop-generation"), timeout=0.5
-            )
+            await asyncio.wait_for(pilot.click("#console-stop-generation"), timeout=0.5)
             assert operation.cancel_event.is_set()
         finally:
             release.set()
@@ -542,7 +550,7 @@ async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
         assert kwargs["cancel_event"].is_set()
         raise ImageGenerationCancelled()
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _blocked_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", _blocked_batch)
     async with host.run_test(size=(160, 48)) as pilot:
         old = host.screen_stack[-1]
         await _wait_for_selector(old, pilot, "#console-native-composer")
@@ -686,9 +694,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 errors=[],
             )
 
-        monkeypatch.setattr(
-            chat_screen_module, "run_generation_batch", _terminal_batch
-        )
+        monkeypatch.setattr(image_module, "run_generation_batch", _terminal_batch)
         async with host.run_test(size=(160, 48)) as pilot:
             old = host.screen_stack[-1]
             await _wait_for_selector(old, pilot, "#console-native-composer")
@@ -700,9 +706,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
             )
             old_store.add_pending_attachment(session.id, source)
             old_store.set_session_draft(session.id, "settlement draft")
-            old.query_one("#console-native-composer").load_draft(
-                "settlement draft"
-            )
+            old.query_one("#console-native-composer").load_draft("settlement draft")
             caller = asyncio.create_task(
                 old._console_command_generate_image(
                     CommandParse(
@@ -737,7 +741,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
             assert not stop.disabled
 
             settlement_events: list[str] = []
-            original_reconcile = fresh._reconcile_h3_image_edit_completions
+            original_reconcile = fresh._image._reconcile_h3_image_edit_completions
             original_transcript_sync = fresh._sync_native_console_chat_ui
             original_control_sync = fresh._request_console_control_bar_sync
 
@@ -753,7 +757,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 settlement_events.append("controls")
                 original_control_sync()
 
-            fresh._reconcile_h3_image_edit_completions = _record_reconcile
+            fresh._image._reconcile_h3_image_edit_completions = _record_reconcile
             fresh._sync_native_console_chat_ui = _record_transcript_sync
             fresh._request_console_control_bar_sync = _record_control_sync
 
@@ -777,7 +781,9 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 fresh_store = fresh._ensure_console_chat_store()
                 messages = fresh_store.messages_for_session(session.id)
                 matching = [
-                    message for message in messages if message.content == expected_content
+                    message
+                    for message in messages
+                    if message.content == expected_content
                 ]
                 if len(matching) != 1:
                     return False
@@ -797,9 +803,10 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 "controls"
             )
             if expected_content is None:
-                assert fresh._ensure_console_chat_store().messages_for_session(
-                    session.id
-                ) == []
+                assert (
+                    fresh._ensure_console_chat_store().messages_for_session(session.id)
+                    == []
+                )
             else:
                 matching = [
                     message
@@ -814,7 +821,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 )
 
             if terminal_kind == "cancel":
-                fresh._reconcile_h3_image_edit_completions = original_reconcile
+                fresh._image._reconcile_h3_image_edit_completions = original_reconcile
                 fresh._sync_native_console_chat_ui = original_transcript_sync
                 fresh._request_console_control_bar_sync = original_control_sync
                 newer_release = asyncio.Event()
@@ -853,7 +860,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
 
                 fresh._sync_native_console_chat_ui = _count_transcript_sync
                 fresh._request_console_control_bar_sync = _count_control_sync
-                await fresh._settle_current_h3_outcome(
+                await fresh._image._settle_current_h3_outcome(
                     session.id, old_generation
                 )
                 assert transcript_syncs == 0
@@ -861,10 +868,8 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 assert stop.styles.display != "none"
                 newer_release.set()
                 await newer.task
-                fresh._console_h3_ui_generations = {
-                    session.id: newer.generation
-                }
-                await fresh._settle_current_h3_outcome(
+                fresh._console_h3_ui_generations = {session.id: newer.generation}
+                await fresh._image._settle_current_h3_outcome(
                     session.id, old_generation
                 )
                 assert transcript_syncs == 0
@@ -929,7 +934,7 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
             )
         raise RuntimeError("sentinel response body and private descriptor")
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _failed_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", _failed_batch)
     async with host.run_test(size=(160, 48)) as pilot:
         old = host.screen_stack[-1]
         await _wait_for_selector(old, pilot, "#console-native-composer")
@@ -946,9 +951,7 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
                     RuntimeError("sentinel persistence path")
                 ),
             )
-        old.query_one("#console-native-composer").load_draft(
-            "captured failure draft"
-        )
+        old.query_one("#console-native-composer").load_draft("captured failure draft")
         caller = asyncio.create_task(
             old._console_command_generate_image(
                 CommandParse(
@@ -1017,7 +1020,7 @@ async def test_late_first_persisted_h3_failure_reconciles_through_normal_restore
                 raise ComfyUIImageEditError("source_upload")
             raise RuntimeError("sentinel response body /private/source.png")
 
-        monkeypatch.setattr(chat_screen_module, "run_generation_batch", _failed_batch)
+        monkeypatch.setattr(image_module, "run_generation_batch", _failed_batch)
         async with host.run_test(size=(160, 48)) as pilot:
             old = host.screen_stack[-1]
             await _wait_for_selector(old, pilot, "#console-native-composer")
@@ -1183,14 +1186,14 @@ def test_two_fresh_screens_reconcile_real_persisted_h3_success_at_every_boundary
                 captured_draft="captured draft",
             )
             assert registry.publish_completion(record)
-            old._filter_h3_attachment_from_app_stash(
+            old._image._filter_h3_attachment_from_app_stash(
                 session.id, source.attachment_id
             )
             return record
 
         if success_timing == "before_stash":
             completion = _commit_success()
-            assert old._cleanup_h3_completion_in_store(
+            assert old._image._cleanup_h3_completion_in_store(
                 old_store, completion, clear_visible_composer=False
             )
             assert registry.ack_completion(session.id, generation)
@@ -1200,7 +1203,7 @@ def test_two_fresh_screens_reconcile_real_persisted_h3_success_at_every_boundary
 
         if success_timing == "after_stash_before_adoption":
             completion = _commit_success()
-            assert old._cleanup_h3_completion_in_store(
+            assert old._image._cleanup_h3_completion_in_store(
                 old_store, completion, clear_visible_composer=False
             )
 
@@ -1220,7 +1223,7 @@ def test_two_fresh_screens_reconcile_real_persisted_h3_success_at_every_boundary
         if success_timing == "after_adoption":
             fresh_store.set_session_draft(session.id, "replacement draft")
             completion = _commit_success()
-            fresh._reconcile_h3_image_edit_completions(fresh_store)
+            fresh._image._reconcile_h3_image_edit_completions(fresh_store)
 
         assert registry.completion(session.id) is None
 
@@ -1273,7 +1276,7 @@ async def test_confirmed_session_delete_drops_active_and_completion():
         async def _runner(_generation: str) -> None:
             await release.wait()
 
-        registry = console._h3_image_edit_registry()
+        registry = console._image._h3_image_edit_registry()
         operation = registry.start(
             session_id=doomed.id,
             attachment_id="doomed-source",

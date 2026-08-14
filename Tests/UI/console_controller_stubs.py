@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 
 #: Every keyword-only dependency of ``ConsoleMessageController.__init__``
@@ -46,6 +47,25 @@ MESSAGE_CONTROLLER_CALLABLES = (
     "keep_console_generation_variant",
     "handle_console_toggle_image_view",
     "invalidate_console_persisted_rows_cache",
+)
+
+IMAGE_CONTROLLER_CALLABLES = (
+    "ensure_console_image_view",
+    "recent_console_image_messages",
+    "console_image_default_mode",
+    "console_generation_browse",
+    "sync_native_console_chat_ui",
+    "ensure_console_chat_store",
+    "build_console_provider_selection",
+    "ensure_console_provider_gateway",
+    "console_image_preparing",
+    "current_console_chat_store",
+    "console_composer_or_none",
+    "console_visible_draft_session_id",
+    "append_native_console_system_message",
+    "request_console_control_bar_sync",
+    "default_console_session_settings",
+    "clear_console_composer_draft",
 )
 
 
@@ -128,4 +148,39 @@ def stub_message_controller(
         **kwargs,
     )
     screen._message = controller
+    return controller
+
+
+def stub_image_controller(
+    screen: Any,
+    *,
+    context: str = "stub_image_controller",
+    app_instance: Any = None,
+    **wired: Any,
+) -> ConsoleImageController:
+    """Attach a fail-loud image controller to a bare screen shell."""
+    unknown = set(wired) - set(IMAGE_CONTROLLER_CALLABLES)
+    if unknown:
+        raise TypeError(
+            f"stub_image_controller got unknown callable(s) {sorted(unknown)}; "
+            f"expected a subset of {list(IMAGE_CONTROLLER_CALLABLES)}"
+        )
+    resolved_app = (
+        app_instance
+        if app_instance is not None
+        else getattr(screen, "app_instance", None)
+    )
+    assert resolved_app is not None, (
+        f"{context}: no app_instance to snapshot. Attach the controller after "
+        "the harness app exists, or pass app_instance=NO_APP."
+    )
+    controller = ConsoleImageController(
+        screen,
+        app_instance=None if resolved_app is NO_APP else resolved_app,
+        **{
+            name: wired.get(name, _raiser(name, context))
+            for name in IMAGE_CONTROLLER_CALLABLES
+        },
+    )
+    screen._image = controller
     return controller

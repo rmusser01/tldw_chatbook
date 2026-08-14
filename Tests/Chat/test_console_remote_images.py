@@ -5,10 +5,21 @@ and gated behind ``[chat.images] render_remote_images``; extraction accepts
 markdown image links and bare image-extension URLs, http(s) only.
 """
 
+import io
+from types import SimpleNamespace
+
+import pytest
+
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_image_view import (
     extract_image_urls,
     resolve_render_remote_images,
 )
+
+PILImage = pytest.importorskip("PIL.Image")
 
 
 def test_remote_images_default_off():
@@ -32,9 +43,7 @@ def test_extract_markdown_image_links():
 def test_extract_bare_image_extension_urls():
     """Bare URLs with image extensions (plus query strings) extract."""
     text = "portrait: https://example.com/a/b/portrait.jpg?size=big done"
-    assert extract_image_urls(text) == [
-        "https://example.com/a/b/portrait.jpg?size=big"
-    ]
+    assert extract_image_urls(text) == ["https://example.com/a/b/portrait.jpg?size=big"]
 
 
 def test_non_image_bare_urls_ignored():
@@ -63,21 +72,12 @@ def test_dedupe_and_cap():
 
 # ---- ChatScreen spec wiring ----
 
-import io
-
-import pytest
-from types import SimpleNamespace
-
-PILImage = pytest.importorskip("PIL.Image")
-
-from tldw_chatbook.Chat.console_chat_models import (
-    ConsoleChatMessage,
-    ConsoleMessageRole,
-)
-
 
 def _bare_screen(*, enabled: bool):
-    from Tests.UI.console_controller_stubs import stub_message_controller
+    from Tests.UI.console_controller_stubs import (
+        stub_image_controller,
+        stub_message_controller,
+    )
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
@@ -90,6 +90,16 @@ def _bare_screen(*, enabled: bool):
     # delegation. `ChatScreen.__new__` skips the construction `__init__`
     # would do. That method touches no injected seam, so nothing is wired.
     stub_message_controller(screen, context="test_console_remote_images._bare_screen")
+    stub_image_controller(
+        screen,
+        context="test_console_remote_images._bare_screen",
+        ensure_console_image_view=lambda: screen._ensure_console_image_view(),
+        recent_console_image_messages=(
+            lambda messages: screen._recent_console_image_messages(messages)
+        ),
+        console_image_default_mode=lambda: screen._console_image_default_mode,
+        console_generation_browse=lambda: screen._console_generation_browse(),
+    )
     return screen
 
 
@@ -112,7 +122,7 @@ def test_remote_spec_built_for_cached_link_when_enabled():
     _state, cache = screen._ensure_console_image_view()
     assert cache.prepare("remote:https://example.com/pic.png", _png_bytes())
 
-    specs = screen._build_console_image_specs([message])
+    specs = screen._image._build_console_image_specs([message])
 
     assert message.id in specs
 
@@ -126,7 +136,7 @@ def test_remote_spec_ignored_when_setting_off():
     dispatched: list = []
     screen.run_worker = lambda coro, **kw: (dispatched.append(coro), coro.close())
 
-    specs = screen._build_console_image_specs([message])
+    specs = screen._image._build_console_image_specs([message])
 
     assert message.id not in specs
     assert dispatched == []
@@ -144,7 +154,7 @@ def test_uncached_link_dispatches_fetch_once():
 
     screen.run_worker = _record
 
-    screen._build_console_image_specs([message])
-    screen._build_console_image_specs([message])
+    screen._image._build_console_image_specs([message])
+    screen._image._build_console_image_specs([message])
 
     assert len(dispatched) == 1
