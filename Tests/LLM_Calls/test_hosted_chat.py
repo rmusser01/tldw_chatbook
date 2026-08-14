@@ -745,6 +745,7 @@ def test_transport_config_repr_hides_api_key() -> None:
 
 
 def test_owned_json_post_maps_invalid_base_url_to_redacted_transport_error() -> None:
+    """Map malformed bases to a redacted public transport error."""
     base_url = "https://user:RAW-URL-CANARY@example.com/v1"
 
     with pytest.raises(ChatProviderError) as exc_info:

@@ -4,7 +4,7 @@ title: Harden Moonshot Kimi and Z.ai GLM as first-class hosted providers
 status: Done
 assignee: []
 created_date: '2026-08-12 20:45'
-updated_date: '2026-08-14 00:27'
+updated_date: '2026-08-14 00:45'
 labels: []
 dependencies:
   - TASK-15675
@@ -59,6 +59,9 @@ Bring the existing Moonshot AI and Z.ai integrations up to the same first-class 
    URL validation exception into its documented redacted public error contract,
    align Z.ai's adapter-only retry-delay fallback with canonical Console/config
    policy, and prove both through focused regressions before re-closing the task.
+8. Late compliance correction: give the Z.ai retry fallback one provider-local
+   named owner and document the added regression callable, then resolve both
+   PR #1614 rule threads through a final focused follow-up.
 
 Detailed plan:
 `Docs/superpowers/plans/2026-08-12-kimi-zai-hosted-chat-completions-implementation.md`
@@ -119,4 +122,14 @@ needed.
   independent code review were green. No broad suite was run under the user's
   related-test-only restriction. ADR-063 remains the governing decision; no new
   ADR was required.
+- Late compliance correction: PR #1614's post-merge rule review now has one
+  provider-local owner for the Z.ai retry fallback and a concise docstring on
+  the added transport regression. The same two exact regressions and complete
+  touched modules passed (`2` and `124` tests); focused Ruff lint/format, Z.ai
+  MyPy/compileall, diff checks, and independent review were green. PR #1615's
+  delayed review caught and closed one circular-test assertion: the test now
+  independently pins the numeric `5.0` policy and the resolver's use of its
+  named owner. Mutating the owner to `1.0` failed the exact test before it was
+  restored; the restored test and static checks passed, and the review thread
+  was replied to and resolved.
 <!-- SECTION:NOTES:END -->

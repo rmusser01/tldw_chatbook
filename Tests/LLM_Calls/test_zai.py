@@ -130,7 +130,8 @@ def test_resolve_zai_request_uses_canonical_precedence_and_current_defaults() ->
     )
     assert defaults.model == "glm-5.2"
     assert defaults.base_url == "https://api.z.ai/api/paas/v4"
-    assert defaults.retry_delay == 5.0
+    assert zai._DEFAULT_RETRY_DELAY == 5.0
+    assert defaults.retry_delay == zai._DEFAULT_RETRY_DELAY
 
 
 def test_resolve_zai_request_rejects_normalized_table_alias_conflict() -> None:

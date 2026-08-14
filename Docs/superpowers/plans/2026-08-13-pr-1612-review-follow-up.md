@@ -93,3 +93,31 @@ its acceptance criteria, return it to `Done` through the Backlog CLI, commit the
 four source/test files plus task/design/plan documentation, push the follow-up
 branch, open a PR against `dev`, resolve both original PR #1612 threads with the
 correction commit/PR, wait for required checks, and merge.
+
+### Task 4: Close The Late Compliance Review
+
+**Files:**
+- Modify: `tldw_chatbook/LLM_Calls/zai.py`
+- Modify: `Tests/LLM_Calls/test_zai.py`
+- Modify: `Tests/LLM_Calls/test_hosted_chat.py`
+
+- [x] **Step 1: Name the Z.ai retry fallback**
+
+Introduce one provider-local default constant, use it in resolution, and have
+the existing defaults contract reference that owner.
+
+- [x] **Step 2: Document the new regression callable**
+
+Add a concise docstring to the new hosted transport test. No empty
+`Args`/`Returns`/`Raises` sections are needed because the test accepts nothing,
+returns nothing, and asserts rather than exposing an exception contract.
+
+- [x] **Step 3: Run only the directly related tests and static checks**
+
+Run the two exact regressions, both complete touched test modules, Ruff
+lint/format, MyPy for Z.ai, compileall for Z.ai, and `git diff --check`.
+
+- [x] **Step 4: Resolve PR #1614's two threads and merge the final follow-up**
+
+Reply with the exact correction commit/PR, resolve both threads, verify there
+are no remaining actionable comments, and merge into `dev`.
