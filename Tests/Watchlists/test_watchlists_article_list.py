@@ -13,9 +13,14 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.widgets import Input, ListView, Select, Static
+from textual.widgets import Button, Input, ListView, Select, Static
 
-from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane, _render_row
+from tldw_chatbook.UI.Watchlists_Modules.article_list import (
+    ArticleListPane,
+    NextItemsPageRequested,
+    PreviousItemsPageRequested,
+    _render_row,
+)
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import (
     ItemSelected,
     ItemsFilterChanged,
@@ -71,6 +76,14 @@ class ArticleListHarness(App):
 
     def on_refresh_items_requested(self, message: RefreshItemsRequested) -> None:
         self.captured_messages.append(("refresh_items_requested", None))
+
+    def on_previous_items_page_requested(
+        self, message: PreviousItemsPageRequested
+    ) -> None:
+        self.captured_messages.append(("previous_page", None))
+
+    def on_next_items_page_requested(self, message: NextItemsPageRequested) -> None:
+        self.captured_messages.append(("next_page", None))
 
     def on_next_unread_requested(self, message: NextUnreadRequested) -> None:
         self.captured_messages.append(("next_unread_requested", None))
@@ -332,6 +345,106 @@ async def test_search_query_narrows_rows():
         await pilot.pause(0.2)
 
         assert [item["item_id"] for item in pane.displayed_items()] == [1]
+
+
+async def test_pager_reflects_page_boundaries_and_loading_without_recompose():
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        list_view = pane.query_one("#items-table", ListView)
+        previous = pane.query_one("#items-page-previous", Button)
+        next_button = pane.query_one("#items-page-next", Button)
+        label = pane.query_one("#items-page-label", Static)
+
+        assert previous.disabled and next_button.disabled
+        assert str(label.renderable) == "Page 1"
+
+        pane.page_number = 2
+        pane.has_previous = True
+        pane.has_next = True
+        await pilot.pause()
+
+        assert pane.query_one("#items-table", ListView) is list_view
+        assert not previous.disabled and not next_button.disabled
+        assert str(label.renderable) == "Page 2"
+
+        pane.page_loading = True
+        await pilot.pause()
+        assert previous.disabled and next_button.disabled
+
+
+async def test_pager_buttons_post_narrow_page_requests():
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        pane.page_number = 2
+        pane.has_previous = True
+        pane.has_next = True
+        await pilot.pause()
+
+        pane.query_one("#items-page-previous", Button).press()
+        pane.query_one("#items-page-next", Button).press()
+        await pilot.pause()
+
+        assert ("previous_page", None) in app.captured_messages
+        assert ("next_page", None) in app.captured_messages
+
+
+async def test_authoritative_backend_search_does_not_refilter_returned_rows():
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        pane.search_query = "body-only-token"
+        pane.items = [_item(1, title="Backend FTS match", content="")]
+        pane.search_results_authoritative = True
+        await pilot.pause()
+
+        assert [item["item_id"] for item in pane.displayed_items()] == [1]
+
+        pane.query_one("#items-search-input", Input).value = "edited-token"
+        await pilot.pause()
+
+        assert pane.search_results_authoritative is False
+        assert pane.displayed_items() == []
+
+
+async def test_focus_first_row_does_not_select_but_next_user_move_does():
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        pane.items = [_item(1), _item(2)]
+        await pilot.pause()
+
+        pane.focus_first_row_without_selecting()
+        await pilot.pause()
+
+        list_view = pane.query_one("#items-table", ListView)
+        assert list_view.has_focus
+        assert not [m for m in app.captured_messages if m[0] == "item_selected"]
+
+        list_view.action_cursor_down()
+        await pilot.pause()
+        assert [m for m in app.captured_messages if m[0] == "item_selected"]
+
+        list_view.action_cursor_up()
+        await pilot.pause()
+        selected = [m for m in app.captured_messages if m[0] == "item_selected"]
+        assert len(selected) == 2, "returning to the first row must select normally"
+
+
+async def test_apply_page_items_rebuilds_before_focusing_first_row():
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+
+        await pane.apply_page_items([_item(1), _item(2)], focus_first=True)
+        await pilot.pause()
+
+        assert [item["item_id"] for item in pane.displayed_items()] == [2, 1]
+        list_view = pane.query_one("#items-table", ListView)
+        assert list_view.has_focus
+        assert isinstance(list_view.children[list_view.index], type(_item_rows(pane)[0]))
+        assert not [m for m in app.captured_messages if m[0] == "item_selected"]
 
 
 async def test_update_item_status_cell_repaints_in_place_without_recompose():

@@ -39,6 +39,7 @@ from typing import Any
 from rich.text import Text
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Input, ListItem, ListView, Select, Static
 
@@ -54,6 +55,14 @@ from .items_pane import (
 )
 
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+
+
+class PreviousItemsPageRequested(Message):
+    """Ask the owning screen for the preceding backend page."""
+
+
+class NextItemsPageRequested(Message):
+    """Ask the owning screen for the next backend page."""
 
 
 def _sort_key(item: dict[str, Any]) -> datetime:
@@ -255,6 +264,11 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
     #: `recompose=True`: flipping it must update one Static in place, never
     #: rebuild the ListView under the user's cursor.
     new_items_note = reactive("")
+    page_number = reactive(1)
+    has_previous = reactive(False)
+    has_next = reactive(False)
+    page_loading = reactive(False)
+    search_results_authoritative = reactive(False)
 
     def watch_new_items_note(self, note: str) -> None:
         """Show/hide the pill in place (see the reactive's note above)."""
@@ -294,6 +308,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         #: in place WITHOUT recomposing, so re-deriving the displayed
         #: sequence afterwards can disagree with what is on screen.
         self._rendered_items: list[dict[str, Any]] = []
+        self._suppressed_highlight_item_id: str | None = None
 
     def compose(self):
         """Build the toolbar and the grouped rows, once per pane instance.
@@ -370,6 +385,20 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
             id="items-queued-legend",
             classes="watchlists-hint-line",
         )
+        with Horizontal(id="items-pagination", classes="destination-filter-strip"):
+            yield Button(
+                "Previous",
+                id="items-page-previous",
+                compact=True,
+                disabled=self.page_loading or not self.has_previous,
+            )
+            yield Static(f"Page {self.page_number}", id="items-page-label")
+            yield Button(
+                "Next",
+                id="items-page-next",
+                compact=True,
+                disabled=self.page_loading or not self.has_next,
+            )
 
     def _build_rows(self) -> list[ListItem]:
         """Rows and day headers for the whole loaded page, pre-filtered.
@@ -404,7 +433,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         _set_header_visible(header, header_has_visible)
         return rows
 
-    def _filter_state(self) -> tuple[str, str, str | None]:
+    def _filter_state(self) -> tuple[str, str, bool, str | None]:
         """Everything `_filtered_items()` reads, as one comparable value.
 
         The open-item pin is part of it, not just the two filters: a
@@ -417,7 +446,12 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
             if isinstance(selected, dict) and selected.get("id") is not None
             else None
         )
-        return (self.status_filter, self.search_query, selected_id)
+        return (
+            self.status_filter,
+            self.search_query,
+            self.search_results_authoritative,
+            selected_id,
+        )
 
     async def _rebuild_rows(self) -> None:
         """Replace the ListView's children after a data arrival.
@@ -524,7 +558,9 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         dicts).
         """
         status_filter = self.status_filter
-        query = self.search_query.strip().lower()
+        query = (
+            "" if self.search_results_authoritative else self.search_query.strip().lower()
+        )
         selected = self.selected_item
         selected_id: str | None = None
         if isinstance(selected, dict) and selected.get("id") is not None:
@@ -557,6 +593,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "items-search-input":
+            self.search_results_authoritative = False
             self.search_query = event.value
         event.stop()
 
@@ -573,6 +610,15 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         """
         await self._rebuild_rows()
 
+    async def apply_page_items(
+        self, items: list[dict[str, Any]], *, focus_first: bool = False
+    ) -> None:
+        """Apply a backend page and optionally highlight its first article."""
+        self.set_reactive(ArticleListPane.items, items)
+        await self._rebuild_rows()
+        if focus_first:
+            self.focus_first_row_without_selecting()
+
     def watch_status_filter(self, status_filter: str) -> None:
         self._apply_row_visibility()
         self._post_filter_changed()
@@ -580,6 +626,33 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
     def watch_search_query(self, search_query: str) -> None:
         self._apply_row_visibility()
         self._post_filter_changed()
+
+    def watch_search_results_authoritative(self, authoritative: bool) -> None:
+        self._apply_row_visibility()
+
+    def _sync_pager(self) -> None:
+        """Update the pager in place without rebuilding the list."""
+        try:
+            previous = self.query_one("#items-page-previous", Button)
+            next_button = self.query_one("#items-page-next", Button)
+            label = self.query_one("#items-page-label", Static)
+        except NoMatches:
+            return
+        previous.disabled = self.page_loading or not self.has_previous
+        next_button.disabled = self.page_loading or not self.has_next
+        label.update(f"Page {self.page_number}")
+
+    def watch_page_number(self, page_number: int) -> None:
+        self._sync_pager()
+
+    def watch_has_previous(self, has_previous: bool) -> None:
+        self._sync_pager()
+
+    def watch_has_next(self, has_next: bool) -> None:
+        self._sync_pager()
+
+    def watch_page_loading(self, page_loading: bool) -> None:
+        self._sync_pager()
 
     # task-15460 deleted the `recompose()`/`_restore_search_focus` pair that
     # used to live here (TASK-3071's shape, ported from `ItemsPane`): it
@@ -674,17 +747,20 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         self._repaint_row(item_id, is_flagged=starred)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Route the strip's one button; stop every press from bubbling.
+        """Route pane buttons and stop every press from bubbling.
 
         Args:
-            event: The button press; only `#items-refresh-button` carries a
-                meaning here (it posts `RefreshItemsRequested`), and every
-                id is stopped so a stray press cannot reach the screen's own
-                `Button.Pressed` handlers.
+            event: The button press. Refresh and page buttons post their
+                narrow requests; every id is stopped so a stray press cannot
+                reach the screen's own `Button.Pressed` handlers.
         """
         button_id = str(event.button.id)
         if button_id == "items-refresh-button":
             self.post_message(RefreshItemsRequested())
+        elif button_id == "items-page-previous":
+            self.post_message(PreviousItemsPageRequested())
+        elif button_id == "items-page-next":
+            self.post_message(NextItemsPageRequested())
         event.stop()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -706,6 +782,9 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         event.stop()
         if not isinstance(event.item, _ArticleRow):
             return
+        if event.item.item_id_key == self._suppressed_highlight_item_id:
+            self._suppressed_highlight_item_id = None
+            return
         try:
             list_view = self.query_one("#items-table", ListView)
         except NoMatches:
@@ -713,6 +792,19 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         if not list_view.has_focus:
             return
         self.select_item_by_id(event.item.item_id_key)
+
+    def focus_first_row_without_selecting(self) -> None:
+        """Focus and highlight the first visible article without selecting it."""
+        try:
+            list_view = self.query_one("#items-table", _ArticleListView)
+        except NoMatches:
+            return
+        for index, node in enumerate(list_view.children):
+            if isinstance(node, _ArticleRow) and node.display and not node.disabled:
+                list_view.focus()
+                self._suppressed_highlight_item_id = node.item_id_key
+                list_view.index = index
+                return
 
     def select_item_by_id(self, item_id: str) -> None:
         """Select the item with the given id and notify listeners."""
