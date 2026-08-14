@@ -2435,6 +2435,8 @@ async def test_library_shell_fresh_screen_reentry_serializes_draining_retrieval(
                 message="A cross-screen Library RAG worker did not terminate.",
             )
             await _wait_for_selector(second, pilot, "#library-rag-result-0")
+            assert second.query_one("#library-rag-query-input", Input).value == "D"
+            assert second.query("#library-rag-result-0")
         finally:
             service.release_all()
             for query in ("B", "C", "D"):
@@ -2459,14 +2461,12 @@ async def test_library_shell_fresh_screen_reentry_serializes_draining_retrieval(
                 message="A cross-screen Library RAG worker remained registered.",
             )
 
-        assert second is not None
-        assert service.snapshot() == (("B", "D"), 0, 1)
-        assert applied_queries == [(id(second), "D")]
-        assert second._library_rag_query == "D"
-        assert [row.title for row in second._library_rag_results] == ["D"]
-        assert second._library_rag_retrieval_status == "ready"
-        assert second.query_one("#library-rag-query-input", Input).value == "D"
-        assert second.query("#library-rag-result-0")
+    assert second is not None
+    assert service.snapshot() == (("B", "D"), 0, 1)
+    assert applied_queries == [(id(second), "D")]
+    assert second._library_rag_query == "D"
+    assert [row.title for row in second._library_rag_results] == ["D"]
+    assert second._library_rag_retrieval_status == "ready"
 
 
 @pytest.mark.asyncio
