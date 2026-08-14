@@ -1262,11 +1262,12 @@ class ConsoleSettingsModal(
 
     def _show_settings_close_guard(self, mode: str) -> None:
         guard = self.query_one("#console-settings-close-guard", Vertical)
-        if guard.display:
+        if guard.display and self._settings_close_guard_mode == mode:
             self._focus_settings_close_guard()
             return
+        if not guard.display:
+            self._settings_close_guard_focus = self.focused
         self._settings_close_guard_mode = mode
-        self._settings_close_guard_focus = self.focused
         is_reset = mode == "reset"
         self.query_one("#console-settings-close-undo", Button).display = is_reset
         self.query_one("#console-settings-close-keep", Button).display = is_reset
@@ -1322,7 +1323,7 @@ class ConsoleSettingsModal(
     def _close_after_undo(self, event: Button.Pressed) -> None:
         event.stop()
         if self._undo_memory_reset():
-            self.dismiss_safe_once(None)
+            self._finish_reset_close_choice()
 
     @on(Button.Pressed, "#console-settings-close-keep")
     def _keep_reset_and_close(self, event: Button.Pressed) -> None:
@@ -1331,6 +1332,15 @@ class ConsoleSettingsModal(
         undo = self.query_one("#console-context-undo-reset", Button)
         undo.display = False
         undo.disabled = True
+        self._finish_reset_close_choice()
+
+    def _finish_reset_close_choice(self) -> None:
+        if self._compaction_is_active():
+            self.query_one("#console-context-action-status", Static).update(
+                "Compacting… one additional model call may be billed."
+            )
+            self._show_settings_close_guard("compaction")
+            return
         self.dismiss_safe_once(None)
 
     @on(Button.Pressed, "#console-settings-close-anyway")
