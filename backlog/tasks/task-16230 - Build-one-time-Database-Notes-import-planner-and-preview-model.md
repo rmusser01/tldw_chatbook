@@ -75,7 +75,7 @@ not passing native evidence.
 
 Verification on 2026-08-14:
 
-- Planner plus Windows-adapter gate: 415 passed, 3 native-Windows-only skipped.
+- Planner plus Windows-adapter gate: 419 passed, 3 native-Windows-only skipped.
 - Established Notes/Library regression gate: 267 passed, 593 deselected after
   rebasing onto the latest `origin/dev`.
 - Broader `Tests/Notes` gate: 1,953 passed, 11 failed, 50 skipped; an untouched
@@ -93,6 +93,12 @@ Verification on 2026-08-14:
   close-on-exec, preserves process interruptions raised during POSIX/Windows cleanup,
   and documents all public planner functions in Google style. Fourteen focused
   regressions cover these review corrections.
+- Final independent review found that exact and user-confirmed items could acquire
+  duplicate update authority for one note. Confirmation and override transforms now
+  reject duplicate targets, while the aggregate plan model independently rejects two
+  selected updates to the same note. Four additional regressions cover exact/uncertain,
+  uncertain/uncertain, override, and direct-construction paths without exposing note
+  identifiers in errors.
 
 ADR required: no. ADR-059 and ADR-060 remain the governing ownership, privacy,
 matching, hierarchy, and update-safety decisions. The Windows path/handle incident

@@ -548,6 +548,11 @@ def confirm_uncertain_match(plan: NoteImportPlan, item_id: str) -> NoteImportPla
         raise ValueError("Only an uncertain match can be explicitly confirmed.")
     if len(item.payloads) != 1 or item.match.note_version is None:
         raise ValueError("This uncertain match cannot be confirmed for update.")
+    _require_unique_update_authorization(
+        plan,
+        item_index,
+        item.match.note_id,
+    )
     confirmed = replace(
         item,
         match=replace(item.match, kind=ImportMatchKind.USER_CONFIRMED),
@@ -604,6 +609,13 @@ def apply_item_override(
     else:
         if not (replace_content or add_membership):
             raise ValueError("Update must replace content or add membership.")
+        if item.match is None:
+            raise ValueError("Update requires one authorized note target.")
+        _require_unique_selected_update_target(
+            plan,
+            item_index,
+            item.match.note_id,
+        )
         requested_replace = replace_content
         requested_membership = add_membership
 
@@ -619,6 +631,36 @@ def apply_item_override(
 def _require_plan(plan: NoteImportPlan) -> None:
     if not isinstance(plan, NoteImportPlan):
         raise TypeError("plan must be a NoteImportPlan.")
+
+
+def _require_unique_update_authorization(
+    plan: NoteImportPlan,
+    item_index: int,
+    note_id: str,
+) -> None:
+    if any(
+        index != item_index
+        and ImportAction.UPDATE_EXISTING in other.allowed_actions
+        and other.match is not None
+        and other.match.note_id == note_id
+        for index, other in enumerate(plan.items)
+    ):
+        raise ValueError("The plan contains a duplicate update target.")
+
+
+def _require_unique_selected_update_target(
+    plan: NoteImportPlan,
+    item_index: int,
+    note_id: str,
+) -> None:
+    if any(
+        index != item_index
+        and other.selected_action is ImportAction.UPDATE_EXISTING
+        and other.match is not None
+        and other.match.note_id == note_id
+        for index, other in enumerate(plan.items)
+    ):
+        raise ValueError("The plan contains a duplicate update target.")
 
 
 def _normalized_folder_name(value: str) -> NormalizedFolderName:

@@ -4779,6 +4779,136 @@ def test_confirm_uncertain_match_adds_update_without_changing_classification() -
     assert original.items[0].match.kind is ImportMatchKind.UNCERTAIN
 
 
+def test_confirm_uncertain_match_rejects_an_exact_update_target_collision() -> None:
+    """One exact match and one confirmation cannot authorize the same target."""
+    private_note_id = "PRIVATE-SHARED-NOTE"
+    exact = dataclass_replace(
+        _task5_exact_item(),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id=private_note_id,
+            note_version=9,
+        ),
+    )
+    uncertain = dataclass_replace(
+        _task5_uncertain_item(),
+        match=ImportMatch(
+            kind=ImportMatchKind.UNCERTAIN,
+            note_id=private_note_id,
+            note_version=12,
+        ),
+    )
+    plan = dataclass_replace(_plan_with_item(exact), items=(exact, uncertain))
+
+    with pytest.raises(ValueError, match="duplicate update target") as raised:
+        note_import_planner.confirm_uncertain_match(plan, "item-uncertain")
+
+    assert private_note_id not in str(raised.value)
+
+
+def test_confirm_uncertain_match_rejects_a_second_uncertain_update_target() -> None:
+    """Two uncertain sources cannot both gain update authority for one note."""
+    private_note_id = "PRIVATE-SHARED-NOTE"
+    first = dataclass_replace(
+        _task5_uncertain_item(),
+        item_id="item-uncertain-1",
+        match=ImportMatch(
+            kind=ImportMatchKind.UNCERTAIN,
+            note_id=private_note_id,
+            note_version=12,
+        ),
+    )
+    second = dataclass_replace(
+        _task5_uncertain_item(),
+        item_id="item-uncertain-2",
+        match=ImportMatch(
+            kind=ImportMatchKind.UNCERTAIN,
+            note_id=private_note_id,
+            note_version=13,
+        ),
+    )
+    plan = dataclass_replace(_plan_with_item(first), items=(first, second))
+    once_confirmed = note_import_planner.confirm_uncertain_match(
+        plan,
+        "item-uncertain-1",
+    )
+
+    with pytest.raises(ValueError, match="duplicate update target") as raised:
+        note_import_planner.confirm_uncertain_match(
+            once_confirmed,
+            "item-uncertain-2",
+        )
+
+    assert private_note_id not in str(raised.value)
+
+
+def _duplicate_authorized_update_plan() -> NoteImportPlan:
+    private_note_id = "PRIVATE-SHARED-NOTE"
+    first = dataclass_replace(
+        _task5_exact_item(item_id="item-update-1"),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id=private_note_id,
+            note_version=12,
+        ),
+    )
+    second = dataclass_replace(
+        _task5_uncertain_item(),
+        item_id="item-update-2",
+        match=ImportMatch(
+            kind=ImportMatchKind.USER_CONFIRMED,
+            note_id=private_note_id,
+            note_version=13,
+        ),
+        allowed_actions=(
+            ImportAction.SKIP,
+            ImportAction.CREATE_NEW,
+            ImportAction.UPDATE_EXISTING,
+        ),
+    )
+    return dataclass_replace(_plan_with_item(first), items=(first, second))
+
+
+def test_update_override_rejects_a_second_selected_update_target() -> None:
+    """A crafted authorized plan still cannot select two updates for one note."""
+    plan = _duplicate_authorized_update_plan()
+    first_update = note_import_planner.apply_item_override(
+        plan,
+        "item-update-1",
+        ImportAction.UPDATE_EXISTING,
+        replace_content=True,
+    )
+
+    with pytest.raises(ValueError, match="duplicate update target") as raised:
+        note_import_planner.apply_item_override(
+            first_update,
+            "item-update-2",
+            ImportAction.UPDATE_EXISTING,
+            replace_content=True,
+        )
+
+    assert "PRIVATE-SHARED-NOTE" not in str(raised.value)
+
+
+def test_note_import_plan_rejects_duplicate_selected_update_targets() -> None:
+    """The aggregate model prevents direct construction from bypassing the guard."""
+    plan = _duplicate_authorized_update_plan()
+    selected = tuple(
+        dataclass_replace(
+            item,
+            selected_action=ImportAction.UPDATE_EXISTING,
+            replace_content=True,
+            add_membership=False,
+        )
+        for item in plan.items
+    )
+
+    with pytest.raises(ValueError, match="duplicate update target") as raised:
+        dataclass_replace(plan, items=selected)
+
+    assert "PRIVATE-SHARED-NOTE" not in str(raised.value)
+
+
 def test_confirm_uncertain_match_rejects_a_versionless_target() -> None:
     original = _plan_with_item(_task5_uncertain_item(note_version=None))
 

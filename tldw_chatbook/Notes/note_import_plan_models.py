@@ -558,6 +558,14 @@ class NoteImportPlan:
             raise ValueError("items must contain ImportPreviewItem values.")
         if len({item.item_id for item in items}) != len(items):
             raise ValueError("Preview item identifiers must be unique.")
+        selected_update_targets = tuple(
+            item.match.note_id
+            for item in items
+            if item.selected_action is ImportAction.UPDATE_EXISTING
+            and item.match is not None
+        )
+        if len(set(selected_update_targets)) != len(selected_update_targets):
+            raise ValueError("The plan contains a duplicate update target.")
         if len(set(paths)) != len(paths):
             raise ValueError("Proposed folder paths cannot contain duplicates.")
         if any(len(item.reason) > self.bounds.max_reason_length for item in items):
