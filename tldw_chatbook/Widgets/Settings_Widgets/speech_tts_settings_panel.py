@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import math
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -874,6 +874,7 @@ class SpeechTTSSettingsPanel(Vertical):
         runtime_status_store: SpeechTTSRuntimeStatusStore | None = None,
         provider_test_evidence: ProcessProviderTestEvidenceStore | None = None,
         draft_snapshot: SpeechTTSPanelDraftSnapshot | None = None,
+        audio_cpp_result_cleanup_pending: Callable[[], bool] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -998,6 +999,9 @@ class SpeechTTSSettingsPanel(Vertical):
         self._leave_save_waiters: dict[int, asyncio.Future[bool]] = {}
         self._last_focused_control_id: str | None = None
         self._audio_cpp_scan_revision = 0
+        self._audio_cpp_result_cleanup_pending = audio_cpp_result_cleanup_pending or (
+            lambda: False
+        )
         if restored is None:
             self._realtime_original = _read_realtime_settings_draft()
             self._realtime_draft = replace(self._realtime_original)
@@ -1007,6 +1011,47 @@ class SpeechTTSSettingsPanel(Vertical):
             self._realtime_draft = replace(restored.realtime_draft)
             self._draft_revision = restored.draft_revision
         self._draft_revision_basis = self._draft_revision_values()
+
+    def audio_cpp_result_cleanup_pending(self) -> bool:
+        """Return whether package-review cleanup currently fences this draft."""
+
+        try:
+            return bool(self._audio_cpp_result_cleanup_pending())
+        except Exception:
+            return True
+
+    def _fence_audio_cpp_result_cleanup(self) -> bool:
+        if not self.audio_cpp_result_cleanup_pending():
+            return False
+        self._set_result(
+            "Finishing installed package review…",
+            severity="information",
+        )
+        return True
+
+    def refresh_audio_cpp_result_cleanup_state(self) -> None:
+        """Update only controls governed by the short review transaction."""
+
+        pending = self.audio_cpp_result_cleanup_pending()
+        selectors = (
+            "#settings-speech-save",
+            "#settings-speech-revert",
+            "#settings-speech-restore-defaults",
+            "#settings-speech-audio-cpp-guided-add-package",
+            "#settings-speech-audio-cpp-open-model-library",
+            "#settings-speech-audio_cpp-guided-default-model-id",
+        )
+        for selector in selectors:
+            try:
+                self.query_one(selector).disabled = pending
+            except QueryError:
+                pass
+        for button in self.query(".settings-speech-audio-cpp-package-remove").results(
+            Button
+        ):
+            button.disabled = pending
+        if pending:
+            self._fence_audio_cpp_result_cleanup()
 
     def _draft_revision_values(self) -> tuple[object, ...]:
         """Return detached values whose actual changes advance the revision."""
@@ -2112,17 +2157,21 @@ class SpeechTTSSettingsPanel(Vertical):
             id=self._INSPECTOR_CARD_ID,
         )
 
+        cleanup_pending = self.audio_cpp_result_cleanup_pending()
         with Horizontal(id="settings-speech-actions", classes="settings-action-row"):
             yield Button(
                 "Save",
                 id="settings-speech-save",
                 variant="primary",
-                disabled=self._latest_request_id is not None,
+                disabled=self._latest_request_id is not None or cleanup_pending,
             )
-            yield Button("Revert", id="settings-speech-revert")
+            yield Button(
+                "Revert", id="settings-speech-revert", disabled=cleanup_pending
+            )
             yield Button(
                 "Restore Non-secret Defaults",
                 id="settings-speech-restore-defaults",
+                disabled=cleanup_pending,
             )
             yield Button("Open Speech Lab", id="settings-speech-open-lab-bottom")
         yield Static(
@@ -2893,6 +2942,7 @@ class SpeechTTSSettingsPanel(Vertical):
                             "Add local package…",
                             id="settings-speech-audio-cpp-guided-add-package",
                             compact=True,
+                            disabled=self.audio_cpp_result_cleanup_pending(),
                             tooltip=(
                                 "Choose one package directory to scan against the "
                                 "reviewed audio.cpp recipes."
@@ -2902,6 +2952,7 @@ class SpeechTTSSettingsPanel(Vertical):
                             "Open Model Library…",
                             id="settings-speech-audio-cpp-open-model-library",
                             compact=True,
+                            disabled=self.audio_cpp_result_cleanup_pending(),
                             tooltip=(
                                 "Browse reviewed audio.cpp model packages without "
                                 "saving this Settings draft."
@@ -2941,6 +2992,9 @@ class SpeechTTSSettingsPanel(Vertical):
                                             f"package-remove-{package.package_uuid}"
                                         ),
                                         compact=True,
+                                        disabled=(
+                                            self.audio_cpp_result_cleanup_pending()
+                                        ),
                                         variant="warning",
                                         classes=(
                                             "settings-speech-audio-cpp-package-remove"
@@ -2968,6 +3022,7 @@ class SpeechTTSSettingsPanel(Vertical):
                                 ),
                                 allow_blank=False,
                                 compact=True,
+                                disabled=self.audio_cpp_result_cleanup_pending(),
                                 classes=(
                                     "settings-compact-select settings-speech-field "
                                     "settings-speech-draft-field"
@@ -3606,6 +3661,8 @@ class SpeechTTSSettingsPanel(Vertical):
 
     def request_save(self) -> int | None:
         """Validate locally and post one atomic ordinary-save proposal."""
+        if self._fence_audio_cpp_result_cleanup():
+            return None
         self._collect_visible_state()
         if self._latest_request_id is not None:
             self._set_result("A global Speech & TTS save is already in progress.")
@@ -4647,6 +4704,9 @@ class SpeechTTSSettingsPanel(Vertical):
     async def confirm_leave(self) -> bool:
         """Resolve the global draft before its owner or surface changes."""
 
+        if self._fence_audio_cpp_result_cleanup():
+            return False
+
         focus_id = self._focused_id()
         if self._latest_request_id is not None:
             request_id = self._latest_request_id
@@ -4915,6 +4975,8 @@ class SpeechTTSSettingsPanel(Vertical):
     @on(Button.Pressed, "#settings-speech-audio-cpp-guided-add-package")
     def handle_audio_cpp_add_package(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._fence_audio_cpp_result_cleanup():
+            return
         self.app.push_screen(
             SelectDirectory(title="Choose an audio.cpp model package directory"),
             self._audio_cpp_package_picker_result,
@@ -4925,6 +4987,8 @@ class SpeechTTSSettingsPanel(Vertical):
         """Delegate exact request staging to the Settings navigation owner."""
 
         event.stop()
+        if self._fence_audio_cpp_result_cleanup():
+            return
         snapshot = self.draft_snapshot()
         values = snapshot.state.providers["audio_cpp"]
         if (
@@ -4947,6 +5011,8 @@ class SpeechTTSSettingsPanel(Vertical):
         """Start one latest-wins bounded scan for an explicitly selected root."""
 
         if path is None:
+            return
+        if self._fence_audio_cpp_result_cleanup():
             return
         self._collect_visible_state()
         values = self.state.providers["audio_cpp"]
@@ -4989,6 +5055,7 @@ class SpeechTTSSettingsPanel(Vertical):
             revision != self._audio_cpp_scan_revision
             or not self.is_mounted
             or result.request_revision != revision
+            or self.audio_cpp_result_cleanup_pending()
         ):
             return
 
@@ -5074,6 +5141,8 @@ class SpeechTTSSettingsPanel(Vertical):
     @on(Button.Pressed, ".settings-speech-audio-cpp-package-remove")
     async def handle_audio_cpp_remove_package(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._fence_audio_cpp_result_cleanup():
+            return
         button_id = event.button.id or ""
         prefix = "settings-speech-audio-cpp-guided-package-remove-"
         if not button_id.startswith(prefix):
@@ -5133,6 +5202,9 @@ class SpeechTTSSettingsPanel(Vertical):
     async def revert_to_saved(self) -> None:
         """Restore the last successfully loaded or published snapshot."""
 
+        if self._fence_audio_cpp_result_cleanup():
+            return
+
         self._reset_to_saved()
         try:
             get_current_worker()
@@ -5158,6 +5230,8 @@ class SpeechTTSSettingsPanel(Vertical):
     @on(Button.Pressed, "#settings-speech-restore-defaults")
     async def handle_restore_defaults(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._fence_audio_cpp_result_cleanup():
+            return
         self._collect_visible_state()
         self._clear_validation_errors()
         self.state = restore_non_secret_defaults(

@@ -2655,9 +2655,8 @@ async def test_transaction_failure_rolls_back_and_requeues_exact_result(
                 False,
             )
             assert type(merged) is SpeechTTSPanelDraftSnapshot
-            panel.state.providers["audio_cpp"]["guided_default_model_id"] = (
-                "user-overlap"
-            )
+            await pilot.pause()
+            panel.state.providers["audio_cpp"]["guided_packages"] = []
             panel._synchronize_draft_revision()
             overlapped = panel.draft_snapshot()
 
@@ -2684,9 +2683,27 @@ async def test_transaction_failure_rolls_back_and_requeues_exact_result(
             assert not app_instance.pending_handoffs.has_pending(
                 HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
             )
+            await pilot.pause()
+            assert panel.result_text == "Finishing installed package review…"
+            assert screen.query_one("#settings-speech-save", Button).disabled
+            assert screen.query_one("#settings-speech-revert", Button).disabled
+            assert screen.query_one(
+                "#settings-speech-restore-defaults", Button
+            ).disabled
+            assert screen.query_one(
+                "#settings-speech-audio-cpp-guided-add-package", Button
+            ).disabled
+            assert screen.query_one(
+                "#settings-speech-audio_cpp-guided-default-model-id", Select
+            ).disabled
+            assert not screen.query_one("#settings-speech-speed", Input).disabled
+            assert panel.request_save() is None
+            assert panel._latest_request_id is None
+            assert await panel.confirm_leave() is False
+            assert await screen.flush_pending_work() is False
 
-            panel.state.providers["audio_cpp"]["guided_default_model_id"] = (
-                merged.state.providers["audio_cpp"]["guided_default_model_id"]
+            panel.state.providers["audio_cpp"]["guided_packages"] = list(
+                merged.state.providers["audio_cpp"]["guided_packages"]
             )
             panel._synchronize_draft_revision()
             screen._retry_audio_cpp_result_cleanup()
@@ -2695,6 +2712,10 @@ async def test_transaction_failure_rolls_back_and_requeues_exact_result(
             )
             assert replay is not None and replay.value == result
             assert screen._audio_cpp_result_cleanup is None
+            await _wait_for_selector(
+                screen, pilot, "#settings-speech-save", timeout=8.0
+            )
+            assert not screen.query_one("#settings-speech-save", Button).disabled
             return
 
         if transaction_failure == "preack_unmount":
@@ -2703,14 +2724,16 @@ async def test_transaction_failure_rolls_back_and_requeues_exact_result(
 
             from tldw_chatbook.Model_Artifacts.service import ArtifactRef
 
-            saved = screen.save_state()
             merged = screen._merge_and_ack_audio_cpp_model_library_result(
                 claim,
                 result,
                 package,
                 False,
             )
+            panel.state.providers["audio_cpp"]["guided_packages"] = []
+            panel._synchronize_draft_revision()
             await host.switch_screen(Screen())
+            saved = screen.save_state()
             settled = screen._ack_merged_audio_cpp_model_library_result(
                 claim,
                 panel,

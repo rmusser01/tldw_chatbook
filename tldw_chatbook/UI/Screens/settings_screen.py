@@ -411,6 +411,47 @@ def _restore_audio_cpp_merge_delta(
         return None
 
 
+def _force_restore_audio_cpp_merge_delta(
+    before: SpeechTTSPanelDraftSnapshot,
+    merged: SpeechTTSPanelDraftSnapshot,
+    current: SpeechTTSPanelDraftSnapshot,
+) -> SpeechTTSPanelDraftSnapshot | None:
+    """Undo only the review delta during forced teardown, preserving other edits."""
+
+    if _restore_audio_cpp_merge_delta(before, merged, merged) != before:
+        return None
+    before_values = before.state.providers.get("audio_cpp")
+    current_values = current.state.providers.get("audio_cpp")
+    if type(before_values) is not dict or type(current_values) is not dict:
+        return None
+    restored_state = copy.deepcopy(current.state)
+    restored_values = restored_state.providers["audio_cpp"]
+    for key in ("guided_packages", "guided_default_model_id"):
+        if key in before_values:
+            restored_values[key] = copy.deepcopy(before_values[key])
+        else:
+            restored_values.pop(key, None)
+    if (
+        restored_state == before.state
+        and current.original_state == before.original_state
+        and current.realtime_draft == before.realtime_draft
+        and current.realtime_original == before.realtime_original
+        and current.configure_provider == before.configure_provider
+    ):
+        return before
+    try:
+        return SpeechTTSPanelDraftSnapshot(
+            state=restored_state,
+            original_state=current.original_state,
+            realtime_draft=current.realtime_draft,
+            realtime_original=current.realtime_original,
+            configure_provider=current.configure_provider,
+            draft_revision=current.draft_revision + 1,
+        )
+    except (TypeError, ValueError):
+        return None
+
+
 def _theme_save_target() -> Path:
     """Return the active profile's directory for custom theme files."""
     return get_cli_config_path().parent / "themes"
@@ -2975,8 +3016,14 @@ class SettingsScreen(BaseAppScreen):
         """Fence any late Model Library review before this screen is replaced."""
 
         self._audio_cpp_result_cancellation.set()
-        self._retry_audio_cpp_staged_request_cleanup()
-        self._retry_audio_cpp_result_cleanup()
+        try:
+            self._retry_audio_cpp_staged_request_cleanup()
+        except BaseException:
+            pass
+        try:
+            self._retry_audio_cpp_result_cleanup(force_overlap=True)
+        except BaseException:
+            pass
 
     def _workbench_compact_now(self) -> bool:
         return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
@@ -14512,6 +14559,9 @@ class SettingsScreen(BaseAppScreen):
                 provider_test_evidence=process_provider_test_evidence_store(
                     self.app_instance
                 ),
+                audio_cpp_result_cleanup_pending=(
+                    self.audio_cpp_result_cleanup_pending
+                ),
                 id="settings-speech-tts-panel",
             )
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:
@@ -15800,6 +15850,14 @@ class SettingsScreen(BaseAppScreen):
             "_audio_cpp_settings_model_library_request",
             None,
         )
+        if self.audio_cpp_result_cleanup_pending():
+            try:
+                panel = self.query_one(SpeechTTSSettingsPanel)
+                panel._fence_audio_cpp_result_cleanup()  # noqa: SLF001
+            except QueryError:
+                pass
+            self._speech_tts_model_library_route_token = None
+            return False
         if (
             attempt is not None
             and attempt[0] == "llm"
@@ -15964,6 +16022,13 @@ class SettingsScreen(BaseAppScreen):
             expected=expected,
             release_only=release_only,
         )
+        if panel is not None and panel.is_mounted:
+            panel.refresh_audio_cpp_result_cleanup_state()
+
+    def audio_cpp_result_cleanup_pending(self) -> bool:
+        """Return whether this screen owns unsettled Model Library cleanup."""
+
+        return self._audio_cpp_result_cleanup is not None
 
     @work(
         exclusive=True,
@@ -16276,6 +16341,8 @@ class SettingsScreen(BaseAppScreen):
                     ),
                 ):
                     raise
+            if self._audio_cpp_result_cleanup is not None and panel.is_mounted:
+                panel.refresh_audio_cpp_result_cleanup_state()
             return False
         if current_expected is expected:
             delattr(
@@ -16417,6 +16484,8 @@ class SettingsScreen(BaseAppScreen):
         cleanup = self._audio_cpp_result_cleanup
         if cleanup is not None and cleanup.claim is claim:
             self._audio_cpp_result_cleanup = None
+            if cleanup.panel is not None and cleanup.panel.is_mounted:
+                cleanup.panel.refresh_audio_cpp_result_cleanup_state()
 
     def _rollback_and_release_audio_cpp_model_library_result(
         self,
@@ -16451,7 +16520,7 @@ class SettingsScreen(BaseAppScreen):
             )
         self._retry_audio_cpp_result_cleanup()
 
-    def _retry_audio_cpp_result_cleanup(self) -> None:
+    def _retry_audio_cpp_result_cleanup(self, *, force_overlap: bool = False) -> None:
         """Retry the one retained owner-thread rollback without hiding failures."""
 
         cleanup = self._audio_cpp_result_cleanup
@@ -16476,6 +16545,12 @@ class SettingsScreen(BaseAppScreen):
                     cleanup.merged,
                     current,
                 )
+                if target is None and force_overlap:
+                    target = _force_restore_audio_cpp_merge_delta(
+                        cleanup.before,
+                        cleanup.merged,
+                        current,
+                    )
                 if target is None:
                     raise _AudioCppResultTransactionError(
                         "audio.cpp result rollback overlaps a newer package edit"
@@ -16516,6 +16591,8 @@ class SettingsScreen(BaseAppScreen):
                 "audio.cpp result claim could not be released"
             )
         self._audio_cpp_result_cleanup = None
+        if cleanup.panel is not None and cleanup.panel.is_mounted:
+            cleanup.panel.refresh_audio_cpp_result_cleanup_state()
 
     def stage_audio_cpp_model_library_request(
         self,
@@ -16693,7 +16770,9 @@ class SettingsScreen(BaseAppScreen):
                 )
             except QueryError:
                 panel = None
-            if panel is not None and panel.has_unsaved_changes():
+            if panel is not None and (
+                panel.has_unsaved_changes() or panel.audio_cpp_result_cleanup_pending()
+            ):
                 if not self._speech_tts_leave_in_progress:
                     self._speech_tts_leave_in_progress = True
                     self.run_worker(
