@@ -1257,6 +1257,7 @@ class ConsoleSettingsModal(
         return label
 
     def action_dismiss(self) -> None:
+        """Route the dismiss action through the applicable close guard."""
         self._request_settings_close()
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
@@ -1312,11 +1313,13 @@ class ConsoleSettingsModal(
         self.query_one(selector, Button).focus()
 
     def action_settings_focus_next(self) -> None:
+        """Move focus forward within the active close guard or Settings."""
         guard = self.query_one("#console-settings-close-guard", Vertical)
         selector = "#console-settings-close-guard Button" if guard.display else "*"
         self.focus_next(selector)
 
     def action_settings_focus_previous(self) -> None:
+        """Move focus backward within the active close guard or Settings."""
         guard = self.query_one("#console-settings-close-guard", Vertical)
         selector = "#console-settings-close-guard Button" if guard.display else "*"
         self.focus_previous(selector)

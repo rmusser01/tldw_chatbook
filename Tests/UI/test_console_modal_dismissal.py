@@ -1057,6 +1057,15 @@ def launch():
         assert actual == {ConsoleCostModal}
 
 
+def test_modal_dismissal_uses_a_public_monotonic_clock() -> None:
+    source = (_REPO_ROOT / "tldw_chatbook/Widgets/modal_dismissal.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "textual._time" not in source
+    assert "time.monotonic()" in source
+
+
 class _SyntheticRowlessOwner(Screen[None]):
     pass
 

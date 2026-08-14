@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
+import time
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from weakref import ReferenceType, ref
 
 from textual import events
-from textual._time import get_time
 from textual.app import App
 from textual.screen import Screen
 from textual.widget import Widget
@@ -41,7 +41,17 @@ def is_modal_backdrop_click(
     target_is_content_or_descendant: bool,
     point_is_in_content_region: bool,
 ) -> bool:
-    """Return whether a classified click is on a modal's backdrop."""
+    """Return whether a classified click is on a modal's backdrop.
+
+    Args:
+        button: Textual mouse-button number; primary is ``1``.
+        provenance_known: Whether both the event target and coordinates are known.
+        target_is_content_or_descendant: Whether the target belongs to the modal.
+        point_is_in_content_region: Whether the screen point falls inside the modal.
+
+    Returns:
+        ``True`` only for a known primary click outside modal content.
+    """
     return (
         button == 1
         and provenance_known
@@ -109,7 +119,7 @@ async def _mount_backdrop_click_shield(
 ) -> None:
     if app.screen is not revealed_screen:
         return
-    remaining = app.CLICK_CHAIN_TIME_THRESHOLD - (get_time() - event_time)
+    remaining = app.CLICK_CHAIN_TIME_THRESHOLD - (time.monotonic() - event_time)
     if remaining <= 0:
         return
 
@@ -117,7 +127,7 @@ async def _mount_backdrop_click_shield(
     shield.styles.offset = (screen_x, screen_y)
     await revealed_screen.mount(shield)
 
-    remaining = app.CLICK_CHAIN_TIME_THRESHOLD - (get_time() - event_time)
+    remaining = app.CLICK_CHAIN_TIME_THRESHOLD - (time.monotonic() - event_time)
     if remaining <= 0:
         await shield.remove()
         return
@@ -260,7 +270,7 @@ class SafeModalDismissMixin:
         event.stop()
         event.prevent_default()
         self._safe_backdrop_event_in_attempt = (
-            event.time,
+            time.monotonic(),
             int(event.screen_x),
             int(event.screen_y),
         )
