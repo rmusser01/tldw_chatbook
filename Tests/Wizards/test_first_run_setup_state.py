@@ -489,8 +489,20 @@ class TestActiveStepIds:
             STEP_SUMMARY,
         )
 
-    def test_full_track_with_key_includes_protect(self):
-        assert STEP_PROTECT in active_step_ids(TRACK_FULL, key_entered=True)
+    def test_full_track_with_key(self):
+        assert active_step_ids(TRACK_FULL, key_entered=True) == (
+            STEP_WELCOME,
+            STEP_PROVIDER,
+            STEP_MODEL,
+            STEP_VOICE,
+            STEP_RAG,
+            STEP_SPEECH,
+            STEP_TOOLS,
+            STEP_NOTES,
+            STEP_APPEARANCE,
+            STEP_PROTECT,
+            STEP_SUMMARY,
+        )
 
     def test_quick_track(self):
         assert active_step_ids(TRACK_QUICK, key_entered=False) == (

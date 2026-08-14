@@ -1569,6 +1569,33 @@ def test_first_run_result_callback_keeps_same_tab_context_navigation():
     assert message.screen_context == {"category": "providers-models"}
 
 
+def test_first_run_result_callback_remounts_same_tab_home_after_completion():
+    from tldw_chatbook.app import TldwCli
+
+    receiver = SimpleNamespace(
+        current_tab=TAB_HOME,
+        post_message=MagicMock(),
+        _schedule_startup_model_catalog_refresh=MagicMock(),
+    )
+    TldwCli._handle_first_run_wizard_result(
+        receiver,
+        {
+            "completed": True,
+            "exit_route": TAB_HOME,
+            "exit_context": None,
+        },
+    )
+
+    receiver._schedule_startup_model_catalog_refresh.assert_called_once_with(
+        after_setup_completion=True
+    )
+    receiver.post_message.assert_called_once()
+    message = receiver.post_message.call_args.args[0]
+    assert isinstance(message, NavigateToScreen)
+    assert message.screen_name == TAB_HOME
+    assert message.screen_context == {}
+
+
 # ---------------------------------------------------------------------------
 # 3. Full track, skip every step -> app fully usable afterwards
 #    (checklist item 5).
@@ -1628,7 +1655,8 @@ async def test_full_track_skip_everything_leaves_app_usable(
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == TAB_HOME
-                and app.screen.__class__.__name__ == "HomeScreen",
+                and app.screen.__class__.__name__ == "HomeScreen"
+                and bool(app.screen.query("#nav-console")),
             )
 
             # "Fully usable": the shell nav still works after the wizard.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import importlib
 import struct
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -77,6 +78,44 @@ from tldw_chatbook.Widgets.Settings_Widgets import (
 from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
 )
+
+
+_LOCAL_SPEECH_RUNTIME_IMPORT_ROOTS = frozenset(
+    {
+        "nemo",
+        "faster_whisper",
+        "lightning_whisper_mlx",
+        "parakeet_mlx",
+        "kokoro_onnx",
+        "chatterbox",
+        "boson_multimodal",
+    }
+)
+
+
+def _install_local_runtime_import_guards(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[str]:
+    import_attempts: list[str] = []
+    real_import = builtins.__import__
+    real_import_module = importlib.import_module
+
+    def reject_local_runtime_import(name: str) -> None:
+        if name.split(".", 1)[0] in _LOCAL_SPEECH_RUNTIME_IMPORT_ROOTS:
+            import_attempts.append(name)
+            raise AssertionError(f"must not import local runtime {name}")
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        reject_local_runtime_import(name)
+        return real_import(name, globals, locals, fromlist, level)
+
+    def guarded_import_module(name: str, package: str | None = None):
+        reject_local_runtime_import(name)
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    monkeypatch.setattr(importlib, "import_module", guarded_import_module)
+    return import_attempts
 
 
 async def _settle(pilot) -> None:
@@ -943,6 +982,24 @@ async def test_settings_connection_invalidates_evidence_at_changed_revision() ->
         assert "catalog not_tested" in connection
 
 
+def test_local_runtime_import_guards_intercept_static_and_dynamic_imports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import_attempts = _install_local_runtime_import_guards(monkeypatch)
+
+    def import_nemo_asr():
+        import nemo.collections.asr
+
+        return nemo.collections.asr
+
+    with pytest.raises(AssertionError, match="nemo.collections.asr"):
+        import_nemo_asr()
+    with pytest.raises(AssertionError, match="faster_whisper"):
+        importlib.import_module("faster_whisper")
+
+    assert import_attempts == ["nemo.collections.asr", "faster_whisper"]
+
+
 @pytest.mark.asyncio
 async def test_first_settings_mount_probes_local_speech_dependencies_once(
     monkeypatch: pytest.MonkeyPatch,
@@ -960,25 +1017,7 @@ async def test_first_settings_mount_probes_local_speech_dependencies_once(
         "find_spec",
         find_spec,
     )
-    local_runtime_modules = {
-        "nemo_toolkit",
-        "faster_whisper",
-        "lightning_whisper_mlx",
-        "parakeet_mlx",
-        "kokoro_onnx",
-        "chatterbox",
-        "boson_multimodal",
-    }
-    imported_local_runtimes: list[str] = []
-    real_import = builtins.__import__
-
-    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name.split(".", 1)[0] in local_runtime_modules:
-            imported_local_runtimes.append(name)
-            raise AssertionError(f"must not import local runtime {name}")
-        return real_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    imported_local_runtimes = _install_local_runtime_import_guards(monkeypatch)
     app = _PanelHarness(state=_audio_cpp_state(saved_provider=True))
 
     async with app.run_test(size=(150, 80)):

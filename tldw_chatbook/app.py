@@ -9958,11 +9958,14 @@ class TldwCli(
                 after_setup_completion=True
             )
 
-        # Dismissing a rerun already uncovers its originating destination.
-        # Re-navigating a context-free exit to that same tab would tear down
-        # the mounted owner before its first-chat rollback and focus resync
-        # can settle. Context-bearing recovery routes still need dispatch.
-        if not screen_context and exit_route == getattr(self, "current_tab", None):
+        # Dismissing a rerun over Console already uncovers that same mounted
+        # Console. Replacing it here would interrupt first-chat rollback and
+        # focus resync. Other destinations still remount to refresh their state.
+        if (
+            not screen_context
+            and exit_route == TAB_CHAT
+            and getattr(self, "current_tab", None) == TAB_CHAT
+        ):
             return
 
         from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
