@@ -1,5 +1,5 @@
 ---
-id: TASK-16074
+id: TASK-16262
 title: Stabilize Library Notes recompose assertions
 status: Done
 assignee:
