@@ -1861,3 +1861,72 @@ def test_missing_secure_discovery_capability_has_a_distinct_stable_reason(
 
     assert raised.value.reason_code == "secure_discovery_unavailable"
     assert str(note) not in str(raised.value)
+
+
+def test_failed_entry_stat_is_not_retried_into_an_ambiguous_sibling_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One scan pass uses one metadata snapshot and never traverses a reappeared entry."""
+    root = tmp_path / "Project"
+    root.mkdir()
+    directory_metadata = root.stat()
+    decomposed_name = "Cafe\N{COMBINING ACUTE ACCENT}"
+
+    class RacingEntry:
+        def __init__(self, name: str, *, fail_first: bool = False) -> None:
+            self.name = name
+            self.fail_first = fail_first
+            self.stat_calls = 0
+
+        def stat(self, *, follow_symlinks: bool) -> os.stat_result:
+            assert follow_symlinks is False
+            self.stat_calls += 1
+            if self.fail_first and self.stat_calls == 1:
+                raise FileNotFoundError("entry disappeared")
+            return directory_metadata
+
+    composed = RacingEntry("Caf\N{LATIN SMALL LETTER E WITH ACUTE}")
+    decomposed = RacingEntry(decomposed_name, fail_first=True)
+
+    class RacingScandir:
+        def __init__(self) -> None:
+            self.entries = iter([composed, decomposed])
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def __iter__(self) -> Self:
+            return self
+
+        def __next__(self) -> RacingEntry:
+            return next(self.entries)
+
+    real_open = os.open
+
+    def guarded_open(
+        path: object,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if os.fspath(path) == decomposed_name and dir_fd is not None:
+            raise AssertionError("reappeared entry was traversed")
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "scandir", lambda _descriptor: RacingScandir())
+    monkeypatch.setattr(note_import_planner.os, "open", guarded_open)
+
+    discovery = discover_import_sources([root], _discovery_bounds())
+
+    assert discovery.candidates == ()
+    assert composed.stat_calls == 1
+    assert decomposed.stat_calls == 1
+    assert [failure.reason_code for failure in discovery.failures] == [
+        "nested_unavailable",
+        "nested_unavailable",
+    ]

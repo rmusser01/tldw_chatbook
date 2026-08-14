@@ -115,6 +115,12 @@ class _SelectedPath:
     parent_identities: tuple[SourceIdentity, ...] = field(repr=False)
 
 
+@dataclass(frozen=True, slots=True)
+class _ScannedDirectoryEntry:
+    entry: os.DirEntry[str] = field(repr=False)
+    metadata: os.stat_result | None = field(repr=False)
+
+
 _MESSAGES = {
     "empty_selection": "Choose at least one file or one folder.",
     "invalid_selection": "The selected source is not valid.",
@@ -399,10 +405,11 @@ def _scan_directory_fd(
                     _reject(state.bounds, "max_entries_exceeded")
                 entries.append(entry)
             entries.sort(key=lambda entry: _display_sort_key(entry.name))
-            _validate_sibling_folder_namespace(entries, state.bounds)
-            for entry in entries:
+            scanned_entries = _snapshot_directory_entries(entries)
+            _validate_sibling_folder_namespace(scanned_entries, state.bounds)
+            for scanned_entry in scanned_entries:
                 _scan_entry(
-                    entry=entry,
+                    scanned_entry=scanned_entry,
                     directory_fd=directory_fd,
                     directory_path=directory_path,
                     relative_parts=relative_parts,
@@ -420,20 +427,34 @@ def _scan_directory_fd(
     return True
 
 
-def _validate_sibling_folder_namespace(
+def _snapshot_directory_entries(
     entries: Iterable[os.DirEntry[str]],
+) -> tuple[_ScannedDirectoryEntry, ...]:
+    """Capture one non-following metadata observation for every safe entry name."""
+    scanned_entries: list[_ScannedDirectoryEntry] = []
+    for entry in entries:
+        metadata: os.stat_result | None = None
+        if _is_safe_display_segment(entry.name):
+            try:
+                metadata = entry.stat(follow_symlinks=False)
+            except NotImplementedError as error:
+                raise _SecureDiscoveryUnavailable from error
+            except (OSError, TypeError, ValueError):
+                pass
+        scanned_entries.append(_ScannedDirectoryEntry(entry=entry, metadata=metadata))
+    return tuple(scanned_entries)
+
+
+def _validate_sibling_folder_namespace(
+    scanned_entries: Iterable[_ScannedDirectoryEntry],
     bounds: ImportBounds,
 ) -> None:
     """Reject canonically ambiguous directory siblings before traversal."""
     folder_keys: set[str] = set()
-    for entry in entries:
-        if not _is_safe_display_segment(entry.name):
-            continue
-        try:
-            metadata = entry.stat(follow_symlinks=False)
-        except NotImplementedError as error:
-            raise _SecureDiscoveryUnavailable from error
-        except (OSError, TypeError, ValueError):
+    for scanned_entry in scanned_entries:
+        entry = scanned_entry.entry
+        metadata = scanned_entry.metadata
+        if metadata is None:
             continue
         if _is_link_or_reparse(metadata) or not stat.S_ISDIR(metadata.st_mode):
             continue
@@ -448,7 +469,7 @@ def _validate_sibling_folder_namespace(
 
 def _scan_entry(
     *,
-    entry: os.DirEntry[str],
+    scanned_entry: _ScannedDirectoryEntry,
     directory_fd: int,
     directory_path: Path,
     relative_parts: tuple[str, ...],
@@ -457,6 +478,7 @@ def _scan_entry(
     directory_identities: tuple[SourceIdentity, ...],
     state: _DiscoveryState,
 ) -> None:
+    entry = scanned_entry.entry
     entry_path = directory_path / entry.name
     entry_parts = (*relative_parts, entry.name)
     display_path = _display_path(root_label, entry_parts)
@@ -464,11 +486,8 @@ def _scan_entry(
         safe_display_path = _unsafe_failure_display_path(root_label, entry_parts)
         _add_failure(state, entry_path, safe_display_path, "nested_unsafe_name")
         return
-    try:
-        metadata = entry.stat(follow_symlinks=False)
-    except NotImplementedError as error:
-        raise _SecureDiscoveryUnavailable from error
-    except (OSError, TypeError, ValueError):
+    metadata = scanned_entry.metadata
+    if metadata is None:
         _add_failure(state, entry_path, display_path, "nested_unavailable")
         return
 
