@@ -10,7 +10,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC
+from pathlib import Path
 from queue import Queue
+from uuid import UUID, uuid5
 
 import pytest
 from loguru import logger as loguru_logger
@@ -25,6 +27,12 @@ from tldw_chatbook.Notes.note_folder_models import (
     NoteFolder,
 )
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.note_import_execution_models import (
+    ImportEffectState,
+    ImportItemOutcome,
+    ImportSessionState,
+    approve_note_import_plan,
+)
 from tldw_chatbook.Notes.note_import_executor import (
     ImportTargetConflictError,
     ImportTargetError,
@@ -32,13 +40,30 @@ from tldw_chatbook.Notes.note_import_executor import (
     ImportTargetPermanentError,
     ImportTargetRetryableError,
     LocalNoteImportTarget,
+    NoteImportExecutor,
 )
-from tldw_chatbook.Notes.note_import_plan_models import ParsedNotePayload
+from tldw_chatbook.Notes.note_import_plan_models import (
+    ImportAction,
+    ImportBounds,
+    ImportClassification,
+    ImportMatch,
+    ImportMatchKind,
+    ImportPreviewItem,
+    ImportSource,
+    ImportSourceKind,
+    NoteImportPlan,
+    ParsedNotePayload,
+    ProposedFolderMembership,
+    RootCollisionChoice,
+    RootCollisionState,
+)
+from tldw_chatbook.Notes.note_import_receipts import NoteImportReceiptRepository
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 
 _FOLDER_ID = "00000000-0000-5000-8000-000000000001"
 _OTHER_FOLDER_ID = "00000000-0000-5000-8000-000000000002"
 _NOTE_ID = "00000000-0000-5000-8000-000000000101"
+_EXECUTION_APPROVAL_ID = "00000000-0000-4000-8000-000000000041"
 
 
 @pytest.fixture
@@ -77,6 +102,130 @@ def _payload(
     keywords: tuple[str, ...] = ("Project", "draft"),
 ) -> ParsedNotePayload:
     return ParsedNotePayload(title=title, content=content, keywords=keywords)
+
+
+def _execution_bounds() -> ImportBounds:
+    return ImportBounds(
+        max_files=50,
+        max_file_bytes=1_000_000,
+        max_total_bytes=5_000_000,
+        max_depth=8,
+        max_entries=1_000,
+        max_notes_per_file=100,
+        max_keywords_per_note=50,
+    )
+
+
+def _execution_item(
+    *,
+    item_id: str,
+    payloads: tuple[ParsedNotePayload, ...],
+    action: ImportAction,
+    memberships: tuple[ProposedFolderMembership, ...] = (),
+    match: ImportMatch | None = None,
+    replace_content: bool = False,
+    add_membership: bool = False,
+    classification: ImportClassification | None = None,
+) -> ImportPreviewItem:
+    resolved_classification = classification
+    if resolved_classification is None:
+        resolved_classification = (
+            ImportClassification.CHANGED_REPEAT
+            if match is not None
+            else ImportClassification.NEW
+        )
+    if resolved_classification in {
+        ImportClassification.UNSUPPORTED,
+        ImportClassification.FAILED,
+    }:
+        allowed_actions = (ImportAction.SKIP,)
+        default_action = ImportAction.SKIP
+    elif match is None:
+        allowed_actions = (ImportAction.SKIP, ImportAction.CREATE_NEW)
+        default_action = ImportAction.CREATE_NEW
+    else:
+        allowed_actions = (
+            ImportAction.SKIP,
+            ImportAction.CREATE_NEW,
+            ImportAction.UPDATE_EXISTING,
+        )
+        default_action = ImportAction.CREATE_NEW
+    return ImportPreviewItem(
+        item_id=item_id,
+        source=ImportSource(
+            kind=ImportSourceKind.DIRECTORY_MEMBER,
+            display_path=f"Selected/{item_id}.md",
+            source_path=Path(f"/private/import/{item_id}.md"),
+        ),
+        payloads=payloads,
+        memberships=memberships,
+        classification=resolved_classification,
+        reason="Approved import preview outcome.",
+        default_action=default_action,
+        selected_action=action,
+        allowed_actions=allowed_actions,
+        match=match,
+        replace_content=replace_content,
+        add_membership=add_membership,
+    )
+
+
+def _execution_plan(
+    *items: ImportPreviewItem,
+    proposed_folder_paths: tuple[tuple[str, ...], ...] = (),
+    root_collision: RootCollisionState | None = None,
+) -> NoteImportPlan:
+    return NoteImportPlan(
+        bounds=_execution_bounds(),
+        items=items,
+        proposed_folder_paths=proposed_folder_paths,
+        root_collision=root_collision,
+    )
+
+
+def _approved_execution_plan(
+    *items: ImportPreviewItem,
+    proposed_folder_paths: tuple[tuple[str, ...], ...] = (),
+    root_collision: RootCollisionState | None = None,
+):
+    return approve_note_import_plan(
+        _execution_plan(
+            *items,
+            proposed_folder_paths=proposed_folder_paths,
+            root_collision=root_collision,
+        ),
+        approval_id=_EXECUTION_APPROVAL_ID,
+    )
+
+
+@pytest.fixture
+def real_executor(target_harness, tmp_path):
+    target, service, folders, db = target_harness
+    receipts = NoteImportReceiptRepository(tmp_path / "execution-receipts.sqlite3")
+    executor = NoteImportExecutor(
+        target=target,
+        receipt_repository=receipts,
+        batch_size=25,
+    )
+    return executor, target, receipts, service, folders, db
+
+
+def _expected_note_id(item_id: str, payload_index: int) -> str:
+    return str(
+        uuid5(
+            UUID(_EXECUTION_APPROVAL_ID),
+            f"note:{item_id}:{payload_index}",
+        )
+    )
+
+
+def _expected_folder_id(normalized_path: str) -> str:
+    return str(
+        uuid5(
+            UUID(_EXECUTION_APPROVAL_ID),
+            f"folder:{normalized_path}",
+        )
+    )
 
 
 def _active_membership_count(
@@ -801,6 +950,587 @@ def test_target_keyword_sync_handles_hidden_deleted_links_exactly(
         ).fetchone()[0]
         == 1
     )
+
+
+def test_executor_creates_multi_payload_notes_with_exact_keywords_and_memberships(
+    real_executor,
+) -> None:
+    executor, target, receipts, _service, folders, db = real_executor
+    payloads = (
+        _payload(title="First", content="First body", keywords=("Alpha", "beta")),
+        _payload(title="Second", content="Second body", keywords=("Gamma",)),
+    )
+    item = _execution_item(
+        item_id="multi-create",
+        payloads=payloads,
+        action=ImportAction.CREATE_NEW,
+        memberships=(
+            ProposedFolderMembership(0, ("Imported Root",)),
+            ProposedFolderMembership(1, ("Imported Root", "Nested")),
+        ),
+        add_membership=True,
+    )
+    approved = _approved_execution_plan(
+        item,
+        proposed_folder_paths=(
+            ("Imported Root",),
+            ("Imported Root", "Nested"),
+        ),
+    )
+
+    receipt = executor.execute(approved)
+
+    assert (receipt.state, receipt.imported, receipt.failed, receipt.completed) == (
+        ImportSessionState.COMPLETED,
+        2,
+        0,
+        2,
+    )
+    root = folders.get_folder_by_path(("Imported Root",))
+    nested = folders.get_folder_by_path(("Imported Root", "Nested"))
+    assert root is not None and nested is not None
+    assert root.folder_id == _expected_folder_id("/imported root")
+    assert nested.folder_id == _expected_folder_id("/imported root/nested")
+    for payload_index, payload in enumerate(payloads):
+        note_id = _expected_note_id(item.item_id, payload_index)
+        note = target.read_note(note_id=note_id)
+        assert note is not None
+        assert (note.title, note.content, set(note.keywords)) == (
+            payload.title,
+            payload.content,
+            set(payload.keywords),
+        )
+    assert (
+        _active_membership_count(
+            db, folder_id=root.folder_id, note_id=_expected_note_id(item.item_id, 0)
+        )
+        == 1
+    )
+    assert (
+        _active_membership_count(
+            db, folder_id=nested.folder_id, note_id=_expected_note_id(item.item_id, 1)
+        )
+        == 1
+    )
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert all(
+        effect.state is ImportEffectState.APPLIED
+        for effect in (
+            *durable.payload_effects,
+            *durable.folder_effects,
+            *durable.membership_effects,
+        )
+    )
+    assert durable.items[0].outcome is ImportItemOutcome.IMPORTED
+
+
+def test_executor_update_can_replace_without_adding_membership(real_executor) -> None:
+    executor, target, _receipts, _service, folders, _db = real_executor
+    existing = target.create_note(
+        note_id="existing-replace",
+        payload=_payload(content="Original body", keywords=("old",)),
+    )
+    replacement = _payload(content="Replacement body", keywords=("new", "exact"))
+    item = _execution_item(
+        item_id="replace-only",
+        payloads=(replacement,),
+        action=ImportAction.UPDATE_EXISTING,
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id=existing.note_id,
+            note_version=existing.version,
+        ),
+        replace_content=True,
+    )
+
+    receipt = executor.execute(_approved_execution_plan(item))
+
+    assert (receipt.updated, receipt.failed) == (1, 0)
+    updated = target.read_note(note_id=existing.note_id)
+    assert updated is not None
+    assert (updated.content, set(updated.keywords), updated.version) == (
+        replacement.content,
+        set(replacement.keywords),
+        existing.version + 1,
+    )
+    assert folders.list_memberships(note_ids=(existing.note_id,)) == ()
+
+
+def test_executor_update_can_add_membership_without_replacing_content(
+    real_executor,
+) -> None:
+    executor, target, receipts, _service, folders, db = real_executor
+    original_payload = _payload(content="Original body", keywords=("keep",))
+    existing = target.create_note(
+        note_id="existing-membership", payload=original_payload
+    )
+    item = _execution_item(
+        item_id="membership-only",
+        payloads=(_payload(content="Ignored replacement", keywords=("ignored",)),),
+        action=ImportAction.UPDATE_EXISTING,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id=existing.note_id,
+            note_version=existing.version,
+        ),
+        add_membership=True,
+    )
+
+    receipt = executor.execute(
+        _approved_execution_plan(
+            item,
+            proposed_folder_paths=(("Imported Root",),),
+        )
+    )
+
+    assert (receipt.updated, receipt.failed) == (1, 0)
+    unchanged = target.read_note(note_id=existing.note_id)
+    assert unchanged is not None
+    assert (unchanged.content, set(unchanged.keywords), unchanged.version) == (
+        original_payload.content,
+        set(original_payload.keywords),
+        existing.version,
+    )
+    folder = folders.get_folder_by_path(("Imported Root",))
+    assert folder is not None
+    assert (
+        _active_membership_count(
+            db, folder_id=folder.folder_id, note_id=existing.note_id
+        )
+        == 1
+    )
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert durable.payload_effects == ()
+    assert durable.items[0].observed_version == existing.version
+
+
+def test_executor_update_keeps_replace_effect_independent_from_folder_failure(
+    real_executor,
+) -> None:
+    executor, target, receipts, _service, folders, _db = real_executor
+    existing = target.create_note(
+        note_id="existing-independent-update",
+        payload=_payload(content="Original body", keywords=("old",)),
+    )
+    folders.create_folder(
+        name="Imported Root", parent_id=None, folder_id="different-root-id"
+    )
+    replacement = _payload(content="Confirmed replacement", keywords=("new",))
+    item = _execution_item(
+        item_id="independent-update",
+        payloads=(replacement,),
+        action=ImportAction.UPDATE_EXISTING,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id=existing.note_id,
+            note_version=existing.version,
+        ),
+        replace_content=True,
+        add_membership=True,
+    )
+
+    receipt = executor.execute(
+        _approved_execution_plan(
+            item,
+            proposed_folder_paths=(("Imported Root",),),
+        )
+    )
+
+    updated = target.read_note(note_id=existing.note_id)
+    assert updated is not None
+    assert (updated.content, set(updated.keywords), updated.version) == (
+        replacement.content,
+        set(replacement.keywords),
+        existing.version + 1,
+    )
+    assert (receipt.updated, receipt.failed, receipt.reason_code) == (
+        0,
+        1,
+        "folder_conflict",
+    )
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert durable.payload_effects[0].state is ImportEffectState.APPLIED
+    assert durable.folder_effects[0].state is ImportEffectState.FAILED
+    assert durable.items[0].outcome is ImportItemOutcome.FAILED
+
+
+def test_executor_membership_only_stale_version_durably_fails_membership_effect(
+    real_executor,
+) -> None:
+    executor, target, receipts, _service, folders, _db = real_executor
+    existing = target.create_note(note_id="existing-stale", payload=_payload())
+    item = _execution_item(
+        item_id="stale-membership",
+        payloads=(_payload(),),
+        action=ImportAction.UPDATE_EXISTING,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id=existing.note_id,
+            note_version=existing.version,
+        ),
+        add_membership=True,
+    )
+    approved = _approved_execution_plan(
+        item,
+        proposed_folder_paths=(("Imported Root",),),
+    )
+    target.replace_note(
+        note_id=existing.note_id,
+        expected_version=existing.version,
+        payload=_payload(content="Changed after approval"),
+    )
+
+    receipt = executor.execute(approved)
+
+    assert (
+        receipt.state,
+        receipt.updated,
+        receipt.failed,
+        receipt.reason_code,
+    ) == (ImportSessionState.NEEDS_ATTENTION, 0, 1, "version_conflict")
+    folder = folders.get_folder_by_path(("Imported Root",))
+    assert folder is not None
+    assert folders.list_memberships(note_ids=(existing.note_id,)) == ()
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert durable.folder_effects[0].state is ImportEffectState.APPLIED
+    assert durable.membership_effects[0].state is ImportEffectState.FAILED
+    assert durable.membership_effects[0].reason_code == "version_conflict"
+    assert durable.items[0].outcome is ImportItemOutcome.FAILED
+
+
+def test_executor_all_skip_including_unsupported_and_failed_mutates_nothing(
+    real_executor,
+) -> None:
+    executor, _target, receipts, _service, folders, db = real_executor
+    items = tuple(
+        _execution_item(
+            item_id=f"skip-{classification.value}",
+            payloads=(),
+            action=ImportAction.SKIP,
+            classification=classification,
+        )
+        for classification in (
+            ImportClassification.UNSUPPORTED,
+            ImportClassification.FAILED,
+        )
+    )
+
+    receipt = executor.execute(
+        _approved_execution_plan(
+            *items,
+            proposed_folder_paths=(("Unauthorized Root",),),
+        )
+    )
+
+    assert (
+        receipt.state,
+        receipt.total,
+        receipt.completed,
+        receipt.skipped,
+        receipt.failed,
+    ) == (ImportSessionState.COMPLETED, 2, 2, 2, 0)
+    assert folders.get_folder_by_path(("Unauthorized Root",)) is None
+    assert db.get_connection().execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert durable.folder_effects == ()
+    assert durable.payload_effects == ()
+    assert durable.membership_effects == ()
+    assert all(item.outcome is ImportItemOutcome.SKIPPED for item in durable.items)
+
+
+def test_executor_creates_only_authorized_folders_and_reuses_only_resolved_root(
+    real_executor,
+) -> None:
+    executor, _target, _receipts, _service, folders, _db = real_executor
+    existing_root = folders.create_folder(
+        name="Imported Root", parent_id=None, folder_id="preexisting-root"
+    )
+    item = _execution_item(
+        item_id="root-reuse",
+        payloads=(_payload(),),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Imported Root", "Used Child")),),
+        add_membership=True,
+    )
+
+    receipt = executor.execute(
+        _approved_execution_plan(
+            item,
+            proposed_folder_paths=(
+                ("Imported Root",),
+                ("Imported Root", "Used Child"),
+                ("Imported Root", "Unused Child"),
+            ),
+            root_collision=RootCollisionState(
+                proposed_label="Imported Root",
+                collides=True,
+                choice=RootCollisionChoice.USE_EXISTING,
+            ),
+        )
+    )
+
+    assert receipt.imported == 1
+    assert folders.get_folder_by_path(("Imported Root",)) == existing_root
+    used = folders.get_folder_by_path(("Imported Root", "Used Child"))
+    assert used is not None
+    assert used.folder_id == _expected_folder_id("/imported root/used child")
+    assert folders.get_folder_by_path(("Imported Root", "Unused Child")) is None
+
+
+def test_executor_folder_conflict_fails_dependent_work_without_creating_note(
+    real_executor,
+) -> None:
+    executor, target, receipts, _service, folders, _db = real_executor
+    folders.create_folder(
+        name="Imported Root", parent_id=None, folder_id="different-root-id"
+    )
+    item = _execution_item(
+        item_id="folder-conflict",
+        payloads=(_payload(),),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        add_membership=True,
+    )
+
+    receipt = executor.execute(
+        _approved_execution_plan(
+            item,
+            proposed_folder_paths=(("Imported Root",),),
+        )
+    )
+
+    assert (
+        receipt.state,
+        receipt.imported,
+        receipt.failed,
+        receipt.retryable,
+        receipt.reason_code,
+    ) == (ImportSessionState.NEEDS_ATTENTION, 0, 1, 0, "folder_conflict")
+    assert target.read_note(note_id=_expected_note_id(item.item_id, 0)) is None
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert durable.folder_effects[0].state is ImportEffectState.FAILED
+    assert durable.folder_effects[0].reason_code == "folder_conflict"
+    assert durable.payload_effects[0].state is ImportEffectState.PENDING
+    assert durable.items[0].outcome is ImportItemOutcome.FAILED
+
+
+def test_executor_reports_honest_mixed_counts_and_retryable_failures(
+    real_executor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor, target, _receipts, _service, _folders, _db = real_executor
+    existing = target.create_note(note_id="existing-mixed", payload=_payload())
+    imported = _execution_item(
+        item_id="created",
+        payloads=(_payload(title="Created"),),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        add_membership=True,
+    )
+    updated = _execution_item(
+        item_id="updated",
+        payloads=(_payload(title="Updated", content="Updated body"),),
+        action=ImportAction.UPDATE_EXISTING,
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id=existing.note_id,
+            note_version=existing.version,
+        ),
+        replace_content=True,
+    )
+    skipped = _execution_item(
+        item_id="skipped",
+        payloads=(),
+        action=ImportAction.SKIP,
+        classification=ImportClassification.UNSUPPORTED,
+    )
+    retry_payload = _payload(title="Retry target")
+    failed = _execution_item(
+        item_id="retryable",
+        payloads=(retry_payload,),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        add_membership=True,
+    )
+    original_create = target.create_note
+
+    def selectively_busy(*, note_id: str, payload: ParsedNotePayload):
+        if payload is retry_payload:
+            raise ImportTargetRetryableError
+        return original_create(note_id=note_id, payload=payload)
+
+    monkeypatch.setattr(target, "create_note", selectively_busy)
+
+    receipt = executor.execute(
+        _approved_execution_plan(
+            imported,
+            updated,
+            skipped,
+            failed,
+            proposed_folder_paths=(("Imported Root",),),
+        )
+    )
+
+    assert (
+        receipt.state,
+        receipt.total,
+        receipt.completed,
+        receipt.imported,
+        receipt.updated,
+        receipt.skipped,
+        receipt.failed,
+        receipt.retryable,
+        receipt.reason_code,
+    ) == (ImportSessionState.NEEDS_ATTENTION, 4, 4, 1, 1, 1, 1, 1, "database_busy")
+
+
+def test_executor_persists_each_effect_before_advancing_and_aborts_fatal_faults(
+    real_executor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor, target, receipts, _service, _folders, _db = real_executor
+    item = _execution_item(
+        item_id="fatal-after-create",
+        payloads=(_payload(),),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        add_membership=True,
+    )
+    approved = _approved_execution_plan(
+        item,
+        proposed_folder_paths=(("Imported Root",),),
+    )
+
+    def fatal_membership(*, folder_id: str, note_id: str) -> None:
+        raise ImportTargetInternalError
+
+    monkeypatch.setattr(target, "attach_membership", fatal_membership)
+
+    with pytest.raises(ImportTargetInternalError):
+        executor.execute(approved)
+
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert durable.state is ImportSessionState.RUNNING
+    assert durable.folder_effects[0].state is ImportEffectState.APPLIED
+    assert durable.payload_effects[0].state is ImportEffectState.APPLIED
+    assert durable.membership_effects[0].state is ImportEffectState.PENDING
+    assert durable.items[0].outcome is ImportItemOutcome.PENDING
+    assert target.read_note(note_id=_expected_note_id(item.item_id, 0)) is not None
+
+
+def test_executor_summarizes_retryability_across_all_membership_failures(
+    real_executor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor, target, receipts, _service, _folders, _db = real_executor
+    item = _execution_item(
+        item_id="mixed-membership-failures",
+        payloads=(_payload(),),
+        action=ImportAction.CREATE_NEW,
+        memberships=(
+            ProposedFolderMembership(0, ("Imported Root", "Permanent")),
+            ProposedFolderMembership(0, ("Imported Root", "Retryable")),
+        ),
+        add_membership=True,
+    )
+
+    def mixed_failures(*, folder_id: str, note_id: str) -> None:
+        del note_id
+        if folder_id == _expected_folder_id("/imported root/permanent"):
+            raise ImportTargetPermanentError
+        raise ImportTargetRetryableError
+
+    monkeypatch.setattr(target, "attach_membership", mixed_failures)
+
+    receipt = executor.execute(
+        _approved_execution_plan(
+            item,
+            proposed_folder_paths=(
+                ("Imported Root",),
+                ("Imported Root", "Permanent"),
+                ("Imported Root", "Retryable"),
+            ),
+        )
+    )
+
+    assert (
+        receipt.state,
+        receipt.failed,
+        receipt.retryable,
+        receipt.reason_code,
+    ) == (ImportSessionState.NEEDS_ATTENTION, 1, 1, "database_busy")
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert [effect.state for effect in durable.membership_effects] == [
+        ImportEffectState.FAILED,
+        ImportEffectState.FAILED,
+    ]
+    assert [effect.retryable for effect in durable.membership_effects] == [False, True]
+
+
+def test_executor_summarizes_retryability_across_all_required_folder_failures(
+    real_executor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor, target, receipts, _service, _folders, _db = real_executor
+    item = _execution_item(
+        item_id="mixed-folder-failures",
+        payloads=(_payload(),),
+        action=ImportAction.CREATE_NEW,
+        memberships=(
+            ProposedFolderMembership(0, ("Imported Root", "Permanent")),
+            ProposedFolderMembership(0, ("Imported Root", "Retryable")),
+        ),
+        add_membership=True,
+    )
+    original_ensure = target.ensure_folder
+
+    def mixed_folder_failures(
+        *, segments: tuple[str, ...], folder_id: str, allow_existing: bool
+    ):
+        if segments[-1] == "Permanent":
+            raise ImportTargetPermanentError
+        if segments[-1] == "Retryable":
+            raise ImportTargetRetryableError
+        return original_ensure(
+            segments=segments,
+            folder_id=folder_id,
+            allow_existing=allow_existing,
+        )
+
+    monkeypatch.setattr(target, "ensure_folder", mixed_folder_failures)
+
+    receipt = executor.execute(
+        _approved_execution_plan(
+            item,
+            proposed_folder_paths=(
+                ("Imported Root",),
+                ("Imported Root", "Permanent"),
+                ("Imported Root", "Retryable"),
+            ),
+        )
+    )
+
+    assert (
+        receipt.state,
+        receipt.failed,
+        receipt.retryable,
+        receipt.reason_code,
+    ) == (ImportSessionState.NEEDS_ATTENTION, 1, 1, "database_busy")
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert [effect.state for effect in durable.folder_effects] == [
+        ImportEffectState.APPLIED,
+        ImportEffectState.FAILED,
+        ImportEffectState.FAILED,
+    ]
+    assert [effect.retryable for effect in durable.folder_effects] == [
+        False,
+        False,
+        True,
+    ]
+    assert durable.payload_effects[0].state is ImportEffectState.PENDING
 
 
 def test_target_membership_attach_is_idempotent_and_requires_active_targets(

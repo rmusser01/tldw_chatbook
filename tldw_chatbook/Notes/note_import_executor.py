@@ -1,8 +1,4 @@
-"""Synchronous, replay-safe local target operations for Database Notes imports.
-
-This module intentionally contains no plan loop or receipt orchestration.  It is
-the narrow target boundary used by that later executor work.
-"""
+"""Synchronous local target operations and durable one-time import execution."""
 
 from __future__ import annotations
 
@@ -11,6 +7,7 @@ import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from uuid import UUID, uuid5
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
@@ -19,16 +16,37 @@ from tldw_chatbook.Notes.note_folder_models import (
     FolderConflictError,
     FolderValidationError,
     NoteFolder,
+    join_normalized_folder_path,
+    normalize_folder_name,
 )
 from tldw_chatbook.Notes.note_folder_repository import (
     LocalNoteFolderRepository,
     validate_deterministic_folder_id,
 )
+from tldw_chatbook.Notes.note_import_execution_models import (
+    ApprovedNoteImportPlan,
+    ImportEffectState,
+    ImportExecutionReceipt,
+    ImportItemOutcome,
+    ImportSessionState,
+)
 from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_DEPTH,
     MAX_IMPORT_KEYWORD_LENGTH,
     MAX_IMPORT_KEYWORDS_PER_NOTE,
+    ImportAction,
+    ImportPreviewItem,
     ParsedNotePayload,
+    ProposedFolderMembership,
+    RootCollisionChoice,
+)
+from tldw_chatbook.Notes.note_import_receipts import (
+    EffectTransition,
+    ImportEffectCategory,
+    ImportEffectRecord,
+    ImportReceiptTransitionError,
+    NoteImportReceiptRepository,
+    _folder_path_digest,
 )
 
 _OPAQUE_ID_MAX_LENGTH = 256
@@ -848,6 +866,539 @@ def _translate_exception(
     return ImportTargetInternalError()
 
 
+@dataclass(frozen=True, slots=True)
+class _ExecutionFailure:
+    """One bounded operational failure safe to persist in the receipt ledger."""
+
+    reason_code: str
+    retryable: bool
+
+
+class NoteImportExecutor:
+    """Execute one approved local import plan with per-effect durable receipts."""
+
+    def __init__(
+        self,
+        *,
+        target: LocalNoteImportTarget,
+        receipt_repository: NoteImportReceiptRepository,
+        batch_size: int = 25,
+    ) -> None:
+        if type(target) is not LocalNoteImportTarget:
+            raise TypeError("target must be a LocalNoteImportTarget.")
+        if type(receipt_repository) is not NoteImportReceiptRepository:
+            raise TypeError("receipt_repository must be a NoteImportReceiptRepository.")
+        if type(batch_size) is not int:
+            raise TypeError("batch_size must be an integer.")
+        if not 1 <= batch_size <= 100:
+            raise ValueError("batch_size must be between 1 and 100.")
+        self._target = target
+        self._receipts = receipt_repository
+        self._batch_size = batch_size
+
+    def __repr__(self) -> str:
+        return "NoteImportExecutor(<private>)"
+
+    def execute(self, approved: ApprovedNoteImportPlan) -> ImportExecutionReceipt:
+        """Execute one freshly approved plan and return its durable receipt."""
+        if type(approved) is not ApprovedNoteImportPlan:
+            raise TypeError("approved must be an ApprovedNoteImportPlan.")
+        snapshot = self._receipts.begin(approved, batch_size=self._batch_size)
+        if snapshot.state is not ImportSessionState.PENDING:
+            raise ImportReceiptTransitionError(
+                "Task 4 execution requires a fresh pending receipt session."
+            )
+        self._receipts.transition_session(
+            approved.approval_id,
+            ImportSessionState.RUNNING,
+        )
+
+        folder_bindings, folder_failures = self._execute_folders(
+            approved,
+            snapshot.folder_effects,
+        )
+        payload_effects_by_item: dict[str, dict[int | None, ImportEffectRecord]] = {}
+        for effect in snapshot.payload_effects:
+            if effect.item_id is None:
+                raise ImportReceiptTransitionError(
+                    "Payload receipt authority does not match the approved plan."
+                )
+            payload_effects_by_item.setdefault(effect.item_id, {})[
+                effect.payload_index
+            ] = effect
+        membership_effects_by_item: dict[str, list[ImportEffectRecord]] = {}
+        for effect in snapshot.membership_effects:
+            if effect.item_id is None:
+                raise ImportReceiptTransitionError(
+                    "Membership receipt authority does not match the approved plan."
+                )
+            membership_effects_by_item.setdefault(effect.item_id, []).append(effect)
+        for item in approved.plan.items:
+            self._execute_item(
+                approved,
+                item=item,
+                payload_effects=payload_effects_by_item.get(item.item_id, {}),
+                membership_effects=tuple(
+                    membership_effects_by_item.get(item.item_id, ())
+                ),
+                folder_bindings=folder_bindings,
+                folder_failures=folder_failures,
+            )
+
+        running_receipt = self._receipts.aggregate_receipt(approved.approval_id)
+        final_state = (
+            ImportSessionState.NEEDS_ATTENTION
+            if running_receipt.failed
+            else ImportSessionState.COMPLETED
+        )
+        self._receipts.transition_session(approved.approval_id, final_state)
+        return self._receipts.aggregate_receipt(approved.approval_id)
+
+    def _execute_folders(
+        self,
+        approved: ApprovedNoteImportPlan,
+        folder_effects: tuple[ImportEffectRecord, ...],
+    ) -> tuple[dict[str, str], dict[tuple[str, ...], _ExecutionFailure]]:
+        ordered_paths = _required_folder_paths(approved)
+        effects_by_digest = {
+            effect.folder_path_digest: effect for effect in folder_effects
+        }
+        if None in effects_by_digest or len(effects_by_digest) != len(folder_effects):
+            raise ImportReceiptTransitionError(
+                "Folder receipt authority does not match the approved plan."
+            )
+        if {_folder_path_digest(path) for path in ordered_paths} != set(
+            effects_by_digest
+        ):
+            raise ImportReceiptTransitionError(
+                "Folder receipt authority does not match the approved plan."
+            )
+
+        bindings: dict[str, str] = {}
+        failures: dict[tuple[str, ...], _ExecutionFailure] = {}
+        normalized_owners: dict[str, tuple[str, ...]] = {}
+        for path in ordered_paths:
+            effect = effects_by_digest[_folder_path_digest(path)]
+            inherited = _first_folder_failure(path, failures)
+            if inherited is not None:
+                self._fail_effect(approved.approval_id, effect, inherited)
+                failures[path] = inherited
+                continue
+            normalized_path = _normalized_folder_path(path)
+            if normalized_path in normalized_owners:
+                failure = _ExecutionFailure("folder_conflict", False)
+                self._fail_effect(approved.approval_id, effect, failure)
+                failures[path] = failure
+                continue
+            deterministic_id = _deterministic_folder_id(
+                approved.approval_id,
+                normalized_path,
+            )
+            try:
+                folder = self._target.ensure_folder(
+                    segments=path,
+                    folder_id=deterministic_id,
+                    allow_existing=_allows_existing_root(approved, path),
+                )
+            except ImportTargetInternalError:
+                raise
+            except ImportTargetError as error:
+                failure = _failure_for_target_error(error, folder=True)
+                self._fail_effect(approved.approval_id, effect, failure)
+                failures[path] = failure
+                continue
+            self._receipts.transition_effects(
+                approved.approval_id,
+                (
+                    EffectTransition(
+                        category=ImportEffectCategory.FOLDER,
+                        effect_id=effect.effect_id,
+                        state=ImportEffectState.APPLIED,
+                        target_folder_id=folder.folder_id,
+                    ),
+                ),
+            )
+            bindings[_folder_path_digest(path)] = folder.folder_id
+            normalized_owners[normalized_path] = path
+        return bindings, failures
+
+    def _execute_item(
+        self,
+        approved: ApprovedNoteImportPlan,
+        *,
+        item: ImportPreviewItem,
+        payload_effects: dict[int | None, ImportEffectRecord],
+        membership_effects: tuple[ImportEffectRecord, ...],
+        folder_bindings: dict[str, str],
+        folder_failures: dict[tuple[str, ...], _ExecutionFailure],
+    ) -> None:
+        if item.selected_action is ImportAction.SKIP:
+            self._receipts.transition_item(
+                approved.approval_id,
+                item.item_id,
+                ImportItemOutcome.SKIPPED,
+            )
+            return
+
+        if len(membership_effects) != len(item.memberships):
+            raise ImportReceiptTransitionError(
+                "Membership receipt authority does not match the approved plan."
+            )
+        memberships = tuple(zip(item.memberships, membership_effects, strict=True))
+        memberships_by_payload: dict[
+            int, list[tuple[ProposedFolderMembership, ImportEffectRecord]]
+        ] = {}
+        for membership_pair in memberships:
+            memberships_by_payload.setdefault(
+                membership_pair[0].payload_index,
+                [],
+            ).append(membership_pair)
+        failures: list[_ExecutionFailure] = []
+        observed_version: int | None = None
+
+        if item.selected_action is ImportAction.CREATE_NEW:
+            for payload_index, payload in enumerate(item.payloads):
+                note_id = _deterministic_note_id(
+                    approved.approval_id,
+                    item.item_id,
+                    payload_index,
+                )
+                unit_memberships = tuple(memberships_by_payload.get(payload_index, ()))
+                blocked = _membership_folder_failure(unit_memberships, folder_failures)
+                if blocked is not None:
+                    failures.append(blocked)
+                    continue
+                effect = payload_effects.get(payload_index)
+                if effect is None:
+                    raise ImportReceiptTransitionError(
+                        "Payload receipt authority does not match the approved plan."
+                    )
+                try:
+                    note = self._target.create_note(note_id=note_id, payload=payload)
+                except ImportTargetInternalError:
+                    raise
+                except ImportTargetError as error:
+                    failure = _failure_for_target_error(error, folder=False)
+                    self._fail_effect(
+                        approved.approval_id,
+                        effect,
+                        failure,
+                        target_note_id=note_id,
+                    )
+                    failures.append(failure)
+                    continue
+                self._apply_payload_effect(
+                    approved.approval_id,
+                    effect,
+                    note_id=note.note_id,
+                    observed_version=note.version,
+                )
+                membership_failure = self._execute_memberships(
+                    approved,
+                    note_id=note.note_id,
+                    memberships=unit_memberships,
+                    folder_bindings=folder_bindings,
+                )
+                if membership_failure is not None:
+                    failures.append(membership_failure)
+        else:
+            if item.match is None or item.match.note_version is None:
+                raise ImportReceiptTransitionError(
+                    "Update execution requires approved target authority."
+                )
+            note_id = item.match.note_id
+            blocked = _membership_folder_failure(memberships, folder_failures)
+            if blocked is not None:
+                failures.append(blocked)
+            note_operation_failed = False
+            try:
+                if item.replace_content:
+                    effect = payload_effects.get(0)
+                    if effect is None:
+                        raise ImportReceiptTransitionError(
+                            "Payload receipt authority does not match the approved plan."
+                        )
+                    note = self._target.replace_note(
+                        note_id=note_id,
+                        expected_version=item.match.note_version,
+                        payload=item.payloads[0],
+                    )
+                    self._apply_payload_effect(
+                        approved.approval_id,
+                        effect,
+                        note_id=note.note_id,
+                        observed_version=note.version,
+                    )
+                else:
+                    note = self._target.read_note(note_id=note_id)
+                    if note is None or note.version != item.match.note_version:
+                        raise ImportTargetConflictError
+                observed_version = note.version
+            except ImportTargetInternalError:
+                raise
+            except ImportTargetError as error:
+                note_operation_failed = True
+                failure = _failure_for_target_error(error, folder=False)
+                effect = payload_effects.get(0)
+                if effect is not None:
+                    self._fail_effect(
+                        approved.approval_id,
+                        effect,
+                        failure,
+                        target_note_id=note_id,
+                    )
+                elif blocked is None:
+                    for membership, membership_effect in memberships:
+                        folder_id = folder_bindings.get(
+                            _folder_path_digest(tuple(membership.folder_segments))
+                        )
+                        if folder_id is None:
+                            raise ImportReceiptTransitionError(
+                                "Membership folder authority is not durably applied."
+                            )
+                        self._fail_effect(
+                            approved.approval_id,
+                            membership_effect,
+                            failure,
+                            target_note_id=note_id,
+                            target_folder_id=folder_id,
+                        )
+                failures.append(failure)
+            if blocked is None and not note_operation_failed:
+                membership_failure = self._execute_memberships(
+                    approved,
+                    note_id=note_id,
+                    memberships=memberships,
+                    folder_bindings=folder_bindings,
+                )
+                if membership_failure is not None:
+                    failures.append(membership_failure)
+
+        if failures:
+            failure = _summarize_failures(failures)
+            self._receipts.transition_item(
+                approved.approval_id,
+                item.item_id,
+                ImportItemOutcome.FAILED,
+                reason_code=failure.reason_code,
+                retryable=failure.retryable,
+            )
+            return
+        outcome = (
+            ImportItemOutcome.IMPORTED
+            if item.selected_action is ImportAction.CREATE_NEW
+            else ImportItemOutcome.UPDATED
+        )
+        self._receipts.transition_item(
+            approved.approval_id,
+            item.item_id,
+            outcome,
+            observed_version=(
+                observed_version
+                if item.selected_action is ImportAction.UPDATE_EXISTING
+                else None
+            ),
+        )
+
+    def _execute_memberships(
+        self,
+        approved: ApprovedNoteImportPlan,
+        *,
+        note_id: str,
+        memberships: tuple[tuple[ProposedFolderMembership, ImportEffectRecord], ...],
+        folder_bindings: dict[str, str],
+    ) -> _ExecutionFailure | None:
+        failures: list[_ExecutionFailure] = []
+        for membership, effect in memberships:
+            path_digest = _folder_path_digest(tuple(membership.folder_segments))
+            folder_id = folder_bindings.get(path_digest)
+            if folder_id is None:
+                raise ImportReceiptTransitionError(
+                    "Membership folder authority is not durably applied."
+                )
+            try:
+                self._target.attach_membership(folder_id=folder_id, note_id=note_id)
+            except ImportTargetInternalError:
+                raise
+            except ImportTargetError as error:
+                failure = _failure_for_target_error(error, folder=True)
+                self._fail_effect(
+                    approved.approval_id,
+                    effect,
+                    failure,
+                    target_note_id=note_id,
+                    target_folder_id=folder_id,
+                )
+                failures.append(failure)
+                continue
+            self._receipts.transition_effects(
+                approved.approval_id,
+                (
+                    EffectTransition(
+                        category=ImportEffectCategory.MEMBERSHIP,
+                        effect_id=effect.effect_id,
+                        state=ImportEffectState.APPLIED,
+                        target_note_id=note_id,
+                        target_folder_id=folder_id,
+                    ),
+                ),
+            )
+        return _summarize_failures(failures) if failures else None
+
+    def _apply_payload_effect(
+        self,
+        approval_id: str,
+        effect: ImportEffectRecord,
+        *,
+        note_id: str,
+        observed_version: int,
+    ) -> None:
+        self._receipts.transition_effects(
+            approval_id,
+            (
+                EffectTransition(
+                    category=ImportEffectCategory.PAYLOAD,
+                    effect_id=effect.effect_id,
+                    state=ImportEffectState.APPLIED,
+                    target_note_id=note_id,
+                    observed_version=observed_version,
+                ),
+            ),
+        )
+
+    def _fail_effect(
+        self,
+        approval_id: str,
+        effect: ImportEffectRecord,
+        failure: _ExecutionFailure,
+        *,
+        target_note_id: str | None = None,
+        target_folder_id: str | None = None,
+    ) -> None:
+        self._receipts.transition_effects(
+            approval_id,
+            (
+                EffectTransition(
+                    category=effect.category,
+                    effect_id=effect.effect_id,
+                    state=ImportEffectState.FAILED,
+                    reason_code=failure.reason_code,
+                    retryable=failure.retryable,
+                    target_note_id=target_note_id,
+                    target_folder_id=target_folder_id,
+                ),
+            ),
+        )
+
+
+def _required_folder_paths(
+    approved: ApprovedNoteImportPlan,
+) -> tuple[tuple[str, ...], ...]:
+    required: set[tuple[str, ...]] = set()
+    for item in approved.plan.items:
+        if item.selected_action is ImportAction.SKIP or not item.add_membership:
+            continue
+        for membership in item.memberships:
+            path = tuple(membership.folder_segments)
+            required.update(path[:depth] for depth in range(1, len(path) + 1))
+    proposed_ordinals = {
+        path: ordinal
+        for ordinal, path in enumerate(approved.plan.proposed_folder_paths)
+    }
+    if required.difference(proposed_ordinals):
+        raise ImportReceiptTransitionError(
+            "The approved plan is missing required folder authority."
+        )
+    return tuple(
+        sorted(required, key=lambda path: (len(path), proposed_ordinals[path]))
+    )
+
+
+def _normalized_folder_path(path: tuple[str, ...]) -> str:
+    normalized_path = ""
+    for segment in path:
+        normalized_path = join_normalized_folder_path(
+            normalized_path,
+            normalize_folder_name(segment).key,
+        )
+    return normalized_path
+
+
+def _deterministic_folder_id(approval_id: str, normalized_path: str) -> str:
+    return str(uuid5(UUID(approval_id), f"folder:{normalized_path}"))
+
+
+def _deterministic_note_id(
+    approval_id: str,
+    item_id: str,
+    payload_index: int,
+) -> str:
+    return str(uuid5(UUID(approval_id), f"note:{item_id}:{payload_index}"))
+
+
+def _allows_existing_root(
+    approved: ApprovedNoteImportPlan,
+    path: tuple[str, ...],
+) -> bool:
+    collision = approved.plan.root_collision
+    return bool(
+        len(path) == 1
+        and collision is not None
+        and collision.collides
+        and collision.choice is RootCollisionChoice.USE_EXISTING
+        and path[0] == collision.proposed_label
+    )
+
+
+def _first_folder_failure(
+    path: tuple[str, ...],
+    failures: dict[tuple[str, ...], _ExecutionFailure],
+) -> _ExecutionFailure | None:
+    for depth in range(1, len(path)):
+        failure = failures.get(path[:depth])
+        if failure is not None:
+            return failure
+    return None
+
+
+def _membership_folder_failure(
+    memberships: tuple[tuple[ProposedFolderMembership, ImportEffectRecord], ...],
+    folder_failures: dict[tuple[str, ...], _ExecutionFailure],
+) -> _ExecutionFailure | None:
+    failures: list[_ExecutionFailure] = []
+    for membership, _effect in memberships:
+        path = tuple(membership.folder_segments)
+        for depth in range(1, len(path) + 1):
+            failure = folder_failures.get(path[:depth])
+            if failure is not None:
+                failures.append(failure)
+    return _summarize_failures(failures) if failures else None
+
+
+def _summarize_failures(failures: list[_ExecutionFailure]) -> _ExecutionFailure:
+    return next(
+        (failure for failure in failures if failure.retryable),
+        failures[0],
+    )
+
+
+def _failure_for_target_error(
+    error: ImportTargetError,
+    *,
+    folder: bool,
+) -> _ExecutionFailure:
+    if isinstance(error, ImportTargetRetryableError):
+        return _ExecutionFailure("database_busy", True)
+    if isinstance(error, ImportTargetConflictError):
+        return _ExecutionFailure(
+            "folder_conflict" if folder else "version_conflict",
+            False,
+        )
+    if isinstance(error, ImportTargetPermanentError):
+        return _ExecutionFailure("target_invalid", False)
+    return _ExecutionFailure("target_failure", False)
+
+
 __all__ = [
     "ImportTargetConflictError",
     "ImportTargetError",
@@ -857,4 +1408,5 @@ __all__ = [
     "LocalNoteImportTarget",
     "LocalTargetFolder",
     "LocalTargetNote",
+    "NoteImportExecutor",
 ]
