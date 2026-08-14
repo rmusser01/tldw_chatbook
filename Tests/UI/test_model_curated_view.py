@@ -446,6 +446,52 @@ def test_finish_install_clears_the_indicator_and_reloads_despite_a_missing_progr
     view.ensure_loaded.assert_called_once_with(force=True)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "terminal",
+    ("cancel", "finish"),
+)
+async def test_curated_terminal_failure_persists_bounded_inline_recovery(
+    tmp_path: Path,
+    terminal: str,
+) -> None:
+    """Host-terminal failures remain visible after the operation recomposes."""
+    reference = ArtifactRef("model-a", "a" * 40, "int8")
+    descriptor = _descriptor(reference)
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: _registry_with(descriptor),
+    )
+    app = _StyledViewApp(view)
+    recovery = (
+        "Pinned source unavailable — the app may be offline. "
+        "Select Retry install when connectivity returns."
+        if terminal == "cancel"
+        else "Package verification failed (size or SHA-256). No package was "
+        "promoted. Select Retry install."
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        view._operation_reference = reference
+        if terminal == "cancel":
+            view.cancel_pending_install(recovery)
+        else:
+            view.finish_install(recovery)
+        assert await _wait_until(
+            lambda: (
+                recovery in _all_text(app)
+                and view.query_one(".curated-install", Button).has_focus
+            ),
+            pilot=pilot,
+        )
+        retry = view.query_one(".curated-install", Button)
+        assert str(retry.label) == "Retry install…"
+        assert retry.has_focus
+        assert retry in app.screen._compositor.visible_widgets
+
+
 # ---------------------------------------------------------------------------
 # Module-scope import boundary (TASK-1914 fix round 1).
 #
@@ -547,6 +593,18 @@ async def test_every_exact_parakeet_root_posts_use_from_disk_with_its_catalog_re
 
         assert [request.reference for request in app.requests] == expected
         assert all(button.reference != vad_reference for button in buttons)
+        view._operation_reference = expected[0]
+        view.refresh(recompose=True)
+        await pilot.pause()
+        use_from_disk = view.query_one(".curated-use-from-disk", Button)
+        assert use_from_disk.disabled is True
+        assert use_from_disk.tooltip == (
+            "Use from disk unavailable — another model package operation is in progress."
+        )
+        assert (
+            "Use from disk unavailable — another model package operation is in progress."
+            in _all_text(app)
+        )
 
 
 @pytest.mark.asyncio
@@ -562,6 +620,53 @@ async def test_non_parakeet_root_has_no_use_from_disk_action(tmp_path: Path) -> 
         view.ensure_loaded()
         assert await _wait_until(lambda: view._loaded, pilot=pilot)
         assert not app.query(".curated-use-from-disk")
+
+
+@pytest.mark.asyncio
+async def test_pending_curated_actions_expose_adjacent_reasons_to_tab_only_user_at_80x24(
+    tmp_path: Path,
+) -> None:
+    """Tab skips inert actions while both reasons remain painted beside them."""
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        parakeet_descriptor,
+        parakeet_reference,
+        parakeet_source_map,
+    )
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+
+    reference = parakeet_reference(PARAKEET_V2_MODEL, "int8")
+    registry = CuratedRegistry()
+    registry.register(
+        parakeet_descriptor(PARAKEET_V2_MODEL, "int8"),
+        sources=parakeet_source_map()[reference],
+    )
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+    )
+    view._operation_reference = reference
+    app = _StyledViewApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        refresh = view.query_one("#curated-models-refresh", Button)
+        refresh.focus()
+        await pilot.press("tab")
+
+        assert app.focused is refresh
+        assert view.query_one(".curated-install", Button).disabled is True
+        assert view.query_one(".curated-use-from-disk", Button).disabled is True
+        reasons = list(view.query(".curated-disabled-reason").results(Static))
+        assert {str(reason.renderable) for reason in reasons} == {
+            "Install unavailable — another model package operation is in progress.",
+            "Use from disk unavailable — another model package operation is in progress.",
+        }
+        assert all(
+            reason in app.screen._compositor.visible_widgets for reason in reasons
+        )
+        assert all(reason.region.right <= view.region.right for reason in reasons)
+        assert all(reason.region.bottom <= view.region.bottom for reason in reasons)
 
 
 @pytest.mark.asyncio
@@ -588,14 +693,22 @@ async def test_audio_cpp_mode_filters_catalog_and_exposes_joined_recipe_facts(
         assert ordinary.model_id not in text
         assert audio_descriptor.model_id in text
         assert audio_descriptor.model_family in text
-        assert "Available: Downloadable" in text
-        assert "Integrity: Manifest checksums recorded" in text
-        assert "Recipe: Matched" in text
+        assert "Available: Not checked — pinned source was not contacted" in text
+        assert "Integrity: Not checked — package is not installed" in text
+        assert "Recipe: Catalog candidate — exact revision not checked" in text
         assert "Compatibility:" in text
-        assert "Configured: Not selected here" in text
-        assert "Running: Not observed here" in text
+        assert "Configured: Unknown — Settings state was not checked" in text
+        assert "Running: Unknown — supervisor state was not checked" in text
+        assert "Speech tasks:" in text
+        assert "Required package files:" in text
+        assert "Pinned source:" in text
+        assert "Manifest authority: Pinned sizes and SHA-256 digests recorded" in text
+        assert "Package size:" in text
         assert view.query_one(".audio-cpp-companions", Collapsible)
         assert "audiocpp_server is not included" in text
+        assert "Available: Downloadable" not in text
+        assert "Integrity: Verified" not in text
+        assert "Recipe: Matched" not in text
 
 
 @pytest.mark.asyncio
@@ -725,16 +838,24 @@ async def test_audio_cpp_row_is_truthful_expandable_and_keyboard_reachable_at_80
         text = _all_text(app)
         for fact in (
             descriptor.model_id,
-            "Available: Downloadable",
-            "Integrity: Manifest checksums recorded",
-            f"Recipe: Matched — {recipe.recipe_id} rev {recipe.recipe_revision}",
+            "Available: Not checked — pinned source was not contacted",
+            "Integrity: Not checked — package is not installed",
+            "Recipe: Catalog candidate — exact revision not checked",
             "Compatibility:",
-            "Configured: Not selected here — review in Guided Settings",
-            "Running: Not observed here — check Speech Lab",
+            "Configured: Unknown — Settings state was not checked",
+            "Running: Unknown — supervisor state was not checked",
+            "Speech tasks: TTS, CLONE",
+            "Required package files:",
+            "Pinned source:",
+            "Manifest authority: Pinned sizes and SHA-256 digests recorded",
+            "Package size:",
             "Model package only — audiocpp_server is not included",
         ):
             assert fact in text
         assert "Active" not in text
+        assert "Available: Downloadable" not in text
+        assert "Integrity: Verified" not in text
+        assert "Recipe: Matched" not in text
 
         class _ComposeMustNotReadRecipes:
             @property
@@ -748,7 +869,7 @@ async def test_audio_cpp_row_is_truthful_expandable_and_keyboard_reachable_at_80
         )
         view.refresh(recompose=True)
         await pilot.pause()
-        assert f"Recipe: Matched — {recipe.recipe_id}" in _all_text(app)
+        assert "Recipe: Catalog candidate" in _all_text(app)
 
         disclosure = view.query_one(".audio-cpp-companions", Collapsible)
         assert str(disclosure.title) == "Companion files (12)"
@@ -806,6 +927,11 @@ async def test_disabled_installed_audio_cpp_action_has_reason_and_three_to_one_c
         assert button.tooltip == (
             "Already installed — open Guided Settings to review this package."
         )
+        assert "Installed — open Guided Settings to review this package." in _all_text(
+            app
+        )
+        button.scroll_visible(animate=False, immediate=True, force=True)
+        await pilot.pause()
         painted = _painted_style_of_text(app, button.region, "Installed")
         assert painted is not None
         assert painted.color is not None and painted.bgcolor is not None

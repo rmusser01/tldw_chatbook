@@ -1624,7 +1624,7 @@ class LLMScreen(LabScreen):
         self._model_install_worker = None
         if error is not None or report is None:
             self.notify(error or "Model preflight failed.", severity="error")
-            self._clear_curated_install_state()
+            self._clear_curated_install_state(error or "Model preflight failed.")
             return
         registry = self._model_install_registry
         if registry is None:
@@ -1641,7 +1641,17 @@ class LLMScreen(LabScreen):
     def _confirm_curated_install(self, confirmed: bool) -> None:
         """Start provisioning only after explicit consent."""
         if not confirmed:
-            self._clear_curated_install_state()
+            report = self._model_install_pending_report
+            message = None
+            from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
+
+            if isinstance(report, PreflightReport) and not report.sufficient_space:
+                message = (
+                    f"Insufficient space — {report.required_bytes:,} bytes required; "
+                    f"{report.free_bytes:,} bytes free. Free space, then select "
+                    "Retry install."
+                )
+            self._clear_curated_install_state(message)
             return
         reference = self._model_install_reference
         if reference is not None:
@@ -2068,6 +2078,7 @@ class LLMScreen(LabScreen):
         claim = self._audio_cpp_model_request_claim
         store = getattr(self.app_instance, "pending_handoffs", None)
         returned_for_review = False
+        installed_but_return_failed = False
         if error is None and result is None:
             error = "Model installed, but it could not be returned for review."
         if error is None and result is not None and claim is not None:
@@ -2081,7 +2092,11 @@ class LLMScreen(LabScreen):
                 or result.revision != reference.revision
                 or result.variant != reference.variant
             ):
-                error = "Model installed, but it could not be returned for review."
+                installed_but_return_failed = True
+                error = (
+                    "Installed, but the Settings return expired. Reopen Guided "
+                    "Settings and choose this package again."
+                )
         if error is None and result is not None and claim is not None:
             staged = False
             try:
@@ -2097,7 +2112,11 @@ class LLMScreen(LabScreen):
                     handoffs.clear_pending(
                         HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
                     )
-                error = "Model installed, but it could not be returned for review."
+                installed_but_return_failed = True
+                error = (
+                    "Installed, but the Settings return expired. Reopen Guided "
+                    "Settings and choose this package again."
+                )
             else:
                 self._audio_cpp_model_request_claim = None
                 returned_for_review = True
@@ -2113,7 +2132,7 @@ class LLMScreen(LabScreen):
             self._audio_cpp_model_request_claim = None
         self._finish_curated_provision(
             error,
-            succeeded=error is None,
+            succeeded=error is None or installed_but_return_failed,
             success_message=(
                 "Installed — ready for review" if returned_for_review else "Installed"
             ),
@@ -2170,7 +2189,7 @@ class LLMScreen(LabScreen):
         self._model_install_kind = None
         view = self._curated_view()
         if view is not None:
-            view.finish_install()
+            view.finish_install(error)
 
     def on_unmount(self) -> None:
         """Cancel screen-owned work and release live verifier ownership."""
@@ -2205,7 +2224,7 @@ class LLMScreen(LabScreen):
             cast(PendingHandoffStore, store).release(claim)
             self._audio_cpp_model_request_claim = None
 
-    def _clear_curated_install_state(self) -> None:
+    def _clear_curated_install_state(self, message: str | None = None) -> None:
         """Reset this screen's own bookkeeping after a request that never
         started provisioning (a preflight failure or an explicit decline
         at the consent modal) -- neither ever posted
@@ -2222,7 +2241,10 @@ class LLMScreen(LabScreen):
         self._model_install_kind = None
         view = self._curated_view()
         if view is not None:
-            view.cancel_pending_install()
+            if message is None:
+                view.cancel_pending_install()
+            else:
+                view.cancel_pending_install(message)
 
     def _deliver_curated(
         self, message: InstallProgressed | InstallStatusChanged

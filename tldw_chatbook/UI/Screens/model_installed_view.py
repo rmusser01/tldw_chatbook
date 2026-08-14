@@ -52,8 +52,13 @@ from tldw_chatbook.UI.Screens.model_browser_state import (
     inventory_rows,
 )
 from tldw_chatbook.UI.Screens.model_curated_view import (
+    AudioCppObservationProvider,
     AudioCppPackageProjection,
+    ModelLibraryFocusLocator,
     audio_cpp_package_projection,
+    model_library_focus_locator,
+    project_audio_cpp_observation,
+    restore_model_library_focus,
 )
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
@@ -221,6 +226,7 @@ class InstalledView(Widget):
         recycle_idle: Callable[[ArtifactRef], bool] | None = None,
         can_start_import: Callable[[], bool] | None = None,
         on_import_lane_changed: Callable[[bool], None] | None = None,
+        observation_provider: AudioCppObservationProvider | None = None,
         id: str | None = None,
     ) -> None:
         """Create an idle view; no filesystem work occurs here.
@@ -244,6 +250,7 @@ class InstalledView(Widget):
         )
         self._can_start_import = can_start_import or (lambda: True)
         self._on_import_lane_changed = on_import_lane_changed or (lambda _active: None)
+        self._observation_provider = observation_provider
         self._import_lane_owned = False
         self._service: ModelArtifactService | None = None
         self._rows: tuple[InventoryRow, ...] = ()
@@ -271,6 +278,7 @@ class InstalledView(Widget):
         self._pending_import_path: Path | None = None
         self._import_status: str | None = None
         self._import_retry_available = False
+        self._restore_header_focus_id: str | None = None
         super().__init__(id=id)
 
     def _non_import_lifecycle_pending(self) -> bool:
@@ -435,8 +443,11 @@ class InstalledView(Widget):
         )
         children: list[Widget] = [
             Static(row.model_label, classes="installed-model-title", markup=False),
-            Static(row.provenance, classes="installed-model-muted", markup=False),
         ]
+        if audio_cpp is None:
+            children.append(
+                Static(row.provenance, classes="installed-model-muted", markup=False)
+            )
         if row.reference is not None:
             children.append(
                 Static(
@@ -480,6 +491,11 @@ class InstalledView(Widget):
                     False if audio_cpp is not None else row.activation_allowed
                 ),
                 pending=self._lifecycle_pending(),
+                disabled_reason=(
+                    "Delete unavailable — another model package operation is in progress."
+                    if audio_cpp is not None and self._lifecycle_pending()
+                    else None
+                ),
             )
             if audio_cpp is not None:
                 controls.add_class("audio-cpp-actions")
@@ -496,7 +512,9 @@ class InstalledView(Widget):
             if audio_cpp is not None
             else "installed-model-row"
         )
-        return Vertical(*children, classes=classes)
+        widget = Vertical(*children, classes=classes)
+        widget.reference = row.reference
+        return widget
 
     @staticmethod
     def _audio_cpp_facts(
@@ -512,20 +530,31 @@ class InstalledView(Widget):
             collapsed=True,
         )
         return (
-            Static("Available: Installed locally", markup=False),
             Static(
-                "Integrity: Verified"
+                "Available: Not checked — pinned source was not contacted",
+                markup=False,
+            ),
+            Static("Installed package: Local record found", markup=False),
+            Static(
+                "Integrity: Not checked this session"
                 if row.ready
-                else "Integrity: Verification required",
+                else "Integrity: Unknown — package record needs Repair",
                 markup=False,
             ),
             Static(f"Recipe: {projection.recipe}", markup=False),
             Static(f"Compatibility: {projection.compatibility}", markup=False),
+            Static(f"Configured: {projection.configured}", markup=False),
+            Static(f"Running: {projection.running}", markup=False),
+            Static(f"Speech tasks: {projection.speech_tasks}", markup=False),
             Static(
-                "Configured: Not observed here — review Guided Settings",
+                f"Required package files: {projection.required_files}", markup=False
+            ),
+            Static(f"Pinned source: {projection.pinned_source}", markup=False),
+            Static(
+                "Manifest authority: Pinned sizes and SHA-256 digests recorded",
                 markup=False,
             ),
-            Static("Running: Not observed here — check Speech Lab", markup=False),
+            Static(f"Package size: {projection.package_size}", markup=False),
             companions,
             Static(
                 "Model package only — audiocpp_server is not included",
@@ -670,8 +699,42 @@ class InstalledView(Widget):
             self.ensure_loaded(force=True)
         else:
             self.refresh(recompose=True)
+            if error is None and self._observation_provider is not None:
+                self._observe_audio_cpp_rows()
             if self._import_status is not None:
                 self.call_after_refresh(self._focus_import_recovery)
+            elif self._restore_header_focus_id is not None:
+                focus_id = self._restore_header_focus_id
+                self._restore_header_focus_id = None
+                self.call_after_refresh(self.restore_focus, focus_id)
+
+    @work(group="installed_audio_cpp_observation", exclusive=True, exit_on_error=False)
+    async def _observe_audio_cpp_rows(self) -> None:
+        """Apply exact Settings/runtime evidence without blocking inventory load."""
+
+        provider = self._observation_provider
+        if provider is None:
+            return
+        projections = dict(self._audio_cpp_projections)
+        changed = False
+        for reference, projection in tuple(projections.items()):
+            try:
+                evidence = await provider(reference)
+            except Exception:
+                continue
+            from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+                AudioCppArtifactRemovalEvidence,
+            )
+
+            if type(evidence) is not AudioCppArtifactRemovalEvidence:
+                continue
+            projected = project_audio_cpp_observation(projection, reference, evidence)
+            if projected != projection:
+                projections[reference] = projected
+                changed = True
+        if changed and self.is_attached:
+            self._audio_cpp_projections = projections
+            self.refresh(recompose=True)
 
     def _focus_import_recovery(self) -> None:
         """Restore focus to one stable import control after recomposition."""
@@ -691,6 +754,28 @@ class InstalledView(Widget):
         """Keep keyboard-selected disclosures and actions inside the viewport."""
 
         event.widget.scroll_visible(animate=False, immediate=True, force=True)
+
+    def focus_locator(self, widget: Widget) -> ModelLibraryFocusLocator | None:
+        """Return a stable exact-row locator for focus across pane changes."""
+
+        return model_library_focus_locator(
+            self,
+            widget,
+            row_selector=".installed-model-row",
+            action_class="model-delete",
+            action_role="delete",
+        )
+
+    def restore_focus(self, locator: ModelLibraryFocusLocator) -> None:
+        """Restore an id-based header or exact-ref row control."""
+
+        restore_model_library_focus(
+            self,
+            locator,
+            row_selector=".installed-model-row",
+            action_role="delete",
+            action_selector=".model-delete",
+        )
 
     @on(Button.Pressed, "#installed-models-import-gguf")
     def _header_import_pressed(self) -> None:
@@ -1092,12 +1177,14 @@ class InstalledView(Widget):
     def _refresh_pressed(self) -> None:
         if self._lifecycle_pending():
             return
+        self._restore_header_focus_id = "installed-models-refresh"
         self.ensure_loaded(force=True)
 
     @on(Button.Pressed, "#installed-models-repair")
     def _repair_pressed(self) -> None:
         if self._lifecycle_pending():
             return
+        self._restore_header_focus_id = "installed-models-repair"
         self._operation_name = "repair"
         self.refresh(recompose=True)
         self._repair_store()

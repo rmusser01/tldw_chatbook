@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from textual import on, work
@@ -28,6 +28,9 @@ from tldw_chatbook.Model_Artifacts.service import (
 from tldw_chatbook.Model_Artifacts.store import managed_service
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import parakeet_reference
 from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+    AudioCppArtifactRemovalEvidence,
+)
 from tldw_chatbook.UI.Screens.model_browser_state import provenance_label
 from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
 
@@ -42,6 +45,117 @@ class AudioCppPackageProjection:
     recipe: str
     compatibility: str
     companion_paths: tuple[str, ...]
+    speech_tasks: str
+    required_files: str
+    pinned_source: str
+    package_size: str
+    configured: str = "Unknown — Settings state was not checked"
+    running: str = "Unknown — supervisor state was not checked"
+
+
+AudioCppObservationProvider = Callable[
+    [ArtifactRef], Awaitable[AudioCppArtifactRemovalEvidence]
+]
+ModelLibraryFocusLocator = str | tuple[ArtifactRef, str]
+
+
+def model_library_focus_locator(
+    view: Widget,
+    widget: Widget,
+    *,
+    row_selector: str,
+    action_class: str,
+    action_role: str,
+) -> ModelLibraryFocusLocator | None:
+    """Identify one header or exact-ref model-library control."""
+
+    if widget.id:
+        return widget.id
+    for row in view.query(row_selector):
+        reference = getattr(row, "reference", None)
+        if (
+            not isinstance(reference, ArtifactRef)
+            or row not in widget.ancestors_with_self
+        ):
+            continue
+        if isinstance(widget, Button) and widget.has_class(action_class):
+            return (reference, action_role)
+        if any(
+            disclosure in widget.ancestors_with_self
+            for disclosure in row.query(".audio-cpp-companions")
+        ):
+            return (reference, "disclosure")
+    return None
+
+
+def restore_model_library_focus(
+    view: Widget,
+    locator: ModelLibraryFocusLocator,
+    *,
+    row_selector: str,
+    action_role: str,
+    action_selector: str,
+) -> None:
+    """Restore one header or exact-ref control after a pane change."""
+
+    if isinstance(locator, str):
+        try:
+            target = view.query_one(f"#{locator}")
+        except NoMatches:
+            return
+    else:
+        reference, role = locator
+        row = next(
+            (
+                item
+                for item in view.query(row_selector)
+                if getattr(item, "reference", None) == reference
+            ),
+            None,
+        )
+        if row is None:
+            return
+        try:
+            item = row.query_one(
+                action_selector if role == action_role else ".audio-cpp-companions"
+            )
+            target = (
+                item.query_one("CollapsibleTitle") if role == "disclosure" else item
+            )
+        except NoMatches:
+            return
+    if getattr(target, "disabled", False):
+        return
+    view.screen.set_focus(target)
+    target.scroll_visible(animate=False, immediate=True, force=True)
+
+
+def project_audio_cpp_observation(
+    projection: AudioCppPackageProjection,
+    reference: ArtifactRef,
+    evidence: AudioCppArtifactRemovalEvidence,
+) -> AudioCppPackageProjection:
+    """Apply only exact-reference Settings and live-supervisor evidence."""
+
+    if evidence.reference != reference:
+        return projection
+    scopes = {scope for scope, _label, _identity in evidence.settings_consumers}
+    configured_parts = []
+    if scopes.intersection({"saved", "saved-default"}):
+        configured_parts.append("Saved Settings")
+    if scopes.intersection({"draft", "draft-default"}):
+        configured_parts.append("detached draft")
+    configured = (
+        " + ".join(configured_parts)
+        if configured_parts
+        else "Not configured — exact Settings state checked"
+    )
+    running = (
+        "Applied supervisor generation is active"
+        if evidence.live_runtime_ids
+        else "Not running — applied supervisor state checked"
+    )
+    return replace(projection, configured=configured, running=running)
 
 
 def audio_cpp_package_projection(
@@ -62,7 +176,15 @@ def audio_cpp_package_projection(
         None,
     )
     if recipe is None:
-        return AudioCppPackageProjection("Unmatched", "Unknown", ())
+        return AudioCppPackageProjection(
+            "Catalog unavailable — exact revision not checked",
+            "Catalog evidence unavailable — exact package not checked",
+            (),
+            "Unknown",
+            "Unknown",
+            descriptor.source_url,
+            f"{descriptor.expected_installed_bytes:,} bytes",
+        )
     evidence = ", ".join(
         f"{item.system}/{item.architecture}/{item.backend.value}: {item.state.value}"
         for item in recipe.backend_evidence
@@ -74,9 +196,16 @@ def audio_cpp_package_projection(
         if item.relative_path != model_path
     )
     return AudioCppPackageProjection(
-        recipe=f"Matched — {recipe.recipe_id} rev {recipe.recipe_revision}",
-        compatibility=f"{recipe.audio_cpp_release} · {evidence}",
+        recipe="Catalog candidate — exact revision not checked",
+        compatibility=(
+            "Catalog tuple evidence — exact installed package not checked · "
+            f"{recipe.audio_cpp_release} · {evidence}"
+        ),
         companion_paths=companions,
+        speech_tasks=", ".join(item.upper() for item in recipe.capabilities),
+        required_files=", ".join(item.path for item in descriptor.files),
+        pinned_source=f"{descriptor.upstream_repository}@{descriptor.upstream_revision}",
+        package_size=f"{descriptor.expected_installed_bytes:,} bytes",
     )
 
 
@@ -86,7 +215,6 @@ class CuratedRow:
 
     descriptor: ArtifactDescriptor
     installed: bool
-    integrity: str = "Manifest checksums recorded"
     audio_cpp: AudioCppPackageProjection | None = None
 
 
@@ -213,6 +341,7 @@ class CuratedView(Widget):
         *,
         service_factory: Callable[[], ModelArtifactService] = managed_service,
         registry_factory: Callable[[], CuratedRegistry] = curated_registry,
+        observation_provider: AudioCppObservationProvider | None = None,
         id: str | None = None,
     ) -> None:
         """Create an idle curated view.
@@ -224,6 +353,7 @@ class CuratedView(Widget):
         """
         self._service_factory = service_factory
         self._registry_factory = registry_factory
+        self._observation_provider = observation_provider
         self._service: ModelArtifactService | None = None
         self._registry: CuratedRegistry | None = None
         self._rows: tuple[CuratedRow, ...] = ()
@@ -235,6 +365,8 @@ class CuratedView(Widget):
         self._consumer_filter: str | None = None
         self._allow_installed_return = False
         self._restore_focus_after_load = False
+        self._recovery_message: str | None = None
+        self._recovery_reference: ArtifactRef | None = None
         super().__init__(id=id)
 
     def compose(self) -> ComposeResult:
@@ -268,7 +400,10 @@ class CuratedView(Widget):
         )
         install = Button(
             (
-                "Use installed package"
+                "Retry install…"
+                if descriptor.reference == self._recovery_reference
+                and not row.installed
+                else "Use installed package"
                 if row.installed and audio_cpp_return
                 else "Installed"
                 if row.installed
@@ -288,6 +423,23 @@ class CuratedView(Widget):
         elif self._operation_reference is not None:
             install.tooltip = "Another model package operation is in progress."
         actions = [install]
+        disabled_reasons: list[Widget] = []
+        if row.installed and not audio_cpp_return:
+            disabled_reasons.append(
+                Static(
+                    "Installed — open Guided Settings to review this package.",
+                    classes="curated-disabled-reason",
+                    markup=False,
+                )
+            )
+        elif self._operation_reference is not None:
+            disabled_reasons.append(
+                Static(
+                    "Install unavailable — another model package operation is in progress.",
+                    classes="curated-disabled-reason",
+                    markup=False,
+                )
+            )
         if self._external_key(descriptor.reference) is not None:
             use_from_disk = Button(
                 "Use from disk…",
@@ -296,6 +448,15 @@ class CuratedView(Widget):
                 disabled=self._operation_reference is not None,
             )
             use_from_disk.reference = descriptor.reference
+            if self._operation_reference is not None:
+                reason = (
+                    "Use from disk unavailable — another model package operation "
+                    "is in progress."
+                )
+                use_from_disk.tooltip = reason
+                disabled_reasons.append(
+                    Static(reason, classes="curated-disabled-reason", markup=False)
+                )
             actions.append(use_from_disk)
         details: list[Widget] = [
             Static(descriptor.model_id, classes="curated-model-title", markup=False),
@@ -310,22 +471,41 @@ class CuratedView(Widget):
                 markup=False,
             ),
             Static(
-                f"License: {descriptor.license_id} · "
-                f"{provenance_label(descriptor.provenance)}",
+                f"License: {descriptor.license_id}"
+                + (
+                    ""
+                    if row.audio_cpp is not None
+                    else f" · {provenance_label(descriptor.provenance)}"
+                ),
                 classes="curated-model-muted",
                 markup=False,
             ),
         ]
+        if descriptor.reference == self._recovery_reference:
+            details.append(
+                Static(
+                    self._recovery_message or "Review and retry this install.",
+                    classes="curated-recovery-status",
+                    markup=False,
+                )
+            )
         if row.audio_cpp is not None:
             details.extend(self._audio_cpp_facts(row))
             details.append(
-                Vertical(*actions, classes="curated-actions audio-cpp-actions")
+                Vertical(
+                    *actions,
+                    *disabled_reasons,
+                    classes="curated-actions audio-cpp-actions",
+                )
             )
             classes = "curated-model-row audio-cpp-model-row"
         else:
             details.append(Horizontal(*actions, classes="curated-actions"))
+            details.extend(disabled_reasons)
             classes = "curated-model-row"
-        return Vertical(*details, classes=classes)
+        widget = Vertical(*details, classes=classes)
+        widget.reference = descriptor.reference
+        return widget
 
     @staticmethod
     def _audio_cpp_facts(row: CuratedRow) -> tuple[Widget, ...]:
@@ -341,19 +521,29 @@ class CuratedView(Widget):
         )
         return (
             Static(
-                "Available: Installed locally"
-                if row.installed
-                else "Available: Downloadable",
+                "Available: Not checked — pinned source was not contacted",
                 markup=False,
             ),
-            Static(f"Integrity: {row.integrity}", markup=False),
+            Static(
+                "Integrity: Not checked this session"
+                if row.installed
+                else "Integrity: Not checked — package is not installed",
+                markup=False,
+            ),
             Static(f"Recipe: {projection.recipe}", markup=False),
             Static(f"Compatibility: {projection.compatibility}", markup=False),
+            Static(f"Configured: {projection.configured}", markup=False),
+            Static(f"Running: {projection.running}", markup=False),
+            Static(f"Speech tasks: {projection.speech_tasks}", markup=False),
             Static(
-                "Configured: Not selected here — review in Guided Settings",
+                f"Required package files: {projection.required_files}", markup=False
+            ),
+            Static(f"Pinned source: {projection.pinned_source}", markup=False),
+            Static(
+                "Manifest authority: Pinned sizes and SHA-256 digests recorded",
                 markup=False,
             ),
-            Static("Running: Not observed here — check Speech Lab", markup=False),
+            Static(f"Package size: {projection.package_size}", markup=False),
             companions,
             Static(
                 "Model package only — audiocpp_server is not included",
@@ -435,14 +625,6 @@ class CuratedView(Widget):
                 CuratedRow(
                     descriptor,
                     descriptor.reference in installed_by_ref,
-                    (
-                        "Verified"
-                        if descriptor.reference in installed_by_ref
-                        and installed_by_ref[descriptor.reference].ready
-                        else "Verification required"
-                        if descriptor.reference in installed_by_ref
-                        else "Manifest checksums recorded"
-                    ),
                     audio_cpp_package_projection(descriptor),
                 )
                 for descriptor in registry.list()
@@ -472,9 +654,44 @@ class CuratedView(Widget):
         self._loaded = error is None
         self._load_error = error
         self.refresh(recompose=True)
+        if error is None and self._observation_provider is not None:
+            self._observe_audio_cpp_rows()
         if self._restore_focus_after_load:
             self._restore_focus_after_load = False
             self.call_after_refresh(self._restore_refresh_focus)
+        elif self._recovery_reference is not None:
+            self.call_after_refresh(
+                self.restore_focus,
+                (self._recovery_reference, "install"),
+            )
+
+    @work(group="curated_audio_cpp_observation", exclusive=True, exit_on_error=False)
+    async def _observe_audio_cpp_rows(self) -> None:
+        """Replace frozen projections with exact-ref app evidence when available."""
+
+        provider = self._observation_provider
+        if provider is None:
+            return
+        rows = list(self._rows)
+        changed = False
+        for index, row in enumerate(rows):
+            if row.audio_cpp is None:
+                continue
+            try:
+                evidence = await provider(row.descriptor.reference)
+            except Exception:
+                continue
+            if type(evidence) is not AudioCppArtifactRemovalEvidence:
+                continue
+            projected = project_audio_cpp_observation(
+                row.audio_cpp, row.descriptor.reference, evidence
+            )
+            if projected != row.audio_cpp:
+                rows[index] = replace(row, audio_cpp=projected)
+                changed = True
+        if changed and self.is_attached:
+            self._rows = tuple(rows)
+            self.refresh(recompose=True)
 
     def _restore_refresh_focus(self) -> None:
         """Return keyboard focus to the remounted Refresh button."""
@@ -490,6 +707,28 @@ class CuratedView(Widget):
         """Keep keyboard-selected disclosures and actions inside the viewport."""
 
         event.widget.scroll_visible(animate=False, immediate=True, force=True)
+
+    def focus_locator(self, widget: Widget) -> ModelLibraryFocusLocator | None:
+        """Return a stable semantic locator for a focused row control."""
+
+        return model_library_focus_locator(
+            self,
+            widget,
+            row_selector=".curated-model-row",
+            action_class="curated-install",
+            action_role="install",
+        )
+
+    def restore_focus(self, locator: ModelLibraryFocusLocator) -> None:
+        """Restore focus to an id or exact-ref row role after recomposition."""
+
+        restore_model_library_focus(
+            self,
+            locator,
+            row_selector=".curated-model-row",
+            action_role="install",
+            action_selector=".curated-install",
+        )
 
     @on(Button.Pressed, "#curated-models-refresh")
     def _refresh_pressed(self) -> None:
@@ -510,6 +749,9 @@ class CuratedView(Widget):
         if type(already_installed) is not bool:
             return
         self._operation_reference = reference
+        if reference == self._recovery_reference:
+            self._recovery_reference = None
+            self._recovery_message = None
         self.refresh(recompose=True)
         self.post_message(
             self.InstallRequested(
@@ -576,7 +818,7 @@ class CuratedView(Widget):
         except NoMatches:
             self.refresh(recompose=True)
 
-    def cancel_pending_install(self) -> None:
+    def cancel_pending_install(self, message: str | None = None) -> None:
         """Clear the in-flight indicator without reloading the catalog.
 
         Called by the host screen (``LLMScreen``) when a request this view
@@ -587,17 +829,34 @@ class CuratedView(Widget):
         clicked Install, not the instance whose install is still in
         flight -- see ``LLMScreen._curated_install_requested``).
         """
+        reference = self._operation_reference
         self._operation_reference = None
+        if message is not None and reference is not None:
+            self._recovery_message = message
+            self._recovery_reference = reference
         self.refresh(recompose=True)
+        if self._recovery_reference is not None:
+            self.call_after_refresh(
+                self.call_later,
+                self.restore_focus,
+                (self._recovery_reference, "install"),
+            )
 
-    def finish_install(self) -> None:
+    def finish_install(self, message: str | None = None) -> None:
         """Clear the in-flight indicator and reload after a completed install.
 
         Called by the host screen (``LLMScreen``) once provisioning
         finishes, successfully or not -- reloading refreshes which rows
         show "Installed" and re-enables Install everywhere else.
         """
+        reference = self._operation_reference
         self._operation_reference = None
+        if message is not None and reference is not None:
+            self._recovery_message = message
+            self._recovery_reference = reference
+        elif message is None:
+            self._recovery_message = None
+            self._recovery_reference = None
         self._progress = None
         try:
             progress = self.query_one(

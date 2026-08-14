@@ -1332,6 +1332,16 @@ InstalledView .installed-recovery-status {
     margin-bottom: 1;
 }
 
+CuratedView .curated-disabled-reason,
+CuratedView .curated-recovery-status,
+InstalledView .model-disabled-reason {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    margin-bottom: 1;
+    color: $warning;
+}
+
 CuratedView Button:focus,
 CuratedView CollapsibleTitle:focus,
 InstalledView Button:focus,

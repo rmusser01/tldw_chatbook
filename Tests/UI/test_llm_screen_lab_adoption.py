@@ -159,7 +159,8 @@ def test_audio_cpp_terminal_result_is_one_time_and_skips_runtime_mutation(
     screen._audio_cpp_model_request_claim = claim
     screen.notify = MagicMock()
     screen._deliver_curated = MagicMock()
-    screen._curated_view = MagicMock(return_value=None)
+    view = MagicMock()
+    screen._curated_view = MagicMock(return_value=view)
     reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
     screen._model_install_kind = "curated"
     screen._model_install_reference = reference
@@ -243,7 +244,8 @@ def test_audio_cpp_terminal_rejects_a_foreign_result_without_staging() -> None:
     screen._audio_cpp_model_request_claim = claim
     screen.notify = MagicMock()
     screen._deliver_curated = MagicMock()
-    screen._curated_view = MagicMock(return_value=None)
+    view = MagicMock()
+    screen._curated_view = MagicMock(return_value=view)
     reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
     screen._model_install_kind = "curated"
     screen._model_install_reference = reference
@@ -267,8 +269,15 @@ def test_audio_cpp_terminal_rejects_a_foreign_result_without_staging() -> None:
     assert replay is not None
     assert replay.value.token == "expected-token"
     screen.notify.assert_called_once_with(
-        "Model installed, but it could not be returned for review.",
+        "Installed, but the Settings return expired. Reopen Guided Settings "
+        "and choose this package again.",
         severity="error",
+    )
+    delivered = screen._deliver_curated.call_args.args[0]
+    assert delivered.succeeded is True
+    view.finish_install.assert_called_once_with(
+        "Installed, but the Settings return expired. Reopen Guided Settings "
+        "and choose this package again."
     )
 
 
@@ -1523,7 +1532,7 @@ def test_curated_preflight_failure_notifies_and_does_not_push_a_modal(monkeypatc
     assert screen._model_install_service is None
     assert screen._model_install_registry is None
     assert screen._model_install_sources is None
-    view.cancel_pending_install.assert_called_once_with()
+    view.cancel_pending_install.assert_called_once_with("boom")
 
 
 def test_declining_the_consent_modal_does_not_start_the_install_worker():
@@ -1553,6 +1562,74 @@ def test_declining_the_consent_modal_does_not_start_the_install_worker():
     assert screen._model_install_reference is None
     assert screen._model_install_pending_report is None
     view.cancel_pending_install.assert_called_once_with()
+
+
+def test_declining_insufficient_space_persists_exact_required_and_free_bytes():
+    """A disabled consent plan leaves actionable byte-exact recovery behind."""
+    from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    view = MagicMock()
+    screen._curated_view = MagicMock(return_value=view)
+    screen._run_curated_provision = MagicMock()
+    screen._model_install_worker = None
+    screen._model_install_reference = ArtifactRef("model-a", "a" * 40, "int8")
+    screen._model_install_service = MagicMock()
+    screen._model_install_registry = MagicMock()
+    screen._model_install_sources = {}
+    screen._model_install_pending_report = PreflightReport(
+        root=screen._model_install_reference,
+        closure_fingerprint="f" * 64,
+        entries=(),
+        download_bytes=8_000_000,
+        already_staged_bytes=0,
+        staging_overhead_bytes=388_608,
+        retained_bytes=0,
+        destination=MagicMock(),
+        free_bytes=2_097_152,
+        required_bytes=8_388_608,
+        sufficient_space=False,
+        gating_errors=(),
+    )
+
+    module.LLMScreen._confirm_curated_install(screen, False)
+
+    view.cancel_pending_install.assert_called_once_with(
+        "Insufficient space — 8,388,608 bytes required; 2,097,152 bytes free. "
+        "Free space, then select Retry install."
+    )
+
+
+@pytest.mark.parametrize(
+    ("detail", "retryable", "expected"),
+    (
+        (
+            "transport error fetching private/source/path",
+            True,
+            "Pinned source unavailable — the app may be offline.",
+        ),
+        (
+            "preverify checksum mismatch at private/source/path",
+            False,
+            "Package verification failed (size or SHA-256). No package was promoted.",
+        ),
+    ),
+)
+def test_audio_cpp_transfer_failures_map_to_bounded_inline_recovery(
+    detail, retryable, expected
+):
+    """Typed transfer failures select recovery without leaking collaborator text."""
+    from tldw_chatbook.Model_Artifacts.acquisition import TransferError
+    from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
+
+    message = install_failure_message(
+        TransferError(detail, retryable=retryable), model_label="audio.cpp package"
+    )
+
+    assert expected in message
+    assert "private/source/path" not in message
 
 
 def test_curated_install_requested_refuses_a_second_concurrent_install():
@@ -1913,7 +1990,7 @@ def test_failed_curated_provision_notifies_mirrors_and_resets_state(monkeypatch)
     assert delivered.active is False
     assert delivered.succeeded is False
 
-    view.finish_install.assert_called_once_with()
+    view.finish_install.assert_called_once_with("boom")
     source_service.prefer_managed.assert_not_called()
 
 
@@ -4653,6 +4730,160 @@ async def test_model_library_view_switch_restores_keyboard_focus_at_80x24(
         window.active_view = "installed"
         await pilot.pause()
         assert app.focused is window.query_one("#installed-models-repair", Button)
+
+
+@pytest.mark.asyncio
+async def test_real_model_library_projects_exact_settings_and_running_evidence(
+    tmp_path,
+    monkeypatch,
+):
+    """Only exact saved/draft and applied-supervisor evidence promotes axes."""
+    from tldw_chatbook.Model_Artifacts.curated_registry import CuratedRegistry
+    from dataclasses import replace
+
+    import tldw_chatbook.TTS.audio_cpp_recipes as recipes_module
+    from textual.widgets._collapsible import CollapsibleTitle
+
+    from tldw_chatbook.Model_Artifacts.service import (
+        ArtifactDiskUsage,
+        InstalledArtifact,
+        ModelArtifactService,
+    )
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+    )
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    recipe = next(
+        item
+        for item in recipes_module.AUDIO_CPP_RECIPE_REGISTRY.recipes
+        if descriptor.reference.artifact_id in item.model_library_artifact_ids
+    )
+    signal = recipe.required_files[0]
+    companions = tuple(
+        replace(signal, relative_path=f"companions/review-file-{index:02d}.json")
+        for index in range(12)
+    )
+    monkeypatch.setattr(
+        recipes_module,
+        "AUDIO_CPP_RECIPE_REGISTRY",
+        type(
+            "Registry",
+            (),
+            {
+                "recipes": (
+                    replace(recipe, required_files=recipe.required_files + companions),
+                )
+            },
+        )(),
+    )
+    descriptor = replace(
+        descriptor,
+        model_id="audio-cpp/" + "very-long-reviewed-model-" * 5,
+        model_family="very-long-family-" * 5,
+    )
+    registry = CuratedRegistry()
+    registry.register(descriptor, sources=sources)
+
+    async def evidence(exact):
+        assert exact == descriptor.reference
+        return AudioCppArtifactRemovalEvidence(
+            exact,
+            settings_consumers=(
+                ("saved", "Guided Settings", "saved-package"),
+                ("draft", "Unsaved Guided Settings", "draft-package"),
+            ),
+            live_runtime_ids=("process-generation-7",),
+        )
+
+    app = _app()
+    monkeypatch.setattr(app, "_audio_cpp_artifact_removal_evidence", evidence)
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#curated-models-view")),
+            pilot,
+        )
+        window = screen.query_one(LLMManagementWindow)
+        curated = window.query_one("#curated-models-view", CuratedView)
+        curated._service_factory = lambda: ModelArtifactService(tmp_path / "store")
+        curated._registry_factory = lambda: registry
+        curated._service = None
+        curated._registry = None
+        curated.set_consumer_filter("audio_cpp")
+        window.active_view = "curated"
+        assert await _wait_for(
+            lambda: (
+                "Configured: Saved Settings + detached draft"
+                in "\n".join(str(item.renderable) for item in curated.query(Static))
+            ),
+            pilot,
+        )
+        text = "\n".join(str(item.renderable) for item in curated.query(Static))
+        assert "Running: Applied supervisor generation is active" in text
+        assert "Configured: Unknown" not in text
+        assert "Running: Unknown" not in text
+
+        pane = window.query_one("#llm-view-curated")
+        assert pane.region.width < 80
+        refresh = curated.query_one("#curated-models-refresh", Button)
+        refresh.focus()
+        await pilot.press("tab")
+        disclosure_title = curated.query_one(CollapsibleTitle)
+        assert disclosure_title.has_focus
+        await pilot.press("enter", "tab")
+        install = curated.query_one(".curated-install", Button)
+        assert install.has_focus
+        assert install in app.screen._compositor.visible_widgets
+        assert install.region.right <= pane.region.right
+        assert install.region.bottom <= pane.region.bottom
+
+        window.active_view = "installed"
+        await pilot.pause()
+        window.active_view = "curated"
+        await pilot.pause()
+        assert curated.query_one(".curated-install", Button).has_focus
+
+        class InstalledService:
+            def list_installed(self):
+                return (
+                    InstalledArtifact(
+                        path=tmp_path / "managed",
+                        descriptor=descriptor,
+                        ready=True,
+                        active=True,
+                        error=None,
+                    ),
+                )
+
+            def disk_usage(self):
+                return ArtifactDiskUsage(1, 0, 64 * 1024 * 1024)
+
+        installed_view = window.query_one("#installed-models-view", InstalledView)
+        installed_view._service_factory = InstalledService
+        installed_view._service = None
+        window.active_view = "installed"
+        installed_view.ensure_loaded(force=True)
+        assert await _wait_for(
+            lambda: bool(installed_view.query(CollapsibleTitle)), pilot
+        )
+        installed_title = installed_view.query_one(CollapsibleTitle)
+        installed_title.focus()
+        await pilot.press("enter", "tab")
+        delete = installed_view.query_one(".model-delete", Button)
+        assert delete.has_focus
+        assert delete in app.screen._compositor.visible_widgets
+        assert (
+            delete.region.right <= window.query_one("#llm-view-installed").region.right
+        )
+        window.active_view = "curated"
+        await pilot.pause()
+        window.active_view = "installed"
+        await pilot.pause()
+        assert installed_view.query_one(".model-delete", Button).has_focus
 
 
 # Windows Proactor event-loop setup owns an internal loopback socket pair.

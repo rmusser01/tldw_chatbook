@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef
 
@@ -36,7 +36,7 @@ class ModelActivationControls(Widget):
 
     DEFAULT_CSS = """
     ModelActivationControls {
-        height: 3;
+        height: auto;
     }
 
     ModelActivationControls Button {
@@ -53,6 +53,7 @@ class ModelActivationControls(Widget):
         ready: bool,
         pending: bool = False,
         allow_activation: bool | None = None,
+        disabled_reason: str | None = None,
     ) -> None:
         """Create controls for one exact installed reference.
 
@@ -71,6 +72,7 @@ class ModelActivationControls(Widget):
         self.ready = ready
         self.pending = pending
         self.allow_activation = allow_activation
+        self.disabled_reason = disabled_reason
         self._activation_eligible = (
             ready if allow_activation is None else allow_activation
         )
@@ -93,6 +95,12 @@ class ModelActivationControls(Widget):
                 classes="model-delete",
                 variant="error",
                 disabled=self.pending,
+            )
+        if self.pending and self.disabled_reason is not None:
+            yield Static(
+                self.disabled_reason,
+                classes="model-disabled-reason",
+                markup=False,
             )
 
     def set_pending(self, pending: bool) -> None:

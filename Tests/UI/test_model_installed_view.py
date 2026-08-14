@@ -181,6 +181,44 @@ def _painted_screen_text(app: App) -> str:
     )
 
 
+def _painted_style_of_text(app: App, region, needle: str):
+    strips = app.screen._compositor.render_strips()
+    for y in range(region.y, region.bottom):
+        cursor = 0
+        for segment in strips[y]:
+            end = cursor + segment.cell_length
+            if (
+                max(cursor, region.x) < min(end, region.right)
+                and needle in segment.text
+            ):
+                return segment.style
+            cursor = end
+    return None
+
+
+def _contrast(first, second) -> float:
+    def luminance(color) -> float:
+        triplet = color.get_truecolor()
+
+        def channel(value: int) -> float:
+            value /= 255
+            return (
+                value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+            )
+
+        return sum(
+            weight * channel(value)
+            for weight, value in zip(
+                (0.2126, 0.7152, 0.0722),
+                (triplet.red, triplet.green, triplet.blue),
+                strict=True,
+            )
+        )
+
+    lighter, darker = sorted((luminance(first), luminance(second)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
 @pytest.mark.asyncio
 async def test_installed_view_performs_no_io_at_compose_time(tmp_path: Path) -> None:
     """Eagerly mounted model views stay idle until their rail row is selected."""
@@ -2688,16 +2726,25 @@ async def test_installed_audio_cpp_row_separates_package_truth_at_80x24(
         await _wait_until(pilot, lambda: view._loaded)
         text = _rendered_static_text(view)
         for fact in (
-            "Available: Installed locally",
-            "Integrity: Verified",
-            "Recipe: Matched",
+            "Available: Not checked — pinned source was not contacted",
+            "Installed package: Local record found",
+            "Integrity: Not checked this session",
+            "Recipe: Catalog candidate — exact revision not checked",
             "Compatibility:",
-            "Configured: Not observed here — review Guided Settings",
-            "Running: Not observed here — check Speech Lab",
+            "Configured: Unknown — Settings state was not checked",
+            "Running: Unknown — supervisor state was not checked",
+            "Speech tasks:",
+            "Required package files:",
+            "Pinned source:",
+            "Manifest authority: Pinned sizes and SHA-256 digests recorded",
+            "Package size:",
             "Model package only — audiocpp_server is not included",
         ):
             assert fact in text
         assert "Active" not in text
+        assert "Integrity verified" not in text
+        assert "Integrity: Verified" not in text
+        assert "Recipe: Matched" not in text
         assert not view.query(".model-activate")
         delete = view.query_one(".model-delete", Button)
         delete.focus()
@@ -2705,6 +2752,128 @@ async def test_installed_audio_cpp_row_separates_package_truth_at_80x24(
         assert delete in app.screen._compositor.visible_widgets
         assert delete.region.right <= view.region.right
         assert delete.region.bottom <= view.region.bottom
+
+
+@pytest.mark.asyncio
+async def test_corrupt_audio_cpp_row_never_promotes_ready_or_integrity_truth(
+    tmp_path: Path,
+) -> None:
+    """A stale readiness bit cannot outweigh current inventory failure evidence."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    descriptor, _sources = audio_cpp_curated_entries()[0]
+    installed = InstalledArtifact(
+        path=tmp_path / "managed-package",
+        descriptor=descriptor,
+        ready=False,
+        active=True,
+        error="PRIVATE checksum failure detail",
+    )
+
+    class Service:
+        def list_installed(self):
+            return (installed,)
+
+        def disk_usage(self):
+            return ArtifactDiskUsage(1, 0, 64 * 1024 * 1024)
+
+    view = InstalledView(service_factory=Service, legacy_dir=tmp_path)
+    app = _StyledInstalledApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        await _wait_until(pilot, lambda: view._loaded)
+        text = _rendered_static_text(view)
+
+    assert "Integrity: Unknown — package record needs Repair" in text
+    assert "Integrity verified" not in text
+    assert "Integrity: Verified" not in text
+    assert "Ready" not in text
+    assert "Active" not in text
+    assert "Recipe: Matched" not in text
+    assert "PRIVATE" not in text
+
+
+@pytest.mark.parametrize(
+    "theme",
+    ("textual-dark", "textual-light", "tokyo-night", "monokai", "dracula"),
+)
+@pytest.mark.asyncio
+async def test_disabled_audio_cpp_delete_has_adjacent_reason_and_contrast(
+    tmp_path: Path,
+    theme: str,
+) -> None:
+    """A disabled destructive action remains readable without pointer help."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    descriptor, _sources = audio_cpp_curated_entries()[0]
+    installed = InstalledArtifact(
+        path=tmp_path / "managed-package",
+        descriptor=descriptor,
+        ready=True,
+        active=False,
+        error=None,
+    )
+    service = MagicMock()
+    service.list_installed.return_value = (installed,)
+    service.disk_usage.return_value = ArtifactDiskUsage(1, 0, 64 * 1024 * 1024)
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._install_active = True
+    app = _StyledInstalledApp(view)
+    app.theme = theme
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        await _wait_until(pilot, lambda: view._loaded)
+        delete = view.query_one(".model-delete", Button)
+        delete.scroll_visible(animate=False, immediate=True, force=True)
+        await pilot.pause()
+        assert delete.disabled is True
+        assert (
+            "Delete unavailable — another model package operation is in progress."
+            in _rendered_static_text(view)
+        )
+        painted = _painted_style_of_text(app, delete.region, "Delete")
+        assert painted is not None
+        assert painted.color is not None and painted.bgcolor is not None
+        ratio = _contrast(painted.color, painted.bgcolor)
+        assert ratio >= 3.0, f"Delete is {ratio:.2f}:1 under {theme}"
+
+
+@pytest.mark.parametrize(
+    "control_id",
+    ("installed-models-refresh", "installed-models-repair"),
+)
+@pytest.mark.asyncio
+async def test_installed_header_action_restores_focus_after_recompose(
+    tmp_path: Path,
+    control_id: str,
+) -> None:
+    """Refresh and Repair return focus to the semantic invoking action."""
+    from tldw_chatbook.Model_Artifacts.service import ReconcileReport
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    service = MagicMock()
+    service.list_installed.return_value = ()
+    service.disk_usage.return_value = ArtifactDiskUsage(0, 0, 64 * 1024 * 1024)
+    service.reconcile.return_value = ReconcileReport(0, 0, (), (), ())
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    app = _StyledInstalledApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        await _wait_until(pilot, lambda: view._loaded)
+        control = view.query_one(f"#{control_id}", Button)
+        control.focus()
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: (
+                not view._loading
+                and view._operation_name is None
+                and view.query_one(f"#{control_id}", Button).has_focus
+            ),
+        )
 
 
 @pytest.mark.asyncio
