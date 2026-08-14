@@ -4,11 +4,12 @@ from __future__ import annotations
 
 
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Select, Static
 
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
@@ -66,6 +67,18 @@ def _rail_rows(screen):
     return list(screen.query(".lab-rail-row").results(Button))
 
 
+def _assert_painted_inside(app, widget, parent) -> None:
+    """Assert real compositor visibility inside one owning region."""
+    assert widget in app.screen._compositor.visible_widgets
+    assert widget.is_on_screen
+    assert widget.region.width > 0 and widget.region.height > 0
+    bounds = parent.content_region
+    assert widget.region.x >= bounds.x
+    assert widget.region.right <= bounds.right
+    assert widget.region.y >= bounds.y
+    assert widget.region.bottom <= bounds.bottom
+
+
 @pytest.mark.asyncio
 async def test_all_provider_and_model_rows_live_in_the_rail():
     app = _app()
@@ -87,6 +100,141 @@ async def test_all_provider_and_model_rows_live_in_the_rail():
             "external",
             "remote",
         ]
+
+
+@pytest.mark.asyncio
+async def test_empty_models_recovery_routes_hold_at_80_columns(
+    tmp_path,
+    monkeypatch,
+):
+    """Downloader retirement leaves explicit, distinct, in-bounds recovery."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactDiskUsage
+    from tldw_chatbook.Model_Artifacts.remote_huggingface import (
+        HuggingFaceRemoteAdapter,
+    )
+    from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    search = AsyncMock(return_value=())
+    monkeypatch.setattr(HuggingFaceRemoteAdapter, "search", search)
+    app = _app()
+    app._parakeet_source_service = _FakeExternalSourceService()
+    async with app.run_test(size=(80, 40)) as pilot:
+        assert app.CSS_PATH == TldwCli.CSS_PATH
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#installed-models-view")), pilot
+        )
+
+        rows = _rail_rows(screen)
+        keys = [row.lab_view_key for row in rows]
+        assert "download-models" not in keys
+        assert not screen.query("#lab-models-row-download-models")
+        rail = screen.query_one("#lab-rail")
+        for row in rows:
+            _assert_painted_inside(app, row, rail)
+
+        window = screen.query_one(LLMManagementWindow)
+        assert "download-models" not in window.view_mapping
+        assert "download-models" not in window.ACTION_HANDLERS
+        assert not window.query("#llm-view-download-models")
+        assert not window.query("#empty-state-download-models")
+
+        installed = window.query_one("#installed-models-view", InstalledView)
+        legacy_root = tmp_path / "empty-legacy-root"
+        legacy_root.mkdir()
+        managed_root = tmp_path / "managed-store"
+        service = MagicMock()
+        service.list_installed.return_value = ()
+        service.disk_usage.return_value = ArtifactDiskUsage(0, 0, 64 * 1024 * 1024)
+        service.artifacts_path = managed_root
+        installed._service_factory = lambda: service
+        installed._legacy_dir = legacy_root
+        installed_row = next(row for row in rows if row.lab_view_key == "installed")
+        installed_row.press()
+        assert await _wait_for(lambda: installed._loaded, pilot)
+
+        recovery = next(
+            item
+            for item in installed.query(Static)
+            if str(item.renderable).startswith("No managed or legacy models found.")
+        )
+        import_button = installed.query_one("#installed-models-import-gguf", Button)
+        installed_parent = window.query_one("#llm-view-installed")
+        assert import_button in app.screen._compositor.visible_widgets
+        assert import_button.is_on_screen
+        assert import_button.region.right <= app.size.width
+        assert import_button.region.bottom <= app.size.height
+        _assert_painted_inside(app, recovery, installed_parent)
+        assert import_button.can_focus
+
+        for provider, view_key in (
+            ("llamacpp", "llama-cpp"),
+            ("llamafile", "llamafile"),
+        ):
+            next(row for row in rows if row.lab_view_key == view_key).press()
+            await pilot.pause()
+            mode = window.query_one(f"#{provider}-gguf-source-mode", Select)
+            labels = tuple(str(label) for label, _value in mode._options)
+            assert "External GGUF" in labels
+            if mode.value != "external":
+                mode.value = "external"
+                await pilot.pause()
+            external_region = window.query_one(f"#{provider}-gguf-external-region")
+            external_region.scroll_visible()
+            await pilot.pause()
+            model_path = window.query_one(f"#{provider}-model-path", Input)
+            browse = window.query_one(f"#{provider}-browse-model-button", Button)
+            view = window.query_one(f"#llm-view-{view_key}")
+            _assert_painted_inside(app, model_path, view)
+            _assert_painted_inside(app, browse, view)
+            source_copy = "\n".join(
+                str(item.renderable) for item in external_region.query(Static)
+            )
+            assert "used in place" in source_copy
+            assert "not imported, copied, deleted, or selected globally" in source_copy
+
+        external_row = next(row for row in rows if row.lab_view_key == "external")
+        assert str(external_row.label) == "External"
+        external_row.press()
+        await pilot.pause()
+        external = window.query_one("#external-models-view", ExternalModelView)
+        external_text = "\n".join(
+            str(item.renderable) for item in external.query(Static)
+        )
+        assert "external Parakeet sources" in external_text
+        assert "GGUF" not in external_text
+
+        transformers_row = next(
+            row for row in rows if row.lab_view_key == "transformers"
+        )
+        transformers_row.press()
+        await pilot.pause()
+        transformers_view = window.query_one("#llm-view-transformers")
+        for selector in (
+            "#transformers-models-dir-path",
+            "#transformers-browse-models-dir-button",
+            "#transformers-list-local-models-button",
+        ):
+            control = window.query_one(selector)
+            control.scroll_visible()
+            await pilot.pause()
+            _assert_painted_inside(app, control, transformers_view)
+        assert not window.query("#transformers-download-model-button")
+
+        remote_row = next(row for row in rows if row.lab_view_key == "remote")
+        remote_row.press()
+        await pilot.pause()
+        assert window.active_view == "remote"
+        assert window.query_one("#remote-models-view")
+        search.assert_not_awaited()
+
+    expected = (
+        "No managed or legacy models found. Use Import GGUF… for a managed copy, "
+        "or choose External GGUF under Llama.cpp or Llamafile to use a file in place."
+    )
+    assert str(recovery.renderable) == expected
+    assert str(tmp_path) not in str(recovery.renderable)
 
 
 @pytest.mark.asyncio

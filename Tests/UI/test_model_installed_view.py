@@ -1449,6 +1449,70 @@ async def test_empty_inventory_still_reports_managed_and_staging_space(
 
 
 @pytest.mark.asyncio
+async def test_empty_inventory_paints_path_private_recovery_and_real_import_intent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty managed/legacy inventory keeps both honest GGUF routes usable."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+    from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
+
+    service = MagicMock()
+    service.list_installed.return_value = ()
+    service.disk_usage.return_value = ArtifactDiskUsage(0, 0, 64 * 1024 * 1024)
+    service.artifacts_path = tmp_path / "managed-store"
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    app = _StyledInstalledApp(view)
+    pushed: list[tuple[Screen, Callable | None]] = []
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        assert app.CSS_PATH == TldwCli.CSS_PATH
+        view.ensure_loaded()
+        await _wait_until(pilot, lambda: view._loaded)
+
+        button = view.query_one("#installed-models-import-gguf", Button)
+        assert button.can_focus
+        assert button in app.screen._compositor.visible_widgets
+        for bounds in (button.parent.content_region, view.content_region):
+            assert button.region.x >= bounds.x
+            assert button.region.right <= bounds.right
+            assert button.region.y >= bounds.y
+            assert button.region.bottom <= bounds.bottom
+
+        monkeypatch.setattr(
+            app,
+            "push_screen",
+            lambda screen, callback=None: pushed.append((screen, callback)),
+        )
+        app.screen.set_focus(button)
+        await pilot.pause()
+        assert button.has_focus
+        await pilot.press("enter")
+        await pilot.pause()
+        picker, callback = pushed.pop()
+        assert isinstance(picker, EnhancedFileOpen)
+        assert callback is not None
+
+        recovery = next(
+            item
+            for item in view.query(Static)
+            if str(item.renderable).startswith("No managed or legacy models found.")
+        )
+        assert recovery in app.screen._compositor.visible_widgets
+        painted = _painted_screen_text(app)
+        assert "No managed or legacy models found." in painted
+        assert "Import GGUF…" in painted
+        assert "External GGUF" in painted
+
+    expected = (
+        "No managed or legacy models found. Use Import GGUF… for a managed copy, "
+        "or choose External GGUF under Llama.cpp or Llamafile to use a file in place."
+    )
+    assert str(recovery.renderable) == expected
+    assert str(tmp_path) not in str(recovery.renderable)
+
+
+@pytest.mark.asyncio
 async def test_mounted_install_progress_updates_without_recomposing_inventory(
     tmp_path: Path,
 ) -> None:
@@ -2342,13 +2406,12 @@ def test_curated_progress_tolerates_recompose_gap() -> None:
     view.refresh.assert_called_once_with(recompose=True)
 
 
-def test_models_rail_lists_curated_and_installed_and_drops_local_models() -> None:
-    """Phase 1 replaces Local Models while preserving the legacy downloader."""
+def test_models_rail_lists_surviving_destinations_without_a_downloader() -> None:
+    """The Models rail keeps recovery destinations, not the retired browser."""
     from tldw_chatbook.UI.Screens.llm_screen import MODELS_RAIL_SECTIONS
 
     models_section = dict(MODELS_RAIL_SECTIONS)["Models"]
     keys = [key for key, _label in models_section]
-    assert "curated" in keys
-    assert "installed" in keys
+    assert keys == ["curated", "installed", "external", "remote"]
     assert "local-models" not in keys
-    assert "download-models" in keys
+    assert "download-models" not in keys

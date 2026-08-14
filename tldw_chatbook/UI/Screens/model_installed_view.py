@@ -348,7 +348,12 @@ class InstalledView(Widget):
 
         with VerticalScroll(classes="installed-list"):
             if self._loaded and not self._rows:
-                yield Static("No managed or legacy models found.", markup=False)
+                yield Static(
+                    "No managed or legacy models found. Use Import GGUF… for a "
+                    "managed copy, or choose External GGUF under Llama.cpp or "
+                    "Llamafile to use a file in place.",
+                    markup=False,
+                )
             for row in self._rows:
                 yield self._row_widget(row)
 
