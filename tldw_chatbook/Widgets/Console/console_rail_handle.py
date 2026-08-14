@@ -96,9 +96,11 @@ class ConsoleRailHandle(DestinationRailHandle):
         """Return compact visible text while preserving full tooltips."""
         if self.vertical:
             return self._stack_vertical_label(self.label)
-        if self.side != "right":
-            return self.label
-        return "Inspect->" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
+        if self.side == "left":
+            return (
+                "Context->" if self.label == CONSOLE_RAIL_CONTEXT_LABEL else self.label
+            )
+        return "<-Inspect" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
 
     def _display_badge(self) -> str:
         """Return badge copy that fits the collapsed inspector affordance."""

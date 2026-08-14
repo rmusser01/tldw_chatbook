@@ -58,15 +58,13 @@ from collections.abc import Callable
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import Button
 
 from ...Chat.console_display_state import (
     ConsoleInspectorState,
     ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
 )
-from ...Chat.console_glyphs import GLYPH_COLLAPSE_RIGHT
-from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
 from ...Widgets.Console import (
     ConsoleRetrievalScopeRow,
@@ -162,23 +160,18 @@ class ConsoleInspectorRail(Vertical):
         right_rail_header.styles.min_height = 1
         right_rail_header.styles.max_height = 1
         with right_rail_header:
-            rail_label = Static(
-                "Inspector",
-                id="console-inspector-rail-title",
-                classes="console-rail-title",
-            )
-            rail_label.styles.width = "1fr"
-            yield rail_label
             collapse_button = Button(
-                resolve_glyph(GLYPH_COLLAPSE_RIGHT),
+                "Inspect|--------->",
                 id="console-inspector-rail-collapse",
                 classes="console-rail-collapse-button",
                 compact=True,
             )
             collapse_button.tooltip = "Collapse Inspector rail"
-            collapse_button.styles.width = 3
-            collapse_button.styles.min_width = 3
-            collapse_button.styles.max_width = 3
+            collapse_button.styles.width = "100%"
+            collapse_button.styles.min_width = 0
+            collapse_button.styles.max_width = "100%"
+            collapse_button.styles.text_align = "left"
+            collapse_button.styles.content_align = ("left", "middle")
             yield collapse_button
 
         with VerticalScroll(
@@ -238,8 +231,7 @@ class ConsoleInspectorRail(Vertical):
                     self._settings_summary_state,
                     id="console-settings-summary",
                     classes=(
-                        "console-inspector-session-settings"
-                        " console-settings-summary"
+                        "console-inspector-session-settings console-settings-summary"
                     ),
                 )
                 settings_summary.styles.width = "100%"
