@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Render `Inspect-->` as the complete nine-cell horizontal collapsed Inspector button while preserving every existing rail geometry, badge, tooltip, vertical-mode, and responsive contract.
+**Goal:** Render `Inspect->` as the complete nine-cell horizontal collapsed Inspector button while preserving every existing rail geometry, badge, tooltip, vertical-mode, and responsive contract.
 
-**Architecture:** Keep the shared `DestinationRailHandle` and all layout/CSS unchanged. Use the existing `ConsoleRailHandle._display_label()` presentation seam to replace the canonical horizontal right-side Inspector copy with one fixed nine-cell literal; strengthen existing component, mounted, interaction, and real-Console visual regressions around that seam.
+**Architecture:** Keep the shared `DestinationRailHandle`, CSS files, and layout geometry unchanged. Use the existing `ConsoleRailHandle._display_label()` presentation seam for one fixed nine-cell literal and clear Textual's default `line_pad=1` inline in the existing horizontal right Button block so the label uses all nine content cells; strengthen existing component, mounted, interaction, and real-Console visual regressions around those seams.
 
 **Tech Stack:** Python 3.11+, Textual 8.x, Rich cell geometry, pytest/Textual Pilot.
 
@@ -26,8 +26,8 @@
 - Modify `Tests/UI/test_console_shell_regions.py`: update the saved horizontal rail-style expectation while preserving stacked mode.
 - Modify `Tests/UI/test_settings_console_rail_labels.py`: update the mounted horizontal Inspector expectation in the failed-save state.
 - Modify `Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py`: update the core-loop mounted button label while preserving its tooltip contract.
-- Modify `Tests/UI/test_workbench_visual_snapshots.py`: require one composited `Inspect-->` row across the existing six real-Console viewport/badge states.
-- Modify `tldw_chatbook/Widgets/Console/console_rail_handle.py`: change the canonical horizontal Inspector display literal only.
+- Modify `Tests/UI/test_workbench_visual_snapshots.py`: require one composited `Inspect->` row across the existing six real-Console viewport/badge states.
+- Modify `tldw_chatbook/Widgets/Console/console_rail_handle.py`: change the canonical horizontal Inspector display literal and clear line padding on the existing horizontal right Button.
 - Modify `backlog/tasks/task-15865 - Make-Inspect-arrow-a-full-button-label.md`: complete acceptance criteria and record scoped verification after fresh evidence.
 
 ### Task 1: Pin the full-button label and arrow-end hit target
@@ -47,7 +47,7 @@ Change the horizontal Inspector assertion in `test_horizontal_defaults_preserve_
 
 ```python
 assert context._display_label() == CONSOLE_RAIL_CONTEXT_LABEL
-assert inspector._display_label() == "Inspect-->"
+assert inspector._display_label() == "Inspect->"
 ```
 
 The existing `test_vertical_inspector_label_stacks_without_direction_glyph` remains unchanged and continues to require stacked `Inspector`.
@@ -58,7 +58,7 @@ In `test_console_handle_abbreviates_the_inspector_label_on_the_right`, require:
 
 ```python
 button = app.query_one("#console-rail-open", Button)
-assert str(button.label) == "Inspect-->"
+assert str(button.label) == "Inspect->"
 assert button.tooltip == "Open Inspector rail"
 ```
 
@@ -76,7 +76,7 @@ In `test_clicking_open_then_collapse_toggles_visibility_and_persists`, replace t
 
 ```python
 open_button = pilot.app.screen.query_one("#console-inspector-rail-open", Button)
-assert str(open_button.label) == "Inspect-->"
+assert str(open_button.label) == "Inspect->"
 arrow_end = (open_button.region.width - 1, open_button.region.height // 2)
 assert await pilot.click(open_button, offset=arrow_end)
 ```
@@ -88,8 +88,8 @@ Keep every existing post-click open/hidden assertion and the collapse-back path.
 In `test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep`, preserve the geometry/frame/badge/transcript assertions and change only the visible copy requirements:
 
 ```python
-assert _painted_region_rows(screen, inspector_button.region) == ["Inspect-->"]
-assert inspector_button.label == "Inspect-->"
+assert _painted_region_rows(screen, inspector_button.region) == ["Inspect->"]
+assert inspector_button.label == "Inspect->"
 ```
 
 Do not rename the historical TASK-15783 parity test; TASK-15865 strengthens its current UI contract without rewriting its provenance.
@@ -100,13 +100,13 @@ Change only the horizontal canonical Inspector expectations in these existing te
 
 ```python
 # Tests/UI/test_console_shell_regions.py
-(False, 13, 11, "Context ▸", "Inspect-->"),
+(False, 13, 11, "Context ▸", "Inspect->"),
 
 # Tests/UI/test_settings_console_rail_labels.py
-assert right._display_label() == "Inspect-->"
+assert right._display_label() == "Inspect->"
 
 # Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py
-assert inspector_button.label == "Inspect-->"
+assert inspector_button.label == "Inspect->"
 ```
 
 Leave the stacked `Inspector`, left `Context ▸`, width, tooltip, and settings state assertions unchanged.
@@ -147,15 +147,21 @@ git commit -m "test(console): require full Inspect arrow button"
 **Files:**
 - Modify: `tldw_chatbook/Widgets/Console/console_rail_handle.py:94-100`
 
-- [ ] **Step 1: Make the minimal presentation change**
+- [ ] **Step 1: Make the minimal presentation changes**
 
-Change only the canonical horizontal right-side return literal:
+Change the canonical horizontal right-side return literal:
 
 ```python
-return "Inspect-->" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
+return "Inspect->" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
 ```
 
-Do not add constants, width calculations, child widgets, CSS, or layout changes. The existing branch order already protects vertical and left-side presentation.
+In the existing nonvertical right Button block, clear Textual's default line padding:
+
+```python
+child.styles.line_pad = 0
+```
+
+`Inspect->` is exactly nine terminal cells. Textual 8's default `line_pad=1` reserves one cell on each side, and a runtime compositor probe showed the label wrapping until this inline reset; the repository uses this inline pattern because TCSS rejects `line-pad: 0`. Do not add constants, width calculations, child widgets, CSS-file rules, or layout changes. The existing branch order protects vertical and left-side presentation.
 
 - [ ] **Step 2: Run the focused GREEN gates from Task 1**
 
@@ -283,7 +289,7 @@ git diff origin/dev...HEAD -- \
   Tests/UI/test_workbench_visual_snapshots.py
 ```
 
-Confirm the production diff is the one approved literal, the arrow-end click stays in bounds, and no shared handle, CSS, width, badge composition, or vertical copy changed.
+Confirm the production diff is the approved literal plus the inline line-pad reset on the existing horizontal right Button, the arrow-end click stays in bounds, and no shared handle, CSS file, width, badge composition, or vertical copy changed.
 
 - [ ] **Step 2: Complete the task record**
 
@@ -296,7 +302,7 @@ backlog task edit 15865 \
   --check-ac 3 \
   --check-ac 4 \
   --check-ac 5 \
-  --notes "Implemented the full-width Inspect arrow through the existing ConsoleRailHandle display seam using one fixed literal; no CSS, width, or child-widget changes were added. Modified console_rail_handle.py plus test_console_rail_handle.py, test_destination_rail.py, test_console_right_rail.py, test_console_shell_regions.py, test_settings_console_rail_labels.py, test_product_maturity_gate1_core_loop_screen_adaptation.py, and test_workbench_visual_snapshots.py. Directly related rail, interaction, compact-access, CSS-integrity, visual, Ruff, duplicate-ID, and diff checks passed. Per user instruction, no full repository suite was run. ADR required: no." \
+  --notes "Implemented the nine-cell Inspect arrow through the existing ConsoleRailHandle display seam using the fixed Inspect-> literal plus an inline line-pad reset on the existing horizontal right Button; no CSS-file, outer-width, child-widget, ID/class, or layout-structure changes were added. Modified console_rail_handle.py plus test_console_rail_handle.py, test_destination_rail.py, test_console_right_rail.py, test_console_shell_regions.py, test_settings_console_rail_labels.py, test_product_maturity_gate1_core_loop_screen_adaptation.py, and test_workbench_visual_snapshots.py. Directly related rail, interaction, compact-access, CSS-integrity, visual, Ruff, duplicate-ID, and diff checks passed. Per user instruction, no full repository suite was run. ADR required: no." \
   --status Done \
   --plain
 ```
