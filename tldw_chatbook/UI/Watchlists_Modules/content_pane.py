@@ -11,7 +11,7 @@ from typing import Any
 from rich.console import Group, RenderableType
 from rich.markdown import Markdown
 from rich.text import Text
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
@@ -430,7 +430,7 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
         # rather than stacking. A `change` item previously spent three of the
         # reader on three stacked buttons; it now spends one, which preserves
         # the body budget and makes room for the expand affordance.
-        with Horizontal(id="content-actions", classes="destination-filter-strip"):
+        with HorizontalScroll(id="content-actions", classes="destination-filter-strip"):
             yield Button(
                 "Mark unread",
                 id="content-mark-unread-button",

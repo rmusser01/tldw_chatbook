@@ -242,6 +242,22 @@
     overflow-y: auto;
 }
 
+/* Keep the action strip one row. Ordinary article verbs fit at the compact
+ * width once Button's generic 16-cell floor is removed; change-only verbs
+ * use native focus-driven horizontal scrolling. A painted scrollbar would
+ * consume this single row, so the scroll owner keeps no scrollbar chrome.
+ */
+#content-actions {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-size-horizontal: 0;
+}
+
+#content-actions Button {
+    width: auto;
+    min-width: 0;
+}
+
 #content-position {
     width: 1fr;
 }

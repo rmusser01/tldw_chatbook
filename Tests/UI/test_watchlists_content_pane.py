@@ -138,7 +138,7 @@ async def test_content_pane_shows_placeholder_with_no_item():
 
 @pytest.mark.asyncio
 async def test_open_content_wraps_only_the_body_in_a_vertical_scroll():
-    from textual.containers import VerticalScroll
+    from textual.containers import HorizontalScroll, VerticalScroll
     from textual.widgets import Static
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
@@ -159,7 +159,7 @@ async def test_open_content_wraps_only_the_body_in_a_vertical_scroll():
     async with app.run_test() as pilot:
         await pilot.pause()
         pane = app.query_one(ContentPane)
-        actions = app.query_one("#content-actions")
+        actions = app.query_one("#content-actions", HorizontalScroll)
         body_scroll = app.query_one("#content-body-scroll", VerticalScroll)
         body = app.query_one("#content-body", Static)
         footer = app.query_one("#content-footer")

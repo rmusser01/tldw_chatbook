@@ -1,6 +1,6 @@
 import pytest
 from textual.app import App, ComposeResult
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import HorizontalScroll, Vertical, VerticalScroll
 from textual.widgets import Button, Static
 
 from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
@@ -60,12 +60,14 @@ class _ReadGeometryApp(App):
         read_mode: bool = True,
         layout: RegionLayout = RegionLayout(),
         content_lines: int | None = 30,
+        content_kind: str = "article",
     ) -> None:
         super().__init__()
         self.item_count = item_count
         self.read_mode = read_mode
         self.initial_layout = layout
         self.content_lines = content_lines
+        self.content_kind = content_kind
 
     def _items_pane(self) -> Vertical:
         pane = ArticleListPane(id="watchlists-items-pane")
@@ -89,8 +91,10 @@ class _ReadGeometryApp(App):
                 "item_id": "reader",
                 "title": "Geometry article",
                 "source_name": "Geometry Feed",
-                "content_kind": "article",
-                "content_format": "text",
+                "content_kind": self.content_kind,
+                "content_format": (
+                    "diff" if self.content_kind == "change" else "text"
+                ),
                 "content": "\n\n".join(
                     f"paragraph-{row:02d}" for row in range(self.content_lines)
                 ),
@@ -722,6 +726,87 @@ async def test_content_actions_footer_and_border_stay_painted_at_body_extremes()
             assert "Next unread" in rendered
             assert rows[0].startswith("╭") and rows[0].endswith("╮"), rows[0]
             assert rows[-1].startswith("╰") and rows[-1].endswith("╯"), rows[-1]
+
+
+@pytest.mark.asyncio
+async def test_compact_article_actions_are_fully_contained_and_composited():
+    app = _ReadGeometryApp(0, content_lines=80)
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        centre = app.query_one("#wl-centre", VerticalScroll)
+        actions = app.query_one("#content-actions")
+        buttons = list(actions.query(Button))
+        centre.scroll_to_widget(actions, animate=False)
+        await pilot.pause()
+
+        assert actions.region.height == 1
+        assert actions.max_scroll_x == 0
+        for button in buttons:
+            assert actions.content_region.contains_region(button.region), (
+                f"{button.id} is clipped outside the compact action viewport: "
+                f"actions={actions.content_region} button={button.region}"
+            )
+
+        strips = app.screen._compositor.render_strips()
+        row = "".join(segment.text for segment in strips[actions.region.y])[
+            actions.region.x : actions.region.right
+        ]
+        for button in buttons:
+            assert str(button.label) in row, (button.id, row)
+
+
+@pytest.mark.parametrize("size", [(120, 36), (180, 70)])
+@pytest.mark.asyncio
+async def test_change_actions_tab_into_native_horizontal_view(size):
+    app = _ReadGeometryApp(0, content_lines=80, content_kind="change")
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        centre = app.query_one("#wl-centre", VerticalScroll)
+        actions = app.query_one("#content-actions", HorizontalScroll)
+        body_scroll = app.query_one("#content-body-scroll", VerticalScroll)
+        buttons = list(actions.query(Button))
+        assert [button.id for button in buttons] == [
+            "content-mark-unread-button",
+            "content-star-button",
+            "content-open-button",
+            "content-ingest-button",
+            "content-queue-button",
+            "content-expand-button",
+            "content-full-page-button",
+            "content-previous-snapshot-button",
+        ]
+        assert actions.region.height == 1
+        if size[0] == 120:
+            assert actions.max_scroll_x > 0, (
+                "the compact change fixture must genuinely exercise overflow"
+            )
+
+        centre.scroll_to_widget(actions, animate=False)
+        await pilot.pause()
+        buttons[0].focus()
+        await pilot.pause()
+        for index, button in enumerate(buttons):
+            if index:
+                await pilot.press("tab")
+                await pilot.pause()
+            assert app.focused is button, (index, app.focused)
+            assert actions.content_region.contains_region(button.region), (
+                f"focused {button.id} did not scroll fully into view: "
+                f"actions={actions.content_region} button={button.region} "
+                f"scroll_x={actions.scroll_x}"
+            )
+            strips = app.screen._compositor.render_strips()
+            row = "".join(segment.text for segment in strips[actions.region.y])[
+                actions.region.x : actions.region.right
+            ]
+            assert str(button.label) in row, (button.id, row)
+
+        action_region = actions.region
+        action_scroll_x = actions.scroll_x
+        body_scroll.scroll_end(animate=False)
+        await pilot.pause()
+        assert actions.region == action_region
+        assert actions.scroll_x == action_scroll_x
 
 
 @pytest.mark.asyncio
