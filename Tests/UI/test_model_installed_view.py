@@ -2842,6 +2842,56 @@ async def test_install_only_audio_cpp_root_without_readiness_is_not_a_repair_err
     assert "Active" not in text
 
 
+@pytest.mark.parametrize("mismatch", ("revision", "repository"))
+@pytest.mark.asyncio
+async def test_installed_audio_cpp_mismatch_is_review_required_when_mounted(
+    tmp_path: Path,
+    mismatch: str,
+) -> None:
+    """Installed rows do not promote drifted descriptors to canonical truth."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    descriptor, _sources = audio_cpp_curated_entries()[0]
+    mismatched = (
+        replace(
+            descriptor,
+            reference=ArtifactRef(
+                descriptor.reference.artifact_id,
+                "0" * 40,
+                descriptor.reference.variant,
+            ),
+        )
+        if mismatch == "revision"
+        else replace(descriptor, upstream_repository="attacker/repository")
+    )
+    installed = InstalledArtifact(
+        path=tmp_path / "managed-package",
+        descriptor=mismatched,
+        ready=False,
+        active=False,
+        error=None,
+    )
+    service = MagicMock()
+    service.list_installed.return_value = (installed,)
+    service.disk_usage.return_value = ArtifactDiskUsage(1, 0, 64 * 1024 * 1024)
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    app = _StyledInstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        await _wait_until(pilot, lambda: view._loaded)
+        text = _rendered_static_text(view)
+
+    assert "Available: Unknown" in text
+    assert "review required" in text
+    assert "Recipe: Unknown" in text
+    assert "Pinned source: Unknown" in text
+    assert "Complete pinned source recorded" not in text
+    assert "exact manifest mapping recorded" not in text
+    assert "attacker/repository" not in text
+
+
 @pytest.mark.parametrize(
     "theme",
     ("textual-dark", "textual-light", "tokyo-night", "monokai", "dracula"),
@@ -3050,6 +3100,74 @@ async def test_delayed_bulk_observation_restores_installed_delete_focus(
         assert view.query_one(".model-delete", Button).has_focus
 
     assert calls == [(descriptor.reference,)]
+
+
+@pytest.mark.asyncio
+async def test_back_to_back_installed_refresh_starts_only_the_latest_generation(
+    tmp_path: Path,
+) -> None:
+    """A deferred old start cannot cancel the newer installed observation."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
+    )
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    descriptor, _sources = audio_cpp_curated_entries()[0]
+    installed = InstalledArtifact(
+        path=tmp_path / "managed-package",
+        descriptor=descriptor,
+        ready=False,
+        active=False,
+        error=None,
+    )
+    service = MagicMock()
+    service.list_installed.return_value = (installed,)
+    service.disk_usage.return_value = ArtifactDiskUsage(1, 0, 64 * 1024 * 1024)
+    calls = 0
+
+    async def observe(references):
+        nonlocal calls
+        calls += 1
+        return AudioCppModelLibraryObservationSnapshot(
+            (
+                AudioCppArtifactRemovalEvidence(
+                    references[0],
+                    settings_consumers=(
+                        (("saved", "Guided Settings", "package"),) if calls == 1 else ()
+                    ),
+                ),
+            )
+        )
+
+    view = InstalledView(
+        service_factory=lambda: service,
+        legacy_dir=tmp_path,
+        observation_provider=observe,
+    )
+    app = _StyledInstalledApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        await _wait_until(
+            pilot,
+            lambda: "Configured: Saved Settings" in _rendered_static_text(view),
+        )
+        view.query_one(".model-delete", Button).focus()
+        await pilot.pause()
+        assert view.query_one(".model-delete", Button).has_focus
+        view.refresh_observations()
+        view.refresh_observations()
+        await _wait_until(
+            pilot,
+            lambda: (
+                "Configured: Not configured — exact Settings state checked"
+                in _rendered_static_text(view)
+            ),
+        )
+        assert view.query_one(".model-delete", Button).has_focus
+
+    assert calls == 2
 
 
 def test_curated_progress_tolerates_recompose_gap() -> None:

@@ -49,10 +49,12 @@ class AudioCppPackageProjection:
 
     recipe: str
     compatibility: str
+    availability: str
     companion_paths: tuple[str, ...]
     speech_tasks: str
     required_files: str
     pinned_source: str
+    manifest_authority: str
     package_size: str
     configured: str = _AUDIO_CPP_CONFIGURED_UNKNOWN
     running: str = _AUDIO_CPP_RUNNING_UNKNOWN
@@ -182,6 +184,12 @@ def audio_cpp_package_projection(
 
     if descriptor.consumer != "audio_cpp":
         return None
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        AUDIO_CPP_ARTIFACT_COMMIT,
+        AUDIO_CPP_ARTIFACT_REPOSITORY,
+        audio_cpp_artifact_identity_matches_recipe,
+        audio_cpp_artifact_source_matches_descriptor,
+    )
     from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
 
     recipe = next(
@@ -192,16 +200,32 @@ def audio_cpp_package_projection(
         ),
         None,
     )
-    if recipe is None:
+    exact = recipe is not None and audio_cpp_artifact_identity_matches_recipe(
+        recipe_id=recipe.recipe_id,
+        recipe_revision=recipe.recipe_revision,
+        package_variant=recipe.package_variant,
+        recipe_artifact_ids=recipe.model_library_artifact_ids,
+        recipe_precision=recipe.precision,
+        artifact_id=descriptor.reference.artifact_id,
+        revision=descriptor.reference.revision,
+        variant=descriptor.reference.variant,
+    )
+    if not exact or not audio_cpp_artifact_source_matches_descriptor(descriptor):
         return AudioCppPackageProjection(
-            "Catalog unavailable — exact revision not checked",
-            "Catalog evidence unavailable — exact package not checked",
-            (),
-            "Unknown",
-            "Unknown",
-            descriptor.source_url,
-            f"{descriptor.expected_installed_bytes:,} bytes",
+            recipe="Unknown — exact catalog identity does not match a reviewed recipe",
+            compatibility="Unknown — exact package identity needs review",
+            availability=(
+                "Unknown — exact catalog identity or pinned source does not match; "
+                "review required"
+            ),
+            companion_paths=(),
+            speech_tasks="Unknown — exact package identity needs review",
+            required_files="Unknown — exact package identity needs review",
+            pinned_source="Unknown — exact pinned source needs review",
+            manifest_authority="Unknown — exact manifest authority needs review",
+            package_size="Unknown — exact package identity needs review",
         )
+    assert recipe is not None
     evidence = ", ".join(
         f"{item.system}/{item.architecture}/{item.backend.value}: {item.state.value}"
         for item in recipe.backend_evidence
@@ -221,10 +245,12 @@ def audio_cpp_package_projection(
             "Catalog tuple evidence — exact installed package not checked · "
             f"{recipe.audio_cpp_release} · {evidence}"
         ),
+        availability=("Complete pinned source recorded; live reachability not checked"),
         companion_paths=companions,
         speech_tasks=", ".join(item.upper() for item in recipe.capabilities),
         required_files=", ".join(item.path for item in descriptor.files),
-        pinned_source=f"{descriptor.upstream_repository}@{descriptor.upstream_revision}",
+        pinned_source=f"{AUDIO_CPP_ARTIFACT_REPOSITORY}@{AUDIO_CPP_ARTIFACT_COMMIT}",
+        manifest_authority="Pinned sizes and SHA-256 digests recorded",
         package_size=f"{descriptor.expected_installed_bytes:,} bytes",
     )
 
@@ -388,6 +414,7 @@ class CuratedView(Widget):
         self._recovery_message: str | None = None
         self._recovery_reference: ArtifactRef | None = None
         self._observation_generation = 0
+        self._observation_focus_locator: ModelLibraryFocusLocator | None = None
         super().__init__(id=id)
 
     def compose(self) -> ComposeResult:
@@ -541,10 +568,7 @@ class CuratedView(Widget):
             collapsed=True,
         )
         return (
-            Static(
-                "Available: Complete pinned source recorded; live reachability not checked",
-                markup=False,
-            ),
+            Static(f"Available: {projection.availability}", markup=False),
             Static(
                 "Integrity: Not checked this session"
                 if row.installed
@@ -561,8 +585,7 @@ class CuratedView(Widget):
             ),
             Static(f"Pinned source: {projection.pinned_source}", markup=False),
             Static(
-                "Manifest authority: Pinned sizes and SHA-256 digests recorded",
-                markup=False,
+                f"Manifest authority: {projection.manifest_authority}", markup=False
             ),
             Static(f"Package size: {projection.package_size}", markup=False),
             companions,
@@ -704,6 +727,10 @@ class CuratedView(Widget):
             if focused is not None and self in focused.ancestors_with_self
             else None
         )
+        if locator is not None:
+            self._observation_focus_locator = locator
+        else:
+            locator = self._observation_focus_locator
         rows = tuple(
             replace(row, audio_cpp=clear_audio_cpp_observation(row.audio_cpp))
             if row.audio_cpp is not None
@@ -715,18 +742,35 @@ class CuratedView(Widget):
             self.refresh(recompose=True)
             if locator is not None:
                 self.call_after_refresh(self.restore_focus, locator)
-            self.call_after_refresh(
-                self._observe_audio_cpp_rows,
-                self._observation_generation,
-                references,
-                locator,
-            )
-            return
-        self._observe_audio_cpp_rows(
+        else:
+            self.refresh()
+        self.call_after_refresh(
+            self._start_audio_cpp_observation,
             self._observation_generation,
             references,
             locator,
         )
+
+    def _start_audio_cpp_observation(
+        self,
+        generation: int,
+        references: tuple[ArtifactRef, ...],
+        locator: ModelLibraryFocusLocator | None,
+    ) -> None:
+        """Start only the still-current deferred observation generation."""
+
+        if (
+            generation != self._observation_generation
+            or tuple(
+                row.descriptor.reference
+                for row in self._rows
+                if row.audio_cpp is not None
+            )
+            != references
+        ):
+            return
+        self._observation_focus_locator = None
+        self._observe_audio_cpp_rows(generation, references, locator)
 
     @work(group="curated_audio_cpp_observation", exclusive=True, exit_on_error=False)
     async def _observe_audio_cpp_rows(

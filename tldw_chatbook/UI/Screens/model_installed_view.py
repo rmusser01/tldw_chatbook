@@ -282,6 +282,7 @@ class InstalledView(Widget):
         self._import_retry_available = False
         self._restore_header_focus_id: str | None = None
         self._observation_generation = 0
+        self._observation_focus_locator: ModelLibraryFocusLocator | None = None
         super().__init__(id=id)
 
     def _non_import_lifecycle_pending(self) -> bool:
@@ -533,10 +534,7 @@ class InstalledView(Widget):
             collapsed=True,
         )
         return (
-            Static(
-                "Available: Complete pinned source recorded; live reachability not checked",
-                markup=False,
-            ),
+            Static(f"Available: {projection.availability}", markup=False),
             Static("Installed package: Local record found", markup=False),
             Static(
                 "Integrity: Unknown — package record needs Repair"
@@ -554,8 +552,7 @@ class InstalledView(Widget):
             ),
             Static(f"Pinned source: {projection.pinned_source}", markup=False),
             Static(
-                "Manifest authority: Pinned sizes and SHA-256 digests recorded",
-                markup=False,
+                f"Manifest authority: {projection.manifest_authority}", markup=False
             ),
             Static(f"Package size: {projection.package_size}", markup=False),
             companions,
@@ -727,6 +724,10 @@ class InstalledView(Widget):
             if focused is not None and self in focused.ancestors_with_self
             else None
         )
+        if locator is not None:
+            self._observation_focus_locator = locator
+        else:
+            locator = self._observation_focus_locator
         projections = {
             reference: clear_audio_cpp_observation(projection)
             for reference, projection in self._audio_cpp_projections.items()
@@ -736,18 +737,30 @@ class InstalledView(Widget):
             self.refresh(recompose=True)
             if locator is not None:
                 self.call_after_refresh(self.restore_focus, locator)
-            self.call_after_refresh(
-                self._observe_audio_cpp_rows,
-                self._observation_generation,
-                references,
-                locator,
-            )
-            return
-        self._observe_audio_cpp_rows(
+        else:
+            self.refresh()
+        self.call_after_refresh(
+            self._start_audio_cpp_observation,
             self._observation_generation,
             references,
             locator,
         )
+
+    def _start_audio_cpp_observation(
+        self,
+        generation: int,
+        references: tuple[ArtifactRef, ...],
+        locator: ModelLibraryFocusLocator | None,
+    ) -> None:
+        """Start only the still-current deferred observation generation."""
+
+        if (
+            generation != self._observation_generation
+            or tuple(self._audio_cpp_projections) != references
+        ):
+            return
+        self._observation_focus_locator = None
+        self._observe_audio_cpp_rows(generation, references, locator)
 
     @work(group="installed_audio_cpp_observation", exclusive=True, exit_on_error=False)
     async def _observe_audio_cpp_rows(

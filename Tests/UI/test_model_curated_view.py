@@ -715,6 +715,84 @@ async def test_audio_cpp_mode_filters_catalog_and_exposes_joined_recipe_facts(
         assert "Recipe: Matched" not in text
 
 
+@pytest.mark.parametrize("mismatch", ("revision", "repository"))
+def test_audio_cpp_projection_rejects_mismatched_static_catalog_facts(
+    mismatch: str,
+) -> None:
+    """Persisted descriptor drift cannot inherit canonical package claims."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.UI.Screens.model_curated_view import (
+        audio_cpp_package_projection,
+    )
+
+    descriptor, _sources = audio_cpp_curated_entries()[0]
+    mismatched = (
+        replace(
+            descriptor,
+            reference=ArtifactRef(
+                descriptor.reference.artifact_id,
+                "0" * 40,
+                descriptor.reference.variant,
+            ),
+        )
+        if mismatch == "revision"
+        else replace(descriptor, upstream_repository="attacker/repository")
+    )
+
+    projection = audio_cpp_package_projection(mismatched)
+
+    assert projection is not None
+    assert projection.availability.startswith("Unknown")
+    assert projection.recipe.startswith("Unknown")
+    assert projection.pinned_source.startswith("Unknown")
+    assert "attacker/repository" not in projection.pinned_source
+
+
+@pytest.mark.parametrize("mismatch", ("revision", "repository"))
+@pytest.mark.asyncio
+async def test_curated_audio_cpp_mismatch_is_review_required_when_mounted(
+    tmp_path: Path,
+    mismatch: str,
+) -> None:
+    """Curated rows render mismatch truth without canonical source claims."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    mismatched = (
+        replace(
+            descriptor,
+            reference=ArtifactRef(
+                descriptor.reference.artifact_id,
+                "0" * 40,
+                descriptor.reference.variant,
+            ),
+        )
+        if mismatch == "revision"
+        else replace(descriptor, upstream_repository="attacker/repository")
+    )
+    registry = CuratedRegistry()
+    registry.register(mismatched, sources=sources)
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _StyledViewApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        text = _all_text(app)
+
+    assert "Available: Unknown" in text
+    assert "review required" in text
+    assert "Recipe: Unknown" in text
+    assert "Pinned source: Unknown" in text
+    assert "Complete pinned source recorded" not in text
+    assert "exact manifest mapping recorded" not in text
+    assert "attacker/repository" not in text
+
+
 @pytest.mark.asyncio
 async def test_installed_audio_cpp_row_uses_shared_install_message_for_return(
     tmp_path: Path,
@@ -983,7 +1061,15 @@ def test_default_only_evidence_does_not_claim_guided_settings_membership() -> No
 
     reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
     projection = AudioCppPackageProjection(
-        "recipe", "compatibility", (), "TTS", "model.bin", "source", "1 byte"
+        recipe="recipe",
+        compatibility="compatibility",
+        availability="availability",
+        companion_paths=(),
+        speech_tasks="TTS",
+        required_files="model.bin",
+        pinned_source="source",
+        manifest_authority="authority",
+        package_size="1 byte",
     )
     evidence = AudioCppArtifactRemovalEvidence(
         reference,
@@ -1216,3 +1302,62 @@ async def test_observation_refresh_clears_stale_affirmation_while_pending(
         assert "Configured: Saved Settings" not in text
         assert "Configured: Unknown — Settings state was not checked" in text
         release_refresh.set()
+
+
+@pytest.mark.asyncio
+async def test_back_to_back_curated_refresh_starts_only_the_latest_generation(
+    tmp_path: Path,
+) -> None:
+    """A deferred old start cannot cancel the newer observation worker."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
+    )
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    registry = CuratedRegistry()
+    registry.register(descriptor, sources=sources)
+    calls = 0
+
+    async def observe(references):
+        nonlocal calls
+        calls += 1
+        return AudioCppModelLibraryObservationSnapshot(
+            (
+                AudioCppArtifactRemovalEvidence(
+                    references[0],
+                    settings_consumers=(
+                        (("saved", "Guided Settings", "package"),) if calls == 1 else ()
+                    ),
+                ),
+            )
+        )
+
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+        observation_provider=observe,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _StyledViewApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(
+            lambda: "Configured: Saved Settings" in _all_text(app), pilot=pilot
+        )
+        view.query_one(".curated-install", Button).focus()
+        await pilot.pause()
+        assert view.query_one(".curated-install", Button).has_focus
+        view.refresh_observations()
+        view.refresh_observations()
+        assert await _wait_until(
+            lambda: (
+                "Configured: Not configured — exact Settings state checked"
+                in _all_text(app)
+            ),
+            pilot=pilot,
+        )
+        assert view.query_one(".curated-install", Button).has_focus
+
+    assert calls == 2

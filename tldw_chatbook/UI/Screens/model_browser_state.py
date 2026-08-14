@@ -334,6 +334,13 @@ def install_failure_message(exc: BaseException, *, model_label: str) -> str:
                 "Pinned source unavailable — the app may be offline. Select Retry "
                 "install when connectivity returns."
             )
+        if exc.code is TransferFailureCode.LOCAL_STATE:
+            return "Package install could not access local state. Select Retry install."
+        if exc.code is TransferFailureCode.SOURCE_BLOCKED:
+            return (
+                "Package install is blocked by local source-access policy. Review "
+                "network policy, then select Retry install."
+            )
         if exc.retryable:
             return "The download was interrupted. Retry Install to resume."
         return "The download failed and cannot be retried automatically."

@@ -424,6 +424,45 @@ def audio_cpp_artifact_identity_matches_recipe(
     )
 
 
+def audio_cpp_artifact_source_matches_descriptor(
+    descriptor: ArtifactDescriptor,
+) -> bool:
+    """Match one descriptor to the complete checked-in pinned source facts."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactDescriptor, ArtifactFile
+
+    if type(descriptor) is not ArtifactDescriptor:
+        return False
+    try:
+        manifest = _cached_audio_cpp_artifact_source_manifest()
+    except (OSError, TypeError, ValueError):
+        return False
+    package = next(
+        (
+            item
+            for item in manifest.packages
+            if item.artifact_id == descriptor.reference.artifact_id
+        ),
+        None,
+    )
+    if package is None:
+        return False
+    files = tuple(
+        ArtifactFile(item.managed_path, item.size_bytes, item.sha256)
+        for item in sorted(package.files, key=lambda item: item.managed_path)
+    )
+    first_source = min(package.files, key=lambda item: item.managed_path).source_path
+    return bool(
+        descriptor.reference.revision == manifest.commit
+        and descriptor.upstream_repository == manifest.repository
+        and descriptor.upstream_revision == manifest.commit
+        and descriptor.source_url == _pinned_source_url(manifest, first_source)
+        and descriptor.files == files
+        and descriptor.expected_installed_bytes
+        == sum(item.size_bytes for item in files)
+    )
+
+
 def _pinned_source_url(manifest: AudioCppArtifactSourceManifest, path: str) -> str:
     return (
         f"https://huggingface.co/{manifest.repository}/resolve/"

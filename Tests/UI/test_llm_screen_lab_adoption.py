@@ -1705,6 +1705,18 @@ async def test_models_lab_insufficient_space_cancel_is_inline_and_never_provisio
             "VERIFICATION_FAILED",
             "Package verification failed (size or SHA-256). No package was promoted.",
         ),
+        (
+            "PRIVATE local state detail /Users/example/model",
+            True,
+            "LOCAL_STATE",
+            "Package install could not access local state. Select Retry install.",
+        ),
+        (
+            "PRIVATE blocked source https://secret.example/model",
+            False,
+            "SOURCE_BLOCKED",
+            "Package install is blocked by local source-access policy. Review network policy, then select Retry install.",
+        ),
     ),
 )
 def test_audio_cpp_transfer_failures_map_to_bounded_inline_recovery(
@@ -1727,6 +1739,11 @@ def test_audio_cpp_transfer_failures_map_to_bounded_inline_recovery(
 
     assert expected in message
     assert "private/source/path" not in message
+    assert "PRIVATE" not in message
+    assert "/Users" not in message
+    assert "secret.example" not in message
+    if code_name in {"LOCAL_STATE", "SOURCE_BLOCKED"}:
+        assert "download" not in message.casefold()
 
 
 def test_ambiguous_transfer_text_cannot_promote_a_typed_recovery_claim() -> None:
