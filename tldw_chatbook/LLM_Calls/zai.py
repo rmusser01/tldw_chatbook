@@ -44,6 +44,7 @@ from tldw_chatbook.config import (
 
 _DEFAULT_BASE_URL = "https://api.z.ai/api/paas/v4"
 _DEFAULT_MODEL = "glm-5.2"
+_DEFAULT_RETRY_DELAY = 5.0
 _FUNCTION_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{2,63}$")
 _GLM_5_2_REASONING_EFFORTS = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
@@ -216,7 +217,11 @@ def resolve_zai_request(
         base_url=_resolve_base_url(explicit_base_url, settings),
         timeout=_positive_number(transport_settings, "timeout", 90.0),
         retries=_nonnegative_integer(transport_settings, "retries", 3),
-        retry_delay=_nonnegative_number(transport_settings, "retry_delay", 5.0),
+        retry_delay=_nonnegative_number(
+            transport_settings,
+            "retry_delay",
+            _DEFAULT_RETRY_DELAY,
+        ),
         streaming=_resolve_streaming(settings),
     )
 
