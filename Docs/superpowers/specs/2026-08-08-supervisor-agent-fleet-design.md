@@ -436,26 +436,48 @@ now fights the target, and nothing long-term sneaks into this program's ACs.
   is where the wake runs.
 
   *(Corrected 2026-08-14, wake-integrity arc — tasks 15970/15971, per the
-  coordinator's design ruling.)* "Whenever a Console screen is mounted"
-  includes a Console screen the user has NAVIGATED AWAY FROM: a Chat
-  screen can stay resident in the screen stack — mounted, pump running,
-  controller live — while another screen displays (observed live and
-  harness-reproduced: a navigation issued while a pushed screen sits
-  above Chat pops the modal off the stack, not Chat). **Off-screen
-  delivery from that resident screen is the intended behavior** — the
-  supervisor acts immediately; that IS the auto-wake invariant, and
-  staging ever existed only because the screen used to die on nav-away.
-  What the user is owed instead of staging is *knowledge*: the settle
-  toast fires at settle from any screen, and a wake turn that completes
-  while its conversation is not the displayed-and-active one **leaves the
+  coordinator's design ruling; rationale re-anchored the same day, see the
+  superseding note below.)* A Console screen that is mounted but not the
+  one being LOOKED AT — covered by a pushed screen (command palette, nav
+  overflow menu, picker, dialog), or displayed with a different session
+  tab active — delivers its wake anyway. **That off-view delivery is the
+  intended behavior**, and the reason is the invariant, not the plumbing:
+  a supervisor exists to act on its children's results the moment they
+  land (§3 invariant 5). Staging is the fallback for when there is no
+  controller to act with, never a politeness about visibility. What the
+  user is owed instead of staging is *knowledge*: the settle toast fires
+  at settle from any screen, and a wake turn that completes while its
+  conversation is not the displayed-and-active one **leaves the
   `FLEET_UNSEEN` mark set** (delivery-commit visibility probe,
   `wake_conversation_in_view`), so the `◈` badge points at the delivered
   result until the user views it — view-clear applies normally then,
   since a delivered wake has nothing pending. "Viewing" means DISPLAYED:
-  a mounted-but-hidden Console's sync tick never view-clears the mark.
-  Durable staging (mark + `wake_delivered_at` ledger + mount-claim +
-  session-open trigger) remains exactly for the genuinely-unmounted
-  case: restart / first boot, where no controller exists at all.
+  a mounted-but-undisplayed Console's sync tick never view-clears the
+  mark.
+
+  *(Superseding correction, 2026-08-14 — task-16300.)* The ruling above
+  stands; the rationale first recorded for it does not. That text argued
+  off-screen delivery was intended because *"'whenever a Console screen
+  is mounted' includes a Console screen the user has NAVIGATED AWAY
+  FROM"* — a Chat screen staying resident in the screen stack after
+  navigation. **That was never a nav model; it was a bug.** Textual's
+  `App.switch_screen` pops only the top of the screen stack, so a
+  navigation issued while any pushed screen sat above Chat replaced the
+  MODAL and left Chat resident — violating the invariant `app.py`'s
+  `_create_navigation_screen` documents (screens die on navigation;
+  `ScreenStateStore` carries continuity), and producing exactly the two
+  failures 15970/15971 were filed for. Navigation now reduces the stack
+  to its content screen before switching, so **a hidden-but-resident
+  Chat screen is no longer a normal state**: leaving Console unmounts it
+  and shuts its controller down, on every path. Nothing about the ruling
+  changes — off-view delivery and the `◈` guarantee are unaffected,
+  because the off-view cases that matter (a modal covering Console, a
+  non-active session tab) never depended on residency. What changes is
+  the boundary of the staging path: durable staging (mark +
+  `wake_delivered_at` ledger + mount-claim + session-open trigger) is the
+  path whenever no Console screen is mounted at all — restart, first
+  boot, **and navigating away from Console**, which is genuinely
+  unmounted again rather than secretly still running.
 - **Cost:** per-child token spend rolls into the existing Console cost
   ticker, attributed per agent in expanded rows; fleet aggregate visible on
   the summary line's expansion.

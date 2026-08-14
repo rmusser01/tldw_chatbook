@@ -48,6 +48,15 @@ task-15862 active_app-ContextVar lesson applied to self.app resolution. Tests
 (Tests/UI/test_console_fleet_wake_hidden_screen.py): real pilot.press keys, real
 nav construction of the two-screen state, RED pre-fix on the probe AND on the
 outcome (the hidden coordinator's _attempt delivered through the held draft);
+[correction 2026-08-14, task-16300: that "real nav construction" built the
+two-screen state through a screen-stack LEAK — switch_screen pops only the top,
+so navigating under a pushed screen left the old Chat screen resident. The leak
+is fixed, so navigation can no longer produce two live Console screens; the two
+tests now build the geometry directly with push_screen and stay RED without this
+fix (mutation re-run at the fix commit), keeping the probe's cross-screen
+resolution pinned as defence in depth. The fix itself is unchanged and still
+correct — a Console screen covered by a modal reads its own composer, which is
+where the user's draft is.]
 mutations M1/M2 killed. Live re-verified on a scratch profile vs real Anthropic:
 a draft typed with real keys during the spawning turn held the due wake ~90s
 (child done, stamp NULL throughout), clearing it delivered in ~2s. Evidence:

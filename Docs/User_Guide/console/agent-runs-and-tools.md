@@ -401,22 +401,31 @@ first's genuinely-running rows.
   survivor billed after its turn — that remainder is recorded nowhere
   durable — and the plain-text conversation export contains no token
   figures at all.
-- The supervisor can act while you are on another screen — deliberately.
-  A finished background sub-agent wakes its supervisor and notifies you
+- The supervisor can act while you are not watching — deliberately. A
+  finished background sub-agent wakes its supervisor and notifies you
   from any screen (see
   [When a background sub-agent finishes — auto-wake](#when-a-background-sub-agent-finishes--auto-wake)),
-  and if a live Console still exists — including one you navigated away
-  from — the wake turn fires immediately rather than waiting for you to
-  come back: acting on results without a human keystroke is what
-  auto-wake is for. You always learn of it: the toast fires the moment
-  the sub-agent finishes, and a wake that delivers while you're not
-  viewing that conversation leaves the `◈` marker set on it until you
-  view the delivered result. Only when no Console exists at all — before
-  the first Console open after a restart — is the completion staged
-  durably and delivered when Console next opens. *(This paragraph
-  previously promised the wake was "never acted on invisibly in the
-  background" while you were elsewhere; corrected 2026-08-14 — the wake
-  does act, and the `◈` marker is the guarantee you find out.)*
+  and as long as Console is open the wake turn fires immediately rather
+  than waiting for you to look at it: acting on results without a human
+  keystroke is what auto-wake is for. "Open but not watched" is the
+  ordinary case here — a dialog, the command palette or the destination
+  menu covering Console, or a different session tab in front. You always
+  learn of it: the toast fires the moment the sub-agent finishes, and a
+  wake that delivers while you're not viewing that conversation leaves
+  the `◈` marker set on it until you view the delivered result. When no
+  Console is open at all — before the first Console open after a
+  restart, or after you have left Console for another screen — the
+  completion is staged durably and delivered when Console next opens.
+  *(This paragraph previously promised the wake was "never acted on
+  invisibly in the background" while you were elsewhere; corrected
+  2026-08-14 — the wake does act, and the `◈` marker is the guarantee
+  you find out. A second correction the same day, task-16300: it also
+  said the wake fires from "a live Console you navigated away from".
+  That described a bug, not a feature — navigating away while a dialog
+  was open used to leave the old Console screen running invisibly behind
+  the new screen. Leaving Console now genuinely closes it, so a
+  completion after you leave is staged, exactly as the "Leaving the
+  Console screen" note below has always said.)*
 
 **Turning it off.** Set `[agents] subagents_outlive_turn = false` in
 `config.toml`: sub-agents are then settled at the end of the turn that
@@ -739,4 +748,12 @@ still held: SIGKILL with a wake owed left mark + NULL stamp in place, the
 relaunch rendered `◈` on the sidebar row before the conversation was
 opened, and one click on that row delivered the owed wake exactly once,
 stamped ~2s later. Every one of the five sub-agent runs in the session's
-ledger ended stamped exactly once.)*
+ledger ended stamped exactly once.) The "navigated away from" clause in
+the honest-limits bullet corrected @ HEAD — 2026-08-14 (task-16300,
+documentation-only for this page: navigating away from Console under an
+open dialog used to leave the old Console screen resident and running,
+and the bullet had described that leak as intended behavior. Navigation
+now unmounts the outgoing screen, so leaving Console stages. Pinned by
+`Tests/UI/test_screen_residency.py`; the live off-view evidence above is
+unaffected — it was gathered with a palette covering an open Console and
+a different session tab active, not by navigating away.)*
