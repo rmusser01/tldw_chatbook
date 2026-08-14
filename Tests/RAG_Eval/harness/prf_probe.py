@@ -1,5 +1,5 @@
 # Tests/RAG_Eval/harness/prf_probe.py
-"""PRF probe machinery: which terms the feedback set contributes, and how.
+r"""PRF probe machinery: which terms the feedback set contributes, and how.
 
 TASK-15965 Phase A. Pseudo-relevance feedback is the first P2c FEATURE
 candidate, and it is probed before it is built -- the discipline that
@@ -20,15 +20,35 @@ run's numbers can be evidence about PRF rather than about the probe:
 4. `ProbeQueryResult` -- the per-query table row the probe report prints
    verbatim.
 
-**Everything token-shaped here is the engine's own.** `RAGService`'s
-static helpers do the tokenizing, the stopword test and the quoting, and
-`_FTS5_STOPWORDS` is imported rather than copied. That is the TASK-15400
-probe-fidelity lesson applied to construction as well as to execution:
-a probe that builds a *similar* expression measures a query the engine
-would never run. `Tests/RAG_Eval/test_prf_probe.py` pins
-`compose_feedback_expression` byte-identical to what the engine's own
-`or` construction emits, so "the same helpers" cannot drift into "the
+**Every QUERY-side token operation here is the engine's own.**
+`RAGService`'s static helpers do the query tokenizing, the stopword test
+and the quoting, and `_FTS5_STOPWORDS` is imported rather than copied.
+That is the TASK-15400 probe-fidelity lesson applied to construction as
+well as to execution: a probe that builds a *similar* expression measures
+a query the engine would never run. `Tests/RAG_Eval/test_prf_probe.py`
+pins `compose_feedback_expression` byte-identical to what the engine's
+own `or` construction emits, so "the same helpers" cannot drift into "the
 same idea".
+
+**The DOCUMENT side is the one exception, and it is stated rather than
+glossed.** `_index_terms` re-declares the engine's run pattern
+(`r"[^\W_]+"`, which `rag_service` writes inline inside
+`_fts5_term_key`/`_is_fts5_stopword` rather than exposing) because the
+engine has no public "index terms of this text" helper -- it only ever
+tokenizes QUERIES. So this is a fifth copy of that regex, and the review
+that found it was right to. What keeps it honest is a pin, not a promise:
+`test_index_terms_agree_with_the_engines_own_term_key` asserts
+`_index_terms(x) == RAGService._fts5_term_key(x).split()` over the hostile
+sample set, so the copy cannot drift without reddening.
+
+**The bound on that agreement, so a future corpus edit knows.** Both
+sides above are the same regex, but neither is exactly what FTS5 INDEXES:
+`unicode61` folds diacritics by default, so a document containing `café`
+is indexed under `cafe` while `_index_terms`/`_fts5_term_key` both answer
+`café` -- a derived term that would never match its own source document.
+The frozen corpus contains ZERO non-ASCII words (measured, 172 docs), so
+this cannot reach the verdict; it becomes reachable the moment the corpus
+gains one.
 
 **Why per-token quoting is not optional in a probe.** The expansion terms
 come from DOCUMENT text. Query-box input at least passes through a
@@ -43,12 +63,21 @@ this module inherits it.
 the verdict belong to the probe RUN, which is gated
 (`harness_gate()`); this module is imported by always-on pure tests and
 must stay importable with no env var set.
+
+**Import this under pytest.** Importing `rag_service` runs
+`config.load_settings`. `Tests/conftest.py` redirects `HOME`,
+`XDG_CONFIG_HOME` and `TLDW_CONFIG_PATH` to a temp sandbox at
+pre-import bootstrap, so under pytest that read is sandboxed; a bare
+`python -c 'import ...prf_probe'` outside pytest reads the developer's
+real `~/.config/tldw_cli/config.toml` instead. Task 2's probe runs under
+pytest, which is where this stays a non-issue.
 """
 from __future__ import annotations
 
 import re
 from collections import Counter
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Collection, Sequence
 
 from tldw_chatbook.RAG_Search.simplified.rag_service import (
@@ -88,6 +117,10 @@ _TERM_RUN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 def _index_terms(text: str) -> list[str]:
     """The lowercased index terms of a piece of text, in order.
 
+    The DOCUMENT-side tokenizer, and the module's one re-declaration of
+    the engine's run pattern (see the module docstring). Pinned equal to
+    `RAGService._fts5_term_key(x).split()` so the copy cannot drift.
+
     Args:
         text: Document text, or a raw query token.
 
@@ -106,10 +139,25 @@ def derive_expansion_terms(
 ) -> tuple[str, ...]:
     """The top-N characteristic terms of a pseudo-relevant document set.
 
-    Term frequency over the WHOLE fed set (total occurrences, not
-    document frequency): with M as small as 3-10, document frequency
-    collapses to a handful of distinct values and ties on nearly
-    everything, which is precisely the regime a tie-break has to survive.
+    **Length-normalized term frequency (RM3's tf/|D|), summed over the fed
+    set** -- a term's weight is its occurrences in each document divided
+    by that document's length in index terms, added across documents.
+
+    The normalization is not a refinement, it is what keeps the probe from
+    measuring document length instead of PRF. The frozen corpus's 172
+    documents run 39 to 889 words (median 58, MEASURED): under raw
+    occurrence-summing a single long document contributes up to ~15x a
+    median one, so one long document landing in a top-5 feed effectively
+    writes the whole expansion list. Both failure modes reach the verdict
+    and neither announces itself -- a topically-wrong long document
+    manufactures a NULL, a dominant on-topic one manufactures a rescue
+    that a shorter feed would not reproduce.
+
+    Weights are exact `Fraction`s rather than floats. Float addition is
+    not associative, so two terms with identical contributions summed in
+    different document orders could compare unequal in the last bit --
+    which would put document-order dependence back in through the ranking
+    key, precisely the thing the tie-break exists to remove.
 
     Two exclusions, both load-bearing:
 
@@ -122,10 +170,10 @@ def derive_expansion_terms(
       raw token (`spindle-bearing`) excludes both of the words FTS5
       indexes it as.
 
-    Ordering is total: count descending, then alphabetically. Without the
+    Ordering is total: weight descending, then alphabetically. Without the
     second key the order falls to dictionary insertion -- i.e. to
     whichever document the probe happened to read first -- and a grid
-    point stops being reproducible in exactly the small-count regime
+    point stops being reproducible in exactly the small-weight regime
     where ties are the rule.
 
     Args:
@@ -138,8 +186,8 @@ def derive_expansion_terms(
             every probe path.
 
     Returns:
-        At most ``n_terms`` lowercased index terms, most frequent first,
-        ties broken alphabetically. Empty when the documents contribute
+        At most ``n_terms`` lowercased index terms, heaviest first, ties
+        broken alphabetically. Empty when the documents contribute
         nothing -- the structural case where a zero-row first pass feeds
         PRF nothing at all.
     """
@@ -150,14 +198,25 @@ def derive_expansion_terms(
     for token in query_terms:
         excluded.update(_index_terms(token))
 
-    counts: Counter[str] = Counter()
+    weights: dict[str, Fraction] = {}
     for doc in docs:
-        counts.update(
-            term for term in _index_terms(doc) if term not in excluded
-        )
+        terms = _index_terms(doc)
+        # |D| is the document's FULL length in index terms, function
+        # words included: length normalization is about how much text a
+        # document contributed, not about how much of it survived the
+        # exclusions.
+        length = len(terms)
+        if not length:
+            continue
+        for term, count in Counter(terms).items():
+            if term in excluded:
+                continue
+            weights[term] = weights.get(term, Fraction(0)) + Fraction(
+                count, length
+            )
 
-    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    return tuple(term for term, _count in ranked[:n_terms])
+    ranked = sorted(weights.items(), key=lambda item: (-item[1], item[0]))
+    return tuple(term for term, _weight in ranked[:n_terms])
 
 
 def _quoted_content_tokens(query: str) -> list[str]:
@@ -249,6 +308,19 @@ class ProbeQueryResult:
     honesty notes ask, which is why none of them has a default -- a
     forgotten column is a report that quietly cannot answer one of them.
 
+    **WHICH first pass these columns describe, stated because the row
+    cannot say it and the verdict turns on it.** `first_pass_rows` and
+    `target_rank_before` are ALWAYS the SHIPPED first pass -- the
+    four-seam `build_fts_match_query` AND form -- even on a run where
+    Step 0's census activated the licensed OR-feedback variant. The bar's
+    loss clause is defined against what users see today, and users see the
+    shipped pass; populating `target_rank_before` from the wider feedback
+    pass would credit it with hits the product never had and then score
+    the second pass as LOSING them, manufacturing losses that could NULL
+    the arc on an artefact of the probe's own instrumentation. The
+    variant's own fireability belongs in Step 0's separate census table,
+    where it is disclosed as the variant's number.
+
     Attributes:
         query_id: The golden query's id. Gains and losses are reported BY
             ID (the TASK-15700 lost-column discipline); an aggregate
@@ -257,10 +329,12 @@ class ProbeQueryResult:
             (paraphrase/vocabulary_mismatch as target, negation as
             regression guard, negatives as junk guard) behave differently
             enough that a mixed average means nothing.
-        fireable: Whether the first pass returned anything to feed from.
-            Step 0's census answer for this query, and the arc's central
-            structural question.
-        first_pass_rows: Rows the first pass returned.
+        fireable: Whether the pass that actually FED this run returned
+            anything to feed from -- the shipped pass on a base run, the
+            licensed variant on a variant run. The one column whose
+            meaning follows the active regime, which is why the regime is
+            named in every table the spec asks for.
+        first_pass_rows: Rows the SHIPPED first pass returned.
         fed_docs: How many of those rows' documents actually fed term
             derivation (the top-M cut).
         content_fetches: Reads spent fetching text for the fed rows. The
@@ -268,8 +342,9 @@ class ProbeQueryResult:
             conversation rows carry label snippets ("Matched media ·
             {type}"), not text, so without the fetch the feed silently
             skews toward notes and prompts.
-        target_rank_before: The target's 1-based rank in the first pass,
-            or ``None`` for a miss. Never 0 -- a miss is an absence.
+        target_rank_before: The target's 1-based rank in the SHIPPED
+            first pass, or ``None`` for a miss. Never 0 -- a miss is an
+            absence. Never sourced from the feedback variant: see above.
         target_rank_after: The same after the expanded second pass. The
             column that lets the report state losses as well as gains.
         rows_after: Rows the second pass returned -- the negation and

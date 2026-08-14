@@ -52,7 +52,16 @@
 
 ### Task 2: THE PROBE RUN + the mechanical verdict
 
-**Files:** `Tests/RAG_Eval/test_prf_probe.py` (the gated run), report + ledger + backlog note only.
+**Files:** `Tests/RAG_Eval/test_prf_probe_run.py` (the gated run — a NEW module), report + ledger + backlog note only.
+
+> **Amended at Task 1 review (2026-08-13).** This line named
+> `test_prf_probe.py`, which is now the always-on pure-function pin file (26+
+> tests, no gate). Every gated module in that directory applies
+> `pytestmark = harness_gate()` at module level, so a Task-2 implementer
+> following BOTH the plan and the directory idiom would have silently gated
+> the pins — the exact trap `harness/environment.py:harness_gate`'s own
+> docstring names, and the reason it is per-module rather than directory-wide.
+> The gated run goes in its own module.
 
 - [ ] **Step 1 (STEP 0 FIRST — one command):** the fireability census over the 22: shipped first pass (the four-seam MATCH via `build_fts_match_query`, handed at the DB-level call sites), rows-returned per query. If fireability ≥ 5/22 → the base grid runs on the shipped first pass. If < 5/22 → the licensed variant (feedback pass = `compose_feedback_expression`) is activated, DISCLOSED as such in every table.
 - [ ] **Step 2:** The grid (base point N=8/M=5; the full {4,8,16}×{3,5,10} ONLY if the base point shows signal — every point run is recorded; a null at every point run is the null): per query — first pass → fetch content for top-M fed rows (count fetches) → derive terms → second pass with `compose_prf_expression` → target rank. Guards in the same run: the derived currently-hitting population (gains AND losses by id — the lost-column discipline), negation (rows + junk delta, reported), negatives (structural-vs-live per the spec's honesty note).

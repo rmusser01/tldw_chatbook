@@ -19,11 +19,21 @@ The properties, each with the mutation that reds it:
   query's own words expands nothing. Mutation: drop the stopword filter
   from `derive_expansion_terms` and
   `test_expansion_terms_exclude_stopwords` reds.
+* **Length normalization.** Weights are `tf/|D|` summed (RM3's form), not
+  raw occurrences. The frozen corpus runs 39 to 889 words per document
+  (median 58), so raw summing would let one long document in a top-5 feed
+  write the expansion list by itself. Mutation: sum raw counts and
+  `test_a_long_document_does_not_get_to_write_the_expansion_list` reds.
 * **The N cut and total determinism.** Same documents, same terms, in the
-  same order -- including when two terms tie on count, where the
+  same order -- including when two terms tie on weight, where the
   tie-break is alphabetical rather than whichever document happened to be
-  read first. A grid point that cannot be re-derived is not a
-  measurement.
+  read first. The tied fixture puts its tied terms in SEPARATE documents,
+  because tied terms sharing one document keep their insertion order
+  under any shuffle and would pin nothing. A grid point that cannot be
+  re-derived is not a measurement.
+* **The document-side tokenizer agrees with the engine's.** It is the
+  module's one copy of the engine's run pattern, so it is pinned equal to
+  `RAGService._fts5_term_key(x).split()` rather than trusted.
 * **Per-token quoting.** The injection-safety property of TASK-3995 is
   load-bearing in a probe too: the probe composes expressions from
   DOCUMENT text, which is far more hostile than a query box. Mutation:
@@ -61,6 +71,7 @@ from tldw_chatbook.RAG_Search.simplified.rag_service import (
 
 from Tests.RAG_Eval.harness.prf_probe import (
     ProbeQueryResult,
+    _index_terms,
     compose_feedback_expression,
     compose_prf_expression,
     derive_expansion_terms,
@@ -160,39 +171,86 @@ def test_expansion_terms_are_capped_at_n_terms() -> None:
         assert len(terms) == min(n_terms, 10), f"N={n_terms} -> {terms}"
 
 
-def test_expansion_terms_rank_by_count_then_alphabetically() -> None:
-    """The tie-break is stated, not incidental.
+def test_a_long_document_does_not_get_to_write_the_expansion_list() -> None:
+    """Length normalization (RM3's tf/|D|), against the lever that exists.
 
-    Counts alone leave the order of equal-count terms to dictionary
-    insertion, i.e. to which document the probe happened to read first --
-    which makes a grid point unreproducible in exactly the situation
-    (many terms, few documents, small counts) where ties are the rule
-    rather than the exception.
+    The frozen corpus runs 39 to 889 words per document (median 58,
+    measured over its 172 docs), so raw occurrence-summing lets one long
+    document in a top-5 feed outweigh a median one by ~15x -- the
+    expansion list would then be written by whichever long document
+    happened to land in the feed, and both outcomes reach the verdict
+    silently: a topically-wrong long document manufactures a NULL, a
+    dominant on-topic one manufactures a rescue no shorter feed
+    reproduces.
+
+    The synthetic states the inversion exactly. Raw counts say `boiler`
+    (3 occurrences) beats `carriage` (2); normalized weights say
+    `carriage` (1/2 + 1/2 = 1) beats `boiler` (3/60 = 1/20) -- the term
+    present in MORE of the fed documents wins, which is what
+    "characteristic of the feedback set" is supposed to mean.
+
+    Mutation: sum raw counts instead of `Fraction(count, length)` and
+    this reds on the very first assertion.
     """
-    docs = [
-        "runout runout runout",  # 3
-        "zebra zebra carriage carriage",  # 2 each, tied
-        "apple",  # 1
-    ]
+    long_doc = " ".join(["boiler"] * 3 + [f"filler{i}" for i in range(57)])
+    assert len(long_doc.split()) == 60
 
     terms = derive_expansion_terms(
-        docs, query_terms=(), n_terms=8, stopwords=_FTS5_STOPWORDS
+        [long_doc, "carriage widget", "carriage gadget"],
+        query_terms=(),
+        n_terms=8,
+        stopwords=_FTS5_STOPWORDS,
     )
 
-    assert terms == ("runout", "carriage", "zebra", "apple")
+    assert terms[0] == "carriage"
+    assert terms.index("carriage") < terms.index("boiler")
+    # ...and the long document is not silenced either, only cut down to
+    # its share: `boiler` still outranks the fillers it shares its
+    # document with.
+    assert terms.index("boiler") < terms.index("filler0")
+
+
+#: Two terms tied on normalized weight (1) in SEPARATE documents, plus an
+#: untied tail. The separation is the whole point: `sorted` is stable, so
+#: tied terms living in ONE document keep their within-document insertion
+#: order no matter how the DOCUMENTS are shuffled -- a fixture that can
+#: never expose a missing tie-break. Split across documents, shuffling the
+#: documents swaps which tied term is inserted first, and only the
+#: alphabetical key holds the output still.
+_TIED_DOCS = [
+    "zebra zebra",  # zebra: 2/2 = 1
+    "runout runout",  # runout: 2/2 = 1
+    "apple banana banana banana",  # banana 3/4, apple 1/4
+]
+
+
+def test_expansion_terms_rank_by_weight_then_alphabetically() -> None:
+    """The tie-break is stated, not incidental.
+
+    Weights alone leave the order of equal-weight terms to dictionary
+    insertion, i.e. to which document the probe happened to read first --
+    which makes a grid point unreproducible in exactly the situation
+    (many terms, few documents, small weights) where ties are the rule
+    rather than the exception.
+    """
+    terms = derive_expansion_terms(
+        _TIED_DOCS, query_terms=(), n_terms=8, stopwords=_FTS5_STOPWORDS
+    )
+
+    # `zebra` is inserted FIRST (it is document 0) and still sorts second.
+    assert terms == ("runout", "zebra", "banana", "apple")
 
 
 def test_expansion_terms_do_not_depend_on_document_order() -> None:
-    """The determinism the tie-break buys, asserted end to end."""
-    docs = [
-        "zebra zebra carriage carriage",
-        "runout runout runout",
-        "apple",
-    ]
-    shuffled = [docs[2], docs[0], docs[1]]
+    """The determinism the tie-break buys, asserted end to end.
+
+    The shuffle inverts the insertion order of the tied pair, so this
+    agrees only because the ranking key does not consult it.
+    """
+    shuffled = [_TIED_DOCS[1], _TIED_DOCS[2], _TIED_DOCS[0]]
 
     assert derive_expansion_terms(
-        docs, query_terms=(), n_terms=8, stopwords=_FTS5_STOPWORDS
+        _TIED_DOCS, query_terms=(), n_terms=8, stopwords=_FTS5_STOPWORDS
     ) == derive_expansion_terms(
         shuffled, query_terms=(), n_terms=8, stopwords=_FTS5_STOPWORDS
     )
@@ -214,6 +272,41 @@ def test_terms_are_the_lowercased_alphanumeric_runs_fts5_indexes() -> None:
 
     assert terms[0] == "read"  # 4 occurrences once folded and split
     assert set(terms) == {"read", "only", "mode", "notice"}
+
+
+def test_index_terms_agree_with_the_engines_own_term_key() -> None:
+    """The document-side tokenizer is a COPY of the engine's run pattern.
+
+    The engine writes `r"[^\\W_]+"` inline inside `_fts5_term_key` and
+    `_is_fts5_stopword` and exposes no "index terms of this text" helper
+    -- it only ever tokenizes queries -- so the probe's document side
+    re-declares it. A copy with no pin is a copy that drifts, and a
+    derivation that splits words differently from the engine derives
+    terms that cannot match the documents they came from.
+
+    Not a claim that either side equals what FTS5 INDEXES: `unicode61`
+    folds diacritics, so both answer `café` where the index holds `cafe`.
+    The frozen corpus has zero non-ASCII words, so that gap cannot reach
+    the verdict (module docstring).
+    """
+    samples = [
+        "Obsidian-3 lathe",
+        "content:wombat",
+        "{title content}:lathe",
+        'confirmed" runout',
+        "lathe) OR (spindle",
+        "READ the Read-Only notice!",
+        "under_score mixed_Case",
+        "!!! ---",
+        "",
+        "trailing   whitespace  ",
+        "digits 42 and 3.14",
+    ]
+
+    for sample in samples:
+        assert _index_terms(sample) == RAGService._fts5_term_key(
+            sample
+        ).split(), sample
 
 
 def test_no_documents_yields_no_terms() -> None:
@@ -416,17 +509,22 @@ def test_feedback_expression_is_byte_identical_to_the_engines_or_construction() 
     cfg.search.fts_match_construction = "or"
     service = RAGService(cfg)
 
-    for query in (
-        "the lathe spindle",
-        "Obsidian-3 lathe",
-        "what is a vendor chaser",
-        'confirmed" runout',
-        "the of and",
-        "",
-    ):
-        primary, fallback = service._fts5_match_expressions(query)
-        assert fallback is None
-        assert compose_feedback_expression(query) == primary, query
+    try:
+        for query in (
+            "the lathe spindle",
+            "Obsidian-3 lathe",
+            "what is a vendor chaser",
+            'confirmed" runout',
+            "the of and",
+            "",
+        ):
+            primary, fallback = service._fts5_match_expressions(query)
+            assert fallback is None
+            assert compose_feedback_expression(query) == primary, query
+    finally:
+        # The constructor opens an 8-worker thread pool; a pin is no
+        # reason to leak one per run.
+        service.close()
 
 
 # --------------------------------------------------------------------------
