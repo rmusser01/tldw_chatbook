@@ -48,8 +48,13 @@ engine concluded for its own sub-legs.
   14 behind 13 notes; the conv targets at 19-21).
 - Dedup across seams: structurally vacuous (seams disjoint by
   source_type — same argument as 15700's, one comment, no machinery),
-  but `interleave_rankings` requires a key — use the service's existing
-  doc-identity key so the call is honest.
+  but `interleave_rankings` requires a key — verified at review: rows
+  carry `source_id` + `provenance.source_type` (`_note_row` et al.,
+  ~L1080-1136), so the key is `(provenance.source_type, source_id)`.
+- Callers verified at review: `_search_keyword` is consumed only inside
+  the service (`:268` direct plain, `:331` the profile arm); the
+  route-note/count consumers read the outcome dict, not raw row order —
+  the enumeration item narrows to display-side consumption only.
 - The merged list still carries NO cross-seam truncation at this site
   (today's contract: consumers cut). The change is ORDER only.
 
