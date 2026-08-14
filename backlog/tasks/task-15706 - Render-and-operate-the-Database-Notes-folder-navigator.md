@@ -1,10 +1,10 @@
 ---
 id: TASK-15706
 title: Render and operate the Database Notes folder navigator
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-13 01:43'
-updated_date: '2026-08-14 00:49'
+updated_date: '2026-08-14 01:49'
 labels:
   - notes
   - folders
@@ -146,5 +146,5 @@ Notes list when the folder capability is unavailable.
 - [x] #3 Implementation Notes summarize the approach, files, trade-offs, and evidence.
 - [x] #4 ADR-059 and ADR-060 are linked from the implementation plan and notes.
 - [x] #5 A rendered-frame self-review confirms hierarchy and status remain legible at 60×20 without color.
-- [ ] #6 The task is set to Done only after all requirements above are complete.
+- [x] #6 The task is set to Done only after all requirements above are complete.
 <!-- DOD:END -->
