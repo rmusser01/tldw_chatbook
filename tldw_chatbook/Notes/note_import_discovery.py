@@ -295,6 +295,7 @@ def read_discovered_source(
             candidate.identity, after_read
         ):
             raise VerifiedSourceReadError("source_changed")
+        _verify_lexical_source_binding(candidate)
     except VerifiedSourceReadError as error:
         primary_error = error
     except (FileNotFoundError, NotADirectoryError):
@@ -311,6 +312,70 @@ def read_discovered_source(
     if close_failed:
         raise VerifiedSourceReadError("source_unavailable")
     return bytes(content)
+
+
+def _verify_lexical_source_binding(candidate: DiscoveredImportSource) -> None:
+    """Recheck that the recorded leaf remains bound at its lexical path."""
+    descriptors: list[int] = []
+    primary_error: VerifiedSourceReadError | None = None
+    close_failed = False
+    try:
+        path = candidate.source.source_path
+        components = path.parts[1:]
+        if (
+            not path.anchor
+            or not components
+            or len(candidate.parent_identities) != len(components)
+        ):
+            raise VerifiedSourceReadError("source_changed")
+
+        current_fd = os.open(path.anchor, _directory_open_flags())
+        descriptors.append(current_fd)
+        if not _identity_matches(
+            candidate.parent_identities[0],
+            os.fstat(current_fd),
+        ):
+            raise VerifiedSourceReadError("source_changed")
+
+        for index, component in enumerate(components[:-1], start=1):
+            metadata = os.stat(
+                component,
+                dir_fd=current_fd,
+                follow_symlinks=False,
+            )
+            if _is_link_or_reparse(metadata) or not stat.S_ISDIR(metadata.st_mode):
+                raise VerifiedSourceReadError("source_changed")
+            next_fd = os.open(component, _directory_open_flags(), dir_fd=current_fd)
+            descriptors.append(next_fd)
+            if not _identity_matches(
+                candidate.parent_identities[index],
+                os.fstat(next_fd),
+            ):
+                raise VerifiedSourceReadError("source_changed")
+            current_fd = next_fd
+
+        leaf_metadata = os.stat(
+            components[-1],
+            dir_fd=current_fd,
+            follow_symlinks=False,
+        )
+        if not _file_identity_matches(candidate.identity, leaf_metadata):
+            raise VerifiedSourceReadError("source_changed")
+    except VerifiedSourceReadError as error:
+        primary_error = error
+    except (FileNotFoundError, NotADirectoryError):
+        primary_error = VerifiedSourceReadError("source_changed")
+    except (_SecureDiscoveryUnavailable, NotImplementedError):
+        primary_error = VerifiedSourceReadError("secure_read_unavailable")
+    except (OSError, TypeError, ValueError):
+        primary_error = VerifiedSourceReadError("source_unavailable")
+    finally:
+        close_failed = _close_descriptors(descriptors)
+
+    if primary_error is not None:
+        raise primary_error
+    if close_failed:
+        raise VerifiedSourceReadError("source_unavailable")
 
 
 def _copy_bounded_selection(

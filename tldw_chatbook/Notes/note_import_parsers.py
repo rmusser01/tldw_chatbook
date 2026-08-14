@@ -352,6 +352,8 @@ def _parse_text(
     bounds: ImportBounds,
 ) -> tuple[ParsedNotePayload, ...]:
     if extension in {".txt", ".text", ".rst", ".md", ".markdown"}:
+        if not text.strip():
+            raise _ParseFailure("invalid_content")
         title = PurePosixPath(candidate.source.display_path).stem
         if extension in {".md", ".markdown"}:
             for line in text.splitlines()[:10]:
@@ -403,13 +405,13 @@ def _payload_from_mapping(
     if not all(isinstance(key, str) for key in record):
         raise _ParseFailure("invalid_content")
     content_value = record.get("content", record.get("body"))
-    if not isinstance(content_value, str) or not content_value:
+    if not isinstance(content_value, str) or not content_value.strip():
         raise _ParseFailure("invalid_content")
     title_value = record.get("title", record.get("name", "Untitled"))
-    if title_value == "":
-        title_value = "Untitled"
     if not isinstance(title_value, str):
         raise _ParseFailure("invalid_content")
+    if not title_value.strip():
+        title_value = "Untitled"
     keywords_value = record.get("keywords", record.get("tags"))
     keywords = _keywords(keywords_value, bounds)
     template = record.get("template")
@@ -424,13 +426,18 @@ def _payload_from_mapping(
 
 
 def _keywords(value: Any, bounds: ImportBounds) -> tuple[str, ...]:
-    if value in (None, ""):
+    if value is None:
         return ()
     if isinstance(value, str):
-        keywords = (value,)
+        if not value.strip():
+            return ()
+        raw_keywords = value.split(",")
     elif isinstance(value, list) and all(isinstance(item, str) for item in value):
-        keywords = tuple(value)
+        raw_keywords = value
     else:
+        raise _ParseFailure("invalid_content")
+    keywords = tuple(keyword.strip() for keyword in raw_keywords)
+    if any(not keyword for keyword in keywords):
         raise _ParseFailure("invalid_content")
     if len(keywords) > bounds.max_keywords_per_note:
         raise _ParseFailure("too_many_keywords")
@@ -455,8 +462,16 @@ def _csv_payloads(text: str, bounds: ImportBounds) -> tuple[ParsedNotePayload, .
 
     title_index = _first_header(normalized_headers, ("title", "name"))
     content_index = _first_header(normalized_headers, ("content", "body"))
-    if title_index is None or content_index is None:
+    if title_index is None and content_index is None:
         title_index, content_index = 0, 1
+    elif title_index is None:
+        title_index = next(
+            index for index in range(len(headers)) if index != content_index
+        )
+    elif content_index is None:
+        content_index = next(
+            index for index in range(len(headers)) if index != title_index
+        )
     keyword_index = _first_header(normalized_headers, ("keywords", "tags"))
     template_index = _first_header(normalized_headers, ("template",))
 

@@ -2056,6 +2056,29 @@ def test_csv_falls_back_to_first_two_distinct_columns(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("csv_content", "expected_title", "expected_content"),
+    [
+        ("body,subject\nBody,One\n", "One", "Body"),
+        ("text,name\nBody,One\n", "One", "Body"),
+    ],
+)
+def test_csv_partial_semantic_headers_preserve_the_recognized_role(
+    tmp_path: Path,
+    csv_content: str,
+    expected_title: str,
+    expected_content: str,
+) -> None:
+    source = tmp_path / "notes.csv"
+    source.write_text(csv_content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    payload = batch.parsed[0].payloads[0]
+    assert payload.title == expected_title
+    assert payload.content == expected_content
+
+
+@pytest.mark.parametrize(
     ("content", "reason_code"),
     [
         ('{"title":"One","title":"Two","content":"Body"}', "invalid_content"),
@@ -2154,6 +2177,72 @@ def test_utf8_bom_is_accepted_without_entering_note_content(tmp_path: Path) -> N
     assert batch.parsed[0].payloads[0].content == "Body"
 
 
+@pytest.mark.parametrize("extension", [".txt", ".md", ".markdown"])
+@pytest.mark.parametrize("content", ["", " \n\t "])
+def test_plain_sources_reject_empty_or_whitespace_only_content(
+    tmp_path: Path,
+    extension: str,
+    content: str,
+) -> None:
+    source = tmp_path / f"note{extension}"
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed == ()
+    assert batch.issues[0].classification is ImportClassification.FAILED
+    assert batch.issues[0].reason_code == "invalid_content"
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("notes.json", '{"content":""}'),
+        ("notes.json", '{"content":"   \\n"}'),
+        ("notes.yaml", 'content: ""\n'),
+        ("notes.yaml", 'content: "   "\n'),
+        ("notes.csv", "title,content\nOne,\n"),
+        ("notes.csv", "title,content\nOne,   \n"),
+    ],
+)
+def test_structured_sources_reject_empty_or_whitespace_only_bodies_atomically(
+    tmp_path: Path,
+    filename: str,
+    content: str,
+) -> None:
+    source = tmp_path / filename
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed == ()
+    assert batch.issues[0].classification is ImportClassification.FAILED
+    assert batch.issues[0].reason_code == "invalid_content"
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("notes.json", '{"title":"   ","content":"  Body \\n"}'),
+        ("notes.yaml", 'name: "   "\nbody: "  Body "\n'),
+        ("notes.csv", "title,content\n   ,  Body \n"),
+    ],
+)
+def test_structured_blank_titles_fall_back_without_stripping_content(
+    tmp_path: Path,
+    filename: str,
+    content: str,
+) -> None:
+    source = tmp_path / filename
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    payload = batch.parsed[0].payloads[0]
+    assert payload.title == "Untitled"
+    assert payload.content.startswith("  Body ")
+
+
 @pytest.mark.parametrize(
     ("field_name", "value", "error_type"),
     [
@@ -2206,6 +2295,91 @@ def test_structured_note_and_keyword_expansion_respects_independent_bounds(
         "too_many_keywords",
         "too_many_notes",
     }
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        (
+            "notes.json",
+            '{"content":"Body","keywords":" alpha, beta "}',
+        ),
+        ("notes.yaml", 'content: Body\ntags: " alpha, beta "\n'),
+        ("notes.csv", 'title,content,tags\nOne,Body," alpha, beta "\n'),
+    ],
+)
+def test_keyword_strings_split_and_trim_across_structured_formats(
+    tmp_path: Path,
+    filename: str,
+    content: str,
+) -> None:
+    source = tmp_path / filename
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed[0].payloads[0].keywords == ("alpha", "beta")
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        (
+            "notes.json",
+            '{"content":"Body","keywords":[" alpha "," beta"]}',
+        ),
+        ("notes.yaml", 'content: Body\ntags: [" alpha ", " beta"]\n'),
+    ],
+)
+def test_keyword_lists_are_trimmed_across_structured_formats(
+    tmp_path: Path,
+    filename: str,
+    content: str,
+) -> None:
+    source = tmp_path / filename
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed[0].payloads[0].keywords == ("alpha", "beta")
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"content":"Body","tags":"alpha,,beta"}',
+        '{"content":"Body","tags":["alpha","   "]}',
+    ],
+)
+def test_empty_keyword_elements_reject_the_structured_source_atomically(
+    tmp_path: Path,
+    content: str,
+) -> None:
+    source = tmp_path / "notes.json"
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code == "invalid_content"
+
+
+def test_keyword_bound_counts_split_string_elements(tmp_path: Path) -> None:
+    source = tmp_path / "notes.json"
+    source.write_text(
+        '{"content":"Body","tags":"alpha,beta"}',
+        encoding="utf-8",
+    )
+    bounds = _discovery_bounds(max_keywords_per_note=1)
+
+    batch = _parse_selection(
+        [source],
+        bounds=bounds,
+        destination=("Imported",),
+    )
+
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code == "too_many_keywords"
 
 
 def test_replaced_source_and_parent_directory_are_rejected_as_races(
@@ -2278,6 +2452,65 @@ def test_leaf_change_during_bounded_read_is_rejected_after_read(
 
     assert batch.parsed == ()
     assert batch.issues[0].reason_code == "source_changed"
+
+
+def test_lexical_parent_replacement_during_read_is_rejected_after_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = tmp_path / "selected"
+    parent.mkdir()
+    source = parent / "note.txt"
+    source.write_text("original", encoding="utf-8")
+    bounds = _discovery_bounds()
+    discovery = discover_import_sources([source], bounds)
+    moved_parent = tmp_path / "moved-selected"
+    real_read = os.read
+    real_open = os.open
+    real_close = os.close
+    replaced = False
+    opened: list[int] = []
+    closed: list[int] = []
+
+    def tracked_open(
+        path: object,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+        opened.append(descriptor)
+        return descriptor
+
+    def tracked_close(descriptor: int) -> None:
+        real_close(descriptor)
+        closed.append(descriptor)
+
+    def racing_read(descriptor: int, count: int) -> bytes:
+        nonlocal replaced
+        chunk = real_read(descriptor, count)
+        if chunk and not replaced:
+            replaced = True
+            parent.rename(moved_parent)
+            parent.mkdir()
+            source.write_text("replacement", encoding="utf-8")
+        return chunk
+
+    monkeypatch.setattr(note_import_discovery.os, "open", tracked_open)
+    monkeypatch.setattr(note_import_discovery.os, "close", tracked_close)
+    monkeypatch.setattr(note_import_discovery.os, "read", racing_read)
+
+    batch = note_import_planner.parse_import_sources(
+        discovery,
+        bounds,
+        destination_folder_segments=("Imported",),
+    )
+
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code == "source_changed"
+    assert opened
+    assert Counter(opened) == Counter(closed)
 
 
 def test_bounded_read_does_not_trust_discovered_stat_size(
