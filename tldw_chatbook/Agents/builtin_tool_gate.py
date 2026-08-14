@@ -120,9 +120,7 @@ class BuiltinToolGate:
         with self._lock:
             self._payload = None
             self._stamps = {
-                key: value
-                for key, value in self._stamps.items()
-                if key[0] != run_id
+                key: value for key, value in self._stamps.items() if key[0] != run_id
             }
 
     @contextlib.contextmanager
@@ -163,9 +161,7 @@ class BuiltinToolGate:
         """
         with self._lock:
             snapshot = {
-                key: value
-                for key, value in self._stamps.items()
-                if key[0] == run_id
+                key: value for key, value in self._stamps.items() if key[0] == run_id
             }
         try:
             yield
@@ -463,7 +459,7 @@ def builtin_permission_rows(payload: dict) -> list[BuiltinPermRow]:
     live: set[str] = set()
     for entry in provider.list_catalog():
         tool = provider.tool_for(entry.name)
-        if tool is None:            # defensive: catalog/registry disagree
+        if tool is None:  # defensive: catalog/registry disagree
             continue
         live.add(entry.name)
         rows.append(
@@ -693,9 +689,7 @@ def _off_tool_gate_status() -> tuple[int, bool]:
             if section == "console" and key == LOCAL_TOOLS_MASTER_KEY
             else False
         )
-        enabled = coerce_bool_setting(
-            get_cli_setting(section, key, default), default
-        )
+        enabled = coerce_bool_setting(get_cli_setting(section, key, default), default)
         if enabled:
             continue
         off += 1
@@ -732,16 +726,15 @@ def tool_gate_breadcrumb(gates: list[ToolGate] | None = None) -> str | None:
     else:
         off = sum(1 for gate in gates if not gate.enabled)
         local_master_off = any(
-            gate.key == LOCAL_TOOLS_MASTER_KEY and not gate.enabled
-            for gate in gates
+            gate.key == LOCAL_TOOLS_MASTER_KEY and not gate.enabled for gate in gates
         )
     if off == 0:
         return None
     if local_master_off:
         return (
-            "Standard web tools (web_search, web_fetch, web_crawl) and local "
-            "workspace tools are off. Enable 'Local workspace + web tools' "
-            "in Tools mode; the next Console agent run will use it. "
+            "Workspace, web, and Watchlists tools are off. Enable 'Local "
+            "workspace, web, and Watchlists tools' in Tools mode; the next "
+            "Console agent run will use it. "
             f"{off} tool gate(s) are off in total."
         )
     return (

@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -26,7 +26,10 @@ from tldw_chatbook.MCP.readiness import (
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel
-from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode, _named_items_text
+from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import (
+    MCPServersMode,
+    _named_items_text,
+)
 
 _BUNDLED_CSS_PATH = str(
     Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
@@ -161,13 +164,15 @@ async def test_status_column_cells_carry_semantic_color_by_readiness_state():
             [
                 _snap("local:docs", "docs"),
                 _snap(
-                    "local:web", "web",
+                    "local:web",
+                    "web",
                     state=ReadinessState.NEEDS_ATTENTION,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Timed out",
                 ),
                 _snap(
-                    "local:beta", "beta",
+                    "local:beta",
+                    "beta",
                     state=ReadinessState.NEEDS_SETUP,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Missing environment variables: KEY.",
@@ -176,17 +181,20 @@ async def test_status_column_cells_carry_semantic_color_by_readiness_state():
         )
         await pilot.pause()
         table = app.query_one("#mcp-servers-table", DataTable)
-        assert table.get_cell_at((0, 2)).style == state_text(
-            "x", "ready"
-        ).style  # READY
-        assert table.get_cell_at((1, 2)).style == state_text(
-            "x", "error"
-        ).style  # NEEDS_ATTENTION
-        assert table.get_cell_at((2, 2)).style == state_text(
-            "x", "warning"
-        ).style  # NEEDS_SETUP
+        assert (
+            table.get_cell_at((0, 2)).style == state_text("x", "ready").style
+        )  # READY
+        assert (
+            table.get_cell_at((1, 2)).style == state_text("x", "error").style
+        )  # NEEDS_ATTENTION
+        assert (
+            table.get_cell_at((2, 2)).style == state_text("x", "warning").style
+        )  # NEEDS_SETUP
         # Content itself is unchanged -- glyph + label, still one string.
-        assert str(table.get_cell_at((0, 2))) == f"{STATE_GLYPHS[ReadinessState.READY]} Ready"
+        assert (
+            str(table.get_cell_at((0, 2)))
+            == f"{STATE_GLYPHS[ReadinessState.READY]} Ready"
+        )
 
 
 @pytest.mark.asyncio
@@ -533,7 +541,8 @@ async def test_local_detail_lists_resources_and_prompts_from_discovery_snapshot(
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
         local = _snap(
-            "local:docs", "docs",
+            "local:docs",
+            "docs",
             detail={
                 "command": "python",
                 "args": [],
@@ -562,7 +571,8 @@ async def test_local_detail_resources_prompts_empty_copy_is_none():
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
         local = _snap(
-            "local:docs", "docs",
+            "local:docs",
+            "docs",
             detail={
                 "command": "python",
                 "args": [],
@@ -590,8 +600,10 @@ async def test_server_external_record_detail_shows_resource_prompt_counts_only()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
         snap = _snap(
-            "server:main/docs", "docs",
-            resource_count=3, prompt_count=0,
+            "server:main/docs",
+            "docs",
+            resource_count=3,
+            prompt_count=0,
             detail={"raw": {"server_id": "docs", "enabled": True}},
         )
         await canvas.show_detail(snap)
@@ -602,7 +614,8 @@ async def test_server_external_record_detail_shows_resource_prompt_counts_only()
 
         # Unreported counts render "—" (unknown), never a fake zero.
         bare = _snap(
-            "server:main/other", "other",
+            "server:main/other",
+            "other",
             detail={"raw": {"server_id": "other", "enabled": True}},
         )
         await canvas.show_detail(bare)
@@ -774,7 +787,7 @@ async def test_tool_gate_checkboxes_render_under_builtin_detail_with_subheadings
 ):
     """The builtin detail pane also renders a "Tool gates" group -- one
     Checkbox per `all_tool_gates()` entry, under two subheadings ("Agent
-    built-ins" / "Local workspace + web tools"), plus the ADAPTED restart note
+    built-ins" / "Local workspace, web, and Watchlists tools"), plus the ADAPTED restart note
     (NOT the `[mcp]` toggles' "next client launch" wording -- these gates
     affect the in-process agent runtime, no MCP client involved).
     """
@@ -802,11 +815,14 @@ async def test_tool_gate_checkboxes_render_under_builtin_detail_with_subheadings
         heading_builtin = app.query_one("#mcp-gate-heading-builtin", Static)
         heading_local = app.query_one("#mcp-gate-heading-local", Static)
         assert "Agent built-ins" in str(heading_builtin.renderable)
-        assert "Local workspace + web tools" in str(heading_local.renderable)
+        assert "Local workspace, web, and Watchlists tools" in str(
+            heading_local.renderable
+        )
 
         includes = app.query_one("#mcp-gate-local-includes", Static)
         includes_text = str(includes.renderable)
         assert "web_search, web_fetch, and web_crawl" in includes_text
+        assert "Watchlists search/detail" in includes_text
         assert "web_deep_search is separately gated" in includes_text
 
         first_cb = app.query_one(f"#mcp-gate-{first_builtin_key}", Checkbox)
@@ -854,15 +870,16 @@ async def test_local_group_dependents_are_disabled_while_master_is_off(monkeypat
         await pilot.pause()
 
         note = app.query_one("#mcp-gate-local-master-off-note", Static)
-        assert (
-            "Master switch is off" in str(note.renderable)
-            and "web_search, web_fetch, web_crawl" in str(note.renderable)
-        )
+        assert "Master switch is off" in str(
+            note.renderable
+        ) and "workspace, web, and Watchlists tools" in str(note.renderable)
 
         master_cb = app.query_one(f"#mcp-gate-{LOCAL_TOOLS_MASTER_KEY}", Checkbox)
         assert master_cb.value is False
         assert master_cb.disabled is False  # the master itself stays clickable
-        assert "Local workspace + web tools (master switch)" in str(master_cb.label)
+        assert "Local workspace, web, and Watchlists tools (master switch)" in str(
+            master_cb.label
+        )
 
         dependent_cb = app.query_one(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Checkbox)
         assert dependent_cb.value is True  # its own gate really is on...
@@ -970,7 +987,7 @@ async def test_toggling_tool_gate_checkbox_posts_tool_gate_changed_with_section_
     monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
 
     app = CanvasApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(100, 30)) as pilot:
         canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(builtin_readiness(enabled=True))
         await pilot.pause()
@@ -1697,7 +1714,9 @@ async def test_detail_scroll_focus_is_quiet_not_the_generic_outline_with_bundled
 
 
 @pytest.mark.asyncio
-async def test_adv_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_css(monkeypatch):
+async def test_adv_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_css(
+    monkeypatch,
+):
     """Same contract as the detail-scroll test above, for the Advanced
     collapsible's `#mcp-adv-scroll` in mcp_inspector.py.
 
@@ -1711,7 +1730,9 @@ async def test_adv_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_cs
     from textual.widgets import Collapsible
 
     monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
-    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True)
+    monkeypatch.setattr(
+        mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True
+    )
     app = InspectorAppWithBundledCSS()
     async with app.run_test(size=(120, 40)) as pilot:
         collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)

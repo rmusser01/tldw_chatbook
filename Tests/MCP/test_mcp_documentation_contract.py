@@ -27,6 +27,7 @@ CONSOLE_AGENT_TOOLS_DOCUMENT = (
 )
 SKILLS_EXAMPLES_DOCUMENT = REPO_ROOT / "Docs" / "Examples" / "skills" / "README.md"
 CONFIG_TEMPLATE = REPO_ROOT / "tldw_chatbook" / "config.py"
+BUILTIN_TOOL_GATE = REPO_ROOT / "tldw_chatbook" / "Agents" / "builtin_tool_gate.py"
 MCP_TOOLS_MODE = (
     REPO_ROOT / "tldw_chatbook" / "UI" / "MCP_Modules" / "mcp_tools_mode.py"
 )
@@ -36,6 +37,7 @@ MCP_SERVERS_MODE = (
 WATCHLISTS_TOOL_DOCUMENTS = (CONSOLE_AGENT_TOOLS_DOCUMENT, USER_GUIDE_DOCUMENT)
 LOCAL_TOOL_COPY_SURFACES = (
     CONFIG_TEMPLATE,
+    BUILTIN_TOOL_GATE,
     MCP_TOOLS_MODE,
     MCP_SERVERS_MODE,
     CONSOLE_AGENT_TOOLS_DOCUMENT,
@@ -315,6 +317,9 @@ def test_watchlists_tools_document_search_evidence_and_cursor_semantics() -> Non
             "For “all,” follow `next_cursor` until `has_more` is `false`",
             "Continuation excludes later inserts but is not snapshot isolation",
             "server Watchlists search is not yet supported",
+            "`status` is `unsupported`",
+            "`retryable` is `false`",
+            "`message` is exactly `server Watchlists search is not supported; switch Watchlists to Local before retrying`",
         ):
             assert contract in normalized, (path, contract)
 

@@ -561,7 +561,9 @@ The same local-tools group provides `watchlists_search_items` and
 `watchlists_get_item`. Results are local-first: both tools read the local
 Watchlists database, and server Watchlists search is not yet supported. In
 server mode they return a non-retryable unsupported result and do not search
-the local database.
+the local database. Its logical fields are explicit: `status` is `unsupported`,
+`retryable` is `false`, and `message` is exactly `server Watchlists search is
+not supported; switch Watchlists to Local before retrying`.
 
 `watchlists_search_items` returns newest-first, source-linked,
 collection-aware valid JSON bounded to 30 KiB. A query uses literal full-text
