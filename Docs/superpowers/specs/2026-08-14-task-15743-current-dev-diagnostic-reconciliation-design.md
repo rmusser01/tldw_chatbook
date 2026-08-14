@@ -83,6 +83,31 @@ They include request/status/success events and unsafe response-detail,
 exception-text, and exception-capturing events. No replacement diagnostic is
 required because the strict wrappers retain typed failures and request metrics.
 
+### Final-rebase amendment
+
+The required final rebase onto `origin/dev` imported 17 additional unsafe call
+sites across 11 owners after the original 31-call audit. They are part of the
+same acceptance boundary, not a new logging policy:
+
+| Owner | Unsafe call sites | Required surviving metadata |
+| --- | ---: | --- |
+| `Chat/console_agent_bridge.py` | 1 | fixed usage-accounting event plus exception type |
+| `Chat/console_chat_store.py` | 2 | fixed speech-preference events plus exception type |
+| `Chat/console_fleet_attention.py` | 1 | fixed mark-set event plus exception type |
+| `Chat/console_fleet_wake.py` | 2 | fixed probe/hook events plus exception type |
+| `Event_Handlers/TTS_Events/tts_events.py` | 2 | fixed missing-export event only |
+| `UI/CCP_Modules/ccp_character_handler.py` | 2 | fixed displayed-card event only |
+| `UI/STTS_Window.py` | 1 | fixed return-navigation event plus exception type |
+| `UI/Screens/model_installed_view.py` | 1 | fixed deletion event plus exception type |
+| `UI/Screens/watchlists_collections_screen.py` | 2 | fixed load event plus exception type |
+| `UI/Wizards/FirstRunSetupWizard.py` | 1 | fixed rejected-delete event only |
+| `config.py` | 2 | fixed precondition phase plus exception type |
+
+The same rebase also imported bounded provider, status, error-class, count, and
+code-side route/callback metadata plus privacy-improving deletions. Those rows
+require no production edit and remain governed by the final generated manifest.
+The sink topology remains the same six files.
+
 ## Decision
 
 Deliver one atomic TASK-15743 reconciliation after TASK-3070.2 and TASK-16001.
@@ -127,6 +152,14 @@ Production repairs:
 - `tldw_chatbook/UI/Screens/chat_screen.py`
 - `tldw_chatbook/UI/Screens/library_screen.py`
 - `tldw_chatbook/app.py`
+- `tldw_chatbook/Chat/console_chat_store.py`
+- `tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py`
+- `tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py`
+- `tldw_chatbook/UI/STTS_Window.py`
+- `tldw_chatbook/UI/Screens/model_installed_view.py`
+- `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`
+- `tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py`
+- `tldw_chatbook/config.py`
 
 ## Verification boundary
 

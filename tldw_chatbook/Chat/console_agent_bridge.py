@@ -1738,10 +1738,10 @@ class _StreamingModelAdapter:
                 )
         except Exception as exc:  # noqa: BLE001 — observability is never fatal
             usage = None
-            logger.opt(exception=True).warning(
+            logger.warning(
                 "usage accounting failed after a successful provider turn; "
-                "completing the turn without usage: {!r}",
-                exc,
+                "completing the turn without usage (exception_type={})",
+                type(exc).__name__,
             )
         if usage is not None:
             response["usage"] = usage

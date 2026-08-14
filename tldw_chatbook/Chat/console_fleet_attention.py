@@ -145,10 +145,10 @@ def set_fleet_unseen_completion(app: Any, conversation_id: str) -> bool:
         return False
     try:
         service.set_mark(conversation_id, service.FLEET_UNSEEN)
-    except Exception:  # noqa: BLE001 -- a lost mark is a missing badge, not a crash
-        logger.opt(exception=True).warning(
-            "fleet unseen mark set failed for conversation {conversation_id}",
-            conversation_id=conversation_id,
+    except Exception as exc:  # noqa: BLE001 -- a lost mark is a missing badge, not a crash
+        logger.warning(
+            "fleet unseen mark set failed (exception_type={})",
+            type(exc).__name__,
         )
         return False
     bump_fleet_unseen_revision(app)

@@ -12,6 +12,12 @@
 without embedding a private checkout path:
 `project_python="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.venv/bin/python"`.
 
+**Final-rebase amendment:** The mandatory final rebase imported 17 additional
+unsafe call sites across 11 owners. The design records their exact disposition.
+`test_task_15743_final_rebase_diagnostics_are_metadata_only` must fail before
+the repairs and pass afterward. These repairs join the final source/manifest
+commit and all affected focused tests below; no sink or metadata policy changes.
+
 ---
 
 ### Task 1: Freeze governance and the audited delta

@@ -8792,10 +8792,7 @@ class SetupWizardContainer(WizardContainer):
         if not wizard_state.commit_sections_allowed(
             {section: {} for section in requested_deletes}
         ):
-            logger.error(
-                "Wizard delete rejected non-owned sections: {}",
-                list(requested_deletes),
-            )
+            logger.error("Wizard delete rejected non-owned sections")
             return False
         import asyncio
 

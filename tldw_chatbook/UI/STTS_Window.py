@@ -2286,12 +2286,16 @@ class STTSWindow(Container):
                 self._voice_tool_back_in_progress = False
                 self._set_voice_tool_back_disabled(False)
             raise
-        except Exception:
+        except Exception as exc:
             if token == self._voice_tool_navigation_token:
                 self._voice_tool_origin = origin
                 self._voice_tool_back_in_progress = False
                 self._set_voice_tool_back_disabled(False)
-            logger.exception("Could not return to the originating Speech view")
+            logger.error(
+                "Could not return to the originating Speech view "
+                "(exception_type={})",
+                type(exc).__name__,
+            )
             return
         if token != self._voice_tool_navigation_token:
             return

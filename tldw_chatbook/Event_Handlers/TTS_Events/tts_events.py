@@ -3709,13 +3709,13 @@ class TTSEventHandler:
                 )
 
         if not source_file:
-            logger.error(f"No audio file found for message {event.message_id}")
+            logger.error("No audio file found to export")
             self.notify("No audio file found to export", severity="error")
             return
 
         try:
             if not source_file.exists():
-                logger.error(f"No audio file found for message {event.message_id}")
+                logger.error("No audio file found to export")
                 self.notify("No audio file found to export", severity="error")
                 return
 

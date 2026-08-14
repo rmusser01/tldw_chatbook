@@ -356,6 +356,64 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
 }
 
 
+TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
+    "tldw_chatbook/Chat/console_agent_bridge.py": {
+        "usage accounting failed after a successful provider turn": (
+            1,
+            ("type(exc).__name__",),
+        ),
+    },
+    "tldw_chatbook/Chat/console_chat_store.py": {
+        "Failed to restore Console reply-speech preferences": (
+            1,
+            ("type(exc).__name__",),
+        ),
+        "Failed to persist Console reply-speech preferences": (
+            1,
+            ("type(exc).__name__",),
+        ),
+    },
+    "tldw_chatbook/Chat/console_fleet_attention.py": {
+        "fleet unseen mark set failed": (1, ("type(exc).__name__",)),
+    },
+    "tldw_chatbook/Chat/console_fleet_wake.py": {
+        "wake delivery UI hook raised": (1, ("type(exc).__name__",)),
+        "wake view probe raised; keeping the unseen mark": (
+            1,
+            ("type(exc).__name__",),
+        ),
+    },
+    "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": {
+        "No audio file found to export": (2, ()),
+    },
+    "tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py": {
+        "Displayed character card": (2, ()),
+    },
+    "tldw_chatbook/UI/STTS_Window.py": {
+        "Could not return to the originating Speech view": (
+            1,
+            ("type(exc).__name__",),
+        ),
+    },
+    "tldw_chatbook/UI/Screens/model_installed_view.py": {
+        "Managed model deletion failed": (1, ("type(exc).__name__",)),
+    },
+    "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": {
+        "Failed to load watchlist items": (2, ("type(exc).__name__",)),
+    },
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
+        "Wizard delete rejected non-owned sections": (1, ()),
+    },
+    "tldw_chatbook/config.py": {
+        "phase=precondition, error_type": (1, ("type(error).__name__",)),
+        "phase=locked_precondition, error_type": (
+            1,
+            ("type(error).__name__",),
+        ),
+    },
+}
+
+
 def test_production_diagnostic_inventory_and_sink_topology_are_unchanged() -> None:
     result = subprocess.run(
         [sys.executable, "scripts/check_persistent_diagnostic_inventory.py"],
@@ -435,6 +493,65 @@ def test_reviewed_diagnostic_changes_are_metadata_only() -> None:
                 failures.append(
                     f"{relative}: {label!r} captures exception or stack details"
                 )
+
+    assert failures == []
+
+
+def test_task_15743_final_rebase_diagnostics_are_metadata_only() -> None:
+    """TASK-15743: final-base imports keep exactly the reviewed safe shapes."""
+    failures: list[str] = []
+    for relative, expected_by_label in TASK_15743_FINAL_REBASE_DIAGNOSTICS.items():
+        source = (REPO_ROOT / relative).read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=relative)
+        logger_symbols = diagnostic_inventory._logger_symbols(tree)
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and diagnostic_inventory._is_diagnostic_call(node, logger_symbols)
+            and node.args
+        ]
+        for label, (expected_count, expected_fields) in expected_by_label.items():
+            matches = [call for call in calls if label in ast.unparse(call.args[0])]
+            if len(matches) != expected_count:
+                failures.append(
+                    f"{relative}: expected {expected_count} diagnostics containing "
+                    f"{label!r}, found {len(matches)}"
+                )
+                continue
+            for call in matches:
+                fields = [
+                    ast.unparse(node.value)
+                    for node in ast.walk(call.args[0])
+                    if isinstance(node, ast.FormattedValue)
+                ]
+                fields.extend(ast.unparse(argument) for argument in call.args[1:])
+                fields.extend(
+                    ast.unparse(keyword.value)
+                    for keyword in call.keywords
+                    if keyword.arg not in {"exc_info", "stack_info", "stacklevel"}
+                )
+                captures_exception = (
+                    isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "exception"
+                ) or any(
+                    isinstance(node, ast.keyword)
+                    and node.arg == "exception"
+                    and not (
+                        isinstance(node.value, ast.Constant)
+                        and node.value.value is False
+                    )
+                    for node in ast.walk(call.func)
+                )
+                if sorted(fields) != sorted(expected_fields):
+                    failures.append(
+                        f"{relative}: {label!r} fields {fields!r}, "
+                        f"expected {list(expected_fields)!r}"
+                    )
+                if captures_exception:
+                    failures.append(
+                        f"{relative}: {label!r} captures exception details"
+                    )
 
     assert failures == []
 

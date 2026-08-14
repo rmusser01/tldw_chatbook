@@ -1368,11 +1368,12 @@ class ConsoleChatStore:
             return
         try:
             restored = reader(session.persisted_conversation_id)
-        except Exception:
-            logger.bind(
-                session_id=session.id,
-                conversation_id=session.persisted_conversation_id,
-            ).exception("Failed to restore Console reply-speech preferences.")
+        except Exception as exc:
+            logger.warning(
+                "Failed to restore Console reply-speech preferences "
+                "(exception_type={}).",
+                type(exc).__name__,
+            )
             return
         if isinstance(restored, ConsoleSpeechPreferences):
             session.speech_preferences = restored
@@ -1725,11 +1726,12 @@ class ConsoleChatStore:
                     expected_version=expected_version,
                 )
             )
-        except Exception:
-            logger.bind(
-                session_id=session.id,
-                conversation_id=session.persisted_conversation_id,
-            ).exception("Failed to persist Console reply-speech preferences.")
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist Console reply-speech preferences "
+                "(exception_type={}).",
+                type(exc).__name__,
+            )
             return session, False
         if not persisted:
             return session, False

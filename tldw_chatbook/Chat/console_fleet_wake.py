@@ -511,9 +511,10 @@ class ConsoleFleetWakeCoordinator:
         if callable(hook):
             try:
                 hook(session_id)
-            except Exception:  # noqa: BLE001 -- UI freshness is best-effort
-                logger.opt(exception=True).debug(
-                    "wake delivery UI hook raised"
+            except Exception as exc:  # noqa: BLE001 -- UI freshness is best-effort
+                logger.debug(
+                    "wake delivery UI hook raised (exception_type={})",
+                    type(exc).__name__,
                 )
         task = loop.create_task(
             self._deliver(
@@ -631,9 +632,11 @@ class ConsoleFleetWakeCoordinator:
             return True
         try:
             return bool(probe(conversation_id, session_id))
-        except Exception:  # noqa: BLE001 -- uncertainty keeps the badge
-            logger.opt(exception=True).debug(
-                "wake view probe raised; keeping the unseen mark"
+        except Exception as exc:  # noqa: BLE001 -- uncertainty keeps the badge
+            logger.debug(
+                "wake view probe raised; keeping the unseen mark "
+                "(exception_type={})",
+                type(exc).__name__,
             )
             return False
 
