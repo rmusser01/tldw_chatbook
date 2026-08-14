@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import QueryError
 from textual.widget import Widget
 from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static, TextArea
 from textual.worker import WorkerFailed
@@ -955,6 +956,18 @@ async def _wait_until(
             return
         await pilot.pause(0.01)
     raise AssertionError("condition did not become true")
+
+
+def _playground_is_mounted(app: App[Any]) -> bool:
+    """Return whether the async view replacement mounted strict descendants."""
+    try:
+        playground = app.query_one(SpeechPlaygroundPane)
+        playground.query_one("#tts-provider-select", Select).query_one(
+            "SelectOverlay"
+        )
+    except QueryError:
+        return False
+    return True
 
 
 @pytest.mark.asyncio
@@ -1960,7 +1973,7 @@ async def test_preview_posts_the_exact_loaded_profile_and_current_availability()
         app.query_one("#stts-profile-preview-btn", Button).press()
         await _wait_until(
             pilot,
-            lambda: app.query_one(STTSWindow).current_view == "playground",
+            lambda: _playground_is_mounted(app),
         )
         preset = app.query_one(SpeechPlaygroundPane)._profile_preset
         assert type(preset) is TTSPlaygroundSelectionPreset
@@ -2026,7 +2039,7 @@ async def test_matching_profile_sample_records_evidence_and_enables_save(
         app.query_one("#stts-profile-preview-btn", Button).press()
         await _wait_until(
             pilot,
-            lambda: app.query_one(STTSWindow).current_view == "playground",
+            lambda: _playground_is_mounted(app),
         )
         pane = app.query_one(SpeechPlaygroundPane)
         await _wait_until(pilot, lambda: len(pane.query("#audio-play-btn")) == 1)
@@ -2073,7 +2086,7 @@ async def test_different_profile_sample_cannot_enable_save(
         app.query_one("#stts-profile-preview-btn", Button).press()
         await _wait_until(
             pilot,
-            lambda: app.query_one(STTSWindow).current_view == "playground",
+            lambda: _playground_is_mounted(app),
         )
         pane = app.query_one(SpeechPlaygroundPane)
         await _wait_until(pilot, lambda: len(pane.query("#audio-play-btn")) == 1)
@@ -2180,7 +2193,7 @@ async def test_stts_window_consumes_exact_profile_preview_once_on_playground_rem
         app.query_one("#stts-profile-preview-btn", Button).press()
         await _wait_until(
             pilot,
-            lambda: app.query_one(STTSWindow).current_view == "playground",
+            lambda: _playground_is_mounted(app),
         )
         first_playground = app.query_one(SpeechPlaygroundPane)
         window = app.query_one(STTSWindow)
@@ -2244,7 +2257,7 @@ async def test_exact_preview_at_80x24_focuses_playground_with_visible_recovery_b
         preview.press()
         await _wait_until(
             pilot,
-            lambda: app.query_one(STTSWindow).current_view == "playground",
+            lambda: _playground_is_mounted(app),
         )
         await pilot.pause()
 

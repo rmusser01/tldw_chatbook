@@ -1,7 +1,7 @@
 import asyncio
 import os
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from textual.widgets import Input, Static
@@ -1187,24 +1187,22 @@ def _provider_test_result_text(screen) -> str:
     return _static_text(screen.query_one("#settings-provider-test-result", Static))
 
 
-async def _reachable_endpoint_probe(_base_url: str) -> SettingsEndpointProbeOutcome:
+async def _reachable_endpoint_probe(
+    _base_url: str, **_kwargs: object
+) -> SettingsEndpointProbeOutcome:
     return SettingsEndpointProbeOutcome(
-        reachable=True,
+        state="reachable",
         summary="reachable (1 model)",
-        model_count=1,
+        model_ids=("llama-3",),
     )
 
 
 @pytest.mark.asyncio
-async def test_test_provider_button_click_runs_the_check(monkeypatch):
+async def test_test_provider_button_click_runs_the_check():
     """AC#2: clicking #settings-test-provider (not the 't' hotkey) runs the test."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
     app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
-        _reachable_endpoint_probe,
-    )
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
@@ -1214,8 +1212,14 @@ async def test_test_provider_button_click_runs_the_check(monkeypatch):
         # Sanity: the test has not run yet (mount-time default copy only).
         assert _provider_test_result_text(screen) == "Provider test has not run."
 
-        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "endpoint reachable")
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+            _reachable_endpoint_probe,
+        ):
+            await _click_scrolled_settings_button(
+                screen, pilot, "#settings-test-provider"
+            )
+            await _wait_for_settings_text(screen, pilot, "endpoint reachable")
 
         result_text = _provider_test_result_text(screen)
         assert "Provider test" in result_text
@@ -1223,7 +1227,7 @@ async def test_test_provider_button_click_runs_the_check(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_test_provider_button_runs_with_provider_input_focused(monkeypatch):
+async def test_test_provider_button_runs_with_provider_input_focused():
     """AC#3: a real mouse click on the button still runs the check, starting
     from an Input-focused state.
 
@@ -1242,10 +1246,6 @@ async def test_test_provider_button_runs_with_provider_input_focused(monkeypatch
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
     app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
-        _reachable_endpoint_probe,
-    )
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
@@ -1258,8 +1258,14 @@ async def test_test_provider_button_runs_with_provider_input_focused(monkeypatch
         # Sanity: this is exactly the state that would make the 't' hotkey no-op.
         assert screen._settings_text_entry_has_focus() is True
 
-        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "endpoint reachable")
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+            _reachable_endpoint_probe,
+        ):
+            await _click_scrolled_settings_button(
+                screen, pilot, "#settings-test-provider"
+            )
+            await _wait_for_settings_text(screen, pilot, "endpoint reachable")
 
         assert "Provider test" in _provider_test_result_text(screen)
 
