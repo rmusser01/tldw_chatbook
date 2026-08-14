@@ -311,8 +311,12 @@ from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.voice_bundle_service import (
     TTSVoiceBundlePortabilityService,
+)
+from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+    SpeechTTSPanelDraftSnapshot,
 )
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.Model_Artifacts.store import managed_service
@@ -9415,39 +9419,96 @@ class TldwCli(
             self._audio_cpp_artifact_lease_coordinator = coordinator
         return coordinator
 
+    def _audio_cpp_removal_settings_inputs(
+        self,
+    ) -> tuple[
+        AudioCppSettingsConfig,
+        AudioCppSettingsConfig | None,
+        TTSPreferencesSnapshot,
+        TTSPreferencesSnapshot | None,
+    ]:
+        """Read saved plus exact detached-or-mounted Speech/TTS draft state."""
+
+        try:
+            saved = project_audio_cpp_settings_config(self.app_config)
+            saved_preferences = TTSPreferencesSnapshot.from_settings(self.app_config)
+        except (TypeError, ValueError):
+            raise ProfileRepositoryError("unavailable") from None
+
+        draft_snapshot: SpeechTTSPanelDraftSnapshot | None = None
+        stored_settings_state = False
+        store = getattr(self, "screen_state_store", None)
+        if store is not None:
+            try:
+                stored = store.restore(TAB_SETTINGS, self._current_runtime_identity())
+            except Exception:
+                raise ProfileRepositoryError("unavailable") from None
+            if stored is not None:
+                stored_settings_state = True
+                if "speech_tts_panel_draft" in stored:
+                    candidate = stored["speech_tts_panel_draft"]
+                    if type(candidate) is not SpeechTTSPanelDraftSnapshot:
+                        raise ProfileRepositoryError("unavailable")
+                    draft_snapshot = candidate
+        if draft_snapshot is None and not stored_settings_state:
+            current_screen = getattr(self, "screen", None)
+            candidate = getattr(current_screen, "_speech_tts_draft_snapshot", None)
+            if type(candidate) is SpeechTTSPanelDraftSnapshot:
+                draft_snapshot = candidate
+
+        if draft_snapshot is None:
+            return saved, None, saved_preferences, None
+        try:
+            provider = draft_snapshot.state.providers.get("audio_cpp")
+            if not isinstance(provider, dict):
+                raise ValueError
+            draft = AudioCppSettingsConfig.from_mapping(provider)
+            draft_preferences = draft_snapshot.state.defaults.snapshot()
+        except (TypeError, ValueError):
+            raise ProfileRepositoryError("unavailable") from None
+        return saved, draft, saved_preferences, draft_preferences
+
     async def _audio_cpp_artifact_removal_evidence(
         self,
         reference: "ArtifactRef",
     ) -> AudioCppArtifactRemovalEvidence:
         """Collect bounded saved, draft, profile, assignment, and runtime facts."""
 
-        saved = project_audio_cpp_settings_config(self.app_config)
-        draft: AudioCppSettingsConfig | None = None
-        current_screen = getattr(self, "screen", None)
-        draft_snapshot = getattr(current_screen, "_speech_tts_draft_snapshot", None)
-        draft_state = getattr(draft_snapshot, "state", None)
-        providers = getattr(draft_state, "providers", None)
-        if isinstance(providers, dict) and isinstance(providers.get("audio_cpp"), dict):
-            draft = AudioCppSettingsConfig.from_mapping(providers["audio_cpp"])
+        saved, draft, saved_preferences, draft_preferences = (
+            self._audio_cpp_removal_settings_inputs()
+        )
 
         profile_service = await self._ensure_tts_profile_service()
         if profile_service is None:
             raise ProfileRepositoryError("unavailable")
         profiles_with_counts: list[tuple[Any, int]] = []
+        seen_profile_ids: set[Any] = set()
+        expected_total: int | None = None
         offset = 0
         while len(profiles_with_counts) < 200:
             page = await profile_service.list_profiles(search=None, offset=offset)
+            if type(page.total) is not int or page.total < 0 or page.total > 200:
+                raise ProfileRepositoryError("unavailable")
+            if expected_total is None:
+                expected_total = page.total
+            elif page.total != expected_total:
+                raise ProfileRepositoryError("unavailable")
             if not page.profiles:
                 break
+            if len(profiles_with_counts) + len(page.profiles) > page.total:
+                raise ProfileRepositoryError("unavailable")
             for profile in page.profiles:
+                if profile.profile_id in seen_profile_ids:
+                    raise ProfileRepositoryError("unavailable")
+                seen_profile_ids.add(profile.profile_id)
                 loaded = await profile_service.get_profile(profile.profile_id)
                 count = await profile_service.assignment_count(loaded)
                 profiles_with_counts.append((loaded.profile, count))
-                if len(profiles_with_counts) >= 200:
-                    break
             offset += len(page.profiles)
             if offset >= page.total:
                 break
+        if expected_total is None or len(profiles_with_counts) != expected_total:
+            raise ProfileRepositoryError("unavailable")
 
         staged_ids: tuple[str, ...] = ()
         live_ids: tuple[str, ...] = ()
@@ -9499,6 +9560,8 @@ class TldwCli(
             reference,
             saved_settings=saved,
             draft_settings=draft,
+            saved_preferences=saved_preferences,
+            draft_preferences=draft_preferences,
             profiles=tuple(profiles_with_counts),
             staged_runtime_ids=staged_ids,
             live_runtime_ids=live_ids,
@@ -11090,6 +11153,9 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)
+        if coordinator is not None:
+            await coordinator.shutdown()
         await self.audio_cpp_model_install_owner.shutdown()
         await self._shutdown_console_image_edits()
         await self._shutdown_file_notes_session_owner()

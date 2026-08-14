@@ -6,8 +6,8 @@ import asyncio
 import errno
 import os
 import stat
-from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -112,7 +112,7 @@ class _ArtifactLeaseCoordinator(Protocol):
     def lease_consumers(
         self,
         consumers: tuple[AudioCppArtifactConsumerRequirement, ...],
-    ) -> AbstractContextManager[None]: ...
+    ) -> object: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -1132,22 +1132,28 @@ class TTSVoiceBundlePortabilityService:
         self._closed = False
         self._close_task: asyncio.Task[None] | None = None
 
-    def _lease_import_dependency(
+    @asynccontextmanager
+    async def _lease_import_dependency(
         self,
         command: TTSBundleImportCommand,
-    ) -> AbstractContextManager[None]:
+    ) -> AsyncIterator[None]:
         coordinator = self._artifact_lease_coordinator
         if coordinator is None:
-            return nullcontext()
-        return coordinator.lease_consumers(
-            (
-                AudioCppArtifactConsumerRequirement(
-                    provider_id=command.source_draft.provider_id,
-                    model_id=command.source_draft.model_id,
-                    recipe_requirement=command.recipe_requirement,
-                ),
-            )
-        )
+            yield
+            return
+        async with cast(
+            Any,
+            coordinator.lease_consumers(
+                (
+                    AudioCppArtifactConsumerRequirement(
+                        provider_id=command.source_draft.provider_id,
+                        model_id=command.source_draft.model_id,
+                        recipe_requirement=command.recipe_requirement,
+                    ),
+                )
+            ),
+        ):
+            yield
 
     async def _ensure_root(self) -> None:
         async with self._root_lock:
@@ -1568,7 +1574,7 @@ class TTSVoiceBundlePortabilityService:
             )
             _test_boundary("commit_pre_repository")
             await self._verify_source(session)
-            with self._lease_import_dependency(command):
+            async with self._lease_import_dependency(command):
                 control, result = await self._run_owned_call(
                     self._repository.commit_bundle_import(command)
                 )

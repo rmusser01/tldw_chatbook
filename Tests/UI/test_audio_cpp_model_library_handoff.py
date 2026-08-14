@@ -2215,6 +2215,85 @@ async def test_mounted_settings_stages_exact_request_after_collecting_widgets() 
 
 
 @pytest.mark.asyncio
+async def test_real_settings_navigation_preserves_detached_tts_draft_for_removal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production route saves the exact typed draft before mounting Library."""
+
+    from textual.widgets import Button, Select
+
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook.UI.Screens import llm_screen as llm_screen_module
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSPanelDraftSnapshot,
+    )
+
+    async def unavailable_ollama(*_args: object, **_kwargs: object) -> bool:
+        return False
+
+    monkeypatch.setattr(llm_screen_module, "_probe_local_server", unavailable_ollama)
+
+    app = _build_test_app(configured_default="settings")
+    async with app.run_test(size=(190, 55)) as pilot:
+        assert await _wait_for(lambda: isinstance(app.screen, SettingsScreen), pilot)
+        screen = app.screen
+        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-speech-tts-panel",
+            timeout=8.0,
+        )
+        screen.query_one(
+            "#settings-speech-configure-provider", Select
+        ).value = "audio_cpp"
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-speech-audio-cpp-open-model-library",
+            timeout=8.0,
+        )
+        screen.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        screen.query_one(
+            "#settings-speech-audio_cpp-managed-setup-source", Select
+        ).value = "guided"
+        await pilot.pause()
+        screen.query_one(
+            "#settings-speech-default-provider", Select
+        ).value = "audio_cpp"
+        assert await _wait_for(
+            lambda: (
+                screen.query_one("#settings-speech-default-provider", Select).value
+                == "audio_cpp"
+            ),
+            pilot,
+        )
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-speech-audio-cpp-open-model-library",
+            timeout=8.0,
+        )
+        screen.query_one(
+            "#settings-speech-audio-cpp-open-model-library", Button
+        ).press()
+
+        assert await _wait_for(lambda: app.current_tab == "llm_management", pilot)
+        assert not isinstance(app.screen, SettingsScreen)
+        stored = app.screen_state_store.restore(
+            "settings", app._current_runtime_identity()
+        )
+        assert stored is not None
+        draft = stored["speech_tts_panel_draft"]
+        assert type(draft) is SpeechTTSPanelDraftSnapshot
+        assert draft.state.defaults.provider_id == "audio_cpp"
+        assert draft.state.defaults.model_mode == "first_available"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failure",
     ("stage_raise", "stage_interrupt", "post_false", "post_raise", "post_interrupt"),

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 import hashlib
 import inspect
 import os
@@ -1406,8 +1406,8 @@ class _ArtifactLeaseCoordinator:
         self.active = False
         self.calls: list[tuple[AudioCppArtifactConsumerRequirement, ...]] = []
 
-    @contextmanager
-    def lease_consumers(self, consumers):
+    @asynccontextmanager
+    async def lease_consumers(self, consumers):
         exact = tuple(consumers)
         self.calls.append(exact)
         self.active = True
@@ -5902,7 +5902,12 @@ async def test_cancellation_propagates_unchanged_from_repository_wait() -> None:
     boundary = _AsyncBoundary()
     repository = _FakeRepository()
     repository.create_boundary = boundary
-    service, repository, tts_service = _service(repository=repository)
+    coordinator = _ArtifactLeaseCoordinator()
+    service, repository, tts_service = _service(
+        repository=repository,
+        artifact_lease_coordinator=coordinator,
+    )
+    repository.coordinator_probe = lambda: coordinator.active
     existing_tasks = set(asyncio.all_tasks())
     operation = asyncio.create_task(
         service.create_from_artifact(
@@ -5916,20 +5921,24 @@ async def test_cancellation_propagates_unchanged_from_repository_wait() -> None:
     cancellation_identity = object()
 
     operation.cancel(cancellation_identity)
+    await asyncio.sleep(0)
+    assert operation.done() is False
+    assert coordinator.active is True
+    boundary.release.set()
     with pytest.raises(asyncio.CancelledError) as caught:
         await operation
 
     assert caught.value.args == (cancellation_identity,)
     assert caught.value.args[0] is cancellation_identity
     assert boundary.settled.is_set()
-    assert not boundary.release.is_set()
+    assert boundary.release.is_set()
     assert operation.done()
     assert operation not in asyncio.all_tasks()
     assert set(asyncio.all_tasks()) == existing_tasks
     assert tts_service.capability_calls == []
     assert tts_service.revision_decisions == [("audio_cpp", 3)]
     assert [name for name, _value in repository.calls] == ["create"]
-    assert repository.coordinator_active_at_repository_calls == [False]
+    assert repository.coordinator_active_at_repository_calls == [True]
 
 
 @pytest.mark.asyncio

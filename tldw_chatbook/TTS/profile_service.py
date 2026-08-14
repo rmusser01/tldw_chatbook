@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    Sequence,
+)
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from itertools import islice
 from threading import RLock
@@ -276,7 +284,7 @@ class _ArtifactLeaseCoordinatorProtocol(Protocol):
     def lease_consumers(
         self,
         consumers: Iterable[AudioCppArtifactConsumerRequirement],
-    ) -> AbstractContextManager[None]: ...
+    ) -> object: ...
 
 
 def _validate_nonnegative_integer(value: object, code: str) -> int:
@@ -1420,14 +1428,48 @@ class TTSProfileService:
             recipe_requirement=requirement,
         )
 
-    def _lease_artifact_consumers(
+    @asynccontextmanager
+    async def _lease_artifact_consumers(
         self,
         *consumers: AudioCppArtifactConsumerRequirement,
-    ) -> AbstractContextManager[None]:
+    ) -> AsyncIterator[None]:
         coordinator = getattr(self, "_artifact_lease_coordinator", None)
         if coordinator is None:
-            return nullcontext()
-        return coordinator.lease_consumers(consumers)
+            yield
+            return
+        async with cast(Any, coordinator.lease_consumers(consumers)):
+            yield
+
+    async def _run_owned_repository_call(self, awaitable: Awaitable[Any]) -> Any:
+        """Keep one admitted repository mutation leased through settlement."""
+
+        task: asyncio.Future[Any] = asyncio.ensure_future(awaitable)
+        cancellation: asyncio.CancelledError | None = None
+        waiter = asyncio.current_task()
+        requests = waiter.cancelling() if waiter is not None else 0
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as error:
+                current = waiter.cancelling() if waiter is not None else 0
+                if current > requests:
+                    cancellation = cancellation or error
+                    requests = current
+            except BaseException:
+                if not task.done():
+                    raise
+        try:
+            result = task.result()
+        except BaseException as error:
+            if cancellation is not None:
+                cancellation.add_note(
+                    "profile repository mutation also failed after cancellation"
+                )
+                raise cancellation from None
+            raise error
+        if cancellation is not None:
+            raise cancellation
+        return result
 
     async def list_profiles(
         self,
@@ -2135,10 +2177,12 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            with self._lease_artifact_consumers(
+            async with self._lease_artifact_consumers(
                 self._artifact_consumer(draft.provider_id, draft.model_id)
             ):
-                result = await self._repository.create_profile(draft)
+                result = await self._run_owned_repository_call(
+                    self._repository.create_profile(draft)
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -2326,19 +2370,21 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            with self._lease_artifact_consumers(
+            async with self._lease_artifact_consumers(
                 self._artifact_consumer(
                     draft.provider_id,
                     draft.model_id,
                     recipe_requirement,
                 )
             ):
-                result = await self._repository.create_profile_with_reference(
-                    draft,
-                    profile_id,
-                    evidence.canonical_reference,
-                    recipe_requirement,
-                    expected_generation=repository_generation,
+                result = await self._run_owned_repository_call(
+                    self._repository.create_profile_with_reference(
+                        draft,
+                        profile_id,
+                        evidence.canonical_reference,
+                        recipe_requirement,
+                        expected_generation=repository_generation,
+                    )
                 )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
@@ -2395,7 +2441,7 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            with self._lease_artifact_consumers(
+            async with self._lease_artifact_consumers(
                 self._artifact_consumer(
                     loaded_profile.provider_id,
                     loaded_profile.model_id,
@@ -2407,11 +2453,13 @@ class TTSProfileService:
                 ),
                 self._artifact_consumer(draft.provider_id, draft.model_id),
             ):
-                result = await self._repository.update_profile(
-                    loaded_profile.profile_id,
-                    loaded_profile.revision,
-                    draft,
-                    expected_generation=loaded.repository_generation,
+                result = await self._run_owned_repository_call(
+                    self._repository.update_profile(
+                        loaded_profile.profile_id,
+                        loaded_profile.revision,
+                        draft,
+                        expected_generation=loaded.repository_generation,
+                    )
                 )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
@@ -2466,7 +2514,7 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            with self._lease_artifact_consumers(
+            async with self._lease_artifact_consumers(
                 self._artifact_consumer(
                     source.provider_id,
                     source.model_id,
@@ -2477,9 +2525,11 @@ class TTSProfileService:
                     ),
                 )
             ):
-                result = await self._repository.create_profile(
-                    draft,
-                    expected_generation=loaded.repository_generation,
+                result = await self._run_owned_repository_call(
+                    self._repository.create_profile(
+                        draft,
+                        expected_generation=loaded.repository_generation,
+                    )
                 )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
@@ -2585,7 +2635,7 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            with self._lease_artifact_consumers(
+            async with self._lease_artifact_consumers(
                 self._artifact_consumer(
                     profile.provider_id,
                     profile.model_id,
@@ -2596,17 +2646,19 @@ class TTSProfileService:
                     ),
                 )
             ):
-                result = await self._repository.set_assignment(
-                    canonical_ref,
-                    profile.profile_id,
-                    expected_generation=repository_generation,
-                    expected_profile_revision=profile.revision,
-                    expected_current_profile_id=(
-                        None
-                        if expected_assignment is None
-                        else expected_assignment.profile_id
-                    ),
-                    expected_profile=profile,
+                result = await self._run_owned_repository_call(
+                    self._repository.set_assignment(
+                        canonical_ref,
+                        profile.profile_id,
+                        expected_generation=repository_generation,
+                        expected_profile_revision=profile.revision,
+                        expected_current_profile_id=(
+                            None
+                            if expected_assignment is None
+                            else expected_assignment.profile_id
+                        ),
+                        expected_profile=profile,
+                    )
                 )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
@@ -2677,7 +2729,7 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            with self._lease_artifact_consumers(
+            async with self._lease_artifact_consumers(
                 self._artifact_consumer(
                     loaded_profile.provider_id,
                     loaded_profile.model_id,
@@ -2688,10 +2740,12 @@ class TTSProfileService:
                     ),
                 )
             ):
-                result = await self._repository.remove_assignment(
-                    canonical_assignment.character_ref,
-                    expected_generation=expected_generation,
-                    expected_profile_id=canonical_assignment.profile_id,
+                result = await self._run_owned_repository_call(
+                    self._repository.remove_assignment(
+                        canonical_assignment.character_ref,
+                        expected_generation=expected_generation,
+                        expected_profile_id=canonical_assignment.profile_id,
+                    )
                 )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
@@ -2715,7 +2769,7 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            with self._lease_artifact_consumers(
+            async with self._lease_artifact_consumers(
                 self._artifact_consumer(
                     profile.provider_id,
                     profile.model_id,
@@ -2726,9 +2780,11 @@ class TTSProfileService:
                     ),
                 )
             ):
-                result = await self._repository.delete_profile(
-                    profile.profile_id,
-                    expected_generation=loaded.repository_generation,
+                result = await self._run_owned_repository_call(
+                    self._repository.delete_profile(
+                        profile.profile_id,
+                        expected_generation=loaded.repository_generation,
+                    )
                 )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
@@ -2880,16 +2936,18 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            with self._lease_artifact_consumers(
+            async with self._lease_artifact_consumers(
                 self._artifact_consumer(
                     portable.draft.provider_id,
                     portable.draft.model_id,
                 )
             ):
-                result = await self._repository.create_profile(
-                    portable.draft,
-                    portable.profile_id,
-                    expected_generation=expected_generation,
+                result = await self._run_owned_repository_call(
+                    self._repository.create_profile(
+                        portable.draft,
+                        portable.profile_id,
+                        expected_generation=expected_generation,
+                    )
                 )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
@@ -2918,22 +2976,24 @@ class TTSProfileService:
         result = None
         repository = self._require_portable_repository()
         try:
-            with self._lease_artifact_consumers(
+            async with self._lease_artifact_consumers(
                 self._artifact_consumer(
                     portable.draft.provider_id,
                     portable.draft.model_id,
                 )
             ):
-                result = await repository.create_profile_with_assignment(
-                    portable.draft,
-                    portable.profile_id,
-                    character_ref,
-                    expected_generation=expected_generation,
-                    expected_current_profile_id=(
-                        None
-                        if expected_current is None
-                        else expected_current.profile_id
-                    ),
+                result = await self._run_owned_repository_call(
+                    repository.create_profile_with_assignment(
+                        portable.draft,
+                        portable.profile_id,
+                        character_ref,
+                        expected_generation=expected_generation,
+                        expected_current_profile_id=(
+                            None
+                            if expected_current is None
+                            else expected_current.profile_id
+                        ),
+                    )
                 )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
@@ -2970,7 +3030,7 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            with self._lease_artifact_consumers(
+            async with self._lease_artifact_consumers(
                 self._artifact_consumer(
                     profile.provider_id,
                     profile.model_id,
@@ -2981,17 +3041,19 @@ class TTSProfileService:
                     ),
                 )
             ):
-                result = await self._repository.set_assignment(
-                    character_ref,
-                    profile.profile_id,
-                    expected_generation=expected_generation,
-                    expected_profile_revision=profile.revision,
-                    expected_current_profile_id=(
-                        None
-                        if expected_current is None
-                        else expected_current.profile_id
-                    ),
-                    expected_profile=profile,
+                result = await self._run_owned_repository_call(
+                    self._repository.set_assignment(
+                        character_ref,
+                        profile.profile_id,
+                        expected_generation=expected_generation,
+                        expected_profile_revision=profile.revision,
+                        expected_current_profile_id=(
+                            None
+                            if expected_current is None
+                            else expected_current.profile_id
+                        ),
+                        expected_profile=profile,
+                    )
                 )
         except (ProfileRepositoryError, ProfileValidationError):
             raise

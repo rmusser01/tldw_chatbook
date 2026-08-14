@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
-from collections.abc import Callable, Iterable, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactNotInstalledError,
+    ArtifactRemovalAvailability,
     ArtifactRef,
+    take_artifact_removal_cleanup_owner,
 )
 from tldw_chatbook.TTS.audio_cpp_guided_config import (
     AudioCppManagedArtifactIdentity,
     AudioCppSettingsConfig,
 )
 from tldw_chatbook.TTS.profile_reference_types import TTSCloneRecipeRequirement
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.profile_types import TTSGenerationProfile
 
 _MAX_CONSUMERS = 200
@@ -32,10 +36,24 @@ class _InstalledRootHandle(Protocol):
     def close(self) -> None: ...
 
 
+class _RemovalAuthority(Protocol):
+    def commit(self) -> None: ...
+
+    def close(self) -> None: ...
+
+
 class _ArtifactService(Protocol):
     def acquire_installed_root(
         self, reference: ArtifactRef
     ) -> _InstalledRootHandle: ...
+
+    def probe_removal_availability(
+        self, reference: ArtifactRef
+    ) -> ArtifactRemovalAvailability: ...
+
+    def acquire_removal_authority(
+        self, reference: ArtifactRef
+    ) -> _RemovalAuthority: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +63,7 @@ class AudioCppArtifactRemovalEvidence:
     reference: ArtifactRef
     settings_consumers: tuple[tuple[str, str, str], ...] = ()
     profile_consumers: tuple[tuple[str, str, int, bool], ...] = ()
+    profile_provenance: tuple[tuple[str, str], ...] = ()
     staged_runtime_ids: tuple[str, ...] = ()
     live_runtime_ids: tuple[str, ...] = ()
 
@@ -56,6 +75,8 @@ class AudioCppArtifactRemovalEvidence:
             or type(self.profile_consumers) is not tuple
             or type(self.staged_runtime_ids) is not tuple
             or type(self.live_runtime_ids) is not tuple
+            or type(self.profile_provenance) is not tuple
+            or len(self.profile_provenance) > _MAX_CONSUMERS
             or sum(
                 map(
                     len,
@@ -93,18 +114,24 @@ class AudioCppArtifactRemovalEvidence:
                 _bounded_identifier(value) for value in self.staged_runtime_ids
             )
             live = tuple(_bounded_identifier(value) for value in self.live_runtime_ids)
+            provenance = tuple(
+                (_bounded_identifier(identity), _bounded_identifier(requirement))
+                for identity, requirement in self.profile_provenance
+            )
         except (TypeError, ValueError):
             invalid = True
             settings = ()
             profiles = ()
             staged = ()
             live = ()
+            provenance = ()
         if invalid:
             raise AudioCppArtifactDependencyError("invalid dependency evidence")
         object.__setattr__(self, "settings_consumers", tuple(sorted(settings)))
         object.__setattr__(self, "profile_consumers", tuple(sorted(profiles)))
         object.__setattr__(self, "staged_runtime_ids", tuple(sorted(set(staged))))
         object.__setattr__(self, "live_runtime_ids", tuple(sorted(set(live))))
+        object.__setattr__(self, "profile_provenance", tuple(sorted(provenance)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +264,9 @@ def _consumer_fingerprint(evidence: AudioCppArtifactRemovalEvidence) -> str:
             "clone" if has_clone else "plain",
         ):
             _hash_field(digest, value)
+    for identity, requirement in evidence.profile_provenance:
+        for value in ("profile-provenance", identity, requirement):
+            _hash_field(digest, value)
     for kind, identities in (
         ("staged", evidence.staged_runtime_ids),
         ("live", evidence.live_runtime_ids),
@@ -275,6 +305,8 @@ def project_audio_cpp_artifact_removal_evidence(
     *,
     saved_settings: AudioCppSettingsConfig,
     draft_settings: AudioCppSettingsConfig | None = None,
+    saved_preferences: TTSPreferencesSnapshot | None = None,
+    draft_preferences: TTSPreferencesSnapshot | None = None,
     profiles: tuple[tuple[TTSGenerationProfile, int], ...] = (),
     staged_runtime_ids: tuple[str, ...] = (),
     live_runtime_ids: tuple[str, ...] = (),
@@ -291,19 +323,49 @@ def project_audio_cpp_artifact_removal_evidence(
         and type(draft_settings) is not AudioCppSettingsConfig
     ):
         raise AudioCppArtifactDependencyError("dependency projection failed")
+    if any(
+        value is not None and type(value) is not TTSPreferencesSnapshot
+        for value in (saved_preferences, draft_preferences)
+    ):
+        raise AudioCppArtifactDependencyError("dependency projection failed")
     settings: list[tuple[str, str, str]] = []
     try:
         from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
             audio_cpp_curated_entries,
         )
+        from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
 
-        relevant_models = {
-            descriptor.model_id
-            for descriptor, _sources in audio_cpp_curated_entries()
-            if descriptor.reference == reference
-        }
+        descriptors = tuple(audio_cpp_curated_entries())
+        recipes = tuple(AUDIO_CPP_RECIPE_REGISTRY.recipes)
+        catalog_model_references: dict[str, set[ArtifactRef]] = {}
+        catalog_requirement_references: dict[
+            tuple[str, int, str], set[ArtifactRef]
+        ] = {}
+        for descriptor, _sources in descriptors:
+            catalog_model_references.setdefault(descriptor.model_id, set()).add(
+                descriptor.reference
+            )
+            for recipe in recipes:
+                if (
+                    descriptor.reference.artifact_id
+                    in recipe.model_library_artifact_ids
+                    and recipe.default_public_model_id == descriptor.model_id
+                ):
+                    key = (
+                        recipe.recipe_id,
+                        recipe.recipe_revision,
+                        descriptor.model_id,
+                    )
+                    catalog_requirement_references.setdefault(key, set()).add(
+                        descriptor.reference
+                    )
     except (OSError, TypeError, ValueError):
         raise AudioCppArtifactDependencyError("dependency projection failed") from None
+    managed_model_references: dict[str, set[ArtifactRef]] = {}
+    scoped_managed_model_references: dict[str, dict[str, set[ArtifactRef]]] = {
+        "saved": {},
+        "draft": {},
+    }
     for scope, label, config in (
         ("saved", "Guided Settings", saved_settings),
         ("draft", "Unsaved Guided Settings", draft_settings),
@@ -312,39 +374,92 @@ def project_audio_cpp_artifact_removal_evidence(
             continue
         for package in config.guided_packages:
             identity = package.managed_artifact
-            if identity is None or _reference_from_identity(identity) != reference:
+            if identity is None:
                 continue
-            relevant_models.add(package.public_model_id)
+            package_reference = _reference_from_identity(identity)
+            managed_model_references.setdefault(package.public_model_id, set()).add(
+                package_reference
+            )
+            scoped_managed_model_references[scope].setdefault(
+                package.public_model_id, set()
+            ).add(package_reference)
+            if package_reference != reference:
+                continue
             display = (
                 f"{label} default"
                 if config.guided_default_model_id == package.public_model_id
                 else label
             )
             settings.append((scope, display, package.package_uuid))
+    for scope, label, preferences in (
+        ("saved", "Saved global TTS default", saved_preferences),
+        ("draft", "Unsaved global TTS default", draft_preferences),
+    ):
+        preference_references = set(
+            catalog_model_references.get(
+                preferences.model_id if preferences is not None else "", set()
+            )
+        )
+        if preferences is not None and preferences.model_id is not None:
+            preference_references.update(
+                scoped_managed_model_references[scope].get(preferences.model_id, set())
+            )
+        if (
+            preferences is not None
+            and preferences.provider_id == "audio_cpp"
+            and preferences.model_mode == "exact"
+            and preferences.model_id is not None
+            and reference in preference_references
+        ):
+            settings.append((f"{scope}-default", label, preferences.model_id))
     projected_profiles: list[tuple[str, str, int, bool]] = []
+    projected_provenance: list[tuple[str, str]] = []
     try:
         for profile, assignment_count in profiles:
             if type(profile) is not TTSGenerationProfile:
                 raise TypeError
-            if (
-                profile.provider_id != "audio_cpp"
-                or profile.model_id not in relevant_models
-            ):
+            if profile.provider_id != "audio_cpp":
                 continue
+            profile_reference = profile.reference
+            requirement = (
+                None
+                if profile_reference is None
+                else profile_reference.recipe_requirement
+            )
+            provenance = ""
+            if requirement is None:
+                references = managed_model_references.get(profile.model_id, set())
+            else:
+                requirement_key = (
+                    requirement.recipe_id,
+                    requirement.recipe_revision,
+                    requirement.model_id,
+                )
+                references = catalog_requirement_references.get(requirement_key, set())
+                provenance = (
+                    f"{requirement.recipe_id}@{requirement.recipe_revision}:"
+                    f"{requirement.model_id}"
+                )
+            if reference not in references:
+                continue
+            profile_identity = str(profile.profile_id)
             projected_profiles.append(
                 (
-                    str(profile.profile_id),
+                    profile_identity,
                     profile.display_name,
                     assignment_count,
-                    profile.reference is not None,
+                    profile_reference is not None,
                 )
             )
+            if provenance:
+                projected_provenance.append((profile_identity, provenance))
     except (TypeError, ValueError):
         raise AudioCppArtifactDependencyError("dependency projection failed") from None
     return AudioCppArtifactRemovalEvidence(
         reference=reference,
         settings_consumers=tuple(settings),
         profile_consumers=tuple(projected_profiles),
+        profile_provenance=tuple(projected_provenance),
         staged_runtime_ids=staged_runtime_ids,
         live_runtime_ids=live_runtime_ids,
     )
@@ -395,6 +510,11 @@ class AudioCppArtifactLeaseCoordinator:
         self._artifact_service = artifact_service
         self._saved_settings_snapshot = saved_settings_snapshot
         self._catalog_entries = catalog_entries or self._default_catalog_entries
+        self._cleanup_owners: list[_InstalledRootHandle | _RemovalAuthority] = []
+        self._cleanup_lock = asyncio.Lock()
+        self._blocking_tasks: set[asyncio.Task[object]] = set()
+        self._removal_tasks: set[asyncio.Task[str]] = set()
+        self._closed = False
 
     @staticmethod
     def _default_catalog_entries() -> tuple[object, ...]:
@@ -470,12 +590,14 @@ class AudioCppArtifactLeaseCoordinator:
                     )
                 )
             )
-            if len(saved_matches) > 1:
+            persisted_references = {
+                _reference_from_identity(item.managed_artifact)
+                for item in saved_matches
+            }
+            if len(persisted_references) > 1:
                 raise AudioCppArtifactDependencyError("dependency resolution failed")
             persisted_reference = (
-                None
-                if not saved_matches
-                else _reference_from_identity(saved_matches[0].managed_artifact)
+                None if not persisted_references else next(iter(persisted_references))
             )
             if (
                 catalog_reference is not None
@@ -490,39 +612,261 @@ class AudioCppArtifactLeaseCoordinator:
                 resolved[_reference_key(reference)] = reference
         return tuple(resolved[key] for key in sorted(resolved))
 
-    @contextmanager
-    def lease_consumers(
+    async def _settle_task(
+        self,
+        task: asyncio.Task[Any],
+    ) -> tuple[asyncio.CancelledError | None, object | None, BaseException | None]:
+        cancellation: asyncio.CancelledError | None = None
+        waiter = asyncio.current_task()
+        requests = waiter.cancelling() if waiter is not None else 0
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as error:
+                current = waiter.cancelling() if waiter is not None else 0
+                if current > requests:
+                    cancellation = cancellation or error
+                    requests = current
+            except BaseException:
+                if not task.done():
+                    raise
+        try:
+            return cancellation, task.result(), None
+        except BaseException as error:
+            return cancellation, None, error
+
+    async def _settle_blocking(
+        self,
+        function: Callable[..., object],
+        *args: object,
+    ) -> tuple[asyncio.CancelledError | None, object | None, BaseException | None]:
+        task = asyncio.create_task(asyncio.to_thread(function, *args))
+        self._blocking_tasks.add(task)
+        try:
+            return await self._settle_task(task)
+        finally:
+            self._blocking_tasks.discard(task)
+
+    def _retain_error_owner(self, error: BaseException) -> None:
+        owner = take_artifact_removal_cleanup_owner(error)
+        if owner is not None:
+            self._retain_cleanup_owner(owner)
+
+    def _retain_cleanup_owner(
+        self,
+        owner: _InstalledRootHandle | _RemovalAuthority,
+    ) -> None:
+        if all(retained is not owner for retained in self._cleanup_owners):
+            self._cleanup_owners.append(owner)
+
+    async def _close_owner(
+        self,
+        owner: _InstalledRootHandle | _RemovalAuthority,
+    ) -> tuple[asyncio.CancelledError | None, BaseException | None]:
+        cancellation, _result, error = await self._settle_blocking(owner.close)
+        if error is not None:
+            self._retain_error_owner(error)
+        return cancellation, error
+
+    async def _drain_cleanup_locked(self) -> None:
+        retained = self._cleanup_owners
+        self._cleanup_owners = []
+        cancellation: asyncio.CancelledError | None = None
+        for owner in retained:
+            owner_cancellation, error = await self._close_owner(owner)
+            cancellation = cancellation or owner_cancellation
+            if error is not None:
+                self._retain_cleanup_owner(owner)
+        if cancellation is not None:
+            raise cancellation
+        if self._cleanup_owners:
+            raise AudioCppArtifactDependencyError("artifact cleanup is incomplete")
+
+    async def drain_cleanup(self) -> None:
+        """Retry every app-owned cleanup authority exactly once."""
+
+        async with self._cleanup_lock:
+            await self._drain_cleanup_locked()
+
+    @asynccontextmanager
+    async def lease_consumers(
         self,
         consumers: Iterable[AudioCppArtifactConsumerRequirement],
-    ) -> Iterator[None]:
+    ) -> AsyncIterator[None]:
         """Hold sorted exact shared-root leases through caller commit/rollback."""
 
+        if self._closed:
+            raise AudioCppArtifactDependencyError("lease coordinator is closed")
+        await self.drain_cleanup()
         handles: list[_InstalledRootHandle] = []
         primary_error: BaseException | None = None
         try:
             for reference in self._resolved_references(consumers):
-                try:
-                    handle = self._artifact_service.acquire_installed_root(reference)
-                except ArtifactNotInstalledError:
+                cancellation, value, error = await self._settle_blocking(
+                    self._artifact_service.acquire_installed_root,
+                    reference,
+                )
+                if isinstance(error, ArtifactNotInstalledError):
+                    if cancellation is not None:
+                        raise cancellation
                     continue
+                if error is not None:
+                    self._retain_error_owner(error)
+                    if cancellation is not None:
+                        raise cancellation
+                    raise AudioCppArtifactDependencyError(
+                        "artifact lease acquisition failed"
+                    ) from None
+                handle = cast(_InstalledRootHandle, value)
                 handles.append(handle)
+                if cancellation is not None:
+                    raise cancellation
             yield
         except BaseException as error:
             primary_error = error
             raise
         finally:
-            cleanup_error: BaseException | None = None
+            cleanup_failed = False
+            cleanup_cancellation: asyncio.CancelledError | None = None
             for handle in reversed(handles):
-                try:
-                    handle.close()
-                except BaseException as error:
-                    if cleanup_error is None:
-                        cleanup_error = error
-            if cleanup_error is not None:
+                cancellation, close_error = await self._close_owner(handle)
+                cleanup_cancellation = cleanup_cancellation or cancellation
+                if close_error is not None:
+                    self._retain_cleanup_owner(handle)
+                    cleanup_failed = True
+            if cleanup_failed:
                 if primary_error is not None:
                     primary_error.add_note("audio.cpp artifact lease cleanup failed")
                 else:
-                    raise cleanup_error
+                    raise AudioCppArtifactDependencyError(
+                        "artifact cleanup is incomplete"
+                    ) from None
+            if cleanup_cancellation is not None and primary_error is None:
+                raise cleanup_cancellation
+
+    async def probe_removal_availability(
+        self,
+        reference: ArtifactRef,
+    ) -> ArtifactRemovalAvailability:
+        """Probe off-loop while retaining any escaped cleanup authority."""
+
+        await self.drain_cleanup()
+        cancellation, value, error = await self._settle_blocking(
+            self._artifact_service.probe_removal_availability,
+            reference,
+        )
+        if error is not None:
+            self._retain_error_owner(error)
+            if cancellation is not None:
+                raise cancellation
+            raise AudioCppArtifactDependencyError("removal probe failed") from None
+        if cancellation is not None:
+            raise cancellation
+        if type(value) is not ArtifactRemovalAvailability:
+            raise AudioCppArtifactDependencyError("removal probe failed")
+        return value
+
+    async def _remove_if_unchanged(
+        self,
+        reference: ArtifactRef,
+        fingerprint: str,
+        collect_fingerprint: Callable[[], Awaitable[str]],
+    ) -> str:
+        await self.drain_cleanup()
+        authority: _RemovalAuthority | None = None
+        primary_error: BaseException | None = None
+        close_failed = False
+        try:
+            cancellation, value, error = await self._settle_blocking(
+                self._artifact_service.acquire_removal_authority,
+                reference,
+            )
+            if error is not None:
+                self._retain_error_owner(error)
+                if cancellation is not None:
+                    raise cancellation
+                raise AudioCppArtifactDependencyError(
+                    "removal authority is unavailable"
+                ) from None
+            authority = cast(_RemovalAuthority, value)
+            if cancellation is not None:
+                raise cancellation
+            current = await collect_fingerprint()
+            if current != fingerprint:
+                return "changed"
+            cancellation, _value, error = await self._settle_blocking(authority.commit)
+            if error is not None:
+                self._retain_error_owner(error)
+                if cancellation is not None:
+                    raise cancellation
+                raise AudioCppArtifactDependencyError(
+                    "artifact removal failed"
+                ) from None
+            if cancellation is not None:
+                raise cancellation
+            return "committed"
+        except BaseException as error:
+            primary_error = error
+            raise
+        finally:
+            if authority is not None:
+                cancellation, close_error = await self._close_owner(authority)
+                if close_error is not None:
+                    self._retain_cleanup_owner(authority)
+                    close_failed = True
+                if close_failed and primary_error is None:
+                    raise AudioCppArtifactDependencyError(
+                        "artifact cleanup is incomplete"
+                    ) from None
+                if cancellation is not None and primary_error is None:
+                    raise cancellation
+
+    async def remove_if_unchanged(
+        self,
+        reference: ArtifactRef,
+        fingerprint: str,
+        collect_fingerprint: Callable[[], Awaitable[str]],
+    ) -> str:
+        """Own one retained acquire/revalidate/commit/close operation."""
+
+        if self._closed:
+            raise AudioCppArtifactDependencyError("lease coordinator is closed")
+        task = asyncio.create_task(
+            self._remove_if_unchanged(reference, fingerprint, collect_fingerprint)
+        )
+        self._removal_tasks.add(task)
+        cancellation: asyncio.CancelledError | None = None
+        waiter = asyncio.current_task()
+        requests = waiter.cancelling() if waiter is not None else 0
+        try:
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError as error:
+                    current = waiter.cancelling() if waiter is not None else 0
+                    if current > requests:
+                        cancellation = cancellation or error
+                        requests = current
+                        task.cancel()
+                except BaseException:
+                    if not task.done():
+                        raise
+            result = task.result()
+        finally:
+            self._removal_tasks.discard(task)
+        if cancellation is not None:
+            raise cancellation
+        return result
+
+    async def shutdown(self) -> None:
+        """Stop admission, join removal work, then drain retained owners."""
+
+        self._closed = True
+        for task in tuple(self._removal_tasks):
+            task.cancel()
+        for task in tuple(self._removal_tasks):
+            await self._settle_task(task)
+        await self.drain_cleanup()
 
 
 __all__ = [

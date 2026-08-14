@@ -669,6 +669,219 @@ async def test_profile_service_concurrent_first_use_joins_one_open_and_construct
 
 
 @pytest.mark.asyncio
+async def test_removal_evidence_fails_closed_when_profile_inventory_exceeds_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+
+    summaries = tuple(
+        SimpleNamespace(profile_id=UUID(int=index + 1)) for index in range(200)
+    )
+
+    class Profiles:
+        async def list_profiles(self, *, search: object, offset: int):
+            assert search is None
+            assert offset == 0
+            return SimpleNamespace(profiles=summaries, total=201)
+
+        async def get_profile(self, profile_id: UUID):
+            return SimpleNamespace(profile=SimpleNamespace(profile_id=profile_id))
+
+        async def assignment_count(self, _loaded: object) -> int:
+            return 0
+
+    class Registry:
+        async def provider_configuration_snapshot(self, _provider_id: str):
+            return SimpleNamespace(
+                staged_config=None,
+                applied_config={},
+                staged_generation=0,
+            )
+
+    profile_service = Profiles()
+    owner = SimpleNamespace(
+        app_config={},
+        screen=SimpleNamespace(),
+        tts_service=SimpleNamespace(registry=Registry()),
+    )
+
+    async def ensure_profiles() -> Profiles:
+        return profile_service
+
+    owner._ensure_tts_profile_service = ensure_profiles
+    owner._audio_cpp_removal_settings_inputs = lambda: (
+        app_module.AudioCppSettingsConfig(),
+        None,
+        TTSPreferencesSnapshot(
+            provider_id="openai",
+            model_mode="exact",
+            model_id="tts-1",
+            voice_mode="exact",
+            voice_id="alloy",
+            response_format="mp3",
+            speed=1.0,
+        ),
+        None,
+    )
+    monkeypatch.setattr(
+        app_module,
+        "project_audio_cpp_artifact_removal_evidence",
+        lambda *_args, **_kwargs: object(),
+    )
+
+    with pytest.raises(ProfileRepositoryError, match="unavailable"):
+        await TldwCli._audio_cpp_artifact_removal_evidence(
+            owner,
+            ArtifactRef("audio-cpp-model", "a" * 40, "q8_0"),
+        )
+
+    class IncompleteProfiles(Profiles):
+        async def list_profiles(self, *, search: object, offset: int):
+            assert search is None
+            if offset == 0:
+                return SimpleNamespace(profiles=summaries[:1], total=2)
+            return SimpleNamespace(profiles=(), total=2)
+
+    incomplete = IncompleteProfiles()
+
+    async def ensure_incomplete_profiles() -> IncompleteProfiles:
+        return incomplete
+
+    owner._ensure_tts_profile_service = ensure_incomplete_profiles
+    with pytest.raises(ProfileRepositoryError, match="unavailable"):
+        await TldwCli._audio_cpp_artifact_removal_evidence(
+            owner,
+            ArtifactRef("audio-cpp-model", "a" * 40, "q8_0"),
+        )
+
+
+def test_removal_settings_inputs_prefer_exact_detached_typed_draft() -> None:
+    """Detached Settings state wins over a stale mounted fallback snapshot."""
+
+    from dataclasses import replace
+
+    from Tests.UI.test_settings_speech_tts_panel import _audio_cpp_state
+    from tldw_chatbook.UI.Navigation.screen_state_store import (
+        RuntimeIdentity,
+        ScreenStateStore,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSPanelDraftSnapshot,
+        _RealtimeSettingsDraft,
+    )
+
+    realtime = _RealtimeSettingsDraft(
+        False,
+        "openai",
+        "gpt-realtime",
+        "",
+        "30",
+        "auto",
+        "semantic_vad",
+        "0.5",
+        "500",
+    )
+
+    def snapshot(model_id: str) -> SpeechTTSPanelDraftSnapshot:
+        state = _audio_cpp_state(model_mode="exact", model_id=model_id)
+        original = _audio_cpp_state()
+        return SpeechTTSPanelDraftSnapshot(
+            state=state,
+            original_state=original,
+            realtime_draft=realtime,
+            realtime_original=replace(realtime),
+            configure_provider="audio_cpp",
+            draft_revision=1,
+        )
+
+    identity = RuntimeIdentity("local")
+    store = ScreenStateStore()
+    store.save(
+        "settings",
+        {"speech_tts_panel_draft": snapshot("stored-exact-model")},
+        identity,
+    )
+    owner = SimpleNamespace(
+        app_config={},
+        screen_state_store=store,
+        screen=SimpleNamespace(
+            _speech_tts_draft_snapshot=snapshot("mounted-stale-model")
+        ),
+        _current_runtime_identity=lambda: identity,
+    )
+
+    _saved, draft, _saved_preferences, draft_preferences = (
+        TldwCli._audio_cpp_removal_settings_inputs(owner)
+    )
+
+    assert draft is not None
+    assert draft_preferences is not None
+    assert draft_preferences.provider_id == "audio_cpp"
+    assert draft_preferences.model_mode == "exact"
+    assert draft_preferences.model_id == "stored-exact-model"
+
+
+def test_removal_settings_inputs_treat_missing_stored_draft_as_no_draft() -> None:
+    """An authoritative Settings snapshot without Speech/TTS has no draft."""
+
+    from Tests.UI.test_settings_speech_tts_panel import _audio_cpp_state
+    from tldw_chatbook.UI.Navigation.screen_state_store import (
+        RuntimeIdentity,
+        ScreenStateStore,
+    )
+
+    identity = RuntimeIdentity("local")
+    store = ScreenStateStore()
+    store.save("settings", {"active_category": "theme"}, identity)
+    owner = SimpleNamespace(
+        app_config={},
+        screen_state_store=store,
+        screen=SimpleNamespace(
+            _speech_tts_draft_snapshot=SimpleNamespace(state=_audio_cpp_state())
+        ),
+        _current_runtime_identity=lambda: identity,
+    )
+
+    _saved, draft, _saved_preferences, draft_preferences = (
+        TldwCli._audio_cpp_removal_settings_inputs(owner)
+    )
+
+    assert draft is None
+    assert draft_preferences is None
+
+
+@pytest.mark.asyncio
+async def test_app_lifecycle_shutdown_drains_artifact_coordinator_first() -> None:
+    calls: list[str] = []
+
+    class Coordinator:
+        async def shutdown(self) -> None:
+            calls.append("coordinator")
+
+    class InstallOwner:
+        async def shutdown(self) -> None:
+            calls.append("install")
+
+    async def image_shutdown() -> None:
+        calls.append("image")
+
+    async def notes_shutdown() -> None:
+        calls.append("notes")
+
+    owner = SimpleNamespace(
+        _audio_cpp_artifact_lease_coordinator=Coordinator(),
+        audio_cpp_model_install_owner=InstallOwner(),
+        _shutdown_console_image_edits=image_shutdown,
+        _shutdown_file_notes_session_owner=notes_shutdown,
+    )
+
+    await TldwCli._shutdown_app_owned_lifecycles(owner)
+
+    assert calls == ["coordinator", "install", "image", "notes"]
+
+
+@pytest.mark.asyncio
 async def test_profile_service_store_open_failure_leaves_ordinary_tts_untouched(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

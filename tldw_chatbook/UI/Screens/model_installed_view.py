@@ -253,7 +253,6 @@ class InstalledView(Widget):
         self._operation_name: str | None = None
         self._pending_delete_reference: ArtifactRef | None = None
         self._pending_removal_preview: AudioCppArtifactRemovalPreview | None = None
-        self._removal_cleanup_authorities: list[object] = []
         self._import_generation = 0
         self._import_selecting = False
         self._import_active = False
@@ -1105,10 +1104,8 @@ class InstalledView(Widget):
         evidence = await collector(reference)
         generic_blocked = False
         if include_probe:
-            availability = await asyncio.to_thread(
-                self._service_for_worker().probe_removal_availability,
-                reference,
-            )
+            coordinator = self.app._ensure_audio_cpp_artifact_lease_coordinator()
+            availability = await coordinator.probe_removal_availability(reference)
             generic_blocked = availability is ArtifactRemovalAvailability.BUSY
         return build_audio_cpp_artifact_removal_preview(
             evidence,
@@ -1119,16 +1116,6 @@ class InstalledView(Widget):
     async def _review_audio_cpp_deletion(self, reference: ArtifactRef) -> None:
         """Build the pre-confirmation dependency review without blocking paint."""
 
-        if not await self._retry_audio_cpp_removal_cleanup():
-            self._operation_reference = None
-            self._operation_name = None
-            self._pending_delete_reference = None
-            self.notify(
-                "Removal cleanup is incomplete. Retry after cleanup settles.",
-                severity="error",
-            )
-            self.refresh(recompose=True)
-            return
         try:
             preview = await self._collect_audio_cpp_removal_preview(
                 reference,
@@ -1200,55 +1187,32 @@ class InstalledView(Widget):
     ) -> None:
         """Own authority, drift revalidation, commit, and cleanup in one worker."""
 
-        authority = None
         try:
-            service = self._service_for_worker()
-            authority = await asyncio.to_thread(
-                service.acquire_removal_authority,
+            coordinator = self.app._ensure_audio_cpp_artifact_lease_coordinator()
+
+            async def collect_fingerprint() -> str:
+                current = await self._collect_audio_cpp_removal_preview(
+                    reference,
+                    include_probe=False,
+                )
+                return current.fingerprint
+
+            outcome = await coordinator.remove_if_unchanged(
                 reference,
+                fingerprint,
+                collect_fingerprint,
             )
-            current = await self._collect_audio_cpp_removal_preview(
-                reference,
-                include_probe=False,
-            )
-            if current.fingerprint != fingerprint:
+            if outcome == "changed":
                 self._apply_lifecycle_result(
                     "delete",
                     "Review changed dependencies. Open removal preview again.",
                 )
                 return
-            commit_task = asyncio.create_task(asyncio.to_thread(authority.commit))
-            try:
-                await asyncio.shield(commit_task)
-            except asyncio.CancelledError:
-                # ``to_thread`` cannot be cancelled. Keep the authority until
-                # its destructive commit has definitely settled.
-                await asyncio.shield(commit_task)
-                raise
             self._apply_lifecycle_result("delete", None)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self._finish_delete_failure(reference, exc)
-        finally:
-            if authority is not None:
-                try:
-                    await asyncio.shield(asyncio.to_thread(authority.close))
-                except BaseException:
-                    self._removal_cleanup_authorities.append(authority)
-
-    async def _retry_audio_cpp_removal_cleanup(self) -> bool:
-        """Retry retained authority cleanup without starting a background loop."""
-
-        retained = self._removal_cleanup_authorities
-        self._removal_cleanup_authorities = []
-        for authority in retained:
-            try:
-                close = getattr(authority, "close")
-                await asyncio.shield(asyncio.to_thread(close))
-            except BaseException:
-                self._removal_cleanup_authorities.append(authority)
-        return not self._removal_cleanup_authorities
+            self._finish_delete_failure_on_loop(reference, exc)
 
     @work(
         thread=True,
@@ -1327,21 +1291,50 @@ class InstalledView(Widget):
         reference: ArtifactRef,
         exc: BaseException,
     ) -> None:
-        """Report one final delete failure without exposing lease details."""
-        if isinstance(exc, ArtifactInUseError):
-            logger.warning("Managed model deletion blocked by a lease")
-        else:
-            logger.opt(exception=True).error(
-                "Managed model deletion failed for {}@{}/{}",
-                reference.artifact_id,
-                reference.revision,
-                reference.variant,
-            )
+        """Report one thread-worker delete failure through the UI-loop seam."""
+
+        message = self._bounded_delete_failure(reference, exc)
         self.app.call_from_thread(
             self._apply_lifecycle_result,
             "delete",
-            lifecycle_failure_message(exc, operation="deletion"),
+            message,
         )
+
+    def _finish_delete_failure_on_loop(
+        self,
+        reference: ArtifactRef,
+        exc: BaseException,
+    ) -> None:
+        """Report one async-worker delete failure already on the app loop."""
+
+        message = self._bounded_delete_failure(reference, exc)
+        self._apply_lifecycle_result("delete", message)
+
+    @staticmethod
+    def _bounded_delete_failure(
+        reference: ArtifactRef,
+        exc: BaseException,
+    ) -> str:
+        """Log bounded fields only and return the bounded recovery copy."""
+
+        if isinstance(exc, ArtifactInUseError):
+            logger.warning("Managed model deletion blocked by a lease")
+        else:
+            try:
+                code = getattr(exc, "code", "operation_failed")
+            except BaseException:
+                code = "operation_failed"
+            if type(code) is not str or not code or len(code) > 64:
+                code = "operation_failed"
+            logger.error(
+                "Managed model deletion failed for {}@{}/{}; error_type={} code={}",
+                reference.artifact_id,
+                reference.revision,
+                reference.variant,
+                type(exc).__name__,
+                code,
+            )
+        return lifecycle_failure_message(exc, operation="deletion")
 
     def _set_delete_phase(
         self,

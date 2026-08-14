@@ -1065,7 +1065,10 @@ def test_installed_worker_failures_are_logged_and_sanitized(
     worker = getattr(module.InstalledView, worker_name).__wrapped__
     worker(view, *worker_args)
 
-    fake_logger.opt.assert_called_once_with(exception=True)
+    if worker_name == "_delete_model":
+        fake_logger.opt.assert_not_called()
+    else:
+        fake_logger.opt.assert_called_once_with(exception=True)
     fake_logger.error.assert_called_once()
     logged = " ".join(
         str(value) for value in fake_logger.error.call_args.args
@@ -1136,6 +1139,7 @@ async def test_audio_cpp_removal_worker_revalidates_without_self_probe_then_comm
     monkeypatch,
 ) -> None:
     from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactLeaseCoordinator,
         AudioCppArtifactRemovalEvidence,
         build_audio_cpp_artifact_removal_preview,
     )
@@ -1172,10 +1176,14 @@ async def test_audio_cpp_removal_worker_revalidates_without_self_probe_then_comm
 
     fake_app = MagicMock()
     fake_app._audio_cpp_artifact_removal_evidence = collect
-    monkeypatch.setattr(InstalledView, "app", property(lambda self: fake_app))
-    view = InstalledView(
-        service_factory=lambda: Service(), legacy_dir=Path("/tmp/models")
+    coordinator = AudioCppArtifactLeaseCoordinator(
+        Service(),
+        saved_settings_snapshot=lambda: (),
+        catalog_entries=lambda: (),
     )
+    fake_app._ensure_audio_cpp_artifact_lease_coordinator = lambda: coordinator
+    monkeypatch.setattr(InstalledView, "app", property(lambda self: fake_app))
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=Path("/tmp/models"))
     view._apply_lifecycle_result = MagicMock()
 
     await InstalledView._delete_audio_cpp_model.__wrapped__(
@@ -1193,6 +1201,7 @@ async def test_audio_cpp_removal_cancellation_waits_for_commit_before_cleanup(
     monkeypatch,
 ) -> None:
     from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactLeaseCoordinator,
         AudioCppArtifactRemovalEvidence,
         build_audio_cpp_artifact_removal_preview,
     )
@@ -1224,10 +1233,14 @@ async def test_audio_cpp_removal_cancellation_waits_for_commit_before_cleanup(
 
     fake_app = MagicMock()
     fake_app._audio_cpp_artifact_removal_evidence = collect
-    monkeypatch.setattr(InstalledView, "app", property(lambda self: fake_app))
-    view = InstalledView(
-        service_factory=lambda: Service(), legacy_dir=Path("/tmp/models")
+    coordinator = AudioCppArtifactLeaseCoordinator(
+        Service(),
+        saved_settings_snapshot=lambda: (),
+        catalog_entries=lambda: (),
     )
+    fake_app._ensure_audio_cpp_artifact_lease_coordinator = lambda: coordinator
+    monkeypatch.setattr(InstalledView, "app", property(lambda self: fake_app))
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=Path("/tmp/models"))
     view._apply_lifecycle_result = MagicMock()
 
     task = asyncio.create_task(
@@ -1247,30 +1260,56 @@ async def test_audio_cpp_removal_cancellation_waits_for_commit_before_cleanup(
     assert events == ["commit-start", "commit-end", "close"]
 
 
-@pytest.mark.asyncio
-async def test_audio_cpp_removal_retries_retained_cleanup_authority() -> None:
+def test_audio_cpp_removal_cleanup_ownership_is_not_widget_local() -> None:
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
 
-    events: list[str] = []
-
-    class Authority:
-        attempts = 0
-
-        def close(self) -> None:
-            self.attempts += 1
-            events.append(f"close-{self.attempts}")
-            if self.attempts == 1:
-                raise RuntimeError("still busy")
-
-    authority = Authority()
     view = InstalledView(service_factory=MagicMock(), legacy_dir=Path("/tmp/models"))
-    view._removal_cleanup_authorities.append(authority)
 
-    assert await view._retry_audio_cpp_removal_cleanup() is False
-    assert view._removal_cleanup_authorities == [authority]
-    assert await view._retry_audio_cpp_removal_cleanup() is True
-    assert view._removal_cleanup_authorities == []
-    assert events == ["close-1", "close-2"]
+    assert not hasattr(view, "_removal_cleanup_authorities")
+
+
+def test_audio_cpp_delete_failure_on_app_loop_is_bounded_and_clears_lane(
+    monkeypatch,
+) -> None:
+    import tldw_chatbook.UI.Screens.model_installed_view as installed_module
+    from tldw_chatbook.Model_Artifacts.service import ArtifactStateError
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    canary = "PRIVATE /Users/person/models/model.gguf"
+    try:
+        raise OSError(canary)
+    except OSError as cause:
+        failure = ArtifactStateError("artifact deletion I/O failed")
+        failure.__cause__ = cause
+    logged: list[object] = []
+
+    class BoundedLogger:
+        def opt(self, **kwargs):
+            logged.append(kwargs)
+            return self
+
+        def error(self, *args, **kwargs):
+            logged.extend((args, kwargs))
+
+        def warning(self, *args, **kwargs):
+            logged.extend((args, kwargs))
+
+    class AppLoop:
+        def call_from_thread(self, *_args, **_kwargs):
+            raise RuntimeError("call_from_thread used from app loop")
+
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "q8_0")
+    monkeypatch.setattr(installed_module, "logger", BoundedLogger())
+    monkeypatch.setattr(InstalledView, "app", property(lambda self: AppLoop()))
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=Path("/tmp/models"))
+    view._apply_lifecycle_result = MagicMock()
+
+    view._finish_delete_failure_on_loop(reference, failure)
+
+    view._apply_lifecycle_result.assert_called_once()
+    rendered = repr((logged, view._apply_lifecycle_result.call_args))
+    assert canary not in rendered
+    assert "exception': True" not in rendered
 
 
 def test_deletion_guard_blocks_before_and_after_confirmation(monkeypatch) -> None:

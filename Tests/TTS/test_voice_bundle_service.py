@@ -9,7 +9,7 @@ import pickle
 import stat
 import struct
 import threading
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from dataclasses import fields, is_dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -260,8 +260,8 @@ class _ArtifactLeaseCoordinator:
         self.active = False
         self.calls: list[tuple[object, ...]] = []
 
-    @contextmanager
-    def lease_consumers(self, consumers):
+    @asynccontextmanager
+    async def lease_consumers(self, consumers):
         self.calls.append(tuple(consumers))
         self.active = True
         try:
