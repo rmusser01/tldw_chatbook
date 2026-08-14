@@ -38,12 +38,16 @@
 
 **Files:**
 
+- Create: `tldw_chatbook/Notes/note_import_discovery.py`
+- Create: `tldw_chatbook/Notes/note_import_parsers.py`
 - Modify: `tldw_chatbook/Notes/note_import_planner.py`
 - Modify: `Tests/Notes/test_note_import_planner.py`
 
+- [ ] Move the approved descriptor-based discovery implementation behind a dedicated module while retaining the planner's public discovery imports, so later format and matching logic cannot obscure the path-safety boundary.
 - [ ] Add failing tests for text/Markdown and structured JSON/YAML/CSV sources, multi-note results, unsupported extensions, malformed inputs, empty branches, and parent-folder membership placement.
 - [ ] Run the focused tests and confirm the parsing/hierarchy cases fail.
-- [ ] Implement bounded in-memory parsers that normalize immutable note payloads, never log content or exception text, and assign every payload from one source to the source parent folder.
+- [ ] Implement bounded, descriptor-verified in-memory parsers in the dedicated parser module; reopen each leaf through its recorded parent identities, use `O_NOFOLLOW`, enforce the observed size bound while reading, and recheck identity before and after the read.
+- [ ] Normalize immutable note payloads without logging content or exception text, and assign every payload from one source to the source parent folder.
 - [ ] Build only folders needed by importable items, including the selected directory as the top-level proposed folder.
 - [ ] Re-run the parsing/hierarchy tests and confirm they pass.
 
