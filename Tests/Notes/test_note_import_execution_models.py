@@ -639,6 +639,56 @@ def test_execution_counts_and_state_fail_closed(overrides: dict[str, object]) ->
         _receipt(**overrides)
 
 
+def test_execution_state_rejects_a_spoofed_import_session_state_class() -> None:
+    class SpoofedSessionState:
+        @property
+        def __class__(self) -> type[ImportSessionState]:
+            return ImportSessionState
+
+        def __repr__(self) -> str:
+            return _HOSTILE_TEXT_SECRET
+
+    with pytest.raises(TypeError, match="ImportSessionState") as caught:
+        ImportExecutionProgress(
+            state=SpoofedSessionState(),  # type: ignore[arg-type]
+            total=0,
+            completed=0,
+            imported=0,
+            updated=0,
+            skipped=0,
+            failed=0,
+            retryable=0,
+        )
+
+    assert _HOSTILE_TEXT_SECRET not in str(caught.value)
+    assert caught.value.__context__ is None
+
+
+def test_execution_state_does_not_dispatch_a_raising_class_property() -> None:
+    class RaisingSessionState:
+        @property
+        def __class__(self) -> type[object]:
+            raise RuntimeError(_HOSTILE_TEXT_SECRET)
+
+        def __repr__(self) -> str:
+            return _HOSTILE_TEXT_SECRET
+
+    with pytest.raises(TypeError, match="ImportSessionState") as caught:
+        ImportExecutionProgress(
+            state=RaisingSessionState(),  # type: ignore[arg-type]
+            total=0,
+            completed=0,
+            imported=0,
+            updated=0,
+            skipped=0,
+            failed=0,
+            retryable=0,
+        )
+
+    assert _HOSTILE_TEXT_SECRET not in str(caught.value)
+    assert caught.value.__context__ is None
+
+
 def test_execution_projections_are_frozen() -> None:
     progress = ImportExecutionProgress(
         state=ImportSessionState.RUNNING,

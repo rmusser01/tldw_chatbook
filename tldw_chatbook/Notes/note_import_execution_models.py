@@ -308,7 +308,7 @@ def _validate_execution_counts(
     reason_code: object,
 ) -> None:
     """Validate one public execution projection at its construction boundary."""
-    if not isinstance(state, ImportSessionState):
+    if type(state) is not ImportSessionState:
         raise TypeError("state must be an ImportSessionState.")
     counts = {
         "total": total,
