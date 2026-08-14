@@ -65,6 +65,9 @@ _TTS_ARTIFACT_WRITE_BATCH_BYTES = 64 * 1024
 _TTS_IO_CANCELLATION_JOIN_TIMEOUT_SECONDS = 1.0
 _TTS_SECURE_DELETE_TIMEOUT_SECONDS = 1.0
 _TTS_RETAINED_WORK_DRAIN_TIMEOUT_SECONDS = 1.0
+# task-15471 fix round (review M2): how often a deferred cleanup re-checks
+# whether an in-flight export still holds its claim on the source file.
+_TTS_EXPORT_CLEANUP_RETRY_SECONDS = 0.25
 _GLOBAL_OVERRIDE_TOKEN_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
 # F4 fix-round: hard cap, in bytes, on the in-memory WAV body the
 # opportunistic sink-upgrade attempt (see `wav_collect` in `_generate_tts`)
@@ -447,6 +450,15 @@ class TTSEventHandler:
         # are the whole point).
         self._legacy_handoff_stop_events: set[threading.Event] = set()
         self._audio_files_lock = asyncio.Lock()  # Lock for audio files dictionary
+        # task-15471 fix round (review M2): message_ids whose cached audio an
+        # export is currently copying, refcounted so overlapping exports of
+        # the same message keep the claim until the LAST one finishes.
+        # `_cleanup_audio_file` waits on this claim instead of secure-deleting
+        # -- the delete overwrites the source IN PLACE with zeros
+        # (`Utils/secure_temp_files.py`) before unlinking, so a delete
+        # overlapping the threaded copy would silently export zeros. Guarded
+        # by `_audio_files_lock` (same bookkeeping domain).
+        self._exporting_audio_refcounts: Dict[str, int] = {}
         self._active_tasks: set[asyncio.Task] = set()  # Track active async tasks
         self._active_tasks_lock = asyncio.Lock()  # Lock for active tasks set
         self._last_cooldown_cleanup = 0.0  # Track last cleanup time
@@ -2533,58 +2545,98 @@ class TTSEventHandler:
         import shutil
         import json
 
-        # Get audio file
+        # Get audio file, claiming it against cleanup in the same lock hold
+        # (task-15471 fix round, review M2): `_cleanup_audio_file`'s secure
+        # delete zeroes the source IN PLACE before unlinking, and the copy
+        # below now runs on a pool thread the loop no longer excludes -- an
+        # unclaimed overlap would export zeros under a success toast.
         async with self._audio_files_lock:
             source_file = self._audio_files.get(event.message_id)
+            if source_file is not None:
+                self._exporting_audio_refcounts[event.message_id] = (
+                    self._exporting_audio_refcounts.get(event.message_id, 0) + 1
+                )
 
-        if not source_file or not source_file.exists():
+        if not source_file:
             logger.error(f"No audio file found for message {event.message_id}")
             self.notify("No audio file found to export", severity="error")
             return
 
         try:
+            if not source_file.exists():
+                logger.error(f"No audio file found for message {event.message_id}")
+                self.notify("No audio file found to export", severity="error")
+                return
+
             # Validate output path
             output_path = event.output_path
             if not output_path.suffix:
                 # Add extension from source file
                 output_path = output_path.with_suffix(source_file.suffix)
 
-            # Create parent directory if needed
-            output_path.parent.mkdir(parents=True, exist_ok=True)
+            def _write_export() -> None:
+                """Copy the audio + optional metadata sidecar to disk.
 
-            # Copy audio file
-            shutil.copy2(source_file, output_path)
-            logger.info(f"Exported audio to {output_path}")
+                task-15471: the `copy2` moves megabytes of audio and used
+                to run directly in this handler, on the event loop.
+                """
+                # Create parent directory if needed
+                output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Add metadata if requested
-            if event.include_metadata:
-                metadata = {
-                    "message_id": event.message_id,
-                    "export_time": datetime.now().isoformat(),
-                    "format": source_file.suffix[1:],  # Remove dot
-                    "source": "tldw_chatbook_tts",
-                }
+                # Copy audio file
+                shutil.copy2(source_file, output_path)
+                logger.info(f"Exported audio to {output_path}")
 
-                # Save metadata as JSON sidecar file
-                metadata_path = output_path.with_suffix(output_path.suffix + ".json")
-                with open(metadata_path, "w") as f:
-                    json.dump(metadata, f, indent=2)
+                # Add metadata if requested
+                if event.include_metadata:
+                    metadata = {
+                        "message_id": event.message_id,
+                        "export_time": datetime.now().isoformat(),
+                        "format": source_file.suffix[1:],  # Remove dot
+                        "source": "tldw_chatbook_tts",
+                    }
 
-                logger.info(f"Saved metadata to {metadata_path}")
+                    # Save metadata as JSON sidecar file
+                    metadata_path = output_path.with_suffix(
+                        output_path.suffix + ".json"
+                    )
+                    with open(metadata_path, "w") as f:
+                        json.dump(metadata, f, indent=2)
+
+                    logger.info(f"Saved metadata to {metadata_path}")
+
+            await asyncio.to_thread(_write_export)
 
             self.notify(f"Audio exported to {output_path.name}", severity="success")
 
         except Exception as e:
             logger.error(f"Failed to export audio: {e}")
             self.notify(f"Failed to export audio: {str(e)}", severity="error")
+        finally:
+            # Release the claim; a cleanup that arrived mid-copy is polling
+            # for this and proceeds on its next check.
+            async with self._audio_files_lock:
+                remaining = self._exporting_audio_refcounts.get(event.message_id, 0) - 1
+                if remaining <= 0:
+                    self._exporting_audio_refcounts.pop(event.message_id, None)
+                else:
+                    self._exporting_audio_refcounts[event.message_id] = remaining
 
     async def _cleanup_audio_file(self, message_id: str, delay: float = 0) -> None:
         """Clean up audio file after playback"""
         if delay > 0:
             await asyncio.sleep(delay)
 
-        async with self._audio_files_lock:
-            audio_file = self._audio_files.get(message_id)
+        # task-15471 fix round (review M2): never destroy a source an export
+        # is still copying -- the secure delete zeroes it in place, and the
+        # overlapping copy would silently write zeros. Wait for the claim to
+        # clear (bounded in practice by one copy's duration), then delete.
+        while True:
+            async with self._audio_files_lock:
+                if message_id not in self._exporting_audio_refcounts:
+                    audio_file = self._audio_files.get(message_id)
+                    break
+            await asyncio.sleep(_TTS_EXPORT_CLEANUP_RETRY_SECONDS)
         if audio_file is None:
             return
 

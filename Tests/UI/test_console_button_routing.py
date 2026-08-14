@@ -162,6 +162,9 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
 
         star.press()
         await pilot.pause()
+        # task-15471: the durable write runs on a worker now -- wait for it
+        # rather than racing the pool thread with the assertion.
+        await console.workers.wait_for_complete()
         assert marks.is_starred("conv-star-1") is True
 
         # A second press unstars: the branch reads current truth from the
@@ -169,6 +172,7 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
         console.query_one("#console-conversation-star-0", Button).press()
         await pilot.pause()
+        await console.workers.wait_for_complete()
         assert marks.is_starred("conv-star-1") is False
 
 

@@ -354,6 +354,11 @@ class ConsoleWorkspaceController:
         self._console_workspace_conversation_search_total: int | None = None
         self._console_workspace_conversation_search_error = ""
         self._console_workspace_conversation_workspace_id: str | None = None
+        # task-15471: serializes star toggles now that the durable write
+        # runs off the loop -- two rapid presses must queue (each resolving
+        # current truth before toggling), never race two pool threads into
+        # a stale double-star.
+        self._console_star_toggle_lock = asyncio.Lock()
 
     # -- Framework services (kind 1: live-read via `@property`) ------------
 
@@ -2026,31 +2031,101 @@ class ConsoleWorkspaceController:
                 severity="warning",
             )
             return
-        star_action = "resolve"
-        try:
-            is_starred = getattr(marks_service, "is_starred", None)
-            currently_starred = (
-                bool(is_starred(conversation_id))
-                if callable(is_starred)
-                else bool(starred)
-            )
-            star_action = "unstar" if currently_starred else "star"
-            if currently_starred:
-                marks_service.unstar_conversation(conversation_id)
-            else:
-                marks_service.star_conversation(conversation_id)
-        except Exception:
-            logger.exception(
-                "Unable to update local conversation star "
-                "conversation_id={} action={}",
+        # task-15471: the resolve+toggle pair used to run right here, on the
+        # event loop -- a read transaction plus a durable write transaction
+        # per click, with the click frozen for the DB's whole busy_timeout
+        # if any other writer held the file. It now runs on a worker; the
+        # wrapper owns the failure/confirmation copy that followed it inline.
+        self.run_worker(
+            self._toggle_console_conversation_star_off_loop(
+                marks_service,
                 conversation_id,
-                star_action,
-            )
-            self.app_instance.notify(
-                "Unable to update local star.",
-                severity="warning",
-            )
-            return
+                starred=starred,
+                conversation_title=conversation_title,
+            ),
+            group="console-conversation-star",
+            exit_on_error=False,
+        )
+
+    async def _toggle_console_conversation_star_off_loop(
+        self,
+        marks_service: Any,
+        conversation_id: str,
+        *,
+        starred: bool,
+        conversation_title: str,
+    ) -> None:
+        """Resolve current star truth, toggle it off the loop, and confirm.
+
+        The deferred body of `_toggle_console_conversation_star`
+        (task-15471). `_console_star_toggle_lock` serializes concurrent
+        presses so each one resolves current truth from the service before
+        toggling -- a rapid double-press still nets toggle-twice, exactly
+        the pre-worker semantics, never two pool threads racing the same
+        pre-state into a stale double-star.
+
+        Args:
+            marks_service: The app's `conversation_local_marks_service`,
+                captured non-None by the dispatching guard.
+            conversation_id: See `_toggle_console_conversation_star`.
+            starred: Fallback only, as before -- used when the service
+                cannot answer `is_starred`.
+            conversation_title: For the confirmation toast.
+        """
+        progress = {"action": "resolve"}
+        async with self._console_star_toggle_lock:
+            try:
+
+                def _resolve_and_toggle() -> str:
+                    is_starred = getattr(marks_service, "is_starred", None)
+                    currently_starred = (
+                        bool(is_starred(conversation_id))
+                        if callable(is_starred)
+                        else bool(starred)
+                    )
+                    action = "unstar" if currently_starred else "star"
+                    progress["action"] = action
+                    if currently_starred:
+                        marks_service.unstar_conversation(conversation_id)
+                    else:
+                        marks_service.star_conversation(conversation_id)
+                    return action
+
+                db = getattr(marks_service, "db", None)
+                if bool(getattr(db, "is_memory_db", False)):
+                    # A per-connection :memory: DB is only visible to the
+                    # thread that migrated it -- same guard as the browser
+                    # search threading (`chat_screen.py`, task-15455).
+                    star_action = _resolve_and_toggle()
+                else:
+                    star_action = await asyncio.to_thread(_resolve_and_toggle)
+            except asyncio.CancelledError:
+                # Fix round (review minor 3): cancellation cannot stop the
+                # pool thread, so the durable write may still land -- and
+                # `CancelledError` is a `BaseException` that would sail past
+                # the `except Exception` below, recreating exactly the
+                # TASK-357 silent-toggle shape (write landed, no repaint).
+                # Best-effort re-sync so the rail repaints from truth, then
+                # let the cancellation propagate.
+                try:
+                    self._sync_console_workspace_context()
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        "Star-toggle cancellation re-sync failed"
+                    )
+                raise
+            except Exception:
+                logger.exception(
+                    "Unable to update local conversation star "
+                    "conversation_id={} action={}",
+                    conversation_id,
+                    progress["action"],
+                )
+                self.app_instance.notify(
+                    "Unable to update local star.",
+                    severity="warning",
+                )
+                return
         # TASK-357: confirm the toggle so a star/unstar is not a silent state
         # change (the review saw an accidental star go unnoticed).
         # `"".splitlines()` is `[]`, so indexing [0] raised IndexError on an

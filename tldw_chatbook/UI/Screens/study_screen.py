@@ -1075,6 +1075,19 @@ class StudyScreen(BaseAppScreen):
         quiz_service = getattr(self.app_instance, "study_quiz_scope_service", None)
         db = getattr(self.app_instance, "chachanotes_db", None)
 
+        async def _db_off_loop(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+            """Run one sync fallback DB query off the event loop.
+
+            task-15471: these fallbacks ran synchronously in this async
+            method -- three chachanotes queries on the loop per screen
+            resume. Same `is_memory_db` guard as the Console browser-search
+            threading: a per-connection :memory: DB is only visible to the
+            thread that migrated it, so it must stay on the loop thread.
+            """
+            if bool(getattr(db, "is_memory_db", False)):
+                return func(*args, **kwargs)
+            return await asyncio.to_thread(func, *args, **kwargs)
+
         due_count = 0
         try:
             due_loader = getattr(study_service, "get_due_flashcards", None)
@@ -1086,7 +1099,9 @@ class StudyScreen(BaseAppScreen):
                     self._normalize_records(due_records) or list(due_records or [])
                 )
             elif db is not None and hasattr(db, "get_due_flashcards"):
-                due_count = len(list(db.get_due_flashcards(limit=25) or []))
+                due_count = len(
+                    list(await _db_off_loop(db.get_due_flashcards, limit=25) or [])
+                )
         except Exception:
             logger.opt(exception=True).debug("Failed to load Study due counts")
 
@@ -1104,7 +1119,9 @@ class StudyScreen(BaseAppScreen):
             elif db is not None and hasattr(db, "list_decks"):
                 recent_decks = [
                     str(deck.get("name") or "Untitled deck")
-                    for deck in list(db.list_decks(limit=3, offset=0) or [])[:3]
+                    for deck in list(
+                        await _db_off_loop(db.list_decks, limit=3, offset=0) or []
+                    )[:3]
                 ]
         except Exception:
             logger.opt(exception=True).debug("Failed to load Study deck recents")
@@ -1121,7 +1138,8 @@ class StudyScreen(BaseAppScreen):
                     for quiz in self._normalize_records(quizzes)[:3]
                 ]
             elif db is not None and hasattr(db, "list_quizzes"):
-                quizzes = db.list_quizzes(
+                quizzes = await _db_off_loop(
+                    db.list_quizzes,
                     q=None,
                     workspace_id=self.scope_state.workspace_id,
                     limit=3,

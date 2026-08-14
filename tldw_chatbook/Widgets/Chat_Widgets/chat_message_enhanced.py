@@ -4,6 +4,7 @@
 # Imports
 #
 # Standard Library
+import asyncio
 import base64
 import logging
 from datetime import datetime
@@ -645,9 +646,15 @@ Preview: {preview}...
             )
             filename = f"chat_image_{timestamp}.{extension}"
 
-            # Save to user's downloads directory
+            # Save to user's downloads directory. Written off the loop
+            # (task-15471): this can be a multi-MB payload, and the Console
+            # equivalent (`UI/Console_Modules/message.py`,
+            # `_save_console_message_image`) already threads its write the
+            # same way. Snapshot the bytes first so a mid-write reactive
+            # update cannot race the pool thread's read.
+            image_data = self.image_data
             downloads_path = Path.home() / "Downloads" / filename
-            downloads_path.write_bytes(self.image_data)
+            await asyncio.to_thread(downloads_path.write_bytes, image_data)
 
             self.app.notify(f"Image saved to: {downloads_path}")
         except Exception as e:
