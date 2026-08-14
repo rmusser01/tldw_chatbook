@@ -2,28 +2,29 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger as _loguru_fallback_logger
 from rich.text import Text
 from textual.widgets import Button, Input, RichLog
-from tldw_chatbook.Utils.input_validation import sanitize_string as sanitize_input
 
-try:
-    from huggingface_hub import constants as hf_constants
-except ImportError:
-    hf_constants = None  # type: ignore
+from tldw_chatbook.Utils.input_validation import sanitize_string as sanitize_input
+from tldw_chatbook.Utils.optional_deps import get_safe_import
+from .llm_management_events import _make_path_update_callback
+
+_huggingface_hub = get_safe_import("huggingface_hub")
+hf_constants = (
+    importlib.import_module("huggingface_hub.constants")
+    if _huggingface_hub is not None
+    else None
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
     # textual_fspicker is imported dynamically in the handler
-
-# Import shared helpers if needed
-from .llm_management_events import (
-    _make_path_update_callback,
-)
 
 MAX_LOCAL_MODEL_RESULTS = 500
 

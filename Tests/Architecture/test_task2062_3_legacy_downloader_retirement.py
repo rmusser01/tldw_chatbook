@@ -59,11 +59,17 @@ def _rail_keys() -> tuple[str, ...]:
 
 
 def test_legacy_models_downloader_files_are_retired() -> None:
+    """Reject any surviving legacy downloader file."""
     assert not [path.relative_to(ROOT) for path in RETIRED_FILES if path.exists()]
 
 
 @pytest.mark.parametrize("module_name", RETIRED_MODULES)
 def test_legacy_models_downloader_modules_are_not_importable(module_name: str) -> None:
+    """Keep every retired downloader module non-importable.
+
+    Args:
+        module_name: Retired import path under test.
+    """
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module(module_name)
 
@@ -81,10 +87,16 @@ def test_legacy_models_downloader_modules_are_not_importable(module_name: str) -
     ),
 )
 def test_production_has_no_legacy_browser_reference(retired_reference: str) -> None:
+    """Reject production references to retired browser owners.
+
+    Args:
+        retired_reference: Retired symbol or module fragment under test.
+    """
     assert _production_python_with(retired_reference) == ()
 
 
 def test_models_rail_and_view_mapping_have_no_legacy_browser_destination() -> None:
+    """Keep the retired browser absent from Models navigation and view routing."""
     view_mapping = LLMManagementWindow(None).view_mapping
     assert "download-models" not in _rail_keys()
     assert "download-models" not in view_mapping
@@ -92,10 +104,12 @@ def test_models_rail_and_view_mapping_have_no_legacy_browser_destination() -> No
 
 
 def test_production_has_no_retired_download_models_empty_state_action() -> None:
+    """Keep production empty states free of the retired download action."""
     assert _production_python_with("empty-state-download-models") == ()
 
 
 def test_installed_external_and_remote_rail_destinations_remain() -> None:
+    """Preserve the Installed, External, and Remote Models destinations."""
     keys = _rail_keys()
     assert "installed" in keys
     assert "external" in keys
@@ -103,6 +117,7 @@ def test_installed_external_and_remote_rail_destinations_remain() -> None:
 
 
 def test_configured_legacy_download_root_still_reaches_installed_view() -> None:
+    """Preserve the configured legacy root as an Installed read-only scan path."""
     source = inspect.getsource(LLMManagementWindow._mount_deferred_views)
     assert '"model_download_dir"' in source
     assert "legacy_dir = Path(str(configured)).expanduser()" in source
@@ -110,6 +125,7 @@ def test_configured_legacy_download_root_still_reaches_installed_view() -> None:
 
 
 def test_transformers_local_directory_controls_remain() -> None:
+    """Preserve Transformers local directory browse and list controls."""
     source = (PRODUCTION_ROOT / "UI/LLM_Management_Window.py").read_text(
         encoding="utf-8"
     )
@@ -123,7 +139,17 @@ def test_transformers_local_directory_controls_remain() -> None:
         assert fragment in source
 
 
+def test_transformers_cache_hint_uses_optional_dependency_guard() -> None:
+    """Keep the surviving cache hint behind the shared optional-deps guard."""
+    source = TRANSFORMERS_EVENTS_PATH.read_text(encoding="utf-8")
+
+    assert 'get_safe_import("huggingface_hub")' in source
+    assert 'importlib.import_module("huggingface_hub.constants")' in source
+    assert "from huggingface_hub import" not in source
+
+
 def test_transformers_direct_downloader_is_retired() -> None:
+    """Keep every Transformers direct-download control and handler retired."""
     window_source = (PRODUCTION_ROOT / "UI/LLM_Management_Window.py").read_text(
         encoding="utf-8"
     )
@@ -156,6 +182,7 @@ def test_transformers_direct_downloader_is_retired() -> None:
 
 
 def test_llamacpp_and_llamafile_external_gguf_controls_remain() -> None:
+    """Preserve External GGUF controls for llama.cpp and llamafile."""
     source = (PRODUCTION_ROOT / "UI/LLM_Management_Window.py").read_text(
         encoding="utf-8"
     )
@@ -170,6 +197,7 @@ def test_llamacpp_and_llamafile_external_gguf_controls_remain() -> None:
 
 
 def test_remote_acquisition_and_hugging_face_inference_owners_remain() -> None:
+    """Preserve managed remote acquisition and Hugging Face inference owners."""
     remote_view = importlib.import_module("tldw_chatbook.UI.Screens.model_remote_view")
     remote_adapter = importlib.import_module(
         "tldw_chatbook.Model_Artifacts.remote_huggingface"
@@ -186,6 +214,7 @@ def test_remote_acquisition_and_hugging_face_inference_owners_remain() -> None:
 
 
 def test_model_download_dir_is_only_config_and_installed_legacy_scan_wiring() -> None:
+    """Constrain model_download_dir to config and the Installed scan seam."""
     assert set(_production_python_with("model_download_dir")) == {
         "tldw_chatbook/config.py",
         "tldw_chatbook/UI/LLM_Management_Window.py",
@@ -193,6 +222,7 @@ def test_model_download_dir_is_only_config_and_installed_legacy_scan_wiring() ->
 
 
 def test_default_llm_management_config_only_keeps_installed_legacy_scan_root() -> None:
+    """Keep only the Installed legacy scan root in default Models config."""
     assert DEFAULT_CONFIG_FROM_TOML["llm_management"] == {
         "model_download_dir": "~/Downloads/tldw_models"
     }
