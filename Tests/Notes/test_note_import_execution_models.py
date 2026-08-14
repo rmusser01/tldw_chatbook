@@ -1,10 +1,12 @@
 """Contracts for approved one-time Database Notes import execution models."""
 
+import inspect
 from dataclasses import FrozenInstanceError, asdict, replace
 from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.Notes import note_import_execution_models
 from tldw_chatbook.Notes.note_import_execution_models import (
     MAX_IMPORT_REASON_CODE_LENGTH,
     ApprovedNoteImportPlan,
@@ -174,6 +176,40 @@ def test_approved_plan_is_opaque_and_bound_to_exact_effects() -> None:
     assert _SECRET_BODY not in repr(approved)
     assert len(approved._private_plan_digest()) == 64
     assert set(approved._private_plan_digest()) <= set("0123456789abcdef")
+
+
+def test_approved_plan_public_constructor_does_not_expose_a_digest() -> None:
+    signature = str(inspect.signature(ApprovedNoteImportPlan))
+
+    assert "digest" not in signature
+
+
+def test_direct_construction_cannot_wrap_an_unresolved_plan() -> None:
+    unresolved = _plan(
+        root_collision=RootCollisionState(proposed_label="Project", collides=True)
+    )
+    digest = note_import_execution_models._private_plan_digest(unresolved)
+
+    with pytest.raises(ImportApprovalError, match="approve_note_import_plan"):
+        ApprovedNoteImportPlan(_APPROVAL_ID, unresolved, digest)  # type: ignore[call-arg]
+
+
+def test_private_approved_plan_factory_revalidates_root_resolution() -> None:
+    unresolved = _plan(
+        root_collision=RootCollisionState(proposed_label="Project", collides=True)
+    )
+    factory = getattr(
+        note_import_execution_models,
+        "_create_approved_note_import_plan",
+        None,
+    )
+
+    assert factory is not None
+    with pytest.raises(ImportApprovalError, match="resolved") as caught:
+        factory(unresolved, _APPROVAL_ID)
+
+    assert _SECRET_BODY not in str(caught.value)
+    assert str(_SOURCE_PATH) not in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -352,6 +388,12 @@ def test_receipt_copies_private_collections_and_hides_them_from_repr() -> None:
     assert "raw private error" not in repr(receipt)
 
 
+def test_receipt_hides_approval_id_from_repr() -> None:
+    receipt = _receipt()
+
+    assert _APPROVAL_ID not in repr(receipt)
+
+
 @pytest.mark.parametrize(
     ("field_name", "value"),
     [
@@ -372,6 +414,7 @@ def test_receipt_rejects_invalid_private_values_without_echoing_them(
 
     if value[0]:
         assert value[0] not in str(caught.value)
+    assert field_name not in str(caught.value)
 
 
 def test_private_collection_iterator_errors_are_sanitized() -> None:
@@ -383,6 +426,7 @@ def test_private_collection_iterator_errors_are_sanitized() -> None:
         _receipt(_note_ids=ExplodingPrivateValues())
 
     assert _SECRET_BODY not in str(caught.value)
+    assert "_note_ids" not in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -476,7 +520,7 @@ def test_approved_plan_requires_a_real_note_import_plan() -> None:
     with pytest.raises(ImportApprovalError, match="NoteImportPlan"):
         approve_note_import_plan(object())  # type: ignore[arg-type]
 
-    with pytest.raises(TypeError, match="NoteImportPlan"):
+    with pytest.raises(ImportApprovalError, match="approve_note_import_plan"):
         ApprovedNoteImportPlan(
             approval_id=_APPROVAL_ID,
             plan=object(),  # type: ignore[arg-type]

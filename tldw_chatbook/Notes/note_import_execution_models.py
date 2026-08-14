@@ -8,7 +8,6 @@ projection contains only bounded state and outcome counts.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import re
 from collections.abc import Callable
@@ -195,7 +194,7 @@ def _private_plan_digest(plan: NoteImportPlan) -> str:
     return _canonical_json_digest(canonical_plan)
 
 
-@dataclass(frozen=True, slots=True, repr=False)
+@dataclass(frozen=True, slots=True, repr=False, init=False)
 class ApprovedNoteImportPlan:
     """Opaque immutable authority to execute one exact import plan."""
 
@@ -203,20 +202,10 @@ class ApprovedNoteImportPlan:
     plan: NoteImportPlan
     __plan_digest: str
 
-    def __post_init__(self) -> None:
-        _validate_uuid_text(self.approval_id, approval_boundary=True)
-        if not isinstance(self.plan, NoteImportPlan):
-            raise TypeError("plan must be a NoteImportPlan.")
-        if not isinstance(self.__plan_digest, str) or not _LOWER_SHA256.fullmatch(
-            self.__plan_digest
-        ):
-            raise ValueError(
-                "The private plan digest must be a lowercase SHA-256 digest."
-            )
-        if not hmac.compare_digest(self.__plan_digest, _private_plan_digest(self.plan)):
-            raise ValueError(
-                "The private plan digest does not match the approved plan."
-            )
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise ImportApprovalError(
+            "Approved plans must be created by approve_note_import_plan()."
+        )
 
     def _private_plan_digest(self) -> str:
         """Return private receipt-binding material for the executor."""
@@ -225,6 +214,40 @@ class ApprovedNoteImportPlan:
     def __repr__(self) -> str:
         """Return an opaque representation that cannot disclose plan content."""
         return "ApprovedNoteImportPlan(<private>)"
+
+
+def _validate_note_import_plan_for_approval(plan: object) -> NoteImportPlan:
+    """Return one fully resolved real plan without echoing rejected contents."""
+    if not isinstance(plan, NoteImportPlan):
+        raise ImportApprovalError("plan must be a NoteImportPlan.")
+    collision = plan.root_collision
+    if collision is not None and collision.collides and collision.choice is None:
+        raise ImportApprovalError(
+            "Every colliding import root must be explicitly resolved before approval."
+        )
+    return plan
+
+
+def _create_approved_note_import_plan(
+    plan: NoteImportPlan,
+    approval_id: str,
+) -> ApprovedNoteImportPlan:
+    """Create an approved plan only after repeating the full approval checks."""
+    validated_plan = _validate_note_import_plan_for_approval(plan)
+    validated_approval_id = _validate_uuid_text(
+        approval_id,
+        approval_boundary=True,
+    )
+    plan_digest = _private_plan_digest(validated_plan)
+    approved = object.__new__(ApprovedNoteImportPlan)
+    object.__setattr__(approved, "approval_id", validated_approval_id)
+    object.__setattr__(approved, "plan", validated_plan)
+    object.__setattr__(
+        approved,
+        "_ApprovedNoteImportPlan__plan_digest",
+        plan_digest,
+    )
+    return approved
 
 
 def approve_note_import_plan(
@@ -245,22 +268,10 @@ def approve_note_import_plan(
         ImportApprovalError: If the plan, approval identifier, or root collision
             is not safe to execute.
     """
-    if not isinstance(plan, NoteImportPlan):
-        raise ImportApprovalError("plan must be a NoteImportPlan.")
-    collision = plan.root_collision
-    if collision is not None and collision.collides and collision.choice is None:
-        raise ImportApprovalError(
-            "Every colliding import root must be explicitly resolved before approval."
-        )
-    resolved_approval_id = (
-        str(uuid4())
-        if approval_id is None
-        else _validate_uuid_text(approval_id, approval_boundary=True)
-    )
-    return ApprovedNoteImportPlan(
-        resolved_approval_id,
+    resolved_approval_id = str(uuid4()) if approval_id is None else approval_id
+    return _create_approved_note_import_plan(
         plan,
-        _private_plan_digest(plan),
+        resolved_approval_id,
     )
 
 
@@ -316,20 +327,19 @@ def _validate_execution_counts(
 def _copy_private_collection(
     values: object,
     *,
-    field_name: str,
     validator: Callable[[str], bool],
 ) -> tuple[str, ...]:
     """Copy and validate private values without disclosing them in errors."""
     if isinstance(values, (str, bytes)):
-        raise TypeError(f"{field_name} must be a collection.")
+        raise TypeError("Private receipt data must be a collection.")
     try:
         copied = tuple(values)  # type: ignore[arg-type]
     except TypeError:
-        raise TypeError(f"{field_name} must be a collection.") from None
+        raise TypeError("Private receipt data must be a collection.") from None
     except Exception:  # noqa: BLE001 - validation boundary must redact iterator errors
-        raise ValueError(f"{field_name} private collection could not be read.") from None
+        raise ValueError("The private collection could not be read safely.") from None
     if not all(isinstance(value, str) and validator(value) for value in copied):
-        raise ValueError(f"{field_name} contains an invalid private value.")
+        raise ValueError("Private receipt data contains an invalid value.")
     return copied
 
 
@@ -419,7 +429,7 @@ class ImportExecutionDiagnostic:
 class ImportExecutionReceipt:
     """Immutable result with repr-hidden private reconciliation material."""
 
-    approval_id: str
+    approval_id: str = field(repr=False)
     state: ImportSessionState
     total: int
     completed: int
@@ -466,7 +476,6 @@ class ImportExecutionReceipt:
                 field_name,
                 _copy_private_collection(
                     getattr(self, field_name),
-                    field_name=field_name,
                     validator=validator,
                 ),
             )
