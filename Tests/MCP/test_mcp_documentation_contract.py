@@ -34,6 +34,9 @@ MCP_TOOLS_MODE = (
 MCP_SERVERS_MODE = (
     REPO_ROOT / "tldw_chatbook" / "UI" / "MCP_Modules" / "mcp_servers_mode.py"
 )
+LOCAL_TOOL_PROVIDER = REPO_ROOT / "tldw_chatbook" / "Agents" / "local_tool_provider.py"
+MCP_SERVER = REPO_ROOT / "tldw_chatbook" / "MCP" / "server.py"
+MCP_WORKBENCH = REPO_ROOT / "tldw_chatbook" / "UI" / "MCP_Modules" / "mcp_workbench.py"
 WATCHLISTS_TOOL_DOCUMENTS = (CONSOLE_AGENT_TOOLS_DOCUMENT, USER_GUIDE_DOCUMENT)
 LOCAL_TOOL_COPY_SURFACES = (
     CONFIG_TEMPLATE,
@@ -125,6 +128,18 @@ def _standalone_inventory_block(text: str) -> str:
     following_heading = re.search(r"^#{2,3} ", text[start:], re.MULTILINE)
     end = start + following_heading.start() if following_heading else len(text)
     return text[start:end].strip()
+
+
+def _admonition_block(text: str, kind: str) -> str:
+    match = re.search(
+        rf"^> \[!{re.escape(kind)}\]\s*$\n(?P<body>(?:^>.*(?:\n|$))+)",
+        text,
+        re.MULTILINE,
+    )
+    assert match is not None
+    return " ".join(
+        line.removeprefix("> ").strip() for line in match.group("body").splitlines()
+    )
 
 
 def _assert_inventory_contract(path: Path, text: str) -> None:
@@ -407,13 +422,44 @@ def test_documents_warn_about_external_local_data_and_cloud_egress(
     document: tuple[Path, str],
 ) -> None:
     path, text = document
-    normalized = " ".join(text.split())
-    assert "> [!WARNING]" in text, path
-    assert "user's OS access" in normalized, path
-    assert "private local Library" in normalized, path
-    assert "tools, resources, and prompts" in normalized, path
-    assert "off-device" in normalized, path
-    assert "cloud model" in normalized, path
+    warning = _admonition_block(text, "WARNING")
+    assert "user's OS access" in warning, path
+    assert "private local Library" in warning, path
+    assert "tools, resources, and prompts" in warning, path
+    assert "off-device" in warning, path
+    assert "cloud model" in warning, path
+
+
+def test_user_guide_warning_names_private_watchlists_egress_and_trust_boundary() -> (
+    None
+):
+    warning = _admonition_block(
+        USER_GUIDE_DOCUMENT.read_text(encoding="utf-8"), "WARNING"
+    )
+    assert "private Watchlists feed and article evidence" in warning
+    assert "external MCP client may send" in warning
+    assert "off-device to a cloud model" in warning
+    assert "trust both the client and the model provider" in warning
+
+
+def test_internal_watchlists_provider_inventories_reject_verified_stale_copy() -> None:
+    stale_by_path = {
+        LOCAL_TOOL_PROVIDER: ("workspace-local fs_/web_/todo_ tools",),
+        MCP_SERVER: (
+            "workspace-local agent tools (`fs_*`",
+            "workspace-local agent tools (fs_*/git_*/web_*)",
+        ),
+        MCP_WORKBENCH: (
+            "workspace-local agent tool set (fs_*/git_*/web_*)",
+            "local/web master switch",
+        ),
+        MCP_TOOLS_MODE: ("local/web provider master switch",),
+    }
+    for path, stale_phrases in stale_by_path.items():
+        text = path.read_text(encoding="utf-8")
+        assert "workspace, web, and Watchlists" in text, path
+        for stale in stale_phrases:
+            assert stale not in text, (path, stale)
 
 
 def test_design_distinguishes_payload_free_diagnostics_from_authorized_egress() -> None:

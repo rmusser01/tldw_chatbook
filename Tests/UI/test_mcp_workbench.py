@@ -227,6 +227,50 @@ async def test_workbench_at_100x30_keeps_primary_content_reachable(monkeypatch):
         assert "..." in str(rows[1].label)
 
 
+@pytest.mark.asyncio
+async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypatch):
+    """Paint may shorten the label, but its semantics and interaction remain."""
+    _, save_calls = _fake_tool_gate_config_seam(monkeypatch)
+    app = WorkbenchAppWithBundledCSS()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")
+        await pilot.pause()
+
+        checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
+        assert str(checkbox.label) == (
+            "Local workspace, web, and Watchlists tools (master switch)"
+        )
+        checkbox.scroll_visible(animate=False, force=True, immediate=True)
+        checkbox.focus()
+        await pilot.pause()
+        await pilot.pause()
+        assert checkbox.is_on_screen
+        assert app.focused is checkbox
+
+        rendered = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in app.screen._compositor.render_strips()
+        )
+        assert "Local workspace, web, and Watchlists tools" in rendered
+
+        original = checkbox.value
+        assert await pilot.click(checkbox, offset=(1, 0))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("console", "local_tools_enabled", not original) in save_calls
+
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        title = app.query_one("#mcp-tools-local-config-title", Static)
+        title.scroll_visible(animate=False)
+        await pilot.pause()
+        assert title.is_on_screen
+        assert str(title.renderable) == "Local workspace, web, and Watchlists tools"
+
+
 class ProblemRecordsService(FakeHubService):
     """FakeHubService whose local catalog is a caller-supplied record list,
     so a test can control exactly how many problem servers load (F-054)."""

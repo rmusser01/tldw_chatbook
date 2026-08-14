@@ -1676,7 +1676,8 @@ class MCPWorkbench(Container):
         reused here, not re-fetched), the built-in server's inventory
         (`service.local_service.get_inventory()`, guarded by getattr since
         test fakes and a still-initializing service may not expose it),
-        and the workspace-local agent tool set (`_local_agent_hub_tools()`,
+        and the workspace, web, and Watchlists agent tool set
+        (`_local_agent_hub_tools()`,
         task-2838 -- keyed `local:__local__`, non-executable hub-side).
 
         Server source: each external-server record's own embedded `tools`
@@ -1706,7 +1707,7 @@ class MCPWorkbench(Container):
                     inventory = None
                 if isinstance(inventory, Mapping):
                     tools.extend(builtin_tools_from_inventory(inventory))
-            # task-2838: the workspace-local agent tool set (fs_*/git_*/web_*)
+            # task-2838: the workspace, web, and Watchlists agent tool set
             # is a first-class Hub catalog source too -- same shared
             # permission store the Console gates on, resolved by the same
             # `effective_tool_states()` pass as every other row.
@@ -1724,7 +1725,7 @@ class MCPWorkbench(Container):
         return tools
 
     def _local_agent_hub_tools(self) -> list[HubTool]:
-        """The workspace-local agent tool set (fs_*/git_*/web_*) as HubTools.
+        """The workspace, web, and Watchlists agent tool set as HubTools.
 
         task-2838: the Hub catalog's fourth source. The provider is built
         catalog-view only -- no Console ``SessionTodoStore``, so
@@ -1752,9 +1753,10 @@ class MCPWorkbench(Container):
         ``[console] local_tools_enabled`` is on -- the SAME opt-in the
         Console composition (`_compose_local_provider()`) and the external
         MCP exposure (`[mcp] expose_local_tools`) already apply to this
-        workspace-writing tool set. When the feature is off everywhere, the
-        management surface does not advertise it either. Coerced at read
-        time: a quoted ``"false"`` in the TOML must not fail this OPEN.
+        workspace, web, and Watchlists tool set. When the feature is off
+        everywhere, the management surface does not advertise it either.
+        Coerced at read time: a quoted ``"false"`` in the TOML must not fail
+        this OPEN.
         """
         if not coerce_bool_setting(
             get_cli_setting(
@@ -3016,7 +3018,7 @@ class MCPWorkbench(Container):
     def on_mcp_tools_mode_local_tools_enabled_changed(
         self, event: MCPToolsMode.LocalToolsEnabledChanged
     ) -> None:
-        """Persist the Tools-mode local/web master switch without blocking UI."""
+        """Persist the workspace, web, and Watchlists master switch."""
         event.stop()
         self.run_worker(
             self._save_tools_mode_local_enabled(event.enabled),

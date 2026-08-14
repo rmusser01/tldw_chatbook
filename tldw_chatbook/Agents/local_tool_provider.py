@@ -1,4 +1,4 @@
-"""ToolProvider for workspace-local fs_/web_/todo_ tools.
+"""ToolProvider for workspace, web, and Watchlists agent tools.
 
 Spec: Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md.
 ADR: backlog/decisions/032. Mirrors MCPToolProvider's approval discipline:

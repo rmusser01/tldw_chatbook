@@ -171,7 +171,7 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
             self.action_key = action_key
 
     class LocalToolsEnabledChanged(Message, namespace="mcp_tools_mode"):
-        """Request persistence of the local/web provider master switch."""
+        """Persist the workspace, web, and Watchlists provider master switch."""
 
         def __init__(self, enabled: bool) -> None:
             super().__init__()
@@ -316,7 +316,7 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         """Refresh local-tool controls from persisted configuration truth.
 
         Args:
-            enabled: Persisted state of the local/web provider master switch.
+            enabled: State of the workspace, web, and Watchlists master switch.
             workspace_root: Persisted workspace confinement root, or an empty
                 string when the app launch directory is the root.
             visible: Whether the local-source configuration panel is visible.

@@ -57,7 +57,7 @@ honors its kill switch. An external `ask` state is refused because an
 external client cannot show Chatbook's approval card.
 
 > [!WARNING]
-> An external MCP client runs with the user's OS access. It can read private local Library content through exposed tools, resources, and prompts, and it may send that content off-device to a cloud model. Enable only what you mean to disclose, and trust both the client and the model provider.
+> An external MCP client runs with the user's OS access. It can read private local Library data and private Watchlists feed and article evidence through exposed tools, resources, and prompts. The external MCP client may send that content off-device to a cloud model. Enable only what you mean to disclose, and trust both the client and the model provider.
 
 ## Configuring workspace, web, and Watchlists tools (Tools mode)
 
