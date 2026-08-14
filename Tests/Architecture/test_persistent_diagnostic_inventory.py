@@ -357,6 +357,12 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
 
 
 TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
+    "tldw_chatbook/Chat/console_runtime.py": {
+        "Console runtime: could not write the app's": (
+            1,
+            ("CONSOLE_RUNTIME_ATTR",),
+        ),
+    },
     "tldw_chatbook/Chat/console_agent_bridge.py": {
         "usage accounting failed after a successful provider turn": (
             1,
@@ -386,6 +392,12 @@ TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
     "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": {
         "No audio file found to export": (2, ()),
     },
+    "tldw_chatbook/DB/Subscriptions_DB.py": {
+        "subscription_items_fts unavailable; falling back to LIKE search": (
+            1,
+            (),
+        ),
+    },
     "tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py": {
         "Displayed character card": (2, ()),
     },
@@ -403,6 +415,12 @@ TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
     },
     "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
         "Wizard delete rejected non-owned sections": (1, ()),
+    },
+    "tldw_chatbook/Tools/watchlists_tool_service.py": {
+        "Watchlists tool execution failed": (
+            1,
+            ("category or 'Exception'",),
+        ),
     },
     "tldw_chatbook/config.py": {
         "phase=precondition, error_type": (1, ("type(error).__name__",)),
