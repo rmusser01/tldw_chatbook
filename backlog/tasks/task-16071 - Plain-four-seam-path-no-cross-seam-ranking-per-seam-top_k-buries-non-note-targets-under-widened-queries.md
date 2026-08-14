@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-08-14 01:52'
-updated_date: '2026-08-14 02:39'
+updated_date: '2026-08-14 06:12'
 labels:
   - rag
   - library
@@ -128,3 +128,9 @@ Ledger: .superpowers/sdd/2026-08-14-rag-four-seam-cross-ranking/progress.md
 4. Replace the fixed-order rows.extend merge (library_local_rag_search_service.py:449-452) with interleave_rankings from RAG_Search/fusion.py keyed on (provenance.source_type, source_id); write the rule at the site citing the 16071 worked examples; no-tiering comment with the 15700 pointer; NO truncation added.
 5. Gated re-measure + zero-movement proof + the PRF oracle control re-run (Task 2); User Guide/doc stamp + close-out (Task 3).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Task 2 (gated capture + PRF oracle control, HEAD 0b512f24a): ZERO MOVEMENT — gate PASSED, 105/105 cells (+0.000), grep-counted, and bit-exact (0 of 105 metrics differ by float equality); NO re-stamp, baselines untouched; plain keyword recall exactly 0.84375 / scoped 1.000 as Task 1 predicted. The PRF oracle CONTROL split the defect: TF-8 8/22->14/22 and rarest-DF 15/22->19/22, with the ENTIRE gain in the conversation column (0/6->6/6, 2/6->6/6) and media moving +0 under both selectors (1/9, 6/9) — conversation burial was seam ORDER (all six now at position 3, the conv seam's rank-1 slot; within-seam rank was always 1), media shortfall is per-seam VOLUME (misses sit 6-28 deep in their own seam, unreachable by any ordering change); notes 7/7 verified at position 1, not assumed. Bound recalibrates >=15/22 -> >=19/22 observable. Real feed also moved: TF base point 0/22->2/22 rescued (both conversation targets), which licensed the 9-point sweep for the first time (max 2/22 vs bar >=5) and the axis control 0/22->1/22 at both points — VERDICT still NULL, PRF STAYS RETIRED, null now stronger. Fed rows went 18%->54% label-only: the merge changes WHAT a top-M consumer sees. Batteries unchanged: 5 / 340 / 315p+13s / 306 gated / 1 PRF; scope_pipeline 4F/73P still dev's pre-existing red. HANDOVER: Tests/RAG_Eval/harness/runner.py:740-743 prints a now-false 'fixed seam order' claim on every gated run, plus README:773 and :1079; the README PRF section's rows :714, :736-741 and :754-760 are stale too, not just the oracle table.
+<!-- SECTION:NOTES:END -->
