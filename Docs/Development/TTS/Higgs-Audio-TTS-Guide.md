@@ -37,10 +37,10 @@ We provide installation scripts that automate the entire process:
 
 ```bash
 # Unix/Linux/macOS
-./scripts/install_higgs.sh
+./Helper_Scripts/Higgs-Install/install_higgs.sh
 
 # Windows
-scripts\install_higgs.bat
+Helper_Scripts\Higgs-Install\install_higgs.bat
 ```
 
 The script will:
@@ -81,7 +81,7 @@ pip install -e ".[higgs_tts]"
 
 ```bash
 # Run the verification script
-python scripts/verify_higgs_installation.py
+python Helper_Scripts/Higgs-Install/verify_higgs_installation.py
 
 # Or manually test imports
 python -c "import boson_multimodal; print('✅ Higgs Audio core installed successfully!')"

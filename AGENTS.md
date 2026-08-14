@@ -68,7 +68,7 @@ pytest --cov=tldw_chatbook  # With coverage
 
 ### Data Layer (`DB/`)
 
-- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes), schema v7
+- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes), schema v37
 - **`Client_Media_DB_v2.py`** - Media storage with chunking
 - **`RAG_Indexing_DB.py`** - Vector storage (when enabled)
 - Other DBs: Evals, Prompts, Subscriptions

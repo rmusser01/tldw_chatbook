@@ -77,8 +77,8 @@ pip install -e ".[embeddings_rag,chunker]"
 # Web search and scraping capabilities
 pip install -e ".[websearch]"
 
-# All optional features
-pip install -e ".[embeddings_rag,chunker,websearch,audio,video,pdf,ebook,nemo,mcp,chatterbox,local_tts,higgs_tts,ocr_docext,debugging,mlx_whisper,diarization,coding_map,local_vllm,local_mlx,local_transformers,web]"
+# Most optional features (full extras list lives in pyproject.toml's [project.optional-dependencies])
+pip install -e ".[embeddings_rag,chunker,websearch,audio,video,pdf,ebook,nemo,mcp,chatterbox,local_tts,higgs_tts,ocr_docext,debugging,mlx_whisper,diarization,coding_map,local_vllm,local_mlx,local_transformers,web,speech_recording,realtime]"
 
 # Common feature combinations
 pip install -e ".[audio,video]"  # Media transcription (includes faster-whisper)
@@ -116,7 +116,7 @@ Advanced optional capability groups:
 | `local_mlx`                    | Local inference | MLX inference (Apple Silicon) | mlx-lm |
 | `transcription_faster_whisper` | Media ingestion and transcription | CPU/CUDA optimized Whisper transcription | faster-whisper |
 | `transcription_lightning_whisper` | Media ingestion and transcription | Apple Silicon optimized Whisper | lightning-whisper-mlx |
-| `transcription_parakeet`       | Media ingestion and transcription | Real-time ASR for Apple Silicon | parakeet-mlx |
+| `transcription_parakeet`       | Media ingestion and transcription | Parakeet ONNX transcription (cross-platform) | onnx-asr |
 | `mlx_whisper`                  | Media ingestion and transcription | Legacy: Both Apple Silicon transcription providers | lightning-whisper-mlx, parakeet-mlx |
 | `audio`                        | Media ingestion and transcription | Audio processing with transcription | faster-whisper, soundfile, yt-dlp |
 | `video`                        | Media ingestion and transcription | Video processing with transcription | faster-whisper, soundfile, yt-dlp |
@@ -141,6 +141,7 @@ The application supports multiple transcription providers. By default, `audio`, 
 
 #### Available Providers:
 - **faster-whisper** (Default): CPU/CUDA optimized implementation, works everywhere
+- **parakeet-onnx**: Parakeet ONNX transcription, cross-platform (installed by the `transcription_parakeet` extra and by `audio`/`video`)
 - **lightning-whisper-mlx**: Apple Silicon optimized Whisper implementation
 - **parakeet-mlx**: Real-time ASR optimized for Apple Silicon
 
@@ -176,10 +177,10 @@ Higgs Audio V2 is a state-of-the-art TTS system with zero-shot voice cloning cap
 **Option 1: Automated Installation (Recommended)**
 ```bash
 # Unix/Linux/macOS
-./scripts/install_higgs.sh
+./Helper_Scripts/Higgs-Install/install_higgs.sh
 
 # Windows
-scripts\install_higgs.bat
+Helper_Scripts\Higgs-Install\install_higgs.bat
 ```
 
 **Option 2: Manual Installation**
@@ -200,7 +201,7 @@ pip install -e ".[higgs_tts]"
 
 3. **Verify installation:**
 ```bash
-python scripts/verify_higgs_installation.py
+python Helper_Scripts/Higgs-Install/verify_higgs_installation.py
 ```
 
 #### Troubleshooting
@@ -254,7 +255,7 @@ The screen shell is organized around a **master shell** of primary destinations 
 > **Migration note:** legacy tabs — `Chat` (now Console), `Notes`, `Media`, `Ingest`, `Search`, `Coding`, `Characters/Prompts` (now Personas), `Subscriptions` (now Watchlists), and `Chatbooks` (now under Artifacts) — still resolve as routes/aliases, but are no longer separate primary destinations. `Coding` in particular is now a thin compatibility stub; agentic programming happens in the Console.
 
 ### LLM Support
-- **Commercial LLM APIs**: OpenAI, Anthropic, Cohere, DeepSeek, Google, Groq, Mistral, OpenRouter, QwenCloud, HuggingFace
+- **Commercial LLM APIs**: OpenAI, Anthropic, Cohere, DeepSeek, Google, Groq, Mistral, OpenRouter, QwenCloud, HuggingFace, Moonshot (Kimi), Z.ai (GLM)
 - **Local LLM APIs**: Llama.cpp, Ollama, Kobold.cpp, vLLM, Aphrodite, MLX-LM, ONNX Runtime, Custom OpenAI-compatible endpoints
 - **Streaming responses** with real-time display
 - **Full conversation management**: Save, load, edit, fork conversations
@@ -263,7 +264,6 @@ The screen shell is organized around a **master shell** of primary destinations 
   explicit Resume or Discard recovery without re-running completed tools
 - **Model capability detection**: Vision support, tool calling, etc.
 - **Custom tokenizer support** for accurate token counting
-- **Chat Tabs**: Multiple concurrent chat sessions (enable with `enable_chat_tabs = true` in config)
 
 ### RAG (Basic - FTS5)
 Even without optional dependencies, you get:
@@ -279,7 +279,7 @@ Even without optional dependencies, you get:
 - **Safe execution**: Timeouts and concurrency control
 - **UI integration**: Dedicated widgets for tool calls and results
 - **Provider support**: Multiple LLM providers with tool calling capabilities
-- **Status**: Implementation complete, UI widgets functional, chat integration pending
+- **Chat integration**: Tool calls, results, and approvals render inline in the Console
 
 ## Enhanced Features (With Optional Dependencies)
 
@@ -293,26 +293,18 @@ Installing `pip install -e ".[embeddings_rag]"` adds:
 - **Advanced Caching**: Query and embedding result caching
 - **Memory Management**: Automatic cleanup at configurable thresholds
 
-#### Enabling the New Modular RAG System
-```bash
-# Set environment variable
-export USE_MODULAR_RAG=true
-# Or in config.toml: use_modular_service = true
-```
-
 #### Default Embedding Configuration
 The embeddings_rag module comes with sensible defaults that work out of the box:
-- **Default Model**: `mxbai-embed-large-v1` (1024 dimensions) - high-quality embeddings
+- **Default Model**: `e5-small-v2` (384 dimensions) - the shipped `[embedding_config] default_model_id`
 - **Auto-device Detection**: Automatically uses GPU (CUDA/MPS) if available
 - **Zero Configuration**: Works immediately after installation
-- **Flexible Dimensions**: Supports Matryoshka - can use 512 or 256 dimensions for speed/storage
 
 Common embedding models are pre-configured:
-- **High Quality (Default)**: `mxbai-embed-large-v1` (~335MB, 1024d, supports 512d/256d)
+- **High Quality**: `mxbai-embed-large-v1` (~335MB, 1024d, supports 512d/256d)
 - **State-of-the-Art**: 
   - `stella_en_1.5B_v5` (~1.5GB, 512-8192d, security-pinned)
   - `qwen3-embedding-4b` (~4GB, up to 4096d, 32k context)
-- **Small/Fast**: `e5-small-v2`, `all-MiniLM-L6-v2` (~100MB, 384d)
+- **Small/Fast (Default)**: `e5-small-v2`, `all-MiniLM-L6-v2` (~100MB, 384d)
 - **Balanced**: `e5-base-v2`, `all-mpnet-base-v2` (~400MB, 768d)
 - **Large Models**: `e5-large-v2`, `multilingual-e5-large-instruct` (~1.3GB, 1024d)
 - **API-based**: OpenAI embeddings (requires API key)
@@ -425,7 +417,7 @@ All chat features listed here work with the core installation:
 - **Browser automation**: Playwright for dynamic content
 - **Language detection**: For multi-lingual content
 - **Integration with RAG**: Web content as knowledge source
-- **Multiple search providers**: Google, Bing, DuckDuckGo, Brave, Kagi, Tavily, SearX, Baidu, Yandex
+- **Multiple search providers**: Google, Bing, DuckDuckGo, Brave, Kagi, Tavily, SearX, Serper, Exa, Baidu, Yandex
 
 ### Media Processing Features
 
@@ -505,6 +497,8 @@ Comprehensive TTS support with multiple backends:
 - **ElevenLabs**: Premium voice synthesis with custom voices
 - **Kokoro ONNX** (with `local_tts`): Local neural TTS with no internet required
 - **Chatterbox** (with `chatterbox`): Advanced local TTS model
+- **Higgs Audio V2** (with `higgs_tts`): Zero-shot voice cloning (see installation section above)
+- **AllTalk**: OpenAI-compatible local TTS server
 - **Unified Interface**: Single API for all backends
 - **Voice Selection**: Choose from available voices per backend
 - **Audio Output**: Direct playback or save to file
@@ -573,18 +567,17 @@ Edit `~/.config/tldw_cli/config.toml` to:
 Example embedding configuration:
 ```toml
 [embedding_config]
-default_model_id = "mxbai-embed-large-v1"  # High-quality default
+default_model_id = "e5-small-v2"  # Shipped default; mxbai-embed-large-v1 and others are documented options
 
-[rag.embedding]
-model = "mxbai-embed-large-v1"
-device = "auto"  # Auto-detects best device (cuda/mps/cpu)
+# RAG-side embedding overrides can also be set via environment variables:
+# RAG_EMBEDDING_MODEL, RAG_DEVICE
 ```
 
 Example audio transcription configuration:
 ```toml
 [transcription]
 # Use NVIDIA Parakeet for low-latency transcription
-default_provider = "parakeet"  # Options: faster-whisper, qwen2audio, parakeet
+default_provider = "parakeet"  # Options: faster-whisper, parakeet-onnx, qwen2audio, parakeet, canary, parakeet-mlx, lightning-whisper-mlx, remote-whisper
 default_model = "nvidia/parakeet-tdt-1.1b"  # TDT model for streaming
 device = "cuda"  # Use GPU for faster processing
 use_vad_by_default = true  # Voice Activity Detection
@@ -592,22 +585,21 @@ use_vad_by_default = true  # Voice Activity Detection
 
 Example TTS configuration:
 ```toml
-[tts]
-default_backend = "openai"  # Options: openai, elevenlabs, kokoro, chatterbox
+[app_tts]
+default_provider = "openai"  # Options: openai, elevenlabs, kokoro, chatterbox, alltalk
 default_voice = "alloy"  # Backend-specific voice ID
-auto_play = true  # Play audio automatically after generation
 
-[tts.kokoro]
-model_path = "models/kokoro-v0_19.onnx"  # Path to local model
-voice = "af_bella"  # Available voices vary by model
+# Kokoro ONNX model locations (used when default_provider = "kokoro")
+# KOKORO_ONNX_MODEL_PATH_DEFAULT = "models/kokoro-v0_19.onnx"
+# KOKORO_ONNX_VOICES_JSON_DEFAULT = "models/voices.json"
 ```
 
 Example MCP configuration:
 ```toml
 [mcp]
 enabled = true
-server_port = 3000
-allowed_tools = ["search", "rag", "media_ingest"]
+http_port = 3000
+allowed_clients = ["claude-desktop", "localhost"]
 ```
 
 Example splash screen configuration:
@@ -616,7 +608,9 @@ Example splash screen configuration:
 enabled = true
 duration = 3.0
 card_selection = "random"  # Options: random, sequential, or specific card name
-active_cards = ["default", "cyberpunk", "minimalist"]
+active_cards = ["default", "matrix", "minimal"]
+
+[splash_screen.effects]
 animation_speed = 1.0
 ```
 
@@ -692,13 +686,12 @@ exact controls, endpoints, recovery, and optional paid verification.
 
 ### Database Files
 Located at `~/.local/share/tldw_cli/`:
-- `ChaChaNotes.db`: Conversations, characters, and notes
-- `media_v2.db`: Ingested media files and metadata
-- `prompts.db`: Saved prompt templates
+- `tldw_chatbook_ChaChaNotes.db`: Conversations, characters, and notes
+- `tldw_chatbook_media_v2.db`: Ingested media files and metadata
+- `tldw_chatbook_prompts.db`: Saved prompt templates
 - `rag_indexing.db`: RAG indexing state (if using RAG features)
 - `evals.db`: Evaluation results and benchmarks
-- `subscriptions.db`: Content subscription tracking
-- `search_history.db`: Search query history
+- `tldw_chatbook_subscriptions.db`: Content subscription tracking
 
 ## Web Server Access
 
