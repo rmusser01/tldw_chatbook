@@ -122,7 +122,9 @@ class ConsoleRailHandle(DestinationRailHandle):
         if normalized_label == " ".join(CONSOLE_RAIL_CONTEXT_LABEL.split()):
             normalized_label = normalized_label.removesuffix(GLYPH_COLLAPSED).rstrip()
         elif normalized_label == " ".join(CONSOLE_RAIL_INSPECTOR_LABEL.split()):
-            normalized_label = normalized_label.removeprefix(GLYPH_COLLAPSE_LEFT).lstrip()
+            normalized_label = normalized_label.removeprefix(
+                GLYPH_COLLAPSE_LEFT
+            ).lstrip()
         return ConsoleRailHandle._stack_vertical_text(normalized_label)
 
     @staticmethod
