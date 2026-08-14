@@ -663,6 +663,9 @@ async def test_the_carried_open_item_keeps_the_pages_ordering():
         # `_normalize_items_status_filter` maps it to "unread", so this also
         # pins the legacy-value path -- the query below is `status="new"`.
         screen._items_status_filter = "new"
+        screen._items_committed_page_key = screen._items_page_key(0)
+        # Production selection records this provenance alongside the item.
+        screen._selected_content_page_key = screen._items_committed_page_key
         await screen._load_items()
 
         titles = [row["title"] for row in screen._loaded_items]

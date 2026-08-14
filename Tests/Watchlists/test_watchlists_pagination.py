@@ -21,7 +21,14 @@ from tldw_chatbook.UI.Watchlists_Modules.article_list import (
     PreviousItemsPageRequested,
 )
 from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
-from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
+from tldw_chatbook.UI.Watchlists_Modules.items_pane import (
+    ItemSelected,
+    ItemsFilterChanged,
+    NextUnreadRequested,
+    RefreshItemsRequested,
+)
+from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
 
 
 def _item(index: int, *, day: int = 13) -> dict[str, object]:
@@ -47,6 +54,7 @@ async def _open_screen(controller: AsyncMock):
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
         assert isinstance(screen, WatchlistsCollectionsScreen)
+        controller.get_overview_data.return_value = {}
         screen._controller = controller
         yield screen, pilot
 
@@ -477,3 +485,370 @@ async def test_selection_records_the_page_that_was_committed_before_detail_fetch
 
         assert screen._selected_content_item is item
         assert screen._selected_content_page_key == selection_key
+
+
+@pytest.mark.asyncio
+async def test_status_change_resets_to_first_page_before_loading():
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(100, 51)
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items(
+            target_page_index=2, explicit_page_change=True
+        ) is True
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def pending_first_page(**kwargs):
+            assert kwargs["offset"] == 0
+            assert kwargs["status"] == "new"
+            entered.set()
+            await release.wait()
+            return _items(0, 3)
+
+        controller.list_items.reset_mock()
+        controller.list_items.side_effect = pending_first_page
+        screen.handle_items_filter_changed(ItemsFilterChanged("unread", ""))
+
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert screen._items_page_index == 0
+        assert screen._items_has_next is False
+        assert screen._items_page_loading is True
+        assert pane.page_number == 1
+        assert pane.query_one("#items-page-previous", Button).disabled is True
+        assert pane.query_one("#items-page-next", Button).disabled is True
+        await _wait_until(pilot, entered.is_set)
+        release.set()
+        await _wait_until(pilot, lambda: not screen._items_page_loading)
+
+
+@pytest.mark.asyncio
+async def test_search_edit_stays_on_logical_page_one_through_debounce_and_load():
+    controller = AsyncMock()
+    old_rows = _items(100, 51)
+    old_rows[0]["title"] = "Needle provisional"
+    controller.list_items.return_value = old_rows
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items(
+            target_page_index=2, explicit_page_change=True
+        ) is True
+        prior_rows = screen._loaded_items
+        open_item = prior_rows[0]
+        screen._selected_content_item = open_item
+        content = screen.query_one("#watchlists-content-pane", ContentPane)
+        content.item = open_item
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def pending_search(**kwargs):
+            assert kwargs["offset"] == 0
+            assert kwargs["limit"] == 51
+            assert kwargs["search"] == "needle"
+            entered.set()
+            await release.wait()
+            return _items(0, 1)
+
+        controller.list_items.reset_mock()
+        controller.list_items.side_effect = pending_search
+        screen.handle_items_filter_changed(ItemsFilterChanged("all", "needle"))
+
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert screen._items_page_index == 0
+        assert screen._items_page_loading is True
+        assert screen._items_has_next is False
+        assert screen._loaded_items is prior_rows
+        assert content.item is open_item
+        assert pane.search_results_authoritative is False
+        assert pane.query_one("#items-page-previous", Button).disabled is True
+        assert pane.query_one("#items-page-next", Button).disabled is True
+        await pilot.pause(0.1)
+        assert controller.list_items.await_count == 0
+        await _wait_until(pilot, entered.is_set)
+        assert screen._items_page_index == 0
+        assert screen._items_page_loading is True
+        assert content.item is open_item
+        release.set()
+        await _wait_until(pilot, lambda: not screen._items_page_loading)
+
+
+@pytest.mark.asyncio
+async def test_refresh_reloads_the_committed_current_page():
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(100, 51)
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items(
+            target_page_index=2, explicit_page_change=True
+        ) is True
+        controller.list_items.reset_mock()
+        controller.list_items.return_value = _items(200, 1)
+
+        screen.handle_refresh_items_requested(RefreshItemsRequested())
+        await _wait_until(pilot, lambda: controller.list_items.await_count == 1)
+        await _wait_until(pilot, lambda: not screen._items_page_loading)
+
+        assert controller.list_items.await_args.kwargs["offset"] == 100
+        assert screen._items_page_index == 2
+
+
+@pytest.mark.asyncio
+async def test_tree_scope_change_resets_and_reloads_page_one():
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(100, 51)
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items(
+            target_page_index=2, explicit_page_change=True
+        ) is True
+        controller.list_items.reset_mock()
+        controller.list_items.return_value = _items(0, 1)
+
+        screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=7)
+        await _wait_until(pilot, lambda: controller.list_items.await_count == 1)
+        await _wait_until(pilot, lambda: not screen._items_page_loading)
+
+        assert controller.list_items.await_args.kwargs["offset"] == 0
+        assert controller.list_items.await_args.kwargs["watchlist_id"] == 7
+        assert screen._items_page_index == 0
+
+
+@pytest.mark.asyncio
+async def test_backend_change_reloads_read_but_not_a_hidden_read_section():
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(100, 51)
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items(
+            target_page_index=2, explicit_page_change=True
+        ) is True
+        controller.list_items.reset_mock()
+        controller.list_items.return_value = _items(0, 1)
+
+        screen.runtime_backend = "server"
+        await _wait_until(pilot, lambda: controller.list_items.await_count == 1)
+        await _wait_until(pilot, lambda: not screen._items_page_loading)
+        assert controller.list_items.await_args.kwargs["runtime_backend"] == "server"
+        assert controller.list_items.await_args.kwargs["offset"] == 0
+        assert screen._items_page_index == 0
+
+        screen.active_section = "sources"
+        await pilot.pause(0.1)
+        screen._items_page_index = 2
+        screen._items_has_next = True
+        controller.list_items.reset_mock()
+        screen.runtime_backend = "local"
+        await pilot.pause(0.2)
+        assert controller.list_items.await_count == 0
+        assert screen._items_page_index == 0
+        assert screen._items_page_loading is False
+
+
+@pytest.mark.asyncio
+async def test_selection_during_search_debounce_keeps_prior_committed_key():
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(0, 2)
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items() is True
+        prior_key = screen._items_committed_page_key
+        item = screen._loaded_items[0]
+        item["title"] = "Needle"
+        screen._mark_item_read_on_open = Mock()
+        controller.get_item_content.return_value = "Fetched"
+
+        screen.handle_items_filter_changed(ItemsFilterChanged("all", "needle"))
+        await screen.handle_item_selected(ItemSelected(item))
+
+        assert screen._items_page_index == 0
+        assert screen._items_committed_page_key == prior_key
+        assert screen._selected_content_page_key == prior_key
+        await pilot.pause(0.35)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed_field", ["backend", "scope", "status", "search"])
+async def test_query_context_changes_do_not_pin_the_open_item(changed_field):
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(0, 2)
+
+    async with _open_screen(controller) as (screen, _pilot):
+        assert await screen._load_items() is True
+        open_item = screen._loaded_items[0]
+        screen._selected_content_item = open_item
+        screen._selected_content_page_key = screen._items_committed_page_key
+        if changed_field == "backend":
+            screen.__dict__["_reactive_runtime_backend"] = "server"
+        elif changed_field == "scope":
+            screen.__dict__["_reactive_tree_scope"] = TreeScope(
+                kind="watchlist", watchlist_id=7
+            )
+        elif changed_field == "status":
+            screen._items_status_filter = "unread"
+        else:
+            screen._items_search_query = "different"
+        screen._reset_items_paging_for_context(loading=True)
+        controller.list_items.return_value = _items(100, 2)
+
+        assert await screen._load_items() is True
+
+        assert str(open_item["id"]) not in {
+            str(item["id"]) for item in screen._loaded_items
+        }
+
+
+@pytest.mark.asyncio
+async def test_content_only_backend_match_survives_authoritative_search_load():
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(0, 1)
+
+    async with _open_screen(controller) as (screen, _pilot):
+        assert await screen._load_items() is True
+        result = _item(77)
+        result.pop("content")
+        controller.list_items.return_value = [result]
+        screen._items_search_query = "full-body-only-token"
+        screen._reset_items_paging_for_context(loading=True)
+
+        assert await screen._load_items() is True
+
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert pane.search_results_authoritative is True
+        assert [str(item["id"]) for item in pane.displayed_items()] == ["77"]
+        article_rows = list(pane.query(".article-row"))
+        assert len(article_rows) == 1
+        assert article_rows[0].parent.display is True
+
+
+@pytest.mark.asyncio
+async def test_older_context_result_cannot_paint_after_newer_result():
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(0, 1)
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items() is True
+        old_started = asyncio.Event()
+        old_result = asyncio.get_running_loop().create_future()
+
+        async def controlled(**kwargs):
+            if "search" not in kwargs:
+                old_started.set()
+                return await old_result
+            return _items(200, 1)
+
+        controller.list_items.reset_mock()
+        controller.list_items.side_effect = controlled
+        older = asyncio.create_task(screen._load_items())
+        await _wait_until(pilot, old_started.is_set)
+        screen._items_search_query = "new context"
+        screen._reset_items_paging_for_context(loading=True)
+        assert await screen._load_items() is True
+        old_result.set_result(_items(100, 1))
+        assert await older is False
+
+        assert [str(item["id"]) for item in screen._loaded_items] == ["200"]
+
+
+@pytest.mark.asyncio
+async def test_failed_search_keeps_provisional_rows_content_and_disabled_next():
+    controller = AsyncMock()
+    rows = _items(100, 51)
+    rows[0]["title"] = "Needle provisional"
+    controller.list_items.return_value = rows
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items(
+            target_page_index=2, explicit_page_change=True
+        ) is True
+        prior_rows = screen._loaded_items
+        open_item = prior_rows[0]
+        screen._selected_content_item = open_item
+        content = screen.query_one("#watchlists-content-pane", ContentPane)
+        content.item = open_item
+
+        controller.list_items.reset_mock()
+        controller.list_items.side_effect = RuntimeError("search unavailable")
+        screen.handle_items_filter_changed(ItemsFilterChanged("all", "needle"))
+        await _wait_until(pilot, lambda: controller.list_items.await_count == 1)
+        await _wait_until(pilot, lambda: not screen._items_page_loading)
+
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert screen._items_page_index == 0
+        assert screen._items_has_next is False
+        assert screen._loaded_items is prior_rows
+        assert pane.items is prior_rows
+        assert pane.search_results_authoritative is False
+        assert pane.has_previous is False
+        assert pane.has_next is False
+        assert content.item is open_item
+
+
+@pytest.mark.asyncio
+async def test_empty_nonfirst_refresh_walks_back_to_nearest_nonempty_page():
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(100, 10)
+
+    async with _open_screen(controller) as (screen, _pilot):
+        assert await screen._load_items(
+            target_page_index=2, explicit_page_change=True
+        ) is True
+
+        async def pages(**kwargs):
+            return _items(0, 4) if kwargs["offset"] == 0 else []
+
+        controller.list_items.reset_mock()
+        controller.list_items.side_effect = pages
+        assert await screen._load_items() is True
+
+        assert [call.kwargs["offset"] for call in controller.list_items.await_args_list] == [
+            100,
+            50,
+            0,
+        ]
+        assert screen._items_page_index == 0
+        assert [str(item["id"]) for item in screen._loaded_items] == [
+            str(index) for index in range(4)
+        ]
+
+
+@pytest.mark.asyncio
+async def test_page_navigation_keys_never_fetch_or_reach_the_lookahead_row():
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(0, 51)
+
+    async with _open_screen(controller) as (screen, _pilot):
+        assert await screen._load_items() is True
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        last_visible = screen._loaded_items[-1]
+        screen._selected_content_item = last_visible
+        pane.selected_item = last_visible
+        controller.list_items.reset_mock()
+
+        screen.action_next_item()
+        screen.action_previous_item()
+        screen.handle_next_unread_requested(NextUnreadRequested())
+
+        assert controller.list_items.await_count == 0
+        assert "50" not in {str(item["id"]) for item in pane.displayed_items()}
+
+
+@pytest.mark.asyncio
+async def test_rebuilt_read_pane_is_seeded_with_committed_page_state():
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(100, 51)
+
+    async with _open_screen(controller) as (screen, _pilot):
+        assert await screen._load_items(
+            target_page_index=2, explicit_page_change=True
+        ) is True
+        original = screen.query_one("#watchlists-items-pane", ArticleListPane)
+
+        await screen.query_one("#wl-workbench").refresh_region_content(Region.ITEMS)
+        replacement = screen.query_one("#watchlists-items-pane", ArticleListPane)
+
+        assert replacement is not original
+        assert replacement.items is screen._loaded_items
+        assert replacement.page_number == 3
+        assert replacement.has_previous is True
+        assert replacement.has_next is True
+        assert replacement.page_loading is False

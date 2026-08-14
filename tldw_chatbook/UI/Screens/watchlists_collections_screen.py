@@ -2194,6 +2194,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._items_search_results_authoritative
         )
 
+    def _reset_items_paging_for_context(self, *, loading: bool) -> None:
+        """Invalidate Read paging before a query-context change is loaded."""
+        timer = getattr(self, "_items_search_reload_timer", None)
+        if timer is not None:
+            timer.stop()
+            self._items_search_reload_timer = None
+        self._items_page_index = 0
+        self._items_has_next = False
+        self._items_page_loading = loading
+        self._items_search_results_authoritative = False
+        self._items_load_generation += 1
+        self._push_items_pager_state()
+
     def _build_content_pane(self) -> ContentPane:
         """Build the CONTENT-region content: the reader for the last
         selected item (Task 4).
@@ -3682,7 +3695,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not self.is_mounted:
             return
         self._refresh_centre_header_for_scope()
-        if self.active_section == "items":
+        read_is_active = self.active_section == "items"
+        self._reset_items_paging_for_context(loading=read_is_active)
+        if read_is_active:
             # Own group, not the default one: `exclusive=True` in the
             # default group would cancel every in-flight default-group
             # worker (`_create_source`, `_delete_source`, ...) -- the
@@ -4245,6 +4260,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._pending_navigation_run_backend = None
         if not self.is_mounted:
             return
+        read_is_active = self.active_section == "items"
+        self._reset_items_paging_for_context(loading=read_is_active)
+        if read_is_active:
+            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
         try:
             label = self.query_one("#watchlists-backend-label", Static)
             label_text = self._backend_label_text()
@@ -9032,6 +9051,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         generation = self._items_load_generation
         self._items_page_loading = True
         self._push_items_pager_state()
+        resolved_target = target
+        resolved_key = target_key
         try:
             # TASK-3791 plan task 3: a non-blank search term is part of the
             # query (the corpus-wide FTS path, falling back to LIKE), not a
@@ -9049,20 +9070,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 # on status and statuses together, and widening the list to
                 # the reader statuses would make the node lie besides.
                 items_kwargs.pop("statuses", None)
-            raw_items = await self._controller.list_items(
-                runtime_backend=self.runtime_backend,
-                limit=_ITEMS_PAGE_SIZE + 1,
-                offset=target * _ITEMS_PAGE_SIZE,
-                **items_kwargs,
-            )
+            runtime_backend = self.runtime_backend
+            while True:
+                raw_items = await self._controller.list_items(
+                    runtime_backend=runtime_backend,
+                    limit=_ITEMS_PAGE_SIZE + 1,
+                    offset=resolved_target * _ITEMS_PAGE_SIZE,
+                    **items_kwargs,
+                )
+                if not self._items_load_is_current(generation, target_key):
+                    return False
+                if raw_items or resolved_target == 0:
+                    break
+                resolved_target -= 1
+                resolved_key = (*target_key[:-1], resolved_target)
         except asyncio.CancelledError:
             raise
         except Exception:
             async with self._items_page_presentation_lock:
-                if (
-                    generation != self._items_load_generation
-                    or target_key != self._items_page_key(target)
-                ):
+                if not self._items_load_is_current(generation, target_key):
                     return False
                 logger.opt(exception=True).debug("Failed to load watchlist items.")
                 self._items_page_loading = False
@@ -9071,22 +9097,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     notify("Failed to load watchlist items.", severity="error")
                 return False
 
-        if (
-            generation != self._items_load_generation
-            or target_key != self._items_page_key(target)
-        ):
+        if not self._items_load_is_current(generation, target_key):
             return False
 
         has_next = len(raw_items) > _ITEMS_PAGE_SIZE
         rows = [dict(item) for item in raw_items[:_ITEMS_PAGE_SIZE]]
-        if self._selected_content_page_key == target_key:
+        if self._selected_content_page_key == resolved_key:
             rows = self._with_open_item(rows, max_items=_ITEMS_PAGE_SIZE)
 
         async with self._items_page_presentation_lock:
-            if (
-                generation != self._items_load_generation
-                or target_key != self._items_page_key(target)
-            ):
+            if not self._items_load_is_current(generation, target_key):
                 return False
             prior_rows = self._loaded_items
             pane: ArticleListPane | None = None
@@ -9110,10 +9130,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             except Exception:
                 if pane is not None:
                     await pane.apply_page_items(prior_rows, focus_first=False)
-                if (
-                    generation != self._items_load_generation
-                    or target_key != self._items_page_key(target)
-                ):
+                if not self._items_load_is_current(generation, target_key):
                     return False
                 logger.opt(exception=True).debug("Failed to load watchlist items.")
                 self._items_page_loading = False
@@ -9122,22 +9139,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     notify("Failed to load watchlist items.", severity="error")
                 return False
 
-            if (
-                generation != self._items_load_generation
-                or target_key != self._items_page_key(target)
-            ):
+            if not self._items_load_is_current(generation, target_key):
                 if pane is not None:
                     await pane.apply_page_items(prior_rows, focus_first=False)
                 return False
 
             self._loaded_items = rows
-            self._items_page_index = target
+            self._items_page_index = resolved_target
             self._items_has_next = has_next
-            self._items_committed_page_key = target_key
+            self._items_committed_page_key = resolved_key
             self._items_search_results_authoritative = True
             self._items_page_loading = False
             self._push_items_pager_state()
         return True
+
+    def _items_load_is_current(
+        self, generation: int, target_key: tuple[Any, ...]
+    ) -> bool:
+        """Whether a result still belongs to the active Read query context."""
+        return (
+            generation == self._items_load_generation
+            and target_key[:-1] == self._items_page_key(0)[:-1]
+        )
 
     @on(ItemSelected)
     async def handle_item_selected(self, event: ItemSelected) -> None:
@@ -9767,10 +9790,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_status_filter = incoming
         self._items_search_query = event.search_query
         if status_changed:
+            self._reset_items_paging_for_context(loading=True)
             # Own group, as in `watch_tree_scope`: an exclusive reload in
             # the default group cancels unrelated in-flight workers.
             self.run_worker(self._load_items(), exclusive=True, group="wc_items")
         elif query_changed:
+            self._reset_items_paging_for_context(loading=True)
             # TASK-3791 plan task 3: a search edit re-fetches too, now that
             # the term is part of the query (`_load_items` weaves it in) --
             # debounced, because this message fires on every keystroke and a
