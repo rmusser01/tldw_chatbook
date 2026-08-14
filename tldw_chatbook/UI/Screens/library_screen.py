@@ -5702,7 +5702,8 @@ class LibraryScreen(BaseAppScreen):
         conversations query are view/selection state. The Prompt browse scope
         is request state instead: its query, collection, sort, and page values
         define the exact local Prompt service request issued after restore.
-        Only that immutable scope is saved; its result rows are fetched fresh.
+        Its immutable fields are saved as a primitive mapping; result rows are
+        fetched fresh.
         ``_library_notes_filter_records`` is likewise never persisted because
         it is a derived/bulk snapshot recomputed from the saved notes filter.
         """
@@ -5733,7 +5734,9 @@ class LibraryScreen(BaseAppScreen):
         state["library_media_type_filter"] = self._library_media_type_filter
         state["library_notes_sort"] = self._library_notes_sort
         state["library_notes_filter"] = self._library_notes_filter
-        state["library_prompts_scope"] = self._library_prompt_browse_controller.scope
+        state["library_prompts_scope"] = dataclasses.asdict(
+            self._library_prompt_browse_controller.scope
+        )
         state["selected_prompt_id"] = self._selected_prompt_id
         state["library_conversation_query"] = getattr(
             self, "_library_conversation_query", ""
@@ -5874,7 +5877,13 @@ class LibraryScreen(BaseAppScreen):
         )
         prompts_scope = state.get("library_prompts_scope")
         if isinstance(prompts_scope, PromptBrowseScope):
+            # In-memory compatibility with snapshots made before TASK-16227.
             restored_prompts_scope = prompts_scope
+        elif type(prompts_scope) is dict:
+            try:
+                restored_prompts_scope = PromptBrowseScope(**prompts_scope)
+            except (TypeError, ValueError):
+                restored_prompts_scope = PromptBrowseScope()
         else:
             # In-memory compatibility with pre-TASK-198 saved screen state.
             legacy_sort = state.get("library_prompts_sort")
