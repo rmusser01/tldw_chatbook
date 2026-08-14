@@ -355,6 +355,70 @@ def test_no_tool_message_streams_final_answer_like_today(tmp_path):
     assert ConsoleMessageRole.TOOL not in roles
 
 
+def test_usage_accounting_failure_never_flips_a_streamed_run_to_error(
+    tmp_path, monkeypatch
+):
+    """TASK-16270: usage accounting is pure observability. A run that
+    streamed its answer successfully and then fails INSIDE usage
+    extraction must complete ``done`` with the usage simply missing (plus
+    a logged warning naming the failure) — never flip to
+    ``status='error'``."""
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("usage extraction exploded")
+
+    monkeypatch.setattr(
+        console_agent_bridge, "_openai_usage_from_provider_call", _boom
+    )
+    warnings: list[str] = []
+    sink_id = logger.add(warnings.append, level="WARNING", format="{message}")
+    try:
+        bridge, _db, store, session, aid = _bridge(tmp_path, [["Tok", "yo."]])
+        outcome = _run(
+            bridge,
+            store,
+            session,
+            aid,
+            resolution=ConsoleProviderResolution(
+                provider="TestProvider", base_url="", model=None, ready=True
+            ),
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert outcome.status == "done"
+    assert outcome.final_text == "Tokyo."
+    assert store.get_message(aid).content == "Tokyo."
+    # Usage is simply missing — never attached to the message.
+    assert store.get_message(aid).usage is None
+    assert any("usage accounting failed" in m for m in warnings)
+
+
+def test_a_genuine_provider_failure_still_classifies_as_error(tmp_path):
+    """The TASK-16270 wrap covers ONLY usage accounting: a failure in the
+    model call / stream itself must still land ``status='error'``."""
+
+    class _ExplodingGateway:
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            yield "Tok"
+            raise RuntimeError("provider connection dropped")
+
+    bridge, _db, store, session, aid = _bridge_with_gateway(
+        tmp_path, _ExplodingGateway()
+    )
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=ConsoleProviderResolution(
+            provider="TestProvider", base_url="", model=None, ready=True
+        ),
+    )
+    assert outcome.status == "error"
+    assert any(step.kind == "error" for step in outcome.steps)
+
+
 def test_tool_turn_renders_a_tool_marker_not_prose(tmp_path):
     scripts = [
         [_fence("calculator", {"expression": "6*7"})],  # turn 1: leading fence
