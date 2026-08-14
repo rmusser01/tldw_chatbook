@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import hashlib
 import io
@@ -24,6 +25,19 @@ TREE_URL = (
     f"https://huggingface.co/api/models/{REPOSITORY}/tree/{COMMIT}"
     "?recursive=true&expand=true"
 )
+
+
+def _manifest_refresh_docstring(function_name: str) -> str:
+    script_path = (
+        Path(__file__).parents[2] / "scripts" / "refresh_audio_cpp_artifact_manifest.py"
+    )
+    module = ast.parse(script_path.read_text(encoding="utf-8"))
+    functions = {
+        node.name: node
+        for node in module.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    return ast.get_docstring(functions[function_name]) or ""
 
 
 def _valid_manifest() -> dict[str, Any]:
@@ -1155,14 +1169,23 @@ def test_public_manifest_refresh_functions_use_google_style_docstrings(
     function_name: str,
     requires_raises: bool,
 ) -> None:
-    import scripts.refresh_audio_cpp_artifact_manifest as module
-
-    docstring = getattr(module, function_name).__doc__ or ""
+    docstring = _manifest_refresh_docstring(function_name)
 
     assert "Args:" in docstring
     assert "Returns:" in docstring
     if requires_raises:
         assert "Raises:" in docstring
+
+
+def test_manifest_docstring_contract_does_not_mutate_import_state() -> None:
+    before_path = tuple(sys.path)
+    sentinel = object()
+    before_module = sys.modules.get("audio_cpp_artifact_catalog", sentinel)
+
+    _manifest_refresh_docstring("validate_commit")
+
+    assert tuple(sys.path) == before_path
+    assert sys.modules.get("audio_cpp_artifact_catalog", sentinel) is before_module
 
 
 def test_refresh_command_writes_exact_bytes_to_explicit_output_without_site_packages(

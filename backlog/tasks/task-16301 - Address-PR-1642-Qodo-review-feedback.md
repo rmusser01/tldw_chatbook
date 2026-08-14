@@ -54,7 +54,12 @@ changes documentation and tests only.
 - Kept the maintainer refresh command dependency-free under ``python -S`` and
   documented ``--manifest``/``--output`` as explicit trusted-maintainer paths.
   Added coverage proving an explicit nested output receives the exact bytes.
-- Verification: the two affected test files passed 138 tests; the focused
+- A follow-up Qodo review found that importing the maintainer script to inspect
+  docstrings leaked its deliberate command-line ``sys.path`` setup into pytest.
+  The contract test now reads docstrings with stdlib ``ast`` instead, and an
+  isolation regression proves ``sys.path`` and the duplicate top-level module
+  slot remain unchanged.
+- Verification: the two affected test files passed 139 tests; the focused
   documentation/output contracts passed 9 tests; the unchanged lease/script
   boundary selection passed 4 tests; Ruff check, Ruff format check, and
   ``git diff --check`` passed. A repository-wide run was stopped after 1,564
