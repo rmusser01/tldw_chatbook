@@ -72,13 +72,13 @@ class ImportEffectState(str, Enum):
 def _validate_uuid_text(value: object, *, approval_boundary: bool) -> str:
     """Return canonical UUID text without including rejected input in errors."""
     error_type = ImportApprovalError if approval_boundary else ValueError
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise error_type("approval_id must be canonical UUID text.")
     try:
         parsed = UUID(value)
     except (AttributeError, ValueError):
-        raise error_type("approval_id must be canonical UUID text.") from None
-    if str(parsed) != value:
+        parsed = None
+    if parsed is None or str(parsed) != value:
         raise error_type("approval_id must be canonical UUID text.")
     return value
 
@@ -218,7 +218,7 @@ class ApprovedNoteImportPlan:
 
 def _validate_note_import_plan_for_approval(plan: object) -> NoteImportPlan:
     """Return one fully resolved real plan without echoing rejected contents."""
-    if not isinstance(plan, NoteImportPlan):
+    if type(plan) is not NoteImportPlan:
         raise ImportApprovalError("plan must be a NoteImportPlan.")
     collision = plan.root_collision
     if collision is not None and collision.collides and collision.choice is None:
@@ -268,18 +268,26 @@ def approve_note_import_plan(
         ImportApprovalError: If the plan, approval identifier, or root collision
             is not safe to execute.
     """
-    resolved_approval_id = str(uuid4()) if approval_id is None else approval_id
-    return _create_approved_note_import_plan(
-        plan,
-        resolved_approval_id,
-    )
+    try:
+        resolved_approval_id = str(uuid4()) if approval_id is None else approval_id
+        return _create_approved_note_import_plan(
+            plan,
+            resolved_approval_id,
+        )
+    except ImportApprovalError:
+        raise
+    except Exception:  # noqa: BLE001 - public privacy boundary sanitizes internals
+        sanitized_error = ImportApprovalError(
+            "The import plan could not be validated safely for approval."
+        )
+    raise sanitized_error from None
 
 
 def _validate_reason_code(reason_code: object) -> str | None:
     """Return one bounded public machine token without echoing rejected input."""
     if reason_code is None:
         return None
-    if not isinstance(reason_code, str):
+    if type(reason_code) is not str:
         raise TypeError("reason_code must be text when provided.")
     if not _SAFE_REASON_CODE.fullmatch(reason_code):
         raise ValueError("reason_code must be a bounded lowercase ASCII machine token.")
@@ -332,15 +340,20 @@ def _copy_private_collection(
     """Copy and validate private values without disclosing them in errors."""
     if isinstance(values, (str, bytes)):
         raise TypeError("Private receipt data must be a collection.")
+    copied: tuple[object, ...] | None
     try:
         copied = tuple(values)  # type: ignore[arg-type]
-    except TypeError:
-        raise TypeError("Private receipt data must be a collection.") from None
     except Exception:  # noqa: BLE001 - validation boundary must redact iterator errors
-        raise ValueError("The private collection could not be read safely.") from None
-    if not all(isinstance(value, str) and validator(value) for value in copied):
+        copied = None
+    if copied is None:
+        raise ValueError("The private collection could not be read safely.")
+    try:
+        valid = all(type(value) is str and validator(value) for value in copied)
+    except Exception:  # noqa: BLE001 - validation boundary must redact validator errors
+        valid = False
+    if not valid:
         raise ValueError("Private receipt data contains an invalid value.")
-    return copied
+    return copied  # type: ignore[return-value]
 
 
 def _valid_private_id(value: str) -> bool:

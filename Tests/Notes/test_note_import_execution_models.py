@@ -40,6 +40,7 @@ _SECRET_BODY = "Body secret that must never enter a public projection"
 _SOURCE_PATH = Path("/private/user/Project/notes.json")
 _PAYLOAD_DIGEST = "a" * 64
 _SOURCE_DIGEST = "b" * 64
+_HOSTILE_TEXT_SECRET = "hostile-secret-must-not-escape"
 
 
 def _item(
@@ -242,6 +243,40 @@ def test_approval_requires_uuid_text_and_generates_a_canonical_uuid_by_default()
     assert generated.approval_id == generated.approval_id.casefold()
 
 
+def test_approval_rejects_a_hostile_uuid_text_subclass_without_invoking_it() -> None:
+    class HostileApprovalId(str):
+        def replace(self, *args: object, **kwargs: object) -> str:
+            raise RuntimeError(_HOSTILE_TEXT_SECRET)
+
+    approval_id = HostileApprovalId(_APPROVAL_ID)
+
+    with pytest.raises(ImportApprovalError, match="UUID text") as caught:
+        approve_note_import_plan(_plan(), approval_id=approval_id)
+
+    assert _HOSTILE_TEXT_SECRET not in str(caught.value)
+    assert _APPROVAL_ID not in str(caught.value)
+    assert caught.value.__context__ is None
+
+
+def test_approval_sanitizes_unexpected_private_plan_digest_failures() -> None:
+    concrete_path_type = type(Path("/"))
+
+    class HostileSourcePath(concrete_path_type):  # type: ignore[misc,valid-type]
+        def __str__(self) -> str:
+            raise RuntimeError(_HOSTILE_TEXT_SECRET)
+
+    source_path = HostileSourcePath("/private/user/Project/hostile.json")
+    plan = _plan(item=_item(source_path=source_path))
+
+    with pytest.raises(ImportApprovalError, match="validated safely") as caught:
+        approve_note_import_plan(plan, approval_id=_APPROVAL_ID)
+
+    assert _HOSTILE_TEXT_SECRET not in str(caught.value)
+    assert "/private/user" not in str(caught.value)
+    assert _APPROVAL_ID not in str(caught.value)
+    assert caught.value.__context__ is None
+
+
 def test_plan_digest_is_deterministic_for_the_same_authority() -> None:
     first = approve_note_import_plan(_plan(), approval_id=_APPROVAL_ID)
     second = approve_note_import_plan(_plan(), approval_id=_APPROVAL_ID)
@@ -429,6 +464,32 @@ def test_private_collection_iterator_errors_are_sanitized() -> None:
     assert "_note_ids" not in str(caught.value)
 
 
+def test_private_receipt_ids_require_exact_builtin_strings() -> None:
+    class HostilePrivateId(str):
+        def __repr__(self) -> str:
+            return _HOSTILE_TEXT_SECRET
+
+    with pytest.raises(ValueError) as caught:
+        _receipt(_note_ids=(HostilePrivateId("safe-private-id"),))
+
+    assert _HOSTILE_TEXT_SECRET not in str(caught.value)
+    assert "_note_ids" not in str(caught.value)
+    assert caught.value.__context__ is None
+
+
+def test_private_raw_errors_require_exact_builtin_strings_without_invocation() -> None:
+    class HostileRawError(str):
+        def __len__(self) -> int:
+            raise RuntimeError(_HOSTILE_TEXT_SECRET)
+
+    with pytest.raises(ValueError) as caught:
+        _receipt(_raw_errors=(HostileRawError("safe-private-error"),))
+
+    assert _HOSTILE_TEXT_SECRET not in str(caught.value)
+    assert "_raw_errors" not in str(caught.value)
+    assert caught.value.__context__ is None
+
+
 @pytest.mark.parametrize(
     "reason_code",
     [
@@ -456,6 +517,45 @@ def test_reason_code_rejects_coerced_values_and_accepts_none() -> None:
         _receipt(reason_code=17)
 
     assert _receipt(reason_code=None).reason_code is None
+
+
+@pytest.mark.parametrize(
+    "projection_type",
+    [
+        ImportExecutionProgress,
+        ImportExecutionDiagnostic,
+        ImportExecutionReceipt,
+    ],
+)
+def test_execution_projections_reject_hostile_reason_code_subclasses(
+    projection_type: type[
+        ImportExecutionProgress | ImportExecutionDiagnostic | ImportExecutionReceipt
+    ],
+) -> None:
+    class HostileReasonCode(str):
+        def __repr__(self) -> str:
+            return _HOSTILE_TEXT_SECRET
+
+    reason_code = HostileReasonCode("safe_token")
+    values: dict[str, object] = {
+        "state": ImportSessionState.COMPLETED,
+        "total": 1,
+        "completed": 1,
+        "imported": 1,
+        "updated": 0,
+        "skipped": 0,
+        "failed": 0,
+        "retryable": 0,
+        "reason_code": reason_code,
+    }
+    if projection_type is ImportExecutionReceipt:
+        values["approval_id"] = _APPROVAL_ID
+
+    with pytest.raises(TypeError, match="reason_code") as caught:
+        projection_type(**values)  # type: ignore[arg-type]
+
+    assert _HOSTILE_TEXT_SECRET not in str(caught.value)
+    assert caught.value.__context__ is None
 
 
 @pytest.mark.parametrize(
