@@ -183,8 +183,8 @@ security, privacy, or failure behavior.
 
 The PR may touch multiple subsystems because the user explicitly requested one
 follow-up PR for the complete captured failure set. That does not authorize opportunistic
-cleanup. Every changed hunk must map to at least one baseline node and its root-cause
-record. The PR description groups commits and files by failure cluster.
+cleanup. Every changed hunk must map to at least one baseline red outcome and its
+root-cause record. The PR description groups commits and files by failure cluster.
 
 If a repair would require a schema migration, a new dependency, a service contract,
 security/privacy policy, or another architectural decision, implementation pauses for
@@ -194,12 +194,13 @@ an ADR/spec amendment before that cluster is changed.
 
 During repair:
 
-- Every baseline failure/error node passes.
+- Every baseline red outcome is repaired and its original node, collector, or minimized
+  process-triggering sequence passes the applicable verification.
 - Each directly affected file or subsystem suite passes.
 - Static analysis and generated-artifact checks run for every touched file family.
 - Persistent diagnostic inventory is refreshed only for owners actually changed.
-- Privacy scans assert that reports and diagnostics contain no credentials, synthetic
-  real credentials, real profile paths, or private user data. Synthetic redaction
+- Privacy scans assert that reports and diagnostics contain no real credentials, real
+  profile paths, or private user data. Synthetic redaction
   canaries may intentionally appear in ignored raw failure evidence; their values must
   not enter persistent production diagnostics or committed inventories.
 
