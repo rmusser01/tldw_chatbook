@@ -68,7 +68,6 @@ from tldw_chatbook.RAG_Search.simplified.rag_service import (
     _FTS5_STOPWORDS,
     RAGService,
 )
-
 from Tests.RAG_Eval.harness.prf_probe import (
     ProbeQueryResult,
     _index_terms,

@@ -406,7 +406,9 @@ def _fetch_document_text(
         row = chachanotes_db.get_note_by_id(source_id)
         return str((row or {}).get("content") or "")
     if source_type == "conversation":
-        messages = chachanotes_db.get_messages_for_conversation(source_id, limit=500)
+        messages = chachanotes_db.get_messages_for_conversation(
+            source_id, limit=500, include_image_data=False
+        )
         return "\n".join(str(message.get("content") or "") for message in messages)
     raise AssertionError(
         f"fed row {slug!r} has source_type {source_type!r}, which this probe "
