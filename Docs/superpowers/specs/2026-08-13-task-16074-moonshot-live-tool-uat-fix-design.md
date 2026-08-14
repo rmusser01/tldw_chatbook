@@ -1,7 +1,7 @@
 # Moonshot Live Native-Tool UAT Fix Design
 
 Date: 2026-08-13
-Status: Draft; awaiting written-spec review
+Status: Written-spec review approved; awaiting user approval for planning
 Backlog task: [TASK-16074](../../../backlog/tasks/task-16074%20-%20Make-Moonshot-live-native-tool-continuation-pass.md)
 Foundation task: [TASK-15676](../../../backlog/tasks/task-15676%20-%20Harden-Moonshot-Kimi-and-Z.ai-GLM-as-first-class-hosted-providers.md)
 Architecture decision: [ADR-063](../../../backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md)
@@ -35,7 +35,8 @@ committed.
 The exact offending field or interaction is not yet established. The remaining
 surface is the final first-turn request as composed by the joined product path,
 especially its messages and any request policy added above the already-proven
-tool-schema builder.
+tool-schema builder. This uncertainty is the investigation target, not an
+implementation placeholder. No production code has been changed at this stage.
 
 ## Goals
 
