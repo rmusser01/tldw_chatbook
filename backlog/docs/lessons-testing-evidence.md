@@ -27,6 +27,30 @@ named coordinates or that lower-middle sampling matches Textual's alignment.
 Keep a separate one-painted-row assertion so the midpoint check cannot pass on a
 multi-line control.
 
+---
+
+## A geometry harness must mount the production hierarchy and stylesheet
+
+**TASK-16200, 2026-08-14.** The first Watchlists Read geometry harness mounted
+`ArticleListPane` directly where production mounts a detail wrapper, title, and
+nested pane. With the inner table capped at 42 rows, the simplified harness
+reported a contained, painted pager. A production-shaped probe showed the real
+detail pane growing to 51 rows inside a 50-row ITEMS region, placing the pager
+exactly outside the clipped box; the rendered frame contained none of Previous,
+Page 1, or Next. Rebuilding the harness with the real wrapper/title hierarchy
+made the regression fail, and the correct 40-row table cap kept the pager inside.
+During final live QA, a second simplified host loaded consolidated widget/screen
+CSS but omitted the app bundle; its regions measured 8/5 rows until the harness
+used the exact `TldwCli.CSS_PATH` stack.
+
+**What to do.** For layout limits, reproduce every production ancestor that
+contributes rows and load the same stylesheet sources in the same order as the
+application. Assert containment and compositor text, not only a child widget's
+declared height. A shortened DOM or partial stylesheet can make both overflow
+and clipping tests pass for a product path that still hides its controls.
+
+---
+
 ## An exact live-test gate must be the first gate that can skip the test
 
 **TASK-15676, 2026-08-13.** The opt-in Moonshot/Z.ai paid harness required an
