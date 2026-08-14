@@ -442,6 +442,20 @@ class STTSSettingsSaveEvent(Message):
         self.commit_defaults_after_handoff = commit_defaults_after_handoff
         self.publication_lease = publication_lease
 
+    def _publication_started(self) -> None:
+        """Drop event ownership after the service returns a retained ticket."""
+
+        self.publication_lease = None
+
+    def _abandon_publication_lease(self) -> None:
+        """Release the transfer only when no service adopted it."""
+
+        publication_lease = self.publication_lease
+        if publication_lease is None:
+            return
+        publication_lease.abandon()
+        self.publication_lease = None
+
 
 @dataclass(frozen=True, slots=True)
 class STTSSettingsSaveResult:
@@ -1822,16 +1836,7 @@ class STTSEventHandler:
 
     async def handle_settings_save(self, event: STTSSettingsSaveEvent) -> None:
         """Handle settings save"""
-        if self._cleanup_task is not None:
-            logger.debug("Ignoring STTS settings after cleanup started")
-            self._reply_settings_save(
-                event,
-                persisted=False,
-                provider_statuses={},
-                failure_phase="before_replace",
-            )
-            return
-        async with self._settings_save_lock:
+        try:
             if self._cleanup_task is not None:
                 logger.debug("Ignoring STTS settings after cleanup started")
                 self._reply_settings_save(
@@ -1841,7 +1846,19 @@ class STTSEventHandler:
                     failure_phase="before_replace",
                 )
                 return
-            await self._persist_settings(event)
+            async with self._settings_save_lock:
+                if self._cleanup_task is not None:
+                    logger.debug("Ignoring STTS settings after cleanup started")
+                    self._reply_settings_save(
+                        event,
+                        persisted=False,
+                        provider_statuses={},
+                        failure_phase="before_replace",
+                    )
+                    return
+                await self._persist_settings(event)
+        finally:
+            event._abandon_publication_lease()
 
     async def _persist_settings(self, event: STTSSettingsSaveEvent) -> None:
         """Persist and publish one validated, service-owned settings proposal."""
@@ -1979,6 +1996,7 @@ class STTSEventHandler:
                     persist,
                     publication_lease=event.publication_lease,
                 )
+            event._publication_started()
             publication = await asyncio.shield(ticket.foreground)
             activation_outcome: TTSDefaultActivationOutcome | None = None
             if event.commit_defaults_after_handoff:

@@ -578,6 +578,9 @@ class TTSSettingsPublicationLease(Protocol):
     async def release(self) -> None:
         """Release or retain exact cleanup authority for a later retry."""
 
+    def abandon(self) -> None:
+        """Release an unadopted transfer; do nothing after adoption."""
+
 
 def _sanitized_shutdown_error(*failures: BaseException) -> RuntimeError:
     failure_types = ", ".join(sorted({type(failure).__name__ for failure in failures}))

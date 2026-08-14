@@ -147,6 +147,8 @@ class AudioCppManagedLeasePublication:
     def abandon(self) -> None:
         """Return an unadopted transfer to app-owned cleanup."""
 
+        if self.hold.publication_adopted:
+            return
         self.owner.request_lease_release(self.hold)
 
 
