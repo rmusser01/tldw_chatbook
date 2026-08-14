@@ -137,13 +137,19 @@ def test_hub_tools_lists_every_spec_under_the_local_server_key(tmp_path):
     ]
     for hub in hubs:
         assert hub.server_key == "local:__local__"
-        assert hub.server_label == "Local workspace"
+        assert hub.server_label == "Local workspace, web, and Watchlists"
         assert hub.source == "local"
         assert hub.stale is False
         assert hub.executable is True  # provider view stays invocation-capable
         assert hub.input_schema  # every spec ships a parameters schema
     # risk tags ride along so the permission risk floor sees them hub-side
     assert {h.name: h.tags for h in hubs}["fs_write"] == ("mutates",)
+    labels = {hub.name: hub.server_label for hub in hubs}
+    assert {
+        labels["fs_list"],
+        labels["web_fetch"],
+        labels["watchlists_search_items"],
+    } == {"Local workspace, web, and Watchlists"}
 
 
 class RecordingWatchlistsService:
@@ -341,6 +347,7 @@ def test_watchlists_permission_allow_executes_and_ask_deny_never_invokes(tmp_pat
     assert len(approvals) == 1
     assert approvals[0][0].server_key == "local:__local__"
     assert approvals[0][0].tool_name == "watchlists_search_items"
+    assert approvals[0][0].server_label == "Local workspace, web, and Watchlists"
 
 
 def test_hub_tools_omits_all_task_tools_without_a_todo_store(tmp_path):

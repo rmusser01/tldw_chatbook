@@ -8729,6 +8729,7 @@ _LOCAL_AGENT_TOOL_NAMES = {
     "fs_list", "fs_read", "fs_write", "fs_edit", "fs_patch", "fs_glob",
     "fs_grep", "git_status", "git_diff", "git_log", "git_blame",
     "git_branches", "web_fetch", "web_search", "web_crawl",
+    "watchlists_search_items", "watchlists_get_item",
 }
 
 
@@ -8779,7 +8780,9 @@ async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch
         assert TASK_TOOL_NAMES.isdisjoint(names)
         # One coherent group, honestly non-executable until Hub-side
         # execution is wired (inspector renders "not_executable" from this).
-        assert all(t.server_label == "Local workspace" for t in local)
+        assert all(
+            t.server_label == "Local workspace, web, and Watchlists" for t in local
+        )
         assert all(t.source == "local" for t in local)
         assert all(t.executable is False for t in local)
         assert all(t.stale is False for t in local)
@@ -8787,6 +8790,23 @@ async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch
         # permission risk floor.
         assert all(t.input_schema for t in local)
         assert {t.name: t.tags for t in local}["fs_write"] == ("mutates",)
+        permission_rows = app.query_one(MCPPermissionsMode)._all_rows
+        local_server_row = next(
+            row
+            for row in permission_rows
+            if row.kind == "server" and row.server_key == "local:__local__"
+        )
+        assert local_server_row.server_label == "Local workspace, web, and Watchlists"
+        labels_by_tool = {
+            row.tool_name: row.server_label
+            for row in permission_rows
+            if row.kind == "tool" and row.server_key == "local:__local__"
+        }
+        assert {
+            labels_by_tool["fs_list"],
+            labels_by_tool["web_fetch"],
+            labels_by_tool["watchlists_search_items"],
+        } == {"Local workspace, web, and Watchlists"}
         # The pre-existing sources are untouched: the fake's "docs" profile
         # tool still lists under its own key.
         assert any(
