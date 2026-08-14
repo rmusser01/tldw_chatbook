@@ -1606,12 +1606,27 @@ def test_first_run_result_callback_remounts_same_tab_home_after_completion():
 async def test_full_track_skip_everything_leaves_app_usable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from tldw_chatbook.UI.Screens.home_screen import HomeScreen
+
+    readiness = {"console": False}
+    monkeypatch.setattr(
+        HomeScreen,
+        "_home_console_provider_ready",
+        lambda _self: readiness["console"],
+    )
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            original_home = app.screen_stack[-2]
+            assert original_home.__class__.__name__ == "HomeScreen"
+            await _wait_until(
+                pilot,
+                lambda: original_home._home_content_snapshot is not None
+                and not original_home._home_content_snapshot.console_ready,
             )
             container = app.screen.query_one(SetupWizardContainer)
             await pilot.pause(0.2)
@@ -1647,20 +1662,30 @@ async def test_full_track_skip_everything_leaves_app_usable(
             ]
 
             # Exit via "Explore Home" (TAB_HOME) to prove the app is
-            # usable afterwards, not just that the wizard closed.
+            # usable afterwards, not just that the wizard closed. Change the
+            # readiness seam after Home's original mount so only a freshly
+            # mounted Home can observe the completed setup state.
+            readiness["console"] = True
             _press(app.screen, "#setup-exit-home")
-            await _wait_until(
-                pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
-            )
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == TAB_HOME
                 and app.screen.__class__.__name__ == "HomeScreen"
+                and app.screen is not original_home
                 and bool(app.screen.query("#nav-console")),
+            )
+            refreshed_home = app.screen
+            await _wait_until(
+                pilot,
+                lambda: refreshed_home._home_content_snapshot is not None
+                and refreshed_home._home_content_snapshot.console_ready
+                and refreshed_home._current_dashboard_input is not None
+                and refreshed_home._current_dashboard_input.console_ready
+                and bool(refreshed_home.query("#home-start-conversation")),
             )
 
             # "Fully usable": the shell nav still works after the wizard.
-            _press(app.screen, "#nav-console")
+            _press(refreshed_home, "#nav-console")
             await _wait_until(pilot, lambda: app.current_tab == TAB_CHAT)
             assert app.current_tab == TAB_CHAT
 
