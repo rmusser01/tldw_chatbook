@@ -75,6 +75,9 @@ MAX_IMPORT_TEMPLATE_NAME_LENGTH = 1_024
 MAX_IMPORT_KEYWORD_LENGTH = 512
 """Absolute scalar lengths for parsed note metadata."""
 
+MAX_IMPORT_ITEM_ID_LENGTH = 256
+"""Absolute length ceiling for opaque preview item identifiers."""
+
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
@@ -112,6 +115,20 @@ def _validate_folder_segment(segment: str, *, field_name: str) -> None:
         or "\x00" in segment
     ):
         raise ValueError(f"{field_name} contains an invalid folder segment.")
+
+
+def _validate_import_item_id(value: object) -> str:
+    """Return one bounded opaque preview identifier or fail closed."""
+    if not isinstance(value, str):
+        raise TypeError("item_id must be text.")
+    if (
+        not value
+        or len(value) > MAX_IMPORT_ITEM_ID_LENGTH
+        or not value.isascii()
+        or any(not (character.isalnum() or character in "-_.:") for character in value)
+    ):
+        raise ValueError("item_id must be a safe opaque item identifier.")
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,8 +362,7 @@ class ImportPreviewItem:
         object.__setattr__(self, "memberships", memberships)
         object.__setattr__(self, "allowed_actions", allowed_actions)
 
-        if not isinstance(self.item_id, str) or not self.item_id:
-            raise ValueError("item_id must be non-empty text.")
+        _validate_import_item_id(self.item_id)
         if not isinstance(self.source, ImportSource):
             raise TypeError("source must be an ImportSource.")
         if self.match is not None and not isinstance(self.match, ImportMatch):

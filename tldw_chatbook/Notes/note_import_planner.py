@@ -49,6 +49,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ProposedFolderMembership,
     RootCollisionChoice,
     RootCollisionState,
+    _validate_import_item_id,
 )
 
 _NEW_REASON = "Ready to import as a new note."
@@ -496,6 +497,8 @@ def confirm_uncertain_match(plan: NoteImportPlan, item_id: str) -> NoteImportPla
         or item.match.kind is not ImportMatchKind.UNCERTAIN
     ):
         raise ValueError("Only an uncertain match can be explicitly confirmed.")
+    if len(item.payloads) != 1 or item.match.note_version is None:
+        raise ValueError("This uncertain match cannot be confirmed for update.")
     confirmed = replace(
         item,
         match=replace(item.match, kind=ImportMatchKind.USER_CONFIRMED),
@@ -546,7 +549,7 @@ def apply_item_override(
         replace_content=requested_replace,
         add_membership=requested_membership,
     )
-    return _replace_item(plan, item_index, updated)
+    return _replace_item_and_recompute_folders(plan, item_index, updated)
 
 
 def _require_plan(plan: NoteImportPlan) -> None:
@@ -679,20 +682,11 @@ def _find_item(
     plan: NoteImportPlan,
     item_id: str,
 ) -> tuple[int, ImportPreviewItem]:
-    if (
-        not isinstance(item_id, str)
-        or not item_id
-        or len(item_id) > 256
-        or not item_id.isascii()
-        or any(
-            not (character.isalnum() or character in "-_.:") for character in item_id
-        )
-    ):
-        raise ValueError("item_id must be a safe opaque item identifier.")
+    validated_item_id = _validate_import_item_id(item_id)
     matches = tuple(
         (index, item)
         for index, item in enumerate(plan.items)
-        if item.item_id == item_id
+        if item.item_id == validated_item_id
     )
     if len(matches) != 1:
         raise ValueError("The item identifier must match exactly one preview item.")
@@ -706,13 +700,67 @@ def _replace_item(
 ) -> NoteImportPlan:
     items = list(plan.items)
     items[item_index] = item
-    updated = replace(plan, items=tuple(items))
-    if (
-        updated.root_collision is not None
-        and _meaningful_directory_root(updated) is None
-    ):
-        return replace(updated, root_collision=None)
-    return updated
+    return replace(plan, items=tuple(items))
+
+
+def _replace_item_and_recompute_folders(
+    plan: NoteImportPlan,
+    item_index: int,
+    item: ImportPreviewItem,
+) -> NoteImportPlan:
+    items = list(plan.items)
+    items[item_index] = item
+    frozen_items = tuple(items)
+    proposed_folder_paths = _selected_folder_ancestor_closure(frozen_items)
+    return replace(
+        plan,
+        items=frozen_items,
+        proposed_folder_paths=proposed_folder_paths,
+        root_collision=_collision_after_item_override(
+            plan.root_collision,
+            frozen_items,
+        ),
+    )
+
+
+def _selected_folder_ancestor_closure(
+    items: tuple[ImportPreviewItem, ...],
+) -> tuple[tuple[str, ...], ...]:
+    paths: set[tuple[str, ...]] = set()
+    for item in items:
+        if not item.add_membership:
+            continue
+        for membership in item.memberships:
+            for depth in range(1, len(membership.folder_segments) + 1):
+                paths.add(membership.folder_segments[:depth])
+    return tuple(
+        sorted(
+            paths,
+            key=lambda path: tuple(_display_sort_key(segment) for segment in path),
+        )
+    )
+
+
+def _collision_after_item_override(
+    collision: RootCollisionState | None,
+    items: tuple[ImportPreviewItem, ...],
+) -> RootCollisionState | None:
+    if collision is None:
+        return None
+    active_roots = {
+        membership.folder_segments[0]
+        for item in items
+        if item.add_membership and item.source.kind is ImportSourceKind.DIRECTORY_MEMBER
+        for membership in item.memberships
+    }
+    if len(active_roots) != 1:
+        return None
+    active_root = _normalized_folder_name(next(iter(active_roots)))
+    collision_root_label = collision.resolved_label or collision.proposed_label
+    collision_root = _normalized_folder_name(collision_root_label)
+    if active_root.key != collision_root.key:
+        return None
+    return collision
 
 
 __all__ = [
