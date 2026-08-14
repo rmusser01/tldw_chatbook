@@ -93,6 +93,20 @@ The complete suite is not one pytest process. A task-owned standard-library harn
 9. Resumes by skipping only chunks whose command, source/environment generation,
    expected-node hash, outcome hash, exit status, and complete marker all verify.
 
+Process ownership follows [ADR-065](../../../backlog/decisions/065-checkpoint-harness-process-ownership.md).
+The unprivileged harness owns subprocesses that retain at least one of live ancestry,
+the task environment tag, the harness process group, or its private inheritable
+sentinel descriptor. Deliberately removing every ownership signal while leaving work
+running is outside this diagnostic contract. On Darwin, a hard-gated `libproc` census
+finds sentinel holders. Each candidate's ownership is verified between two identical
+PID-version reads before audit-token signaling; identity changes restart the bounded
+census. Completion after root exit requires two successful, non-truncated full
+censuses whose combined ancestry, tag, process-group, and sentinel candidate set is
+empty. The real preflight proves the exact census calls, pinned flavor-17 structure,
+valid-token signal, and stale-token `ESRCH` rejection. Any capability, census, identity,
+signaling, or quiescence uncertainty is an owned red
+`process_containment_unavailable` outcome and cannot authorize a complete marker.
+
 The terminal-outcome ledger is authoritative. It combines exact test-node reports,
 collector reports, harness-owned timeout/interruption records, and process/session
 outcomes. JUnit supplies failure/error detail but is not authoritative for terminated
@@ -273,11 +287,10 @@ commands, classifications, and durations rather than raw traces.
 
 ## ADR decision
 
-ADR required: no.
+ADR required: yes.
 
-ADR path: N/A.
+ADR path: `backlog/decisions/065-checkpoint-harness-process-ownership.md`.
 
-Reason: this task restores existing product and test contracts and does not introduce a
-new storage, service, security, dependency, or long-lived UX boundary. If classification
-reveals that such a decision is necessary, that cluster stops until this design and an
-ADR are amended before implementation.
+Reason: negative harness testing exposed an unprivileged Darwin process-ownership and
+cleanup boundary. ADR-065 records the user-approved cooperative-subprocess limitation,
+the private-ABI capability gate, and PID-version-safe signaling before implementation.

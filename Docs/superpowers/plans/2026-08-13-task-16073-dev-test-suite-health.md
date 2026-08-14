@@ -52,11 +52,11 @@ repository file.
 
 ## ADR check
 
-ADR required: no.
+ADR required: yes.
 
-ADR path: N/A.
+ADR path: `backlog/decisions/065-checkpoint-harness-process-ownership.md`.
 
-Reason: the task restores existing product/test contracts. If a failure requires a schema, service, security, dependency, or long-lived UX decision, stop that cluster and amend the design plus an ADR before changing it.
+Reason: Task 2 negative testing exposed a Darwin process-ownership boundary. ADR-065 records the approved cooperative-subprocess limitation, fail-closed capability gate, and PID-version-safe cleanup; application runtime boundaries remain unchanged.
 
 ### Task 1: Pin the newest `dev` and prepare an isolated generation
 
@@ -130,6 +130,10 @@ CASES = (
     "post_summary_hang",
     "sequence_dependent_timeout",
     "false_complete_marker",
+    "process_containment_unavailable",
+    "retained_sentinel_late_exec",
+    "stale_audit_token",
+    "forged_or_truncated_census",
 )
 ```
 
@@ -189,13 +193,32 @@ The harness must also:
 
 For each chunk, record exactly one process outcome keyed by chunk ID. Pytest exit 0 or 1 may be structurally complete only when every expected node reduced exactly once, no unexpected node/collector exists, and session/process records agree. Exit 2 (interrupted), 3 (internal error), 4 (usage error), 5 (no tests for a nonempty slice), signal termination, deadline termination, missing session record, post-summary hang, extra/missing node, corrupt JSONL, or conflicting duplicate phase is an owned red process outcome. Exit 0 with red node reports is corrupt; exit 1 without at least one red node/collector report is corrupt.
 
+Implement ADR-065's process-ownership boundary. Supported test subprocesses retain at
+least one observable ownership signal; deliberate removal of all signals is out of
+scope. On Darwin create one private attempt-scoped regular-file sentinel, pass its
+descriptor only to the pytest root, census surviving holders with hard-gated `libproc`,
+bind every signal to PID-version identity through audit-token signaling, and require
+ownership verification between two identical identity reads plus two successful,
+non-truncated empty full censuses after root exit. The real preflight must exercise the
+exact census calls, flavor 17's pinned 56-byte result, valid audit-token signaling,
+mutated-pidversion `ESRCH` rejection, and probe disappearance. Missing symbols, wrong
+sizes, permission failure, truncation, stale-token acceptance, or ownership uncertainty
+is the exact red
+`process_containment_unavailable` outcome and must occur before pytest launch when the
+preflight itself is unsupported. Never fall back to bare PID or PGID signaling.
+
+RED/GREEN tests must cover unsupported preflight, a retained-sentinel late `atexit`
+fork with `setsid` and minimal-environment exec, stale-token rejection, and forged or
+truncated census. A mutation replacing audit-token signaling with bare PID/PGID
+signaling must fail the exact contract test.
+
 On interruption, timeout, or post-summary hang, retain the harness-owned process outcome; recursively split for remaining coverage and delta-minimize the original ordered triggering slice. A single-node or minimized-sequence timeout is red but completely attributed, never silently green. Deselect records are owned by the collection ledger; final manifest absences are owned `not_collected` outcomes; neither can vanish through chunk execution.
 
 - [ ] **Step 6: Run harness tests to GREEN**
 
 Run the Step 2 command.
 
-Expected: all eight negative cases pass and false completeness is rejected.
+Expected: all contract cases pass and false completeness is rejected.
 
 - [ ] **Step 7: Mutation-check sequence minimization and completeness**
 
