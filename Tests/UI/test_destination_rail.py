@@ -352,7 +352,9 @@ async def test_console_handle_abbreviates_the_inspector_label_on_the_right():
     )
     async with app.run_test(size=(40, 12)) as pilot:
         await pilot.pause()
-        assert str(app.query_one("#console-rail-open", Button).label) == "Inspect"
+        button = app.query_one("#console-rail-open", Button)
+        assert str(button.label) == "Inspect-->"
+        assert button.tooltip == "Open Inspector rail"
 
 
 @pytest.mark.asyncio

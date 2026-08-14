@@ -26,6 +26,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 import pytest
+from textual.widgets import Button
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -98,7 +99,15 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
         await _wait_for_selector(
             pilot.app.screen, pilot, "#console-inspector-rail-open"
         )
-        await pilot.click("#console-inspector-rail-open")
+        open_button = pilot.app.screen.query_one(
+            "#console-inspector-rail-open", Button
+        )
+        assert str(open_button.label) == "Inspect-->"
+        arrow_end = (
+            open_button.region.width - 1,
+            open_button.region.height // 2,
+        )
+        assert await pilot.click(open_button, offset=arrow_end)
         await pilot.pause(0.2)
         assert _right_rail_open(pilot) is True
         assert _handle_visible(pilot) is False

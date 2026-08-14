@@ -190,7 +190,7 @@ def test_horizontal_defaults_preserve_context_and_abbreviate_inspector_label() -
     inspector = _handle(label=CONSOLE_RAIL_INSPECTOR_LABEL, side="right")
 
     assert context._display_label() == CONSOLE_RAIL_CONTEXT_LABEL
-    assert inspector._display_label() == "Inspect"
+    assert inspector._display_label() == "Inspect-->"
 
 
 def test_vertical_generic_label_normalizes_whitespace_before_stacking() -> None:
