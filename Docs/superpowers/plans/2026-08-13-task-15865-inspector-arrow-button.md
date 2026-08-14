@@ -159,7 +159,7 @@ Do not add constants, width calculations, child widgets, CSS, or layout changes.
 
 - [ ] **Step 2: Run the focused GREEN gates from Task 1**
 
-Run the exact Task 1 Step 5 command again.
+Run the exact Task 1 Step 6 command again.
 
 Expected: all selected cases pass, including all six parameterized visual states.
 
@@ -217,12 +217,18 @@ Run:
   Tests/UI/test_console_rail_handle.py \
   Tests/UI/test_destination_rail.py \
   Tests/UI/test_console_right_rail.py \
+  Tests/UI/test_console_shell_regions.py \
+  Tests/UI/test_settings_console_rail_labels.py \
+  Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py \
   Tests/UI/test_workbench_visual_snapshots.py
 ../../.venv/bin/ruff format --check \
   tldw_chatbook/Widgets/Console/console_rail_handle.py \
   Tests/UI/test_console_rail_handle.py \
   Tests/UI/test_destination_rail.py \
   Tests/UI/test_console_right_rail.py \
+  Tests/UI/test_console_shell_regions.py \
+  Tests/UI/test_settings_console_rail_labels.py \
+  Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py \
   Tests/UI/test_workbench_visual_snapshots.py
 git diff --check
 ```
@@ -271,6 +277,9 @@ git diff origin/dev...HEAD -- \
   Tests/UI/test_console_rail_handle.py \
   Tests/UI/test_destination_rail.py \
   Tests/UI/test_console_right_rail.py \
+  Tests/UI/test_console_shell_regions.py \
+  Tests/UI/test_settings_console_rail_labels.py \
+  Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py \
   Tests/UI/test_workbench_visual_snapshots.py
 ```
 
