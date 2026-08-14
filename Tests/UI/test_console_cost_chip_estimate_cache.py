@@ -115,7 +115,7 @@ async def test_editing_one_row_retokenizes_only_that_row(monkeypatch):
         console._build_console_cost_state()
         spy = _spy_on_estimator(monkeypatch)
 
-        target = store.messages_for_session(session_id)[3]
+        target = store.messages_for_session(session_id)[-1]
         store.update_message_content(target.id, "a different, much shorter row")
         state = console._build_console_cost_state()
 
@@ -140,14 +140,15 @@ async def test_edited_row_is_repriced_not_served_stale(monkeypatch):
         store, session_id = _seed_usageless_transcript(console)
 
         before = console._build_console_cost_state()
-        target = store.messages_for_session(session_id)[3]
+        target = store.messages_for_session(session_id)[-1]
+        original_content = target.content
         store.update_message_content(target.id, "tiny")
         after = console._build_console_cost_state()
 
         assert before is not None and after is not None
         assert after.tooltip != before.tooltip
         # And restoring the original text restores the original reading.
-        store.update_message_content(target.id, target.content)
+        store.update_message_content(target.id, original_content)
         restored = console._build_console_cost_state()
         assert restored is not None
         assert restored.tooltip == before.tooltip
