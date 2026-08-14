@@ -899,12 +899,11 @@ is one rescue against a bar of five.
 
 **How many cells a rescue could have been seen in — the corrected framing.**
 The probe's rescue-channel control feeds PRF the target document *itself* (the
-best expansion any feedback set could produce). Read this before the floor:
-
-Columns read pre-16071 → **as shipped**; the merge change is the only
-difference between them (same feed, same path, same k, same corpus, same
-selectors, re-measured in one session by reverting the merge site and
-restoring it):
+best expansion any feedback set could produce). Read this before the floor —
+and read the columns as pre-16071 → **as shipped**, because the merge change
+is the only difference between them (same feed, same path, same k, same
+corpus, same selectors, re-measured in one session by reverting the merge site
+and restoring it):
 
 | selector (oracle feed, same path, same k) | N | reaches top-10 | note | media | conversation |
 |---|---|---|---|---|---|
