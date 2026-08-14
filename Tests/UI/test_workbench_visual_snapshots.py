@@ -180,7 +180,9 @@ def _painted_region_rows(screen, region) -> list[str]:
 
 def _painted_center_row(screen, region) -> str:
     """Return the direct compositor row through the center of a control."""
-    strip = list(screen._compositor.render_strips())[region.center.y]
+    strip = list(screen._compositor.render_strips())[
+        region.y + (region.height - 1) // 2
+    ]
     return strip.crop(region.x, region.right).text.strip()
 
 
