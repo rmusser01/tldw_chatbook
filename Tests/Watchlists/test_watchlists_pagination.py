@@ -801,6 +801,44 @@ async def test_interrupted_search_presentation_restores_provisional_authority(
 
 
 @pytest.mark.asyncio
+async def test_stale_refresh_rollback_keeps_new_context_provisional(monkeypatch):
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(0, 1)
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items() is True
+        prior_rows = screen._loaded_items
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        original_apply = pane.apply_page_items
+        presentation_started = asyncio.Event()
+        release_presentation = asyncio.Event()
+
+        async def block_refresh_presentation(items, *, focus_first=False):
+            await original_apply(items, focus_first=focus_first)
+            if str(items[0]["id"]) == "77":
+                presentation_started.set()
+                await release_presentation.wait()
+
+        monkeypatch.setattr(pane, "apply_page_items", block_refresh_presentation)
+        controller.list_items.return_value = [_item(77)]
+        load = asyncio.create_task(screen._load_items())
+        await _wait_until(pilot, presentation_started.is_set)
+        assert screen._items_search_results_authoritative is True
+        assert pane.search_results_authoritative is True
+
+        screen._items_search_query = "new context"
+        screen._reset_items_paging_for_context(loading=True)
+        assert screen._items_search_results_authoritative is False
+        assert pane.search_results_authoritative is False
+        release_presentation.set()
+
+        assert await load is False
+        assert screen._items_search_results_authoritative is False
+        assert pane.search_results_authoritative is False
+        assert pane.items is prior_rows
+
+
+@pytest.mark.asyncio
 async def test_context_round_trip_does_not_coalesce_with_cancelled_rollback(
     monkeypatch,
 ):

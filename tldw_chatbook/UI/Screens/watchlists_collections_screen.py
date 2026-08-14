@@ -9127,6 +9127,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     )
                 except NoMatches:
                     pass
+
+            def rollback_authority() -> bool:
+                return (
+                    prior_pane_authority
+                    if self._items_load_is_current(generation, target_key)
+                    else self._items_search_results_authoritative
+                )
+
             try:
                 if pane is not None:
                     prior_pane_authority = pane.search_results_authoritative
@@ -9137,12 +9145,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     )
             except asyncio.CancelledError:
                 if pane is not None:
-                    pane.search_results_authoritative = prior_pane_authority
+                    pane.search_results_authoritative = rollback_authority()
                     await pane.apply_page_items(prior_rows, focus_first=False)
                 raise
             except Exception:
                 if pane is not None:
-                    pane.search_results_authoritative = prior_pane_authority
+                    pane.search_results_authoritative = rollback_authority()
                     await pane.apply_page_items(prior_rows, focus_first=False)
                 if not self._items_load_is_current(generation, target_key):
                     return False
@@ -9155,7 +9163,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
             if not self._items_load_is_current(generation, target_key):
                 if pane is not None:
-                    pane.search_results_authoritative = prior_pane_authority
+                    pane.search_results_authoritative = rollback_authority()
                     await pane.apply_page_items(prior_rows, focus_first=False)
                 return False
 
