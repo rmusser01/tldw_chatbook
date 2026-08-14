@@ -2060,12 +2060,15 @@ class SubscriptionsDB(BaseDB):
         "s.name as subscription_name, s.type as subscription_type"
     )
 
-    #: Agent search adds source/date metadata and one bounded body window to
-    #: the existing list projection. Full ``content`` and ``extracted_data``
-    #: remain absent from ordinary multi-row queries.
+    #: Narrow metadata projection for agent search. This is intentionally not
+    #: based on the broader UI list projection: raw processing errors, alert
+    #: matches, hashes, categories/enclosures, flags, and redundant previews
+    #: are not part of the agent evidence contract.
     _AGENT_LIST_ITEM_COLUMNS = (
-        _LIST_ITEM_COLUMNS
-        + ", i.effective_date, "
+        "i.id, i.subscription_id, i.url, i.title, i.published_date, "
+        "i.author, i.status, i.canonical_url, i.created_at, i.updated_at, "
+        "i.content_format, i.content_kind, i.effective_date, "
+        "s.name AS subscription_name, s.type AS subscription_type, "
         "s.source AS subscription_source, "
         "s.is_active AS subscription_is_active, "
         "s.is_paused AS subscription_is_paused, "
@@ -2076,6 +2079,7 @@ class SubscriptionsDB(BaseDB):
     )
     _AGENT_SEARCH_PAGE_LIMIT = 50
     _AGENT_MEMBERSHIP_SOURCE_LIMIT = 50
+    _AGENT_MEMBERSHIP_COLLECTION_LIMIT = 20
     _AGENT_RESOLUTION_CANDIDATE_LIMIT = 20
 
     @classmethod
@@ -2125,6 +2129,45 @@ class SubscriptionsDB(BaseDB):
             + ", substr(snippet(subscription_items_fts, 1, '', '', '', 32), "
             "1, 2000) AS content_match_context"
         )
+
+    @staticmethod
+    def _item_scope_predicates(
+        *,
+        subscription_id: Optional[int],
+        status: Optional[str],
+        watchlist_id: Optional[int],
+        statuses: Optional[Sequence[str]],
+        since: Optional[str],
+    ) -> tuple[List[str], List[Any]]:
+        """Build the shared source, collection, status, and date predicates.
+
+        The date floor targets the generated normalized ``effective_date``
+        column and normalizes the bound value through SQLite ``datetime()``;
+        this preserves the legacy mixed stored-date behavior and index path.
+        """
+        predicates: List[str] = []
+        params: List[Any] = []
+        if subscription_id is not None:
+            predicates.append("i.subscription_id = ?")
+            params.append(subscription_id)
+        if status is not None:
+            predicates.append("i.status = ?")
+            params.append(status)
+        if watchlist_id is not None:
+            predicates.append(
+                "i.subscription_id IN ("
+                "SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ?"
+                ")"
+            )
+            params.append(watchlist_id)
+        if statuses is not None:
+            placeholders = ", ".join("?" for _ in statuses)
+            predicates.append(f"i.status IN ({placeholders})")
+            params.extend(statuses)
+        if since is not None:
+            predicates.append("i.effective_date >= datetime(?)")
+            params.append(since)
+        return predicates, params
 
     def _subscription_items_fts_is_complete(self, conn: Any) -> bool:
         """Whether every current item id has a real FTS docsize row.
@@ -2266,6 +2309,28 @@ class SubscriptionsDB(BaseDB):
         a future effective date) while excluding all later inserts. The
         continuation key follows ``effective_date DESC, id ASC`` explicitly,
         including the NULL-date sink.
+
+        Args:
+            query: Literal whitespace-delimited search terms, or blank to
+                browse without a text predicate.
+            subscription_id: Optional source-row scope.
+            watchlist_id: Optional collection-row scope.
+            statuses: Optional status values to include; ``None`` means all.
+            since: Optional inclusive effective-date floor.
+            limit: Page size from 1 through 50.
+            snapshot_max_item_id: First-page item-ID high-water, or ``None``
+                to capture the current maximum.
+            after_effective_date: Last row's effective date, or ``None`` for
+                the NULL-date sink.
+            after_item_id: Last row ID for keyset continuation.
+
+        Returns:
+            A mapping containing bounded ``items``, ``has_more``, and the
+            traversal ``snapshot_max_item_id``.
+
+        Raises:
+            ValueError: If ``limit`` is outside 1..50 or an effective-date
+                continuation omits ``after_item_id``.
         """
         if limit < 1:
             raise ValueError("limit must be at least 1")
@@ -2279,25 +2344,13 @@ class SubscriptionsDB(BaseDB):
         search_terms = query.split() if query and query.strip() else []
         select_columns, select_params = self._agent_search_projection(search_terms)
         fts_select_columns = self._agent_fts_search_projection()
-        predicates: List[str] = []
-        params: List[Any] = []
-        if subscription_id is not None:
-            predicates.append("i.subscription_id = ?")
-            params.append(subscription_id)
-        if watchlist_id is not None:
-            predicates.append(
-                "i.subscription_id IN ("
-                "SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ?"
-                ")"
-            )
-            params.append(watchlist_id)
-        if statuses is not None:
-            placeholders = ", ".join("?" for _ in statuses)
-            predicates.append(f"i.status IN ({placeholders})")
-            params.extend(statuses)
-        if since is not None:
-            predicates.append("i.effective_date >= datetime(?)")
-            params.append(since)
+        predicates, params = self._item_scope_predicates(
+            subscription_id=subscription_id,
+            status=None,
+            watchlist_id=watchlist_id,
+            statuses=statuses,
+            since=since,
+        )
 
         with self.transaction() as conn:
             if snapshot_max_item_id is None:
@@ -2361,6 +2414,13 @@ class SubscriptionsDB(BaseDB):
         present row whose article body is NULL. The single-row detail path may
         read full ``content``; raw ``extracted_data`` and source secrets are
         intentionally not projected.
+
+        Args:
+            item_id: ``subscription_items.id`` to retrieve.
+
+        Returns:
+            The allowlisted item/source row, including a possibly-null
+            ``content`` value, or ``None`` when the item does not exist.
         """
         with self.transaction() as conn:
             row = conn.execute(
@@ -2404,6 +2464,17 @@ class SubscriptionsDB(BaseDB):
         legacy ``get_all_subscriptions``/UI scan ceiling remain reachable.
         Ambiguity is retained for the tool service to report rather than being
         silently resolved here.
+
+        Args:
+            query: Numeric source ID, or an exact/partial source name or exact
+                configured URL. Exact names take precedence over exact URLs.
+            limit: Requested candidate count, capped at 20.
+
+        Returns:
+            Deterministically ordered, allowlisted source candidates.
+
+        Raises:
+            ValueError: If ``limit`` is less than one.
         """
         bounded_limit = self._bounded_agent_candidate_limit(limit)
         source_columns = (
@@ -2421,12 +2492,23 @@ class SubscriptionsDB(BaseDB):
                 f"""
                 SELECT {source_columns}
                 FROM subscriptions
-                WHERE lower(name) = lower(?) OR source = ?
+                WHERE lower(name) = lower(?)
                 ORDER BY lower(name), name, id
                 LIMIT ?
                 """,
-                (query, query, bounded_limit),
+                (query, bounded_limit),
             ).fetchall()
+            if not rows:
+                rows = conn.execute(
+                    f"""
+                    SELECT {source_columns}
+                    FROM subscriptions
+                    WHERE source = ?
+                    ORDER BY lower(name), name, id
+                    LIMIT ?
+                    """,
+                    (query, bounded_limit),
+                ).fetchall()
             if not rows:
                 rows = conn.execute(
                     f"""
@@ -2443,7 +2525,18 @@ class SubscriptionsDB(BaseDB):
     def resolve_collection_candidates(
         self, query: Union[str, int], *, limit: int = 10
     ) -> List[Dict[str, Any]]:
-        """Resolve an id, or exact names first, else bounded partial names."""
+        """Resolve an id, or exact names first, else bounded partial names.
+
+        Args:
+            query: Numeric collection ID or an exact/partial collection name.
+            limit: Requested candidate count, capped at 20.
+
+        Returns:
+            Deterministically ordered collection ID/name candidates.
+
+        Raises:
+            ValueError: If ``limit`` is less than one.
+        """
         bounded_limit = self._bounded_agent_candidate_limit(limit)
         with self.transaction() as conn:
             if isinstance(query, int):
@@ -2476,12 +2569,22 @@ class SubscriptionsDB(BaseDB):
 
     def get_source_collection_memberships(
         self, subscription_ids: Sequence[int]
-    ) -> Dict[int, List[Dict[str, Any]]]:
-        """Load collection memberships for at most one result page.
+    ) -> Dict[int, Dict[str, Any]]:
+        """Load bounded collection memberships for at most one result page.
 
-        The one ``IN`` query is deliberately capped at the public search page
-        ceiling, preventing both unbounded host parameters and an N+1 lookup
-        per source or item.
+        One window-ranked ``IN`` query fetches at most one lookahead beyond
+        the per-source collection cap. Each source therefore reports whether
+        additional memberships were omitted, without an N+1 count/query.
+
+        Args:
+            subscription_ids: Source row IDs from one agent search page.
+
+        Returns:
+            Mapping of each requested source ID to ``collections`` (at most
+            20 deterministic ID/name rows) and ``has_more`` truncation state.
+
+        Raises:
+            ValueError: If more than 50 distinct source IDs are supplied.
         """
         unique_ids = list(dict.fromkeys(subscription_ids))
         if len(unique_ids) > self._AGENT_MEMBERSHIP_SOURCE_LIMIT:
@@ -2489,8 +2592,9 @@ class SubscriptionsDB(BaseDB):
                 "source collection memberships accepts at most "
                 f"{self._AGENT_MEMBERSHIP_SOURCE_LIMIT} source ids"
             )
-        memberships: Dict[int, List[Dict[str, Any]]] = {
-            source_id: [] for source_id in unique_ids
+        memberships: Dict[int, Dict[str, Any]] = {
+            source_id: {"collections": [], "has_more": False}
+            for source_id in unique_ids
         }
         if not unique_ids:
             return memberships
@@ -2498,16 +2602,29 @@ class SubscriptionsDB(BaseDB):
         with self.transaction() as conn:
             rows = conn.execute(
                 f"""
-                SELECT ws.subscription_id, w.id, w.name
-                FROM watchlist_sources ws
-                JOIN watchlists w ON w.id = ws.watchlist_id
-                WHERE ws.subscription_id IN ({placeholders})
-                ORDER BY ws.subscription_id, lower(w.name), w.name, w.id
+                WITH ranked_memberships AS (
+                    SELECT ws.subscription_id, w.id, w.name,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ws.subscription_id
+                               ORDER BY lower(w.name), w.name, w.id
+                           ) AS membership_rank
+                    FROM watchlist_sources ws
+                    JOIN watchlists w ON w.id = ws.watchlist_id
+                    WHERE ws.subscription_id IN ({placeholders})
+                )
+                SELECT subscription_id, id, name, membership_rank
+                FROM ranked_memberships
+                WHERE membership_rank <= ?
+                ORDER BY subscription_id, membership_rank
                 """,
-                tuple(unique_ids),
+                (*unique_ids, self._AGENT_MEMBERSHIP_COLLECTION_LIMIT + 1),
             ).fetchall()
         for row in rows:
-            memberships[int(row["subscription_id"])].append(
+            result = memberships[int(row["subscription_id"])]
+            if row["membership_rank"] > self._AGENT_MEMBERSHIP_COLLECTION_LIMIT:
+                result["has_more"] = True
+                continue
+            result["collections"].append(
                 {"id": int(row["id"]), "name": row["name"]}
             )
         return memberships
@@ -2613,53 +2730,23 @@ class SubscriptionsDB(BaseDB):
         # their product is how the "all statuses" case came to be missing in
         # the first place. Values stay bound parameters -- only the fixed
         # predicate TEXT is assembled here.
-        predicates: List[str] = []
-        params: List[Any] = []
-        if subscription_id:
-            predicates.append("i.subscription_id = ?")
-            params.append(subscription_id)
-        if status is not None:
-            predicates.append("i.status = ?")
-            params.append(status)
+        predicates, params = self._item_scope_predicates(
+            subscription_id=subscription_id,
+            status=status,
+            watchlist_id=watchlist_id,
+            statuses=statuses,
+            since=since,
+        )
         if run_id is not None:
             predicates.append("i.run_id = ?")
             params.append(run_id)
-        if watchlist_id is not None:
-            predicates.append(
-                "i.subscription_id IN (SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ?)"
-            )
-            params.append(watchlist_id)
         if unassigned_only:
             predicates.append(
                 "NOT EXISTS (SELECT 1 FROM watchlist_sources ws WHERE ws.subscription_id = i.subscription_id)"
             )
-        if statuses is not None:
-            placeholders = ", ".join("?" for _ in statuses)
-            predicates.append(f"i.status IN ({placeholders})")
-            params.extend(statuses)
         if is_flagged is not None:
             predicates.append("i.is_flagged = ?")
             params.append(1 if is_flagged else 0)
-        if since is not None:
-            # PR #1443 review: `created_at` is schema-backed mixed-format
-            # (CURRENT_TIMESTAMP's space-separated naive shape AND ingest's
-            # ISO `T`+offset), and a bare string compare orders ' ' before
-            # 'T' -- a same-instant pair would compare wrong. `datetime()`
-            # normalizes both shapes (and the offset) to one canonical
-            # string; the COALESCE wraps the NORMALIZED values so an
-            # unparseable feed-supplied published_date (datetime() -> NULL)
-            # falls back to created_at instead of poisoning the compare.
-            #
-            # TASK-15464: `i.effective_date` IS this exact COALESCE
-            # expression -- see the migration comment in
-            # `_ensure_watchlists_schema` -- stored/generated rather than
-            # recomputed, so this predicate is byte-for-byte equivalent to
-            # the inline form it replaces, and now shares the same
-            # `idx_subscription_items_effective_date` index the ORDER BY
-            # below uses, instead of computing `datetime()` per row per
-            # query.
-            predicates.append("i.effective_date >= datetime(?)")
-            params.append(since)
         where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
 
         search_terms = search.split() if search and search.strip() else []

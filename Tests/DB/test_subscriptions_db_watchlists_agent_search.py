@@ -108,6 +108,53 @@ def test_blank_search_returns_every_status_newest_effective_first(db: Subscripti
     assert all("effective_date" in row for row in page["items"])
 
 
+def test_agent_search_rows_have_an_exact_narrow_key_allowlist(db: SubscriptionsDB) -> None:
+    source_id = _source(db, "Narrow projection")
+    item_id = _item(db, source_id, "narrow", content="bounded body")
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE subscription_items
+            SET content_hash = 'hash-canary', categories = 'category-canary',
+                enclosures = 'enclosure-canary', extracted_data = 'raw-canary',
+                processing_error = 'error-canary', previous_hash = 'previous-canary',
+                diff_summary = 'diff-canary', alert_matches = 'alert-canary',
+                canonical_url = 'https://items.test/canonical',
+                content_format = 'html', content_kind = 'article'
+            WHERE id = ?
+            """,
+            (item_id,),
+        )
+
+    row = _search(db, limit=1)["items"][0]
+
+    assert set(row) == {
+        "id",
+        "subscription_id",
+        "url",
+        "title",
+        "published_date",
+        "author",
+        "status",
+        "canonical_url",
+        "created_at",
+        "updated_at",
+        "content_format",
+        "content_kind",
+        "effective_date",
+        "subscription_name",
+        "subscription_type",
+        "subscription_source",
+        "subscription_is_active",
+        "subscription_is_paused",
+        "subscription_created_at",
+        "subscription_updated_at",
+        "subscription_last_checked",
+        "subscription_last_successful_check",
+        "content_match_context",
+    }
+
+
 def test_literal_and_terms_match_title_author_and_deep_body(db: SubscriptionsDB) -> None:
     source_id = _source(db, "Search feed")
     deep = "prefix " * 1_000 + "deep-body-token" + " suffix" * 1_000
@@ -438,6 +485,18 @@ def test_source_and_collection_candidate_resolution_is_bounded_and_deterministic
     assert db.resolve_collection_candidates(exact[0]["id"], limit=10) == [exact[0]]
 
 
+def test_source_resolution_prefers_exact_name_before_exact_url(
+    db: SubscriptionsDB,
+) -> None:
+    collision = "https://collision.test/feed"
+    exact_name_id = _source(db, collision, url="https://name-owner.test/feed")
+    _source(db, "URL owner", url=collision)
+
+    candidates = db.resolve_source_candidates(collision, limit=10)
+
+    assert [row["id"] for row in candidates] == [exact_name_id]
+
+
 def test_authoritative_joined_detail_distinguishes_missing_from_null_content(
     db: SubscriptionsDB,
 ) -> None:
@@ -471,12 +530,47 @@ def test_source_collection_memberships_use_one_bounded_query(db: SubscriptionsDB
     membership_selects = [
         statement
         for statement in statements
-        if statement.lstrip().upper().startswith("SELECT")
+        if statement.lstrip().upper().startswith(("SELECT", "WITH"))
         and "WATCHLIST_SOURCES" in statement.upper()
     ]
     assert len(membership_selects) == 1
-    assert [row["name"] for row in memberships[source_ids[0]]] == ["Alpha", "Zulu"]
-    assert [row["name"] for row in memberships[source_ids[1]]] == ["Alpha"]
-    assert memberships[source_ids[2]] == []
+    assert [row["name"] for row in memberships[source_ids[0]]["collections"]] == [
+        "Alpha",
+        "Zulu",
+    ]
+    assert memberships[source_ids[0]]["has_more"] is False
+    assert [row["name"] for row in memberships[source_ids[1]]["collections"]] == [
+        "Alpha"
+    ]
+    assert memberships[source_ids[1]]["has_more"] is False
+    assert memberships[source_ids[2]] == {"collections": [], "has_more": False}
     with pytest.raises(ValueError, match="at most"):
         db.get_source_collection_memberships(range(1, 52))
+
+
+def test_source_collection_memberships_bound_each_source_with_lookahead(
+    db: SubscriptionsDB,
+) -> None:
+    source_id = _source(db, "High-cardinality source")
+    for index in range(25):
+        _add_to_collection(db, _collection(db, f"Collection {index:03d}"), source_id)
+    statements: list[str] = []
+    db.conn.set_trace_callback(statements.append)
+    try:
+        memberships = db.get_source_collection_memberships([source_id])
+    finally:
+        db.conn.set_trace_callback(None)
+
+    result = memberships[source_id]
+    assert [row["name"] for row in result["collections"]] == [
+        f"Collection {index:03d}" for index in range(20)
+    ]
+    assert result["has_more"] is True
+    membership_selects = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith("WITH")
+        and "WATCHLIST_SOURCES" in statement.upper()
+    ]
+    assert len(membership_selects) == 1
+    assert "MEMBERSHIP_RANK <= 21" in membership_selects[0].upper()
