@@ -8,7 +8,7 @@ legacy Chat window are deprecated parallels; new settings belong here.
 import asyncio
 import copy
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import logging
 import os
 from pathlib import Path
@@ -344,6 +344,10 @@ class _AudioCppResultCleanup:
     expected: AudioCppModelLibraryRequest
     release_only: bool = False
     merged: SpeechTTSPanelDraftSnapshot | None = None
+    panel_ready: threading.Event = field(default_factory=threading.Event, repr=False)
+    panel_mounted: bool = False
+    lease_released: bool = False
+    acknowledgement_started: bool = False
     restore_complete: bool = False
 
 
@@ -2128,6 +2132,8 @@ class SettingsRegion(Vertical):
 
 class SettingsScreen(BaseAppScreen):
     """Global preferences, appearance, storage, and app behavior."""
+
+    audio_cpp_result_cleanup_fenced = reactive(False)
 
     BINDINGS = [
         ("s", "settings_save_category", "Save Settings category"),
@@ -14562,6 +14568,9 @@ class SettingsScreen(BaseAppScreen):
                 audio_cpp_result_cleanup_pending=(
                     self.audio_cpp_result_cleanup_pending
                 ),
+                audio_cpp_result_cleanup_mounted=(
+                    self._mark_audio_cpp_result_panel_mounted
+                ),
                 id="settings-speech-tts-panel",
             )
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:
@@ -15974,6 +15983,8 @@ class SettingsScreen(BaseAppScreen):
         cleanup.panel = panel
         cleanup.before = current
         cleanup.before_result_text = panel.result_text
+        if panel.audio_cpp_result_cleanup_action_is_mounted():
+            cleanup.panel_ready.set()
         if result.token != expected.token:
             self._acknowledge_foreign_audio_cpp_model_library_result(claim)
             return
@@ -16022,13 +16033,19 @@ class SettingsScreen(BaseAppScreen):
             expected=expected,
             release_only=release_only,
         )
+        if panel is not None and panel.audio_cpp_result_cleanup_action_is_mounted():
+            self._audio_cpp_result_cleanup.panel_ready.set()
+        self.audio_cpp_result_cleanup_fenced = True
         if panel is not None and panel.is_mounted:
             panel.refresh_audio_cpp_result_cleanup_state()
 
     def audio_cpp_result_cleanup_pending(self) -> bool:
         """Return whether this screen owns unsettled Model Library cleanup."""
 
-        return self._audio_cpp_result_cleanup is not None
+        return bool(
+            self.audio_cpp_result_cleanup_fenced
+            or self._audio_cpp_result_cleanup is not None
+        )
 
     @work(
         exclusive=True,
@@ -16089,6 +16106,13 @@ class SettingsScreen(BaseAppScreen):
                 ):
                     raise ValueError("managed package review mismatch")
                 package = candidates[0].accept(managed_artifact=identity)
+                cleanup = self._audio_cpp_result_cleanup
+                if (
+                    cleanup is None
+                    or cleanup.claim is not claim
+                    or not cleanup.panel_ready.wait(timeout=8.0)
+                ):
+                    raise ValueError("Settings package review did not become ready")
                 merged = self.app.call_from_thread(
                     self._merge_and_ack_audio_cpp_model_library_result,
                     claim,
@@ -16099,14 +16123,8 @@ class SettingsScreen(BaseAppScreen):
                 if type(merged) is not SpeechTTSPanelDraftSnapshot:
                     return
             settled = self.app.call_from_thread(
-                self._ack_merged_audio_cpp_model_library_result,
+                self._mark_audio_cpp_result_lease_released,
                 claim,
-                panel,
-                before,
-                before_result_text,
-                expected,
-                result,
-                merged,
             )
             if not settled:
                 return
@@ -16282,6 +16300,74 @@ class SettingsScreen(BaseAppScreen):
                 raise
             return False
         return True if acknowledge else self._speech_tts_draft_snapshot
+
+    def _mark_audio_cpp_result_panel_mounted(
+        self,
+        panel: SpeechTTSSettingsPanel,
+    ) -> None:
+        """Publish the exact panel whose current Save control just mounted."""
+
+        cleanup = self._audio_cpp_result_cleanup
+        if cleanup is None:
+            return
+        try:
+            current_panel = self.query_one(SpeechTTSSettingsPanel)
+        except QueryError:
+            return
+        if current_panel is not panel:
+            return
+        cleanup.panel = panel
+        if cleanup.merged is None:
+            cleanup.panel_ready.set()
+            return
+        try:
+            current = panel.draft_snapshot()
+        except (TypeError, ValueError):
+            return
+        if current != cleanup.merged:
+            return
+        cleanup.panel_mounted = True
+        self._try_ack_published_audio_cpp_result(cleanup)
+
+    def _mark_audio_cpp_result_lease_released(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+    ) -> bool:
+        """Publish lease exit and settle once the current Save has mounted."""
+
+        cleanup = self._audio_cpp_result_cleanup
+        if cleanup is None or cleanup.claim is not claim:
+            return False
+        cleanup.lease_released = True
+        return self._try_ack_published_audio_cpp_result(cleanup)
+
+    def _try_ack_published_audio_cpp_result(
+        self,
+        cleanup: _AudioCppResultCleanup,
+    ) -> bool:
+        """Acknowledge once after lease exit and exact action remount."""
+
+        if not cleanup.panel_mounted or not cleanup.lease_released:
+            return True
+        if cleanup.acknowledgement_started:
+            return True
+        if (
+            cleanup.panel is None
+            or cleanup.before is None
+            or cleanup.before_result_text is None
+            or cleanup.merged is None
+        ):
+            return False
+        cleanup.acknowledgement_started = True
+        return self._ack_merged_audio_cpp_model_library_result(
+            cleanup.claim,
+            cleanup.panel,
+            cleanup.before,
+            cleanup.before_result_text,
+            cleanup.expected,
+            cleanup.claim.value,
+            cleanup.merged,
+        )
 
     def _ack_merged_audio_cpp_model_library_result(
         self,
@@ -16485,6 +16571,7 @@ class SettingsScreen(BaseAppScreen):
         cleanup = self._audio_cpp_result_cleanup
         if cleanup is not None and cleanup.claim is claim:
             self._audio_cpp_result_cleanup = None
+            self.audio_cpp_result_cleanup_fenced = False
             if cleanup.panel is not None and cleanup.panel.is_mounted:
                 cleanup.panel.refresh_audio_cpp_result_cleanup_state()
 
@@ -16592,6 +16679,7 @@ class SettingsScreen(BaseAppScreen):
                 "audio.cpp result claim could not be released"
             )
         self._audio_cpp_result_cleanup = None
+        self.audio_cpp_result_cleanup_fenced = False
         if cleanup.panel is not None and cleanup.panel.is_mounted:
             cleanup.panel.refresh_audio_cpp_result_cleanup_state()
 

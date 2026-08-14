@@ -1,7 +1,7 @@
 # Guided audio.cpp packages in Model Library
 
 - **Task:** TASK-13207
-- **Status:** Approved design, pending implementation plan
+- **Status:** Approved design and implementation plan; implementation in progress
 - **Existing decisions:** ADR-050, ADR-051
 - **Upstream artifact host:** `audio-cpp/audio.cpp-gguf` on Hugging Face
 - **Pinned artifact commit:** `597048d9a920592808d7d4e2acd7b9c4596a143a`

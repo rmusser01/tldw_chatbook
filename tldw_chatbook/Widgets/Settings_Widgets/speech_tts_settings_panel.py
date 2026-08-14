@@ -803,7 +803,6 @@ class _GlobalSpeechTTSLeaveModal(ModalScreen[LeaveChoice]):
         event.stop()
         self.dismiss("save")
 
-
 class _SpeechSettingsCard(Vertical):
     """One Speech settings focus card, recomposable on its own (task-15475).
 
@@ -835,6 +834,50 @@ class _SpeechSettingsCard(Vertical):
     def compose(self) -> ComposeResult:
         """Yield this card's children from the panel's builder."""
         yield from self._builder()
+
+
+class _SpeechTTSCleanupActionButton(Button):
+    """Derive a remounted action's fence from its current panel owner."""
+
+    def on_mount(self) -> None:
+        owner = self._cleanup_owner()
+        if owner is not None:
+            callback = getattr(owner, "_audio_cpp_result_cleanup_pending", None)
+            fence_owner = getattr(callback, "__self__", None)
+            if fence_owner is not None and hasattr(
+                fence_owner, "audio_cpp_result_cleanup_fenced"
+            ):
+                self.watch(
+                    fence_owner,
+                    "audio_cpp_result_cleanup_fenced",
+                    self._sync_cleanup_state,
+                    init=True,
+                )
+            if self.id == "settings-speech-save":
+                owner.audio_cpp_result_cleanup_action_mounted()  # type: ignore[attr-defined]
+        self.call_later(self._sync_cleanup_state)
+
+    def _cleanup_owner(self) -> Widget | None:
+        """Return the mounted panel exposing the result-cleanup contract."""
+
+        owner: Widget | None = self.parent
+        while owner is not None and not hasattr(
+            owner, "audio_cpp_result_cleanup_pending"
+        ):
+            owner = owner.parent
+        return owner
+
+    def _sync_cleanup_state(self, *_changes: object) -> None:
+        """Read the owner after both Mount and reactive-update turns."""
+
+        owner = self._cleanup_owner()
+        if owner is None:
+            return
+        pending = bool(owner.audio_cpp_result_cleanup_pending())  # type: ignore[attr-defined]
+        save_pending = self.id == "settings-speech-save" and bool(
+            getattr(owner, "_latest_request_id", None)
+        )
+        self.disabled = pending or save_pending
 
 
 class SpeechTTSSettingsPanel(Vertical):
@@ -882,6 +925,9 @@ class SpeechTTSSettingsPanel(Vertical):
         provider_test_evidence: ProcessProviderTestEvidenceStore | None = None,
         draft_snapshot: SpeechTTSPanelDraftSnapshot | None = None,
         audio_cpp_result_cleanup_pending: Callable[[], bool] | None = None,
+        audio_cpp_result_cleanup_mounted: (
+            Callable[[SpeechTTSSettingsPanel], None] | None
+        ) = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -1010,6 +1056,8 @@ class SpeechTTSSettingsPanel(Vertical):
         self._audio_cpp_result_cleanup_pending = audio_cpp_result_cleanup_pending or (
             lambda: False
         )
+        self._audio_cpp_result_cleanup_mounted = audio_cpp_result_cleanup_mounted
+        self._audio_cpp_cleanup_action_mounted = False
         if restored is None:
             self._realtime_original = _read_realtime_settings_draft()
             self._realtime_draft = replace(self._realtime_original)
@@ -1032,6 +1080,19 @@ class SpeechTTSSettingsPanel(Vertical):
             )
         except Exception:
             return True
+
+    def audio_cpp_result_cleanup_action_mounted(self) -> None:
+        """Notify the shell that this panel's current Save action mounted."""
+
+        self._audio_cpp_cleanup_action_mounted = True
+        callback = self._audio_cpp_result_cleanup_mounted
+        if callback is not None:
+            callback(self)
+
+    def audio_cpp_result_cleanup_action_is_mounted(self) -> bool:
+        """Return whether this panel's current Save action has mounted."""
+
+        return self._audio_cpp_cleanup_action_mounted
 
     def _managed_cleanup_owner(self) -> AudioCppModelInstallOwner | None:
         try:
@@ -1187,6 +1248,7 @@ class SpeechTTSSettingsPanel(Vertical):
             "Added one installed Model Library package to the unsaved draft. "
             "Review it and choose Save when ready."
         )
+        self._audio_cpp_cleanup_action_mounted = False
         self.refresh(recompose=True)
         self.call_after_refresh(self._restore_focus, focus_id)
         return current
@@ -2270,16 +2332,16 @@ class SpeechTTSSettingsPanel(Vertical):
 
         cleanup_pending = self.audio_cpp_result_cleanup_pending()
         with Horizontal(id="settings-speech-actions", classes="settings-action-row"):
-            yield Button(
+            yield _SpeechTTSCleanupActionButton(
                 "Save",
                 id="settings-speech-save",
                 variant="primary",
                 disabled=self._latest_request_id is not None or cleanup_pending,
             )
-            yield Button(
+            yield _SpeechTTSCleanupActionButton(
                 "Revert", id="settings-speech-revert", disabled=cleanup_pending
             )
-            yield Button(
+            yield _SpeechTTSCleanupActionButton(
                 "Restore Non-secret Defaults",
                 id="settings-speech-restore-defaults",
                 disabled=cleanup_pending,

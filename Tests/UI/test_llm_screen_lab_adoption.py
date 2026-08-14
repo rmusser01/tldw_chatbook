@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 import threading
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -1402,16 +1403,26 @@ async def test_curated_install_click_reaches_the_shared_consent_modal(monkeypatc
             await pilot.pause()
         assert curated._loaded, "Curated never finished its catalog load"
 
-        button = next(iter(curated.query(".curated-install").results(Button)))
+        assert await _wait_for(
+            lambda: any(
+                not candidate.disabled
+                and candidate in app.screen._compositor.visible_widgets
+                for candidate in curated.query(".curated-install").results(Button)
+            ),
+            pilot,
+            attempts=300,
+        )
+        button = next(
+            candidate
+            for candidate in curated.query(".curated-install").results(Button)
+            if not candidate.disabled
+            and candidate in app.screen._compositor.visible_widgets
+        )
         await pilot.click(button)
-        await pilot.pause()
-        await pilot.pause()
 
-        for _ in range(20):
-            if app.push_screen.called:
-                break
-            await pilot.pause()
-        assert app.push_screen.called, "clicking Install never reached push_screen"
+        assert await _wait_for(lambda: app.push_screen.called, pilot, attempts=300), (
+            "clicking Install never reached push_screen"
+        )
 
         modal, callback = app.push_screen.call_args[0]
         assert isinstance(modal, ModelInstallModal)
@@ -1653,7 +1664,10 @@ async def test_models_lab_insufficient_space_cancel_is_inline_and_never_provisio
         curated = window.query_one("#curated-models-view", CuratedView)
         curated.set_consumer_filter("audio_cpp")
         window.active_view = "curated"
-        assert await _wait_for(lambda: curated._loaded, pilot)
+        assert await _wait_for(
+            lambda: curated._loaded and bool(curated.query(".curated-install")),
+            pilot,
+        )
         install = curated.query_one(".curated-install", Button)
         install.press()
         assert await _wait_for(
@@ -1680,7 +1694,7 @@ async def test_models_lab_insufficient_space_cancel_is_inline_and_never_provisio
         )
         retry = curated.query_one(".curated-install", Button)
         assert str(retry.label) == "Retry install…"
-        assert retry.has_focus
+        assert await _wait_for(lambda: retry.has_focus, pilot)
         assert retry in app.screen._compositor.visible_widgets
         assert retry.region.right <= window.query_one("#llm-view-curated").region.right
         assert (
@@ -3717,10 +3731,11 @@ def test_external_verification_cancellation_is_information_not_error():
 
 
 async def _wait_for(condition, pilot, *, attempts: int = 120) -> bool:
-    for _ in range(attempts):
+    deadline = time.monotonic() + max(1.0, attempts * 0.02)
+    while time.monotonic() < deadline:
         if condition():
             return True
-        await pilot.pause()
+        await pilot.pause(0.01)
     return condition()
 
 
@@ -3732,7 +3747,9 @@ async def test_external_rail_mounts_through_the_existing_deferred_view_pattern()
     app._parakeet_source_service = _FakeExternalSourceService()
     async with app.run_test(size=(120, 40)) as pilot:
         screen = await _models_screen(app)
-        assert await _wait_for(lambda: bool(screen.query("#llm-view-external")), pilot)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
         window = screen.query_one(LLMManagementWindow)
         assert window.query_one("#external-models-view", ExternalModelView)
 
@@ -3800,7 +3817,18 @@ async def test_real_picker_verifies_off_loop_reports_bytes_and_commits_after_suc
         assert service.prepare_threads[0] != threading.get_ident()
 
         service.release_verification.set()
-        assert await _wait_for(lambda: len(service.committed) == 1, pilot)
+        assert await _wait_for(
+            lambda: (
+                len(service.committed) == 1
+                and str(
+                    external.query_one(
+                        "#external-model-operation-status", Static
+                    ).renderable
+                )
+                == "Runtime required"
+            ),
+            pilot,
+        )
         assert service.commit_threads[0] != threading.get_ident()
         owner = service.prepare_calls[0][2]
         assert owner[0] == "scope"
@@ -3812,11 +3840,19 @@ async def test_real_picker_verifies_off_loop_reports_bytes_and_commits_after_suc
             str(tmp_path) not in str(call) for call in screen.notify.call_args_list
         )
 
-        screen.refresh(recompose=True)
+        await screen.recompose()
         assert await _wait_for(
-            lambda: bool(screen.query("#external-model-operation-status")), pilot
+            lambda: (
+                bool(screen.query("#external-model-operation-status"))
+                and str(
+                    screen.query_one(
+                        "#external-model-operation-status", Static
+                    ).renderable
+                )
+                == "Runtime required"
+            ),
+            pilot,
         )
-        await pilot.pause()
         status = screen.query_one("#external-model-operation-status", Static)
         assert str(status.renderable) == "Runtime required"
 
@@ -4593,6 +4629,7 @@ async def test_external_copy_uses_task6_plan_and_stop_uses_the_shared_service(
         dialog = app.screen
         assert str(root) not in dialog.message
         assert "1.0 KiB" in dialog.message
+        assert await _wait_for(lambda: bool(dialog.query("#confirm-button")), pilot)
         dialog.query_one("#confirm-button", Button).press()
         assert await _wait_for(lambda: len(service.copied) == 1, pilot)
 

@@ -4,7 +4,7 @@ title: Integrate guided audio.cpp packages with Model Library
 status: In Progress
 assignee: []
 created_date: '2026-08-09 17:39'
-updated_date: '2026-08-13 15:58'
+updated_date: '2026-08-14 10:29'
 labels:
   - tts
   - audio-cpp
@@ -33,13 +33,13 @@ Connect reviewed audio.cpp model artifacts to the existing Model Library and pro
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Model Library exposes only reviewed audio.cpp artifacts mapped to an exact recipe/package identity and displays family, variant, speech tasks, size/checksum/license/source, required companion files, and exact evidenced compatibility without implying it installs audiocpp_server.
-- [ ] #2 Installation occurs only after explicit user action through the existing shared artifact-store owner, verifies the declared artifact, and returns the exact installed package root/identity to the preserved Guided Settings draft without launching audio.cpp or changing global/Studio defaults.
-- [ ] #3 Returning from Model Library preserves all unrelated Settings draft fields and shows the installed package in the same exact review/validation flow as a scanned local package before Save.
-- [ ] #4 A removal preview accounts for global guided configurations, TTS profiles and clone references, character assignments, active/staged runtime generations, and shared artifact owners before any bytes are removed.
-- [ ] #5 Removal requires an explicit resolution for every blocking dependency, never silently retargets a configuration/profile/character, never deletes a reference asset as a side effect, and does not disrupt an immutable live child snapshot.
-- [ ] #6 Interrupted install/remove, checksum failure, missing files, shared ownership, and source disappearance produce truthful recoverable state with no partial authority transfer or orphaned registry entry.
+- [x] #2 Installation occurs only after explicit user action through the existing shared artifact-store owner, verifies the declared artifact, and returns the exact installed package root/identity to the preserved Guided Settings draft without launching audio.cpp or changing global/Studio defaults.
+- [x] #3 Returning from Model Library preserves all unrelated Settings draft fields and shows the installed package in the same exact review/validation flow as a scanned local package before Save.
+- [x] #4 A removal preview accounts for global guided configurations, TTS profiles and clone references, character assignments, active/staged runtime generations, and shared artifact owners before any bytes are removed.
+- [x] #5 Removal requires an explicit resolution for every blocking dependency, never silently retargets a configuration/profile/character, never deletes a reference asset as a side effect, and does not disrupt an immutable live child snapshot.
+- [x] #6 Interrupted install/remove, checksum failure, missing files, shared ownership, and source disappearance produce truthful recoverable state with no partial authority transfer or orphaned registry entry.
 - [ ] #7 Hermetic store/UI/dependency tests and a clean-profile UAT cover install → exact-root return → guided Save → sample generation plus blocked and approved removal, with no network or large artifact requirement in normal CI.
-- [ ] #8 The pinned 21-family, 67-package inventory has no open recipe gap and keeps recipe support separate from artifact availability: every variant is reviewed as downloadable, local-only, or explicitly unsupported, with no family-specific installer path or silent accounting gap.
+- [x] #8 The pinned 21-family, 67-package inventory has no open recipe gap and keeps recipe support separate from artifact availability: every variant is reviewed as downloadable, local-only, or explicitly unsupported, with no family-specific installer path or silent accounting gap.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -77,10 +77,22 @@ Executable TDD plan: Docs/superpowers/plans/2026-08-13-audio-cpp-model-library-i
 - Live evidence is recorded in
   `Docs/superpowers/qa/audio-cpp-model-library-2026-08-13/live-uat.md`. Exact
   official install, inactive return, health/catalog, lease ownership, and
-  blocked/acknowledged removal passed. Guided Save remained fenced after the
-  return and the host audio.cpp 0.5.1 server returned structured HTTP 500 for
-  the pinned Inflect package on CPU and Metal, so sample generation and audible
-  playback are not claimed.
-- Status remains **In Progress** and acceptance criteria remain unchecked until
-  the clean-profile Save plus audible generation release gate is satisfied.
+  blocked/acknowledged removal passed. A mounted slow-lease regression now
+  proves the current remounted Save is enabled only after exact acknowledgement;
+  a fresh isolated full-app UAT persisted the managed identity and three
+  unrelated dirty draft families through the actual Save action without
+  autosaving. The host audio.cpp 0.5.1 server still returned structured HTTP 500
+  for the pinned Inflect package on CPU and Metal, so the server-side generation
+  cause remains unresolved and audible playback is not claimed.
+- Corrected the asynchronous UI tests to wait for the exact mounted/composed
+  controls they exercise. Deterministic CSS verification now rebuilds to a
+  temporary file and ignores only the generated timestamp rather than invoking
+  the mutating builder with an unsupported `--check` argument.
+- Final exact sandbox matrix: 1,270 passed and 18 expected loopback-bind
+  denials. The final unrestricted matrix request was rejected before process
+  start by the runner approval-usage limit, so no fresh host all-green total is
+  claimed.
+- Criteria #2–#6 and #8 have fresh automated and live evidence. Status remains
+  **In Progress**; criteria #1 and #7 remain unchecked until the exact
+  compatibility/audible-generation release gate is satisfied.
 <!-- SECTION:NOTES:END -->

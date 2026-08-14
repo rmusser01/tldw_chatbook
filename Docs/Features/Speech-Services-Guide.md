@@ -323,7 +323,10 @@ Guided setup is the shortest supported first-time path:
    `audiocpp_server` nor starts audio.cpp. Return to Settings, review the added
    package in the still-unsaved draft, then choose Save. The catalog also names
    local-only variants; those must be supplied through **Add local package…**
-   and are never presented as downloadable.
+   and are never presented as downloadable. Across the pinned 21-family,
+   67-package inventory, 45 reviewed variants are downloadable, 8 approved
+   variants are local-only, and 14 are explicitly unsupported; those states
+   describe artifact availability separately from recipe support.
 4. Choose the default Guided model and backend. **Auto** selects only the
    reviewed portable CPU baseline; it does not infer an accelerated backend
    from the host. An unavailable or unevidenced model/backend combination is
@@ -338,6 +341,11 @@ Guided setup is the shortest supported first-time path:
    Connection** and does not promise generation. The handoff focuses Speech
    Lab's one current primary action, which may be **Start & Generate Sample**,
    **Restart & Apply Settings**, **Retry Sample**, or **Test Connection**.
+   Inflect Micro v2 additionally requires eSpeak-ng with English data. Install
+   it in a standard system or package-manager location before testing; Guided
+   setup does not discover or persist private library/data paths. If your
+   installation requires nonstandard paths, use an advanced `server.json` you
+   control and follow the pinned upstream Inflect session-option guidance.
 7. Run **Start & Generate Sample**. Chatbook lazily creates one private,
    generation-local configuration, starts one child, verifies the selected
    catalog entry, and generates one complete validated WAV.

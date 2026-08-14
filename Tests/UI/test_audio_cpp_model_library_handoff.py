@@ -8,6 +8,7 @@ import hashlib
 import inspect
 from pathlib import Path
 import threading
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -1331,11 +1332,32 @@ async def test_cancelled_settings_identity_worker_releases_app_owned_hold(
 
 
 async def _wait_for(condition, pilot, *, attempts: int = 160) -> bool:
-    for _ in range(attempts):
+    deadline = time.monotonic() + max(1.0, attempts * 0.02)
+    while time.monotonic() < deadline:
         if condition():
             return True
-        await pilot.pause()
+        await pilot.pause(0.01)
     return condition()
+
+
+async def _open_speech_tts_category(screen, pilot) -> None:
+    """Click the current mounted Speech/TTS rail action and await activation."""
+
+    from textual.widgets import Button
+
+    assert await _wait_for(
+        lambda: any(
+            not button.disabled and button in button.screen._compositor.visible_widgets
+            for button in screen.query("#settings-category-speech-tts").results(Button)
+        ),
+        pilot,
+    )
+    button = screen.query_one("#settings-category-speech-tts", Button)
+    await pilot.click(button)
+    assert await _wait_for(
+        lambda: screen.active_category == "speech-tts",
+        pilot,
+    )
 
 
 @pytest.mark.asyncio
@@ -1465,10 +1487,26 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
         screen._deliver_curated = record_delivery
         assert await _wait_for(lambda: bool(screen.query(CuratedView)), pilot)
         view = screen.query_one(CuratedView)
-        assert view._consumer_filter == "audio_cpp"
-        assert view._allow_installed_return is True
+        assert await _wait_for(
+            lambda: (
+                view._consumer_filter == "audio_cpp"
+                and view._allow_installed_return is True
+            ),
+            pilot,
+        )
         assert await _wait_for(lambda: view._loaded, pilot)
-        install = screen.query_one(".curated-install", Button)
+        assert await _wait_for(
+            lambda: any(
+                not button.disabled and button in app.screen._compositor.visible_widgets
+                for button in screen.query(".curated-install").results(Button)
+            ),
+            pilot,
+        )
+        install = next(
+            button
+            for button in screen.query(".curated-install").results(Button)
+            if not button.disabled and button in app.screen._compositor.visible_widgets
+        )
         install.press()
         assert await _wait_for(
             lambda: bool(app.screen.query("#model-install-confirm")), pilot
@@ -1500,7 +1538,16 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
             HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
         )
         fresh_view = screen.query_one(CuratedView)
-        assert await _wait_for(lambda: fresh_view._loaded, pilot)
+        assert await _wait_for(
+            lambda: (
+                fresh_view._loaded
+                and any(
+                    str(button.label) == "Installed" and button.disabled
+                    for button in screen.query(".curated-install").results(Button)
+                )
+            ),
+            pilot,
+        )
         installed = screen.query_one(".curated-install", Button)
         assert str(installed.label) == "Installed"
         assert installed.disabled is True
@@ -1657,7 +1704,9 @@ async def test_mounted_already_installed_audio_cpp_returns_exact_leased_root(
         screen.notify = MagicMock()
         assert await _wait_for(lambda: bool(screen.query(CuratedView)), pilot)
         view = screen.query_one(CuratedView)
-        assert await _wait_for(lambda: view._loaded, pilot)
+        assert await _wait_for(
+            lambda: view._loaded and bool(screen.query(".curated-install")), pilot
+        )
         button = screen.query_one(".curated-install", Button)
         assert str(button.label) == "Use installed package"
         button.press()
@@ -2050,8 +2099,12 @@ async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_ret
         view = screen.query_one(CuratedView)
         assert attempts == [view]
         assert view._consumer_filter == "audio_cpp"
-        assert "Loading curated models…" in "\n".join(
-            str(item.renderable) for item in view.query(Static)
+        assert await _wait_for(
+            lambda: (
+                "Loading curated models…"
+                in "\n".join(str(item.renderable) for item in view.query(Static))
+            ),
+            pilot,
         )
         await asyncio.sleep(2.1)
         assert attempts == [view]
@@ -2072,7 +2125,7 @@ async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
 ) -> None:
     """Real Settings save/restore retains global, provider, and Realtime drafts."""
 
-    from textual.widgets import Button, Input, Select, Switch
+    from textual.widgets import Input, Select, Switch
 
     from Tests.UI.test_destination_shells import (
         DestinationHarness,
@@ -2089,7 +2142,7 @@ async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
         screen = _active_destination_screen(host)
         await host.workers.wait_for_complete()
         await pilot.pause()
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen,
             pilot,
@@ -2180,7 +2233,7 @@ async def test_mounted_settings_stages_exact_request_after_collecting_widgets() 
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen, pilot, "#settings-speech-tts-panel", timeout=8.0
         )
@@ -2239,7 +2292,7 @@ async def test_real_settings_navigation_preserves_detached_tts_draft_for_removal
     async with app.run_test(size=(190, 55)) as pilot:
         assert await _wait_for(lambda: isinstance(app.screen, SettingsScreen), pilot)
         screen = app.screen
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen,
             pilot,
@@ -2304,10 +2357,15 @@ async def test_real_settings_return_acknowledges_before_draft_remount(
     import time
     from types import SimpleNamespace
 
-    from textual.widgets import Button, Select
+    from textual.widgets import Button, Input, Select, Switch
 
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.UI.test_speech_tts_settings_ownership_closeout import (
+        _SettingsReadOnlyTTSService,
+    )
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import STTSEventHandler
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
     from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
         AUDIO_CPP_ARTIFACT_COMMIT,
@@ -2321,10 +2379,16 @@ async def test_real_settings_return_acknowledges_before_draft_remount(
     from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
         SpeechTTSSettingsPanel,
     )
+    from tldw_chatbook.Widgets.Settings_Widgets import (
+        speech_tts_settings_panel as panel_module,
+    )
 
     root = (tmp_path / "managed-supertonic").resolve()
     root.mkdir()
     (root / "supertonic-3-orig.gguf").write_bytes(b"GGUF" + struct.pack("<I", 3))
+    binary = root / "audiocpp_server"
+    binary.write_text("synthetic executable", encoding="utf-8")
+    binary.chmod(0o700)
     reference = ArtifactRef(
         "audio-cpp-supertonic-3-orig",
         AUDIO_CPP_ARTIFACT_COMMIT,
@@ -2344,22 +2408,67 @@ async def test_real_settings_return_acknowledges_before_draft_remount(
         def __exit__(self, *_args: object) -> None:
             time.sleep(1.0)
 
-    monkeypatch.setattr(
-        settings_module,
-        "managed_service",
-        lambda: SimpleNamespace(acquire_installed_root=lambda _reference: Lease()),
+        def close(self) -> None:
+            self.__exit__()
+
+    artifact_service = SimpleNamespace(
+        acquire_installed_root=lambda _reference: Lease()
     )
+    monkeypatch.setattr(settings_module, "managed_service", lambda: artifact_service)
+    monkeypatch.setattr(panel_module, "managed_service", lambda: artifact_service)
     monkeypatch.setattr(
         llm_screen_module,
         "_probe_local_server",
         lambda *_args, **_kwargs: asyncio.sleep(0, result=False),
     )
 
+    persisted_provider: list[tuple[dict[str, dict[str, object]], object]] = []
+    persisted_realtime: list[tuple[dict[str, dict[str, object]], object]] = []
+
+    def persist_provider(section_values, *, delete_keys):
+        persisted_provider.append((section_values, delete_keys))
+        return config_module.ConfigMutationResult(
+            file_replaced=True,
+            caches_reloaded=True,
+            failure_phase=None,
+        )
+
+    def persist_realtime(section_values, *, delete_keys):
+        persisted_realtime.append((section_values, delete_keys))
+        return True
+
+    monkeypatch.setattr(
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        persist_provider,
+    )
+    monkeypatch.setattr(
+        panel_module,
+        "save_settings_to_cli_config",
+        persist_realtime,
+    )
+
     app = _build_test_app(configured_default="settings")
+    settings_service = _SettingsReadOnlyTTSService()
+    settings_handler = STTSEventHandler(app=app)
+    settings_handler._stts_service = settings_service
+    app._stts_handler = settings_handler
     async with app.run_test(size=(120, 44)) as pilot:
         assert await _wait_for(lambda: isinstance(app.screen, SettingsScreen), pilot)
         settings = app.screen
-        settings.query_one("#settings-category-speech-tts", Button).press()
+        assert await _wait_for(
+            lambda: any(
+                button in app.screen._compositor.visible_widgets
+                for button in settings.query("#settings-category-speech-tts").results(
+                    Button
+                )
+            ),
+            pilot,
+        )
+        category_button = settings.query_one("#settings-category-speech-tts", Button)
+        assert not category_button.disabled
+        await pilot.click(category_button)
+        assert await _wait_for(lambda: settings.active_category == "speech-tts", pilot)
         await _wait_for_selector(
             settings,
             pilot,
@@ -2380,7 +2489,29 @@ async def test_real_settings_return_acknowledges_before_draft_remount(
         settings.query_one(
             "#settings-speech-audio_cpp-managed-setup-source", Select
         ).value = "guided"
+        settings.query_one(
+            "#settings-speech-audio_cpp-guided-binary-path", Input
+        ).value = str(binary)
+        settings.query_one(
+            "#settings-speech-audio_cpp-guided-backend-preference", Select
+        ).value = "cpu"
+        settings.query_one("#settings-speech-speed", Input).value = "1.33"
+        settings.query_one("#settings-speech-realtime-enabled", Switch).value = True
+        settings.query_one(
+            "#settings-speech-realtime-model", Input
+        ).value = "unrelated-draft-model"
+        settings.query_one(
+            "#settings-speech-realtime-voice", Input
+        ).value = "unrelated-draft-voice"
         await pilot.pause()
+        staged = settings.query_one(SpeechTTSSettingsPanel).draft_snapshot()
+        assert staged.state.providers["audio_cpp"]["guided_backend_preference"] == (
+            "cpu"
+        )
+        assert staged.state.defaults.speed == 1.33
+        assert staged.realtime_draft.enabled is True
+        assert staged.realtime_draft.model == "unrelated-draft-model"
+        assert staged.realtime_draft.voice == "unrelated-draft-voice"
         settings.query_one(
             "#settings-speech-audio-cpp-open-model-library", Button
         ).press()
@@ -2430,6 +2561,50 @@ async def test_real_settings_return_acknowledges_before_draft_remount(
         assert await _wait_for(
             lambda: not returned.audio_cpp_result_cleanup_pending(), pilot
         )
+        assert await _wait_for(
+            lambda: (
+                bool(returned.query("#settings-speech-save"))
+                and not returned.query_one("#settings-speech-save", Button).disabled
+            ),
+            pilot,
+        )
+        assert persisted_provider == []
+        assert persisted_realtime == []
+
+        save_button = returned.query_one("#settings-speech-save", Button)
+        save_button.scroll_visible(animate=False)
+        await pilot.pause()
+        returned.query_one("#settings-speech-save", Button).press()
+        await pilot.pause()
+        assert await _wait_for(
+            lambda: (
+                len(persisted_provider) == 1
+                and len(persisted_realtime) == 1
+                and returned.query_one(SpeechTTSSettingsPanel)._latest_request_id
+                is None
+            ),
+            pilot,
+        ), (
+            persisted_provider,
+            persisted_realtime,
+            returned.query_one(SpeechTTSSettingsPanel)._latest_request_id,
+            returned.query_one(SpeechTTSSettingsPanel).result_text,
+            settings_service.provider_operations,
+        )
+
+        provider_sections, _provider_deletes = persisted_provider[0]
+        audio_cpp = provider_sections["app_tts"]["audio_cpp"]
+        assert audio_cpp["mode"] == "managed"
+        assert audio_cpp["managed_setup_source"] == "guided"
+        assert audio_cpp["guided_backend_preference"] == "cpu"
+        assert audio_cpp["guided_packages"][0]["public_model_id"] == (
+            "supertonic-3-orig"
+        )
+        assert provider_sections["app_tts"]["default_speed"] == 1.33
+        realtime_sections, _realtime_deletes = persisted_realtime[0]
+        assert realtime_sections["realtime"]["enabled"] is True
+        assert realtime_sections["realtime"]["model"] == "unrelated-draft-model"
+        assert realtime_sections["realtime"]["voice"] == "unrelated-draft-voice"
 
 
 @pytest.mark.asyncio
@@ -2442,8 +2617,6 @@ async def test_model_library_route_token_is_cleared_when_dispatch_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed request/route transaction cannot leave bypass authority behind."""
-
-    from textual.widgets import Button
 
     from Tests.UI.test_destination_shells import (
         DestinationHarness,
@@ -2461,7 +2634,7 @@ async def test_model_library_route_token_is_cleared_when_dispatch_fails(
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen, pilot, "#settings-speech-tts-panel", timeout=8.0
         )
@@ -2524,8 +2697,6 @@ async def test_failed_route_cleanup_retries_after_foreign_request_claim_settles(
 ) -> None:
     """An in-flight foreign request cannot permanently block exact cleanup."""
 
-    from textual.widgets import Button
-
     from Tests.UI.test_destination_shells import (
         DestinationHarness,
         _active_destination_screen,
@@ -2542,7 +2713,7 @@ async def test_failed_route_cleanup_retries_after_foreign_request_claim_settles(
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen, pilot, "#settings-speech-tts-panel", timeout=8.0
         )
@@ -2578,8 +2749,6 @@ async def test_failed_route_cleanup_preserves_value_identical_newer_successor(
 ) -> None:
     """A value-identical successor is foreign when its store revision is newer."""
 
-    from textual.widgets import Button
-
     from Tests.UI.test_destination_shells import (
         DestinationHarness,
         _active_destination_screen,
@@ -2596,7 +2765,7 @@ async def test_failed_route_cleanup_preserves_value_identical_newer_successor(
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen, pilot, "#settings-speech-tts-panel", timeout=8.0
         )
@@ -2650,7 +2819,7 @@ async def test_model_library_leave_bypass_is_fifo_route_exclusive(
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen, pilot, "#settings-speech-tts-panel", timeout=8.0
         )
@@ -2778,7 +2947,7 @@ async def test_mounted_settings_reviews_and_merges_return_under_exact_lease(
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen, pilot, "#settings-speech-tts-panel", timeout=8.0
         )
@@ -2888,7 +3057,7 @@ async def test_mounted_return_is_stale_after_edits_in_every_draft_family(
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen, pilot, "#settings-speech-tts-panel", timeout=8.0
         )
@@ -2965,8 +3134,6 @@ async def test_foreign_result_preserves_expected_request_for_later_exact_result(
 ) -> None:
     """A foreign token is terminal only for its result, not our request."""
 
-    from textual.widgets import Button
-
     from Tests.UI.test_destination_shells import (
         DestinationHarness,
         _active_destination_screen,
@@ -2983,7 +3150,7 @@ async def test_foreign_result_preserves_expected_request_for_later_exact_result(
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen, pilot, "#settings-speech-tts-panel", timeout=8.0
         )
@@ -3044,8 +3211,6 @@ async def test_foreign_result_cleanup_retries_without_touching_current_request(
 ) -> None:
     """Foreign ack/release failures retain release-only cleanup authority."""
 
-    from textual.widgets import Button
-
     from Tests.UI.test_destination_shells import (
         DestinationHarness,
         _active_destination_screen,
@@ -3062,7 +3227,7 @@ async def test_foreign_result_cleanup_retries_without_touching_current_request(
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen, pilot, "#settings-speech-tts-panel", timeout=8.0
         )
@@ -3154,8 +3319,6 @@ async def test_same_token_revision_mismatch_terminally_clears_expected_request(
 ) -> None:
     """A stale revision for our token settles that exact request."""
 
-    from textual.widgets import Button
-
     from Tests.UI.test_destination_shells import (
         DestinationHarness,
         _active_destination_screen,
@@ -3172,7 +3335,7 @@ async def test_same_token_revision_mismatch_terminally_clears_expected_request(
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen, pilot, "#settings-speech-tts-panel", timeout=8.0
         )
@@ -3294,7 +3457,7 @@ async def test_transaction_failure_rolls_back_and_requeues_exact_result(
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen, pilot, "#settings-speech-tts-panel", timeout=8.0
         )
@@ -3829,8 +3992,6 @@ async def test_result_cleanup_retries_after_one_owner_failure(
 ) -> None:
     """A transient owner-thread cleanup failure keeps one exact retry record."""
 
-    from textual.widgets import Button
-
     from Tests.UI.test_destination_shells import (
         DestinationHarness,
         _active_destination_screen,
@@ -3847,7 +4008,7 @@ async def test_result_cleanup_retries_after_one_owner_failure(
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen, pilot, "#settings-speech-tts-panel", timeout=8.0
         )
@@ -3942,8 +4103,6 @@ async def test_worker_call_from_thread_failure_retries_exact_cleanup(
 ) -> None:
     """A failed cleanup dispatch is retried with the complete exact rollback."""
 
-    from textual.widgets import Button
-
     from Tests.UI.test_destination_shells import (
         DestinationHarness,
         _active_destination_screen,
@@ -3962,7 +4121,7 @@ async def test_worker_call_from_thread_failure_retries_exact_cleanup(
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _open_speech_tts_category(screen, pilot)
         await _wait_for_selector(
             screen, pilot, "#settings-speech-tts-panel", timeout=8.0
         )

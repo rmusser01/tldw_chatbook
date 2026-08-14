@@ -658,7 +658,7 @@ Run:
 
 ```bash
 ../../.venv/bin/python -m pytest Tests/UI/test_model_curated_view.py Tests/UI/test_model_installed_view.py Tests/UI/test_llm_screen_lab_adoption.py -q
-../../.venv/bin/python tldw_chatbook/css/build_css.py --check
+../../.venv/bin/python tldw_chatbook/css/check_bundle_sync.py
 ```
 
 Expected: all pass, every action is contained/reachable, and generated CSS is byte-current.
@@ -714,7 +714,7 @@ git diff --name-only -z origin/dev...HEAD -- '*.py' | xargs -0 ../../.venv/bin/p
   tldw_chatbook/TTS/audio_cpp_guided_config.py \
   tldw_chatbook/TTS/audio_cpp_guided_launch.py \
   tldw_chatbook/Model_Artifacts/service.py
-../../.venv/bin/python tldw_chatbook/css/build_css.py --check
+../../.venv/bin/python tldw_chatbook/css/check_bundle_sync.py
 git diff --check origin/dev...HEAD
 ```
 
