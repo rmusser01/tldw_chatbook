@@ -1058,6 +1058,11 @@ class NoteImportExecutor:
 
         if item.selected_action is ImportAction.CREATE_NEW:
             for payload_index, payload in enumerate(item.payloads):
+                effect = payload_effects.get(payload_index)
+                if effect is None:
+                    raise ImportReceiptTransitionError(
+                        "Payload receipt authority does not match the approved plan."
+                    )
                 note_id = _deterministic_note_id(
                     approved.approval_id,
                     item.item_id,
@@ -1066,13 +1071,30 @@ class NoteImportExecutor:
                 unit_memberships = tuple(memberships_by_payload.get(payload_index, ()))
                 blocked = _membership_folder_failure(unit_memberships, folder_failures)
                 if blocked is not None:
+                    transitions = [
+                        _failed_effect_transition(
+                            effect,
+                            blocked,
+                            target_note_id=note_id,
+                        )
+                    ]
+                    for membership, membership_effect in unit_memberships:
+                        membership_failure = _membership_folder_failure(
+                            ((membership, membership_effect),),
+                            folder_failures,
+                        )
+                        transitions.append(
+                            _failed_effect_transition(
+                                membership_effect,
+                                membership_failure or blocked,
+                            )
+                        )
+                    self._receipts.transition_effects(
+                        approved.approval_id,
+                        tuple(transitions),
+                    )
                     failures.append(blocked)
                     continue
-                effect = payload_effects.get(payload_index)
-                if effect is None:
-                    raise ImportReceiptTransitionError(
-                        "Payload receipt authority does not match the approved plan."
-                    )
                 try:
                     note = self._target.create_note(note_id=note_id, payload=payload)
                 except ImportTargetInternalError:
@@ -1107,9 +1129,27 @@ class NoteImportExecutor:
                     "Update execution requires approved target authority."
                 )
             note_id = item.match.note_id
-            blocked = _membership_folder_failure(memberships, folder_failures)
-            if blocked is not None:
+            executable_memberships: list[
+                tuple[ProposedFolderMembership, ImportEffectRecord]
+            ] = []
+            blocked_transitions: list[EffectTransition] = []
+            for membership, membership_effect in memberships:
+                blocked = _membership_folder_failure(
+                    ((membership, membership_effect),),
+                    folder_failures,
+                )
+                if blocked is None:
+                    executable_memberships.append((membership, membership_effect))
+                    continue
+                blocked_transitions.append(
+                    _failed_effect_transition(membership_effect, blocked)
+                )
                 failures.append(blocked)
+            if blocked_transitions:
+                self._receipts.transition_effects(
+                    approved.approval_id,
+                    tuple(blocked_transitions),
+                )
             note_operation_failed = False
             try:
                 if item.replace_content:
@@ -1147,8 +1187,8 @@ class NoteImportExecutor:
                         failure,
                         target_note_id=note_id,
                     )
-                elif blocked is None:
-                    for membership, membership_effect in memberships:
+                else:
+                    for membership, membership_effect in executable_memberships:
                         folder_id = folder_bindings.get(
                             _folder_path_digest(tuple(membership.folder_segments))
                         )
@@ -1164,11 +1204,11 @@ class NoteImportExecutor:
                             target_folder_id=folder_id,
                         )
                 failures.append(failure)
-            if blocked is None and not note_operation_failed:
+            if not note_operation_failed:
                 membership_failure = self._execute_memberships(
                     approved,
                     note_id=note_id,
-                    memberships=memberships,
+                    memberships=tuple(executable_memberships),
                     folder_bindings=folder_bindings,
                 )
                 if membership_failure is not None:
@@ -1278,12 +1318,9 @@ class NoteImportExecutor:
         self._receipts.transition_effects(
             approval_id,
             (
-                EffectTransition(
-                    category=effect.category,
-                    effect_id=effect.effect_id,
-                    state=ImportEffectState.FAILED,
-                    reason_code=failure.reason_code,
-                    retryable=failure.retryable,
+                _failed_effect_transition(
+                    effect,
+                    failure,
                     target_note_id=target_note_id,
                     target_folder_id=target_folder_id,
                 ),
@@ -1373,6 +1410,24 @@ def _membership_folder_failure(
             if failure is not None:
                 failures.append(failure)
     return _summarize_failures(failures) if failures else None
+
+
+def _failed_effect_transition(
+    effect: ImportEffectRecord,
+    failure: _ExecutionFailure,
+    *,
+    target_note_id: str | None = None,
+    target_folder_id: str | None = None,
+) -> EffectTransition:
+    return EffectTransition(
+        category=effect.category,
+        effect_id=effect.effect_id,
+        state=ImportEffectState.FAILED,
+        reason_code=failure.reason_code,
+        retryable=failure.retryable,
+        target_note_id=target_note_id,
+        target_folder_id=target_folder_id,
+    )
 
 
 def _summarize_failures(failures: list[_ExecutionFailure]) -> _ExecutionFailure:

@@ -1105,10 +1105,10 @@ def test_executor_update_can_add_membership_without_replacing_content(
     assert durable.items[0].observed_version == existing.version
 
 
-def test_executor_update_keeps_replace_effect_independent_from_folder_failure(
+def test_executor_update_keeps_content_and_unblocked_membership_independent(
     real_executor,
 ) -> None:
-    executor, target, receipts, _service, folders, _db = real_executor
+    executor, target, receipts, _service, folders, db = real_executor
     existing = target.create_note(
         note_id="existing-independent-update",
         payload=_payload(content="Original body", keywords=("old",)),
@@ -1121,7 +1121,10 @@ def test_executor_update_keeps_replace_effect_independent_from_folder_failure(
         item_id="independent-update",
         payloads=(replacement,),
         action=ImportAction.UPDATE_EXISTING,
-        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        memberships=(
+            ProposedFolderMembership(0, ("Imported Root",)),
+            ProposedFolderMembership(0, ("Good Root",)),
+        ),
         match=ImportMatch(
             kind=ImportMatchKind.EXACT,
             note_id=existing.note_id,
@@ -1134,7 +1137,7 @@ def test_executor_update_keeps_replace_effect_independent_from_folder_failure(
     receipt = executor.execute(
         _approved_execution_plan(
             item,
-            proposed_folder_paths=(("Imported Root",),),
+            proposed_folder_paths=(("Imported Root",), ("Good Root",)),
         )
     )
 
@@ -1145,6 +1148,14 @@ def test_executor_update_keeps_replace_effect_independent_from_folder_failure(
         set(replacement.keywords),
         existing.version + 1,
     )
+    good_root = folders.get_folder_by_path(("Good Root",))
+    assert good_root is not None
+    assert (
+        _active_membership_count(
+            db, folder_id=good_root.folder_id, note_id=existing.note_id
+        )
+        == 1
+    )
     assert (receipt.updated, receipt.failed, receipt.reason_code) == (
         0,
         1,
@@ -1152,7 +1163,16 @@ def test_executor_update_keeps_replace_effect_independent_from_folder_failure(
     )
     durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
     assert durable.payload_effects[0].state is ImportEffectState.APPLIED
-    assert durable.folder_effects[0].state is ImportEffectState.FAILED
+    assert [effect.state for effect in durable.folder_effects] == [
+        ImportEffectState.FAILED,
+        ImportEffectState.APPLIED,
+    ]
+    assert [effect.state for effect in durable.membership_effects] == [
+        ImportEffectState.FAILED,
+        ImportEffectState.APPLIED,
+    ]
+    assert durable.membership_effects[0].reason_code == "folder_conflict"
+    assert durable.membership_effects[0].retryable is False
     assert durable.items[0].outcome is ImportItemOutcome.FAILED
 
 
@@ -1291,14 +1311,21 @@ def test_executor_folder_conflict_fails_dependent_work_without_creating_note(
         item_id="folder-conflict",
         payloads=(_payload(),),
         action=ImportAction.CREATE_NEW,
-        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        memberships=(
+            ProposedFolderMembership(0, ("Imported Root", "Inherited Child")),
+            ProposedFolderMembership(0, ("Good Root",)),
+        ),
         add_membership=True,
     )
 
     receipt = executor.execute(
         _approved_execution_plan(
             item,
-            proposed_folder_paths=(("Imported Root",),),
+            proposed_folder_paths=(
+                ("Imported Root",),
+                ("Imported Root", "Inherited Child"),
+                ("Good Root",),
+            ),
         )
     )
 
@@ -1311,9 +1338,96 @@ def test_executor_folder_conflict_fails_dependent_work_without_creating_note(
     ) == (ImportSessionState.NEEDS_ATTENTION, 0, 1, 0, "folder_conflict")
     assert target.read_note(note_id=_expected_note_id(item.item_id, 0)) is None
     durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
-    assert durable.folder_effects[0].state is ImportEffectState.FAILED
-    assert durable.folder_effects[0].reason_code == "folder_conflict"
-    assert durable.payload_effects[0].state is ImportEffectState.PENDING
+    assert [effect.state for effect in durable.folder_effects] == [
+        ImportEffectState.FAILED,
+        ImportEffectState.APPLIED,
+        ImportEffectState.FAILED,
+    ]
+    assert [effect.reason_code for effect in durable.folder_effects] == [
+        "folder_conflict",
+        None,
+        "folder_conflict",
+    ]
+    assert durable.payload_effects[0].state is ImportEffectState.FAILED
+    assert durable.payload_effects[0].reason_code == "folder_conflict"
+    assert durable.payload_effects[0].retryable is False
+    assert [effect.state for effect in durable.membership_effects] == [
+        ImportEffectState.FAILED,
+        ImportEffectState.FAILED,
+    ]
+    assert [effect.reason_code for effect in durable.membership_effects] == [
+        "folder_conflict",
+        "folder_conflict",
+    ]
+    assert [effect.retryable for effect in durable.membership_effects] == [False, False]
+    assert durable.items[0].outcome is ImportItemOutcome.FAILED
+
+
+def test_executor_folder_blocked_create_payload_does_not_stop_unaffected_payload(
+    real_executor,
+) -> None:
+    executor, target, receipts, _service, folders, db = real_executor
+    folders.create_folder(
+        name="Blocked Root", parent_id=None, folder_id="different-blocked-root-id"
+    )
+    item = _execution_item(
+        item_id="mixed-folder-dependencies",
+        payloads=(
+            _payload(title="Blocked"),
+            _payload(title="Unaffected"),
+        ),
+        action=ImportAction.CREATE_NEW,
+        memberships=(
+            ProposedFolderMembership(0, ("Blocked Root",)),
+            ProposedFolderMembership(1, ("Good Root",)),
+        ),
+        add_membership=True,
+    )
+
+    receipt = executor.execute(
+        _approved_execution_plan(
+            item,
+            proposed_folder_paths=(("Blocked Root",), ("Good Root",)),
+        )
+    )
+
+    assert (
+        receipt.state,
+        receipt.completed,
+        receipt.imported,
+        receipt.failed,
+        receipt.retryable,
+        receipt.reason_code,
+    ) == (ImportSessionState.NEEDS_ATTENTION, 2, 1, 1, 0, "folder_conflict")
+    blocked_note_id = _expected_note_id(item.item_id, 0)
+    unaffected_note_id = _expected_note_id(item.item_id, 1)
+    assert target.read_note(note_id=blocked_note_id) is None
+    unaffected = target.read_note(note_id=unaffected_note_id)
+    assert unaffected is not None
+    assert unaffected.title == "Unaffected"
+    good_root = folders.get_folder_by_path(("Good Root",))
+    assert good_root is not None
+    assert (
+        _active_membership_count(
+            db, folder_id=good_root.folder_id, note_id=unaffected_note_id
+        )
+        == 1
+    )
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert [effect.state for effect in durable.folder_effects] == [
+        ImportEffectState.FAILED,
+        ImportEffectState.APPLIED,
+    ]
+    assert [effect.state for effect in durable.payload_effects] == [
+        ImportEffectState.FAILED,
+        ImportEffectState.APPLIED,
+    ]
+    assert [effect.state for effect in durable.membership_effects] == [
+        ImportEffectState.FAILED,
+        ImportEffectState.APPLIED,
+    ]
+    assert durable.payload_effects[0].reason_code == "folder_conflict"
+    assert durable.membership_effects[0].reason_code == "folder_conflict"
     assert durable.items[0].outcome is ImportItemOutcome.FAILED
 
 
@@ -1530,7 +1644,18 @@ def test_executor_summarizes_retryability_across_all_required_folder_failures(
         False,
         True,
     ]
-    assert durable.payload_effects[0].state is ImportEffectState.PENDING
+    assert durable.payload_effects[0].state is ImportEffectState.FAILED
+    assert durable.payload_effects[0].reason_code == "database_busy"
+    assert durable.payload_effects[0].retryable is True
+    assert [effect.state for effect in durable.membership_effects] == [
+        ImportEffectState.FAILED,
+        ImportEffectState.FAILED,
+    ]
+    assert [effect.reason_code for effect in durable.membership_effects] == [
+        "target_invalid",
+        "database_busy",
+    ]
+    assert [effect.retryable for effect in durable.membership_effects] == [False, True]
 
 
 def test_target_membership_attach_is_idempotent_and_requires_active_targets(
