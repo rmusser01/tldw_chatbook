@@ -1173,9 +1173,9 @@ def test_refresh_command_writes_exact_bytes_to_explicit_output_without_site_pack
     manifest_path = _write_manifest(tmp_path, payload)
     output_path = tmp_path / "nested" / "refreshed-manifest.json"
     output_path.parent.mkdir()
-    expected_bytes = (
-        json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
+    expected_bytes = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
 
     result = subprocess.run(
         [
