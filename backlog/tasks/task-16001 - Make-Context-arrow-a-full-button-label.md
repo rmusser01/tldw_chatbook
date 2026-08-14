@@ -29,3 +29,19 @@ Make the collapsed Console Context affordance read as one obvious, full-width cl
 <!-- SECTION:DESIGN:BEGIN -->
 Approved design: `Docs/superpowers/specs/2026-08-13-task-16001-context-arrow-button-design.md`.
 <!-- SECTION:DESIGN:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add RED pure, mounted, compact arrow-end interaction, saved-style, settings, core-loop, and three-viewport compositor regressions for the exact `Context--->` button while preserving vertical, noncanonical, Inspector, width, tooltip, and shared-handle contracts.
+2. Translate only the canonical horizontal Context label in `ConsoleRailHandle._display_label()` and clear Textual's default line padding inline only on the existing horizontal left Button so the eleven-cell literal fits the unchanged eleven-cell content region.
+3. Mutation-check the last-cell click, run only directly modified/related tests plus focused Ruff, formatter, duplicate-ID, and diff checks, then self-review and close the task with fresh evidence.
+
+ADR required: no.
+
+ADR path: N/A.
+
+Reason: this is a reversible presentation refinement inside the existing Console-specific rail display seam and changes no architecture, persistence, dependency, security policy, public interface, or ownership boundary.
+
+Detailed plan: `Docs/superpowers/plans/2026-08-13-task-16001-context-arrow-button.md`.
+<!-- SECTION:PLAN:END -->
