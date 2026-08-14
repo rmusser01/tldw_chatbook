@@ -25,12 +25,38 @@ def _temporary_config(tmp_path, monkeypatch, toml_text):
         config_module._SETTINGS_CACHE_SOURCE = original_settings_cache_source
 
 
-def test_zai_provider_and_settings_defaults_exist():
+def test_kimi_zai_provider_and_settings_defaults_are_current():
     parsed = tomllib.loads(CONFIG_TOML_CONTENT)
-    assert isinstance(parsed["providers"].get("ZAI"), list)
+    assert parsed["providers"]["Moonshot"][0] == "kimi-k3"
+    assert parsed["providers"]["ZAI"][0] == "glm-5.2"
+
+    moonshot_settings = parsed["api_settings"]["moonshot"]
+    assert moonshot_settings == {
+        "api_key_env_var": "MOONSHOT_API_KEY",
+        "model": "kimi-k3",
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 4096,
+        "api_region": "international",
+        "api_base_url": "https://api.moonshot.ai/v1",
+        "timeout": 90,
+        "retries": 3,
+        "retry_delay": 1.0,
+        "streaming": True,
+    }
     zai_settings = parsed["api_settings"]["zai"]
-    assert zai_settings["api_key_env_var"] == "ZAI_API_KEY"
-    assert zai_settings["api_base_url"] == "https://api.z.ai/api/paas/v4"
+    assert zai_settings == {
+        "api_key_env_var": "ZAI_API_KEY",
+        "model": "glm-5.2",
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 4096,
+        "api_base_url": "https://api.z.ai/api/paas/v4",
+        "timeout": 90,
+        "retries": 3,
+        "retry_delay": 5,
+        "streaming": True,
+    }
 
 
 def test_model_catalog_defaults_exist():
@@ -104,3 +130,18 @@ def test_load_settings_preserves_explicit_legacy_api_models(tmp_path, monkeypatc
         assert settings["anthropic_api"]["model"] == explicit_models["anthropic_model"]
         assert settings["deepseek_api"]["model"] == explicit_models["deepseek_model"]
         assert settings["openai_api"]["model"] == explicit_models["openai_model"]
+
+
+def test_load_settings_preserves_explicit_historical_kimi_glm_models(
+    tmp_path, monkeypatch
+):
+    config_text = """
+[api_settings.moonshot]
+model = "moonshot-v1-128k"
+
+[api_settings.zai]
+model = "glm-4.5"
+"""
+    with _temporary_config(tmp_path, monkeypatch, config_text) as settings:
+        assert settings["api_settings"]["moonshot"]["model"] == "moonshot-v1-128k"
+        assert settings["api_settings"]["zai"]["model"] == "glm-4.5"

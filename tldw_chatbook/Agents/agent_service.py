@@ -803,6 +803,7 @@ class AgentService:
         log_active: bool = False,
         continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
         continuation_owner_key: str | None = None,
+        continuation_owner_message_id: str | None = None,
     ):
         native = config.native_tools and provider_supports_native_tools(api_endpoint)
         # TASK-1272 (Phase 3): the ONLY gate on whether eviction may run at
@@ -833,7 +834,11 @@ class AgentService:
         protocol_key: tuple | None = None
         protocol_text = ""
 
-        def call_model(messages: list[dict], active_schemas: tuple) -> ModelTurn:
+        def call_model(
+            messages: list[dict],
+            active_schemas: tuple,
+            current_continuation: ProviderContinuationCheckpoint | None = None,
+        ) -> ModelTurn:
             nonlocal protocol_key, protocol_text
             schemas = runtime_schemas + list(active_schemas)
             system_content = config.system_prompt
@@ -857,9 +862,39 @@ class AgentService:
             # `run_agent_loop`'s own `messages` -- that list is untouched,
             # see `bound_history_for_send`'s docstring. A no-op (returns
             # `raw_payload` unchanged) whenever `evict_enabled` is False.
-            raw_payload = [{"role": "system", "content": system_content}] + messages
+            effective_groups = continuation_groups
+            payload_messages = [dict(message) for message in messages]
+            if current_continuation is not None:
+                if not continuation_owner_key or not continuation_owner_message_id:
+                    raise ValueError("Active provider continuation requires an owner.")
+                current_group = ContinuationOwnerGroup(
+                    owner_message_id=continuation_owner_message_id,
+                    checkpoint=current_continuation,
+                    rounds=current_continuation.rounds,
+                )
+                effective_groups = tuple(
+                    group
+                    for group in continuation_groups
+                    if group.owner_message_id != continuation_owner_message_id
+                ) + (current_group,)
+                expected_call_ids = tuple(
+                    call.call_id for call in current_continuation.rounds[-1].calls
+                )
+                for message in reversed(payload_messages):
+                    raw_calls = message.get("tool_calls")
+                    call_ids = tuple(
+                        call.get("id")
+                        for call in raw_calls
+                        if isinstance(call, Mapping)
+                    ) if isinstance(raw_calls, list) else ()
+                    if message.get("role") == "assistant" and call_ids == expected_call_ids:
+                        message[continuation_owner_key] = continuation_owner_message_id
+                        break
+            raw_payload = [
+                {"role": "system", "content": system_content}
+            ] + payload_messages
             gateway_prepares_continuation = bool(
-                continuation_groups and self.prepare_provider_continuation_request
+                effective_groups and self.prepare_provider_continuation_request
             )
             payload = bound_history_for_send(
                 raw_payload,
@@ -869,7 +904,7 @@ class AgentService:
                 enabled=evict_enabled,
                 min_recent_rounds=min_recent_rounds,
                 continuation_groups=(
-                    () if gateway_prepares_continuation else continuation_groups
+                    () if gateway_prepares_continuation else effective_groups
                 ),
                 continuation_owner_key=continuation_owner_key or "id",
             )
@@ -885,6 +920,8 @@ class AgentService:
                     }
                     for message in payload
                 ]
+            if gateway_prepares_continuation:
+                call_kwargs["continuation_groups"] = effective_groups
             resp = self.chat_call(
                 api_endpoint=api_endpoint,
                 messages_payload=payload,
@@ -894,6 +931,11 @@ class AgentService:
             )
             text = _response_text(resp)
             tokens = _usage_total_tokens(resp)
+            provider_continuation = getattr(resp, "provider_continuation", None)
+            if provider_continuation is not None and not isinstance(
+                provider_continuation, ProviderContinuationCheckpoint
+            ):
+                raise ValueError("Provider continuation metadata is malformed.")
             if tokens is None:
                 # Provider reported no usage -> estimate from sent payload +
                 # response text (native tool_calls JSON is not separately
@@ -910,7 +952,11 @@ class AgentService:
                     payload, est_model, provider=api_endpoint
                 ) + estimate_tokens(text, est_model, provider=api_endpoint)
             if not native:
-                return ModelTurn(text=text, tokens=tokens)
+                return ModelTurn(
+                    text=text,
+                    tokens=tokens,
+                    provider_continuation=provider_continuation,
+                )
             message = _response_message(resp)
             # Id-less entries get synthesized ids BEFORE parsing, and the
             # SAME normalized list feeds the assistant echo — the echo and
@@ -927,11 +973,20 @@ class AgentService:
                     "content": text,
                     "tool_calls": raw_calls,
                 }
+                if (
+                    provider_continuation is not None
+                    and continuation_owner_key
+                    and continuation_owner_message_id
+                ):
+                    assistant_message[continuation_owner_key] = (
+                        continuation_owner_message_id
+                    )
             return ModelTurn(
                 text=text,
                 tool_calls=tool_calls,
                 assistant_message=assistant_message,
                 tokens=tokens,
+                provider_continuation=provider_continuation,
             )
 
         return call_model
@@ -2774,15 +2829,18 @@ class AgentService:
                 call_id=str(payload.get("call_id", "")),
             )
 
+        call_model = self._make_call_model(
+            config,
+            api_endpoint,
+            runtime_schemas,
+            log_active,
+            continuation_groups,
+            continuation_owner_key,
+            continuation_owner_message_id,
+        )
         deps = LoopDeps(
-            call_model=self._make_call_model(
-                config,
-                api_endpoint,
-                runtime_schemas,
-                log_active,
-                continuation_groups,
-                continuation_owner_key,
-            ),
+            call_model=call_model,
+            call_model_with_continuation=call_model,
             invoke_tool=invoke_tool,
             spawn=spawn,
             find_tools=find_tools,

@@ -240,6 +240,62 @@ does not print the key, prompt, or response. Override the defaults only when
 your account requires it with `TLDW_LIVE_QWENCLOUD_MODEL` or
 `TLDW_LIVE_QWENCLOUD_API_BASE_URL`.
 
+#### Moonshot Kimi and Z.ai GLM in Console
+
+**Moonshot** and **Z.ai** use their stable provider identities and the ordinary
+streaming Console path. They support Chat Completions only—there is no Responses
+mode or provider conversation ID. Fresh defaults are `kimi-k3` at
+`https://api.moonshot.ai/v1` and `glm-5.2` at
+`https://api.z.ai/api/paas/v4`; saved historical models remain usable.
+Moonshot's China endpoint and intentional compatible custom endpoints are
+configured in **F9 ▸ Providers & Models**.
+
+- Existing Chatbook function tools use the same approval, cancellation,
+  execution, budget, and durable recovery loop for both providers. Moonshot
+  and Z.ai hosted search, retrieval, code, memory, and other built-in tools are
+  not exposed.
+- Kimi K3 uses always-on Preserved Thinking. Its retained assistant reasoning
+  is private but is replayed when K3 requires it. Other Kimi models follow only
+  their curated policy. GLM keeps reasoning for an active or restored function
+  tool run with `clear_thinking=false`; ordinary GLM chat clears prior thinking.
+- Private continuation data is assistant/variant-owned, bounded, and omitted
+  from the visible transcript, logs, summaries, ordinary exports, and usage
+  details. It still counts against the context window and is evicted atomically
+  with its visible owner.
+- Terminal usage reaches Console when the provider returns it. If a selected
+  model has no verified rate, **pricing unknown** means cost was not estimated;
+  it never means free.
+- Model discovery reuses the chat endpoint and credential. Moonshot discovery
+  is authenticated; Z.ai is best-effort, so a failed catalog refresh keeps the
+  configured/cached models and does not block generation.
+
+If a tool run is interrupted, opening the conversation does not execute
+anything. Use **Resume** only after checking the pending calls and approving
+them again; Console pins the original provider, model, Chat-Completions
+protocol, and normalized base while resolving the current credential. Use
+**Take over** to continue visibly without replaying the provider checkpoint, or
+**Discard** to clear it. Executing calls remain ambiguous and are blocked;
+completed and failed calls are not run again. Invalid endpoint/config errors
+must be repaired and saved in Settings before retrying.
+
+Optional live verification is paid and skipped by default. Export the relevant
+API key before running either command. Each command starts
+a fresh isolated profile, suppresses child output/logging, and proves one real
+Calculator result changes the final answer. It requires both the exact opt-in
+flag and a nonblank key:
+
+```bash
+TLDW_LIVE_MOONSHOT=1 .venv/bin/python -m pytest -q \
+  Tests/Chat/test_live_moonshot_zai_api.py -k moonshot
+
+TLDW_LIVE_ZAI=1 .venv/bin/python -m pytest -q \
+  Tests/Chat/test_live_moonshot_zai_api.py -k zai
+```
+
+Use `TLDW_LIVE_MOONSHOT_MODEL` / `TLDW_LIVE_MOONSHOT_API_BASE_URL` or
+`TLDW_LIVE_ZAI_MODEL` / `TLDW_LIVE_ZAI_API_BASE_URL` only when your account
+requires an override. The default test suite makes no paid request.
+
 ### Leaving Console during a run
 
 Agent runs are screen-scoped: navigating to any other screen cancels every

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import codecs
 import hashlib
 import json
 import math
@@ -15,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Never, cast
 import requests
 
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
+from tldw_chatbook.LLM_Calls.hosted_chat_streaming import SSERecordDecoder
 
 if TYPE_CHECKING:
     from tldw_chatbook.LLM_Calls.qwencloud import QwenCloudAPIMode
@@ -1026,66 +1026,6 @@ class QwenCloudStream(Iterator[dict[str, Any]]):
         return decoded
 
 
-def _iter_utf8_lines(chunks: Iterable[bytes]) -> Iterator[tuple[str, bool]]:
-    """Decode byte chunks with linear segment accumulation and newline framing."""
-    decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
-
-    def decoded_segments() -> Iterator[str]:
-        for chunk in chunks:
-            if not isinstance(chunk, bytes):
-                raise TypeError("QwenCloud SSE chunks must be bytes.")
-            decoded = decoder.decode(chunk, final=False)
-            if decoded:
-                yield decoded
-        final = decoder.decode(b"", final=True)
-        if final:
-            yield final
-
-    segments: list[str] = []
-    line_chars = 0
-    skip_leading_lf = False
-    for decoded in decoded_segments():
-        cursor = 0
-        if skip_leading_lf:
-            if decoded.startswith("\n"):
-                cursor = 1
-            skip_leading_lf = False
-        segment_start = cursor
-        while cursor < len(decoded):
-            character = decoded[cursor]
-            if character not in {"\r", "\n"}:
-                cursor += 1
-                continue
-            segment = decoded[segment_start:cursor]
-            if segment:
-                line_chars += len(segment)
-                if line_chars > _MAX_SSE_LINE_CHARS:
-                    raise ValueError("QwenCloud SSE line limit was exceeded.")
-                if len(segments) >= _MAX_SSE_LINE_SEGMENTS:
-                    raise ValueError("QwenCloud SSE line segment limit was exceeded.")
-                segments.append(segment)
-            yield "".join(segments), True
-            segments.clear()
-            line_chars = 0
-            cursor += 1
-            if character == "\r":
-                if cursor < len(decoded) and decoded[cursor] == "\n":
-                    cursor += 1
-                elif cursor == len(decoded):
-                    skip_leading_lf = True
-            segment_start = cursor
-        segment = decoded[segment_start:]
-        if segment:
-            line_chars += len(segment)
-            if line_chars > _MAX_SSE_LINE_CHARS:
-                raise ValueError("QwenCloud SSE line limit was exceeded.")
-            if len(segments) >= _MAX_SSE_LINE_SEGMENTS:
-                raise ValueError("QwenCloud SSE line segment limit was exceeded.")
-            segments.append(segment)
-    if segments:
-        yield "".join(segments), False
-
-
 def iter_sse_data_records(chunks: Iterable[bytes]) -> Iterator[str]:
     """Yield complete SSE data records from arbitrary response byte chunks.
 
@@ -1104,35 +1044,15 @@ def iter_sse_data_records(chunks: Iterable[bytes]) -> Iterator[str]:
         TypeError: If a chunk is not bytes.
         ValueError: If EOF interrupts a data record before its blank terminator.
     """
-    data_lines: list[str] = []
-    record_chars = 0
-    for line, terminated in _iter_utf8_lines(chunks):
-        if not terminated:
-            if line.startswith("data:") or line == "data" or data_lines:
-                raise ValueError("QwenCloud SSE data record is incomplete.")
-            continue
-        if line == "":
-            if data_lines:
-                yield "\n".join(data_lines)
-                data_lines.clear()
-                record_chars = 0
-            continue
-        if line.startswith(":"):
-            continue
-        field, separator, value = line.partition(":")
-        if field != "data":
-            continue
-        if not separator:
-            value = ""
-        elif value.startswith(" "):
-            value = value[1:]
-        added_chars = len(value) + (1 if data_lines else 0)
-        if record_chars + added_chars > _MAX_SSE_RECORD_CHARS:
-            raise ValueError("QwenCloud SSE record limit was exceeded.")
-        if len(data_lines) >= _MAX_SSE_DATA_LINES:
-            raise ValueError("QwenCloud SSE data line limit was exceeded.")
-        record_chars += added_chars
-        data_lines.append(value)
-
-    if data_lines:
-        raise ValueError("QwenCloud SSE data record is incomplete.")
+    decoder = SSERecordDecoder(
+        max_bytes=None,
+        max_line_chars=_MAX_SSE_LINE_CHARS,
+        max_record_chars=_MAX_SSE_RECORD_CHARS,
+        max_line_segments=_MAX_SSE_LINE_SEGMENTS,
+        max_data_lines=_MAX_SSE_DATA_LINES,
+    )
+    for chunk in chunks:
+        for record in decoder.feed(chunk):
+            yield record.data
+    for record in decoder.finish():
+        yield record.data

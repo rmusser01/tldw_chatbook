@@ -8,6 +8,7 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError
 from tldw_chatbook.Chat.console_provider_endpoints import (
     effective_provider_endpoint,
     first_configured_endpoint,
@@ -53,6 +54,8 @@ from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import
     fingerprint_endpoint,
     supports_openai_compatible_model_discovery,
 )
+from tldw_chatbook.LLM_Calls.moonshot import resolve_moonshot_request
+from tldw_chatbook.LLM_Calls.zai import resolve_zai_request
 from tldw_chatbook.Utils.input_validation import validate_url
 
 from ..config import (
@@ -67,6 +70,7 @@ from ..config import (
 
 DiscoveryClient = Callable[..., Awaitable[ModelDiscoveryResult]]
 SettingsLoader = Callable[[], Mapping[str, Any]]
+_STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"})
 
 
 class LocalLLMProviderCatalogService:
@@ -188,7 +192,7 @@ class LocalLLMProviderCatalogService:
         settings: Mapping[str, Any] | None,
         provider_key: str,
     ) -> Mapping[str, Any]:
-        if provider_key == "qwencloud":
+        if provider_key in {"qwencloud", *_STRICT_HOSTED_PROVIDER_KEYS}:
             api_settings = (
                 settings.get("api_settings", {})
                 if isinstance(settings, Mapping)
@@ -220,6 +224,55 @@ class LocalLLMProviderCatalogService:
         cls, provider_settings: Mapping[str, Any]
     ) -> str | None:
         return first_configured_endpoint(provider_settings)
+
+    @staticmethod
+    def _combined_hosted_settings(
+        saved_settings: Mapping[str, Any],
+        staged_settings: Mapping[str, Any] | None,
+        provider_key: str,
+    ) -> Mapping[str, Any]:
+        combined = dict(saved_settings)
+        saved_api = saved_settings.get("api_settings", {})
+        merged_api = dict(saved_api) if isinstance(saved_api, Mapping) else saved_api
+        staged_api = (
+            staged_settings.get("api_settings", {})
+            if isinstance(staged_settings, Mapping)
+            else {}
+        )
+        if isinstance(merged_api, dict) and isinstance(staged_api, Mapping):
+            for key, value in staged_api.items():
+                if (
+                    key == provider_key
+                    and isinstance(value, Mapping)
+                    and isinstance(merged_api.get(key), Mapping)
+                ):
+                    merged_api[key] = {**merged_api[key], **value}
+                else:
+                    merged_api[key] = value
+        combined["api_settings"] = merged_api
+        return combined
+
+    def _resolve_hosted_provider(
+        self,
+        *,
+        provider_key: str,
+        saved_settings: Mapping[str, Any],
+        staged_settings: Mapping[str, Any] | None,
+    ) -> tuple[str, str]:
+        config = self._combined_hosted_settings(
+            saved_settings, staged_settings, provider_key
+        )
+        if provider_key == "moonshot":
+            resolution = resolve_moonshot_request(
+                app_config=config,
+                environ=self.environ,
+            )
+        else:
+            resolution = resolve_zai_request(
+                app_config=config,
+                environ=self.environ,
+            )
+        return resolution.base_url, resolution.api_key
 
     def _resolve_endpoint(
         self,
@@ -295,11 +348,22 @@ class LocalLLMProviderCatalogService:
         provider_key: str,
         staged_settings: Mapping[str, Any] | None = None,
     ) -> str | None:
-        endpoint = self._resolve_endpoint(
-            provider_key=provider_key,
-            saved_settings=self._settings(),
-            staged_settings=staged_settings,
-        )
+        saved_settings = self._settings()
+        if provider_key in _STRICT_HOSTED_PROVIDER_KEYS:
+            try:
+                endpoint, _api_key = self._resolve_hosted_provider(
+                    provider_key=provider_key,
+                    saved_settings=saved_settings,
+                    staged_settings=staged_settings,
+                )
+            except ChatConfigurationError:
+                return None
+        else:
+            endpoint = self._resolve_endpoint(
+                provider_key=provider_key,
+                saved_settings=saved_settings,
+                staged_settings=staged_settings,
+            )
         return fingerprint_endpoint(endpoint) if endpoint else None
 
     def get_health(self) -> dict[str, Any]:
@@ -448,11 +512,34 @@ class LocalLLMProviderCatalogService:
                 ),
             )
 
-        endpoint = self._resolve_endpoint(
-            provider_key=provider_key,
-            saved_settings=saved_settings,
-            staged_settings=staged_settings,
-        )
+        api_key: str | None = None
+        if provider_key in _STRICT_HOSTED_PROVIDER_KEYS:
+            try:
+                endpoint, api_key = self._resolve_hosted_provider(
+                    provider_key=provider_key,
+                    saved_settings=saved_settings,
+                    staged_settings=staged_settings,
+                )
+            except ChatConfigurationError:
+                return ModelDiscoveryResult(
+                    provider=provider,
+                    provider_list_key=provider_resolution.provider_list_key,
+                    endpoint_fingerprint=None,
+                    status="error",
+                    error=ModelDiscoveryError(
+                        kind="invalid_provider_settings",
+                        message="Provider settings are invalid for model discovery.",
+                        recovery_hint=(
+                            f"Repair api_settings.{provider_key} before discovering models."
+                        ),
+                    ),
+                )
+        else:
+            endpoint = self._resolve_endpoint(
+                provider_key=provider_key,
+                saved_settings=saved_settings,
+                staged_settings=staged_settings,
+            )
         if endpoint is None:
             return ModelDiscoveryResult(
                 provider=provider,
@@ -481,12 +568,13 @@ class LocalLLMProviderCatalogService:
                 ),
             )
 
-        api_key = self._resolve_api_key(
-            provider=provider,
-            provider_key=provider_key,
-            saved_settings=saved_settings,
-            staged_settings=staged_settings,
-        )
+        if api_key is None:
+            api_key = self._resolve_api_key(
+                provider=provider,
+                provider_key=provider_key,
+                saved_settings=saved_settings,
+                staged_settings=staged_settings,
+            )
         provider_list_key = provider_resolution.provider_list_key or provider
         result = await self.discovery_client(
             provider=provider,

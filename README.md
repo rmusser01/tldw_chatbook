@@ -636,6 +636,8 @@ API keys can also be set via environment variables:
 - `ANTHROPIC_API_KEY`
 - `COHERE_API_KEY`
 - `DASHSCOPE_API_KEY` (QwenCloud)
+- `MOONSHOT_API_KEY` (Moonshot / Kimi)
+- `ZAI_API_KEY` (Z.ai / GLM)
 - etc.
 
 ### QwenCloud
@@ -667,6 +669,26 @@ cached catalog, and model/mode compatibility is reported by the service rather
 than guessed from a model name. See [Settings](Docs/User_Guide/settings.md#qwencloud)
 and [Console](Docs/User_Guide/console.md#qwencloud-in-console) for parameter,
 endpoint, recovery, and optional live-test details.
+
+### Moonshot Kimi and Z.ai GLM
+
+Moonshot and Z.ai are first-class, Chat-Completions-only Console providers.
+Fresh configuration defaults to `kimi-k3` with `MOONSHOT_API_KEY` and
+`glm-5.2` with `ZAI_API_KEY`; explicit historical model selections remain
+unchanged. The defaults use `https://api.moonshot.ai/v1` and
+`https://api.z.ai/api/paas/v4`. Moonshot also supports its China base and both
+providers accept a validated custom compatible base.
+
+Both providers stream text, terminal usage, and existing Chatbook function
+tools through the normal approval and recovery path. Provider-hosted search,
+retrieval, code, and other built-in tools are excluded. Required Kimi/GLM
+reasoning is stored only in bounded private continuation checkpoints, counts
+against context limits, and never appears in the transcript. Model discovery
+uses the shared bounded cache; when no verified price is known, Console reports
+**pricing unknown** rather than treating the request as free. See
+[Settings](Docs/User_Guide/settings.md#moonshot-kimi-and-zai-glm) and
+[Console](Docs/User_Guide/console.md#moonshot-kimi-and-zai-glm-in-console) for
+exact controls, endpoints, recovery, and optional paid verification.
 
 ### Database Files
 Located at `~/.local/share/tldw_cli/`:

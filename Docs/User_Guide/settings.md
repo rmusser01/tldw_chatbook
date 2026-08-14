@@ -198,6 +198,57 @@ Recovery is fail-closed:
   `[api_settings.qwencloud]` table, set a valid `api_mode`, then **Validate Raw
   TOML**, **Save Raw TOML**, and **Reload Config** under Diagnostics.
 
+#### Moonshot Kimi and Z.ai GLM
+
+Choose **Moonshot** or **ZAI** without changing their saved provider identity.
+They use Chat Completions only, so neither provider shows an **API mode**
+selector.
+
+| Provider | Fresh default | Credential | General endpoint | Reasoning for the default model |
+|---|---|---|---|---|
+| Moonshot / Kimi | `kimi-k3` | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` | exactly `low`, `high`, or `max` |
+| Z.ai / GLM | `glm-5.2` | `ZAI_API_KEY` | `https://api.z.ai/api/paas/v4` | exactly `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
+
+Moonshot can instead use the China base `https://api.moonshot.cn/v1` or a
+validated custom compatible base. Z.ai's coding-only
+`https://api.z.ai/api/coding/paas/v4` endpoint is not the general Chat default;
+save the general endpoint or an intentional custom compatible gateway here.
+Explicit historical IDs such as `moonshot-v1-128k` and `glm-4.5` remain
+selected and editable. Settings does not guess their capabilities: its help
+asks you to verify reasoning support instead of silently replacing the model.
+
+The provider/model profile owns the visible reasoning selector. Kimi K3 does
+not receive legacy sampler fields; its request uses the documented common
+output/stop/format/function-tool subset. Historical Moonshot families retain
+their curated sampler surface. GLM 5.2 accepts its documented sampler and
+reasoning fields. For function tools, Moonshot accepts an unset choice,
+`auto`, `none`, `required`, or an exact configured function selection; Z.ai
+accepts only an unset choice or `auto`. Unsupported choices and values block
+before network I/O.
+
+Kimi K3 Preserved Thinking is always on. Required Kimi reasoning and active or
+restored GLM function-tool reasoning are kept in bounded assistant-owned
+private continuation checkpoints. They are excluded from visible transcripts,
+logs, summaries, ordinary text/Markdown exports, and usage records, but their
+tokens still consume the shared context budget. Private-aware JSON/Chatbook
+exports show a warning. Ordinary GLM chat clears prior thinking; no separate
+Z.ai thinking selector is exposed.
+
+**Discover models** uses authenticated `GET {base}/models` for Moonshot and a
+best-effort request for Z.ai. Both reuse the exact normalized base and current
+credential that chat would use. Failures keep configured/cached IDs, never
+block an otherwise ready Z.ai chat, and never infer reasoning/tool support from
+a discovered name. The selector stays capped at 50 while the model picker can
+search the full cached list; the disk cache contains IDs and timestamps only.
+Usage is recorded when returned. **Pricing unknown** means Chatbook has no
+verified rate for that model, not that the call is free.
+
+If Test Provider reports invalid settings, keep exactly one canonical
+`[api_settings.moonshot]` or `[api_settings.zai]` table, remove normalized
+duplicates, enter a nonblank model and an absolute HTTP(S) base without
+credentials in the URL, then correct timeout/retry/streaming types in
+**Advanced Config**. Test the draft again before saving.
+
 ### Core — Speech & TTS
 
 Application-wide speech and text-to-speech defaults — which TTS provider

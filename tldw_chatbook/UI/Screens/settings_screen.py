@@ -312,7 +312,7 @@ PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_streaming": "streaming",
 }
 REASONING_EFFORT_OPTIONS = frozenset(
-    {"", "none", "minimal", "low", "medium", "high", "xhigh"}
+    {"", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
 REASONING_SUMMARY_OPTIONS = frozenset({"", "auto", "concise", "detailed", "none"})
 VERBOSITY_OPTIONS = frozenset({"", "low", "medium", "high"})
@@ -323,6 +323,16 @@ THINKING_EFFORT_OPTIONS = frozenset(
 # ordered option lists (blank = inherit/not set), so invalid values are
 # impossible by construction instead of rejected at save.
 REASONING_EFFORT_SELECT_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
+KIMI_K3_REASONING_EFFORT_SELECT_OPTIONS = ("low", "high", "max")
+GLM_5_2_REASONING_EFFORT_SELECT_OPTIONS = (
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+)
 REASONING_SUMMARY_SELECT_OPTIONS = ("auto", "concise", "detailed", "none")
 VERBOSITY_SELECT_OPTIONS = ("low", "medium", "high")
 THINKING_EFFORT_SELECT_OPTIONS = ("off", "low", "medium", "high", "xhigh", "max")
@@ -347,10 +357,10 @@ MODEL_PROFILE_SELECT_FIELD_KEYS = frozenset(
     }
 )
 OPENAI_REASONING_PROVIDER_KEYS = frozenset({"openai"})
+REASONING_EFFORT_PROVIDER_KEYS = frozenset({"openai", "moonshot", "zai"})
 ANTHROPIC_THINKING_PROVIDER_KEYS = frozenset({"anthropic"})
 OPENAI_REASONING_PROFILE_FIELD_KEYS = frozenset(
     {
-        "model_profile_reasoning_effort",
         "model_profile_reasoning_summary",
         "model_profile_verbosity",
     }
@@ -565,11 +575,13 @@ PROVIDER_ENDPOINT_PLACEHOLDERS = {
     "local_vllm": "http://127.0.0.1:8000/v1",
     "mistral": "https://api.mistral.ai/v1",
     "mistralai": "https://api.mistral.ai/v1",
+    "moonshot": "https://api.moonshot.ai/v1",
     "ollama": "http://127.0.0.1:11434",
     "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "oobabooga": "http://127.0.0.1:5000/v1",
     "vllm": "http://127.0.0.1:8000/v1",
+    "zai": "https://api.z.ai/api/paas/v4",
 }
 PROVIDER_CREDENTIAL_ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 QWENCLOUD_API_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
@@ -3886,9 +3898,15 @@ class SettingsScreen(BaseAppScreen):
     ) -> Select:
         """Build the staged closed-enum Select for a model-profile field."""
         supported = self._model_profile_field_supported(provider, draft_key)
-        allowed = CLOSED_ENUM_SELECT_OPTIONS[
-            PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
-        ]
+        allowed = (
+            self._model_profile_reasoning_effort_options(
+                provider, values.get("model")
+            )
+            if draft_key == "model_profile_reasoning_effort"
+            else CLOSED_ENUM_SELECT_OPTIONS[
+                PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
+            ]
+        )
         return Select(
             [(value, value) for value in allowed],
             value=(
@@ -8290,12 +8308,33 @@ class SettingsScreen(BaseAppScreen):
         )
 
     @staticmethod
+    def _provider_supports_reasoning_effort(provider: object) -> bool:
+        return (
+            provider_config_key(str(provider or ""))
+            in REASONING_EFFORT_PROVIDER_KEYS
+        )
+
+    @staticmethod
+    def _model_profile_reasoning_effort_options(
+        provider: object, model: object
+    ) -> tuple[str, ...]:
+        provider_key = provider_config_key(str(provider or ""))
+        model_key = str(model or "").strip().lower()
+        if provider_key == "moonshot" and model_key == "kimi-k3":
+            return KIMI_K3_REASONING_EFFORT_SELECT_OPTIONS
+        if provider_key == "zai" and model_key == "glm-5.2":
+            return GLM_5_2_REASONING_EFFORT_SELECT_OPTIONS
+        return REASONING_EFFORT_SELECT_OPTIONS
+
+    @staticmethod
     def _provider_supports_anthropic_thinking(provider: object) -> bool:
         return (
             provider_config_key(str(provider or "")) in ANTHROPIC_THINKING_PROVIDER_KEYS
         )
 
     def _model_profile_field_supported(self, provider: object, draft_key: str) -> bool:
+        if draft_key == "model_profile_reasoning_effort":
+            return self._provider_supports_reasoning_effort(provider)
         if draft_key in OPENAI_REASONING_PROFILE_FIELD_KEYS:
             return self._provider_supports_openai_reasoning(provider)
         if draft_key in ANTHROPIC_THINKING_PROFILE_FIELD_KEYS:
@@ -8338,7 +8377,7 @@ class SettingsScreen(BaseAppScreen):
         if not provider_label:
             provider_label = "this provider"
         unavailable: list[str] = []
-        if not self._provider_supports_openai_reasoning(provider):
+        if not self._provider_supports_reasoning_effort(provider):
             unavailable.append("Reasoning")
         if not self._provider_supports_anthropic_thinking(provider):
             unavailable.append("Thinking")
@@ -9041,12 +9080,23 @@ class SettingsScreen(BaseAppScreen):
                                 else Select.NULL
                             )
                         else:
+                            allowed = (
+                                self._model_profile_reasoning_effort_options(
+                                    provider, model
+                                )
+                                if draft_key == "model_profile_reasoning_effort"
+                                else CLOSED_ENUM_SELECT_OPTIONS[
+                                    PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
+                                ]
+                            )
+                            if draft_key == "model_profile_reasoning_effort":
+                                select.set_options(
+                                    [(option, option) for option in allowed]
+                                )
                             select.value = (
                                 self._select_option_value(
                                     value,
-                                    CLOSED_ENUM_SELECT_OPTIONS[
-                                        PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
-                                    ],
+                                    allowed,
                                 )
                                 if supported
                                 else Select.NULL
@@ -9148,6 +9198,35 @@ class SettingsScreen(BaseAppScreen):
         if provider_key in API_URL_PROVIDER_KEYS:
             return "https://host:port/v1"
         return "Optional provider endpoint override"
+
+    @staticmethod
+    def _hosted_provider_guidance(provider: object, model: object) -> str:
+        provider_key = provider_config_key(str(provider or ""))
+        model_key = str(model or "").strip().lower()
+        if provider_key == "moonshot":
+            if model_key == "kimi-k3":
+                return (
+                    "Moonshot Kimi K3: choose the international, China, or custom "
+                    "endpoint. Preserved Thinking is always on; retained reasoning "
+                    "and tool state is private and consumes context."
+                )
+            return (
+                "Moonshot: choose the international, China, or custom endpoint. "
+                "Verify reasoning support for this historical or unknown model; "
+                "private continuation state may consume context."
+            )
+        if provider_key == "zai":
+            qualifier = (
+                "GLM 5.2 supports the reasoning choices shown."
+                if model_key == "glm-5.2"
+                else "Verify reasoning support for this historical or unknown model."
+            )
+            return (
+                "Z.ai: use the general API endpoint; the coding-only endpoint is not "
+                f"supported here. {qualifier} Restored function-tool reasoning is "
+                "private and consumes context."
+            )
+        return ""
 
     def _provider_endpoint_summary(
         self, provider: str, endpoint: object | None = None
@@ -10031,6 +10110,12 @@ class SettingsScreen(BaseAppScreen):
             ).value.strip()
         except QueryError:
             endpoint = self._provider_endpoint_value(provider)
+        try:
+            model = self.query_one("#settings-model-value", Input).value.strip()
+        except QueryError:
+            model = str(
+                self._provider_setting_values_mapping().get("model") or ""
+            ).strip()
         readiness_label = self._provider_readiness_label()
         resolved = self._resolve_provider_model_for_settings()
         self._set_static_text(
@@ -10066,6 +10151,14 @@ class SettingsScreen(BaseAppScreen):
             clear_button.disabled = not self._provider_saved_api_key_present(
                 provider
             ) and not bool(api_key_input.value.strip())
+            hosted_guidance = self._hosted_provider_guidance(provider, model)
+            guidance = self.query_one(
+                "#settings-hosted-provider-guidance", Static
+            )
+            guidance.update(hosted_guidance)
+            guidance.set_class(
+                not hosted_guidance, "settings-gated-profile-hidden"
+            )
         except QueryError:
             pass
         self._refresh_generation_support_summary(provider)
@@ -11099,6 +11192,18 @@ class SettingsScreen(BaseAppScreen):
                 "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.",
                 id="settings-provider-credential-guidance",
                 classes="settings-status-row",
+            )
+            hosted_guidance = self._hosted_provider_guidance(
+                provider, values.get("model")
+            )
+            yield Static(
+                hosted_guidance,
+                id="settings-hosted-provider-guidance",
+                classes=(
+                    "settings-status-row"
+                    if hosted_guidance
+                    else "settings-status-row settings-gated-profile-hidden"
+                ),
             )
             # task-189: the Test affordance closes the first-run Connect job
             # (provider -> model -> endpoint -> credentials -> test) before
@@ -15006,6 +15111,7 @@ class SettingsScreen(BaseAppScreen):
             "api_key": "#settings-provider-api-key",
             "endpoint": "#settings-provider-endpoint-value",
             "credential_env_var": "#settings-provider-credential-env-var",
+            "reasoning": "#settings-model-profile-reasoning-effort",
         }
         selector = field_selectors.get(str(field or "").strip())
         if not selector:

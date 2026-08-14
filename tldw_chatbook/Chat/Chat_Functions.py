@@ -88,6 +88,7 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram  # n
 from tldw_chatbook.config import load_settings  # noqa: E402
 from .chat_persistence_service import ChatPersistenceService  # noqa: E402
 from .provider_continuation import (  # noqa: E402
+    ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     read_provider_continuation_json,
 )
@@ -722,6 +723,11 @@ PROVIDER_PARAM_MAP = {
         "response_format": "response_format",
         "n": "n",
         "user_identifier": "user",
+        "reasoning_effort": "reasoning_effort",
+        "provider_continuations": "provider_continuations",
+        "request_timeout": "request_timeout",
+        "request_retries": "request_retries",
+        "request_retry_delay": "request_retry_delay",
     },
     "zai": {
         "api_key": "api_key",
@@ -733,6 +739,15 @@ PROVIDER_PARAM_MAP = {
         "model": "model",
         "max_tokens": "max_tokens",
         "tools": "tools",
+        "tool_choice": "tool_choice",
+        "stop": "stop",
+        "response_format": "response_format",
+        "user_identifier": "user",
+        "reasoning_effort": "reasoning_effort",
+        "provider_continuations": "provider_continuations",
+        "request_timeout": "request_timeout",
+        "request_retries": "request_retries",
+        "request_retry_delay": "request_retry_delay",
     },
     # Add other providers here
 }
@@ -811,6 +826,10 @@ def chat_api_call(
     llm_fixed_tokens_kobold: Optional[bool] = False,  # Added
     api_base_url: Optional[str] = None,
     api_mode: Optional[str] = None,
+    provider_continuations: Tuple[ProviderContinuationCheckpoint, ...] = (),
+    request_timeout: Optional[float] = None,
+    request_retries: Optional[int] = None,
+    request_retry_delay: Optional[float] = None,
 ):
     """
     Acts as a unified dispatcher to call various LLM API providers.
