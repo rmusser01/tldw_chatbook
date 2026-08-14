@@ -18039,8 +18039,18 @@ class SettingsScreen(BaseAppScreen):
                 self._sync_provider_manual_widget(current_provider)
                 self.query_one("#settings-provider-manual-value", Input).focus()
             return
-        if provider_id is not None:
-            selector.value = provider_id
+        if provider_id is None:
+            return
+        current_provider = str(
+            self._provider_setting_values_mapping().get("provider") or ""
+        )
+        if provider_config_key(provider_id) == provider_config_key(current_provider):
+            return
+        select_value = self._provider_select_value_for_provider(provider_id)
+        if select_value == PROVIDER_MANUAL_SELECT_VALUE:
+            self._apply_provider_value_change(provider_id)
+            return
+        selector.value = select_value
 
     @on(Select.Changed, "#settings-provider-value")
     def handle_provider_value_changed(self, event: Select.Changed) -> None:

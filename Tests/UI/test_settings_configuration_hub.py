@@ -2692,6 +2692,48 @@ async def test_settings_provider_picker_initial_unknown_provider_is_selected_exa
 
 
 @pytest.mark.asyncio
+async def test_settings_provider_picker_saved_unknown_activation_is_exact_noop():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "Exact_Custom-ID",
+        "model": "custom-model",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+        model = screen.query_one("#settings-model-value", Input)
+        endpoint.value = "https://draft.example/v1"
+        api_key.value = "draft-provider-key"
+        await pilot.pause()
+
+        highlighted = picker.get_option_at_index(picker.highlighted)
+        assert getattr(highlighted, "provider_id", None) == "Exact_Custom-ID"
+        assert manual.value == "Exact_Custom-ID"
+
+        picker.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert host._exception is None
+        assert picker.has_focus
+        assert screen.query_one("#settings-provider-endpoint-value", Input) is endpoint
+        assert screen.query_one("#settings-provider-api-key", Input) is api_key
+        assert endpoint.value == "https://draft.example/v1"
+        assert api_key.value == "draft-provider-key"
+        assert manual.value == "Exact_Custom-ID"
+        assert screen.query_one("#settings-provider-value", Select).value == "__manual__"
+        assert screen._provider_setting_values_mapping()["provider"] == "Exact_Custom-ID"
+        assert screen._provider_setting_values_mapping()["model"] == "custom-model"
+        assert model.value == "custom-model"
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_picker_filter_clear_restores_current_highlight():
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
