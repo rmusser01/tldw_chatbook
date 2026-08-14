@@ -93,7 +93,12 @@ def _tool_turn(provider: str) -> bytes:
                         },
                         "finish_reason": None,
                     }
-                ]
+                ],
+                **(
+                    {"system_fingerprint": "fp_kimi_live"}
+                    if provider == "moonshot"
+                    else {}
+                ),
             },
             {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
             {

@@ -184,8 +184,19 @@ class HostedChatStream(Iterator[dict[str, Any]]):
                 pass
 
     def _consume_event(self, event: Mapping[str, Any]) -> dict[str, Any]:
-        if set(event) - {"id", "object", "created", "model", "choices", "usage"}:
+        if set(event) - {
+            "id",
+            "object",
+            "created",
+            "model",
+            "system_fingerprint",
+            "choices",
+            "usage",
+        }:
             raise HostedChatProtocolError("Hosted Chat stream event is malformed.")
+        fingerprint = event.get("system_fingerprint")
+        if fingerprint is not None:
+            _required_metadata(fingerprint, "system fingerprint")
         choices = event.get("choices")
         usage = event.get("usage")
         if not isinstance(choices, Sequence) or isinstance(choices, (str, bytes)):

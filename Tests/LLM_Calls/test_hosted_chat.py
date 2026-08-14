@@ -660,6 +660,83 @@ def test_hosted_chat_stream_accepts_usage_only_after_terminal_choice() -> None:
     assert stream.terminal_turn.usage == {"total_tokens": 3}
 
 
+@pytest.mark.parametrize("fingerprint", ["fp_kimi_live", None])
+def test_hosted_chat_stream_accepts_system_fingerprint(
+    fingerprint: str | None,
+) -> None:
+    event = {
+        "system_fingerprint": fingerprint,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": "done"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"total_tokens": 3},
+    }
+    stream = HostedChatStream(
+        iter(
+            [
+                SSERecord(event=None, data=json.dumps(event)),
+                SSERecord(event=None, data="[DONE]"),
+            ]
+        ),
+        finish_policy=_POLICY,
+    )
+
+    assert list(stream) == [event]
+    assert stream.terminal_turn.text == "done"
+
+
+@pytest.mark.parametrize(
+    "fingerprint",
+    [True, 1, "", "x" * (hosted_chat._MAX_METADATA_CHARS + 1)],
+)
+def test_hosted_chat_stream_rejects_malformed_system_fingerprint(
+    fingerprint: object,
+) -> None:
+    event = {
+        "system_fingerprint": fingerprint,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": "done"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"total_tokens": 3},
+    }
+    stream = HostedChatStream(
+        iter([SSERecord(event=None, data=json.dumps(event))]),
+        finish_policy=_POLICY,
+    )
+
+    with pytest.raises(HostedChatProtocolError):
+        list(stream)
+
+
+def test_hosted_chat_stream_rejects_unknown_top_level_metadata() -> None:
+    event = {
+        "unexpected_live_metadata": "value",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": "done"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"total_tokens": 3},
+    }
+    stream = HostedChatStream(
+        iter([SSERecord(event=None, data=json.dumps(event))]),
+        finish_policy=_POLICY,
+    )
+
+    with pytest.raises(HostedChatProtocolError):
+        list(stream)
+
+
 @pytest.mark.parametrize(
     "records",
     [
