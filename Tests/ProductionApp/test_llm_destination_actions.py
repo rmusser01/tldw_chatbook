@@ -1328,7 +1328,7 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
     monkeypatch.setitem(
         sys.modules,
         "textual_fspicker",
-        SimpleNamespace(FileOpen=Picker, Filters=object),
+        SimpleNamespace(FileOpen=Picker),
     )
     app = TldwCli()
     app.app_config["_first_run"] = False
