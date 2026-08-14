@@ -59,12 +59,22 @@ without.**
   feeds from the top-M by relevance; the honest statement of what this probe
   feeds from is "the first M documents the product would show", which is
   what a plain-profile user's PRF would have to feed from too.
-* *That same seam order caps what a rescue could ever look like*, which is
-  why `_run_oracle_control` exists: `top_k` is a PER-SEAM limit, so an
-  expanded pass that fills the notes seam's 10 slots pushes every media and
-  conversation target past rank 10 whatever the expansion was worth. 15 of
-  the 22 targets are media or conversation documents. Measure the ceiling
-  before reading the floor.
+* *That same seam order interacts with EXPRESSION BREADTH*, which is why
+  `_run_oracle_control` runs under several term SELECTORS rather than one.
+  `top_k` is a PER-SEAM limit and there is no cross-seam ranking, so any
+  pass that matches K or more notes buries every media and conversation
+  target regardless of how well the target itself matched -- and 15 of the
+  22 targets are media or conversation documents. How hard that bites is
+  **not a fixed property of the path**: it depends on how broad the
+  expansion is, which is a property of the SELECTOR. Measured with oracle
+  feeds (the target document itself), the pre-registered TF-8 selector
+  leaves 8/22 observable and a rarest-8-by-corpus-DF selector of the same
+  shape leaves 15/22. An earlier version of this module printed the 8/22 as
+  "could not have been rescued by any real feedback set"; a review refuted
+  that by running it, and the refutation is now part of the instrument
+  rather than a note about it. Measure the ceiling before reading the
+  floor, and measure it under more than one selector before calling it a
+  ceiling at all.
 * *The second pass drops the plural/singular widening the first pass has.*
   `build_fts_match_query` widens each term into an OR-group of naive
   variants; `compose_prf_expression` is the engine's own content-token form
@@ -93,8 +103,9 @@ cache -- the same gate every harness module uses, never a new one:
 from __future__ import annotations
 
 import time
+from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from Tests.RAG_Eval.harness.environment import harness_gate
 
@@ -245,6 +256,10 @@ class _PointReport:
     wall_s: float
     points: tuple[_QueryPoint, ...]
     content_fetches: int
+    #: Which term selector produced this point. Only the pre-registered one
+    #: reaches the verdict; the label is carried so a table can never show a
+    #: control row and a verdict row without saying which is which.
+    selector: str
 
     def by_category(self, categories: Sequence[str]) -> tuple[_QueryPoint, ...]:
         return tuple(
@@ -396,6 +411,121 @@ def _fetch_document_text(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _Selector:
+    """One way of choosing expansion terms, plus how it composes them.
+
+    The probe's verdict is computed from the PRE-REGISTERED selector alone
+    (`derive_expansion_terms`, RM3 tf/|D|). The others exist because a
+    review refuted a claim this module used to print: that the 8/22 oracle
+    ceiling was a property of the four-seam path. It is not -- it is a
+    property of how BROAD the chosen terms are, and the only way to say so
+    honestly is to vary the selector and hold everything else fixed.
+
+    Attributes:
+        name: Short label used in every table.
+        disclosure: What this selector changes relative to the
+            pre-registered one, stated in the report so a reader never has
+            to infer which variables moved.
+        pre_registered: True only for the spec's own derivation. Anything
+            False is a CONTROL and can never reach the verdict.
+        select: ``(docs, query_terms=, n_terms=, stopwords=) -> terms``.
+        compose: ``(query, terms) -> MATCH expression``.
+    """
+
+    name: str
+    disclosure: str
+    pre_registered: bool
+    select: Callable[..., tuple[str, ...]]
+    compose: Callable[[str, Sequence[str]], str]
+
+
+def _corpus_document_frequency(corpus: Sequence[Any]) -> dict[str, int]:
+    """Term -> how many corpus documents contain it.
+
+    Over document CONTENT, which is exactly what `_fetch_document_text`
+    feeds derivation, so a "rare" term is rare in the text PRF actually
+    reads rather than in some other view of the corpus.
+    """
+    from Tests.RAG_Eval.harness.prf_probe import _index_terms
+
+    frequency: Counter[str] = Counter()
+    for doc in corpus:
+        frequency.update(set(_index_terms(doc.content)))
+    return dict(frequency)
+
+
+def _rarest_terms(
+    docs: Sequence[str],
+    *,
+    query_terms: Sequence[str],
+    n_terms: int,
+    stopwords: Sequence[str],
+    document_frequency: Mapping[str, int],
+) -> tuple[str, ...]:
+    """The N rarest terms of the fed set, by corpus document frequency.
+
+    The single-variable counterpart to `derive_expansion_terms`: same fed
+    documents, same exclusions (function words, the query's own index
+    terms), same total ordering discipline -- only the RANKING KEY changes,
+    from "heaviest by tf/|D|" to "rarest by corpus DF". TF picks terms that
+    are frequent in the fed set, and on this corpus that means broad ones
+    ("rather", "once", "each"); DF picks terms few documents share.
+
+    `_index_terms` is imported rather than re-derived for the same reason
+    `prf_probe` states in its own docstring: a probe that tokenizes
+    differently from the engine measures a query the engine would not run.
+
+    Args:
+        docs: The fed documents' text.
+        query_terms: The query's raw tokens, excluded as index terms.
+        n_terms: The N cut; ``<= 0`` yields no terms.
+        stopwords: Function words to exclude (`FTS5_STOPWORDS` everywhere).
+        document_frequency: `_corpus_document_frequency` output.
+
+    Returns:
+        At most ``n_terms`` index terms, rarest first, ties alphabetical.
+    """
+    from Tests.RAG_Eval.harness.prf_probe import _index_terms
+
+    if n_terms <= 0:
+        return ()
+    excluded = {term.lower() for term in stopwords}
+    for token in query_terms:
+        excluded.update(_index_terms(token))
+    candidates = {
+        term
+        for doc in docs
+        for term in _index_terms(doc)
+        if term not in excluded
+    }
+    ranked = sorted(
+        candidates, key=lambda term: (document_frequency.get(term, 0), term)
+    )
+    return tuple(ranked[:n_terms])
+
+
+def _compose_terms_only(query: str, terms: Sequence[str]) -> str:
+    """An OR of the expansion terms with the QUERY SIDE dropped entirely.
+
+    The narrow endpoint of the breadth axis, and the one composition here
+    that is not `compose_prf_expression`. It exists to show that the
+    observability ceiling moves all the way to 22/22 when the expression
+    stops matching everything the query's own content words match -- i.e.
+    that breadth, not the seam order alone, is what was binding. Because it
+    changes TWO things at once (selector AND composition) it is labelled an
+    ILLUSTRATION rather than a controlled comparison wherever it is printed.
+    """
+    from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+
+    quoted = [
+        RAGService._quote_fts5_token(term)
+        for term in terms
+        if any(character.isalnum() for character in term)
+    ]
+    return " OR ".join(quoted)
+
+
 #: Source types whose four-seam ROW carries the document's own text. Only
 #: notes: `_note_row`'s snippet is `item["content"]`, while `_media_row` and
 #: `_conversation_row` emit the labels "Matched media · {type}" and "Matched
@@ -443,31 +573,31 @@ def _run_oracle_control(
     lookup: Mapping[tuple[str, str], str],
     media_db: Any,
     chachanotes_db: Any,
+    selector: _Selector,
 ) -> tuple[_OracleRow, ...]:
     """Feed PRF the target document itself and see whether it can win.
 
-    The rescue-channel ceiling (see `_OracleRow`). Not part of the grid, not
-    part of the verdict: a real feedback set never contains the answer by
-    construction, so an oracle rescue proves only that the CHANNEL is open,
-    and an oracle miss proves the channel was shut before PRF was asked.
+    The rescue-channel measurement (see `_OracleRow`). Not part of the grid
+    and not part of the verdict: a real feedback set never contains the
+    answer by construction, so an oracle rescue proves only that the CHANNEL
+    is open under this selector, and an oracle miss proves it was shut
+    before PRF was asked -- **under this selector**. That qualifier is the
+    whole correction: run this with one selector and the number reads as a
+    property of the retrieval path, which a review measured to be false.
     """
-    from Tests.RAG_Eval.harness.prf_probe import (
-        FTS5_STOPWORDS,
-        compose_prf_expression,
-        derive_expansion_terms,
-    )
+    from Tests.RAG_Eval.harness.prf_probe import FTS5_STOPWORDS
 
     rows: list[_OracleRow] = []
     for query in targets:
         slug = query.relevant_slugs[0]
         text = _fetch_document_text(runtime, slug, media_db, chachanotes_db)
-        terms = derive_expansion_terms(
+        terms = selector.select(
             [text],
             query_terms=query.query.split(),
             n_terms=n_terms,
             stopwords=FTS5_STOPWORDS,
         )
-        expression = compose_prf_expression(query.query, terms) if terms else ""
+        expression = selector.compose(query.query, terms) if terms else ""
         _rows, docs = _run_pass(
             runtime,
             seam,
@@ -522,19 +652,21 @@ def _run_point(
     lookup: Mapping[tuple[str, str], str],
     media_db: Any,
     chachanotes_db: Any,
+    selector: _Selector,
 ) -> _PointReport:
     """Run every golden query at one (N, M) grid point.
 
     The shipped first pass and the feed pass are computed once per run and
-    passed in: neither depends on N or M, and re-running them per point
-    would price the probe rather than the feature.
+    passed in: neither depends on N, M or the selector, and re-running them
+    per point would price the probe rather than the feature.
+
+    ``selector`` is the pre-registered TF derivation for every point the
+    VERDICT reads. Points run under any other selector are axis controls and
+    are kept in a separate list by the caller, never handed to
+    `_format_verdict` -- a control that can reach the verdict is a grid
+    search wearing a different hat.
     """
-    from Tests.RAG_Eval.harness.prf_probe import (
-        FTS5_STOPWORDS,
-        ProbeQueryResult,
-        compose_prf_expression,
-        derive_expansion_terms,
-    )
+    from Tests.RAG_Eval.harness.prf_probe import FTS5_STOPWORDS, ProbeQueryResult
 
     started = time.perf_counter()
     points: list[_QueryPoint] = []
@@ -548,13 +680,13 @@ def _run_point(
             texts.append(_fetch_document_text(runtime, slug, media_db, chachanotes_db))
             fetches += 1
 
-        terms = derive_expansion_terms(
+        terms = selector.select(
             texts,
             query_terms=query.query.split(),
             n_terms=n_terms,
             stopwords=FTS5_STOPWORDS,
         )
-        expression = compose_prf_expression(query.query, terms) if terms else ""
+        expression = selector.compose(query.query, terms) if terms else ""
         if terms and expression:
             _after_rows, docs_after = _run_pass(
                 runtime,
@@ -642,6 +774,7 @@ def _run_point(
         wall_s=time.perf_counter() - started,
         points=tuple(points),
         content_fetches=fetches,
+        selector=selector.name,
     )
 
 
@@ -710,8 +843,76 @@ def _format_census(
     return "\n".join(lines)
 
 
-def _format_oracle(rows: Sequence[_OracleRow], *, n_terms: int) -> str:
-    """The rescue-channel control table (see `_OracleRow`)."""
+def _format_oracle_comparison(
+    runs: Sequence[tuple[_Selector, int, tuple[_OracleRow, ...]]],
+) -> str:
+    """The headline the single-selector version got wrong.
+
+    One selector produces one number that reads as a property of the
+    retrieval path. Several selectors, same oracle feed, same composition
+    (except where disclosed), show what the number is actually a property
+    of. This table IS the correction, rendered where the claim used to be.
+    """
+    types = ("note", "media", "conversation")
+    lines = [
+        "CONTROL — the rescue channel under DIFFERENT TERM SELECTORS "
+        "(oracle feed: the TARGET DOCUMENT itself)",
+        "",
+        "  What is fixed across the rows: the four-seam path, the oracle "
+        "feed, k, the corpus. What varies: which",
+        "  terms are chosen (and, for the disclosed illustration row, "
+        "whether the query's own tokens stay in the",
+        "  expression). Read this BEFORE the floor: it says how many cells "
+        "a rescue could have been seen in at all.",
+        "",
+    ]
+    header = (
+        f"{'selector':<34}{'N':>3}{'top-' + str(K):>8}"
+        + "".join(f"{name:>14}" for name in types)
+        + "  what it changes"
+    )
+    lines.append(header)
+    lines.append("-" * len(header))
+    for selector, n_terms, rows in runs:
+        reachable = sum(1 for row in rows if row.rank_at_k is not None)
+        cells = []
+        for source_type in types:
+            group = [row for row in rows if row.target_source_type == source_type]
+            hits = sum(1 for row in group if row.rank_at_k is not None)
+            cells.append(f"{hits}/{len(group)}")
+        lines.append(
+            f"{selector.name:<34}{n_terms:>3}{f'{reachable}/{len(rows)}':>8}"
+            + "".join(f"{cell:>14}" for cell in cells)
+            + f"  {selector.disclosure}"
+        )
+    lines.append("")
+    lines.append(
+        "  THE READING. The plain path has no cross-seam ranking and a "
+        f"PER-SEAM top_k, so any pass matching {K} or"
+    )
+    lines.append(
+        "  more notes buries every media/conversation target regardless of "
+        "match quality. How hard that bites"
+    )
+    lines.append(
+        "  depends on EXPANSION BREADTH, which is the selector's property, "
+        "not the path's — the rows above are the"
+    )
+    lines.append(
+        "  same path at different breadths. So 'this target could not have "
+        "been rescued by any feedback set' is NOT"
+    )
+    lines.append(
+        "  a conclusion this control supports, and an earlier version of "
+        "this module printed it anyway."
+    )
+    return "\n".join(lines)
+
+
+def _format_oracle(
+    rows: Sequence[_OracleRow], *, n_terms: int, selector: _Selector
+) -> str:
+    """One selector's rescue-channel detail table (see `_OracleRow`)."""
     reachable = sum(1 for row in rows if row.rank_at_k is not None)
     returned = sum(1 for row in rows if row.position is not None)
     by_type: dict[str, list[_OracleRow]] = {}
@@ -719,17 +920,10 @@ def _format_oracle(rows: Sequence[_OracleRow], *, n_terms: int) -> str:
         by_type.setdefault(row.target_source_type, []).append(row)
 
     lines = [
-        f"CONTROL — the rescue channel, measured with a PERFECT feed "
-        f"(N={n_terms} terms derived from the TARGET DOCUMENT itself)",
+        f"  oracle detail — selector: {selector.name} (N={n_terms}); "
+        f"{selector.disclosure}",
         f"  {reachable}/{len(rows)} targets reach the top-{K}; "
         f"{returned}/{len(rows)} are returned at any depth.",
-        "  This is the CEILING on what the rescue clause could observe. A "
-        "target that an oracle feed cannot lift into",
-        f"  the top-{K} could not have been rescued by any real feedback set, "
-        "and its 'no rescue' is a property of the",
-        "  four-seam path (fixed seam order: notes, then media, then "
-        "conversations; no cross-seam ranking), not of PRF.",
-        "",
     ]
     for source_type in sorted(by_type):
         group = by_type[source_type]
@@ -738,7 +932,6 @@ def _format_oracle(rows: Sequence[_OracleRow], *, n_terms: int) -> str:
             f"  by target source type — {source_type}: {hits}/{len(group)} "
             f"reach the top-{K}"
         )
-    lines.append("")
     matched_deep = sum(
         1
         for row in rows
@@ -746,8 +939,8 @@ def _format_oracle(rows: Sequence[_OracleRow], *, n_terms: int) -> str:
     )
     lines.append(
         f"  {matched_deep}/{len(rows)} oracle expressions DO match their "
-        f"target (at k={DEEP_K}) — so every miss above is displacement, not "
-        "a control that failed to reach its document."
+        f"target (at k={DEEP_K}) — so every miss here is displacement under "
+        "THIS selector, not a control that failed to reach its document."
     )
     lines.append("")
     header = (
@@ -775,7 +968,8 @@ def _format_point(report: _PointReport, *, regime: str, with_terms: bool) -> str
     with_row_text = sum(point.fed_docs_with_row_text for point in report.points)
     fed_total = sum(point.result.fed_docs for point in report.points)
     lines = [
-        f"GRID POINT N={report.n_terms} M={report.top_m} — regime: {regime} — "
+        f"GRID POINT N={report.n_terms} M={report.top_m} "
+        f"[selector: {report.selector}] — regime: {regime} — "
         f"{len(report.rescued)}/{len(targets)} rescued, "
         f"{len(report.lost)} hitter(s) lost, "
         f"{report.content_fetches} content fetches, "
@@ -898,6 +1092,18 @@ def _format_verdict(
         ``(rendered verdict, admitted)``. ADMIT requires ONE point to meet
         clauses 1-3 together; clause 4 (negation) is a reported measurement
         the spec pre-registers as expected-to-bind, never a gate.
+
+    **One deliberate difference from the spec's wording, disclosed rather
+    than silently reconciled.** The spec states clause 3 as "zero new ROWS
+    on negatives"; this implements it as zero new DOCUMENTS in the top-K
+    (`docs_added`), the document-level unit every other number in this
+    harness is stated in (`canonicalize.rows_to_doc_ids`). On this run the
+    difference is immaterial -- the negatives return zero rows AND zero
+    documents before and after, so both readings give 0 -- but a future run
+    where a second pass returned several chunks of one already-present
+    document would score 0 here and non-zero on the spec's literal wording.
+    The row counts are printed beside the document counts in the guard
+    table so a reader can apply either reading.
     """
     lines = ["THE VERDICT — the spec's pre-registered bar, clause by clause", ""]
     admitted_points: list[_PointReport] = []
@@ -977,6 +1183,8 @@ def test_the_prf_probe_over_the_real_fixtures(tmp_path, capsys):
         DEFAULT_N_TERMS,
         DEFAULT_TOP_M,
         compose_feedback_expression,
+        compose_prf_expression,
+        derive_expansion_terms,
     )
     from Tests.RAG_Eval.harness.runner import build_query_scope
 
@@ -1081,8 +1289,63 @@ def test_the_prf_probe_over_the_real_fixtures(tmp_path, capsys):
         }
         hitters = {qid: slugs for qid, slugs in hitters.items() if slugs}
 
+        # --- the selectors --------------------------------------------------
+        # TF is the spec's own derivation and the ONLY one the verdict reads.
+        # The other two exist because a review measured that this module's
+        # single-selector oracle number was a property of TF's breadth, not
+        # of the retrieval path, and printed the wrong conclusion from it.
+        document_frequency = _corpus_document_frequency(corpus)
+        tf_selector = _Selector(
+            name="TF tf/|D| (PRE-REGISTERED)",
+            disclosure="the spec's own derivation — the verdict reads this row only",
+            pre_registered=True,
+            select=derive_expansion_terms,
+            compose=compose_prf_expression,
+        )
+        rare_selector = _Selector(
+            name="rarest-by-corpus-DF",
+            disclosure="ranking key only: tf/|D| -> corpus DF ascending",
+            pre_registered=False,
+            select=lambda docs, **kwargs: _rarest_terms(
+                docs, document_frequency=document_frequency, **kwargs
+            ),
+            compose=compose_prf_expression,
+        )
+        rare_narrow_selector = _Selector(
+            name="rarest-1, query side dropped",
+            disclosure="ILLUSTRATION: changes TWO things (N=1 rarest AND no query tokens)",
+            pre_registered=False,
+            select=lambda docs, **kwargs: _rarest_terms(
+                docs, document_frequency=document_frequency, **kwargs
+            ),
+            compose=_compose_terms_only,
+        )
+
+        def oracle_for(selector: _Selector, n_terms: int) -> tuple[_OracleRow, ...]:
+            return _run_oracle_control(
+                targets=targets,
+                n_terms=n_terms,
+                scopes=scopes,
+                runtime=runtime,
+                seam=seam,
+                service_module=service_module,
+                lookup=lookup,
+                media_db=media_db,
+                chachanotes_db=chachanotes_db,
+                selector=selector,
+            )
+
+        oracle_runs = [
+            (tf_selector, BASE_POINT[0], oracle_for(tf_selector, BASE_POINT[0])),
+            (rare_selector, BASE_POINT[0], oracle_for(rare_selector, BASE_POINT[0])),
+            (rare_narrow_selector, 1, oracle_for(rare_narrow_selector, 1)),
+        ]
+        oracle = oracle_runs[0][2]
+
         # --- the grid ------------------------------------------------------
-        def point(n_terms: int, top_m: int) -> _PointReport:
+        def point(
+            n_terms: int, top_m: int, selector: _Selector = tf_selector
+        ) -> _PointReport:
             return _run_point(
                 n_terms=n_terms,
                 top_m=top_m,
@@ -1097,19 +1360,8 @@ def test_the_prf_probe_over_the_real_fixtures(tmp_path, capsys):
                 lookup=lookup,
                 media_db=media_db,
                 chachanotes_db=chachanotes_db,
+                selector=selector,
             )
-
-        oracle = _run_oracle_control(
-            targets=targets,
-            n_terms=BASE_POINT[0],
-            scopes=scopes,
-            runtime=runtime,
-            seam=seam,
-            service_module=service_module,
-            lookup=lookup,
-            media_db=media_db,
-            chachanotes_db=chachanotes_db,
-        )
 
         base = point(*BASE_POINT)
         reports = [base]
@@ -1124,6 +1376,18 @@ def test_the_prf_probe_over_the_real_fixtures(tmp_path, capsys):
                     if (n_terms, top_m) == BASE_POINT:
                         continue
                     reports.append(point(n_terms, top_m))
+
+        # --- the TF-vs-DF axis, on the REAL feed ----------------------------
+        # Not a grid point and not a verdict input: a different DERIVATION,
+        # outside the pre-registration entirely. It exists because the oracle
+        # comparison above raises the obvious question -- if breadth is what
+        # binds, does a narrow selector rescue anything when it is fed a real
+        # feedback set rather than the answer? Answering it with a
+        # measurement is cheaper than leaving it as a threat to the null.
+        axis_reports = [
+            point(8, BASE_POINT[1], rare_selector),
+            point(4, BASE_POINT[1], rare_selector),
+        ]
     finally:
         search_config.default_search_mode = original_mode
         service_module.build_fts_match_query = original_builder
@@ -1150,7 +1414,10 @@ def test_the_prf_probe_over_the_real_fixtures(tmp_path, capsys):
             )
         )
         print("")
-        print(_format_oracle(oracle, n_terms=BASE_POINT[0]))
+        print(_format_oracle_comparison(oracle_runs))
+        for selector, n_terms, rows in oracle_runs:
+            print("")
+            print(_format_oracle(rows, n_terms=n_terms, selector=selector))
         for report in reports:
             print("")
             print(
@@ -1160,6 +1427,21 @@ def test_the_prf_probe_over_the_real_fixtures(tmp_path, capsys):
                     with_terms=(report.n_terms, report.top_m) == BASE_POINT,
                 )
             )
+            print("")
+            print(_format_guards(report, hitters))
+        print("")
+        print(
+            "AXIS CONTROL — the same REAL variant feed, derived with the "
+            "rarest-by-corpus-DF selector instead of TF."
+        )
+        print(
+            "  Outside the pre-registration, so it can never ADMIT; it is "
+            "here to answer 'does a narrower selector"
+        )
+        print("  rescue anything on a real feed?' with a measurement.")
+        for report in axis_reports:
+            print("")
+            print(_format_point(report, regime=regime, with_terms=False))
             print("")
             print(_format_guards(report, hitters))
         print("")
@@ -1173,10 +1455,30 @@ def test_the_prf_probe_over_the_real_fixtures(tmp_path, capsys):
     assert len(census) == len(targets), (
         f"the census covered {len(census)} of {len(targets)} target queries"
     )
-    assert len(oracle) == len(targets), (
-        f"the rescue-channel control covered {len(oracle)} of "
-        f"{len(targets)} target queries"
+    for selector, _n_terms, rows in oracle_runs:
+        assert len(rows) == len(targets), (
+            f"the rescue-channel control under {selector.name!r} covered "
+            f"{len(rows)} of {len(targets)} target queries"
+        )
+    assert sum(
+        1 for selector, _n, _rows in oracle_runs if selector.pre_registered
+    ) == 1, (
+        "exactly one oracle row may be the pre-registered selector"
     )
+    assert len(oracle_runs) > 1, (
+        "the oracle must run under more than one selector — a single-selector "
+        "ceiling reads as a property of the retrieval path, which a review "
+        "measured to be false"
+    )
+    # The verdict must never see a control point. This is the assertion that
+    # keeps the axis run from becoming a grid search with extra steps.
+    assert all(report.selector.endswith("(PRE-REGISTERED)") for report in reports), (
+        f"a non-pre-registered selector reached the verdict: "
+        f"{[report.selector for report in reports]}"
+    )
+    assert axis_reports and all(
+        not report.selector.endswith("(PRE-REGISTERED)") for report in axis_reports
+    ), "the axis control must run, and must not be the pre-registered selector"
     assert reports, "no grid point ran at all"
     assert (reports[0].n_terms, reports[0].top_m) == BASE_POINT, (
         "the first grid point must be the pre-registered base point"
@@ -1186,14 +1488,15 @@ def test_the_prf_probe_over_the_real_fixtures(tmp_path, capsys):
             f"the full grid ran {len(reports)} points, not "
             f"{len(GRID_N) * len(GRID_M)}"
         )
-    for report in reports:
+    for report in [*reports, *axis_reports]:
         assert len(report.points) == len(golden), (
-            f"N={report.n_terms} M={report.top_m} probed "
+            f"N={report.n_terms} M={report.top_m} [{report.selector}] probed "
             f"{len(report.points)} of {len(golden)} queries"
         )
         assert report.content_fetches > 0, (
-            f"N={report.n_terms} M={report.top_m} paid no content fetches — "
-            "the feed was derived from label snippets, not documents"
+            f"N={report.n_terms} M={report.top_m} [{report.selector}] paid no "
+            "content fetches — the feed was derived from label snippets, not "
+            "documents"
         )
     assert service_module.build_fts_match_query is original_builder, (
         "the probe left the seam's MATCH builder substituted"
