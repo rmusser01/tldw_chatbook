@@ -8,7 +8,7 @@ import threading
 import traceback
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC
 from queue import Queue
 
@@ -1325,6 +1325,93 @@ def test_create_note_postcondition_fault_is_safe_fatal_and_rolls_back(
         .fetchone()
         is None
     )
+
+
+def test_replace_note_postcondition_fault_is_safe_fatal_and_rolls_back(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, _service, _folders, db = target_harness
+    original = target.create_note(note_id=_NOTE_ID, payload=_payload())
+    connection = db.get_connection()
+
+    def snapshot_target_state() -> tuple[object, ...]:
+        return (
+            tuple(
+                connection.execute(
+                    "SELECT title, content, version FROM notes WHERE id = ?",
+                    (_NOTE_ID,),
+                ).fetchone()
+            ),
+            [
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT k.keyword, k.deleted, k.version "
+                    "FROM keywords AS k "
+                    "JOIN note_keywords AS nk ON nk.keyword_id = k.id "
+                    "WHERE nk.note_id = ? ORDER BY k.id",
+                    (_NOTE_ID,),
+                ).fetchall()
+            ],
+            [
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT entity, entity_id, operation, version, payload "
+                    "FROM sync_log ORDER BY change_id"
+                ).fetchall()
+            ],
+            [
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT rowid, title, content FROM notes_fts ORDER BY rowid"
+                ).fetchall()
+            ],
+            [
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT rowid, keyword FROM keywords_fts ORDER BY rowid"
+                ).fetchall()
+            ],
+        )
+
+    before = snapshot_target_state()
+    private_detail = "PRIVATE-REPLACE-POSTCONDITION /private/note-secret"
+    real_read = target._read_note
+    read_count = 0
+
+    def mismatching_postcondition_read(cursor, note_id):
+        nonlocal read_count
+        read_count += 1
+        actual = real_read(cursor, note_id)
+        if read_count == 2:
+            assert actual is not None
+            return replace(actual, content=private_detail)
+        return actual
+
+    monkeypatch.setattr(target, "_read_note", mismatching_postcondition_read)
+
+    with pytest.raises(ImportTargetInternalError) as caught:
+        target.replace_note(
+            note_id=_NOTE_ID,
+            expected_version=original.version,
+            payload=_payload(
+                title="Replacement",
+                content="Replacement body",
+                keywords=("replacement",),
+            ),
+        )
+
+    assert not isinstance(caught.value, ImportTargetError)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert private_detail not in str(caught.value)
+    assert private_detail not in repr(caught.value)
+    assert private_detail not in "".join(
+        traceback.format_exception(
+            type(caught.value), caught.value, caught.value.__traceback__
+        )
+    )
+    assert snapshot_target_state() == before
 
 
 @pytest.mark.parametrize(

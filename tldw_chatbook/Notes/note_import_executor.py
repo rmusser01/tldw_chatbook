@@ -298,7 +298,7 @@ class LocalNoteImportTarget:
                     or result.version != expected_version + 1
                     or not _note_matches(result, payload)
                 ):
-                    raise ImportTargetConflictError from None
+                    raise _ImportTargetContractError from None
                 return result
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
             translated_error = _translate_exception(exc)
