@@ -935,6 +935,230 @@ def test_first_chat_failed_acknowledgement_rolls_back_and_requeues(
     assert _pending_first_chat(app) == intent
 
 
+def test_first_chat_ack_exception_rolls_back_create_and_survives_release_error(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = ConsoleChatStore()
+    console._console_chat_store = store
+    prior = store.create_session(
+        title="User work",
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="user-model",
+            source="user",
+        ),
+    )
+    store.set_session_draft(prior.id, "keep exact")
+    prior_before = _first_chat_session_snapshot(prior)
+    snapshot = RuntimeConfigSnapshot(73, _first_chat_config())
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_runtime_config_snapshot",
+        lambda: snapshot,
+    )
+    intent = ConsoleFirstChatIntent(
+        "ack-exception-create-target",
+        "openai",
+        "model-a",
+        snapshot.generation,
+    )
+    app.pending_handoffs.stage_reserved_console_first_chat(intent)
+    real_acknowledge = app.pending_handoffs.acknowledge_current
+    real_release = app.pending_handoffs.release
+    secret = "PRIVATE_ACK_EXCEPTION_TEXT"
+    warnings: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        chat_screen_module.logger,
+        "warning",
+        lambda *args, **_kwargs: warnings.append(args),
+    )
+
+    def fail_acknowledge(_claim) -> bool:
+        raise RuntimeError(secret)
+
+    def fail_release(_claim) -> bool:
+        raise RuntimeError("PRIVATE_RELEASE_EXCEPTION_TEXT")
+
+    monkeypatch.setattr(app.pending_handoffs, "acknowledge_current", fail_acknowledge)
+    monkeypatch.setattr(app.pending_handoffs, "release", fail_release)
+
+    assert console.consume_pending_console_first_chat_intent() is False
+    assert all(item.id != intent.session_id for item in store.sessions())
+    assert store.active_session_id == prior.id
+    assert _first_chat_session_snapshot(prior) == prior_before
+    rendered_warnings = repr(warnings)
+    assert secret not in rendered_warnings
+    assert "PRIVATE_RELEASE_EXCEPTION_TEXT" not in rendered_warnings
+    assert intent.session_id not in rendered_warnings
+
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "acknowledge_current",
+        real_acknowledge,
+    )
+    monkeypatch.setattr(app.pending_handoffs, "release", real_release)
+    assert console.consume_pending_console_first_chat_intent() is True
+    assert store.active_session_id == intent.session_id
+    assert _pending_first_chat(app) is None
+
+
+def test_first_chat_ack_exception_restores_refresh_and_retries(monkeypatch) -> None:
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = ConsoleChatStore()
+    console._console_chat_store = store
+    prior_settings = build_default_console_session_settings(
+        _first_chat_config("openai", "prior-model")
+    )
+    target = store.create_session(
+        session_id="ack-exception-refresh-target",
+        settings=prior_settings,
+        canonical_settings_baseline=prior_settings,
+    )
+    target_before = _first_chat_session_snapshot(target)
+    snapshot = RuntimeConfigSnapshot(75, _first_chat_config())
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_runtime_config_snapshot",
+        lambda: snapshot,
+    )
+    intent = ConsoleFirstChatIntent(
+        target.id,
+        "openai",
+        "model-a",
+        snapshot.generation,
+    )
+    app.pending_handoffs.stage(HandoffChannel.CONSOLE_FIRST_CHAT, intent)
+    real_acknowledge = app.pending_handoffs.acknowledge_current
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "acknowledge_current",
+        lambda _claim: (_ for _ in ()).throw(RuntimeError("PRIVATE_REFRESH")),
+    )
+
+    assert console.consume_pending_console_first_chat_intent() is False
+    restored = next(item for item in store.sessions() if item.id == target.id)
+    assert _first_chat_session_snapshot(restored) == target_before
+
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "acknowledge_current",
+        real_acknowledge,
+    )
+    assert console.consume_pending_console_first_chat_intent() is True
+    assert store.session_settings(target.id).model == "model-a"
+    assert _pending_first_chat(app) is None
+
+
+def test_first_chat_config_guard_exception_rolls_back_and_retries(monkeypatch) -> None:
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = ConsoleChatStore()
+    console._console_chat_store = store
+    prior = store.create_session(
+        title="Prior",
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="prior-model",
+            source="user",
+        ),
+    )
+    prior_before = _first_chat_session_snapshot(prior)
+    snapshot = RuntimeConfigSnapshot(77, _first_chat_config())
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_runtime_config_snapshot",
+        lambda: snapshot,
+    )
+    intent = ConsoleFirstChatIntent(
+        "config-guard-exception-target",
+        "openai",
+        "model-a",
+        snapshot.generation,
+    )
+    app.pending_handoffs.stage_reserved_console_first_chat(intent)
+    real_guard = chat_screen_module.run_if_runtime_config_generation_current
+    monkeypatch.setattr(
+        chat_screen_module,
+        "run_if_runtime_config_generation_current",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("PRIVATE_GUARD")),
+    )
+
+    assert console.consume_pending_console_first_chat_intent() is False
+    assert all(item.id != intent.session_id for item in store.sessions())
+    assert store.active_session_id == prior.id
+    assert _first_chat_session_snapshot(prior) == prior_before
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "run_if_runtime_config_generation_current",
+        real_guard,
+    )
+    assert console.consume_pending_console_first_chat_intent() is True
+    assert _pending_first_chat(app) is None
+
+
+def test_first_chat_ack_exception_after_replacement_preserves_replacement(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = ConsoleChatStore()
+    console._console_chat_store = store
+    prior = store.create_session(
+        title="Prior replacement work",
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="prior-model",
+            source="user",
+        ),
+    )
+    store.set_session_draft(prior.id, "preserve replacement draft")
+    prior_before = _first_chat_session_snapshot(prior)
+    snapshot = RuntimeConfigSnapshot(79, _first_chat_config())
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_runtime_config_snapshot",
+        lambda: snapshot,
+    )
+    original = ConsoleFirstChatIntent(
+        "ack-exception-old-target",
+        "openai",
+        "model-a",
+        snapshot.generation,
+    )
+    replacement = replace(original, session_id="ack-exception-replacement-target")
+    app.pending_handoffs.stage_reserved_console_first_chat(original)
+    real_acknowledge = app.pending_handoffs.acknowledge_current
+
+    def replace_then_raise(_claim) -> bool:
+        app.pending_handoffs.stage_reserved_console_first_chat(replacement)
+        raise RuntimeError("PRIVATE_REPLACEMENT_ACK")
+
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "acknowledge_current",
+        replace_then_raise,
+    )
+
+    assert console.consume_pending_console_first_chat_intent() is False
+    assert all(item.id != original.session_id for item in store.sessions())
+    assert store.active_session_id == prior.id
+    assert _first_chat_session_snapshot(prior) == prior_before
+    assert _pending_first_chat(app) == replacement
+
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "acknowledge_current",
+        real_acknowledge,
+    )
+    assert console.consume_pending_console_first_chat_intent() is True
+    assert store.active_session_id == replacement.session_id
+    assert _pending_first_chat(app) is None
+
+
 def test_first_chat_failed_notification_tracking_is_bounded_to_latest_revision(
     monkeypatch,
 ) -> None:
@@ -1044,7 +1268,7 @@ async def test_mounted_first_chat_preserves_restored_and_concurrent_sessions(
 
 
 @pytest.mark.asyncio
-async def test_mounted_first_chat_replacement_before_ack_restores_prior_ui(
+async def test_mounted_first_chat_replacement_ack_exception_restores_prior_ui(
     monkeypatch,
 ) -> None:
     app = _build_test_app()
@@ -1104,11 +1328,9 @@ async def test_mounted_first_chat_replacement_before_ack_restores_prior_ui(
             None,
         )
 
-        def replace_immediately_before_ack(claim) -> bool:
+        def replace_immediately_before_ack(_claim) -> bool:
             app.pending_handoffs.stage_reserved_console_first_chat(replacement)
-            if real_acknowledge_current is None:
-                return False
-            return real_acknowledge_current(claim)
+            raise RuntimeError("PRIVATE_MOUNTED_REPLACEMENT")
 
         monkeypatch.setattr(
             app.pending_handoffs,
@@ -1126,6 +1348,17 @@ async def test_mounted_first_chat_replacement_before_ack_restores_prior_ui(
         assert store.active_session_id == prior.id
         assert _pending_first_chat(app) == replacement
         assert notifications == []
+
+        assert real_acknowledge_current is not None
+        monkeypatch.setattr(
+            app.pending_handoffs,
+            "acknowledge_current",
+            real_acknowledge_current,
+        )
+        assert console.consume_pending_console_first_chat_intent() is True
+        await pilot.pause()
+        assert store.active_session_id == replacement.session_id
+        assert _pending_first_chat(app) is None
 
 
 @pytest.mark.asyncio
@@ -1263,6 +1496,127 @@ async def test_mounted_first_chat_generation_publish_at_ack_restores_refresh_ui(
         ] == sessions_before
         assert store.active_session_id == target.id
         assert _pending_first_chat(app) == intent
+
+
+@pytest.mark.asyncio
+async def test_mounted_first_chat_ack_exception_during_mount_is_retryable(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    snapshot = RuntimeConfigSnapshot(
+        81,
+        _first_chat_config("llama_cpp", "mount-exception-model"),
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_runtime_config_snapshot",
+        lambda: snapshot,
+    )
+    intent = ConsoleFirstChatIntent(
+        "mounted-on-mount-exception-target",
+        "llama_cpp",
+        "mount-exception-model",
+        snapshot.generation,
+    )
+    app.pending_handoffs.stage_reserved_console_first_chat(intent)
+    real_acknowledge = app.pending_handoffs.acknowledge_current
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "acknowledge_current",
+        lambda _claim: (_ for _ in ()).throw(RuntimeError("PRIVATE_MOUNT")),
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        store = console._ensure_console_chat_store()
+        await pilot.pause()
+        assert all(item.id != intent.session_id for item in store.sessions())
+        assert _pending_first_chat(app) == intent
+
+        monkeypatch.setattr(
+            app.pending_handoffs,
+            "acknowledge_current",
+            real_acknowledge,
+        )
+        assert console.consume_pending_console_first_chat_intent() is True
+        await pilot.pause()
+        assert store.active_session_id == intent.session_id
+        assert _pending_first_chat(app) is None
+
+
+@pytest.mark.asyncio
+async def test_mounted_first_chat_ack_exception_during_resume_restores_ui(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    snapshot = RuntimeConfigSnapshot(
+        83,
+        _first_chat_config("llama_cpp", "resume-exception-model"),
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_runtime_config_snapshot",
+        lambda: snapshot,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        store = console._ensure_console_chat_store()
+        prior = ConsoleChatSession(
+            id="mounted-resume-prior",
+            title="Resume prior",
+            settings=ConsoleSessionSettings(
+                provider="openai",
+                model="resume-prior-model",
+                source="user",
+                system_prompt="Preserve resume UI.",
+            ),
+            draft="preserve resume composer",
+            has_user_work=True,
+        )
+        store.restore_state(sessions=[prior], active_session_id=prior.id)
+        await console._sync_native_console_chat_ui()
+        console._focus_console_composer_if_needed(force=True)
+        await pilot.pause()
+        sessions_before = [
+            _first_chat_session_snapshot(item) for item in store.sessions()
+        ]
+        mounted_before = _mounted_first_chat_projection(console)
+        intent = ConsoleFirstChatIntent(
+            "mounted-on-resume-exception-target",
+            "llama_cpp",
+            "resume-exception-model",
+            snapshot.generation,
+        )
+        app.pending_handoffs.stage_reserved_console_first_chat(intent)
+        real_acknowledge = app.pending_handoffs.acknowledge_current
+        monkeypatch.setattr(
+            app.pending_handoffs,
+            "acknowledge_current",
+            lambda _claim: (_ for _ in ()).throw(RuntimeError("PRIVATE_RESUME")),
+        )
+
+        console.on_screen_resume()
+        await _wait_for_first_chat_projection(console, pilot, mounted_before)
+        assert [
+            _first_chat_session_snapshot(item) for item in store.sessions()
+        ] == sessions_before
+        assert all(item.id != intent.session_id for item in store.sessions())
+        assert _pending_first_chat(app) == intent
+
+        monkeypatch.setattr(
+            app.pending_handoffs,
+            "acknowledge_current",
+            real_acknowledge,
+        )
+        assert console.consume_pending_console_first_chat_intent() is True
+        await pilot.pause()
+        assert store.active_session_id == intent.session_id
+        assert _pending_first_chat(app) is None
 
 
 async def _click_console_session_tab(console, store, pilot, session_id: str) -> None:

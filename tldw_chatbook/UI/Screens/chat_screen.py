@@ -39,6 +39,7 @@ from ..Navigation.pending_handoff_store import (
     ConsoleFirstChatIntent,
     ConsoleProviderIntent,
     HandoffChannel,
+    PendingHandoffStore,
 )
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
@@ -4324,19 +4325,52 @@ class ChatScreen(BaseAppScreen):
         return active_id
 
     def _release_first_chat_claim(self, claim, message: str) -> bool:
-        """Release a retryable claim and show at most one warning per revision."""
+        """Release an exact claim without leaking failure-owned data."""
 
         handoffs = self.app_instance.pending_handoffs
-        claim_is_current = handoffs.is_current_claim(claim)
-        handoffs.release(claim)
+        try:
+            claim_is_current = handoffs.is_current_claim(claim)
+        except Exception as exc:  # noqa: BLE001 - lifecycle boundary containment
+            claim_is_current = False
+            self._log_first_chat_handoff_exception("claim-current-check", exc)
+        try:
+            released = handoffs.release(claim)
+        except Exception as exc:  # noqa: BLE001 - keep the channel retryable
+            self._log_first_chat_handoff_exception("claim-release", exc)
+            released = False
+            if isinstance(handoffs, PendingHandoffStore):
+                try:
+                    # Bypass a failing instance wrapper while retaining the
+                    # store's exact-claim and replacement invariants.
+                    released = PendingHandoffStore.release(handoffs, claim)
+                except Exception as fallback_exc:  # noqa: BLE001
+                    self._log_first_chat_handoff_exception(
+                        "claim-release-fallback",
+                        fallback_exc,
+                    )
+        if not released:
+            return False
         if not claim_is_current:
             if self._first_chat_handoff_notified_revision == claim.revision:
                 self._first_chat_handoff_notified_revision = None
             return False
         if claim.revision != self._first_chat_handoff_notified_revision:
             self._first_chat_handoff_notified_revision = claim.revision
-            self.app_instance.notify(message, severity="warning")
+            try:
+                self.app_instance.notify(message, severity="warning")
+            except Exception as exc:  # noqa: BLE001 - lifecycle boundary containment
+                self._log_first_chat_handoff_exception("notification", exc)
         return False
+
+    @staticmethod
+    def _log_first_chat_handoff_exception(category: str, exc: Exception) -> None:
+        """Log only allowlisted failure classification, never exception content."""
+
+        logger.warning(
+            "First-chat handoff operation failed (category={}, error_type={})",
+            category,
+            type(exc).__name__,
+        )
 
     async def _resync_console_after_first_chat_rollback(
         self,
@@ -4437,6 +4471,13 @@ class ChatScreen(BaseAppScreen):
                 prior_focused_widget=prior_focused_widget,
             )
 
+        def rollback_and_release(message: str) -> bool:
+            try:
+                rollback_mutation()
+            except Exception as exc:  # noqa: BLE001 - lifecycle boundary containment
+                self._log_first_chat_handoff_exception("rollback", exc)
+            return self._release_first_chat_claim(claim, message)
+
         def fence_matches(*, expected_active_id: str) -> bool:
             current = self._current_first_chat_defaults(
                 provider=intent.provider,
@@ -4479,16 +4520,12 @@ class ChatScreen(BaseAppScreen):
                 )
             created_target = target
             if not fence_matches(expected_active_id=prior_active_id):
-                rollback_mutation()
-                return self._release_first_chat_claim(
-                    claim,
+                return rollback_and_release(
                     "Provider settings changed while Console prepared the first chat. It will retry.",
                 )
             store.switch_session(intent.session_id)
             if not fence_matches(expected_active_id=intent.session_id):
-                rollback_mutation()
-                return self._release_first_chat_claim(
-                    claim,
+                return rollback_and_release(
                     "Console changed while the first chat was opening. Your sessions were left unchanged.",
                 )
         else:
@@ -4528,9 +4565,7 @@ class ChatScreen(BaseAppScreen):
                     if session.id == intent.session_id
                 )
                 if not fence_matches(expected_active_id=intent.session_id):
-                    rollback_mutation()
-                    return self._release_first_chat_claim(
-                        claim,
+                    return rollback_and_release(
                         "Provider settings changed while Console prepared the first chat. It will retry.",
                     )
 
@@ -4539,9 +4574,7 @@ class ChatScreen(BaseAppScreen):
             or not self._first_chat_defaults_match(intent, target.settings)
             or not fence_matches(expected_active_id=intent.session_id)
         ):
-            rollback_mutation()
-            return self._release_first_chat_claim(
-                claim,
+            return rollback_and_release(
                 "The first chat target no longer matches provider setup. It was left unchanged.",
             )
 
@@ -4552,18 +4585,23 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_settings_summary()
             self._sync_console_control_bar()
         if not fence_matches(expected_active_id=intent.session_id):
-            rollback_mutation()
-            return self._release_first_chat_claim(
-                claim,
+            return rollback_and_release(
                 "Console changed before the first chat finished opening. It will retry.",
             )
-        if not run_if_runtime_config_generation_current(
-            intent.config_revision,
-            lambda: self.app_instance.pending_handoffs.acknowledge_current(claim),
-        ):
-            rollback_mutation()
-            return self._release_first_chat_claim(
-                claim,
+        try:
+            acknowledged = run_if_runtime_config_generation_current(
+                intent.config_revision,
+                lambda: self.app_instance.pending_handoffs.acknowledge_current(
+                    claim
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - mount/resume must not fail
+            self._log_first_chat_handoff_exception("guarded-acknowledgement", exc)
+            return rollback_and_release(
+                "The first chat could not be acknowledged yet. It will retry.",
+            )
+        if not acknowledged:
+            return rollback_and_release(
                 "The first chat could not be acknowledged yet. It will retry.",
             )
         self._first_chat_handoff_notified_revision = None

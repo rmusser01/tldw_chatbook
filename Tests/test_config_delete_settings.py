@@ -989,6 +989,29 @@ def test_runtime_generation_guard_skips_ack_after_publication(monkeypatch) -> No
     assert acknowledged == []
 
 
+def test_runtime_generation_guard_callback_exception_does_not_poison_lock(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 83)
+
+    with pytest.raises(RuntimeError, match="callback failure"):
+        config_module.run_if_runtime_config_generation_current(
+            83,
+            lambda: (_ for _ in ()).throw(RuntimeError("callback failure")),
+        )
+
+    assert config_module.run_if_runtime_config_generation_current(
+        83,
+        lambda: True,
+    ) is True
+    with config_module._config_file_lock():
+        config_module._CONFIG_GENERATION += 1
+    assert config_module.run_if_runtime_config_generation_current(
+        83,
+        lambda: True,
+    ) is False
+
+
 @pytest.mark.parametrize("serialized", [False, True])
 def test_whole_config_replacement_preserves_revisioned_owned_section(
     tmp_path: Path,
