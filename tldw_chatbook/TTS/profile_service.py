@@ -95,6 +95,7 @@ PortableProfileImportChoice: TypeAlias = Literal["create", "reuse", "copy"]
 _PROFILE_PROVIDER_ID = "audio_cpp"
 _PROFILE_PAGE_LIMIT = 50
 _PROFILE_SAMPLE_EVIDENCE_LIMIT = 256
+_PROFILE_CONSUMER_SNAPSHOT_LIMIT = 200
 _CHARACTER_REF_TYPE: type[CharacterRef] = CharacterRef
 _CHARACTER_TTS_ASSIGNMENT_TYPE: type[CharacterTTSAssignment] = CharacterTTSAssignment
 _ASSIGNED_TTS_PROFILE_SNAPSHOT_TYPE: type[AssignedTTSProfileSnapshot] = (
@@ -1395,6 +1396,7 @@ class TTSProfileService:
             UUID, _ProfileEvidenceLifecycle
         ] = {}
         self._sample_evidence_epoch = 0
+        self._consumer_mutation_lock = asyncio.Lock()
         if artifact_lease_coordinator is not None:
             self._artifact_lease_coordinator = artifact_lease_coordinator
         if _uuid_factory is not None:
@@ -1429,16 +1431,25 @@ class TTSProfileService:
         )
 
     @asynccontextmanager
+    async def consumer_mutation_fence(self) -> AsyncIterator[None]:
+        """Serialize one external repository mutation with bounded snapshots."""
+
+        async with self._consumer_mutation_lock:
+            yield
+
+    @asynccontextmanager
     async def _lease_artifact_consumers(
         self,
         *consumers: AudioCppArtifactConsumerRequirement,
     ) -> AsyncIterator[None]:
         coordinator = getattr(self, "_artifact_lease_coordinator", None)
         if coordinator is None:
-            yield
+            async with self.consumer_mutation_fence():
+                yield
             return
         async with cast(Any, coordinator.lease_consumers(consumers)):
-            yield
+            async with self.consumer_mutation_fence():
+                yield
 
     async def _run_owned_repository_call(self, awaitable: Awaitable[Any]) -> Any:
         """Keep one admitted repository mutation leased through settlement."""
@@ -1515,6 +1526,47 @@ class TTSProfileService:
             raise ProfileServiceError("operation_failed")
         self._require_repository_generation(generation)
         return snapshot
+
+    async def bounded_profile_assignment_snapshot(
+        self,
+    ) -> tuple[tuple[TTSGenerationProfile, int], ...]:
+        """Read one bounded complete inventory while profile mutations wait."""
+
+        async with self._consumer_mutation_lock:
+            captured: list[tuple[TTSGenerationProfile, int]] = []
+            seen_profile_ids: set[UUID] = set()
+            expected_total: int | None = None
+            expected_generation: int | None = None
+            offset = 0
+            while len(captured) < _PROFILE_CONSUMER_SNAPSHOT_LIMIT:
+                page = await self.list_profiles(search=None, offset=offset)
+                if page.total > _PROFILE_CONSUMER_SNAPSHOT_LIMIT:
+                    raise ProfileServiceError("operation_failed")
+                if expected_total is None:
+                    expected_total = page.total
+                    expected_generation = page.repository_generation
+                elif (
+                    page.total != expected_total
+                    or page.repository_generation != expected_generation
+                ):
+                    raise ProfileServiceError("operation_failed")
+                if not page.profiles:
+                    break
+                if len(captured) + len(page.profiles) > page.total:
+                    raise ProfileServiceError("operation_failed")
+                for profile in page.profiles:
+                    if profile.profile_id in seen_profile_ids:
+                        raise ProfileServiceError("operation_failed")
+                    seen_profile_ids.add(profile.profile_id)
+                    loaded = LoadedTTSProfile(page.repository_generation, profile)
+                    count = await self.assignment_count(loaded)
+                    captured.append((loaded.profile, count))
+                offset += len(page.profiles)
+                if offset >= page.total:
+                    break
+            if expected_total is None or len(captured) != expected_total:
+                raise ProfileServiceError("operation_failed")
+            return tuple(captured)
 
     async def get_assigned_profile(
         self,

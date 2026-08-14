@@ -1110,6 +1110,7 @@ class TTSVoiceBundlePortabilityService:
         repository: _Repository,
         dependency_service: _DependencyService,
         *,
+        profile_mutation_fence: Callable[[], object],
         artifact_lease_coordinator: _ArtifactLeaseCoordinator | None = None,
         clock: Callable[[], float] = monotonic,
         uuid_factory: Callable[[], UUID] = uuid4,
@@ -1117,6 +1118,9 @@ class TTSVoiceBundlePortabilityService:
         self._root = Path(operation_root)
         self._repository = repository
         self._dependency_service = dependency_service
+        if not callable(profile_mutation_fence):
+            raise TTSVoiceBundleError("operation_failed")
+        self._profile_mutation_fence = profile_mutation_fence
         self._artifact_lease_coordinator = artifact_lease_coordinator
         self._clock = clock
         self._uuid_factory = uuid_factory
@@ -1153,6 +1157,13 @@ class TTSVoiceBundlePortabilityService:
                 )
             ),
         ):
+            yield
+
+    @asynccontextmanager
+    async def _lease_profile_mutation(self) -> AsyncIterator[None]:
+        """Join the app-owned profile service mutation fence."""
+
+        async with cast(Any, self._profile_mutation_fence()):
             yield
 
     async def _ensure_root(self) -> None:
@@ -1575,9 +1586,10 @@ class TTSVoiceBundlePortabilityService:
             _test_boundary("commit_pre_repository")
             await self._verify_source(session)
             async with self._lease_import_dependency(command):
-                control, result = await self._run_owned_call(
-                    self._repository.commit_bundle_import(command)
-                )
+                async with self._lease_profile_mutation():
+                    control, result = await self._run_owned_call(
+                        self._repository.commit_bundle_import(command)
+                    )
             if control is not None:
                 raise asyncio.CancelledError from None
             if type(result) is not ProfileStoreResult:

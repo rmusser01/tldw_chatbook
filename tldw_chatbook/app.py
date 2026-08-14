@@ -9481,47 +9481,9 @@ class TldwCli(
         profile_service = await self._ensure_tts_profile_service()
         if profile_service is None:
             raise ProfileRepositoryError("unavailable")
-        profiles_with_counts: list[tuple[Any, int]] = []
-        seen_profile_ids: set[Any] = set()
-        expected_total: int | None = None
-        expected_repository_generation: int | None = None
-        offset = 0
-        while len(profiles_with_counts) < 200:
-            page = await profile_service.list_profiles(search=None, offset=offset)
-            if type(page.total) is not int or page.total < 0 or page.total > 200:
-                raise ProfileRepositoryError("unavailable")
-            if expected_total is None:
-                expected_total = page.total
-            elif page.total != expected_total:
-                raise ProfileRepositoryError("unavailable")
-            page_generation = getattr(page, "repository_generation", None)
-            if type(page_generation) is not int or page_generation < 0:
-                raise ProfileRepositoryError("unavailable")
-            if expected_repository_generation is None:
-                expected_repository_generation = page_generation
-            elif page_generation != expected_repository_generation:
-                raise ProfileRepositoryError("unavailable")
-            if not page.profiles:
-                break
-            if len(profiles_with_counts) + len(page.profiles) > page.total:
-                raise ProfileRepositoryError("unavailable")
-            for profile in page.profiles:
-                if profile.profile_id in seen_profile_ids:
-                    raise ProfileRepositoryError("unavailable")
-                seen_profile_ids.add(profile.profile_id)
-                loaded = await profile_service.get_profile(profile.profile_id)
-                if (
-                    getattr(loaded, "repository_generation", None)
-                    != expected_repository_generation
-                ):
-                    raise ProfileRepositoryError("unavailable")
-                count = await profile_service.assignment_count(loaded)
-                profiles_with_counts.append((loaded.profile, count))
-            offset += len(page.profiles)
-            if offset >= page.total:
-                break
-        if expected_total is None or len(profiles_with_counts) != expected_total:
-            raise ProfileRepositoryError("unavailable")
+        profiles_with_counts = (
+            await profile_service.bounded_profile_assignment_snapshot()
+        )
 
         staged_ids: tuple[str, ...] = ()
         live_ids: tuple[str, ...] = ()
@@ -9575,7 +9537,7 @@ class TldwCli(
             draft_settings=draft,
             saved_preferences=saved_preferences,
             draft_preferences=draft_preferences,
-            profiles=tuple(profiles_with_counts),
+            profiles=profiles_with_counts,
             staged_runtime_ids=staged_ids,
             live_runtime_ids=live_ids,
         )
@@ -9587,7 +9549,8 @@ class TldwCli(
 
         if getattr(self, "_tts_voice_bundle_service_close_task", None) is not None:
             return None
-        if await self._ensure_tts_profile_service() is None:
+        profile_service = await self._ensure_tts_profile_service()
+        if profile_service is None:
             return None
         service = getattr(self, "_tts_voice_bundle_service", None)
         if service is None:
@@ -9595,6 +9558,7 @@ class TldwCli(
                 get_user_data_dir() / "tts_voice_bundle_portability",
                 self._tts_profile_repository,
                 self.tts_service,
+                profile_mutation_fence=profile_service.consumer_mutation_fence,
                 artifact_lease_coordinator=(
                     self._ensure_audio_cpp_artifact_lease_coordinator()
                 ),

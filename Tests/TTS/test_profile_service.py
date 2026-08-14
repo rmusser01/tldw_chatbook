@@ -1418,6 +1418,133 @@ class _ArtifactLeaseCoordinator:
 
 
 @pytest.mark.asyncio
+async def test_bounded_consumer_snapshot_serializes_constant_generation_reorder() -> (
+    None
+):
+    first_page_entered = asyncio.Event()
+    release_first_page = asyncio.Event()
+    update_called = asyncio.Event()
+    first = _profile(display_name="A")
+    middle = tuple(
+        _profile(
+            profile_id=UUID(int=index + 2),
+            display_name=f"C{index:02d}",
+        )
+        for index in range(49)
+    )
+    target = _profile(
+        profile_id=UUID(int=100),
+        display_name="TARGET",
+    )
+    last = _profile(profile_id=UUID(int=101), display_name="Z")
+
+    class ReorderingRepository(_FakeRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.profiles = {
+                profile.profile_id: profile
+                for profile in (first, *middle, target, last)
+            }
+
+        async def list_profiles(
+            self,
+            search: str | None = None,
+            limit: int = 50,
+            offset: int = 0,
+        ) -> ProfileStoreResult[TTSProfilePage]:
+            assert search is None
+            ordered = tuple(
+                sorted(self.profiles.values(), key=lambda item: item.normalized_name)
+            )
+            if offset == 0:
+                first_page_entered.set()
+                await release_first_page.wait()
+            return ProfileStoreResult(
+                generation=self.generation,
+                value=TTSProfilePage(
+                    profiles=ordered[offset : offset + limit],
+                    total=len(ordered),
+                ),
+            )
+
+        async def get_profile(
+            self,
+            profile_id: UUID,
+        ) -> ProfileStoreResult[TTSGenerationProfile]:
+            return ProfileStoreResult(
+                generation=self.generation,
+                value=self.profiles[profile_id],
+            )
+
+        async def assignment_count(
+            self,
+            profile_id: UUID,
+        ) -> ProfileStoreResult[int]:
+            assert profile_id in self.profiles
+            return ProfileStoreResult(generation=self.generation, value=0)
+
+        async def update_profile(
+            self,
+            profile_id: UUID,
+            expected_revision: int,
+            draft: TTSProfileDraft,
+            *,
+            expected_generation: int,
+        ) -> ProfileStoreResult[TTSGenerationProfile]:
+            update_called.set()
+            updated = _profile(
+                profile_id=profile_id,
+                display_name=draft.display_name,
+                provider_id=draft.provider_id,
+                model_id=draft.model_id,
+                voice_id=draft.voice_id,
+                response_format=draft.response_format,
+                speed=draft.speed,
+                options=dict(draft.options),
+                revision=expected_revision + 1,
+            )
+            self.profiles[profile_id] = updated
+            return ProfileStoreResult(generation=expected_generation, value=updated)
+
+    repository = ReorderingRepository()
+    service, _repository, _tts_service = _service(repository=repository)
+    loaded_first = LoadedTTSProfile(repository.generation, first)
+    renamed = TTSProfileDraft(
+        display_name="Y",
+        provider_id=first.provider_id,
+        model_id=first.model_id,
+        voice_id=first.voice_id,
+        response_format=first.response_format,
+        speed=first.speed,
+        options=first.options,
+    )
+
+    snapshot = asyncio.create_task(service.bounded_profile_assignment_snapshot())
+    await first_page_entered.wait()
+    rename = asyncio.create_task(service.update_profile(loaded_first, renamed))
+    await asyncio.sleep(0)
+    assert update_called.is_set() is False
+
+    release_first_page.set()
+    captured = await snapshot
+    await rename
+
+    assert target.profile_id in {profile.profile_id for profile, _count in captured}
+    assert len(captured) == 52
+    assert update_called.is_set() is True
+
+
+@pytest.mark.asyncio
+async def test_bounded_consumer_snapshot_rejects_inventory_over_limit() -> None:
+    repository = _FakeRepository()
+    repository.page = TTSProfilePage(profiles=(), total=201)
+    service, _repository, _tts_service = _service(repository=repository)
+
+    with pytest.raises(ProfileServiceError, match="operation_failed"):
+        await service.bounded_profile_assignment_snapshot()
+
+
+@pytest.mark.asyncio
 async def test_artifact_lease_covers_profile_create_repository_commit() -> None:
     coordinator = _ArtifactLeaseCoordinator()
     repository = _FakeRepository()

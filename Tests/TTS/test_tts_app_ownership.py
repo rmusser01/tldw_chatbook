@@ -6,6 +6,7 @@ import builtins
 import gc
 import threading
 from collections.abc import AsyncIterator, Iterator, Mapping
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -669,32 +670,20 @@ async def test_profile_service_concurrent_first_use_joins_one_open_and_construct
 
 
 @pytest.mark.asyncio
-async def test_removal_evidence_fails_closed_when_profile_inventory_is_incoherent(
+async def test_removal_evidence_uses_bounded_profile_snapshot_and_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
     from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 
-    summaries = tuple(
-        SimpleNamespace(profile_id=UUID(int=index + 1)) for index in range(200)
-    )
-
     class Profiles:
-        async def list_profiles(self, *, search: object, offset: int):
-            assert search is None
-            assert offset == 0
-            return SimpleNamespace(
-                profiles=summaries, total=201, repository_generation=7
-            )
+        async def bounded_profile_assignment_snapshot(self):
+            raise ProfileRepositoryError("unavailable")
 
-        async def get_profile(self, profile_id: UUID):
-            return SimpleNamespace(
-                profile=SimpleNamespace(profile_id=profile_id),
-                repository_generation=7,
-            )
-
-        async def assignment_count(self, _loaded: object) -> int:
-            return 0
+        def __getattr__(self, name: str):
+            if name in {"list_profiles", "get_profile", "assignment_count"}:
+                raise AssertionError("app must use the service-owned bounded snapshot")
+            raise AttributeError(name)
 
     class Registry:
         async def provider_configuration_snapshot(self, _provider_id: str):
@@ -735,74 +724,6 @@ async def test_removal_evidence_fails_closed_when_profile_inventory_is_incoheren
         lambda *_args, **_kwargs: object(),
     )
 
-    with pytest.raises(ProfileRepositoryError, match="unavailable"):
-        await TldwCli._audio_cpp_artifact_removal_evidence(
-            owner,
-            ArtifactRef("audio-cpp-model", "a" * 40, "q8_0"),
-        )
-
-    class IncompleteProfiles(Profiles):
-        async def list_profiles(self, *, search: object, offset: int):
-            assert search is None
-            if offset == 0:
-                return SimpleNamespace(
-                    profiles=summaries[:1], total=2, repository_generation=7
-                )
-            return SimpleNamespace(profiles=(), total=2, repository_generation=7)
-
-    incomplete = IncompleteProfiles()
-
-    async def ensure_incomplete_profiles() -> IncompleteProfiles:
-        return incomplete
-
-    owner._ensure_tts_profile_service = ensure_incomplete_profiles
-    with pytest.raises(ProfileRepositoryError, match="unavailable"):
-        await TldwCli._audio_cpp_artifact_removal_evidence(
-            owner,
-            ArtifactRef("audio-cpp-model", "a" * 40, "q8_0"),
-        )
-
-    class ChurningProfiles(Profiles):
-        async def list_profiles(self, *, search: object, offset: int):
-            assert search is None
-            return SimpleNamespace(
-                profiles=(summaries[offset],),
-                total=2,
-                repository_generation=7 + offset,
-            )
-
-    churning = ChurningProfiles()
-
-    async def ensure_churning_profiles() -> ChurningProfiles:
-        return churning
-
-    owner._ensure_tts_profile_service = ensure_churning_profiles
-    with pytest.raises(ProfileRepositoryError, match="unavailable"):
-        await TldwCli._audio_cpp_artifact_removal_evidence(
-            owner,
-            ArtifactRef("audio-cpp-model", "a" * 40, "q8_0"),
-        )
-
-    class LoadedDriftProfiles(Profiles):
-        async def list_profiles(self, *, search: object, offset: int):
-            assert search is None
-            assert offset == 0
-            return SimpleNamespace(
-                profiles=summaries[:1], total=1, repository_generation=7
-            )
-
-        async def get_profile(self, profile_id: UUID):
-            return SimpleNamespace(
-                profile=SimpleNamespace(profile_id=profile_id),
-                repository_generation=8,
-            )
-
-    loaded_drift = LoadedDriftProfiles()
-
-    async def ensure_loaded_drift_profiles() -> LoadedDriftProfiles:
-        return loaded_drift
-
-    owner._ensure_tts_profile_service = ensure_loaded_drift_profiles
     with pytest.raises(ProfileRepositoryError, match="unavailable"):
         await TldwCli._audio_cpp_artifact_removal_evidence(
             owner,
@@ -1075,9 +996,13 @@ def test_profile_service_owns_only_existing_app_dependencies() -> None:
 
     profile_service = tts_package.TTSProfileService(repository, tts_service)
 
-    assert vars(profile_service) == {
-        "_repository": repository,
-        "_tts_service": tts_service,
+    assert profile_service._repository is repository
+    assert profile_service._tts_service is tts_service
+    assert isinstance(profile_service._consumer_mutation_lock, asyncio.Lock)
+    assert set(vars(profile_service)) == {
+        "_repository",
+        "_tts_service",
+        "_consumer_mutation_lock",
     }
     for resource_name in (
         "_close_task",
@@ -1275,7 +1200,12 @@ async def test_voice_bundle_service_is_lazy_singleton_and_closes_before_reposito
 
     portability = PortabilityOwner()
     repository = object()
-    profile_service = object()
+
+    @asynccontextmanager
+    async def mutation_fence():
+        yield
+
+    profile_service = SimpleNamespace(consumer_mutation_fence=mutation_fence)
     tts_service = object()
 
     coordinator = object()
@@ -1285,9 +1215,11 @@ async def test_voice_bundle_service_is_lazy_singleton_and_closes_before_reposito
         repo: object,
         dependency: object,
         *,
+        profile_mutation_fence: object,
         artifact_lease_coordinator: object,
     ) -> object:
         assert artifact_lease_coordinator is coordinator
+        assert profile_mutation_fence is mutation_fence
         constructed.append((root, repo, dependency))
         return portability
 
