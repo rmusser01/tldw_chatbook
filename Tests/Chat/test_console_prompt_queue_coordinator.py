@@ -416,7 +416,7 @@ async def test_context_change_before_first_admission_pauses_for_explicit_review(
         for message in store.messages_for_session(session_id)
         if message.role is ConsoleMessageRole.USER
     )
-    store.update_message_content(user.id, "one edited while running")
+    store.set_session_context_summary(session_id, "summary changed", user.id)
     queued_id = _queue(controller, session_id, "two")
 
     gateway.release[0].set()
