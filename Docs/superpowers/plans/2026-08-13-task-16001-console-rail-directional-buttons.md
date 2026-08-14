@@ -305,9 +305,15 @@ git commit -m "fix(console): make rail directions and hit targets clear"
 
 **Files:**
 - Modify: `backlog/tasks/task-16001 - Make-Console-rail-controls-directional-full-buttons.md`
+- Modify: `Tests/UI/test_console_tab_scope.py`
 - Add: `Docs/superpowers/plans/2026-08-13-task-16001-console-rail-directional-buttons.md`
 
 - [ ] **Step 1: Run directly related regression tests only**
+
+First, update the existing Console focus-tour regression to tolerate the
+optional in-transcript provider-recovery action while still requiring the
+tour to reach the status chips and Inspector within ten stops. This is a
+test-harness correction only; do not alter production focus behavior.
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
