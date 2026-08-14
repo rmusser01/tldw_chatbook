@@ -121,6 +121,13 @@ class SubscriptionsDBUnavailableError(SubscriptionError):
         super().__init__("Watchlists database is unavailable")
 
 
+class SubscriptionsDBReadError(SubscriptionError):
+    """Fixed failure for a transient agent-read readiness operation."""
+
+    def __init__(self) -> None:
+        super().__init__("Watchlists database read failed")
+
+
 # --- Database Class ---
 #: The one definition of `site_configs`. Applied by
 #: `SubscriptionsDB._initialize_schema`, which owns the table, and by
@@ -328,6 +335,8 @@ class SubscriptionsDB(BaseDB):
             SubscriptionsDBUnavailableError: If a required table or column is
                 unavailable. The fixed message contains no SQL, path, or
                 stored value.
+            SubscriptionsDBReadError: If the readiness read fails operationally.
+                The fixed message contains no underlying exception payload.
         """
         try:
             conn = self.conn
@@ -339,8 +348,8 @@ class SubscriptionsDB(BaseDB):
                     raise SubscriptionsDBUnavailableError()
         except SubscriptionsDBUnavailableError:
             raise
-        except Exception:
-            raise SubscriptionsDBUnavailableError() from None
+        except (sqlite3.Error, OSError):
+            raise SubscriptionsDBReadError() from None
 
     def _initialize_schema(self):
         """Initialize the database schema.

@@ -10,7 +10,11 @@ from pathlib import Path
 import pytest
 
 import tldw_chatbook.DB.Subscriptions_DB as subscriptions_module
-from tldw_chatbook.DB.Subscriptions_DB import SubscriptionError, SubscriptionsDB
+from tldw_chatbook.DB.Subscriptions_DB import (
+    SubscriptionError,
+    SubscriptionsDB,
+    SubscriptionsDBReadError,
+)
 
 
 def _create_subscriptions_database(path: Path) -> None:
@@ -45,7 +49,9 @@ def _sqlite_artifact_snapshot(
 ) -> dict[str, tuple[int, int, int, str]]:
     snapshot: dict[str, tuple[int, int, int, str]] = {}
     for candidate in sorted(path.parent.iterdir()):
-        if candidate.name != path.name and not candidate.name.startswith(f"{path.name}-"):
+        if candidate.name != path.name and not candidate.name.startswith(
+            f"{path.name}-"
+        ):
             continue
         metadata = candidate.stat()
         snapshot[candidate.name] = (
@@ -150,7 +156,9 @@ def test_read_only_uses_dedicated_owner_and_only_safe_connection_pragmas(
         "wal_checkpoint",
         "writable_schema",
     )
-    assert not any(token in statement for token in forbidden for statement in normalized)
+    assert not any(
+        token in statement for token in forbidden for statement in normalized
+    )
     db.close()
 
 
@@ -205,10 +213,13 @@ def test_read_only_view_preserves_live_wal_data_and_logical_database(
 
     reader = SubscriptionsDB(path, client_id="agent", read_only=True)
     reader.assert_agent_read_ready()
-    assert reader.conn.execute(
-        "SELECT name FROM subscriptions WHERE source = ?",
-        ("https://example.test/live-wal",),
-    ).fetchone()[0] == "Uncheckpointed source"
+    assert (
+        reader.conn.execute(
+            "SELECT name FROM subscriptions WHERE source = ?",
+            ("https://example.test/live-wal",),
+        ).fetchone()[0]
+        == "Uncheckpointed source"
+    )
     reader.close()
 
     after_artifacts = _sqlite_artifact_snapshot(path)
@@ -238,9 +249,7 @@ def test_read_only_view_preserves_live_wal_data_and_logical_database(
     # or a separate snapshot architecture. Neither is this live read contract.
     assert changed_artifacts <= {f"{path.name}-shm"}
     assert after_artifacts[path.name] == before_artifacts[path.name]
-    assert after_artifacts[f"{path.name}-wal"] == before_artifacts[
-        f"{path.name}-wal"
-    ]
+    assert after_artifacts[f"{path.name}-wal"] == before_artifacts[f"{path.name}-wal"]
 
 
 def test_standalone_read_only_view_creates_only_private_sqlite_sidecars(
@@ -294,3 +303,31 @@ def test_readiness_requires_only_agent_tool_core_schema_and_failure_is_closeable
 
     incomplete.close()
     assert incomplete._local.conn is None
+
+
+def test_readiness_operational_failure_uses_fixed_transient_exception(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "subscriptions.db"
+    _create_subscriptions_database(path)
+    db = SubscriptionsDB(path, read_only=True)
+    original_connection = db.conn
+
+    class FailingReadinessConnection:
+        def execute(self, _statement: str):
+            raise sqlite3.OperationalError(
+                "database /operator/private.db is locked token=secret"
+            )
+
+    db._local.conn = FailingReadinessConnection()
+    try:
+        with pytest.raises(SubscriptionError) as exc_info:
+            db.assert_agent_read_ready()
+    finally:
+        db._local.conn = original_connection
+        db.close()
+
+    assert type(exc_info.value) is SubscriptionsDBReadError
+    assert str(exc_info.value) == "Watchlists database read failed"
+    assert "operator" not in str(exc_info.value)
+    assert "secret" not in str(exc_info.value)

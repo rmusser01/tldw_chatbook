@@ -377,6 +377,22 @@ def test_since_accepts_date_or_rfc3339_and_is_inclusive_after_utc_normalization(
     ]
 
 
+def test_since_accepts_lowercase_rfc3339_separator_and_utc_designator(
+    db: SubscriptionsDB,
+) -> None:
+    source_id = _source(db, "Lowercase date floor")
+    boundary = _item(
+        db, source_id, "lowercase-boundary", published="2026-08-14T08:30:00Z"
+    )
+
+    result = _payload(_service(db).search_items({"since": "2026-08-14t08:30:00z"}))
+
+    assert result["status"] == "ok"
+    assert [item["id"] for item in result["items"]] == [
+        f"local:watchlist_item:{boundary}"
+    ]
+
+
 @pytest.mark.parametrize("limit", (True, False, 0, 51, 1.0, "10"))
 def test_limit_accepts_only_integers_from_one_through_fifty(limit: object) -> None:
     result = _payload(_service(lambda: None).search_items({"limit": limit}))
@@ -609,6 +625,51 @@ def test_missing_and_transient_database_dependencies_are_structured_and_scrubbed
     assert "secret" not in json.dumps(transient)
 
 
+def test_transient_production_readiness_failure_is_retryable_and_scrubbed(
+    db: SubscriptionsDB,
+) -> None:
+    original_connection = db.conn
+
+    class FailingReadinessConnection:
+        def execute(self, _statement: str):
+            raise sqlite3.OperationalError(
+                "database /operator/private.db is temporarily locked token=secret"
+            )
+
+    db._local.conn = FailingReadinessConnection()
+    try:
+        result = _payload(_service(db).search_items({}))
+    finally:
+        db._local.conn = original_connection
+
+    assert result == {
+        "status": "feature_unavailable",
+        "retryable": True,
+        "message": "local Watchlists data is temporarily unavailable; retry later",
+    }
+    serialized = json.dumps(result)
+    assert "operator" not in serialized
+    assert "secret" not in serialized
+    assert "initialize or migrate" not in serialized
+
+
+def test_unexpected_readiness_contract_failure_is_not_misclassified_as_retryable(
+    db: SubscriptionsDB,
+) -> None:
+    original_connection = db.conn
+
+    class BrokenReadinessConnection:
+        def execute(self, _statement: str):
+            raise ValueError("unexpected readiness contract violation")
+
+    db._local.conn = BrokenReadinessConnection()
+    try:
+        with pytest.raises(ValueError, match="unexpected readiness contract"):
+            _service(db).search_items({})
+    finally:
+        db._local.conn = original_connection
+
+
 def test_successful_search_has_exact_core_shape_and_membership_truth(
     db: SubscriptionsDB,
 ) -> None:
@@ -714,6 +775,25 @@ def test_search_reports_omitted_collection_memberships_honestly(
     assert item["id"] == f"local:watchlist_item:{item_id}"
     assert len(item["collections"]) == 20
     assert item["collections_truncated"] is True
+
+
+def test_search_does_not_mask_missing_membership_contract_entries(
+    db: SubscriptionsDB,
+) -> None:
+    source_id = _source(db, "Broken membership contract")
+    _item(db, source_id, "broken-membership")
+
+    class BrokenMembershipDatabase:
+        def __getattr__(self, name: str):
+            return getattr(db, name)
+
+        def get_source_collection_memberships(self, _source_ids: object):
+            return {}
+
+    service = _service(BrokenMembershipDatabase())
+
+    with pytest.raises(KeyError):
+        service.search_items({})
 
 
 def test_detail_has_search_metadata_parity_and_distinguishes_null_from_missing(

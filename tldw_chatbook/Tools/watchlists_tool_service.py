@@ -9,7 +9,10 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from typing import Any
 
-from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDBUnavailableError
+from tldw_chatbook.DB.Subscriptions_DB import (
+    SubscriptionsDBReadError,
+    SubscriptionsDBUnavailableError,
+)
 
 _SEARCH_KEYS = frozenset(
     {"query", "collection", "source", "statuses", "since", "limit", "cursor"}
@@ -29,7 +32,8 @@ _TRANSIENT_UNAVAILABLE_MESSAGE = (
 )
 _RFC3339_RE = re.compile(
     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
-    r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\Z"
+    r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\Z",
+    re.IGNORECASE,
 )
 _CANONICAL_SCOPE_RE = re.compile(
     r"local:(?P<kind>subscription|watchlist):(?P<id>[1-9][0-9]*)\Z"
@@ -122,10 +126,7 @@ class WatchlistsToolService:
         items = [
             self._shape_search_item(
                 row,
-                memberships.get(
-                    int(row["subscription_id"]),
-                    {"collections": [], "has_more": False},
-                ),
+                memberships[int(row["subscription_id"])],
             )
             for row in rows
         ]
@@ -317,7 +318,7 @@ class WatchlistsToolService:
             if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
                 parsed = datetime.combine(date.fromisoformat(value), time(), tzinfo=UTC)
             elif _RFC3339_RE.fullmatch(value):
-                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                parsed = datetime.fromisoformat(value.upper().replace("Z", "+00:00"))
             else:
                 raise ValueError
         except ValueError:
@@ -362,6 +363,8 @@ class WatchlistsToolService:
             database = self._db_resolver()
         except (SubscriptionsDBUnavailableError, FileNotFoundError, ImportError):
             return None, self._feature_unavailable(retryable=False)
+        except SubscriptionsDBReadError:
+            return None, self._feature_unavailable(retryable=True)
         except Exception:  # noqa: BLE001 - resolver failures are scrubbed outcomes
             return None, self._feature_unavailable(retryable=True)
 
@@ -373,7 +376,7 @@ class WatchlistsToolService:
                 readiness_check()
             except SubscriptionsDBUnavailableError:
                 return None, self._feature_unavailable(retryable=False)
-            except Exception:  # noqa: BLE001 - readiness may recover on another call
+            except SubscriptionsDBReadError:
                 return None, self._feature_unavailable(retryable=True)
         return database, None
 
