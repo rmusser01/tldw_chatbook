@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 
@@ -7,6 +7,8 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleStagedContextState,
 )
 from tldw_chatbook.Chat.console_rail_state import (
+    CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS,
+    CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
     CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY,
     ConsoleRailPreferences,
     _INACTIVE_STAGED_SUMMARIES,
@@ -700,9 +702,28 @@ def test_console_rail_priority_resolves_two_open_rails(
         },
         available_columns=width,
     )
+    state = replace(
+        state,
+        left_badge="workspace",
+        right_badge="blocked",
+        persistence_key="sentinel-key",
+        session_open=False,
+        details_open=True,
+    )
+    snapshot = replace(state)
 
     resolved = resolve_console_rail_priority(state, width)
 
+    assert state == snapshot
+    if 100 <= width < 150:
+        assert resolved == replace(
+            snapshot,
+            left_open=False,
+            right_compact_override=True,
+            compact_override=True,
+        )
+    else:
+        assert resolved is state
     assert resolved.left_open is expected_left
     assert resolved.right_open is expected_right
     assert resolved.preferred_left_open is True
@@ -733,6 +754,11 @@ def test_console_context_reveal_preferences_switches_from_effective_inspector(
     )
 
     assert console_context_reveal_preferences(state, width) == expected
+
+
+def test_console_inspector_auto_open_bounds_are_shared_contracts():
+    assert CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS == 118
+    assert CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS == 128
 
 
 @pytest.mark.parametrize(

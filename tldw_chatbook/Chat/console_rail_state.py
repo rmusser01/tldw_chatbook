@@ -40,6 +40,11 @@ CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS = 100
 # hide and the main column's min-width is waived so the transcript always
 # renders (covers the 80x24 and 60x18 review captures).
 CONSOLE_SINGLE_PANE_COLUMNS = 84
+#: Width band where the Console may automatically reveal Inspector when its
+#: standard-width readiness contract is satisfied. Exported so resize
+#: deduplication and the UI eligibility check share exact boundaries.
+CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS = 118
+CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS = 128
 CONSOLE_RAIL_CONTEXT_LABEL = f"Context {GLYPH_COLLAPSED}"
 CONSOLE_RAIL_INSPECTOR_LABEL = f"{GLYPH_COLLAPSE_LEFT} Inspector"
 
@@ -141,9 +146,9 @@ class ConsoleRailState:
     # TASK-2154.2: a rail rendered OPEN below its compact-collapse threshold
     # (an explicit user toggle overrode the responsive default). Drives the
     # main column's min-width waiver so the honored rail can never break the
-    # grid. Computed only in build_console_rail_state -- the 118-128-col band
-    # and pending-launch auto-open paths replace() right_open afterwards and
-    # deliberately keep these flags False, preserving their exact rendering.
+    # grid. build_console_rail_state computes preference-derived overrides;
+    # resolve_console_rail_priority may grant Inspector override authority
+    # after an automatic open.
     right_compact_override: bool = False
     left_compact_override: bool = False
     compact_override: bool = False
@@ -598,9 +603,9 @@ def console_rail_width_band(available_columns: int | None) -> str:
         return "single-pane"
     if available_columns < CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS:
         return "narrow"
-    if available_columns < 118:
+    if available_columns < CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS:
         return "compact-before-auto-open"
-    if available_columns < 129:
+    if available_columns < CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS + 1:
         return "compact-auto-open"
     if available_columns < CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS:
         return "compact-after-auto-open"
