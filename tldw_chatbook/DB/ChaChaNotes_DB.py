@@ -9556,6 +9556,7 @@ UPDATE db_schema_version
         expected_version: int,
         *,
         preserve_provider_continuation: bool = False,
+        preserve_descendants: bool = False,
     ) -> Optional[bool]:
         """
         Updates an existing message using optimistic locking.
@@ -9577,6 +9578,8 @@ UPDATE db_schema_version
                          If 'image_data' is updated, 'image_mime_type' should also be
                          provided, unless 'image_data' is set to None.
             expected_version: The client's expected version of the record.
+            preserve_descendants: Skip descendant tombstones when an
+                authoritative bulk resave owns the retained message set.
 
         Returns:
             True if the update was successful.
@@ -9592,6 +9595,8 @@ UPDATE db_schema_version
             raise InputError("No data provided for message update.")
         if type(preserve_provider_continuation) is not bool:
             raise InputError("Preserve provider continuation must be a boolean.")
+        if type(preserve_descendants) is not bool:
+            raise InputError("Preserve descendants must be a boolean.")
 
         now = self._get_current_utc_timestamp_iso()
         fields_to_update_sql = []
@@ -9720,7 +9725,7 @@ UPDATE db_schema_version
                         msg = f"Message ID {message_id} version changed to {final_state['version']} concurrently."
                     raise ConflictError(msg, entity="messages", entity_id=message_id)
 
-                if content_changed:
+                if content_changed and not preserve_descendants:
                     conn.execute(
                         """
                         WITH RECURSIVE descendants(id) AS (

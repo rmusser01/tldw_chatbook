@@ -595,6 +595,7 @@ class ChatPersistenceService:
         allow_source_owned_repair: bool = False,
         expected_roleplay_version: int | None = None,
         preserve_provider_continuation: bool = False,
+        preserve_descendants: bool = False,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -652,6 +653,8 @@ class ChatPersistenceService:
             metadata_json: Optional structured message metadata JSON
                 (task-2364). Follows the same only-when-supplied rule as
                 ``usage_json``, for the same reason.
+            preserve_descendants: Skip descendant tombstones when this
+                update belongs to an authoritative bulk-history resave.
 
         Returns:
             True if the row update was applied; False if the underlying
@@ -760,6 +763,7 @@ class ChatPersistenceService:
                         update_data,
                         expected_version=current_message["version"],
                         preserve_provider_continuation=preserve_provider_continuation,
+                        preserve_descendants=preserve_descendants,
                     )
                 )
                 if result and attachments is not None:
@@ -791,6 +795,7 @@ class ChatPersistenceService:
                         update_data,
                         expected_version=current_message["version"],
                         preserve_provider_continuation=preserve_provider_continuation,
+                        preserve_descendants=preserve_descendants,
                     )
                 )
                 if result:
@@ -803,6 +808,7 @@ class ChatPersistenceService:
                 update_data,
                 expected_version=current_message["version"],
                 preserve_provider_continuation=preserve_provider_continuation,
+                preserve_descendants=preserve_descendants,
             )
         )
 
@@ -1304,6 +1310,7 @@ class ChatPersistenceService:
                     feedback=feedback,
                     update_parent="parent_message_id" in message_obj,
                     update_feedback="feedback" in message_obj,
+                    preserve_descendants=True,
                 )
                 consumed_existing_ids.add(message_id)
             elif message_id:
@@ -1336,6 +1343,7 @@ class ChatPersistenceService:
                     feedback=feedback,
                     update_parent="parent_message_id" in message_obj,
                     update_feedback="feedback" in message_obj,
+                    preserve_descendants=True,
                 )
                 consumed_existing_ids.add(existing_message["id"])
                 fallback_index += 1
