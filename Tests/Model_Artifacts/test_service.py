@@ -2435,6 +2435,55 @@ def test_ordinary_cleanup_composes_losing_body_group_owner(
     )
 
 
+def test_cleanup_owner_identity_dedupe_bounds_self_carrier_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path / "parent")
+    child_service, child_item, _source, _target = installed_artifact(tmp_path / "child")
+    owner = service.acquire_removal_authority(item.reference)
+    child_owner = child_service.acquire_removal_authority(child_item.reference)
+    owner._absorb_cleanup_owner(child_owner)
+    parent_target_id = id(owner._target_lease)
+    real_release = service_module.ArtifactOperationLease.release
+    real_child_close = child_owner.close
+    child_attempts = 0
+
+    def fail_parent_target(lease: object) -> None:
+        if id(lease) == parent_target_id:
+            raise service_module.ArtifactLeaseError("parent cleanup failed")
+        real_release(lease)
+
+    def fresh_self_carrier() -> None:
+        nonlocal child_attempts
+        child_attempts += 1
+        if child_attempts > 1:
+            raise AssertionError("duplicate child cleanup attempt")
+        raise service_module.ArtifactRemovalCleanupError(child_owner)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_parent_target,
+    )
+    monkeypatch.setattr(child_owner, "close", fresh_self_carrier)
+
+    with pytest.raises(service_module.ArtifactLeaseError, match="parent cleanup"):
+        owner.close()
+
+    assert child_attempts == 1
+    assert len(owner._additional_cleanup_owners) == 1
+    assert owner._additional_cleanup_owners[0] is child_owner
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    monkeypatch.setattr(child_owner, "close", real_child_close)
+    owner.close()
+
+
 def test_close_absorbs_nominal_owner_from_later_ordinary_loser(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

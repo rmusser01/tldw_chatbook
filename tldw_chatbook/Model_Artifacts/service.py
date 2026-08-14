@@ -1318,10 +1318,12 @@ class ArtifactRemovalAuthority:
     def _absorb_cleanup_owner(self, owner: ArtifactRemovalAuthority) -> None:
         """Compose another exact cleanup-only authority into this owner."""
 
-        if owner is self:
-            return
         self._make_cleanup_only()
         owner._make_cleanup_only()
+        if owner is self or any(
+            existing is owner for existing in self._additional_cleanup_owners
+        ):
+            return
         self._additional_cleanup_owners.append(owner)
 
     def _has_cleanup(self) -> bool:
