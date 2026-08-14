@@ -22,6 +22,26 @@ TASK_2511 = (
 )
 DESIGN_DOCUMENT = DOCUMENTS[0]
 USER_GUIDE_DOCUMENT = DOCUMENTS[1]
+CONSOLE_AGENT_TOOLS_DOCUMENT = (
+    REPO_ROOT / "Docs" / "User_Guide" / "console" / "agent-runs-and-tools.md"
+)
+SKILLS_EXAMPLES_DOCUMENT = REPO_ROOT / "Docs" / "Examples" / "skills" / "README.md"
+CONFIG_TEMPLATE = REPO_ROOT / "tldw_chatbook" / "config.py"
+MCP_TOOLS_MODE = (
+    REPO_ROOT / "tldw_chatbook" / "UI" / "MCP_Modules" / "mcp_tools_mode.py"
+)
+MCP_SERVERS_MODE = (
+    REPO_ROOT / "tldw_chatbook" / "UI" / "MCP_Modules" / "mcp_servers_mode.py"
+)
+WATCHLISTS_TOOL_DOCUMENTS = (CONSOLE_AGENT_TOOLS_DOCUMENT, USER_GUIDE_DOCUMENT)
+LOCAL_TOOL_COPY_SURFACES = (
+    CONFIG_TEMPLATE,
+    MCP_TOOLS_MODE,
+    MCP_SERVERS_MODE,
+    CONSOLE_AGENT_TOOLS_DOCUMENT,
+    USER_GUIDE_DOCUMENT,
+    SKILLS_EXAMPLES_DOCUMENT,
+)
 LOCAL_LIBRARY_TOOLS_DOCUMENT = (
     REPO_ROOT / "Docs" / "Development" / "Agent-Tools" / "local-library-tools.md"
 )
@@ -146,7 +166,7 @@ def _mutate_inventory(
 
 def _assert_hub_task_boundary(text: str) -> None:
     normalized = " ".join(text.split())
-    assert "workspace file, read-only Git, and web tools" in normalized
+    assert "workspace file, read-only Git, web, and Watchlists tools" in normalized
     assert all(
         tool_name in normalized
         for tool_name in ("todo_create", "todo_update", "todo_get", "todo_list")
@@ -161,6 +181,16 @@ def _assert_hub_task_boundary(text: str) -> None:
         )
         is None
     )
+
+
+def _tool_parameter_names(text: str, tool_name: str) -> list[str]:
+    section = re.search(
+        rf"^#### `{re.escape(tool_name)}`\s*$\n(?P<body>.*?)(?=^#{{3,4}} |\Z)",
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert section is not None, tool_name
+    return re.findall(r"^\| `([^`]+)` \|", section.group("body"), re.MULTILINE)
 
 
 def test_documents_publish_exact_install_and_launch_commands(
@@ -221,8 +251,8 @@ def test_user_guide_hub_inventory_contract_rejects_session_task_synonym() -> Non
     text = USER_GUIDE_DOCUMENT.read_text(encoding="utf-8")
     normalized = " ".join(text.split())
     mutated = normalized.replace(
-        "workspace file, read-only Git, and web tools",
-        "workspace file, read-only Git, and web tools. "
+        "workspace file, read-only Git, web, and Watchlists tools",
+        "workspace file, read-only Git, web, and Watchlists tools. "
         "It also includes session task tools",
         1,
     )
@@ -230,6 +260,100 @@ def test_user_guide_hub_inventory_contract_rejects_session_task_synonym() -> Non
     assert mutated != normalized
     with pytest.raises(AssertionError):
         _assert_hub_task_boundary(mutated)
+
+
+def test_watchlists_tools_document_every_public_parameter_and_bound() -> None:
+    for path in WATCHLISTS_TOOL_DOCUMENTS:
+        text = path.read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+        assert _tool_parameter_names(text, "watchlists_search_items") == [
+            "query",
+            "collection",
+            "source",
+            "statuses",
+            "since",
+            "limit",
+            "cursor",
+        ], path
+        assert _tool_parameter_names(text, "watchlists_get_item") == ["item_id"], path
+        for contract in (
+            "512 characters and 32 whitespace-delimited terms",
+            "collection names are limited to 256 characters",
+            "source names or configured URLs are limited to 2,048 characters",
+            "positive local row ID from 1 through 2^63-1",
+            "source integer IDs use the same 1 through 2^63-1 range",
+            "non-empty, unique array of at most five values",
+            "`new`, `reviewed`, `ingested`, `ignored`, or `error`",
+            "inclusive effective-date floor in `YYYY-MM-DD` or RFC 3339 form, normalized to UTC",
+            "defaults to 10 and accepts 1 through 50",
+            "non-blank opaque string of at most 2,048 characters",
+            "required canonical `local:watchlist_item:<positive integer>` ID",
+            "item integer is limited to 1 through 2^63-1",
+            "maximum 40 characters",
+            "Unknown parameters are rejected",
+            "Booleans are not accepted as integer IDs or limits",
+            "Numeric strings remain names",
+        ):
+            assert contract in normalized, (path, contract)
+
+
+def test_watchlists_tools_document_search_evidence_and_cursor_semantics() -> None:
+    for path in WATCHLISTS_TOOL_DOCUMENTS:
+        text = path.read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+        for contract in (
+            "literal full-text over title, body, and author; it is not semantic search",
+            "Results are local-first",
+            "local Watchlists database",
+            "newest-first",
+            "source-linked",
+            "30 KiB",
+            "untrusted evidence",
+            "`effective_date` is the normalized publication date, falling back to item creation time",
+            "`published_date`, `created_at`, and `updated_at` remain separate",
+            "`last_checked` and `last_successful_check` remain separate",
+            "For “all,” follow `next_cursor` until `has_more` is `false`",
+            "Continuation excludes later inserts but is not snapshot isolation",
+            "server Watchlists search is not yet supported",
+        ):
+            assert contract in normalized, (path, contract)
+
+
+def test_watchlists_tools_document_privacy_and_external_mcp_permission() -> None:
+    for path in WATCHLISTS_TOOL_DOCUMENTS:
+        text = path.read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+        for contract in (
+            "URL paths are authorized Watchlists metadata",
+            "userinfo, query, and fragment are removed",
+            "Only absolute HTTP(S) URLs with a host are returned",
+            "`[mcp] expose_local_tools`",
+            "per-tool permission must be Allow",
+            "Ask is refused",
+            "send the approved evidence to its client or model",
+        ):
+            assert contract in normalized, (path, contract)
+
+
+def test_expanded_local_tool_group_copy_names_watchlists_everywhere() -> None:
+    stale = "Local workspace + web tools"
+    expected = "workspace, web, and Watchlists"
+    for path in LOCAL_TOOL_COPY_SURFACES:
+        text = path.read_text(encoding="utf-8")
+        assert stale not in text, path
+        assert expected in text, path
+
+
+def test_skill_author_inventory_links_watchlists_task_and_permission_decisions() -> (
+    None
+):
+    text = SKILLS_EXAMPLES_DOCUMENT.read_text(encoding="utf-8")
+    assert (
+        "task-16222%20-%20Expose-local-Watchlists-search-tools-to-Console-and-MCP.md"
+        in text
+    )
+    assert "030-local-library-agent-tool-boundary.md" in text
+    assert "032-local-agent-tool-permission-boundary.md" in text
 
 
 @pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)

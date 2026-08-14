@@ -665,9 +665,7 @@ def _get_typed_value(
         return default
 
 
-def _get_int_timeout_value(
-    data_dict: Dict, key: str, default: int
-) -> int:
+def _get_int_timeout_value(data_dict: Dict, key: str, default: int) -> int:
     """Get an integer timeout value, rejecting booleans, non-positive values, and malformed strings.
 
     Args:
@@ -869,9 +867,7 @@ def normalize_provider_config_key(provider: object) -> str:
         A stripped, lowercase provider key with spaces and hyphens replaced by
         underscores.
     """
-    normalized = (
-        str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
-    )
+    normalized = str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
     return "zai" if normalized == "z.ai" else normalized
 
 
@@ -2690,7 +2686,7 @@ users_name = "default_user" # Default user name for the TUI
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
-local_tools_enabled = true      # standard web + workspace agent tools; every call still uses MCP Ask/Allow/Off permissions
+local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
 # Conversation-memory defaults (ADR-052). Model capacity remains capability data,
 # not a persisted policy value.
 conversation_budget_mode = "automatic"  # automatic, custom
@@ -4178,7 +4174,7 @@ require_auth = false  # Require authentication (not implemented yet)
 rate_limit = 100  # Max requests per minute per client
 max_concurrent_requests = 10  # Max concurrent requests
 
-# expose_local_tools = false   # expose workspace-local agent tools (fs_*/git_*/web_*) to external MCP clients; permission-gated, writes effectively denied until granted
+# expose_local_tools = false   # expose workspace, web, and Watchlists agent tools (fs_*/git_*/web_*/watchlists_*) to external MCP clients; each tool remains permission-gated
 
 # Tool-specific settings
 [mcp.tools]
@@ -5307,8 +5303,7 @@ def apply_settings_mutation_to_cli_config(
     *,
     delete_keys: Mapping[str, Collection[str]] | None = None,
     mutation_precondition: Callable[[], bool] | None = None,
-    locked_snapshot_precondition: Callable[[AtomicConfigSnapshot], bool]
-    | None = None,
+    locked_snapshot_precondition: Callable[[AtomicConfigSnapshot], bool] | None = None,
 ) -> ConfigMutationResult:
     """Atomically apply exact config sets/deletes, then refresh caches."""
     global _CONFIG_CACHE, _SETTINGS_CACHE, settings
