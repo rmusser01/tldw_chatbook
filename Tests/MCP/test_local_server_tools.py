@@ -317,6 +317,94 @@ def test_watchlists_lazy_resolver_closes_failure_and_retries(monkeypatch, tmp_pa
     assert candidates[1].closed is False
 
 
+def test_watchlists_lazy_resolver_blocks_replacement_until_failed_close_succeeds(
+    monkeypatch, tmp_path, workspace, store, caplog
+):
+    sentinel = "SENTINEL /private/leaked.db API_KEY=secret"
+    constructions = []
+
+    class FailedCandidate:
+        def __init__(self):
+            self.close_calls = 0
+
+        def assert_agent_read_ready(self):
+            raise SubscriptionsDBReadError()
+
+        def close(self):
+            self.close_calls += 1
+            if self.close_calls < 3:
+                raise RuntimeError(sentinel)
+
+        def search_items_for_agent(self, **_kwargs):
+            raise AssertionError("failed candidate must never execute a search")
+
+    class ReadyCandidate:
+        def assert_agent_read_ready(self):
+            return None
+
+        def close(self):
+            raise AssertionError("successful candidate remains process-owned")
+
+        def search_items_for_agent(self, **_kwargs):
+            return {"items": [], "has_more": False, "snapshot_max_item_id": 0}
+
+        def get_source_collection_memberships(self, _source_ids):
+            return {}
+
+    failed = FailedCandidate()
+    ready = ReadyCandidate()
+
+    def construct_database(_path, _client_id="default", *, read_only=False):
+        assert read_only is True
+        candidate = failed if not constructions else ready
+        constructions.append(candidate)
+        return candidate
+
+    class LocalRuntimeStore:
+        def __init__(self, _path):
+            pass
+
+        def load(self):
+            return "local"
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "get_subscriptions_db_path",
+        lambda: tmp_path / "subscriptions.db",
+    )
+    monkeypatch.setattr(local_server_tools, "SubscriptionsDB", construct_database)
+    monkeypatch.setattr(
+        local_server_tools, "RuntimeSourceStateStore", LocalRuntimeStore
+    )
+    provider = build_server_local_provider(workspace, store)
+    _grant(store, provider, "watchlists_search_items")
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)))
+
+    try:
+        first = provider.invoke("local:watchlists_search_items", {})
+        second = provider.invoke("local:watchlists_search_items", {})
+        assert constructions == [failed]
+        third = provider.invoke("local:watchlists_search_items", {})
+    finally:
+        logger.remove(sink_id)
+
+    assert failed.close_calls == 3
+    assert constructions == [failed, ready]
+    assert [json.loads(result.content)["status"] for result in (first, second)] == [
+        "feature_unavailable",
+        "feature_unavailable",
+    ]
+    assert all(
+        json.loads(result.content)["retryable"] is True for result in (first, second)
+    )
+    assert json.loads(third.content)["status"] == "ok"
+    assert sentinel not in first.content
+    assert sentinel not in second.content
+    assert sentinel not in caplog.text
+    assert all(sentinel not in record for record in records)
+
+
 def test_watchlists_lazy_resolver_concurrent_first_calls_retain_one_instance(
     monkeypatch, tmp_path
 ):

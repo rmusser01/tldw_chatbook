@@ -44,7 +44,11 @@ from loguru import logger
 from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.config import get_subscriptions_db_path
-from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.DB.Subscriptions_DB import (
+    SubscriptionsDB,
+    SubscriptionsDBReadError,
+    SubscriptionsDBUnavailableError,
+)
 from tldw_chatbook.MCP.permission_store import resolve_effective_state
 from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
 from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
@@ -62,6 +66,7 @@ class _LazyWatchlistsDBResolver:
 
     def __init__(self) -> None:
         self._database: SubscriptionsDB | None = None
+        self._pending_cleanup: tuple[SubscriptionsDB, Exception] | None = None
         self._lock = threading.Lock()
 
     def __call__(self) -> SubscriptionsDB:
@@ -74,16 +79,36 @@ class _LazyWatchlistsDBResolver:
             if database is not None:
                 return database
 
+            if self._pending_cleanup is not None:
+                candidate, failure = self._pending_cleanup
+                try:
+                    candidate.close()
+                except Exception:  # noqa: BLE001 -- retry same cleanup later
+                    raise failure from None
+                self._pending_cleanup = None
+
             candidate: SubscriptionsDB | None = None
             try:
                 candidate = SubscriptionsDB(get_subscriptions_db_path(), read_only=True)
                 candidate.assert_agent_read_ready()
-            except Exception:
+            except Exception as failure:
                 if candidate is not None:
                     try:
                         candidate.close()
                     except Exception:  # noqa: BLE001 -- preserve readiness failure
-                        pass
+                        if isinstance(failure, SubscriptionsDBUnavailableError):
+                            retained_failure = SubscriptionsDBUnavailableError()
+                        elif isinstance(failure, SubscriptionsDBReadError):
+                            retained_failure = SubscriptionsDBReadError()
+                        elif isinstance(failure, FileNotFoundError):
+                            retained_failure = FileNotFoundError()
+                        elif isinstance(failure, ImportError):
+                            retained_failure = ImportError()
+                        else:
+                            retained_failure = RuntimeError(
+                                "Watchlists database initialization failed"
+                            )
+                        self._pending_cleanup = (candidate, retained_failure)
                 raise
 
             self._database = candidate
