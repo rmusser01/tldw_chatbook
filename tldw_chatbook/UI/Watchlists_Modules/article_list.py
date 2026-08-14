@@ -799,9 +799,12 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
             list_view = self.query_one("#items-table", _ArticleListView)
         except NoMatches:
             return
+        self._suppressed_highlight_item_id = None
         for index, node in enumerate(list_view.children):
             if isinstance(node, _ArticleRow) and node.display and not node.disabled:
                 list_view.focus()
+                if list_view.index == index:
+                    return
                 self._suppressed_highlight_item_id = node.item_id_key
                 list_view.index = index
                 return

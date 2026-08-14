@@ -432,6 +432,30 @@ async def test_focus_first_row_does_not_select_but_next_user_move_does():
         assert len(selected) == 2, "returning to the first row must select normally"
 
 
+async def test_repeated_first_row_focus_does_not_leave_stale_suppression():
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        pane.items = [_item(1), _item(2)]
+        await pilot.pause()
+
+        pane.focus_first_row_without_selecting()
+        await pilot.pause()
+        pane.focus_first_row_without_selecting()
+        await pilot.pause()
+
+        assert not [m for m in app.captured_messages if m[0] == "item_selected"]
+
+        list_view = pane.query_one("#items-table", ListView)
+        list_view.action_cursor_down()
+        await pilot.pause()
+        list_view.action_cursor_up()
+        await pilot.pause()
+
+        selected = [m for m in app.captured_messages if m[0] == "item_selected"]
+        assert len(selected) == 2, "both user movements must select normally"
+
+
 async def test_apply_page_items_rebuilds_before_focusing_first_row():
     app = ArticleListHarness()
     async with app.run_test(size=(120, 40)) as pilot:
