@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 import threading
 from typing import Any
@@ -39,6 +40,7 @@ from ...Image_Generation.listing import list_image_models_for_catalog
 
 REMOTE_IMAGE_SCAN_WINDOW = 20
 REMOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+REMOTE_IMAGE_FETCH_ATTEMPT_LIMIT = 256
 
 
 class ConsoleImageController:
@@ -99,7 +101,7 @@ class ConsoleImageController:
         self._imagegen_inflight_sessions: set[str] = set()
         self._imagegen_inflight_message_ids: set[str] = set()
         self._console_h3_ui_generations: dict[str, str] = {}
-        self._remote_image_fetch_attempts: set[str] = set()
+        self._remote_image_fetch_attempts: OrderedDict[str, None] = OrderedDict()
 
     def _ensure_console_image_view(self) -> tuple[Any, Any]:
         return self._ensure_console_image_view_fn()
@@ -197,7 +199,13 @@ class ConsoleImageController:
                 continue
             if cache.is_failed(key) or url in self._remote_image_fetch_attempts:
                 continue
-            self._remote_image_fetch_attempts.add(url)
+            self._remote_image_fetch_attempts[url] = None
+            self._remote_image_fetch_attempts.move_to_end(url)
+            if (
+                len(self._remote_image_fetch_attempts)
+                > REMOTE_IMAGE_FETCH_ATTEMPT_LIMIT
+            ):
+                self._remote_image_fetch_attempts.popitem(last=False)
             self._screen.run_worker(
                 self._fetch_remote_transcript_image(url, key),
                 group="console-remote-image-fetch",

@@ -158,3 +158,26 @@ def test_uncached_link_dispatches_fetch_once():
     screen._image._build_console_image_specs([message])
 
     assert len(dispatched) == 1
+
+
+def test_remote_fetch_attempt_memory_is_bounded():
+    """High-cardinality remote links cannot grow controller state forever."""
+    attempt_limit = 256
+    screen = _bare_screen(enabled=True)
+    dispatched: list = []
+
+    def _record(coro, **kwargs):
+        dispatched.append(coro)
+        coro.close()
+
+    screen.run_worker = _record
+    urls = [
+        f"https://example.com/photo-{index}.jpg" for index in range(attempt_limit + 1)
+    ]
+    for url in urls:
+        screen._image._build_console_image_specs([_assistant(f"see {url} now")])
+
+    assert len(dispatched) == len(urls)
+    assert len(screen._image._remote_image_fetch_attempts) == attempt_limit
+    assert urls[0] not in screen._image._remote_image_fetch_attempts
+    assert urls[-1] in screen._image._remote_image_fetch_attempts
