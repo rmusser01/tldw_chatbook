@@ -8,9 +8,11 @@ import logging
 import os
 from pathlib import Path
 import subprocess
+import sys
 import textwrap
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Button, Input, RichLog, TextArea
@@ -62,15 +64,76 @@ LLM_EVENT_PATHS = tuple(
 )
 REMOVED_TRANSFORMERS_ACTION_IDS = {
     "transformers-browse-script-button",
+    "transformers-download-model-button",
     "transformers-start-server-button",
     "transformers-stop-server-button",
+}
+EXPECTED_LLM_ACTION_IDS = {
+    "llamacpp-browse-exec-button",
+    "llamacpp-browse-model-button",
+    "llamacpp-start-server-button",
+    "llamacpp-stop-server-button",
+    "llamafile-browse-exec-button",
+    "llamafile-browse-model-button",
+    "llamafile-start-server-button",
+    "llamafile-stop-server-button",
+    "mlx-browse-model-button",
+    "mlx-start-server-button",
+    "mlx-stop-server-button",
+    "ollama-browse-exec-button",
+    "ollama-browse-modelfile-button",
+    "ollama-copy-model-button",
+    "ollama-create-model-button",
+    "ollama-delete-model-button",
+    "ollama-embeddings-button",
+    "ollama-list-models-button",
+    "ollama-ps-button",
+    "ollama-pull-model-button",
+    "ollama-push-model-button",
+    "ollama-show-model-button",
+    "ollama-start-service-button",
+    "ollama-stop-service-button",
+    "onnx-browse-model-button",
+    "onnx-browse-python-button",
+    "onnx-browse-script-button",
+    "onnx-start-server-button",
+    "onnx-stop-server-button",
+    "transformers-browse-models-dir-button",
+    "transformers-list-local-models-button",
+    "vllm-browse-model-button",
+    "vllm-browse-python-button",
+    "vllm-start-server-button",
+    "vllm-stop-server-button",
+}
+EXPECTED_DIRECT_COMPOSE_BUTTON_IDS = {
+    "llamacpp-browse-exec-button",
+    "llamacpp-detect-exec-button",
+    "llamacpp-start-server-button",
+    "llamacpp-stop-server-button",
+    "llamafile-browse-exec-button",
+    "llamafile-detect-exec-button",
+    "llamafile-start-server-button",
+    "llamafile-stop-server-button",
+    "mlx-browse-model-button",
+    "mlx-start-server-button",
+    "mlx-stop-server-button",
+    "onnx-browse-model-button",
+    "onnx-browse-python-button",
+    "onnx-browse-script-button",
+    "onnx-start-server-button",
+    "onnx-stop-server-button",
+    "transformers-browse-models-dir-button",
+    "transformers-list-local-models-button",
+    "vllm-browse-model-button",
+    "vllm-browse-python-button",
+    "vllm-start-server-button",
+    "vllm-stop-server-button",
 }
 ROOT_LOG_CALLBACKS = {
     "_update_llamacpp_log",
     "_update_llamafile_log",
     "_update_mlx_log",
     "_update_model_download_log",
-    "_update_transformers_log",
     "_update_vllm_log",
 }
 EXPECTED_BROWSE_TOOLTIPS = {
@@ -276,55 +339,6 @@ class _CompletedOllamaProcess:
 
     def poll(self) -> int:
         return self.returncode
-
-
-class _TransformersProcess:
-    """Deterministic subprocess result for direct worker execution."""
-
-    pid = 5252
-
-    def __init__(self, returncode: int, stdout: str, stderr: str) -> None:
-        self.returncode = returncode
-        self._stdout = stdout
-        self._stderr = stderr
-        self.killed = False
-
-    def wait(self, timeout: float | None = None) -> int:
-        return self.returncode
-
-    def poll(self) -> int:
-        return self.returncode
-
-    def kill(self) -> None:
-        self.killed = True
-
-
-class _TimeoutTransformersProcess:
-    """Force timeout cleanup and expose secret output that must be discarded."""
-
-    pid = 6262
-    returncode = None
-
-    def __init__(self) -> None:
-        self.calls: list[object] = []
-        self.killed = False
-
-    def wait(self, timeout: float | None = None) -> int:
-        self.calls.append(("wait", timeout))
-        if not self.killed:
-            raise subprocess.TimeoutExpired("PRIVATE_COMMAND", timeout)
-        self.returncode = -9
-        return self.returncode
-
-    def poll(self) -> int | None:
-        return self.returncode
-
-    def kill(self) -> None:
-        self.calls.append("kill")
-        self.killed = True
-
-    def terminate(self) -> None:
-        self.calls.append("terminate")
 
 
 class _SubprocessScenario:
@@ -692,11 +706,16 @@ def test_transformers_model_scan_normalizes_multiline_names(tmp_path: Path) -> N
     ]
 
 
-def test_transformers_download_has_no_root_worker_completion_owner() -> None:
+def test_transformers_direct_download_worker_and_owner_are_retired() -> None:
     source = inspect.getsource(MiscWorkerHandler)
 
     assert "transformers_download" not in MiscWorkerHandler.HANDLED_GROUPS
     assert "_handle_transformers_download" not in source
+    assert not hasattr(transformers_events, "run_transformers_model_download_worker")
+    assert not hasattr(
+        transformers_events,
+        "handle_transformers_download_model_button_pressed",
+    )
 
 
 def test_llm_destination_action_census_is_complete_and_removed_controls_are_absent() -> (
@@ -721,11 +740,14 @@ def test_llm_destination_action_census_is_complete_and_removed_controls_are_abse
         "onnx",
         "transformers",
         "mlx-lm",
-        "local-models",
-        "download-models",
+        "curated",
+        "installed",
+        "external",
+        "remote",
     }
     assert REMOVED_TRANSFORMERS_ACTION_IDS.isdisjoint(action_ids)
-    assert action_ids == set(LLMManagementWindow.ACTION_HANDLERS)
+    assert action_ids == EXPECTED_DIRECT_COMPOSE_BUTTON_IDS
+    assert set(LLMManagementWindow.ACTION_HANDLERS) == EXPECTED_LLM_ACTION_IDS
 
 
 def test_llm_destination_action_contract_uses_window_for_ui_lookups() -> None:
@@ -817,14 +839,9 @@ def test_destination_registry_is_a_direct_merge_and_workers_are_thread_callables
     assert "start-model-download-button" not in LLMManagementWindow.ACTION_HANDLERS
     assert all(not path.exists() for path in PROHIBITED_LLM_TEST_PATHS)
     assert not inspect.iscoroutinefunction(vllm_events.run_vllm_server_worker)
-    assert not inspect.iscoroutinefunction(
-        transformers_events.run_transformers_model_download_worker
+    assert REMOVED_TRANSFORMERS_ACTION_IDS.isdisjoint(
+        LLMManagementWindow.ACTION_HANDLERS
     )
-    assert tuple(
-        inspect.signature(
-            transformers_events.run_transformers_model_download_worker
-        ).parameters
-    )[:1] == ("app_instance",)
 
 
 async def _wait_for_llm_screen(app: TldwCli, pilot) -> LLMScreen:
@@ -1290,6 +1307,121 @@ async def test_production_llm_async_results_require_current_owner_and_generation
 
 
 @pytest.mark.asyncio
+async def test_transformers_browse_and_list_preserve_provider_cache_and_selected_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_get_cli_setting = app_module.get_cli_setting
+
+    def get_cli_setting_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return real_get_cli_setting(section, key, default)
+
+    class Picker:
+        def __init__(self, *, location: str, select_dirs: bool, title: str) -> None:
+            self.location = location
+            self.select_dirs = select_dirs
+            self.title = title
+
+    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    monkeypatch.setitem(
+        sys.modules,
+        "textual_fspicker",
+        SimpleNamespace(FileOpen=Picker, Filters=object),
+    )
+    monkeypatch.setattr(transformers_events, "HUGGINGFACE_HUB_AVAILABLE", True)
+
+    app = TldwCli()
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    app._initial_tab_value = TAB_LLM
+
+    try:
+        async with app.run_test(size=(140, 48)) as pilot:
+            screen = await _wait_for_llm_screen(app, pilot)
+            window = screen.query_one(LLMManagementWindow)
+            await pilot.click("#lab-models-row-transformers")
+            await pilot.pause()
+
+            pushed: list[tuple[Picker, object]] = []
+
+            async def capture_picker(picker, callback=None):
+                pushed.append((picker, callback))
+
+            monkeypatch.setattr(app, "push_screen", capture_picker)
+            browse_button = window.query_one(
+                "#transformers-browse-models-dir-button",
+                Button,
+            )
+
+            cache_root = tmp_path / "provider-cache" / "hub"
+            cache_root.mkdir(parents=True)
+            monkeypatch.setattr(
+                transformers_events,
+                "hf_constants",
+                SimpleNamespace(HF_HUB_CACHE=str(cache_root)),
+            )
+            await window.on_button_pressed(Button.Pressed(browse_button))
+            assert pushed[-1][0].location == str(cache_root)
+
+            missing_cache = tmp_path / "missing-cache-parent" / "hub"
+            monkeypatch.setattr(
+                transformers_events,
+                "hf_constants",
+                SimpleNamespace(HF_HUB_CACHE=str(missing_cache)),
+            )
+            await window.on_button_pressed(Button.Pressed(browse_button))
+            picker, callback = pushed[-1]
+            assert picker.location == str(Path.home())
+            assert callable(callback)
+
+            selected_root = tmp_path / "arbitrary-external-transformers-root"
+            selected_root.mkdir()
+            other_input = window.query_one("#vllm-model-path", Input)
+            other_input.value = "org/unchanged"
+            await callback(selected_root)
+            assert window.query_one(
+                "#transformers-models-dir-path", Input
+            ).value == str(selected_root)
+            assert other_input.value == "org/unchanged"
+
+            scanned_paths: list[Path] = []
+
+            def scan_selected_root(path: Path) -> list[str]:
+                scanned_paths.append(path)
+                return ["org/local-model"]
+
+            monkeypatch.setattr(
+                transformers_events,
+                "scan_transformers_local_models",
+                scan_selected_root,
+            )
+            list_button = window.query_one(
+                "#transformers-list-local-models-button",
+                Button,
+            )
+            await window.on_button_pressed(Button.Pressed(list_button))
+            assert scanned_paths == [selected_root.resolve()]
+            assert "org/local-model" in _rich_log_text(
+                window.query_one("#transformers-local-models-list", RichLog)
+            )
+            assert "Local model scan complete." in _rich_log_text(
+                window.query_one("#transformers-log-output", RichLog)
+            )
+    finally:
+        try:
+            if app._rich_log_handler:
+                await app._rich_log_handler.stop_processor()
+                logging.getLogger().removeHandler(app._rich_log_handler)
+                app._rich_log_handler.close()
+            await app.on_shutdown_request()
+            await app.on_unmount()
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
 async def test_production_llm_duplicate_starts_are_reserved_for_every_provider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1634,167 +1766,36 @@ async def test_production_llm_destination_owns_navigation_actions_and_recovery(
                 window.query_one("#transformers-log-output", RichLog)
             )
 
-            download_calls = 0
-            original_download = LLMManagementWindow.ACTION_HANDLERS[
-                "transformers-download-model-button"
-            ]
-
-            async def count_download(window_arg, app_arg, event):
-                nonlocal download_calls
-                download_calls += 1
-                await original_download(window_arg, app_arg, event)
-
-            monkeypatch.setitem(
-                LLMManagementWindow.ACTION_HANDLERS,
-                "transformers-download-model-button",
-                count_download,
-            )
-            download_event = Button.Pressed(
-                window.query_one("#transformers-download-model-button", Button)
-            )
-            await window.on_button_pressed(download_event)
-            await pilot.pause()
-            assert download_calls == 1
-
-            unsafe_launches: list[object] = []
-            monkeypatch.setattr(
-                app,
-                "run_worker",
-                lambda work, **kwargs: unsafe_launches.append(work),
-            )
-            for unsafe_repo_id in ("--token", "../outside", r"org\\outside"):
-                window.query_one(
-                    "#transformers-download-repo-id", Input
-                ).value = unsafe_repo_id
-                unsafe_event = Button.Pressed(
-                    window.query_one("#transformers-download-model-button", Button)
+            for selector in (
+                "#transformers-models-dir-path",
+                "#transformers-browse-models-dir-button",
+                "#transformers-list-local-models-button",
+                "#transformers-local-models-list",
+                "#transformers-log-output",
+            ):
+                assert (
+                    window.query_one(selector) in app.screen._compositor.visible_widgets
                 )
-                await window.on_button_pressed(unsafe_event)
-            assert unsafe_launches == []
-            assert not (tmp_path / "outside").exists()
 
-            window.query_one(
-                "#transformers-download-repo-id", Input
-            ).value = "org/model"
-            window.query_one("#transformers-download-revision", Input).value = "--token"
-            unsafe_revision_event = Button.Pressed(
-                window.query_one("#transformers-download-model-button", Button)
-            )
-            await window.on_button_pressed(unsafe_revision_event)
-            assert unsafe_launches == []
-            window.query_one("#transformers-download-revision", Input).value = ""
-            transformer_launches: list[tuple[object, dict[str, object]]] = []
+            for selector in (
+                "#transformers-download-repo-id",
+                "#transformers-download-revision",
+                "#transformers-download-model-button",
+            ):
+                assert len(window.query(selector)) == 0
 
-            def record_transformer_launch(work, **kwargs):
-                transformer_launches.append((work, kwargs))
-                return None
-
-            monkeypatch.setattr(app, "run_worker", record_transformer_launch)
-            valid_download_event = Button.Pressed(
-                window.query_one("#transformers-download-model-button", Button)
+            assert (
+                "transformers-download-model-button"
+                not in LLMManagementWindow.ACTION_HANDLERS
             )
-            await window.on_button_pressed(valid_download_event)
-            assert download_calls == 6
-            assert len(transformer_launches) == 1
-            transformer_work = transformer_launches[0][0]
-            if inspect.iscoroutine(transformer_work):
-                transformer_work.close()
-            assert callable(transformer_work)
-            assert transformer_launches[0][1]["thread"] is True
-            assert valid_download_event._stop_propagation is True
-
-            timeout_transformers_process = _TimeoutTransformersProcess()
-            transformers_scenario = _SubprocessScenario(
-                [
-                    _TransformersProcess(0, "download-complete", ""),
-                    _TransformersProcess(7, "", "download-failed"),
-                    timeout_transformers_process,
-                ]
+            retired = Button(
+                "Retired",
+                id="transformers-download-model-button",
             )
-            monkeypatch.setattr(
-                transformers_events,
-                "subprocess",
-                transformers_scenario,
-            )
-            real_call_from_thread = app.call_from_thread
-            monkeypatch.setattr(
-                app,
-                "call_from_thread",
-                lambda callback, *args, **kwargs: callback(*args, **kwargs),
-            )
-            success_result = await asyncio.to_thread(transformer_work)
-            failure_result = await asyncio.to_thread(transformer_work)
-            transformers_output = _rich_log_text(
-                window.query_one("#transformers-log-output", RichLog)
-            )
-            old_transformers_window = window
-            screen.refresh(recompose=True)
-            window = await _wait_for_llm_window(
-                screen,
-                pilot,
-                previous=old_transformers_window,
-            )
-            assert window is not old_transformers_window
-            timeout_result = await asyncio.to_thread(transformer_work)
-            await pilot.pause()
-            await pilot.click("#lab-models-row-transformers")
-            await pilot.pause()
-            remounted_transformers_output = _rich_log_text(
-                window.query_one("#transformers-log-output", RichLog)
-            )
-            monkeypatch.setattr(app, "call_from_thread", real_call_from_thread)
-            monkeypatch.setattr(transformers_events, "subprocess", subprocess)
-            monkeypatch.setattr(app, "run_worker", real_run_worker)
-            assert "completed successfully" in success_result
-            assert "failed with code: 7" in failure_result
-            assert "timed out" in timeout_result
-            assert "timed out" in remounted_transformers_output
-            assert timeout_transformers_process.calls == [
-                ("wait", 600),
-                "terminate",
-                ("wait", 5),
-                "kill",
-                ("wait", 5),
-            ]
-            assert all(
-                kwargs["stdout"] is subprocess.DEVNULL
-                and kwargs["stderr"] is subprocess.DEVNULL
-                for kwargs in transformers_scenario.popen_kwargs
-            )
-            assert "download-complete" not in transformers_output
-            assert "download-failed" not in transformers_output
-            assert "PRIVATE_STDOUT" not in transformers_output
-            assert "PRIVATE_STDERR" not in transformers_output
-
-            secret = "/private/secret/model-id command --token value"
-            recovery_notifications: list[str] = []
-            monkeypatch.setattr(
-                app,
-                "notify",
-                lambda message, *args, **kwargs: recovery_notifications.append(
-                    str(message)
-                ),
-            )
-
-            def fail_registered_action(window_arg, app_arg, event):
-                raise RuntimeError(secret)
-
-            monkeypatch.setitem(
-                LLMManagementWindow.ACTION_HANDLERS,
-                "transformers-download-model-button",
-                fail_registered_action,
-            )
-            fault_event = Button.Pressed(
-                window.query_one("#transformers-download-model-button", Button)
-            )
-            await window.on_button_pressed(fault_event)
-            await pilot.pause()
-            recovery = "\n".join(recovery_notifications)
-            assert fault_event._stop_propagation is True
-            assert "transformers-download-model-button" in recovery
-            assert "RuntimeError" in recovery
-            assert secret not in recovery
-            assert len(recovery.rsplit("\n", 1)[-1]) <= 200
+            await window.mount(retired)
+            retired_event = Button.Pressed(retired)
+            await window.on_button_pressed(retired_event)
+            assert retired_event._stop_propagation is True
 
             unknown = Button("Unknown", id="llm-unknown-action")
             await window.mount(unknown)

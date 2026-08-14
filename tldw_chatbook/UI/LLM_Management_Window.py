@@ -1366,25 +1366,6 @@ class LLMManagementWindow(Container):
                     highlight=False,
                 )
 
-                yield Static("---", classes="separator")
-
-                yield Label("Download New Model:", classes="section_label")
-                yield Label(
-                    "Model Repo ID (e.g., 'google-bert/bert-base-uncased'):",
-                    classes="label",
-                )
-                yield Input(
-                    id="transformers-download-repo-id",
-                    placeholder="username/model_name",
-                )
-                yield Label("Revision/Branch (optional):", classes="label")
-                yield Input(id="transformers-download-revision", placeholder="main")
-                yield Button(
-                    "Download Model",
-                    id="transformers-download-model-button",
-                    classes="action_button",
-                )
-
                 yield Label("Model Operations Output", classes="section_label")
                 yield RichLog(
                     id="transformers-log-output",

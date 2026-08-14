@@ -9,12 +9,19 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events_transformers import (
+    TRANSFORMERS_BUTTON_HANDLERS,
+)
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import MODELS_RAIL_SECTIONS
 
 
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_ROOT = ROOT / "tldw_chatbook"
+TRANSFORMERS_EVENTS_PATH = (
+    PRODUCTION_ROOT
+    / "Event_Handlers/LLM_Management_Events/llm_management_events_transformers.py"
+)
 RETIRED_FILES = (
     PRODUCTION_ROOT / "LLM_Calls/huggingface_api.py",
     *(
@@ -114,6 +121,38 @@ def test_transformers_local_directory_controls_remain() -> None:
         'id="transformers-list-local-models-button"',
     ):
         assert fragment in source
+
+
+def test_transformers_direct_downloader_is_retired() -> None:
+    window_source = (PRODUCTION_ROOT / "UI/LLM_Management_Window.py").read_text(
+        encoding="utf-8"
+    )
+    events_source = TRANSFORMERS_EVENTS_PATH.read_text(encoding="utf-8")
+
+    for fragment in (
+        '"Download New Model:"',
+        'id="transformers-download-repo-id"',
+        'id="transformers-download-revision"',
+        'id="transformers-download-model-button"',
+    ):
+        assert fragment not in window_source
+
+    for fragment in (
+        "_valid_huggingface_repo_id",
+        "_valid_huggingface_revision",
+        "run_transformers_model_download_worker",
+        "handle_transformers_download_model_button_pressed",
+        "subprocess.Popen",
+        "functools.partial",
+        "target_model_specific_dir.mkdir",
+        '"huggingface-cli"',
+    ):
+        assert fragment not in events_source
+
+    assert set(TRANSFORMERS_BUTTON_HANDLERS) == {
+        "transformers-list-local-models-button",
+        "transformers-browse-models-dir-button",
+    }
 
 
 def test_llamacpp_and_llamafile_external_gguf_controls_remain() -> None:
