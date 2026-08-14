@@ -173,8 +173,9 @@ The change is acceptable only when:
    tests pass;
 4. the regenerated inventory equals live extraction and retains the existing
    six-file sink topology;
-5. Ruff, format, Bandit, pycompile, diff/privacy/artifact checks, and the full
-   pytest suite pass on the final stack;
+5. Ruff, format, Bandit, pycompile, diff/privacy/artifact checks, and the
+   focused affected-feature suites pass on the final stack; the repository-wide
+   pytest suite is excluded by owner direction on 2026-08-14;
 6. independent spec and code-quality reviews approve the exact diff.
 
 ## Delivery order

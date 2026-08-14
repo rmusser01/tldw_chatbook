@@ -961,13 +961,17 @@ async def _wait_until(
 def _playground_is_mounted(app: App[Any]) -> bool:
     """Return whether the async view replacement mounted strict descendants."""
     try:
+        window = app.query_one(STTSWindow)
         playground = app.query_one(SpeechPlaygroundPane)
         playground.query_one("#tts-provider-select", Select).query_one(
             "SelectOverlay"
         )
     except QueryError:
         return False
-    return True
+    return (
+        window.current_view == "playground"
+        and window._pending_playground_preset is None
+    )
 
 
 @pytest.mark.asyncio

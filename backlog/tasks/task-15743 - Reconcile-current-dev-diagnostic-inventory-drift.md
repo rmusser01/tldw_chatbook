@@ -31,7 +31,7 @@ inventory.
 - [ ] #1 Every unsafe diagnostic in the reviewed stacked delta is replaced by a fixed event with only ADR-029-approved bounded metadata
 - [ ] #2 Reviewed-safe additions and provider-wrapper deletions are recorded without unrelated production edits or a sink-topology change
 - [ ] #3 The governed production-diagnostic inventory is regenerated once and equals live extraction on the final integration base
-- [ ] #4 Focused security, affected feature, static, privacy, artifact, and full-suite gates pass with mutation-sensitive evidence
+- [ ] #4 Focused security, affected feature, static, privacy, and artifact gates pass with mutation-sensitive evidence; the repository-wide suite is excluded by owner direction
 - [ ] #5 Independent spec and code-quality reviews are approved before the ordered PR integration
 <!-- AC:END -->
 

@@ -18,6 +18,12 @@ unsafe call sites across 11 owners. The design records their exact disposition.
 the repairs and pass afterward. These repairs join the final source/manifest
 commit and all affected focused tests below; no sink or metadata policy changes.
 
+**Verification amendment:** The owner explicitly directed on 2026-08-14 not to
+run the repository-wide suite. The focused architecture, security boundary,
+and directly affected feature/static gates are the completion boundary; the
+checkpointed full-suite program below is retained only as superseded history
+and must not be executed for this task.
+
 ---
 
 ### Task 1: Freeze governance and the audited delta
