@@ -476,3 +476,41 @@ async def test_non_backdrop_cancel_does_not_capture_revealed_screen(source: str)
 
         assert app.screen is app.host
         assert app.mouse_captured is None
+
+
+@pytest.mark.asyncio
+async def test_pending_escape_records_backdrop_before_terminal_dismissal():
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_effect() -> None:
+        entered.set()
+        await release.wait()
+
+    app = _ModalHarness()
+    results: list[bool | None] = []
+    modal = _SafeTestModal(cancel_effect=delayed_effect)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        underlying = app.host.query_one("#modal-test-underlying-action", Button)
+        click_point = (underlying.region.x + 1, underlying.region.y + 1)
+        await _mount_modal(app, pilot, modal, results)
+
+        pending_escape = asyncio.create_task(modal.action_request_safe_cancel())
+        await entered.wait()
+        await pilot.click(offset=click_point)
+        assert app.screen is modal
+
+        release.set()
+        await pending_escape
+        await pilot.pause()
+        assert app.screen is app.host
+
+        await pilot.click(offset=click_point)
+        await pilot.pause()
+
+        assert app.host.underlying_button_presses == 0
+        assert app.mouse_captured is app.host
+
+        await pilot.pause(app.CLICK_CHAIN_TIME_THRESHOLD + 0.05)
+        assert app.mouse_captured is None
