@@ -1,6 +1,6 @@
 # ADR-029: Local Private Data Boundary
 
-Status: Accepted (amended 2026-07-28 for operational metadata events — TASK-1240)
+Status: Accepted (amended 2026-07-28 for operational metadata events — TASK-1240; amended 2026-08-14 for scoped audio.cpp Windows artifacts — TASK-13208)
 Date: 2026-07-23
 Related Tasks: [TASK-943](../tasks/task-943%20-%20Establish-private-path-boundary-and-harden-config-bootstrap.md), [TASK-489](../tasks/task-489%20-%20Apply-private-storage-boundary-to-every-SQLite-owner-and-backup.md), [TASK-490](../tasks/task-490%20-%20Harden-persistent-log-and-tool-cache-file-lifecycles.md), [TASK-491](../tasks/task-491%20-%20Make-config-persistence-use-one-effective-path-and-live-runtime-boundary.md), [TASK-492](../tasks/task-492%20-%20Remove-private-payloads-from-persistent-diagnostics-and-tool-history.md), [TASK-493](../tasks/task-493%20-%20Contain-legacy-Notes-sync-paths-and-preserve-file-modes.md), [TASK-494](../tasks/task-494%20-%20Complete-metadata-only-boundary-across-remaining-production-diagnostics.md)
 Supersedes: N/A
@@ -22,6 +22,17 @@ file logging is disabled rather than writing to an unsafe target.
 Windows permission state is reported as unverified until a separately approved
 ACL implementation exists. Chatbook must not translate `chmod` success into a
 claim that a Windows discretionary ACL is private.
+
+For the two artifact classes admitted by TASK-13208 only—generated audio.cpp
+launch artifacts and operation-scoped clone-reference materializations—the
+separately approved native Windows boundary is now defined. Chatbook installs
+and re-verifies a protected DACL whose only allowed trustees are the current
+process-token user SID, LocalSystem, and Builtin Administrators. It rejects
+reparse points, null or invalid DACLs, unexpected allow trustees, and native
+verification failures. The product states that these artifacts are plaintext,
+that local system and administrators retain access, and that ACLs are not
+encryption or forensic erasure. Other Windows private paths retain the
+unverified posture until separately implemented and approved.
 
 The config module is the sole persistence owner for `config.toml`. Every
 create, save, delete, encryption, decryption, and password-change operation

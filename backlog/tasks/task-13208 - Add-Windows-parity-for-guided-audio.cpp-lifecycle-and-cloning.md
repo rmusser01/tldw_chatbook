@@ -1,7 +1,7 @@
 ---
 id: TASK-13208
 title: Add Windows parity for guided audio.cpp lifecycle and cloning
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-09 17:39'
 labels:
@@ -20,6 +20,7 @@ references:
   - backlog/decisions/051-private-tts-clone-reference-assets.md
 documentation:
   - Docs/superpowers/specs/2026-08-09-audio-cpp-guided-model-setup-design.md
+  - Docs/superpowers/specs/2026-08-14-audio-cpp-windows-lifecycle-parity-design.md
 priority: high
 ---
 
