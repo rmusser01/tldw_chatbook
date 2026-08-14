@@ -2,8 +2,6 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from textual.app import App
-
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_INGEST,
@@ -30,6 +28,7 @@ from tldw_chatbook.UI.Screens import home_screen as home_screen_module
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 
 HOME_TEST_SIZE = (160, 40)
@@ -60,7 +59,7 @@ def _stub_home_rail_preferences_cli_fallback(monkeypatch):
     )
 
 
-class HomeHarness(App):
+class HomeHarness(ConsolidatedCSSApp):
     CSS_PATH = str(
         Path(__file__).resolve().parents[2]
         / "tldw_chatbook"
