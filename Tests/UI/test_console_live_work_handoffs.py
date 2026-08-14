@@ -1945,7 +1945,11 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
         ChatScreen: A bare ChatScreen instance suitable for unit-level
             restore-path testing.
     """
-    from Tests.UI.console_controller_stubs import NO_APP, stub_message_controller
+    from Tests.UI.console_controller_stubs import (
+        NO_APP,
+        stub_image_controller,
+        stub_message_controller,
+    )
 
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = app_instance
@@ -1960,6 +1964,7 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
     # are reached through `ChatScreen`'s delegations. `ChatScreen.__new__`
     # skips the construction `__init__` would do. Those three read only
     # `app_instance`, so nothing else is wired.
+    resolved_app = app_instance if app_instance is not None else NO_APP
     stub_message_controller(
         screen,
         context="test_console_live_work_handoffs._bare_console_screen",
@@ -1968,7 +1973,12 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
         # `getattr(..., None)`. `stub_message_controller` refuses to INFER a
         # missing app (an inferred `None` snapshot is a silent-default hole),
         # so the absence is declared here instead. task-3024/2769.
-        app_instance=app_instance if app_instance is not None else NO_APP,
+        app_instance=resolved_app,
+    )
+    stub_image_controller(
+        screen,
+        context="test_console_live_work_handoffs._bare_console_screen",
+        app_instance=resolved_app,
     )
     return screen
 
