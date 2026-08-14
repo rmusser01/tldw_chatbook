@@ -71,24 +71,46 @@ The complete suite is not one pytest process. A task-owned standard-library harn
 4. Uses a small task-owned pytest evidence plugin to write exact `report.nodeid`, phase,
    and outcome records plus the session exit status. The harness/plugin source and
    self-test results are hashed into the evidence manifest.
-5. Writes a complete marker only after the chunk's actual node/outcome set matches its
-   expected slice exactly. Exit 0 or 1 may be complete; collection/internal/interruption
-   exits are incomplete.
-6. On an incomplete or timed-out multi-node chunk, recursively splits and reruns only
-   its uncovered nodes. A timed-out single-node child is terminated, recorded with one
-   task-owned `timeout` terminal outcome plus command/deadline/process evidence, and
-   becomes an explicit baseline failure category; it is never silently dropped.
-7. Resumes by skipping only chunks whose command, source/environment generation,
+5. Records collection reports and process/session outcomes alongside test reports. A
+   collection error is a first-class red outcome keyed to its collector path; the
+   frozen generation stops before execution, the collection defect is repaired
+   RED-first, and a new generation recollects. The cumulative classified inventory
+   retains the original collection outcome and its repair evidence.
+6. Writes a complete marker only after the chunk's actual node/outcome set matches its
+   expected slice exactly. Exit 0 or 1 may be complete. An interruption with uncovered
+   nodes is incomplete and reruns only those uncovered nodes.
+7. Treats an abnormal exit, timeout, or post-summary shutdown hang as a first-class red
+   *process outcome* even when every node in the slice already reported. The harness
+   reruns and delta-minimizes the entire ordered triggering slice (not merely uncovered
+   nodes), preserving order, until it finds a one-minimal triggering sequence. A
+   sequence-dependent result is retained as that bounded sequence rather than being
+   forced into a false single-node attribution.
+8. On an incomplete or timed-out multi-node chunk whose trigger is not yet known,
+   recursively splits for coverage and separately minimizes the original ordered slice
+   for its process outcome. A single-node or minimized-sequence child is terminated,
+   recorded with one task-owned terminal outcome plus command/deadline/process evidence,
+   and becomes an explicit baseline failure category; it is never silently dropped.
+9. Resumes by skipping only chunks whose command, source/environment generation,
    expected-node hash, outcome hash, exit status, and complete marker all verify.
 
-The coverage verifier must prove that every collected node has exactly one terminal
-outcome. All final-generation pytest processes must exit normally. In the red baseline
-only, an exact single-node timeout is a complete *failure outcome* when the harness
-records its bounded termination evidence; it is not a green or normal child exit.
-Missing, duplicate, corrupt, multi-node timeout, or uncollected nodes keep the pipeline
-incomplete. Before the real sweep, negative harness self-tests inject a missing node,
-duplicate node, corrupt report, unowned timeout, and false complete marker and require
-the verifier to reject each one.
+The terminal-outcome ledger is authoritative. It combines exact test-node reports,
+collector reports, harness-owned timeout/interruption records, and process/session
+outcomes. JUnit supplies failure/error detail but is not authoritative for terminated
+tests or session failures. The coverage verifier must prove that every collected node
+has exactly one terminal outcome and every collection/process red outcome is owned by
+one classified inventory entry. All final-generation pytest processes must exit
+normally. In the red baseline only, an exact single-node or minimized ordered-sequence
+timeout/hang is a complete *failure outcome* when the harness records bounded
+termination/minimization evidence; it is not a green or normal child exit. Missing,
+duplicate, corrupt, unowned abnormal exit, or uncollected nodes keep the pipeline
+incomplete.
+
+Before the real sweep, negative harness self-tests inject a missing node, duplicate
+node, corrupt report, collection error, mid-run interruption, post-summary hang,
+sequence-dependent timeout, and false complete marker. Each must either be rejected as
+incomplete or appear as the exact owned red outcome described above. The sequence
+minimizer is mutation-checked by removing one required predecessor and requiring the
+trigger to disappear.
 
 The normalized pytest arguments and sanitized environment are recorded verbatim.
 Per-phase output directories and per-chunk node slices differ by design; equality means
@@ -97,7 +119,8 @@ tests remain frozen for an entire pipeline generation.
 
 ## Failure inventory and classification
 
-The JUnit failure/error set is authoritative. Each node receives one of these labels:
+The verified terminal-outcome ledger is authoritative. Every failure, error, timeout,
+collection failure, and process/session outcome receives one of these labels:
 
 - **Product defect:** the assertion describes the intended contract and production
   behavior violates it.
@@ -127,10 +150,12 @@ an accepted task, canonical ADR, maintained user/developer documentation, or exp
 owner decision. Current production behavior is not its own authority. An ambiguous
 contract pauses that cluster for an owner decision instead of rewriting the test.
 
-If several nodes share a root cause, they form one repair cluster. Unrelated clusters
-remain separate commits inside the single requested PR. A sanitized committed inventory
-maps every baseline node to its category, authority/evidence, repair commit, and final
-verification; it contains no raw traceback bodies or private paths.
+If several red outcomes share a root cause, they form one repair cluster. Unrelated
+clusters remain separate commits inside the single requested PR. A sanitized committed
+inventory maps only baseline failures, errors, timeouts, and collection/process/session
+outcomes to category, authority/evidence, repair commit, and final verification; it
+contains no passing-node rows, raw traceback bodies, or private paths. Full passing-node
+coverage remains proven by the durable manifest/outcome hashes and aggregate counts.
 
 ## Repair rules
 
@@ -174,7 +199,9 @@ During repair:
 - Static analysis and generated-artifact checks run for every touched file family.
 - Persistent diagnostic inventory is refreshed only for owners actually changed.
 - Privacy scans assert that reports and diagnostics contain no credentials, synthetic
-  secret sentinels, real profile paths, or private user data.
+  real credentials, real profile paths, or private user data. Synthetic redaction
+  canaries may intentionally appear in ignored raw failure evidence; their values must
+  not enter persistent production diagnostics or committed inventories.
 
 Final verification uses the same checkpointed pipeline, normalized pytest arguments,
 and environment contract used for the baseline. It re-collects on the frozen candidate:
@@ -196,6 +223,10 @@ invalidates affected and final-suite evidence and requires rerunning it.
   immediately before opening the PR. Every rebase starts a new pipeline generation:
   refresh the environment/package fingerprint, re-collect, add any new red nodes to the
   inventory, and run the complete checkpointed pipeline on the exact ready-PR head SHA.
+  The installed-package hash must remain identical from a generation's clean-dev
+  baseline through its final verification. Dependency drift requires a fresh isolated
+  environment and a new complete clean-dev baseline generation (or an explicit
+  user-approved scope amendment); it cannot make a prior red outcome disappear.
 - Open one ready PR against `dev` with the pinned baseline and final JUnit summaries,
   failure-cluster table, exact test commands, static results, and known limitations.
 - Address CI and reviewer/Qodo comments with focused regressions and separate commits.
