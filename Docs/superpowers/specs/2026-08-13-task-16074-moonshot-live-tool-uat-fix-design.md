@@ -34,21 +34,26 @@ committed.
 | Exact joined first-turn messages with the original five and full captured eight-tool catalogs | HTTP 200 | The complete composed request and aggregate tool schemas |
 | Exact request fully consumed through Chatbook's strict Moonshot adapter | `HostedChatProtocolError` at `HostedChatStream._consume_event()` | The failure is response normalization, not request rejection |
 | Redacted event-key trace | `choices`, `created`, `id`, `model`, `object`, `system_fingerprint` | Streaming rejects Moonshot's standard `system_fingerprint` field |
+| Paid UAT after the fingerprint fix | Safe synthetic 502; keys-only failing terminal shape was `choices[0]` with `delta`, `finish_reason`, `index`, `usage` | Moonshot also places terminal usage inside the choice rather than in a trailing top-level usage event |
 | Real repository live harness through Console, AgentService, and Moonshot | Synthetic HTTP 502 before a recorded tool call | The parser defect is reachable through the product path |
 
 The exact defect is an asymmetric neutral-hosted response allowlist:
 `normalize_hosted_chat_response()` already admits `system_fingerprint` on a
 non-streaming response, while `HostedChatStream._consume_event()` rejects the
 same field on a streaming event. Moonshot currently emits it on the first Kimi
-K3 SSE event. The strict parser raises before consuming the event's tool-call
-delta; the Console gateway then presents its default safe 502 error copy. No
-production code has been changed at this stage.
+K3 SSE event. After that mismatch was corrected, the paid joined UAT exposed a
+second strict-shape mismatch: Moonshot places its terminal usage mapping at
+`choices[0].usage`, while the neutral parser previously admitted usage only at
+the event top level. The parser raises before completing the provider turn in
+either case, and the Console gateway presents its default safe 502 error copy.
 
 ## Goals
 
 - Admit Moonshot's bounded `system_fingerprint` on hosted streaming events,
   matching the existing non-streaming contract.
-- Pin that exact live event shape in deterministic parser and joined Console
+- Admit Moonshot's mapping-valued terminal `choices[0].usage` while rejecting
+  nonterminal, non-mapping, or dual top-level/choice placement.
+- Pin both exact live event shapes in deterministic parser and joined Console
   native-tool regressions.
 - Correct the narrowest owner of the invalid value while preserving Moonshot,
   AgentService, Console, and durable continuation contracts.
@@ -89,8 +94,10 @@ The evidence proceeded from the smallest high-information boundary:
    the exact full captured catalog returned HTTP 200.
 3. Fully consuming the same request through Chatbook reproduced
    `HostedChatProtocolError` at the stream event allowlist.
-4. A keys-only trace isolated `system_fingerprint` as the sole unexpected
-   top-level field. No response values or raw provider body were printed.
+4. A keys-only trace isolated `system_fingerprint` as the first unexpected
+   top-level field. After that correction, a second keys/types-only trace of
+   the still-failing paid UAT isolated terminal `choices[0].usage`. No response
+   values or raw provider body were printed.
 
 The comparison was evidence collection, not a permanent generic
 payload-logging feature. Its temporary `/tmp` harness was deleted after the
@@ -100,16 +107,19 @@ root cause was isolated; no repository seam was introduced.
 
 The production change belongs only in
 `tldw_chatbook/LLM_Calls/hosted_chat.py`, whose neutral stream parser owns the
-top-level OpenAI-shaped event allowlist. It will accept
-`system_fingerprint` only as optional bounded metadata, preserve strict
-rejection of unknown keys and malformed/oversized values, and leave tool,
-reasoning, usage, finish, provider, and request construction behavior
+top-level and choice-level OpenAI-shaped event allowlists. It accepts
+`system_fingerprint` only as optional bounded metadata and accepts choice-level
+usage only as a mapping on the terminal choice when no top-level usage is
+present. Unknown keys, malformed/oversized fingerprints, non-mapping usage,
+ambiguous dual placement, and nonterminal usage remain rejected. Tool,
+reasoning, finish, provider, and request construction behavior remain
 unchanged.
 
-The outer regression will add the exact metadata field to Moonshot's scripted
-SSE in the existing real Console HTTP/native-tool test. No downstream layer
-will discard the field merely to bypass validation, and unrelated providers
-retain their current prepared requests.
+The outer regression adds both exact shapes to Moonshot's scripted SSE in the
+existing real Console HTTP/native-tool test. Z.ai retains its prior trailing
+top-level usage event. No downstream layer discards either field merely to
+bypass validation, and unrelated providers retain their current prepared
+requests.
 
 ## Error And Privacy Contract
 
@@ -128,8 +138,9 @@ retain their current prepared requests.
 
 The implementation must use strict RED-to-GREEN evidence:
 
-1. A deterministic parser regression first reproduces rejection of a bounded
-   `system_fingerprint` streaming event without network access.
+1. Deterministic parser regressions first reproduce rejection of a bounded
+   `system_fingerprint` streaming event and terminal `choices[0].usage`
+   without network access, with fail-closed malformed/ambiguous controls.
 2. A focused joined scripted-HTTP test proves Console/AgentService consumes
    that exact Moonshot event, executes the native calculator call, continues
    with its result, and completes.
