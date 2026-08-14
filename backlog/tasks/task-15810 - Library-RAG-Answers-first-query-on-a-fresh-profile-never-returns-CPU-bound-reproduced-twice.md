@@ -27,3 +27,28 @@ Live verification of TASK-15400 (2026-08-12) and again of TASK-15700 (2026-08-13
 - [ ] #2 The spin is attributed to a named Python frame with a profile (py-spy/cProfile), not to 'the embedding stack' by assumption — the 2026-08-13 sample contradicts that attribution
 - [ ] #3 A live retrieval verification on a scratch profile can complete end-to-end through the UI, so a future arc's live check does not have to fall back to the engine
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Reproduce the cold first query with the design's exact 36-note fixture and
+   capture a Python-level profile before changing production code.
+2. Record the named hot frame and callers, then amend the implementation plan
+   with the exact production owner, deterministic RED regression, and minimal
+   correction; independently re-review that amendment.
+3. Implement only the measured correction with TDD, including concrete-runtime,
+   event-loop heartbeat, stale-result, and non-overlapping cancellation coverage.
+4. Run the focused RAG/Library/Pilot battery, Ruff, and diff checks.
+5. Run the unprofiled cold-query and separate responsiveness checks through the
+   real TUI, prove scratch-profile isolation, update documentation/evidence,
+   self-review, and close the task only when every acceptance criterion passes.
+
+ADR required: no
+
+ADR path: N/A; ADR-003 and ADR-005 already govern the existing Library and
+shared-local-RAG ownership boundaries.
+
+Reason: this is a measured performance bug fix inside existing boundaries. If
+profiling requires a new runtime, storage, or service-contract boundary, stop
+and revisit the ADR decision before implementation.
+
+Detailed plan: `Docs/superpowers/plans/2026-08-13-task-15810-library-rag-first-query.md`
