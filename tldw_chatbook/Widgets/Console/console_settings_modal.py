@@ -321,7 +321,21 @@ class ConsoleSettingsModal(
     }}
     """
 
-    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    BINDINGS = [
+        ("escape", "request_safe_cancel", "Cancel"),
+        Binding(
+            "tab",
+            "settings_focus_next",
+            show=False,
+            priority=True,
+        ),
+        Binding(
+            "shift+tab",
+            "settings_focus_previous",
+            show=False,
+            priority=True,
+        ),
+    ]
     SAFE_MODAL_CONTENT = "#console-settings-modal"
 
     def __init__(
@@ -1294,6 +1308,16 @@ class ConsoleSettingsModal(
         )
         self.query_one(selector, Button).focus()
 
+    def action_settings_focus_next(self) -> None:
+        guard = self.query_one("#console-settings-close-guard", Vertical)
+        selector = "#console-settings-close-guard Button" if guard.display else "*"
+        self.focus_next(selector)
+
+    def action_settings_focus_previous(self) -> None:
+        guard = self.query_one("#console-settings-close-guard", Vertical)
+        selector = "#console-settings-close-guard Button" if guard.display else "*"
+        self.focus_previous(selector)
+
     def _hide_settings_close_guard(self) -> str | None:
         guard = self.query_one("#console-settings-close-guard", Vertical)
         mode = self._settings_close_guard_mode
@@ -1347,6 +1371,8 @@ class ConsoleSettingsModal(
     def _close_during_compaction(self, event: Button.Pressed) -> None:
         event.stop()
         worker = self._compaction_wait_worker
+        if not self.dismiss_safe_once(None):
+            return
         self._compaction_wait_worker = None
         if worker is not None and not worker.is_finished:
             worker.cancel()
@@ -1355,7 +1381,6 @@ class ConsoleSettingsModal(
             severity="warning",
             markup=False,
         )
-        self.dismiss_safe_once(None)
 
     @on(Button.Pressed, "#console-settings-close-return")
     def _return_from_close_guard(self, event: Button.Pressed) -> None:
