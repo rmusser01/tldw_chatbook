@@ -162,6 +162,9 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Character swap: roleplay template seed failed": ("type(exc).__name__",),
         "Start Chat: roleplay template seed/persist failed": ("type(exc).__name__",),
     },
+    "tldw_chatbook/UI/Console_Modules/workspace.py": {
+        "Star-toggle cancellation re-sync failed": (),
+    },
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {
         "MCP Tools-mode local master save failed": ("type(exc).__name__",),
         "MCP Tools-mode workspace root save failed": ("type(exc).__name__",),
