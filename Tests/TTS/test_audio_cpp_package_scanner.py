@@ -1610,3 +1610,255 @@ def test_guided_foundation_has_no_process_network_or_model_write_side_effects(
 
     assert recipe.recipe_id == accepted.recipe_id
     assert before == snapshot()
+
+
+class _FakeWindowsScanHandle:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        identity: object,
+        close_failures: int = 0,
+    ) -> None:
+        self.path = path
+        self.identity = identity
+        self.close_failures = close_failures
+        self.closed = False
+
+    def read(self, count: int, *, offset: int = 0) -> bytes:
+        return self.path.read_bytes()[offset : offset + count]
+
+    def close(self) -> None:
+        from tldw_chatbook.TTS.windows_artifact_fs import WindowsArtifactError
+
+        if self.close_failures:
+            self.close_failures -= 1
+            raise WindowsArtifactError("cleanup_failed", cleanup_owner=self)  # type: ignore[arg-type]
+        self.closed = True
+
+
+class _FakeWindowsScanFilesystem:
+    def __init__(self) -> None:
+        self.directory_opens: list[Path] = []
+        self.file_opens: list[Path] = []
+        self.handles: list[_FakeWindowsScanHandle] = []
+        self.before_file_open = None
+        self.directory_generation: dict[Path, int] = {}
+        self.close_failures = 0
+
+    @staticmethod
+    def _identity(path: Path, generation: int = 0):
+        from tldw_chatbook.TTS.windows_artifact_fs import WindowsFileIdentity
+
+        info = path.stat()
+        value = (info.st_ino + generation).to_bytes(16, "little", signed=False)
+        return WindowsFileIdentity(
+            volume_serial_number=info.st_dev,
+            file_id=value,
+            kind="directory" if path.is_dir() else "file",
+            reparse_tag=0,
+        )
+
+    def pin_directory_no_reparse(self, path: Path) -> _FakeWindowsScanHandle:
+        selected = Path(path)
+        self.directory_opens.append(selected)
+        identity = self._identity(
+            selected,
+            self.directory_generation.get(selected, 0),
+        )
+        handle = _FakeWindowsScanHandle(
+            selected,
+            identity=identity,
+            close_failures=self.close_failures,
+        )
+        self.close_failures = 0
+        self.handles.append(handle)
+        return handle
+
+    def open_file_no_reparse(
+        self, path: Path, *, writable: bool = False
+    ) -> _FakeWindowsScanHandle:
+        assert not writable
+        selected = Path(path)
+        if self.before_file_open is not None:
+            self.before_file_open(selected)
+        self.file_opens.append(selected)
+        handle = _FakeWindowsScanHandle(selected, identity=self._identity(selected))
+        self.handles.append(handle)
+        return handle
+
+
+def test_windows_scan_pins_selected_root_and_reads_exact_file_handle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    root = tmp_path / "Voice 模型"
+    root.mkdir()
+    model = root / "supertonic-3-orig.gguf"
+    _write_gguf(model)
+    filesystem = _FakeWindowsScanFilesystem()
+    monkeypatch.setattr(scanner, "_windows_artifact_filesystem", filesystem)
+
+    result = scanner.scan_audio_cpp_package_root(root)
+
+    assert result.outcome is scanner.AudioCppScanOutcome.COMPLETE
+    assert result.discoveries[0].match.state.value == "exact"
+    assert filesystem.directory_opens.count(root.resolve()) >= 1
+    assert filesystem.file_opens == [model.resolve()]
+    assert all(handle.closed for handle in filesystem.handles)
+    assert scanner.AudioCppScanIssueCode.NO_FOLLOW_UNAVAILABLE not in {
+        issue.code for issue in result.issues
+    }
+
+
+def test_windows_scan_rejects_file_substitution_before_handle_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    root = tmp_path / "selected"
+    root.mkdir()
+    model = root / "supertonic-3-orig.gguf"
+    _write_gguf(model)
+    filesystem = _FakeWindowsScanFilesystem()
+
+    def replace(path: Path) -> None:
+        replacement = path.with_suffix(".replacement")
+        _write_gguf(replacement)
+        path.unlink()
+        replacement.rename(path)
+        filesystem.before_file_open = None
+
+    filesystem.before_file_open = replace
+    monkeypatch.setattr(scanner, "_windows_artifact_filesystem", filesystem)
+
+    result = scanner.scan_audio_cpp_package_root(root)
+
+    assert result.outcome is scanner.AudioCppScanOutcome.PARTIAL
+    assert scanner.AudioCppScanIssueCode.SOURCE_CHANGED in {
+        issue.code for issue in result.issues
+    }
+    assert not result.discoveries or result.discoveries[0].match.state.value != "exact"
+
+
+def test_windows_scan_rejects_directory_identity_change_before_enumeration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    root = tmp_path / "selected"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+    _write_gguf(nested / "supertonic-3-orig.gguf")
+    filesystem = _FakeWindowsScanFilesystem()
+    original_pin = filesystem.pin_directory_no_reparse
+
+    def pin(path: Path) -> _FakeWindowsScanHandle:
+        selected = Path(path)
+        if selected == nested and selected in filesystem.directory_opens:
+            filesystem.directory_generation[selected] = 1
+        return original_pin(selected)
+
+    filesystem.pin_directory_no_reparse = pin  # type: ignore[method-assign]
+    monkeypatch.setattr(scanner, "_windows_artifact_filesystem", filesystem)
+
+    result = scanner.scan_audio_cpp_package_root(root)
+
+    assert result.outcome is scanner.AudioCppScanOutcome.PARTIAL
+    assert result.discoveries == ()
+    assert scanner.AudioCppScanIssueCode.SOURCE_CHANGED in {
+        issue.code for issue in result.issues
+    }
+
+
+def test_windows_scan_casefold_collision_is_never_exact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    root = tmp_path / "selected"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    filesystem = _FakeWindowsScanFilesystem()
+    monkeypatch.setattr(scanner, "_windows_artifact_filesystem", filesystem)
+    real_entry = next(os.scandir(root))
+    duplicate = SimpleNamespace(name="SUPERTONIC-3-ORIG.GGUF")
+    monkeypatch.setattr(
+        scanner, "_scandir", lambda _path: iter((real_entry, duplicate))
+    )
+
+    result = scanner.scan_audio_cpp_package_root(root)
+
+    assert result.outcome is scanner.AudioCppScanOutcome.PARTIAL
+    assert not result.discoveries or result.discoveries[0].match.state.value != "exact"
+
+
+def test_windows_scan_close_failure_exposes_one_retry_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    root = tmp_path / "selected"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    filesystem = _FakeWindowsScanFilesystem()
+    filesystem.close_failures = 2
+    monkeypatch.setattr(scanner, "_windows_artifact_filesystem", filesystem)
+
+    with pytest.raises(scanner.AudioCppPackageScanError) as raised:
+        scanner.scan_audio_cpp_package_root(root)
+
+    cleanup = raised.value.take_cleanup_owner()
+    assert cleanup is not None
+    assert raised.value.take_cleanup_owner() is None
+    cleanup.close()
+    assert cleanup.closed
+
+
+@pytest.mark.asyncio
+async def test_windows_scan_cancellation_waits_for_exact_handle_close(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    root = tmp_path / "selected"
+    root.mkdir()
+    model = root / "supertonic-3-orig.gguf"
+    _write_gguf(model)
+    started = threading.Event()
+    release = threading.Event()
+    filesystem = _FakeWindowsScanFilesystem()
+    original_open = filesystem.open_file_no_reparse
+
+    def open_blocking(path: Path, *, writable: bool = False) -> _FakeWindowsScanHandle:
+        handle = original_open(path, writable=writable)
+        original_read = handle.read
+
+        def read(count: int, *, offset: int = 0) -> bytes:
+            started.set()
+            assert release.wait(2.0)
+            return original_read(count, offset=offset)
+
+        handle.read = read  # type: ignore[method-assign]
+        return handle
+
+    filesystem.open_file_no_reparse = open_blocking  # type: ignore[method-assign]
+    monkeypatch.setattr(scanner, "_windows_artifact_filesystem", filesystem)
+    task = asyncio.create_task(scanner.scan_audio_cpp_package_root_async(root))
+    assert await asyncio.to_thread(started.wait, 1.0)
+
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert all(handle.closed for handle in filesystem.handles)
