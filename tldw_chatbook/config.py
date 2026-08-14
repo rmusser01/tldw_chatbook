@@ -5464,6 +5464,8 @@ def save_settings_to_cli_config(
         section_values,
         delete_keys=delete_keys,
     )
+    if result.conflict:
+        return False
     if result.failure_phase is None and not result.file_replaced:
         return True
     return result.fully_applied
