@@ -21,6 +21,40 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Prompt_Management.prompt_variables import PromptVariableApplication
+from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
+    ConsoleComposerMenuModal,
+)
+from tldw_chatbook.Widgets.Console.console_edit_message_modal import (
+    ConsoleEditMessageModal,
+    ConsoleEditResult,
+)
+from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
+    ConsoleGenerateImageModal,
+)
+from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
+    ConsoleRagSettingsModal,
+    ConsoleRagSettingsResult,
+)
+from tldw_chatbook.Widgets.Console.console_rename_session_modal import (
+    ConsoleRenameSessionModal,
+)
+from tldw_chatbook.Widgets.Console.console_rewind_modal import (
+    ConsoleRewindChoice,
+    ConsoleRewindModal,
+)
+from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
+from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
+    ConsoleSessionSwitcherModal,
+    ConsoleSwitcherChoice,
+)
+from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
+    ConsoleSystemPromptModal,
+)
+from tldw_chatbook.Widgets.Console.console_workspace_switcher_modal import (
+    ConsoleWorkspaceRenameModal,
+    ConsoleWorkspaceSwitcherModal,
+)
 from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterOption,
     ConsoleCharacterPickerModal,
@@ -53,6 +87,10 @@ from tldw_chatbook.Widgets.Console.console_skill_picker_modal import (
 from tldw_chatbook.Widgets.Console.console_style_picker_modal import (
     ConsoleStylePickerModal,
 )
+from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
+    PromptVariablesDialog,
+    PromptVariablesDialogRequest,
+)
 from tldw_chatbook.Widgets.modal_dismissal import (
     SafeModalDismissMixin,
     is_modal_backdrop_click,
@@ -65,6 +103,19 @@ class _Task2ModalContract:
     factory: Callable[[], ModalScreen[Any]]
     content_selector: str
     cancel_result: object
+    opener: str
+    pre_cancel_hook: str | None
+    guard: str
+    focus_postcondition: str
+
+
+@dataclass(frozen=True)
+class _Task3ModalContract:
+    modal_type: type[ModalScreen[Any]]
+    factory: Callable[[], ModalScreen[Any]]
+    content_selector: str
+    cancel_result: object
+    success_result_types: tuple[type[object], ...]
     opener: str
     pre_cancel_hook: str | None
     guard: str
@@ -134,6 +185,23 @@ def _scope_factory() -> ConsoleScopePickerModal:
         media_lister=source_lister,
         notes_lister=source_lister,
         tag_lister=_empty_tags,
+    )
+
+
+async def _save_system_prompt(_name: str, _text: str) -> str:
+    return "saved"
+
+
+def _prompt_variables_factory() -> PromptVariablesDialog:
+    return PromptVariablesDialog(
+        PromptVariablesDialogRequest(
+            system_text=None,
+            user_text="Hello {name}",
+            destination="replace_snapshot",
+            target_session_id="contract-session",
+            composer_fingerprint="a" * 64,
+            system_fingerprint=None,
+        )
     )
 
 
@@ -266,6 +334,144 @@ TASK2_MODAL_CONTRACTS = (
 )
 
 
+TASK3_MODAL_CONTRACTS = (
+    _Task3ModalContract(
+        ConsoleComposerMenuModal,
+        ConsoleComposerMenuModal,
+        "#console-composer-menu",
+        None,
+        (str,),
+        "Console composer Menu button",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        ConsoleEditMessageModal,
+        lambda: ConsoleEditMessageModal(content="original"),
+        "#console-edit-message-modal",
+        None,
+        (ConsoleEditResult,),
+        "Console transcript message action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        ConsoleGenerateImageModal,
+        ConsoleGenerateImageModal,
+        "#console-generate-image-modal",
+        None,
+        (str,),
+        "Composer Generate Image menu action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        ConsoleRagSettingsModal,
+        ConsoleRagSettingsModal,
+        "#console-rag-settings",
+        None,
+        (ConsoleRagSettingsResult,),
+        "Console Library search chip",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        ConsoleRenameSessionModal,
+        lambda: ConsoleRenameSessionModal(title="Contract session"),
+        "#console-rename-session-modal",
+        None,
+        (str,),
+        "Console session tab action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        ConsoleRewindModal,
+        lambda: ConsoleRewindModal(prompts=()),
+        "#console-rewind-modal",
+        None,
+        (ConsoleRewindChoice,),
+        "Console /rewind command",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        ConsoleSaveAsModal,
+        lambda: ConsoleSaveAsModal(destinations=[]),
+        "#console-save-as-modal",
+        None,
+        (str,),
+        "Console message Save as action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        ConsoleSessionSwitcherModal,
+        lambda: ConsoleSessionSwitcherModal(rows=()),
+        "#console-switcher-modal",
+        None,
+        (ConsoleSwitcherChoice,),
+        "Console session switcher command",
+        "_cancel_query_debounce",
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        ConsoleSystemPromptModal,
+        lambda: ConsoleSystemPromptModal(
+            system_prompt="Be concise", save_to_library=_save_system_prompt
+        ),
+        "#console-system-prompt-modal",
+        None,
+        (str,),
+        "Console system prompt chip",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        ConsoleWorkspaceSwitcherModal,
+        lambda: ConsoleWorkspaceSwitcherModal(workspaces=(), active_workspace_id=None),
+        "#console-workspace-switcher-modal",
+        None,
+        (tuple,),
+        "Console workspace context action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        ConsoleWorkspaceRenameModal,
+        lambda: ConsoleWorkspaceRenameModal(current_name="Research"),
+        "#console-workspace-rename-modal",
+        None,
+        (str,),
+        "Workspace Switcher Rename action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        PromptVariablesDialog,
+        _prompt_variables_factory,
+        "#prompt-variables-dialog",
+        None,
+        (PromptVariableApplication,),
+        "Console prompt application flow",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+)
+
+
 def _binding_key_action(binding: object) -> tuple[str, str]:
     if isinstance(binding, Binding):
         return binding.key, binding.action
@@ -316,6 +522,45 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
         assert contract.focus_postcondition == _RESTORE_OPENER
 
 
+def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
+    assert len(TASK3_MODAL_CONTRACTS) == 12
+    assert {contract.modal_type.__name__ for contract in TASK3_MODAL_CONTRACTS} == {
+        "ConsoleComposerMenuModal",
+        "ConsoleEditMessageModal",
+        "ConsoleGenerateImageModal",
+        "ConsoleRagSettingsModal",
+        "ConsoleRenameSessionModal",
+        "ConsoleRewindModal",
+        "ConsoleSaveAsModal",
+        "ConsoleSessionSwitcherModal",
+        "ConsoleSystemPromptModal",
+        "ConsoleWorkspaceRenameModal",
+        "ConsoleWorkspaceSwitcherModal",
+        "PromptVariablesDialog",
+    }
+    for contract in TASK3_MODAL_CONTRACTS:
+        assert issubclass(contract.modal_type, SafeModalDismissMixin)
+        assert contract.modal_type.SAFE_MODAL_CONTENT == contract.content_selector
+        escape_actions = [
+            action
+            for binding in contract.modal_type.BINDINGS
+            for key, action in [_binding_key_action(binding)]
+            if key == "escape"
+        ]
+        assert escape_actions == ["request_safe_cancel"]
+        assert contract.cancel_result is None
+        assert contract.success_result_types
+        assert type(None) not in contract.success_result_types
+        assert contract.opener
+        assert contract.pre_cancel_hook == (
+            "_cancel_query_debounce"
+            if contract.modal_type is ConsoleSessionSwitcherModal
+            else None
+        )
+        assert contract.guard == "none"
+        assert contract.focus_postcondition == _RESTORE_OPENER
+
+
 class _Task2Harness(App[None]):
     CSS = """
     Screen { align: center middle; }
@@ -347,6 +592,152 @@ async def test_task2_contract_selector_exists_and_escape_returns_cancel_result(
         await pilot.pause()
 
     assert app.results == [contract.cancel_result]
+
+
+@pytest.mark.parametrize(
+    "contract", TASK3_MODAL_CONTRACTS, ids=lambda row: row.modal_type.__name__
+)
+@pytest.mark.asyncio
+async def test_task3_contract_selector_exists_and_escape_returns_cancel_result(
+    contract: _Task3ModalContract,
+) -> None:
+    app = _Task2Harness()
+    modal = contract.factory()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+
+        assert modal.query_one(contract.content_selector)
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert app.results == [contract.cancel_result]
+
+
+class _CountingComposerMenuModal(ConsoleComposerMenuModal):
+    def __init__(self) -> None:
+        super().__init__()
+        self.dismiss_calls: list[object] = []
+
+    def dismiss(self, result=None):  # type: ignore[no-untyped-def]
+        self.dismiss_calls.append(result)
+        return super().dismiss(result)
+
+
+class _CountingRagSettingsModal(ConsoleRagSettingsModal):
+    def __init__(self) -> None:
+        super().__init__()
+        self.dismiss_calls: list[object] = []
+
+    def dismiss(self, result=None):  # type: ignore[no-untyped-def]
+        self.dismiss_calls.append(result)
+        return super().dismiss(result)
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [_CountingComposerMenuModal, _CountingRagSettingsModal],
+    ids=["composer-menu", "rag-settings"],
+)
+@pytest.mark.asyncio
+async def test_task3_real_backdrop_dispatch_dismisses_once_through_full_mro(
+    factory: Callable[[], _CountingComposerMenuModal | _CountingRagSettingsModal],
+) -> None:
+    app = _Task2Harness()
+    modal = factory()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+
+        await pilot.click(offset=(0, 0))
+        await pilot.pause()
+        await pilot.pause()
+
+    assert modal.dismiss_calls == [None]
+    assert app.results == [None]
+
+
+class _SettingsAdjacentClickModal(SafeModalDismissMixin, ModalScreen[None]):
+    SAFE_MODAL_CONTENT = "#settings-adjacent-content"
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel")]
+    CSS = """
+    _SettingsAdjacentClickModal { align: center middle; }
+    #settings-adjacent-content { width: 30; height: 7; background: $surface; }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.unrelated_clicks = 0
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings-adjacent-content"):
+            yield Static("Unrelated setting", id="settings-adjacent-action")
+
+    def on_click(self, _event: events.Click) -> None:
+        self.unrelated_clicks += 1
+
+
+@pytest.mark.asyncio
+async def test_task3_mixin_keeps_settings_adjacent_unrelated_click_handler() -> None:
+    app = _Task2Harness()
+    modal = _SettingsAdjacentClickModal()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+
+        await pilot.click("#settings-adjacent-action")
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert modal.unrelated_clicks == 1
+
+
+class _TrackedSessionSwitcherModal(ConsoleSessionSwitcherModal):
+    def __init__(self) -> None:
+        super().__init__(rows=())
+        self.cleanup_calls = 0
+        self.order: list[str] = []
+
+    def _cancel_query_debounce(self) -> None:
+        self.cleanup_calls += 1
+        self.order.append("cleanup")
+        super()._cancel_query_debounce()
+
+    def dismiss(self, result=None):  # type: ignore[no-untyped-def]
+        self.order.append("dismiss")
+        return super().dismiss(result)
+
+
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_task3_session_switcher_cancel_sources_stop_real_debounce_once(
+    source: str,
+) -> None:
+    app = _Task2Harness()
+    modal = _TrackedSessionSwitcherModal()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        modal._query_debounce_timer = modal.set_timer(60, lambda: None)
+        modal.cleanup_calls = 0
+        modal.order.clear()
+
+        if source == "visible":
+            await pilot.click("#console-switcher-cancel")
+        elif source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+    assert modal._query_debounce_timer is None
+    assert modal.cleanup_calls == 1
+    assert modal.order[:2] == ["cleanup", "dismiss"]
+    assert app.results == [None]
 
 
 class _LifecycleCharacterModal(ConsoleCharacterPickerModal):

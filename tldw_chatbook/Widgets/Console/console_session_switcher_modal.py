@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_switcher_state import (
     ConsoleSwitcherEntry,
     build_console_switcher_entries,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
 )
@@ -45,7 +46,9 @@ class ConsoleSwitcherChoice:
     entry: ConsoleSwitcherEntry
 
 
-class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
+class ConsoleSessionSwitcherModal(
+    SafeModalDismissMixin, ModalScreen["ConsoleSwitcherChoice | None"]
+):
     """Fuzzy-find and activate a Console session or persisted conversation."""
 
     DEFAULT_CSS = """
@@ -74,6 +77,13 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         color: gray;
     }
 
+    #console-switcher-cancel {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+    }
+
     .console-switcher-result {
         width: 100%;
         height: 2;
@@ -82,8 +92,9 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
     }
     """
 
+    SAFE_MODAL_CONTENT = "#console-switcher-modal"
     BINDINGS = [
-        ("escape", "dismiss_switcher", "Cancel"),
+        ("escape", "request_safe_cancel", "Cancel"),
         ("f2", "rename_entry", "Rename"),
         ("down", "switcher_cursor_down", "Next result"),
         ("up", "switcher_cursor_up", "Previous result"),
@@ -123,6 +134,7 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
                 "Enter: open  |  F2: rename  |  Up/Down: navigate  |  Esc: close",
                 id="console-switcher-hints",
             )
+            yield Button("Cancel", id="console-switcher-cancel")
 
     async def on_mount(self) -> None:
         """Focus the search input and populate the initial (unfiltered) results."""
@@ -268,10 +280,15 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
             self._cancel_query_debounce()
             self.dismiss(ConsoleSwitcherChoice("activate", self._entries[index]))
 
-    def action_dismiss_switcher(self) -> None:
-        """Dismiss the switcher with no result (Escape)."""
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
         self._cancel_query_debounce()
-        self.dismiss(None)
+        self.dismiss_safe_once(None)
+
+    @on(Button.Pressed, "#console-switcher-cancel")
+    async def _cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self.request_safe_cancel(source="button")
 
     def action_rename_entry(self) -> None:
         """Request a rename for the focused result, or the first native entry (F2).
