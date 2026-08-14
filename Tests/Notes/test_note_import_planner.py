@@ -2640,6 +2640,544 @@ def test_plain_sources_reject_empty_or_whitespace_only_content(
     assert batch.issues[0].reason_code == "invalid_content"
 
 
+def _classification_plan(
+    batch: note_import_planner.ParsedImportBatch,
+    *observations: note_import_planner.PriorImportObservation,
+) -> NoteImportPlan:
+    return note_import_planner.classify_import_batch(
+        batch,
+        _discovery_bounds(),
+        prior_observations=observations,
+    )
+
+
+def _prior_observation(
+    display_path: str,
+    *,
+    fingerprint: str | None,
+    kind: ImportMatchKind = ImportMatchKind.EXACT,
+    note_id: str = "note-7",
+    note_version: int | None = 4,
+) -> note_import_planner.PriorImportObservation:
+    return note_import_planner.PriorImportObservation(
+        display_path=display_path,
+        match_kind=kind,
+        note_id=note_id,
+        note_version=note_version,
+        payload_fingerprint=fingerprint,
+    )
+
+
+def test_classify_import_batch_applies_safe_defaults_for_new_and_repeat_sources(
+    tmp_path: Path,
+) -> None:
+    unchanged = tmp_path / "unchanged.md"
+    changed = tmp_path / "changed.md"
+    new = tmp_path / "new.md"
+    unchanged.write_text("# Same\nBody", encoding="utf-8")
+    changed.write_text("# Changed\nNew body", encoding="utf-8")
+    new.write_text("# New\nBody", encoding="utf-8")
+    batch = _parse_selection([new, unchanged, changed], destination=("Imported",))
+    parsed = {source.candidate.source.display_path: source for source in batch.parsed}
+
+    plan = _classification_plan(
+        batch,
+        _prior_observation(
+            "unchanged.md",
+            fingerprint=note_import_planner._private_payload_fingerprint(
+                parsed["unchanged.md"].payloads
+            ),
+            note_id="same-note",
+        ),
+        _prior_observation(
+            "changed.md",
+            fingerprint=note_import_planner._private_payload_fingerprint(
+                (ParsedNotePayload(title="Old", content="Old body"),)
+            ),
+            note_id="changed-note",
+        ),
+    )
+
+    items = {item.source.display_path: item for item in plan.items}
+    assert items["new.md"].classification is ImportClassification.NEW
+    assert items["new.md"].default_action is ImportAction.CREATE_NEW
+    assert items["new.md"].selected_action is ImportAction.CREATE_NEW
+    assert items["new.md"].allowed_actions == (
+        ImportAction.SKIP,
+        ImportAction.CREATE_NEW,
+    )
+    assert items["new.md"].match is None
+
+    unchanged_item = items["unchanged.md"]
+    assert unchanged_item.classification is ImportClassification.UNCHANGED_REPEAT
+    assert unchanged_item.default_action is ImportAction.SKIP
+    assert unchanged_item.selected_action is ImportAction.SKIP
+    assert unchanged_item.allowed_actions == (
+        ImportAction.SKIP,
+        ImportAction.CREATE_NEW,
+        ImportAction.UPDATE_EXISTING,
+    )
+    assert unchanged_item.match == ImportMatch(
+        kind=ImportMatchKind.EXACT,
+        note_id="same-note",
+        note_version=4,
+    )
+    assert not unchanged_item.replace_content
+    assert not unchanged_item.add_membership
+
+    changed_item = items["changed.md"]
+    assert changed_item.classification is ImportClassification.CHANGED_REPEAT
+    assert changed_item.default_action is ImportAction.CREATE_NEW
+    assert changed_item.selected_action is ImportAction.CREATE_NEW
+    assert changed_item.allowed_actions == (
+        ImportAction.SKIP,
+        ImportAction.CREATE_NEW,
+        ImportAction.UPDATE_EXISTING,
+    )
+    assert changed_item.match is not None
+    assert changed_item.match.kind is ImportMatchKind.EXACT
+    assert not changed_item.replace_content
+    assert changed_item.add_membership
+
+
+def test_classify_import_batch_keeps_uncertain_matches_create_only_by_default(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "possible.md"
+    source.write_text("# Possible\nBody", encoding="utf-8")
+    batch = _parse_selection([source], destination=("Imported",))
+
+    plan = _classification_plan(
+        batch,
+        _prior_observation(
+            "possible.md",
+            kind=ImportMatchKind.UNCERTAIN,
+            fingerprint=None,
+            note_id="possible-note",
+        ),
+    )
+
+    item = plan.items[0]
+    assert item.classification is ImportClassification.UNCERTAIN_MATCH
+    assert item.default_action is ImportAction.CREATE_NEW
+    assert item.selected_action is ImportAction.CREATE_NEW
+    assert item.allowed_actions == (ImportAction.SKIP, ImportAction.CREATE_NEW)
+    assert item.match == ImportMatch(
+        kind=ImportMatchKind.UNCERTAIN,
+        note_id="possible-note",
+        note_version=4,
+    )
+    assert ImportAction.UPDATE_EXISTING not in item.allowed_actions
+
+
+def test_classify_import_batch_turns_parse_issues_into_skip_only_items(
+    tmp_path: Path,
+) -> None:
+    unsupported = tmp_path / "archive.bin"
+    malformed = tmp_path / "broken.json"
+    unsupported.write_bytes(b"not imported")
+    malformed.write_text("{private malformed body", encoding="utf-8")
+    batch = _parse_selection([unsupported, malformed], destination=("Imported",))
+
+    plan = _classification_plan(batch)
+
+    items = {item.source.display_path: item for item in plan.items}
+    assert items["archive.bin"].classification is ImportClassification.UNSUPPORTED
+    assert items["broken.json"].classification is ImportClassification.FAILED
+    for item in items.values():
+        assert item.default_action is ImportAction.SKIP
+        assert item.selected_action is ImportAction.SKIP
+        assert item.allowed_actions == (ImportAction.SKIP,)
+        assert item.payloads == ()
+        assert item.memberships == ()
+        assert item.match is None
+        assert not item.replace_content
+        assert not item.add_membership
+        assert len(item.reason) <= _discovery_bounds().max_reason_length
+
+
+def test_private_payload_fingerprint_is_canonical_and_payload_sensitive() -> None:
+    first = ParsedNotePayload(
+        title="Cafe\u0301",
+        content="Body",
+        keywords=("one", "two"),
+        template_name="Meeting",
+    )
+    canonically_equivalent = ParsedNotePayload(
+        title="Caf\u00e9",
+        content="Body",
+        keywords=("one", "two"),
+        template_name="Meeting",
+    )
+    changed = ParsedNotePayload(
+        title="Caf\u00e9",
+        content="Changed body",
+        keywords=("one", "two"),
+        template_name="Meeting",
+    )
+
+    fingerprint = note_import_planner._private_payload_fingerprint((first,))
+
+    assert fingerprint == note_import_planner._private_payload_fingerprint(
+        [canonically_equivalent]
+    )
+    assert fingerprint != note_import_planner._private_payload_fingerprint((changed,))
+    assert len(fingerprint) == 64
+    assert fingerprint == fingerprint.casefold()
+
+
+def test_private_payload_fingerprint_preserves_structural_type_boundaries() -> None:
+    keyword_value = (
+        ParsedNotePayload(
+            title="Title",
+            content="Body",
+            keywords=("Meeting",),
+            template_name=None,
+        ),
+    )
+    template_value = (
+        ParsedNotePayload(
+            title="Title",
+            content="Body",
+            keywords=(),
+            template_name="Meeting",
+        ),
+    )
+    one_payload_with_delimiters = (
+        ParsedNotePayload(title='One"},{"title":"Two', content="A|B"),
+    )
+    two_payloads = (
+        ParsedNotePayload(title="One", content="A"),
+        ParsedNotePayload(title="Two", content="B"),
+    )
+
+    fingerprints = {
+        note_import_planner._private_payload_fingerprint(keyword_value),
+        note_import_planner._private_payload_fingerprint(template_value),
+        note_import_planner._private_payload_fingerprint(one_payload_with_delimiters),
+        note_import_planner._private_payload_fingerprint(two_payloads),
+    }
+
+    assert len(fingerprints) == 4
+
+
+@pytest.mark.parametrize(
+    "observations",
+    [
+        "not-an-observation-collection",
+        (object(),),
+    ],
+)
+def test_classify_import_batch_rejects_invalid_observation_collection_shape(
+    tmp_path: Path,
+    observations: object,
+) -> None:
+    source = tmp_path / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    batch = _parse_selection([source], destination=("Imported",))
+
+    with pytest.raises((TypeError, ValueError), match="observation"):
+        note_import_planner.classify_import_batch(
+            batch,
+            _discovery_bounds(),
+            prior_observations=observations,  # type: ignore[arg-type]
+        )
+
+
+def test_prior_observations_reject_duplicates_and_unknown_sources(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    batch = _parse_selection([source], destination=("Imported",))
+    fingerprint = note_import_planner._private_payload_fingerprint(
+        batch.parsed[0].payloads
+    )
+    observation = _prior_observation("note.md", fingerprint=fingerprint)
+
+    with pytest.raises(ValueError, match="duplicate"):
+        _classification_plan(batch, observation, observation)
+    with pytest.raises(ValueError, match="unknown"):
+        _classification_plan(
+            batch,
+            _prior_observation("other.md", fingerprint=fingerprint),
+        )
+
+
+def test_prior_observation_keys_match_and_deduplicate_by_nfc_form(
+    tmp_path: Path,
+) -> None:
+    decomposed_name = "Cafe\u0301.md"
+    source = tmp_path / decomposed_name
+    source.write_text("Body", encoding="utf-8")
+    batch = _parse_selection([source], destination=("Imported",))
+    fingerprint = note_import_planner._private_payload_fingerprint(
+        batch.parsed[0].payloads
+    )
+    decomposed = _prior_observation(decomposed_name, fingerprint=fingerprint)
+    composed = _prior_observation("Caf\u00e9.md", fingerprint=fingerprint)
+
+    plan = _classification_plan(batch, composed)
+
+    assert plan.items[0].classification is ImportClassification.UNCHANGED_REPEAT
+    with pytest.raises(ValueError, match="duplicate"):
+        _classification_plan(batch, decomposed, composed)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {
+            "display_path": "/private/absolute.md",
+            "match_kind": ImportMatchKind.EXACT,
+            "payload_fingerprint": "a" * 64,
+        },
+        {
+            "display_path": "note.md",
+            "match_kind": ImportMatchKind.EXACT,
+            "payload_fingerprint": "not-a-sha256",
+        },
+        {
+            "display_path": "note.md",
+            "match_kind": ImportMatchKind.UNCERTAIN,
+            "payload_fingerprint": "a" * 64,
+        },
+        {
+            "display_path": "note.md",
+            "match_kind": ImportMatchKind.USER_CONFIRMED,
+            "payload_fingerprint": None,
+        },
+    ],
+)
+def test_prior_observation_rejects_unsafe_or_contradictory_shape(
+    values: dict[str, object],
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        note_import_planner.PriorImportObservation(
+            note_id="note-7",
+            note_version=1,
+            **values,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("match_kind", "exact"),
+        ("note_id", "/private/note-id"),
+        ("note_id", "note id with spaces"),
+    ],
+)
+def test_prior_observation_rejects_coerced_enums_and_unsafe_note_ids(
+    field_name: str,
+    value: object,
+) -> None:
+    values: dict[str, object] = {
+        "display_path": "note.md",
+        "match_kind": ImportMatchKind.EXACT,
+        "note_id": "note-7",
+        "note_version": 1,
+        "payload_fingerprint": "a" * 64,
+    }
+    values[field_name] = value
+
+    with pytest.raises((TypeError, ValueError)):
+        note_import_planner.PriorImportObservation(**values)  # type: ignore[arg-type]
+
+
+def test_observation_cardinality_is_bounded_before_consuming_extra_input(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    batch = _parse_selection([source], destination=("Imported",))
+    fingerprint = note_import_planner._private_payload_fingerprint(
+        batch.parsed[0].payloads
+    )
+
+    def observations() -> object:
+        yield _prior_observation("note.md", fingerprint=fingerprint)
+        yield _prior_observation("other.md", fingerprint=fingerprint)
+        raise AssertionError("classifier consumed observations past its bound")
+
+    with pytest.raises(ValueError, match="too many"):
+        note_import_planner.classify_import_batch(
+            batch,
+            _discovery_bounds(),
+            prior_observations=observations(),  # type: ignore[arg-type]
+        )
+
+
+def test_observation_iterator_errors_are_sanitized(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    batch = _parse_selection([source], destination=("Imported",))
+    private_error = f"SOURCE-SECRET {tmp_path} sha256:deadbeef"
+
+    def broken_observations() -> object:
+        raise ValueError(private_error)
+        yield  # pragma: no cover
+
+    with pytest.raises(ValueError, match="could not be read safely") as raised:
+        note_import_planner.classify_import_batch(
+            batch,
+            _discovery_bounds(),
+            prior_observations=broken_observations(),  # type: ignore[arg-type]
+        )
+
+    assert private_error not in str(raised.value)
+    assert private_error not in repr(raised.value)
+
+
+def test_observation_iter_creation_errors_are_sanitized(tmp_path: Path) -> None:
+    source = tmp_path / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    batch = _parse_selection([source], destination=("Imported",))
+    private_error = f"SOURCE-SECRET {tmp_path} sha256:deadbeef"
+
+    class BrokenObservations:
+        def __iter__(self) -> object:
+            raise ValueError(private_error)
+
+    with pytest.raises(ValueError, match="could not be read safely") as raised:
+        note_import_planner.classify_import_batch(
+            batch,
+            _discovery_bounds(),
+            prior_observations=BrokenObservations(),  # type: ignore[arg-type]
+        )
+
+    assert private_error not in repr(raised.value)
+
+
+def test_private_fingerprint_helper_is_not_part_of_public_planner_exports() -> None:
+    assert "_private_payload_fingerprint" not in note_import_planner.__all__
+    assert "private_payload_fingerprint" not in note_import_planner.__all__
+
+
+def test_multi_note_source_level_observation_is_fail_safe_uncertain(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "many.json"
+    source.write_text(
+        '[{"title":"One","content":"A"},{"title":"Two","content":"B"}]',
+        encoding="utf-8",
+    )
+    batch = _parse_selection([source], destination=("Imported",))
+    observation = _prior_observation(
+        "many.json",
+        fingerprint=note_import_planner._private_payload_fingerprint(
+            batch.parsed[0].payloads
+        ),
+    )
+
+    item = _classification_plan(batch, observation).items[0]
+
+    assert len(item.payloads) == 2
+    assert item.classification is ImportClassification.UNCERTAIN_MATCH
+    assert item.match is not None
+    assert item.match.kind is ImportMatchKind.UNCERTAIN
+    assert item.selected_action is ImportAction.CREATE_NEW
+    assert item.allowed_actions == (ImportAction.SKIP, ImportAction.CREATE_NEW)
+
+
+def test_classification_is_deterministic_and_preserves_hierarchy(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "Project"
+    nested = root / "Nested"
+    nested.mkdir(parents=True)
+    (root / "z.md").write_text("Z", encoding="utf-8")
+    (nested / "a.md").write_text("A", encoding="utf-8")
+    batch = _parse_selection([root])
+    scrambled = note_import_planner.ParsedImportBatch(
+        parsed=tuple(reversed(batch.parsed)),
+        issues=tuple(reversed(batch.issues)),
+        proposed_folder_paths=batch.proposed_folder_paths,
+    )
+
+    first = _classification_plan(batch)
+    second = _classification_plan(scrambled)
+
+    assert tuple(item.item_id for item in first.items) == tuple(
+        item.item_id for item in second.items
+    )
+    assert tuple(item.source.display_path for item in first.items) == tuple(
+        item.source.display_path for item in second.items
+    )
+    assert tuple(item.memberships for item in first.items) == tuple(
+        item.memberships for item in second.items
+    )
+    assert first.proposed_folder_paths == batch.proposed_folder_paths
+    with pytest.raises(FrozenInstanceError):
+        first.items[0].classification = ImportClassification.FAILED  # type: ignore[misc]
+
+
+def test_classification_privacy_excludes_private_values_from_repr_diagnostics_and_logs(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    source = tmp_path / "private.md"
+    private_content = "SOURCE-CONTENT-SECRET"
+    source.write_text(private_content, encoding="utf-8")
+    batch = _parse_selection([source], destination=("Imported",))
+    private_fingerprint = note_import_planner._private_payload_fingerprint(
+        batch.parsed[0].payloads
+    )
+    observation = _prior_observation(
+        "private.md",
+        fingerprint=private_fingerprint,
+    )
+
+    plan = _classification_plan(batch, observation)
+    rendered = f"{plan!r} {plan.to_diagnostic()!r} {observation!r}"
+    log_text = " ".join(record.getMessage() for record in caplog.records)
+
+    for private_value in (
+        private_fingerprint,
+        str(tmp_path),
+        private_content,
+        "PermissionError",
+    ):
+        assert private_value not in rendered
+        assert private_value not in log_text
+
+
+def test_classification_replaces_caller_issue_text_with_bounded_safe_reason(
+    tmp_path: Path,
+) -> None:
+    private_path = tmp_path / "private.json"
+    raw_exception = f"PermissionError: denied {private_path} SOURCE-SECRET"
+    issue = note_import_planner.ImportParseIssue(
+        display_path="private.json",
+        source_path=private_path,
+        classification=ImportClassification.FAILED,
+        reason_code="source_unavailable",
+        user_message=raw_exception,
+    )
+    batch = note_import_planner.ParsedImportBatch(
+        parsed=(),
+        issues=(issue,),
+        proposed_folder_paths=(),
+    )
+    bounds = ImportBounds(
+        max_files=10,
+        max_file_bytes=1_000,
+        max_total_bytes=10_000,
+        max_depth=4,
+        max_reason_length=12,
+    )
+
+    plan = note_import_planner.classify_import_batch(batch, bounds)
+
+    assert 0 < len(plan.items[0].reason) <= 12
+    rendered = repr(plan)
+    assert raw_exception not in rendered
+    assert str(tmp_path) not in rendered
+    assert "SOURCE-SECRET" not in rendered
+
+
 @pytest.mark.parametrize(
     ("filename", "content"),
     [
