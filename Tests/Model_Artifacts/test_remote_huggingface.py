@@ -281,6 +281,7 @@ def test_remote_discovery_error_retains_bounded_display_safe_warnings() -> None:
 @pytest.mark.parametrize(
     "body",
     [b"not json", b"[" + (b" " * (2 * 1024 * 1024)) + b"]"],
+    ids=("malformed-json", "oversized-json"),
 )
 async def test_search_rejects_malformed_or_oversized_response(body: bytes) -> None:
     """Catches decoding before response-size enforcement or raw parse errors."""
