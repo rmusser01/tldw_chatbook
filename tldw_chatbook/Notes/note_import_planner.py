@@ -102,6 +102,10 @@ class PriorImportObservation:
             if self.note_version < 0:
                 raise ValueError("observation note_version must be non-negative.")
         if self.match_kind is ImportMatchKind.EXACT:
+            if self.note_version is None:
+                raise ValueError(
+                    "An exact observation requires a current note version."
+                )
             if (
                 not isinstance(self.payload_fingerprint, str)
                 or len(self.payload_fingerprint) != 64
@@ -159,7 +163,7 @@ def _private_payload_fingerprint(
             "type": "tldw_note_import_payload_set",
             "version": 1,
         },
-        ensure_ascii=False,
+        ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
@@ -249,6 +253,7 @@ def _validated_observations(
     except Exception:  # noqa: BLE001 - sanitize caller iterator failures
         raise ValueError("prior observations could not be read safely.") from None
     by_path: dict[str, PriorImportObservation] = {}
+    exact_note_ids: set[str] = set()
     index = 0
     while True:
         try:
@@ -267,6 +272,12 @@ def _validated_observations(
             raise ValueError("prior observations contain a duplicate source path.")
         if index > max_observations:
             raise ValueError("prior observations contain too many source records.")
+        if observation.match_kind is ImportMatchKind.EXACT:
+            if observation.note_id in exact_note_ids:
+                raise ValueError(
+                    "prior observations contain a duplicate exact note target."
+                )
+            exact_note_ids.add(observation.note_id)
         by_path[source_key] = observation
     return by_path
 

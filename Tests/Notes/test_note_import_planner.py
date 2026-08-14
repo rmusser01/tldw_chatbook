@@ -3178,6 +3178,105 @@ def test_classification_replaces_caller_issue_text_with_bounded_safe_reason(
     assert "SOURCE-SECRET" not in rendered
 
 
+def test_exact_observation_fingerprinting_handles_json_lone_surrogates_privately(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    source = tmp_path / "surrogate.json"
+    source.write_text(
+        '{"title":"Private","content":"SOURCE-SECRET\\ud800"}',
+        encoding="utf-8",
+    )
+    batch = _parse_selection([source], destination=("Imported",))
+    observation = _prior_observation(
+        "surrogate.json",
+        fingerprint="a" * 64,
+        note_version=3,
+    )
+
+    plan = _classification_plan(batch, observation)
+
+    item = plan.items[0]
+    assert item.classification is ImportClassification.CHANGED_REPEAT
+    assert ImportAction.UPDATE_EXISTING in item.allowed_actions
+    rendered = f"{plan!r} {plan.to_diagnostic()!r} {observation!r}"
+    log_text = " ".join(record.getMessage() for record in caplog.records)
+    for private_value in (
+        "SOURCE-SECRET",
+        str(tmp_path),
+        "UnicodeEncodeError",
+        "\\ud800",
+    ):
+        assert private_value not in rendered
+        assert private_value not in log_text
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_exact_observation_without_current_version_cannot_authorize_update(
+    changed: bool,
+) -> None:
+    payload = ParsedNotePayload(title="Title", content="Current")
+    fingerprint_payload = (
+        ParsedNotePayload(title="Title", content="Prior") if changed else payload
+    )
+    fingerprint = note_import_planner._private_payload_fingerprint(
+        (fingerprint_payload,)
+    )
+
+    with pytest.raises(ValueError, match="version"):
+        _prior_observation(
+            "note.md",
+            fingerprint=fingerprint,
+            note_version=None,
+        )
+
+    uncertain = _prior_observation(
+        "note.md",
+        kind=ImportMatchKind.UNCERTAIN,
+        fingerprint=None,
+        note_version=None,
+    )
+    assert uncertain.note_version is None
+
+
+@pytest.mark.parametrize("second_version", [7, 8])
+def test_duplicate_exact_note_targets_are_rejected_before_update_authorization(
+    tmp_path: Path,
+    second_version: int,
+) -> None:
+    first = tmp_path / "first.md"
+    second = tmp_path / "second.md"
+    first.write_text("First", encoding="utf-8")
+    second.write_text("Second", encoding="utf-8")
+    batch = _parse_selection([first, second], destination=("Imported",))
+    parsed = {source.candidate.source.display_path: source for source in batch.parsed}
+    private_note_id = "SOURCE-SECRET-NOTE"
+    observations = (
+        _prior_observation(
+            "first.md",
+            fingerprint=note_import_planner._private_payload_fingerprint(
+                parsed["first.md"].payloads
+            ),
+            note_id=private_note_id,
+            note_version=7,
+        ),
+        _prior_observation(
+            "second.md",
+            fingerprint=note_import_planner._private_payload_fingerprint(
+                parsed["second.md"].payloads
+            ),
+            note_id=private_note_id,
+            note_version=second_version,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="duplicate exact note target") as raised:
+        _classification_plan(batch, *observations)
+
+    assert private_note_id not in str(raised.value)
+    assert private_note_id not in repr(raised.value)
+
+
 @pytest.mark.parametrize(
     ("filename", "content"),
     [
