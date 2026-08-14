@@ -187,7 +187,7 @@
 .watchlists-read-mode #items-table {
     height: auto;
     min-height: 1;
-    max-height: 42;
+    max-height: 40;
     overflow-y: auto;
 }
 

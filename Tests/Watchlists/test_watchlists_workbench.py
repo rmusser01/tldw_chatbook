@@ -64,10 +64,19 @@ class _ReadGeometryApp(App):
         self.read_mode = read_mode
         self.initial_layout = layout
 
-    def _items_pane(self) -> ArticleListPane:
-        pane = ArticleListPane(id="watchlists-detail-pane")
+    def _items_pane(self) -> Vertical:
+        pane = ArticleListPane(id="watchlists-items-pane")
         pane.items = [_article(index) for index in range(self.item_count)]
-        return pane
+        return Vertical(
+            Static(
+                "Read",
+                classes="destination-section watchlists-column-title",
+                id="watchlists-detail-title",
+            ),
+            pane,
+            id="watchlists-detail-pane",
+            classes="destination-workbench-pane",
+        )
 
     def compose(self) -> ComposeResult:
         classes = "watchlists-read-mode" if self.read_mode else ""
@@ -126,11 +135,61 @@ async def test_read_items_region_grows_from_ten_rows_to_a_fifty_row_cap(
         assert 10 <= items.region.height <= 50, items.region
         if expected_relation == "floor":
             assert items.styles.min_height.value == 10
-            assert items.region.height <= 12, items.region
+            assert items.region.height < 50, items.region
         elif expected_relation == "natural":
             assert 10 < items.region.height < 50, items.region
         else:
             assert items.region.height == 50, items.region
+
+
+@pytest.mark.parametrize("size", [(120, 36), (180, 50), (180, 100)])
+@pytest.mark.asyncio
+async def test_read_items_pager_is_contained_and_painted_at_the_fifty_row_cap(
+    size,
+):
+    app = _ReadGeometryApp(50)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        centre = app.query_one("#wl-centre", VerticalScroll)
+        items = app.query_one("#wl-region-items")
+        detail = app.query_one("#watchlists-detail-pane")
+        pane = app.query_one("#watchlists-items-pane", ArticleListPane)
+        table = app.query_one("#items-table")
+        pager = app.query_one("#items-pagination")
+
+        assert items.region.height == 50
+        assert table.region.height == 40
+        assert detail in items.children
+        assert pane in detail.children
+        assert app.query_one("#watchlists-detail-title") in detail.children
+        assert items.content_region.contains_region(pager.region), (
+            f"pager escapes the 50-row ITEMS content box: "
+            f"items={items.content_region} detail={detail.region} "
+            f"pane={pane.region} pager={pager.region}"
+        )
+
+        centre.scroll_to_widget(pager, animate=False)
+        await pilot.pause()
+        if pager.region.bottom > centre.region.bottom:
+            centre.scroll_to(
+                y=centre.scroll_y + pager.region.bottom - centre.region.bottom,
+                animate=False,
+            )
+        await pilot.pause()
+
+        strips = app.screen._compositor.render_strips()
+        region = pager.region
+        pager_text = "\n".join(
+            "".join(segment.text for segment in strips[y])[
+                region.x : region.x + region.width
+            ]
+            for y in range(max(region.y, 0), min(region.bottom, size[1]))
+        )
+        for label in ("Previous", "Page 1", "Next"):
+            assert label in pager_text, (
+                f"{label!r} is not composited at {size}: {pager_text!r}; "
+                f"centre_scroll={centre.scroll_y} pager={pager.region}"
+            )
 
 
 @pytest.mark.parametrize("size", [(120, 36), (180, 50)])

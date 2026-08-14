@@ -103,13 +103,22 @@ class ProductionCssArticleListHarness(ArticleListHarness):
     )
 
     def compose(self) -> ComposeResult:
-        pane = ArticleListPane(id="watchlists-detail-pane")
+        pane = ArticleListPane(id="watchlists-items-pane")
         pane.items = [
             _item(index, published_offset_hours=index * 12 + 1)
             for index in range(50)
         ]
         with Vertical(classes="watchlists-read-mode"):
-            yield pane
+            yield Vertical(
+                Static(
+                    "Read",
+                    classes="destination-section watchlists-column-title",
+                    id="watchlists-detail-title",
+                ),
+                pane,
+                id="watchlists-detail-pane",
+                classes="destination-workbench-pane",
+            )
 
 
 def _row_texts(pane: ArticleListPane) -> list[str]:
@@ -420,6 +429,10 @@ async def test_read_list_scrolls_rows_without_scrolling_its_fixed_chrome():
         pager = app.query_one("#items-pagination")
         fixed_regions = (toolbar.region, legend.region, pager.region)
 
+        detail = app.query_one("#watchlists-detail-pane")
+        assert app.query_one("#watchlists-detail-title") in detail.children
+        assert app.query_one(ArticleListPane) in detail.children
+
         def composited_text(widget) -> str:
             strips = widget.screen._compositor.render_strips()
             region = widget.region
@@ -430,7 +443,7 @@ async def test_read_list_scrolls_rows_without_scrolling_its_fixed_chrome():
                 for y in range(region.y, region.y + region.height)
             )
 
-        assert table.region.height <= 42
+        assert table.region.height <= 40
         assert table.max_scroll_y > 0
         assert "Refresh" in composited_text(toolbar)
         for label in ("Previous", "Page 1", "Next"):
