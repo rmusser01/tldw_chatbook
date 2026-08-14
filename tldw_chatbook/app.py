@@ -3456,7 +3456,7 @@ class LibraryIngestQueueMixin:
                     type(callback).__name__,
                 )
                 logger.error(
-                    "Library local STT callback could not be marshaled (callback=%s).",
+                    "Library local STT callback could not be marshaled (callback={}).",
                     callback_name,
                 )
 
