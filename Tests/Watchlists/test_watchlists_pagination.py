@@ -234,6 +234,49 @@ async def test_page_state_commits_only_after_mounted_rows_finish_applying(monkey
 
 
 @pytest.mark.asyncio
+async def test_selection_waits_for_presented_page_to_commit(monkeypatch):
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(0, 51)
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items() is True
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        original_apply = pane.apply_page_items
+        presentation_started = asyncio.Event()
+        release_presentation = asyncio.Event()
+
+        async def apply_then_block(items, *, focus_first=False):
+            await original_apply(items, focus_first=focus_first)
+            if str(items[0]["id"]) == "100":
+                presentation_started.set()
+                await release_presentation.wait()
+
+        monkeypatch.setattr(pane, "apply_page_items", apply_then_block)
+        controller.list_items.return_value = _items(100, 51)
+        controller.get_item_content.return_value = "Fetched body"
+        screen._mark_item_read_on_open = Mock()
+        load_task = asyncio.create_task(
+            screen._load_items(target_page_index=1, explicit_page_change=True)
+        )
+        await _wait_until(pilot, presentation_started.is_set)
+
+        item = pane.items[0]
+        selection_task = asyncio.create_task(
+            screen.handle_item_selected(ItemSelected(item))
+        )
+        await pilot.pause(0.05)
+        selection_waited_for_commit = not selection_task.done()
+
+        release_presentation.set()
+        assert await load_task is True
+        await selection_task
+
+        assert selection_waited_for_commit
+        assert screen._selected_content_item is item
+        assert screen._selected_content_page_key == screen._items_page_key(1)
+
+
+@pytest.mark.asyncio
 async def test_cancelled_presentation_rolls_back_before_failed_successor(monkeypatch):
     controller = AsyncMock()
     controller.list_items.return_value = _items(0, 51)

@@ -613,7 +613,12 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
     async def apply_page_items(
         self, items: list[dict[str, Any]], *, focus_first: bool = False
     ) -> None:
-        """Apply a backend page and optionally highlight its first article."""
+        """Apply a backend page and optionally highlight its first article.
+
+        Args:
+            items: The backend page to present.
+            focus_first: Whether to focus the first article after rebuilding.
+        """
         self.set_reactive(ArticleListPane.items, items)
         await self._rebuild_rows()
         if focus_first:

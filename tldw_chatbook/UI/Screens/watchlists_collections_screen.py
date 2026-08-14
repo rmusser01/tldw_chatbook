@@ -9188,7 +9188,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(ItemSelected)
     async def handle_item_selected(self, event: ItemSelected) -> None:
         event.stop()
-        selection_page_key = self._items_committed_page_key
+        async with self._items_page_presentation_lock:
+            selection_page_key = self._items_committed_page_key
         # TASK-15464: fetch the DETAIL body BEFORE any of the selection
         # writes below, not after. `ContentPane.item` is a `recompose=True`
         # reactive, so merging `content` into `event.item` first means one
