@@ -444,7 +444,6 @@ class ImportItemDiagnostic:
     source_display_path: str
     classification: ImportClassification
     selected_action: ImportAction
-    reason: str
     payload_count: int
     membership_count: int
 
@@ -511,7 +510,6 @@ class NoteImportPlan:
                 source_display_path=item.source.display_path,
                 classification=item.classification,
                 selected_action=item.selected_action,
-                reason=item.reason,
                 payload_count=len(item.payloads),
                 membership_count=len(item.memberships),
             )

@@ -603,7 +603,7 @@ def test_plan_exposes_only_an_immutable_redacted_diagnostic_projection() -> None
     assert diagnostic.items[0].selected_action is ImportAction.CREATE_NEW
     assert diagnostic.items[0].payload_count == 1
     assert diagnostic.items[0].membership_count == 1
-    assert diagnostic.items[0].reason == "Ready to import."
+    assert not hasattr(diagnostic.items[0], "reason")
     rendered = repr(diagnostic)
     assert "PRIVATE" not in rendered
     assert "/private/user" not in rendered
@@ -611,6 +611,31 @@ def test_plan_exposes_only_an_immutable_redacted_diagnostic_projection() -> None
     assert "HASH-FINGERPRINT-SECRET" not in rendered
     with pytest.raises(FrozenInstanceError):
         diagnostic.item_count = 2  # type: ignore[misc]
+
+
+def test_diagnostic_projection_excludes_free_form_user_reason() -> None:
+    """User-facing reasons cannot leak sensitive details into persistent logs."""
+    sensitive_values = (
+        "/Users/alice/private.md",
+        "SOURCE_SECRET_BODY",
+        "sha256:deadbeef",
+        "PermissionError: denied",
+    )
+    item = _new_item(
+        payloads=[],
+        memberships=[],
+        classification=ImportClassification.FAILED,
+        reason=" | ".join(sensitive_values),
+        default_action=ImportAction.SKIP,
+        selected_action=ImportAction.SKIP,
+        allowed_actions=[ImportAction.SKIP],
+        add_membership=False,
+    )
+
+    rendered = repr(_plan_with_item(item).to_diagnostic())
+
+    for sensitive_value in sensitive_values:
+        assert sensitive_value not in rendered
 
 
 @pytest.mark.parametrize(
