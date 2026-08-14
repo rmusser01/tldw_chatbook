@@ -102,11 +102,11 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
         )
         open_button = pilot.app.screen.query_one("#console-inspector-rail-open", Button)
         assert str(open_button.label) == "<-Inspect"
-        arrow_end = (
+        far_end = (
             open_button.region.width - 1,
             open_button.region.height // 2,
         )
-        assert await pilot.click(open_button, offset=arrow_end)
+        assert await pilot.click(open_button, offset=far_end)
         await pilot.pause(0.2)
         assert _right_rail_open(pilot) is True
         assert _handle_visible(pilot) is False

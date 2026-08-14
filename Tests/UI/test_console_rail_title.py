@@ -1,4 +1,4 @@
-"""Console left-rail title tests."""
+"""Console left-rail header tests."""
 
 from __future__ import annotations
 

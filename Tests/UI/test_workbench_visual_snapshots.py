@@ -185,9 +185,31 @@ def _painted_center_row(screen, region) -> str:
 
 
 def _rendered_svg_text(svg: str) -> str:
-    """Join rendered SVG text nodes without admitting screenshot metadata."""
-    joined = "".join(re.findall(r"<text[^>]*>([^<]*)</text>", svg))
-    return unescape(joined).replace("\xa0", " ")
+    """Rejoin adjacent rendered text nodes without crossing rows or gaps."""
+    rows: dict[float, list[tuple[float, float, str]]] = {}
+    for attributes, raw_text in re.findall(
+        r"<text\b([^>]*)>([^<]*)</text>", svg, flags=re.DOTALL
+    ):
+        parsed_attributes = dict(re.findall(r'(\w+)="([^"]*)"', attributes))
+        if "clip-path" not in attributes:
+            continue
+        x = float(parsed_attributes["x"])
+        y = float(parsed_attributes["y"])
+        text_length = float(parsed_attributes["textLength"])
+        text = unescape(raw_text).replace("\xa0", " ")
+        rows.setdefault(y, []).append((x, text_length, text))
+
+    rendered_rows = []
+    for y in sorted(rows):
+        rendered_row = ""
+        previous_right: float | None = None
+        for x, text_length, text in sorted(rows[y]):
+            if previous_right is not None and x > previous_right + 0.01:
+                rendered_row += " "
+            rendered_row += text
+            previous_right = max(previous_right or x, x + text_length)
+        rendered_rows.append(rendered_row)
+    return "\n".join(rendered_rows)
 
 
 @pytest.mark.parametrize("density", ("normal", "compact"))
@@ -317,14 +339,23 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
             _assert_svg_healthy(svg)
 
 
-@pytest.mark.parametrize("size", ((140, 42), (160, 45)))
 @pytest.mark.parametrize(
-    ("target_state", "context_open", "inspector_open"),
     (
-        ("context-open-inspector-collapsed", True, False),
-        ("both-open", True, True),
-        ("context-collapsed-inspector-open", False, True),
-        ("both-collapsed", False, False),
+        "size",
+        "target_state",
+        "context_open",
+        "inspector_open",
+        "expected_rail_widths",
+    ),
+    (
+        ((140, 42), "context-open-inspector-collapsed", True, False, (30, 0)),
+        ((140, 42), "both-open", True, True, (30, 34)),
+        ((140, 42), "context-collapsed-inspector-open", False, True, (0, 34)),
+        ((140, 42), "both-collapsed", False, False, (0, 0)),
+        ((160, 45), "context-open-inspector-collapsed", True, False, (30, 0)),
+        ((160, 45), "both-open", True, True, (30, 34)),
+        ((160, 45), "context-collapsed-inspector-open", False, True, (0, 34)),
+        ((160, 45), "both-collapsed", False, False, (0, 0)),
     ),
 )
 @pytest.mark.asyncio
@@ -333,6 +364,7 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
     target_state: str,
     context_open: bool,
     inspector_open: bool,
+    expected_rail_widths: tuple[int, int],
 ) -> None:
     app = _build_test_app(configured_default="home")
     _mark_console_onboarding_complete(app)
@@ -388,7 +420,6 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
 
                 header = button.parent if open_state else None
                 if open_state:
-                    assert rail.region.width >= 18
                     assert isinstance(header, Horizontal)
                     assert rail.content_region.contains_region(header.region)
                     assert header.region.height == 1
@@ -414,6 +445,11 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
                 target_open=inspector_open,
             )
             await pilot.pause(0.5)
+
+            assert (
+                app.screen.query_one("#console-left-rail").region.width,
+                app.screen.query_one("#console-right-rail").region.width,
+            ) == expected_rail_widths
 
             context_selector = (
                 "#console-context-rail-collapse"
