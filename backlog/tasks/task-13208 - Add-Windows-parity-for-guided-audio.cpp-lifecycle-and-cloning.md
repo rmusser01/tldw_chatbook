@@ -21,6 +21,7 @@ references:
 documentation:
   - Docs/superpowers/specs/2026-08-09-audio-cpp-guided-model-setup-design.md
   - Docs/superpowers/specs/2026-08-14-audio-cpp-windows-lifecycle-parity-design.md
+  - Docs/superpowers/plans/2026-08-14-task-13208-audio-cpp-windows-lifecycle-parity.md
 priority: high
 ---
 
@@ -40,3 +41,32 @@ Provide Windows process, path, ACL, scanner, backend-selection, clone-materializ
 - [ ] #6 Settings and Speech Lab preserve the same saved/applied/process truth, keyboard/focus behavior, sample/clone flows, stable errors, and privacy guarantees on Windows as on POSIX.
 - [ ] #7 Windows-specific unit/integration tests plus pinned Windows CPU real-process UAT prove generated JSON acceptance, health/catalog, text and clone WAV synthesis, Model Library/local package paths, exact shutdown, no orphaned child/handle, and audible playback in a disposable profile.
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: yes
+
+ADR path: `backlog/decisions/029-local-private-data-boundary.md` amendment
+
+Reason: Windows owner-private DACL verification changes the security posture
+for generated audio.cpp launch artifacts and clone-reference materializations;
+the existing runtime and ownership ADRs otherwise remain authoritative.
+
+Detailed executable plan:
+`Docs/superpowers/plans/2026-08-14-task-13208-audio-cpp-windows-lifecycle-parity.md`
+
+1. Add one TTS-scoped stdlib Win32 filesystem capability for absolute paths,
+   no-reparse handles, identity, protected DACLs, locks, and exact cleanup.
+2. Use that capability in the existing bounded package scanner without
+   changing recipe matching or result ownership.
+3. Add a Windows storage branch to the existing generated launch artifact.
+4. Add a Windows record branch to the existing clone-reference materializer.
+5. Admit reviewed `.exe` binaries and Windows x86/x64 backend evidence without
+   executing during detection or Save.
+6. Retain spawn across cancellation and close the exact subprocess transport
+   only after the existing supervisor settles every generation resource.
+7. Enable the existing Settings/Speech Lab flow with truthful DACL and
+   saved/applied/process copy.
+8. Add a hermetic Windows 3.12 CI gate and one parameterized PowerShell UAT.
+9. Close the task only after hosted Windows evidence, clean shutdown, and human
+   audible confirmation pass; otherwise keep it In Progress.
