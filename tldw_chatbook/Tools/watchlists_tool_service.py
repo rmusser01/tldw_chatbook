@@ -245,14 +245,14 @@ class WatchlistsToolService:
                 has_more=has_more,
                 next_cursor=next_cursor,
             )
-            if self._json_size(candidate_payload) > _MAX_RESULT_BYTES:
+            if self._json_size(candidate_payload) >= _MAX_RESULT_BYTES:
                 break
             items = candidate_items
             final_payload = candidate_payload
 
         if rows and not items:
             raise RuntimeError("bounded Watchlists item did not fit")
-        return self._json(final_payload)
+        return self._finalize(final_payload)
 
     def get_item(self, arguments: object) -> str:
         """Return authoritative detail for one canonical Watchlists item ID.
@@ -324,10 +324,7 @@ class WatchlistsToolService:
                 "content_normalized": True,
                 "content_truncated": False,
             }
-        response = self._json({"status": "ok", "item": item})
-        if len(response.encode("utf-8")) > _MAX_RESULT_BYTES:
-            raise RuntimeError("bounded Watchlists detail did not fit")
-        return response
+        return self._finalize({"status": "ok", "item": item})
 
     @staticmethod
     def _validate_search(arguments: object) -> _SearchRequest:
@@ -659,7 +656,7 @@ class WatchlistsToolService:
                 "not_found", f"{field} was not found", retryable=False
             )
         if len(candidates) > 1:
-            return None, WatchlistsToolService._json(
+            return None, WatchlistsToolService._finalize(
                 {
                     "status": "needs_disambiguation",
                     "retryable": False,
@@ -833,12 +830,20 @@ class WatchlistsToolService:
         if value is None:
             return None, False
         text = str(value)
-        encoded = text.encode("utf-8")
-        if len(encoded) <= maximum_bytes:
+        if WatchlistsToolService._json_size(text) <= maximum_bytes:
             return text, False
-        suffix_bytes = _TRUNCATION_SUFFIX.encode("utf-8")
-        prefix = encoded[: maximum_bytes - len(suffix_bytes)]
-        return prefix.decode("utf-8", errors="ignore") + _TRUNCATION_SUFFIX, True
+        low = 0
+        high = len(text)
+        fitted = _TRUNCATION_SUFFIX
+        while low <= high:
+            middle = (low + high) // 2
+            candidate = text[:middle] + _TRUNCATION_SUFFIX
+            if WatchlistsToolService._json_size(candidate) <= maximum_bytes:
+                fitted = candidate
+                low = middle + 1
+            else:
+                high = middle - 1
+        return fitted, True
 
     @staticmethod
     def _sanitize_url(value: object) -> tuple[str | None, bool, bool]:
@@ -923,7 +928,7 @@ class WatchlistsToolService:
         text: str, match_index: int, match_length: int
     ) -> tuple[str, bool]:
         maximum_chars = _MAX_SNIPPET_BYTES // 4
-        if len(text.encode("utf-8")) <= _MAX_SNIPPET_BYTES:
+        if WatchlistsToolService._json_size(text) <= _MAX_SNIPPET_BYTES:
             return text, False
         half_window = max(1, (maximum_chars - match_length) // 2)
         start = max(0, match_index - half_window)
@@ -948,7 +953,7 @@ class WatchlistsToolService:
     def _fit_detail_content(item: dict[str, Any]) -> str:
         payload = {"status": "ok", "item": item}
         rendered = WatchlistsToolService._json(payload)
-        if len(rendered.encode("utf-8")) <= _MAX_RESULT_BYTES:
+        if len(rendered.encode("utf-8")) < _MAX_RESULT_BYTES:
             return rendered
 
         evidence = item["evidence"]
@@ -963,7 +968,7 @@ class WatchlistsToolService:
             middle = (low + high) // 2
             evidence["content"] = content[:middle] + _TRUNCATION_SUFFIX
             candidate = WatchlistsToolService._json(payload)
-            if len(candidate.encode("utf-8")) <= _MAX_RESULT_BYTES:
+            if len(candidate.encode("utf-8")) < _MAX_RESULT_BYTES:
                 fitted = candidate
                 low = middle + 1
             else:
@@ -975,6 +980,13 @@ class WatchlistsToolService:
     @staticmethod
     def _json_size(payload: object) -> int:
         return len(WatchlistsToolService._json(payload).encode("utf-8"))
+
+    @staticmethod
+    def _finalize(payload: object) -> str:
+        rendered = WatchlistsToolService._json(payload)
+        if len(rendered.encode("utf-8")) >= _MAX_RESULT_BYTES:
+            raise RuntimeError("bounded Watchlists result did not fit")
+        return rendered
 
     @staticmethod
     def _raise_unexpected(exc: Exception) -> None:
@@ -999,7 +1011,7 @@ class WatchlistsToolService:
 
     @staticmethod
     def _outcome(status: str, message: str, *, retryable: bool) -> str:
-        return WatchlistsToolService._json(
+        return WatchlistsToolService._finalize(
             {"status": status, "retryable": retryable, "message": message}
         )
 

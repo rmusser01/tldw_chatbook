@@ -751,7 +751,7 @@ def test_search_packs_only_complete_truncated_items_below_internal_byte_ceiling(
     raw = service.search_items({"limit": 8})
     result = _payload(raw)
 
-    assert len(raw.encode("utf-8")) <= 30 * 1024
+    assert len(raw.encode("utf-8")) < 30 * 1024
     assert 1 <= result["returned_count"] < 8
     assert result["returned_count"] == len(result["items"])
     assert result["has_more"] is True
@@ -793,7 +793,7 @@ def test_search_normal_item_and_every_expected_outcome_are_strict_bounded_json(
     ]
 
     for response in responses:
-        assert len(response.encode("utf-8")) <= 30 * 1024
+        assert len(response.encode("utf-8")) < 30 * 1024
         assert isinstance(
             json.loads(response, parse_constant=lambda value: 1 / 0), dict
         )
@@ -912,7 +912,7 @@ def test_detail_normalizes_and_byte_truncates_article_body_with_truthful_metadat
     result = _payload(raw)
     item = result["item"]
 
-    assert len(raw.encode("utf-8")) <= 30 * 1024
+    assert len(raw.encode("utf-8")) < 30 * 1024
     assert item["content_format"] == "html"
     assert item["content_kind"] == "article"
     assert item["evidence"]["content_is_untrusted"] is True
@@ -921,6 +921,18 @@ def test_detail_normalizes_and_byte_truncates_article_body_with_truthful_metadat
     assert item["evidence"]["content"].startswith("Hello & evidence")
     assert "<p>" not in item["evidence"]["content"]
     assert item["evidence"]["content"].endswith("[truncated]")
+
+
+def test_detail_ascii_body_stays_strictly_below_internal_byte_ceiling(
+    db: SubscriptionsDB,
+) -> None:
+    source_id = _source(db, "Exact byte ceiling")
+    item_id = _item(db, source_id, "exact-byte-ceiling", content="x" * 100_000)
+
+    raw = _service(db).get_item({"item_id": f"local:watchlist_item:{item_id}"})
+
+    assert len(raw.encode("utf-8")) < 30 * 1024
+    assert _payload(raw)["item"]["evidence"]["content_truncated"] is True
 
 
 def test_detail_keeps_null_article_truthful_and_change_evidence_explicit(
@@ -1342,6 +1354,42 @@ def test_scope_disambiguation_is_bounded_and_missing_is_nonretryable(
         "retryable": False,
         "message": "collection was not found",
     }
+
+
+def test_disambiguation_keeps_complete_ordered_candidates_below_internal_limit(
+    db: SubscriptionsDB,
+) -> None:
+    candidate_ids = [
+        _source(
+            db,
+            f"Hostile candidate {index:02d} " + "\x01" * 1_000,
+            url=(f"https://sources.test/hostile-{index:02d}/" + "path-segment/" * 200),
+        )
+        for index in range(10)
+    ]
+
+    raw = _service(db).search_items({"source": "hostile candidate"})
+    result = _payload(raw)
+
+    assert len(raw.encode("utf-8")) < 30 * 1024
+    assert result["status"] == "needs_disambiguation"
+    assert [candidate["id"] for candidate in result["candidates"]] == [
+        f"local:subscription:{candidate_id}" for candidate_id in candidate_ids
+    ]
+    assert len(result["candidates"]) == 10
+    assert all(
+        set(candidate)
+        == {
+            "id",
+            "name",
+            "name_truncated",
+            "url",
+            "url_redacted",
+            "url_truncated",
+        }
+        for candidate in result["candidates"]
+    )
+    assert all(candidate["name_truncated"] for candidate in result["candidates"])
 
 
 def test_collection_and_source_scope_is_an_intersection_not_a_widening(
