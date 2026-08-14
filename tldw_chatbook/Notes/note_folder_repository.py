@@ -39,6 +39,11 @@ _TREE_SEARCH_NOTE_LIMIT = 250
 _TREE_SEARCH_FOLDER_LIMIT = 500
 _TREE_SEARCH_MEMBERSHIP_LIMIT = 1000
 _FOLDER_PATH_SEGMENT_LIMIT = 64
+_CALLER_FOLDER_ID_MAX_LENGTH = 256
+_ASCII_ALNUM = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+)
+_CALLER_FOLDER_ID_CHARACTERS = _ASCII_ALNUM | frozenset("_.:-")
 _MEMBERSHIP_COLUMNS = (
     "id, folder_id, note_id, ownership, owner_id, owner_active, version"
 )
@@ -75,8 +80,11 @@ class LocalNoteFolderRepository:
             FolderValidationError: If the name or parent cannot be used.
             FolderConflictError: If database contention prevents the mutation.
         """
-        selected_folder_id = str(uuid.uuid4()) if folder_id is None else folder_id
-        _validate_folder_id(selected_folder_id, field="folder_id")
+        if folder_id is None:
+            selected_folder_id = str(uuid.uuid4())
+        else:
+            _validate_caller_folder_id(folder_id)
+            selected_folder_id = folder_id
         normalized = normalize_folder_name(name)
         now = _utc_timestamp()
         normalized_path: str | None = None
@@ -1873,6 +1881,16 @@ def _validate_absolute_normalized_path(path: str) -> None:
 def _validate_folder_id(folder_id: object, *, field: str) -> None:
     if not isinstance(folder_id, str) or not folder_id:
         raise FolderValidationError(f"{field} must be a non-empty string.")
+
+
+def _validate_caller_folder_id(folder_id: object) -> None:
+    if (
+        type(folder_id) is not str
+        or not 1 <= len(folder_id) <= _CALLER_FOLDER_ID_MAX_LENGTH
+        or folder_id[0] not in _ASCII_ALNUM
+        or any(character not in _CALLER_FOLDER_ID_CHARACTERS for character in folder_id)
+    ):
+        raise FolderValidationError("folder_id is invalid.")
 
 
 def _validate_expected_version(expected_version: object) -> None:

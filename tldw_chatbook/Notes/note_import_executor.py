@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import NoReturn
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
     FolderCapabilityError,
     FolderCollisionError,
@@ -28,7 +28,6 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_KEYWORDS_PER_NOTE,
     ParsedNotePayload,
 )
-from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 
 _OPAQUE_ID_MAX_LENGTH = 256
 
@@ -64,6 +63,19 @@ class ImportTargetPermanentError(ImportTargetError):
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class LocalTargetFolder:
+    """Private-safe immutable folder state used by import execution."""
+
+    folder_id: str
+    name: str
+    path: str
+    normalized_path: str
+
+    def __repr__(self) -> str:
+        return "LocalTargetFolder(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class LocalTargetNote:
     """Private-safe immutable note state used only for reconciliation."""
 
@@ -83,26 +95,23 @@ class LocalNoteImportTarget:
     def __init__(
         self,
         *,
-        service: NotesInteropService,
+        db: CharactersRAGDB,
         folder_repository: LocalNoteFolderRepository,
-        user_id: str,
     ) -> None:
         try:
-            if not isinstance(service, NotesInteropService):
-                raise TypeError("service must be a NotesInteropService instance.")
+            if not isinstance(db, CharactersRAGDB):
+                raise TypeError("db must be a CharactersRAGDB instance.")
             if not isinstance(folder_repository, LocalNoteFolderRepository):
                 raise TypeError(
                     "folder_repository must be a LocalNoteFolderRepository instance."
                 )
-            _validate_opaque_id(user_id)
-            target_db = service._get_db(user_id)
-            if target_db.db_path_str != folder_repository.db.db_path_str:
+            if folder_repository.db is not db:
                 raise ValueError("Target components must share one database.")
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
             _raise_translated(exc)
         self._folders = folder_repository
-        self._user_id = target_db.client_id
-        self._db = target_db
+        self._user_id = db.client_id
+        self._db = db
 
     def __repr__(self) -> str:
         return "LocalNoteImportTarget(<private>)"
@@ -113,7 +122,7 @@ class LocalNoteImportTarget:
         segments: Iterable[str],
         folder_id: str,
         allow_existing: bool,
-    ) -> NoteFolder:
+    ) -> LocalTargetFolder:
         """Ensure one exact folder path has an approved identity or reuse policy."""
         try:
             _validate_opaque_id(folder_id)
@@ -122,8 +131,12 @@ class LocalNoteImportTarget:
             copied_segments = _copy_segments(segments)
             existing = self._folders.get_folder_by_path(copied_segments)
             if existing is not None:
-                return _reconcile_folder(
-                    existing, folder_id=folder_id, allow_existing=allow_existing
+                return _project_folder(
+                    _reconcile_folder(
+                        existing,
+                        folder_id=folder_id,
+                        allow_existing=allow_existing,
+                    )
                 )
 
             identity_owner = self._folders.get_folder(folder_id, include_deleted=True)
@@ -138,16 +151,22 @@ class LocalNoteImportTarget:
                 parent_id = parent.folder_id
 
             try:
-                return self._folders.create_folder(
-                    name=copied_segments[-1],
-                    parent_id=parent_id,
-                    folder_id=folder_id,
+                return _project_folder(
+                    self._folders.create_folder(
+                        name=copied_segments[-1],
+                        parent_id=parent_id,
+                        folder_id=folder_id,
+                    )
                 )
             except (FolderCollisionError, FolderValidationError):
                 winner = self._folders.get_folder_by_path(copied_segments)
                 if winner is not None:
-                    return _reconcile_folder(
-                        winner, folder_id=folder_id, allow_existing=allow_existing
+                    return _project_folder(
+                        _reconcile_folder(
+                            winner,
+                            folder_id=folder_id,
+                            allow_existing=allow_existing,
+                        )
                     )
                 if (
                     self._folders.get_folder(folder_id, include_deleted=True)
@@ -578,6 +597,23 @@ class LocalNoteImportTarget:
         )
 
 
+def _project_folder(folder: NoteFolder) -> LocalTargetFolder:
+    values = (
+        folder.folder_id,
+        folder.name,
+        folder.path,
+        folder.normalized_path,
+    )
+    if any(type(value) is not str for value in values):
+        raise ImportTargetPermanentError from None
+    return LocalTargetFolder(
+        folder_id=folder.folder_id,
+        name=folder.name,
+        path=folder.path,
+        normalized_path=folder.normalized_path,
+    )
+
+
 def _reconcile_folder(
     folder: NoteFolder, *, folder_id: str, allow_existing: bool
 ) -> NoteFolder:
@@ -737,5 +773,6 @@ __all__ = [
     "ImportTargetPermanentError",
     "ImportTargetRetryableError",
     "LocalNoteImportTarget",
+    "LocalTargetFolder",
     "LocalTargetNote",
 ]

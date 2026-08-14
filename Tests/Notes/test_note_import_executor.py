@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections.abc import Iterator
 from dataclasses import FrozenInstanceError
 from datetime import UTC
+from queue import Queue
 
 import pytest
 from loguru import logger as loguru_logger
 
+import tldw_chatbook.Notes.note_import_executor as note_import_executor_module
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
     FolderCollisionError,
     FolderValidationError,
+    NoteFolder,
 )
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.note_import_executor import (
@@ -48,13 +52,13 @@ def target_harness(
         api_client_id="target-api",
         global_db_to_use=db,
     )
-    folders = LocalNoteFolderRepository(db)
+    target_db = service._get_db("target-user")
+    folders = LocalNoteFolderRepository(target_db)
     target = LocalNoteImportTarget(
-        service=service,
+        db=target_db,
         folder_repository=folders,
-        user_id="target-user",
     )
-    yield target, service, folders, db
+    yield target, service, folders, target_db
     service.close_all_user_connections()
     db.close_connection()
 
@@ -83,6 +87,39 @@ def _active_membership_count(
     return int(row[0])
 
 
+def test_target_constructor_rejects_a_different_repository_database_safely(
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    target_db = CharactersRAGDB(
+        tmp_path / "private-target.db", client_id="private-target-user"
+    )
+    repository_db = CharactersRAGDB(
+        tmp_path / "private-repository.db", client_id="private-repository-user"
+    )
+    folders = LocalNoteFolderRepository(repository_db)
+    private_values = (
+        target_db.db_path_str,
+        repository_db.db_path_str,
+        target_db.client_id,
+        repository_db.client_id,
+    )
+    loguru_messages: list[str] = []
+    sink_id = loguru_logger.add(lambda message: loguru_messages.append(str(message)))
+    try:
+        with pytest.raises(ImportTargetPermanentError) as caught:
+            LocalNoteImportTarget(db=target_db, folder_repository=folders)
+    finally:
+        loguru_logger.remove(sink_id)
+        target_db.close_connection()
+        repository_db.close_connection()
+
+    rendered = "".join(loguru_messages) + caplog.text + repr(caught.value)
+    assert caught.value.__cause__ is None
+    for private_value in private_values:
+        assert private_value not in rendered
+
+
 def test_target_ensure_folder_is_deterministic_and_replay_safe(
     target_harness,
 ) -> None:
@@ -99,6 +136,71 @@ def test_target_ensure_folder_is_deterministic_and_replay_safe(
     assert retry == first
 
 
+def test_target_folder_projection_is_frozen_usable_and_private_safe(
+    target_harness,
+) -> None:
+    target, _service, _folders, _db = target_harness
+
+    folder = target.ensure_folder(
+        segments=("Private Imported",),
+        folder_id=_FOLDER_ID,
+        allow_existing=False,
+    )
+
+    folder_type = getattr(note_import_executor_module, "LocalTargetFolder", None)
+    assert folder_type is not None
+    assert isinstance(folder, folder_type)
+    assert folder.folder_id == _FOLDER_ID
+    assert folder.name == "Private Imported"
+    assert folder.path == "/Private Imported"
+    assert folder.normalized_path == "/private imported"
+    with pytest.raises(FrozenInstanceError):
+        folder.name = "changed"  # type: ignore[misc]
+    for rendered in (repr(folder), str(folder)):
+        for private_value in (
+            _FOLDER_ID,
+            "Private Imported",
+            "/Private Imported",
+            "/private imported",
+        ):
+            assert private_value not in rendered
+
+
+@pytest.mark.parametrize("field", ["folder_id", "name", "path", "normalized_path"])
+def test_target_folder_projection_rejects_non_exact_text_fields(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    target, _service, folders, _db = target_harness
+
+    class TextSubclass(str):
+        pass
+
+    values = {
+        "folder_id": _FOLDER_ID,
+        "parent_id": None,
+        "name": "Private Imported",
+        "path": "/Private Imported",
+        "normalized_path": "/private imported",
+        "version": 1,
+        "deleted": False,
+    }
+    values[field] = TextSubclass(values[field])
+    hostile_folder = NoteFolder(**values)  # type: ignore[arg-type]
+    monkeypatch.setattr(folders, "get_folder_by_path", lambda _segments: hostile_folder)
+
+    with pytest.raises(ImportTargetPermanentError) as caught:
+        target.ensure_folder(
+            segments=("Private Imported",),
+            folder_id=_FOLDER_ID,
+            allow_existing=False,
+        )
+
+    assert caught.value.__cause__ is None
+    assert "Private Imported" not in repr(caught.value)
+
+
 def test_target_root_reuse_requires_explicit_allow_existing(target_harness) -> None:
     target, _service, folders, _db = target_harness
     existing = folders.create_folder(
@@ -110,12 +212,13 @@ def test_target_root_reuse_requires_explicit_allow_existing(target_harness) -> N
             segments=("Imported",), folder_id=_FOLDER_ID, allow_existing=False
         )
 
-    assert (
-        target.ensure_folder(
-            segments=("Imported",), folder_id=_FOLDER_ID, allow_existing=True
-        )
-        == existing
+    reused = target.ensure_folder(
+        segments=("Imported",), folder_id=_FOLDER_ID, allow_existing=True
     )
+    assert reused.folder_id == existing.folder_id
+    assert reused.name == existing.name
+    assert reused.path == existing.path
+    assert reused.normalized_path == existing.normalized_path
 
 
 def test_target_deleted_deterministic_folder_identity_is_a_conflict(
@@ -193,6 +296,100 @@ def test_target_concurrent_folder_id_winner_on_another_path_is_a_conflict(
 
     assert caught.value.__cause__ is None
     assert "hostile" not in repr(caught.value)
+
+
+@pytest.mark.parametrize("_race_attempt", range(3))
+def test_target_real_two_connection_same_path_race_has_one_safe_winner(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    _race_attempt: int,
+) -> None:
+    database_path = tmp_path / "race.db"
+    first_db = CharactersRAGDB(database_path, client_id="race-first")
+    second_db = CharactersRAGDB(database_path, client_id="race-second")
+    first_folders = LocalNoteFolderRepository(first_db)
+    second_folders = LocalNoteFolderRepository(second_db)
+    first_target = LocalNoteImportTarget(db=first_db, folder_repository=first_folders)
+    second_target = LocalNoteImportTarget(
+        db=second_db, folder_repository=second_folders
+    )
+    pre_read_barrier = threading.Barrier(2)
+
+    def synchronize_first_pre_read(repository: LocalNoteFolderRepository) -> None:
+        real_read = repository.get_folder_by_path
+        is_first_read = True
+
+        def synchronized_read(segments):
+            nonlocal is_first_read
+            result = real_read(segments)
+            if is_first_read:
+                is_first_read = False
+                pre_read_barrier.wait(timeout=5)
+            return result
+
+        monkeypatch.setattr(repository, "get_folder_by_path", synchronized_read)
+
+    synchronize_first_pre_read(first_folders)
+    synchronize_first_pre_read(second_folders)
+    outcomes: Queue[object] = Queue()
+
+    def race(
+        target: LocalNoteImportTarget,
+        folder_id: str,
+        database: CharactersRAGDB,
+    ) -> None:
+        try:
+            outcomes.put(
+                target.ensure_folder(
+                    segments=("Racing path",),
+                    folder_id=folder_id,
+                    allow_existing=False,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve the exact race outcome
+            outcomes.put(exc)
+        finally:
+            database.close_connection()
+
+    threads = (
+        threading.Thread(
+            target=race,
+            args=(first_target, _FOLDER_ID, first_db),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=race,
+            args=(second_target, _OTHER_FOLDER_ID, second_db),
+            daemon=True,
+        ),
+    )
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        assert all(not thread.is_alive() for thread in threads)
+        observed = (outcomes.get_nowait(), outcomes.get_nowait())
+        folder_type = getattr(note_import_executor_module, "LocalTargetFolder", None)
+        assert folder_type is not None
+        assert sum(isinstance(item, folder_type) for item in observed) == 1
+        assert (
+            sum(isinstance(item, ImportTargetConflictError) for item in observed) == 1
+        )
+        rows = (
+            first_db.get_connection()
+            .execute(
+                "SELECT id FROM note_folders "
+                "WHERE normalized_path = '/racing path' AND deleted = 0"
+            )
+            .fetchall()
+        )
+        assert len(rows) == 1
+        assert rows[0]["id"] in {_FOLDER_ID, _OTHER_FOLDER_ID}
+    finally:
+        first_db.close_connection()
+        second_db.close_connection()
 
 
 def test_target_folder_conflict_precedes_following_note_mutation(
@@ -307,14 +504,13 @@ def test_target_create_note_persists_exact_payload_and_reconciles_retry(
     assert count == 1
 
 
-def test_target_uses_service_canonical_client_id_for_direct_writes(
+def test_target_uses_injected_service_database_client_id_for_direct_writes(
     target_harness,
 ) -> None:
-    _target, service, folders, db = target_harness
+    _target, _service, folders, db = target_harness
     target = LocalNoteImportTarget(
-        service=service,
+        db=db,
         folder_repository=folders,
-        user_id=" target-user ",
     )
 
     target.create_note(
@@ -645,19 +841,27 @@ def test_target_validation_translation_is_permanent_and_baseexceptions_escape(
         target.read_note(note_id=_NOTE_ID)
 
 
-def test_target_mutations_do_not_log_private_note_or_keyword_values(
-    target_harness, caplog: pytest.LogCaptureFixture
+def test_target_construction_and_mutations_do_not_log_private_values(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    target, _service, _folders, _db = target_harness
+    _target, _service, folders, db = target_harness
+    private_user_id = db.client_id
+    private_db_path = db.db_path_str
     private_note_id = "private-note-id-never-log"
     private_title = "PRIVATE-TITLE-NEVER-LOG"
     private_content = "PRIVATE-CONTENT-NEVER-LOG"
     private_keyword = "PRIVATE-KEYWORD-NEVER-LOG"
     private_folder_id = "private-folder-id-never-log"
     private_source_path = "PRIVATE-SOURCE-PATH-NEVER-LOG"
+    private_raw_error = (
+        "database is locked PRIVATE-RAW-FAILURE-NEVER-LOG /private/source/path"
+    )
     loguru_messages: list[str] = []
     sink_id = loguru_logger.add(lambda message: loguru_messages.append(str(message)))
     try:
+        target = LocalNoteImportTarget(db=db, folder_repository=folders)
         folder = target.ensure_folder(
             segments=(private_source_path,),
             folder_id=private_folder_id,
@@ -687,12 +891,24 @@ def test_target_mutations_do_not_log_private_note_or_keyword_values(
             ),
         )
         target.sync_keywords(note_id=private_note_id, keywords=(private_keyword,))
+
+        def failing_read(*_args, **_kwargs):
+            try:
+                raise sqlite3.OperationalError(private_raw_error)
+            except sqlite3.OperationalError as exc:
+                raise CharactersRAGDBError(private_raw_error) from exc
+
+        monkeypatch.setattr(target, "_read_note", failing_read)
+        with pytest.raises(ImportTargetRetryableError):
+            target.read_note(note_id=private_note_id)
     finally:
         loguru_logger.remove(sink_id)
 
     rendered = "".join(loguru_messages) + caplog.text
     for private_value in (
         private_note_id,
+        private_user_id,
+        private_db_path,
         private_title,
         private_content,
         private_keyword,
@@ -701,6 +917,7 @@ def test_target_mutations_do_not_log_private_note_or_keyword_values(
         "replacement-title-never-log",
         "replacement-content-never-log",
         "replacement-keyword-never-log",
+        private_raw_error,
     ):
         assert private_value not in rendered
 

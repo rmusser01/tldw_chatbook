@@ -26,6 +26,10 @@ from tldw_chatbook.Notes.note_folder_repository import (
 )
 
 
+class _FolderIdSubclass(str):
+    pass
+
+
 @pytest.fixture
 def repository(tmp_path) -> Iterator[LocalNoteFolderRepository]:
     """Return a repository backed by the real ChaChaNotes SQLite database."""
@@ -113,11 +117,17 @@ def test_create_and_list_nested_folders(repository: LocalNoteFolderRepository) -
     assert plans.normalized_path == "/work/plans"
 
 
-def test_create_folder_accepts_a_deterministic_caller_id(
-    repository: LocalNoteFolderRepository,
+@pytest.mark.parametrize(
+    "folder_id",
+    [
+        "00000000-0000-5000-8000-000000000001",
+        "a._:-Z9",
+        "a" + ("b" * 255),
+    ],
+)
+def test_create_folder_accepts_a_bounded_safe_deterministic_caller_id(
+    repository: LocalNoteFolderRepository, folder_id: str
 ) -> None:
-    folder_id = "00000000-0000-5000-8000-000000000001"
-
     folder = repository.create_folder(
         name="Imported", parent_id=None, folder_id=folder_id
     )
@@ -125,7 +135,27 @@ def test_create_folder_accepts_a_deterministic_caller_id(
     assert folder.folder_id == folder_id
 
 
-@pytest.mark.parametrize("folder_id", ["", 7, False])
+@pytest.mark.parametrize(
+    "folder_id",
+    [
+        "",
+        7,
+        False,
+        " leading",
+        ".leading",
+        "-leading",
+        ":leading",
+        "a b",
+        "a/b",
+        "a\\b",
+        "a\x00b",
+        "a\x01b",
+        "a\tb",
+        "éclair",
+        "a" + ("b" * 256),
+        _FolderIdSubclass("valid-subclass"),
+    ],
+)
 def test_create_folder_rejects_malformed_caller_id_without_mutation(
     repository: LocalNoteFolderRepository, folder_id: object
 ) -> None:
@@ -140,6 +170,23 @@ def test_create_folder_rejects_malformed_caller_id_without_mutation(
 
     assert _folder_rows(repository) == before
     assert "Private input" not in str(caught.value)
+
+
+def test_create_folder_validates_caller_id_before_opening_a_transaction(
+    repository: LocalNoteFolderRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_transaction():
+        raise AssertionError("invalid caller ID reached the transaction boundary")
+
+    monkeypatch.setattr(repository.db, "transaction", forbidden_transaction)
+
+    with pytest.raises(FolderValidationError):
+        repository.create_folder(
+            name="Private input",
+            parent_id=None,
+            folder_id="invalid/path",
+        )
 
 
 def test_create_folder_without_caller_id_retains_uuid_behavior(
