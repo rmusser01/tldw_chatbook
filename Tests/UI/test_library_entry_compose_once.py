@@ -62,6 +62,11 @@ from tldw_chatbook.Widgets.Library import (
     LibrarySkillsListCanvas,
     LibraryStudyHandoffCanvas,
 )
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+    wait_for_signal,
+)
 from Tests.UI.test_library_content_hub import StaticLibraryCollectionsService
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
@@ -1508,7 +1513,11 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
         screen._selected_conversation_id = "chat-pending"
         screen._pending_library_source_open = ("conversations", "chat-pending")
         task = asyncio.create_task(screen._open_pending_library_source())
-        await started.wait()
+        await wait_for_background_signal(
+            started,
+            task,
+            what="pending conversation point fetch",
+        )
 
         screen._selected_conversation_id = "chat-1"
         owner = screen._library_entry_canvas_owner()
@@ -1524,7 +1533,10 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
         await pilot.pause()
 
         release.set()
-        result = await task
+        result = await await_background_task(
+            task,
+            what="pending conversation point fetch",
+        )
 
         assert result is LibraryEntryReconcileResult.SUPERSEDED
         assert screen._selected_conversation_id == "chat-1"
@@ -1573,7 +1585,11 @@ async def test_pending_conversation_open_retries_initial_snapshot_generation(
         focus.focus()
         await pilot.pause()
         task = asyncio.create_task(screen._open_pending_library_source())
-        await started.wait()
+        await wait_for_background_signal(
+            started,
+            task,
+            what="initial pending conversation point fetch",
+        )
 
         snapshot_records = dict(screen._local_source_records)
         snapshot_records["conversations"] = (
@@ -1597,7 +1613,10 @@ async def test_pending_conversation_open_retries_initial_snapshot_generation(
             message="Initial source snapshot did not finish reconciling.",
         )
         release.set()
-        result = await task
+        result = await await_background_task(
+            task,
+            what="pending conversation retry",
+        )
         await pilot.pause()
 
         assert result is LibraryEntryReconcileResult.APPLIED
@@ -1951,7 +1970,10 @@ async def test_uat_warm_landing_fresh_reconcile_retains_frame_and_focus(
         revisit = LibraryScreen(app)
         await host.push_screen(revisit)
         await _wait_for_library_shell(revisit, pilot)
-        await fresh_started.wait()
+        await wait_for_signal(
+            fresh_started,
+            what="warm landing fresh reconciliation",
+        )
         if size == (60, 20):
             revisit._library_notes_stage = "notes"
             revisit._set_library_rail_collapsed(True)
@@ -2027,7 +2049,10 @@ async def test_uat_cold_conversations_loading_to_rows_is_compositor_visible(
 
     async with host.run_test(size=size) as pilot:
         active = _active_library_screen(host)
-        await started.wait()
+        await wait_for_signal(
+            started,
+            what="cold conversations snapshot load",
+        )
         await _wait_for_selector(active, pilot, "#library-canvas-loading")
         if size == (60, 20):
             active._library_notes_stage = "notes"
@@ -2145,10 +2170,17 @@ async def test_landing_deferred_recents_converge_on_latest_state(monkeypatch):
         monkeypatch.setattr(recents_owner, "remove_children", delayed_remove)
         landing.state = first
         replacement = asyncio.create_task(landing._replace_recent_rows())
-        await removal_started.wait()
+        await wait_for_background_signal(
+            removal_started,
+            replacement,
+            what="landing recent-row replacement",
+        )
         landing.state = latest
         release_removal.set()
-        await replacement
+        await await_background_task(
+            replacement,
+            what="landing recent-row replacement",
+        )
 
         recents = list(landing.query(".library-hub-recent"))
         assert [getattr(recent, "record_id", "") for recent in recents] == ["latest"]
@@ -2434,7 +2466,10 @@ async def test_snapshot_timeout_is_repaired_by_blocked_fresh_success(
     host = LibraryHarness(app)
     async with host.run_test(size=size) as pilot:
         screen = _active_library_screen(host)
-        await fetch_started.wait()
+        await wait_for_signal(
+            fetch_started,
+            what="fresh Library snapshot fetch",
+        )
         screen._apply_source_snapshot_timeout()
         await pilot.pause()
         if size == (60, 20):
@@ -2543,7 +2578,11 @@ async def test_two_changed_generations_render_only_the_newer_generation(
         first_task = asyncio.create_task(
             screen._reconcile_library_entry_state(first_generation, route_key)
         )
-        await first_started.wait()
+        await wait_for_background_signal(
+            first_started,
+            first_task,
+            what="first Library entry reconciliation",
+        )
 
         newer_records = dict(first_records)
         newer_records["conversations"] = (
@@ -2574,7 +2613,10 @@ async def test_two_changed_generations_render_only_the_newer_generation(
         await pilot.pause()
 
         release_first.set()
-        first_result = await first_task
+        first_result = await await_background_task(
+            first_task,
+            what="first Library entry reconciliation",
+        )
 
         assert (first_result, newer_result) == (
             LibraryEntryReconcileResult.SUPERSEDED,
@@ -2670,12 +2712,19 @@ async def test_detached_queued_reconcile_completion_is_a_noop(
 
         monkeypatch.setattr(library_screen_module, "_sync_library_canvas", recorded_sync)
         task = asyncio.create_task(delayed_completion())
-        await completion_started.wait()
+        await wait_for_background_signal(
+            completion_started,
+            task,
+            what="detached queued reconciliation",
+        )
 
     assert task is not None
     assert screen.is_attached is False
     release_completion.set()
-    result = await task
+    result = await await_background_task(
+        task,
+        what="detached queued reconciliation",
+    )
 
     assert result is LibraryEntryReconcileResult.SUPERSEDED
     assert target_sync_calls == []
