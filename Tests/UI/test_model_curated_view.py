@@ -62,6 +62,27 @@ from tldw_chatbook.Model_Artifacts.curated_registry import CuratedRegistry
 from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
 
 
+@pytest.mark.parametrize(
+    "function_name",
+    [
+        "model_library_focus_locator",
+        "restore_model_library_focus",
+        "project_audio_cpp_observation",
+        "clear_audio_cpp_observation",
+        "audio_cpp_package_projection",
+    ],
+)
+def test_public_audio_cpp_projection_helpers_document_arguments_and_returns(
+    function_name: str,
+) -> None:
+    from tldw_chatbook.UI.Screens import model_curated_view as module
+
+    docstring = getattr(module, function_name).__doc__ or ""
+
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
+
+
 class _ViewApp(ConsolidatedCSSApp):
     def __init__(self, view: CuratedView) -> None:
         self.view = view

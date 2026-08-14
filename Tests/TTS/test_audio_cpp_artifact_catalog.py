@@ -1141,3 +1141,59 @@ def test_refresh_command_runs_directly_without_network_for_empty_manifest(
         "commit": COMMIT,
         "packages": [],
     }
+
+
+@pytest.mark.parametrize(
+    ("function_name", "requires_raises"),
+    [
+        ("validate_commit", True),
+        ("refresh_manifest_bytes", True),
+        ("main", True),
+    ],
+)
+def test_public_manifest_refresh_functions_use_google_style_docstrings(
+    function_name: str,
+    requires_raises: bool,
+) -> None:
+    import scripts.refresh_audio_cpp_artifact_manifest as module
+
+    docstring = getattr(module, function_name).__doc__ or ""
+
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
+    if requires_raises:
+        assert "Raises:" in docstring
+
+
+def test_refresh_command_writes_exact_bytes_to_explicit_output_without_site_packages(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).parents[2]
+    payload = {"repository": REPOSITORY, "commit": COMMIT, "packages": []}
+    manifest_path = _write_manifest(tmp_path, payload)
+    output_path = tmp_path / "nested" / "refreshed-manifest.json"
+    output_path.parent.mkdir()
+    expected_bytes = (
+        json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            "scripts/refresh_audio_cpp_artifact_manifest.py",
+            "--commit",
+            COMMIT,
+            "--manifest",
+            str(manifest_path),
+            "--output",
+            str(output_path),
+        ],
+        cwd=repository_root,
+        check=False,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+    assert result.stdout == b""
+    assert output_path.read_bytes() == expected_bytes
