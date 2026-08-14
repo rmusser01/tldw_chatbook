@@ -11,7 +11,7 @@ from typing import Self
 
 import pytest
 
-from tldw_chatbook.Notes import note_import_discovery
+from tldw_chatbook.Notes import note_import_discovery, note_import_windows_fs
 from tldw_chatbook.Notes.note_import_discovery import (
     ImportSelectionError,
     VerifiedSourceReadError,
@@ -44,6 +44,18 @@ class FakeWindowsFilesystem:
         self.open_flags: list[int] = []
         self.inheritable_values: list[bool] = []
         self.read_calls = 0
+        self.require_pins = False
+        self.pin_calls = 0
+        self.fail_pin_call: int | None = None
+        self.live_pins: dict[int, Path] = {}
+        self.closed_pins: list[int] = []
+        self.open_file_paths: dict[int, Path] = {}
+        self.unsafe_open_calls = 0
+        self.scandir_without_pins = 0
+        self.read_without_pins = 0
+        self.fail_open_file = False
+        self.scandir_exception: BaseException | None = None
+        self.read_exception: BaseException | None = None
         self.open_error = False
         self.fstat_identity_mismatch = False
         self.before_open: Callable[[Path], None] | None = None
@@ -57,6 +69,23 @@ class FakeWindowsFilesystem:
 
     def mark_reparse(self, path: Path) -> None:
         self.reparse_paths.add(self._key(path))
+
+    def _directory_chain(self, path: Path, *, include_leaf: bool) -> tuple[Path, ...]:
+        absolute = self.absolute(path)
+        components = absolute.parts[1:] if include_leaf else absolute.parts[1:-1]
+        current = Path(absolute.anchor)
+        chain = [current]
+        for component in components:
+            current /= component
+            chain.append(current)
+        return tuple(chain)
+
+    def _has_pinned_chain(self, path: Path, *, include_leaf: bool) -> bool:
+        live_paths = {self._key(value) for value in self.live_pins.values()}
+        return all(
+            self._key(component) in live_paths
+            for component in self._directory_chain(path, include_leaf=include_leaf)
+        )
 
     def absolute(self, path: Path) -> Path:
         return Path(os.path.abspath(os.fspath(path)))
@@ -79,6 +108,11 @@ class FakeWindowsFilesystem:
 
     def scandir(self, path: Path) -> object:
         self.scanned_paths.append(path)
+        if self.require_pins and not self._has_pinned_chain(path, include_leaf=True):
+            self.scandir_without_pins += 1
+            raise AssertionError("scandir called without a fully pinned chain")
+        if self.scandir_exception is not None:
+            raise self.scandir_exception
         if self.before_scandir is not None:
             self.before_scandir(path)
         iterator = os.scandir(path)
@@ -99,20 +133,39 @@ class FakeWindowsFilesystem:
         return ScandirWithExitHook()
 
     def open(self, path: Path, flags: int) -> int:
+        self.unsafe_open_calls += 1
+        return self.open_file_no_reparse(path)
+
+    def pin_directory_no_reparse(self, path: Path) -> int:
+        self.pin_calls += 1
+        if self.fail_pin_call == self.pin_calls:
+            raise OSError("PRIVATE PIN FAILURE")
+        token = -(self.pin_calls + 10_000)
+        self.live_pins[token] = path
+        return token
+
+    def open_file_no_reparse(self, path: Path) -> int:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
         self.open_flags.append(flags)
-        if self.open_error:
+        if self.require_pins and not self._has_pinned_chain(path, include_leaf=False):
+            raise AssertionError("file opened without a fully pinned parent chain")
+        if self.open_error or self.fail_open_file:
             raise OSError(f"PRIVATE WINDOWS OPEN PATH {path}")
         if self.before_open is not None:
             callback = self.before_open
             self.before_open = None
             callback(path)
-        return os.open(path, flags)
+        descriptor = os.open(path, flags)
+        self.open_file_paths[descriptor] = path
+        return descriptor
 
     def set_inheritable(self, descriptor: int, inheritable: bool) -> None:
         self.inheritable_values.append(inheritable)
         os.set_inheritable(descriptor, inheritable)
 
     def fstat(self, descriptor: int) -> os.stat_result | SimpleNamespace:
+        if descriptor in self.live_pins:
+            return self.lstat(self.live_pins[descriptor])
         metadata = os.fstat(descriptor)
         if not self.fstat_identity_mismatch:
             return metadata
@@ -127,6 +180,12 @@ class FakeWindowsFilesystem:
 
     def read(self, descriptor: int, count: int) -> bytes:
         self.read_calls += 1
+        path = self.open_file_paths[descriptor]
+        if self.require_pins and not self._has_pinned_chain(path, include_leaf=False):
+            self.read_without_pins += 1
+            raise AssertionError("read called without a fully pinned parent chain")
+        if self.read_exception is not None:
+            raise self.read_exception
         chunk = os.read(descriptor, count)
         if chunk and self.after_first_read is not None:
             callback = self.after_first_read
@@ -135,6 +194,11 @@ class FakeWindowsFilesystem:
         return chunk
 
     def close(self, descriptor: int) -> None:
+        if descriptor in self.live_pins:
+            self.live_pins.pop(descriptor)
+            self.closed_pins.append(descriptor)
+            return
+        self.open_file_paths.pop(descriptor, None)
         os.close(descriptor)
 
 
@@ -206,7 +270,7 @@ def test_windows_adapter_discovers_and_reads_selected_file_without_posix_flags(
     assert discovery.total_bytes == 4
     assert len(discovery.candidates[0].parent_identities) == len(source.parts) - 1
     assert content == b"Body"
-    assert len(filesystem.open_flags) == 1
+    assert len(filesystem.open_flags) == 2
     assert all(
         flags & (os.O_WRONLY | os.O_RDWR) == 0 for flags in filesystem.open_flags
     )
@@ -238,6 +302,109 @@ def test_windows_adapter_recursively_discovers_and_reads_folder(
         candidate.source.display_path for candidate in discovery.candidates
     ) == ("Project/a.md", "Project/child/b.md")
     assert contents == (b"A", b"B")
+
+
+def test_windows_adapter_keeps_all_ancestor_pins_live_for_scan_and_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "Project"
+    child = root / "child"
+    child.mkdir(parents=True)
+    source = child / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    filesystem = FakeWindowsFilesystem()
+    filesystem.require_pins = True
+    _force_windows_adapter(monkeypatch, filesystem)
+
+    discovery = discover_import_sources([root], _bounds())
+    content = read_discovered_source(discovery.candidates[0], _bounds())
+
+    assert content == b"Body"
+    assert filesystem.scandir_without_pins == 0
+    assert filesystem.read_without_pins == 0
+    assert filesystem.unsafe_open_calls == 0
+    assert filesystem.pin_calls > 0
+    assert filesystem.live_pins == {}
+    assert len(filesystem.closed_pins) == filesystem.pin_calls
+
+
+def test_windows_adapter_closes_partial_directory_pins_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "Project"
+    root.mkdir()
+    (root / "note.md").write_text("Body", encoding="utf-8")
+    filesystem = FakeWindowsFilesystem()
+    filesystem.fail_pin_call = 3
+    _force_windows_adapter(monkeypatch, filesystem)
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([root], _bounds())
+
+    assert raised.value.reason_code == "selection_unreadable"
+    assert filesystem.live_pins == {}
+    assert len(filesystem.closed_pins) == 2
+
+
+def test_windows_adapter_closes_pins_after_unexpected_scan_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "Project"
+    root.mkdir()
+    filesystem = FakeWindowsFilesystem()
+    filesystem.scandir_exception = RuntimeError("PRIVATE UNEXPECTED SCAN")
+    _force_windows_adapter(monkeypatch, filesystem)
+
+    with pytest.raises(RuntimeError, match="PRIVATE UNEXPECTED SCAN"):
+        discover_import_sources([root], _bounds())
+
+    assert filesystem.pin_calls > 0
+    assert filesystem.live_pins == {}
+    assert len(filesystem.closed_pins) == filesystem.pin_calls
+
+
+def test_windows_adapter_closes_parent_pins_when_leaf_open_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    filesystem = FakeWindowsFilesystem()
+    _force_windows_adapter(monkeypatch, filesystem)
+    discovery = discover_import_sources([source], _bounds())
+    pins_before_read = filesystem.pin_calls
+    filesystem.fail_open_file = True
+
+    with pytest.raises(VerifiedSourceReadError) as raised:
+        read_discovered_source(discovery.candidates[0], _bounds())
+
+    assert raised.value.reason_code == "source_unavailable"
+    assert filesystem.pin_calls > pins_before_read
+    assert filesystem.live_pins == {}
+    assert len(filesystem.closed_pins) == filesystem.pin_calls
+
+
+def test_windows_adapter_closes_leaf_and_parent_pins_on_unexpected_read_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    filesystem = FakeWindowsFilesystem()
+    _force_windows_adapter(monkeypatch, filesystem)
+    discovery = discover_import_sources([source], _bounds())
+    filesystem.read_exception = RuntimeError("PRIVATE UNEXPECTED READ")
+
+    with pytest.raises(RuntimeError, match="PRIVATE UNEXPECTED READ"):
+        read_discovered_source(discovery.candidates[0], _bounds())
+
+    assert filesystem.pin_calls > 0
+    assert filesystem.live_pins == {}
+    assert filesystem.open_file_paths == {}
+    assert len(filesystem.closed_pins) == filesystem.pin_calls
 
 
 @pytest.mark.parametrize("reparse_location", ["root", "parent", "leaf"])
@@ -481,6 +648,24 @@ def test_windows_adapter_normalizes_read_errors_without_private_paths(
     assert str(source) not in str(raised.value)
 
 
+def test_production_windows_filesystem_is_native_only_on_windows() -> None:
+    native_type = getattr(
+        note_import_windows_fs,
+        "NativeWindowsReadOnlyFilesystem",
+        None,
+    )
+    unavailable_type = getattr(
+        note_import_windows_fs,
+        "UnavailableWindowsReadOnlyFilesystem",
+        None,
+    )
+
+    assert native_type is not None
+    assert unavailable_type is not None
+    expected_type = native_type if os.name == "nt" else unavailable_type
+    assert isinstance(note_import_windows_fs.OS_WINDOWS_FILESYSTEM, expected_type)
+
+
 @pytest.mark.skipif(
     os.name != "nt" or not hasattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT"),
     reason="requires native Windows reparse metadata",
@@ -498,3 +683,41 @@ def test_native_windows_selected_symlink_is_rejected(tmp_path: Path) -> None:
         discover_import_sources([alias], _bounds())
 
     assert raised.value.reason_code == "selected_symlink"
+
+
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="requires native Windows sharing and rename semantics",
+)
+def test_native_windows_directory_pin_denies_validation_scan_rename(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "Project"
+    root.mkdir()
+    (root / "inside.md").write_text("inside", encoding="utf-8")
+    moved = tmp_path / "moved-Project"
+    native_type = note_import_windows_fs.NativeWindowsReadOnlyFilesystem
+
+    class RenameAttemptFilesystem(native_type):  # type: ignore[misc, valid-type]
+        rename_denied = False
+
+        def scandir(self, path: Path) -> object:
+            try:
+                path.rename(moved)
+            except OSError:
+                self.rename_denied = True
+            return super().scandir(path)
+
+    filesystem = RenameAttemptFilesystem()
+
+    discovery = note_import_windows_fs.discover_import_sources(
+        [root],
+        _bounds(),
+        filesystem=filesystem,
+    )
+
+    assert filesystem.rename_denied
+    assert not moved.exists()
+    assert tuple(
+        candidate.source.display_path for candidate in discovery.candidates
+    ) == ("Project/inside.md",)

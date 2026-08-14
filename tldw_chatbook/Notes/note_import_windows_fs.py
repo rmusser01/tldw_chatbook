@@ -1,16 +1,16 @@
 """Read-only Windows filesystem adapter for one-time note imports.
 
-This path-based adapter is intentionally separate from the stronger POSIX
-descriptor-relative walker. It compensates for Windows' missing ``dir_fd`` and
-``O_NOFOLLOW`` support by rejecting reparse components, recording complete
-lexical identities, and verifying the opened regular-file handle before reads.
+This adapter is intentionally separate from the POSIX descriptor-relative
+walker. It pins each lexical directory with native no-reparse handles, records
+complete identities, and verifies the opened regular-file handle before reads.
 """
 
 from __future__ import annotations
 
 import os
 import stat
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -56,7 +56,9 @@ class WindowsReadOnlyFilesystem(Protocol):
 
     def scandir(self, path: Path) -> Any: ...
 
-    def open(self, path: Path, flags: int) -> int: ...
+    def pin_directory_no_reparse(self, path: Path) -> int: ...
+
+    def open_file_no_reparse(self, path: Path) -> int: ...
 
     def set_inheritable(self, descriptor: int, inheritable: bool) -> None: ...
 
@@ -67,8 +69,43 @@ class WindowsReadOnlyFilesystem(Protocol):
     def close(self, descriptor: int) -> None: ...
 
 
-class OSWindowsReadOnlyFilesystem:
-    """Windows-capable implementation using only Python's portable ``os`` API."""
+class UnavailableWindowsReadOnlyFilesystem:
+    """Fail-closed placeholder used when the host is not native Windows."""
+
+    @staticmethod
+    def _unavailable() -> None:
+        raise NotImplementedError("native Windows handles are unavailable")
+
+    def absolute(self, path: Path) -> Path:
+        self._unavailable()
+
+    def lstat(self, path: Path) -> Any:
+        self._unavailable()
+
+    def scandir(self, path: Path) -> Any:
+        self._unavailable()
+
+    def pin_directory_no_reparse(self, path: Path) -> int:
+        self._unavailable()
+
+    def open_file_no_reparse(self, path: Path) -> int:
+        self._unavailable()
+
+    def set_inheritable(self, descriptor: int, inheritable: bool) -> None:
+        self._unavailable()
+
+    def fstat(self, descriptor: int) -> Any:
+        self._unavailable()
+
+    def read(self, descriptor: int, count: int) -> bytes:
+        self._unavailable()
+
+    def close(self, descriptor: int) -> None:
+        self._unavailable()
+
+
+class NativeWindowsReadOnlyFilesystem:
+    """Native no-reparse handles with rename-denying Windows share modes."""
 
     def absolute(self, path: Path) -> Path:
         return Path(os.path.abspath(os.fspath(path)))
@@ -79,8 +116,11 @@ class OSWindowsReadOnlyFilesystem:
     def scandir(self, path: Path) -> os.ScandirIterator[str]:
         return os.scandir(path)
 
-    def open(self, path: Path, flags: int) -> int:
-        return os.open(path, flags)
+    def pin_directory_no_reparse(self, path: Path) -> int:
+        return self._open_native_fd(path, directory=True)
+
+    def open_file_no_reparse(self, path: Path) -> int:
+        return self._open_native_fd(path, directory=False)
 
     def set_inheritable(self, descriptor: int, inheritable: bool) -> None:
         os.set_inheritable(descriptor, inheritable)
@@ -94,8 +134,92 @@ class OSWindowsReadOnlyFilesystem:
     def close(self, descriptor: int) -> None:
         os.close(descriptor)
 
+    def _open_native_fd(self, path: Path, *, directory: bool) -> int:
+        """Create one non-inheritable CRT fd that owns a Win32 handle."""
+        if os.name != "nt":
+            raise NotImplementedError("native Windows handles are unavailable")
 
-OS_WINDOWS_FILESYSTEM = OSWindowsReadOnlyFilesystem()
+        try:
+            import ctypes
+            import msvcrt
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        except (AttributeError, ImportError):
+            raise NotImplementedError(
+                "native Windows handles are unavailable"
+            ) from None
+        create_file = kernel32.CreateFileW
+        create_file.argtypes = (
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        )
+        create_file.restype = wintypes.HANDLE
+        set_handle_information = kernel32.SetHandleInformation
+        set_handle_information.argtypes = (
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.DWORD,
+        )
+        set_handle_information.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = (wintypes.HANDLE,)
+        close_handle.restype = wintypes.BOOL
+
+        generic_read = 0x80000000
+        file_read_attributes = 0x00000080
+        file_share_read = 0x00000001
+        file_share_write = 0x00000002
+        open_existing = 3
+        file_flag_open_reparse_point = 0x00200000
+        file_flag_backup_semantics = 0x02000000
+        file_flag_sequential_scan = 0x08000000
+        handle_flag_inherit = 0x00000001
+
+        desired_access = file_read_attributes if directory else generic_read
+        open_flags = file_flag_open_reparse_point | (
+            file_flag_backup_semantics if directory else file_flag_sequential_scan
+        )
+        handle = create_file(
+            os.fspath(path),
+            desired_access,
+            file_share_read | file_share_write,
+            None,
+            open_existing,
+            open_flags,
+            None,
+        )
+        handle_value = ctypes.cast(handle, ctypes.c_void_p).value
+        invalid_handle_value = ctypes.c_void_p(-1).value
+        if handle_value in {None, invalid_handle_value}:
+            raise OSError("native Windows handle open failed")
+        if not set_handle_information(handle, handle_flag_inherit, 0):
+            close_handle(handle)
+            raise OSError("native Windows handle hardening failed")
+
+        crt_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        crt_flags |= getattr(os, "O_NOINHERIT", 0)
+        try:
+            descriptor = msvcrt.open_osfhandle(int(handle_value), crt_flags)
+        except (OSError, ValueError):
+            close_handle(handle)
+            raise OSError("native Windows descriptor conversion failed") from None
+        if descriptor < 0:
+            close_handle(handle)
+            raise OSError("native Windows descriptor conversion failed")
+        return descriptor
+
+
+OS_WINDOWS_FILESYSTEM: WindowsReadOnlyFilesystem = (
+    NativeWindowsReadOnlyFilesystem()
+    if os.name == "nt"
+    else UnavailableWindowsReadOnlyFilesystem()
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,12 +289,6 @@ def discover_import_sources(
             _reject(bounds, "unsafe_display_path")
         root_identity = _identity_from_stat(selected_root.metadata)
         try:
-            _validate_directory_binding(
-                selected_root.path,
-                selected_root.parent_identities,
-                root_identity,
-                filesystem,
-            )
             _scan_directory(
                 directory_path=selected_root.path,
                 relative_parts=(),
@@ -182,12 +300,6 @@ def discover_import_sources(
                 ),
                 state=state,
                 filesystem=filesystem,
-            )
-            _validate_directory_binding(
-                selected_root.path,
-                selected_root.parent_identities,
-                root_identity,
-                filesystem,
             )
         except _DirectoryChanged:
             _reject(bounds, "selection_changed")
@@ -235,60 +347,64 @@ def read_discovered_source(
     ):
         raise VerifiedSourceReadError("source_changed")
 
-    descriptor: int | None = None
     content = bytearray()
-    primary_error: VerifiedSourceReadError | None = None
-    close_failed = False
     try:
-        _validate_candidate_binding(candidate, filesystem)
-        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
-        descriptor = filesystem.open(candidate.source.source_path, flags)
-        filesystem.set_inheritable(descriptor, False)
-        opened_metadata = filesystem.fstat(descriptor)
-        if not _file_identity_matches(candidate.identity, opened_metadata):
-            raise VerifiedSourceReadError("source_changed")
-
-        while True:
-            chunk = filesystem.read(
-                descriptor,
-                min(64 * 1024, bounds.max_file_bytes + 1),
-            )
-            if not chunk:
-                break
-            content.extend(chunk)
-            if len(content) > bounds.max_file_bytes:
-                raise VerifiedSourceReadError("max_file_bytes_exceeded")
-
-        after_read = filesystem.fstat(descriptor)
-        if len(content) != candidate.size_bytes or not _file_identity_matches(
-            candidate.identity,
-            after_read,
+        path = candidate.source.source_path
+        with _pinned_directory_chain(
+            path.parent,
+            candidate.parent_identities,
+            filesystem,
         ):
-            raise VerifiedSourceReadError("source_changed")
-    except VerifiedSourceReadError as error:
-        primary_error = error
-    except (FileNotFoundError, NotADirectoryError):
-        primary_error = VerifiedSourceReadError("source_changed")
-    except (OSError, TypeError, ValueError):
-        primary_error = VerifiedSourceReadError("source_unavailable")
-    finally:
-        if descriptor is not None:
-            try:
-                filesystem.close(descriptor)
-            except BaseException:  # noqa: BLE001 - normalize cleanup failures.
-                close_failed = True
+            before_open = filesystem.lstat(path)
+            if not _file_identity_matches(candidate.identity, before_open):
+                raise VerifiedSourceReadError("source_changed")
 
-    if primary_error is not None:
-        raise primary_error
-    if close_failed:
-        raise VerifiedSourceReadError("source_unavailable")
-    try:
-        _validate_candidate_binding(candidate, filesystem)
+            descriptor: int | None = None
+            close_failed = False
+            try:
+                descriptor = filesystem.open_file_no_reparse(path)
+                filesystem.set_inheritable(descriptor, False)
+                opened_metadata = filesystem.fstat(descriptor)
+                if not _file_identity_matches(candidate.identity, opened_metadata):
+                    raise VerifiedSourceReadError("source_changed")
+
+                while True:
+                    chunk = filesystem.read(
+                        descriptor,
+                        min(64 * 1024, bounds.max_file_bytes + 1),
+                    )
+                    if not chunk:
+                        break
+                    content.extend(chunk)
+                    if len(content) > bounds.max_file_bytes:
+                        raise VerifiedSourceReadError("max_file_bytes_exceeded")
+
+                after_read = filesystem.fstat(descriptor)
+                after_path = filesystem.lstat(path)
+                _require_directory_chain(
+                    path.parent,
+                    candidate.parent_identities,
+                    filesystem,
+                )
+                if (
+                    len(content) != candidate.size_bytes
+                    or not _file_identity_matches(candidate.identity, after_read)
+                    or not _file_identity_matches(candidate.identity, after_path)
+                ):
+                    raise VerifiedSourceReadError("source_changed")
+            finally:
+                if descriptor is not None:
+                    close_failed = _close_filesystem_descriptors(
+                        filesystem,
+                        [descriptor],
+                    )
+            if close_failed:
+                raise VerifiedSourceReadError("source_unavailable")
     except VerifiedSourceReadError:
         raise
-    except (FileNotFoundError, NotADirectoryError):
+    except (_DirectoryChanged, FileNotFoundError, NotADirectoryError):
         raise VerifiedSourceReadError("source_changed") from None
-    except (OSError, TypeError, ValueError):
+    except (NotImplementedError, OSError, TypeError, ValueError):
         raise VerifiedSourceReadError("source_unavailable") from None
     return bytes(content)
 
@@ -298,32 +414,50 @@ def _inspect_selected_path(
     bounds: ImportBounds,
     filesystem: WindowsReadOnlyFilesystem,
 ) -> _SelectedPath:
+    directory_pins: list[int] = []
+    leaf_descriptor: int | None = None
+    close_failed = False
     try:
         absolute_path = filesystem.absolute(path)
         anchor, components = _path_components(absolute_path)
         current_path = anchor
-        root_metadata = filesystem.lstat(current_path)
-        if _is_reparse(root_metadata):
-            _reject(bounds, "selected_symlink")
-        if not stat.S_ISDIR(root_metadata.st_mode):
-            _reject(bounds, "selection_not_regular")
         parent_identities: list[SourceIdentity] = []
-        for component in components[:-1]:
-            parent_identities.append(_identity_from_stat(root_metadata))
-            current_path /= component
-            root_metadata = filesystem.lstat(current_path)
-            if _is_reparse(root_metadata):
+        for component in (None, *components[:-1]):
+            if component is not None:
+                current_path /= component
+            pin = filesystem.pin_directory_no_reparse(current_path)
+            directory_pins.append(pin)
+            metadata = filesystem.fstat(pin)
+            if _is_reparse(metadata):
                 _reject(bounds, "selected_symlink")
-            if not stat.S_ISDIR(root_metadata.st_mode):
+            if not stat.S_ISDIR(metadata.st_mode):
                 _reject(bounds, "selection_not_regular")
+            parent_identities.append(_identity_from_stat(metadata))
+
         if not components:
-            metadata = root_metadata
+            metadata = filesystem.fstat(directory_pins[-1])
+            parent_identities.pop()
         else:
-            parent_identities.append(_identity_from_stat(root_metadata))
-            metadata = filesystem.lstat(current_path / components[-1])
+            leaf_path = current_path / components[-1]
+            metadata = filesystem.lstat(leaf_path)
+            if _is_reparse(metadata):
+                _reject(bounds, "selected_symlink")
+            if stat.S_ISDIR(metadata.st_mode):
+                leaf_descriptor = filesystem.pin_directory_no_reparse(leaf_path)
+            elif stat.S_ISREG(metadata.st_mode):
+                leaf_descriptor = filesystem.open_file_no_reparse(leaf_path)
+            if leaf_descriptor is not None:
+                opened_metadata = filesystem.fstat(leaf_descriptor)
+                if _is_reparse(opened_metadata):
+                    _reject(bounds, "selected_symlink")
+                if _identity_from_stat(metadata) != _identity_from_stat(
+                    opened_metadata
+                ):
+                    _reject(bounds, "selection_changed")
+                metadata = opened_metadata
         if _is_reparse(metadata):
             _reject(bounds, "selected_symlink")
-        return _SelectedPath(
+        result = _SelectedPath(
             path=absolute_path,
             metadata=metadata,
             parent_identities=tuple(parent_identities),
@@ -334,8 +468,20 @@ def _inspect_selected_path(
         raise _selection_error(bounds, "selection_missing") from None
     except ValueError:
         raise _selection_error(bounds, "invalid_selection") from None
-    except (OSError, TypeError):
+    except (NotImplementedError, OSError, TypeError):
         raise _selection_error(bounds, "selection_unreadable") from None
+    finally:
+        if leaf_descriptor is not None:
+            close_failed = _close_filesystem_descriptors(
+                filesystem,
+                [leaf_descriptor],
+            )
+        close_failed = (
+            _close_filesystem_descriptors(filesystem, directory_pins) or close_failed
+        )
+    if close_failed:
+        _reject(bounds, "selection_unreadable")
+    return result
 
 
 def _path_components(path: Path) -> tuple[Path, tuple[str, ...]]:
@@ -388,39 +534,43 @@ def _scan_directory(
     state: _DiscoveryState,
     filesystem: WindowsReadOnlyFilesystem,
 ) -> None:
-    _require_directory_chain(directory_path, directory_identities, filesystem)
-    scanned_entries: list[_ScannedEntry] = []
-    with filesystem.scandir(directory_path) as iterator:
-        entries = []
-        for entry in iterator:
-            state.entry_count += 1
-            if state.entry_count > state.bounds.max_entries:
-                _reject(state.bounds, "max_entries_exceeded")
-            entries.append(entry)
-        entries.sort(key=lambda entry: _display_sort_key(entry.name))
-        for entry in entries:
-            metadata: Any | None = None
-            if _is_safe_display_segment(entry.name):
-                try:
-                    metadata = filesystem.lstat(directory_path / entry.name)
-                except (OSError, TypeError, ValueError):
-                    pass
-            scanned_entries.append(_ScannedEntry(entry.name, metadata))
-    _require_directory_chain(directory_path, directory_identities, filesystem)
-    _validate_sibling_namespace(scanned_entries, state.bounds)
+    with _pinned_directory_chain(
+        directory_path,
+        directory_identities,
+        filesystem,
+    ):
+        scanned_entries: list[_ScannedEntry] = []
+        with filesystem.scandir(directory_path) as iterator:
+            entries = []
+            for entry in iterator:
+                state.entry_count += 1
+                if state.entry_count > state.bounds.max_entries:
+                    _reject(state.bounds, "max_entries_exceeded")
+                entries.append(entry)
+            entries.sort(key=lambda entry: _display_sort_key(entry.name))
+            for entry in entries:
+                metadata: Any | None = None
+                if _is_safe_display_segment(entry.name):
+                    try:
+                        metadata = filesystem.lstat(directory_path / entry.name)
+                    except (OSError, TypeError, ValueError):
+                        pass
+                scanned_entries.append(_ScannedEntry(entry.name, metadata))
+        _require_directory_chain(directory_path, directory_identities, filesystem)
+        _validate_sibling_namespace(scanned_entries, state.bounds)
 
-    for scanned_entry in scanned_entries:
-        _scan_entry(
-            scanned_entry,
-            directory_path=directory_path,
-            relative_parts=relative_parts,
-            parent_depth=parent_depth,
-            root_label=root_label,
-            directory_identities=directory_identities,
-            state=state,
-            filesystem=filesystem,
-        )
-    _require_directory_chain(directory_path, directory_identities, filesystem)
+        for scanned_entry in scanned_entries:
+            _scan_entry(
+                scanned_entry,
+                directory_path=directory_path,
+                relative_parts=relative_parts,
+                parent_depth=parent_depth,
+                root_label=root_label,
+                directory_identities=directory_identities,
+                state=state,
+                filesystem=filesystem,
+            )
+        _require_directory_chain(directory_path, directory_identities, filesystem)
 
 
 def _validate_sibling_namespace(
@@ -571,45 +721,50 @@ def _add_failure(
     )
 
 
-def _validate_directory_binding(
+@contextmanager
+def _pinned_directory_chain(
     path: Path,
-    parent_identities: tuple[SourceIdentity, ...],
-    directory_identity: SourceIdentity,
+    expected_identities: tuple[SourceIdentity, ...],
     filesystem: WindowsReadOnlyFilesystem,
-) -> None:
+) -> Iterator[None]:
     anchor, components = _path_components(path)
-    if len(parent_identities) != len(components):
+    if len(expected_identities) != len(components) + 1:
         raise _DirectoryChanged
+    descriptors: list[int] = []
+    active_error = False
     current_path = anchor
-    for index, expected_identity in enumerate(parent_identities):
-        metadata = filesystem.lstat(current_path)
-        if not _directory_identity_matches(expected_identity, metadata):
-            raise _DirectoryChanged
-        if index < len(components) - 1:
-            current_path /= components[index]
-    leaf_metadata = filesystem.lstat(path)
-    if not _directory_identity_matches(directory_identity, leaf_metadata):
-        raise _DirectoryChanged
+    try:
+        for index, expected_identity in enumerate(expected_identities):
+            descriptor = filesystem.pin_directory_no_reparse(current_path)
+            descriptors.append(descriptor)
+            if not _directory_identity_matches(
+                expected_identity,
+                filesystem.fstat(descriptor),
+            ):
+                raise _DirectoryChanged
+            if index < len(components):
+                current_path /= components[index]
+        yield
+    except BaseException:
+        active_error = True
+        raise
+    finally:
+        close_failed = _close_filesystem_descriptors(filesystem, descriptors)
+        if close_failed and not active_error:
+            raise OSError("Windows handle cleanup failed")
 
 
-def _validate_candidate_binding(
-    candidate: DiscoveredImportSource,
+def _close_filesystem_descriptors(
     filesystem: WindowsReadOnlyFilesystem,
-) -> None:
-    path = candidate.source.source_path
-    anchor, components = _path_components(path)
-    if not components or len(candidate.parent_identities) != len(components):
-        raise VerifiedSourceReadError("source_changed")
-    current_path = anchor
-    for index, expected_identity in enumerate(candidate.parent_identities):
-        metadata = filesystem.lstat(current_path)
-        if not _directory_identity_matches(expected_identity, metadata):
-            raise VerifiedSourceReadError("source_changed")
-        if index < len(components) - 1:
-            current_path /= components[index]
-    leaf_metadata = filesystem.lstat(path)
-    if not _file_identity_matches(candidate.identity, leaf_metadata):
-        raise VerifiedSourceReadError("source_changed")
+    descriptors: Iterable[int],
+) -> bool:
+    failed = False
+    for descriptor in reversed(tuple(descriptors)):
+        try:
+            filesystem.close(descriptor)
+        except BaseException:  # noqa: BLE001 - close all handles before reporting.
+            failed = True
+    return failed
 
 
 def _require_directory_chain(
