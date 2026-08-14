@@ -46,9 +46,9 @@ request the next set of items.
 
 ## Non-goals
 
-- Replacing the current `ItemsPane` `DataTable` with the later reader-first
-  `ListView` design.
-- Implementing FTS or cross-page search.
+- Replacing or redesigning the current reader-first `ArticleListPane` /
+  `ListView` rows.
+- Changing the existing corpus-wide FTS/LIKE search contract.
 - Showing an exact total item count or total page count.
 - Adding infinite scroll, automatic page advancement, a draggable splitter, or
   persisted region heights.
@@ -72,7 +72,7 @@ centre scroll viewport
 ├── centre status and tab strip
 ├── Read list region: 10–50 rows
 │   ├── title and toolbar (fixed inside the region)
-│   ├── DataTable (independently scrollable)
+│   ├── article ListView (independently scrollable)
 │   ├── queued legend (fixed inside the region)
 │   └── Previous · Page N · Next (fixed inside the region)
 └── Content region: 20–50 rows
@@ -84,11 +84,11 @@ centre scroll viewport
 The 10- and 50-row Read-list values and the 20- and 50-row Content values
 describe each outer region box, including its chrome. They do not promise 50
 simultaneously visible data rows. Page size is an independent 50-item data
-boundary; at the region cap, the `DataTable` scrolls through the page while the
+boundary; at the region cap, the `ListView` scrolls through the page while the
 toolbar, legend, and pager remain visible.
 
 The centre viewport owns movement between the Read list and Content. The
-`DataTable` owns scrolling among the current page's rows. The Content body owns
+`ListView` owns scrolling among the current page's rows. The Content body owns
 scrolling within the selected article. Pointer-wheel and keyboard scrolling
 follow Textual's nearest focused or hovered scroll owner; no custom wheel-event
 forwarding is introduced unless live verification proves native nested
@@ -114,7 +114,7 @@ The page size is 50. A load requests 51 rows at
 `offset = page_index * 50`. The first 50 rows are displayed. The lookahead row
 is not mounted; its presence only enables `Next`.
 
-The pager is a compact, persistent row below the table:
+The pager is a compact, persistent row below the `ListView`:
 
 - `Previous` is disabled on page 1.
 - The centre label reads `Page N`.
@@ -122,23 +122,27 @@ The pager is a compact, persistent row below the table:
 - Both controls are disabled while a page request is in flight.
 - No total-count query is added solely to display “of N”.
 
-A page transition is transactional from the UI's perspective. The requested
-page index is committed only after its load succeeds. A failure retains the
-current page, rows, selection, and article; it shows the existing error
-notification and restores the pager controls. Rapid repeated activation cannot
-start overlapping page loads.
+A page transition requested by `Previous` or `Next` is transactional from the
+UI's perspective. The requested page index is committed only after its load
+succeeds. A failure retains the current page, rows, selection, article, and
+query context; it shows the existing error notification and restores the pager
+controls. Rapid repeated activation cannot start overlapping page loads.
 
 Changing backend, tree scope, source, status filter, or search text resets to
 page 1. Refresh reloads the current page. If a mutation or refresh leaves a
 non-first page empty, the screen loads the nearest preceding non-empty page.
 
 The selected article remains in Content when the user changes pages, but it is
-not injected into a page where it does not belong. Selecting a row on the new
-page replaces it. The current open-item pin remains valid within its own page so
-mark-read-on-open does not remove the row from a New-filtered view. The visible
-page never exceeds 50 rows to preserve that pin; if a reload must carry the open
-item alongside newly queried rows, it replaces the page's last display slot
-rather than becoming a 51st visible row.
+not injected into a page where it does not belong. Each selection records a
+page key made from backend, tree scope, normalized status filter, normalized
+search query, and page index. The current open-item pin is applied only when a
+reload targets that exact key. An explicit page change or any query-context
+change therefore preserves Content but invalidates the list pin. A same-key
+refresh or mark-read-on-open reload keeps the pin so the open row does not
+vanish from an Unread view. The visible page never exceeds 50 rows to preserve
+that pin; if a same-key reload must carry the open item alongside 50 queried
+rows, it replaces the page's last display slot rather than becoming a 51st
+visible row.
 
 `j`, `k`, and next-unread navigation operate only on the currently rendered
 page. Reaching an edge does not change pages. Pagination is always an explicit
@@ -146,11 +150,32 @@ button action.
 
 ## Search Scope
 
-The existing search is an in-memory filter over loaded rows. This change keeps
-that boundary and makes it honest by relabelling the input to
-`Search this page…`. Changing the query resets pagination to page 1 before
-filtering. Cross-page search remains part of the separately planned FTS work and
-is not pulled into this layout fix.
+The current Read search is corpus-wide: after its debounce, the screen passes
+the query into the existing FTS/LIKE service path, while the live pane applies
+an immediate in-memory filter to the rows already mounted. Pagination preserves
+that contract. Changing the query immediately invalidates the committed query
+context, sets the logical page to 1, disables both pager buttons, and re-arms
+the debounce. During the debounce and load, the old rows remain mounted and are
+narrowed in memory by the new query; Content remains unchanged. The 51-row
+request then carries the search term with offset 0.
+
+On a successful search load, the returned backend page becomes authoritative
+for that query and the pane stops applying the in-memory query predicate to
+those rows. This distinction is required because a corpus FTS match can occur
+in full article content that is intentionally absent from the list projection;
+filtering the returned page again from title, author, or preview text could hide
+a valid backend match. The input value remains visible and later edits make the
+local predicate provisional again until their own backend load succeeds.
+If the user selects one of the provisionally filtered old rows during that
+window, the selection records the mounted page's prior committed key, never the
+pending search key, so the pending result cannot pin that row into a different
+query.
+
+On a failed search load, the screen remains logically on page 1, retains the
+provisionally filtered old rows and Content, keeps `Next` disabled because the
+new context has no successful lookahead yet, and re-enables `Previous` only as
+false because page 1 has no predecessor. Refresh retries that same page-1 query.
+The placeholder remains `Search items...` because search is not page-local.
 
 ## Component Responsibilities
 
@@ -163,15 +188,21 @@ is not pulled into this layout fix.
 - Accept no new layout abstraction. The screen adds a Read-mode class to the
   existing workbench instance, which gives CSS the narrow selector it needs.
 
-### `ItemsPane`
+### `ArticleListPane`
 
 - Receive current page number, `has_previous`, `has_next`, and loading state
   from the screen.
 - Render the fixed pager below the existing queued legend.
 - Post narrowly scoped previous/next request messages; hold no service and
   calculate no offsets.
-- Keep toolbar, legend, and pager visible while only the `DataTable` scrolls.
-- Change the search placeholder to `Search this page…`.
+- Keep toolbar, legend, and pager visible while only the `ListView` scrolls.
+- Preserve the current reader rows, date headers, in-place filter/search
+  painting, and corpus-wide search messaging.
+- Track whether the mounted page is authoritative for the current search. A
+  search edit restores provisional in-memory filtering; a successful backend
+  search load disables that second predicate without clearing the input.
+- Provide one programmatic focus operation that highlights the first selectable
+  article row without posting `ItemSelected`.
 
 ### `ContentPane`
 
@@ -182,19 +213,22 @@ is not pulled into this layout fix.
 
 ### `WatchlistsCollectionsScreen`
 
-- Own page index, lookahead, and loading state so workbench recomposition cannot
-  erase them.
+- Own page index, lookahead, and loading state so scoped region replacement
+  cannot erase them.
+- Own the committed page/query key for the list and the page key where the open
+  article was selected.
 - Convert pager messages into serialized 51-row requests.
 - Reset or retain the page according to the pagination contract.
-- Seed every rebuilt `ItemsPane` with page state in the same way it already
-  seeds filters, selection, and loaded rows.
+- Seed every replacement `ArticleListPane` with page and authoritative-search
+  state in the same way it already seeds filters, selection, and loaded rows.
 - Keep page navigation from clearing the selected Content item.
 
 ### Scope and data services
 
 - Reuse existing `list_items(limit, offset, ...)` calls.
 - Add no count method and make no storage change.
-- Preserve status and scope predicates, including the current open-item pin.
+- Preserve status, scope, and search predicates, including the current
+  open-item pin.
 
 ## States and Feedback
 
@@ -202,14 +236,20 @@ is not pulled into this layout fix.
   copy. Pager reads `Page 1`; both buttons are disabled.
 - **Loading another page:** current rows and Content remain visible. Pager
   buttons are disabled to prevent concurrent requests.
-- **Successful page load:** rows swap as one completed state update; focus moves
-  to a predictable list or pager target without affecting the rails.
+- **Successful explicit page load:** rows swap as one completed state update;
+  focus moves to the `ListView` and its first selectable article row becomes the
+  cursor target without posting `ItemSelected`. Content therefore remains on
+  the previously open article until the user deliberately moves or activates
+  the row. Ordinary refreshes preserve the current focus.
 - **Failed page load:** current state remains visible and an error notification
   explains the failure.
 - **Short article:** Content remains 20 rows; no internal scrollbar is needed.
 - **Long article:** Content grows to 50 rows and then the article body scrolls.
-- **Region rebuild:** page number, rows, filter/search state, selection, centre
-  scroll position where practical, and Content survive collapse/solo changes.
+- **Scoped region replacement:** page number, rows, filter/search state,
+  selection, and Content survive collapse/solo changes because the screen
+  reseeds a replacement pane. Inner scroll position may reset when its owning
+  widget is actually unmounted; it remains stable for in-place class/layout
+  updates that keep the widget mounted.
 - **Manual solo:** the chosen centre region uses available height and Restore
   returns to the bounded stacked layout.
 
@@ -223,9 +263,13 @@ because no new binding is introduced.
 - Do not commit a target page index before its rows arrive successfully.
 - Clamp an out-of-range page after deletions or status changes by stepping back,
   never by showing a permanent empty page with `Previous` available.
-- Keep the lookahead row out of `ItemsPane.items`, selection, navigation, and
+- Keep the lookahead row out of `ArticleListPane.items`, selection, navigation, and
   status mutation paths.
 - Preserve the selected article even when it is absent from the new page.
+- Apply the open-item pin only when the target backend/scope/filter/search/page
+  key equals the key recorded when that article was selected.
+- Suppress exactly the programmatic first-row highlight emitted after an
+  explicit page success; do not suppress the user's next highlight.
 - Keep explicit page navigation independent from `j`/`k`; a row-navigation edge
   must not unexpectedly issue I/O.
 - Verify that inner scrollbars do not obscure pager buttons or article actions.
@@ -237,7 +281,7 @@ because no new binding is introduced.
 - Empty and short Read lists render at a 10-row minimum.
 - Medium lists grow naturally; large lists stop at 50 rows.
 - Empty and short Content renders at 20 rows; long Content stops at 50 rows.
-- The `DataTable` and article body scroll independently at their caps.
+- The `ListView` and article body scroll independently at their caps.
 - A short terminal scrolls the centre from the Read list to Content without
   shrinking either below its minimum.
 - A 51-row response displays 50 rows and enables `Next`; a response of 50 or
@@ -245,11 +289,16 @@ because no new binding is introduced.
 - `Previous`, `Page N`, and `Next` states are correct on first, middle, and last
   pages.
 - Offsets are `0`, `50`, `100`, and so on; visible rows never exceed 50.
-- Page state survives a workbench rebuild and resets for every agreed context
-  change.
-- A failed transition preserves rows, page number, selected item, and Content.
+- Page state survives scoped region replacement and resets for every agreed
+  context change.
+- A failed explicit `Previous`/`Next` transition preserves rows, page number,
+  selected item, and Content.
 - An empty non-first page steps back to a valid page.
-- Search copy and page-local behaviour are explicit.
+- Corpus-wide search resets to page 1 and sends the query with every paged load.
+- A content-only FTS match remains visible after the backend page becomes
+  authoritative, and a subsequent edit restores provisional local filtering.
+- Programmatic post-page focus leaves the selected Content article unchanged;
+  the next user-driven row move selects normally.
 - Geometry assertions cover pager visibility, neighbouring controls, region
   min/max boundaries, and fixed rails at representative terminal sizes.
 - Mutation-check the lookahead, disabled-state, and page-reset assertions.
