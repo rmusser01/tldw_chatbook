@@ -146,6 +146,32 @@ def test_literal_and_terms_match_title_author_and_deep_body(db: SubscriptionsDB)
 
 
 @pytest.mark.parametrize(
+    ("query", "matched_passage"),
+    (
+        ("evidence", "actual ÉVIDENCE passage"),
+        ("NEAR/1", "actual NEAR 1 passage"),
+    ),
+)
+def test_fts_match_context_uses_fts_token_normalization_for_deep_passages(
+    db: SubscriptionsDB, query: str, matched_passage: str
+) -> None:
+    source_id = _source(db, "FTS context feed")
+    item_id = _item(
+        db,
+        source_id,
+        f"fts-context-{query}",
+        content="leading noise " * 1_000 + matched_passage + " trailing noise" * 1_000,
+    )
+
+    rows = _search(db, query=query)["items"]
+
+    assert [row["id"] for row in rows] == [item_id]
+    assert matched_passage in rows[0]["content_match_context"]
+    assert len(rows[0]["content_match_context"]) <= 2_000
+    assert "content" not in rows[0]
+
+
+@pytest.mark.parametrize(
     ("query", "matching_title"),
     (("100%", "literal 100% marker"), ("a_b", "literal a_b marker"), (r"a\b", r"literal a\b marker")),
 )
@@ -184,13 +210,19 @@ def test_partial_fts_coverage_forces_like_even_when_fts_table_exists(
     db: SubscriptionsDB,
 ) -> None:
     source_id = _source(db, "Partial FTS feed")
-    wanted = _item(db, source_id, "deep", content="partial-only-token")
+    wanted = _item(
+        db,
+        source_id,
+        "deep",
+        content="literal prefix " * 1_000 + "partial-only-token" + " suffix" * 1_000,
+    )
     with db.transaction() as conn:
         conn.execute("DELETE FROM subscription_items_fts WHERE rowid = ?", (wanted,))
 
-    assert [row["id"] for row in _search(db, query="partial-only-token")["items"]] == [
-        wanted
-    ]
+    rows = _search(db, query="partial-only-token")["items"]
+    assert [row["id"] for row in rows] == [wanted]
+    assert "partial-only-token" in rows[0]["content_match_context"]
+    assert len(rows[0]["content_match_context"]) <= 2_000
 
 
 def test_equal_fts_cardinality_with_wrong_membership_forces_like(

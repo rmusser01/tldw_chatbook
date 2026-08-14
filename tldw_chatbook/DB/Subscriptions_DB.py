@@ -2082,7 +2082,7 @@ class SubscriptionsDB(BaseDB):
     def _agent_search_projection(
         cls, search_terms: Sequence[str]
     ) -> tuple[str, List[Any]]:
-        """Build the bounded list projection and its literal context binds.
+        """Build the LIKE fallback's bounded literal-context projection.
 
         The body window is centered on the first query term found beyond its
         leading 1,000 characters. This includes a deep body match even when
@@ -2107,6 +2107,23 @@ class SubscriptionsDB(BaseDB):
             + f", substr(i.content, {start_expression}, 2000) "
             "AS content_match_context",
             projection_params,
+        )
+
+    @classmethod
+    def _agent_fts_search_projection(cls) -> str:
+        """Build an FTS-tokenizer-aware, character-bounded body projection.
+
+        FTS5 ``snippet`` uses the same Unicode/diacritic and punctuation
+        tokenization as the MATCH that admitted the row. Restrict it to the
+        content column (index 1), cap its token window, and apply a final
+        character bound so unusually long tokens cannot make a list row
+        unbounded. Empty markers keep public snippet formatting in the later
+        service layer.
+        """
+        return (
+            cls._AGENT_LIST_ITEM_COLUMNS
+            + ", substr(snippet(subscription_items_fts, 1, '', '', '', 32), "
+            "1, 2000) AS content_match_context"
         )
 
     def _subscription_items_fts_is_complete(self, conn: Any) -> bool:
@@ -2156,6 +2173,7 @@ class SubscriptionsDB(BaseDB):
         *,
         select_columns: Optional[str] = None,
         select_params: Sequence[Any] = (),
+        fts_select_columns: Optional[str] = None,
     ) -> List[Any]:
         """The `search` half of `get_new_items`: FTS5 MATCH, LIKE fallback.
 
@@ -2169,6 +2187,8 @@ class SubscriptionsDB(BaseDB):
         box must never raise into the reader.
         """
         columns = select_columns or self._LIST_ITEM_COLUMNS
+        fts_columns = fts_select_columns or columns
+        effective_fts_select_params = () if fts_select_columns else select_params
         match = " AND ".join(self._quote_fts5_term(term) for term in search_terms)
         fts_where = (
             f"{where_clause} AND subscription_items_fts MATCH ?"
@@ -2179,7 +2199,7 @@ class SubscriptionsDB(BaseDB):
             try:
                 return conn.execute(
                     f"""
-                    SELECT {columns}
+                    SELECT {fts_columns}
                     FROM subscription_items i
                     JOIN subscription_items_fts ON subscription_items_fts.rowid = i.id
                     JOIN subscriptions s ON i.subscription_id = s.id
@@ -2187,7 +2207,7 @@ class SubscriptionsDB(BaseDB):
                     ORDER BY i.effective_date DESC, i.id ASC
                     LIMIT ?
                     """,
-                    tuple([*select_params, *params, match, limit]),
+                    tuple([*effective_fts_select_params, *params, match, limit]),
                 ).fetchall()
             except sqlite3.OperationalError:
                 logger.debug(
@@ -2258,6 +2278,7 @@ class SubscriptionsDB(BaseDB):
 
         search_terms = query.split() if query and query.strip() else []
         select_columns, select_params = self._agent_search_projection(search_terms)
+        fts_select_columns = self._agent_fts_search_projection()
         predicates: List[str] = []
         params: List[Any] = []
         if subscription_id is not None:
@@ -2312,6 +2333,7 @@ class SubscriptionsDB(BaseDB):
                     fetch_limit,
                     select_columns=select_columns,
                     select_params=select_params,
+                    fts_select_columns=fts_select_columns,
                 )
             else:
                 rows = conn.execute(
