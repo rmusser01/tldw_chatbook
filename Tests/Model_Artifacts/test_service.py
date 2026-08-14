@@ -45,6 +45,21 @@ class FutureRemovalControl(BaseException):
     """Stand-in for future non-Exception control-flow families."""
 
 
+class UnsafeExitCode(int):
+    """Numeric-looking exit code whose representation is not trusted."""
+
+
+class HostileCleanupControl(BaseException):
+    """Control whose similarly named method must not shadow private ownership."""
+
+    def __init__(self, private: str) -> None:
+        self.method_called = False
+        super().__init__(private)
+
+    def take_cleanup_owner(self) -> None:
+        self.method_called = True
+
+
 REMOVAL_CONTROL_TYPES = (
     KeyboardInterrupt,
     SystemExit,
@@ -286,6 +301,7 @@ def removal_exception_graph_text(error: BaseException) -> str:
         if id(current) in seen:
             continue
         seen.add(id(current))
+        values.extend((str(current), repr(current)))
         values.extend(str(value) for value in current.args)
         if isinstance(current, SystemExit):
             values.append(str(current.code))
@@ -294,6 +310,8 @@ def removal_exception_graph_text(error: BaseException) -> str:
             pending.append(current.__cause__)
         if current.__context__ is not None:
             pending.append(current.__context__)
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions)
     return "\n".join(values)
 
 
@@ -911,6 +929,48 @@ def test_acquire_setup_preserves_bounded_system_exit_code(
     assert caught.value.code is code
 
 
+def test_acquire_setup_bounds_base_exception_group_and_exit_children(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    private = f"PRIVATE_GROUP_SETUP:{tmp_path}:pid={os.getpid()}:owner"
+    signal = BaseExceptionGroup(
+        private,
+        [
+            asyncio.CancelledError(private),
+            SystemExit(23),
+            SystemExit(None),
+            SystemExit(True),
+            SystemExit(UnsafeExitCode(7)),
+            SystemExit(private),
+        ],
+    )
+    real_acquire = service_module.ArtifactOperationLease.acquire
+
+    def interrupt_target_acquire(lease: object) -> object:
+        if lease.key == item.reference.lease_key():
+            raise signal
+        return real_acquire(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        interrupt_target_acquire,
+    )
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        service.acquire_removal_authority(item.reference)
+
+    assert caught.value is not signal
+    assert caught.value.message == "artifact removal control group"
+    assert private not in removal_exception_graph_text(caught.value)
+    exits = [
+        error.code for error in caught.value.exceptions if isinstance(error, SystemExit)
+    ]
+    assert exits == [23, None, 1, 1, 1]
+
+
 @pytest.mark.parametrize(
     "method_name",
     ("probe_removal_availability", "acquire_removal_authority"),
@@ -1464,7 +1524,13 @@ def test_nested_control_cleanup_composes_all_cleanup_only_owners(
         lease_timeout_seconds=0.01,
     )
     private = f"PRIVATE_NESTED:{tmp_path}:pid={os.getpid()}:owner"
-    signal = asyncio.CancelledError(private)
+    signal = BaseExceptionGroup(
+        private,
+        [
+            asyncio.CancelledError(private),
+            BaseExceptionGroup(private, [SystemExit(private)]),
+        ],
+    )
     real_release = service_module.ArtifactOperationLease.release
     failed_targets: set[int] = set()
     first_authority = first.acquire_removal_authority(first_item.reference)
@@ -1486,12 +1552,12 @@ def test_nested_control_cleanup_composes_all_cleanup_only_owners(
         "release",
         fail_each_target_once,
     )
-    with pytest.raises(asyncio.CancelledError) as caught:
+    with pytest.raises(BaseExceptionGroup) as caught:
         with second_authority:
             with first_authority:
                 raise signal
 
-    assert caught.value is signal
+    assert caught.value is not signal
     assert private not in removal_exception_graph_text(caught.value)
     assert (
         first_contender.probe_removal_availability(first_item.reference)
@@ -1506,6 +1572,147 @@ def test_nested_control_cleanup_composes_all_cleanup_only_owners(
     assert service_module.take_artifact_removal_cleanup_owner(caught.value) is None
     with pytest.raises(service_module.ArtifactStateError, match="cleanup-only"):
         cleanup_owner.commit()
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_hostile_control_method_cannot_hide_attached_cleanup_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_HOSTILE:{tmp_path}:pid={os.getpid()}:owner"
+    signal = HostileCleanupControl(private)
+    real_release = service_module.ArtifactOperationLease.release
+    target_attempts = 0
+
+    def interrupt_target_release_once(lease: object) -> None:
+        nonlocal target_attempts
+        if lease.key == item.reference.lease_key():
+            target_attempts += 1
+            if target_attempts == 1:
+                raise signal
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        interrupt_target_release_once,
+    )
+    monkeypatch.setattr(
+        service,
+        "_delete_under_leases",
+        lambda _reference: (_ for _ in ()).throw(
+            service_module.ArtifactStateError(private)
+        ),
+    )
+
+    with pytest.raises(HostileCleanupControl) as caught:
+        service.delete(item.reference)
+
+    assert caught.value is signal
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert signal.method_called is False
+    assert service_module.take_artifact_removal_cleanup_owner(caught.value) is None
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_losing_control_cleanup_owner_composes_into_winning_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, first_item, _source, _target = installed_artifact(tmp_path / "first")
+    second, second_item, _source, _target = installed_artifact(tmp_path / "second")
+    first_contender = service_module.ModelArtifactService(
+        tmp_path / "first" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    second_contender = service_module.ModelArtifactService(
+        tmp_path / "second" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_DIFFERENT_CONTROL:{tmp_path}:pid={os.getpid()}:owner"
+    cleanup_signal = GeneratorExit(private)
+    body_signal = KeyboardInterrupt(private)
+    real_release = service_module.ArtifactOperationLease.release
+    first_authority = first.acquire_removal_authority(first_item.reference)
+    second_authority = second.acquire_removal_authority(second_item.reference)
+    first_target_id = id(first_authority._target_lease)
+    second_target_id = id(second_authority._target_lease)
+    first_failed = False
+    second_failed = False
+
+    def fail_both_targets_once(lease: object) -> None:
+        nonlocal first_failed, second_failed
+        if id(lease) == first_target_id and not first_failed:
+            first_failed = True
+            raise service_module.ArtifactLeaseError(private)
+        if id(lease) == second_target_id and not second_failed:
+            second_failed = True
+            raise cleanup_signal
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_both_targets_once,
+    )
+
+    with pytest.raises(GeneratorExit) as inner:
+        with first_authority:
+            raise cleanup_signal
+    assert inner.value is cleanup_signal
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        with second_authority:
+            raise body_signal
+
+    assert caught.value is body_signal
+    assert private not in removal_exception_graph_text(caught.value)
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert service_module.take_artifact_removal_cleanup_owner(caught.value) is None
 
     monkeypatch.setattr(
         service_module.ArtifactOperationLease,

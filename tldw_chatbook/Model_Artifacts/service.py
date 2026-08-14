@@ -298,18 +298,72 @@ def _is_removal_control(error: BaseException) -> bool:
     return not isinstance(error, Exception)
 
 
-def _sanitize_removal_exception(error: BaseException) -> None:
-    """Remove private values and exception links from a retained exception."""
+def _take_attached_removal_cleanup_owner(
+    error: BaseException,
+) -> ArtifactRemovalAuthority | None:
+    owner = getattr(error, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, None)
+    if not isinstance(owner, ArtifactRemovalAuthority):
+        return None
+    setattr(error, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, None)
+    return owner
+
+
+def _absorb_attached_removal_cleanup_owner(
+    owner: ArtifactRemovalAuthority,
+    error: BaseException,
+) -> None:
+    attached = _take_attached_removal_cleanup_owner(error)
+    if attached is not None:
+        owner._absorb_cleanup_owner(attached)
+
+
+def _move_attached_removal_cleanup_owner(
+    winner: BaseException,
+    loser: BaseException,
+) -> None:
+    losing_owner = _take_attached_removal_cleanup_owner(loser)
+    if losing_owner is None:
+        return
+    winning_owner = _take_attached_removal_cleanup_owner(winner)
+    if winning_owner is None:
+        winning_owner = losing_owner
+    else:
+        winning_owner._absorb_cleanup_owner(losing_owner)
+    setattr(winner, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, winning_owner)
+
+
+def _sanitize_removal_exception(error: BaseException) -> BaseException:
+    """Return a bounded exception.
+
+    Exception-group identity cannot survive because its message and children
+    are read-only; its control family and recursively sanitized children do.
+    """
+
+    if isinstance(error, BaseExceptionGroup):
+        children = tuple(
+            _sanitize_removal_exception(child) for child in error.exceptions
+        )
+        bounded = BaseExceptionGroup("artifact removal control group", children)
+        cleanup_owner = _take_attached_removal_cleanup_owner(error)
+        if cleanup_owner is not None:
+            setattr(bounded, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, cleanup_owner)
+        error.__traceback__ = None
+        error.__context__ = None
+        error.__cause__ = None
+        if hasattr(error, "__notes__"):
+            error.__notes__ = []
+        return bounded
 
     exit_code = error.code if isinstance(error, SystemExit) else None
     error.args = ()
     if isinstance(error, SystemExit):
-        error.code = exit_code if exit_code is None or isinstance(exit_code, int) else 1
+        error.code = exit_code if exit_code is None or type(exit_code) is int else 1
     error.__traceback__ = None
     error.__context__ = None
     error.__cause__ = None
     if hasattr(error, "__notes__"):
         error.__notes__ = []
+    return error
 
 
 def _raise_removal_control(
@@ -320,7 +374,7 @@ def _raise_removal_control(
 ) -> None:
     """Re-raise one exact sanitized control object with optional ownership."""
 
-    _sanitize_removal_exception(control)
+    control = _sanitize_removal_exception(control)
     if ordinary_failure:
         control.add_note("artifact removal also encountered an ordinary failure")
     if cleanup_owner is not None:
@@ -330,7 +384,12 @@ def _raise_removal_control(
             existing_owner._absorb_cleanup_owner(cleanup_owner)
             cleanup_owner = existing_owner
         setattr(control, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, cleanup_owner)
-    raise control from None
+    try:
+        raise control from None
+    except BaseException as raised:
+        raised.__context__ = None
+        raised.__cause__ = None
+        raise
 
 
 class ArtifactRole(str, Enum):
@@ -1257,6 +1316,7 @@ class ArtifactRemovalAuthority:
                 if control is None:
                     control = error
                 else:
+                    _move_attached_removal_cleanup_owner(control, error)
                     _sanitize_removal_exception(error)
                 continue
             setattr(self, attribute, None)
@@ -1270,6 +1330,7 @@ class ArtifactRemovalAuthority:
                     if control is None:
                         control = error
                     else:
+                        _move_attached_removal_cleanup_owner(control, error)
                         _sanitize_removal_exception(error)
                 elif ordinary_error is None:
                     ordinary_error = error
@@ -1314,6 +1375,8 @@ class ArtifactRemovalAuthority:
         if cleanup_error is None:
             return
         if exc is not None and _is_removal_control(exc):
+            if _is_removal_control(cleanup_error):
+                _absorb_attached_removal_cleanup_owner(self, cleanup_error)
             _sanitize_removal_exception(cleanup_error)
             _raise_removal_control(
                 exc,
@@ -1360,15 +1423,10 @@ def take_artifact_removal_cleanup_owner(
 ) -> ArtifactRemovalAuthority | None:
     """Take exact removal cleanup ownership from one bounded failure/control."""
 
-    take_owner = getattr(error, "take_cleanup_owner", None)
-    if callable(take_owner):
-        owner = take_owner()
+    if isinstance(error, ArtifactRemovalCleanupError):
+        owner = error.take_cleanup_owner()
         return owner if isinstance(owner, ArtifactRemovalAuthority) else None
-    owner = getattr(error, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, None)
-    if not isinstance(owner, ArtifactRemovalAuthority):
-        return None
-    setattr(error, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, None)
-    return owner
+    return _take_attached_removal_cleanup_owner(error)
 
 
 class ModelArtifactService:
@@ -1553,6 +1611,11 @@ class ModelArtifactService:
             cleanup_error = error
         if primary_error is not None and _is_removal_control(primary_error):
             if cleanup_error is not None:
+                if _is_removal_control(cleanup_error):
+                    _absorb_attached_removal_cleanup_owner(
+                        cleanup_owner,
+                        cleanup_error,
+                    )
                 _sanitize_removal_exception(cleanup_error)
             _raise_removal_control(
                 primary_error,
@@ -1630,6 +1693,11 @@ class ModelArtifactService:
                 cleanup_error = error
             if _is_removal_control(primary_error):
                 if cleanup_error is not None:
+                    if _is_removal_control(cleanup_error):
+                        _absorb_attached_removal_cleanup_owner(
+                            cleanup_owner,
+                            cleanup_error,
+                        )
                     _sanitize_removal_exception(cleanup_error)
                 _raise_removal_control(
                     primary_error,
@@ -1696,6 +1764,11 @@ class ModelArtifactService:
             target_cleanup_error = error
         if _is_removal_control(target_error):
             if target_cleanup_error is not None:
+                if _is_removal_control(target_cleanup_error):
+                    _absorb_attached_removal_cleanup_owner(
+                        authority,
+                        target_cleanup_error,
+                    )
                 _sanitize_removal_exception(target_cleanup_error)
             _raise_removal_control(
                 target_error,
