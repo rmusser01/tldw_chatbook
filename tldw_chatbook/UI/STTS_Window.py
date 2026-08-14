@@ -54,6 +54,7 @@ from tldw_chatbook.UI.Speech.speech_playground_pane import (
     OpenVoiceProfilesRequested,
     SpeechPlaygroundPane,
 )
+from tldw_chatbook.UI.Speech.speech_playground_model import AXIS_CONTROLS
 from tldw_chatbook.UI.Speech.speech_profile_mixin import (
     AdoptStudioPreferencesRequested,
 )
@@ -1541,6 +1542,7 @@ class STTSWindow(Container):
         self._voice_tool_origin: tuple[str, str | None] | None = None
         self._voice_tool_back_in_progress = False
         self._voice_tool_navigation_token = 0
+        self._view_mount_lock = asyncio.Lock()
         # Bounded, process-local Playground axes survive only internal Lab
         # view switches. They are never written to global or Studio settings.
         self._playground_axis_values: dict[str, str] = dict(
@@ -1632,7 +1634,7 @@ class STTSWindow(Container):
             )
         self._studio_load_result = result
         if self.is_mounted:
-            self._mount_view(self.current_view, force=True)
+            await self._mount_view(self.current_view, force=True)
 
     def _speech_capability_status_text(self) -> str:
         """Return a concise local speech dependency status for the sidebar."""
@@ -1656,7 +1658,11 @@ class STTSWindow(Container):
         which took down the whole screen. Mirrors the same QueryError
         tolerance `LLMManagementWindow.watch_active_view` carries.
         """
-        self._mount_view(new_view)
+        self.run_worker(
+            self._mount_view(new_view),
+            group="speech-view-mount",
+            exit_on_error=False,
+        )
 
     def select_view(
         self,
@@ -1705,7 +1711,11 @@ class STTSWindow(Container):
             self.current_view = view
             return
         if profile_preset is not None:
-            self._mount_view(view, force=True)
+            self.run_worker(
+                self._mount_view(view, force=True),
+                group="speech-view-mount",
+                exit_on_error=False,
+            )
             return
         if navigation_target is not None:
             self.call_after_refresh(self._apply_pending_playground_navigation)
@@ -1751,7 +1761,7 @@ class STTSWindow(Container):
             navigation_target=navigation_target,
         )
         if reset_current_tool and view == current_view:
-            self._mount_view(view, force=True)
+            await self._mount_view(view, force=True)
         return True
 
     async def confirm_studio_preferences_leave(self) -> bool:
@@ -1786,11 +1796,24 @@ class STTSWindow(Container):
             for provider_id in BUILT_IN_TTS_PROVIDER_ORDER
         }
 
-    def _mount_view(self, new_view: str, *, force: bool = False) -> None:
+    async def _mount_view(self, new_view: str, *, force: bool = False) -> None:
         """Replace the mounted content when a view change requires it."""
 
         if type(new_view) is not str or new_view not in STTS_VIEW_KEYS:
             return
+        async with self._view_mount_lock:
+            if not force and new_view != self.current_view:
+                return
+            await self._mount_view_unlocked(new_view, force=force)
+
+    async def _mount_view_unlocked(
+        self,
+        new_view: str,
+        *,
+        force: bool,
+    ) -> None:
+        """Replace one view while the caller holds the mount lock."""
+
         load_result = self._studio_load_result
         if load_result is None:
             return
@@ -1823,8 +1846,9 @@ class STTSWindow(Container):
                 except Exception as e:
                     logger.debug(f"Error during widget cleanup: {e}")
 
-        # Remove all children from the container
-        content_container.remove_children()
+        # Await both sides of the replacement so a rapid rail action cannot
+        # prune nested controls while their Mount events are still queued.
+        await content_container.remove_children()
 
         # Add new content based on view
         self._mounted_view = new_view
@@ -1832,7 +1856,7 @@ class STTSWindow(Container):
             preset = self._pending_playground_preset
             profile_context_token = self._pending_profile_context_token
             navigation_target = self._pending_playground_navigation
-            content_container.mount(
+            await content_container.mount(
                 SpeechPlaygroundPane(
                     id="speech-playground-pane",
                     profile_preset=preset,
@@ -1863,14 +1887,14 @@ class STTSWindow(Container):
         elif new_view == "profiles":
             focus_restore_token = self._begin_profile_focus_restore()
             if self._voice_tool_origin is not None:
-                content_container.mount(
+                await content_container.mount(
                     Button(
                         "Back to previous Speech view",
                         id="speech-destination-back",
                         disabled=True,
                     )
                 )
-            content_container.mount(
+            await content_container.mount(
                 STTSProfileLibrary(
                     self._load_profile_service,
                     default_profile_id_reader=(
@@ -1885,10 +1909,12 @@ class STTSWindow(Container):
             if self._voice_tool_origin is not None:
                 self.call_after_refresh(self._enable_profile_destination_back)
         elif new_view == "blends":
-            content_container.mount(VoiceBlendsPane(id="speech-voice-blends-pane"))
+            await content_container.mount(
+                VoiceBlendsPane(id="speech-voice-blends-pane")
+            )
         elif new_view == "settings":
             adopted = self._pending_adopted_preset
-            content_container.mount(
+            await content_container.mount(
                 SpeechSettingsPane(
                     id="speech-settings-pane",
                     store=self._studio_store,
@@ -1902,13 +1928,45 @@ class STTSWindow(Container):
         elif new_view == "voice-cloning":
             from tldw_chatbook.UI.Voice_Cloning_Window import VoiceCloningWindow
 
-            content_container.mount(VoiceCloningWindow())
+            await content_container.mount(VoiceCloningWindow())
         elif new_view == "effects":
-            content_container.mount(SpeechEffectsPane(id="speech-effects-pane"))
+            await content_container.mount(SpeechEffectsPane(id="speech-effects-pane"))
         elif new_view == "audiobook":
-            content_container.mount(AudioBookGenerationWidget())
+            await content_container.mount(AudioBookGenerationWidget())
         elif new_view == "dictation":
-            content_container.mount(DictationWindow())
+            await content_container.mount(DictationWindow())
+
+        if new_view == "playground":
+            # Top-level mount completion does not include composed descendants.
+            # Hold the replacement lock until every strict axis Select and the
+            # children its Mount handler queries have completed their mounts.
+            select_ids = tuple(
+                axis for axis in AXIS_CONTROLS if axis.endswith("-select")
+            )
+            while True:
+                try:
+                    select_nodes = tuple(
+                        content_container.query_one(f"#{select_id}", Select)
+                        for select_id in select_ids
+                    )
+                    select_children = tuple(
+                        child
+                        for select in select_nodes
+                        for child in (
+                            select.query_one("#label", Static),
+                            select.query_one("SelectOverlay"),
+                        )
+                    )
+                except QueryError:
+                    await asyncio.sleep(0)
+                    continue
+                await asyncio.gather(
+                    *(child._mounted_event.wait() for child in select_children)
+                )
+                await asyncio.gather(
+                    *(select._mounted_event.wait() for select in select_nodes)
+                )
+                break
 
         # Selection styling is the rail's job now. These lines used to
         # `query_one("#view-*-btn")` for the four view buttons; those live on
