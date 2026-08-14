@@ -409,6 +409,7 @@ class ConsoleSettingsModal(
         self._settings_close_guard_focus: Widget | None = None
         self._compaction_wait_worker: Any | None = None
         self._compaction_provider_task: asyncio.Task[tuple[bool, str]] | None = None
+        self._compaction_result_definitive = False
 
     def compose(self) -> ComposeResult:
         provider_options = self._provider_select_options()
@@ -1370,6 +1371,9 @@ class ConsoleSettingsModal(
     @on(Button.Pressed, "#console-settings-close-anyway")
     def _close_during_compaction(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._compaction_result_definitive:
+            self.dismiss_safe_once(None)
+            return
         worker = self._compaction_wait_worker
         if not self.dismiss_safe_once(None):
             return
@@ -1499,6 +1503,7 @@ class ConsoleSettingsModal(
         if self._compact_now is None:
             return
         event.button.disabled = True
+        self._compaction_result_definitive = False
         self.query_one("#console-context-action-status", Static).update(
             "Compacting… one additional model call may be billed."
         )
@@ -1529,6 +1534,12 @@ class ConsoleSettingsModal(
             self.query_one("#console-context-memory-metadata", Static).update(
                 "Generated memory updated; transcript unchanged. Reopen to review provenance."
             )
+        if self._settings_close_guard_mode == "compaction":
+            focus = self._settings_close_guard_focus
+            self.query_one("#console-settings-close-message", Static).update(message)
+            self._hide_settings_close_guard()
+            self._settings_close_guard_focus = None
+            self.call_after_refresh(self._restore_settings_close_focus, focus)
 
     async def _run_context_compaction(self) -> tuple[bool, str]:
         """Run provider work independently of the modal-owned wait worker."""
@@ -1543,6 +1554,7 @@ class ConsoleSettingsModal(
         self, task: asyncio.Task[tuple[bool, str]]
     ) -> None:
         if self._compaction_provider_task is task:
+            self._compaction_result_definitive = True
             self._compaction_provider_task = None
 
     @on(Button.Pressed, "#console-context-undo-reset")

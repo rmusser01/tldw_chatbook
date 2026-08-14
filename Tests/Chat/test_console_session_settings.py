@@ -1910,6 +1910,55 @@ async def test_settings_active_compaction_return_preserves_progress_and_focus() 
 
 
 @pytest.mark.asyncio
+async def test_settings_completed_compaction_retires_guard_and_stale_close_warning() -> (
+    None
+):
+    app = _SettingsCloseHarness()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def compact_now() -> tuple[bool, str]:
+        entered.set()
+        await release.wait()
+        finished.set()
+        return True, "Compaction complete."
+
+    modal = _settings_close_modal(compact_now=compact_now)
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(modal, callback=app.capture)
+        modal.query_one("#console-context-compact-now", Button).press()
+        await pilot.pause()
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        focus = modal.query_one("#console-context-budget-mode", Select)
+        focus.focus()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert modal.query_one("#console-settings-close-guard", Vertical).display
+
+        release.set()
+        await asyncio.wait_for(finished.wait(), timeout=1)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not modal.query_one("#console-settings-close-guard", Vertical).display
+        assert modal.focused is focus
+        assert "Compaction complete." in str(
+            modal.query_one("#console-context-action-status", Static).renderable
+        )
+        assert "may still be billed" not in str(
+            modal.query_one("#console-settings-close-message", Static).renderable
+        )
+        assert app.results == []
+        assert app.notices == []
+
+        modal.query_one("#console-settings-close-anyway", Button).press()
+        await pilot.pause()
+        assert app.notices == []
+        assert app.results == [None]
+
+
+@pytest.mark.asyncio
 async def test_settings_compaction_guard_traps_real_tab_navigation_and_enter() -> None:
     app = _SettingsCloseHarness()
     entered = asyncio.Event()
