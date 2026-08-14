@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import MODELS_RAIL_SECTIONS
 
@@ -150,3 +151,14 @@ def test_model_download_dir_is_only_config_and_installed_legacy_scan_wiring() ->
         "tldw_chatbook/config.py",
         "tldw_chatbook/UI/LLM_Management_Window.py",
     }
+
+
+def test_default_llm_management_config_only_keeps_installed_legacy_scan_root() -> None:
+    assert DEFAULT_CONFIG_FROM_TOML["llm_management"] == {
+        "model_download_dir": "~/Downloads/tldw_models"
+    }
+    config_source = (PRODUCTION_ROOT / "config.py").read_text(encoding="utf-8")
+    assert (
+        'model_download_dir = "~/Downloads/tldw_models"'
+        "  # Legacy read-only scan root for Installed models"
+    ) in config_source

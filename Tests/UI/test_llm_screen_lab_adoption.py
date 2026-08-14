@@ -7,7 +7,7 @@ import threading
 from unittest.mock import MagicMock
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
@@ -1610,22 +1610,21 @@ async def test_surviving_model_rails_trigger_no_unprompted_http_or_search(monkey
     from tldw_chatbook.Model_Artifacts.remote_huggingface import (
         HuggingFaceRemoteAdapter,
     )
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
 
     http_calls: list[tuple[str, str]] = []
     search_calls: list[str] = []
+    original_search = HuggingFaceRemoteAdapter.search
 
-    async def counted_request(self, method, url, *args, **kwargs):
-        http_calls.append((str(method), str(url)))
-        return httpx.Response(
-            599,
-            request=httpx.Request(str(method), str(url)),
-        )
+    async def counted_send(self, request, *args, **kwargs):
+        http_calls.append((request.method, str(request.url)))
+        return httpx.Response(200, json=[], request=request)
 
     async def counted_search(self, query, *, token=None):
         search_calls.append(query)
-        return ()
+        return await original_search(self, query, token=token)
 
-    monkeypatch.setattr(httpx.AsyncClient, "request", counted_request)
+    monkeypatch.setattr(httpx.AsyncClient, "send", counted_send)
     monkeypatch.setattr(HuggingFaceRemoteAdapter, "search", counted_search)
 
     app = _app()
@@ -1640,6 +1639,22 @@ async def test_surviving_model_rails_trigger_no_unprompted_http_or_search(monkey
 
         assert http_calls == [], f"rail traversal issued HTTP: {http_calls}"
         assert search_calls == [], f"rail traversal searched Remote: {search_calls}"
+
+        window = screen.query_one(LLMManagementWindow)
+        remote = window.query_one("#remote-models-view", RemoteView)
+        remote.query_one("#remote-model-query", Input).value = "quantized model"
+        await pilot.click("#remote-model-search")
+        for _ in range(50):
+            if http_calls:
+                break
+            await pilot.pause()
+
+        expected = (
+            "GET",
+            "https://huggingface.co/api/models?search=quantized+model&limit=50",
+        )
+        assert search_calls == ["quantized model"]
+        assert http_calls == [expected]
 
 
 @pytest.mark.asyncio

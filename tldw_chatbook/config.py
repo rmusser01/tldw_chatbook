@@ -3613,13 +3613,7 @@ show_analysis_button = true
 
 [llm_management]
 # LLM Management settings
-model_download_dir = "~/Downloads/tldw_models"  # Directory for downloaded models
-max_concurrent_downloads = 2  # Maximum concurrent model downloads
-auto_verify_downloads = true  # Verify downloaded files
-cleanup_partial_downloads = true  # Remove incomplete downloads on failure
-# HuggingFace settings
-huggingface_cache_ttl = 3600  # Cache model listings for 1 hour
-default_quantization_filter = ""  # e.g., "Q4_K_M,Q5_K_M,Q8_0"
+model_download_dir = "~/Downloads/tldw_models"  # Legacy read-only scan root for Installed models
 
 [notes]
 # Default settings for the Notes tab
