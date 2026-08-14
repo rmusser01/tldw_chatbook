@@ -25,8 +25,15 @@ Correct the accepted maintainability findings from Qodo's review of PR 1642 and 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Confirm [ADR-050](../decisions/050-audio-cpp-generated-model-setup-ownership.md)
-   remains authoritative and no new ADR is required.
+ADR required: no
+
+ADR path:
+[ADR-050](../decisions/050-audio-cpp-generated-model-setup-ownership.md)
+
+Reason: ADR-050 already governs exact lease ownership and retry. This task
+changes documentation and tests only.
+
+1. Confirm ADR-050 remains authoritative and no new ADR is required.
 2. Add failing documentation-contract tests.
 3. Add minimal Google-style docstrings without changing runtime behavior.
 4. Re-run lease and dependency-free script regressions.
