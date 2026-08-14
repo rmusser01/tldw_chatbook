@@ -4184,3 +4184,43 @@ where you think, never where a deliverable lives. Sibling of the hygiene entry
 "Gitignored working files die with their worktree", which is about the same
 directory but a different failure — that one loses a record you correctly wrote
 there; this one never wrote it anywhere else in the first place.
+
+---
+
+## A repro helper that ASSERTS the bug turns your suite into the bug's guard (TASK-16300, 2026-08-14)
+
+**Incident.** The wake-integrity arc (15970/15971) needed a Console screen that
+was mounted but not displayed. It built one through the real navigation API —
+push a modal over Chat, navigate to Library — and its helper `_leak_resident_chat`
+closed with a *precondition* assertion:
+
+```python
+assert chat in app.screen_stack, (
+    "harness precondition: the nav-under-a-pushed-screen path must "
+    "leave the Chat screen resident in the stack ..."
+)
+```
+
+That state was a bug: `App.switch_screen` pops only the top of the screen stack,
+so navigating under a modal replaced the MODAL and left the outgoing screen
+running. When the leak was fixed one day later, four of that file's six tests
+went red **on that assertion line** — not on a single behavioural assertion.
+The failure output read exactly like "the residency fix regressed the wake
+layer". It had not: mutating the 15970 probe fix and both 15971 gates back out
+still turned the same tests red once their setups were rebuilt, so the tests
+were sound and only their *construction* had been harvested from the defect.
+
+The trap is that the helper was written the RIGHT way by every other rule —
+real production APIs, no hand-built screens, no `load_draft` shortcut — and
+fidelity to production is precisely what welded it to production's defect.
+
+**What to do.** Before asserting a state as a harness precondition, ask whether
+that state is a *contract* or an *observation*. A contract ("the composer holds
+the typed text") is worth pinning. An observation of current behaviour,
+especially one you reached for because it was convenient, must not be phrased as
+a requirement — build the state from the smallest API that produces it legitimately
+(here: push a modal over Console; push a second Console screen), and if it is only
+reachable through a defect, say so in the docstring and file the defect. Note also
+what the wording cost: "the nav path MUST leave the screen resident" is how a
+known bug acquires a guard, and the next reader has to decide whether the test or
+the fix is wrong.
