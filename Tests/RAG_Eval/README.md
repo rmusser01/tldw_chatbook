@@ -620,6 +620,113 @@ edited.** `corpus_sha256` hashes their bytes, so even a comment correcting
 did not earn. Those receipts are true of the day they were written; this
 section is the current state.
 
+### The sixth arc, and the second re-stamp that did NOT happen: TASK-16071 (2026-08-14)
+
+The Library's **plain four-seam keyword path** (notes, media, conversations,
+prompts — each its own query under its own `limit=top_k`) used to merge its
+seams by **concatenating them in a fixed source order**. Every row carries
+`score=None` on purpose, so nothing sorted the concatenation: a row's
+cross-seam position was a function of its SOURCE TYPE and of how many rows the
+earlier seams happened to return, never of how well it matched. Any pass
+matching `top_k` notes buried every media, conversation and prompt hit behind
+them, and every downstream cut cut exactly there.
+
+It now merges with **`interleave_rankings`** — the engine's own rank-fair
+primitive, not a re-implementation — keyed on `(provenance.source_type,
+source_id)`: each seam's rank-1 row, then each seam's rank-2 row, and so on,
+with `_KNOWN_KEYWORD_SOURCE_TYPES` order breaking ties *within* a position
+(a pinned convention, not a relevance claim). **ORDER only — no truncation
+added**, since a four-seam query has always been able to return up to
+`4 × top_k` rows and the cut belongs to the consumers. **No tiering, deliberately:**
+every seam builds its MATCH through `build_fts_match_query` and nothing else,
+so all four rankings are all-primary and TASK-15700's tier design has nothing
+to tier here; it applies the day this path gains fallback forms. The rule, the
+worked examples and both of those decisions are written at the merge site in
+`Library/library_local_rag_search_service.py`, which is where the next reader
+will be standing.
+
+**The gate saw nothing, and that was predicted before the change landed.**
+All **105 of 105** gated cells read `(+0.000)`, and stronger than the 3dp
+print: re-compared with float equality, **0 of 105 metrics differ bit-exactly**.
+No baseline file was touched. The reason is a census, not luck — **every one
+of the 60 golden queries returns ≤1 row under the shipped plain pass** (rows>1:
+0; spanning more than one seam: 0), measured at k=10 *and* at k=200. An
+order-only change over a list of length ≤1 is the identity function, so on
+this instrument a moved cell would have been a **STOP**, not a success. That
+prediction was registered before the merge changed, and it is the second arc
+running whose re-stamp is a disclosed **non-event**.
+
+**So the proof lives in two places outside the golden cells**, both of which
+exist because the instrument structurally cannot see this fix: five always-on
+pins on the real path with four real databases
+(`Tests/Library/test_library_keyword_cross_seam.py` — displacement,
+rank-fairness, single-seam byte-identity, no-truncation, prompts-seam
+participation; **RED 3/5 on the old concatenation**), and the PRF probe's
+oracle control, re-run under both merges in one session.
+
+**Plain keyword recall does not move, and the reason is worth keeping.** It is
+**0.84375 = 13.5/16** — thirteen queries at 1.000, one at 0.500, two at 0.000
+(the `precision` cell, 0.875 = 14/16, hides the half-miss). All three lost
+targets are **genuine non-matches**, absent from the merged list even at
+DEEP_K=200 where the whole pass returns 0-1 rows: a conjunctive MATCH with
+plural-only widening against corpus text that inflects differently
+(`slipping`/"slips", `swap`/"swapped", `rollback`/"rolled back"). **Zero
+seam-burial.** The lever on that cell is the term construction (TASK-3997's
+question, TASK-15400's territory), not the merge — worth stating because a
+merge fix is the intuitive place to look for it and it is the wrong place.
+
+**What the control did show: one number was two defects.** Under the oracle
+feed (below, "the fourth retired P2c premise"), the pre-registered TF-8
+selector goes **8/22 → 14/22** and the rarest-DF selector **15/22 → 19/22**,
+and the ENTIRE gain is the conversation column (0/6 → 6/6 and 2/6 → 6/6) while
+**media moves +0 under both selectors** (1/9 and 6/9, unchanged). Conversation
+burial was seam **ORDER** and it is now gone completely; the media shortfall is
+per-seam **VOLUME** — those targets sit ≥7 deep inside the media seam against a
+reachable depth of 3 in a ten-row window, so no ordering change reaches them.
+The honest observability bound recalibrates **≥15 of 22 → ≥19 of 22**.
+
+**The residual headroom is therefore the media column, and it is not an
+ordering problem.** The levers that could move it are the per-seam budget (pull
+deeper per seam before any cross-seam cut) or the widening construction; a
+further ordering change is not one of them, and no future arc should spend
+itself there expecting the media column to answer.
+
+**The change is not free, and both costs are measured.** In the PRF probe's
+widened-feed regime the collateral loss count is identical either side (10 of
+21 hitters) but **two of the ten are different queries** — the rotation pulls
+two conversation targets back inside k and pushes two NOTE targets out, so the
+displacement cost lands on the notes seam. And the fed top-M window went **18%
+→ 54% label-only**: the merge changes *what* a top-M consumer sees, not merely
+the order. In the product, Search mode's evidence list now interleaves by rank
+across sources for any query matching more than one source — a visible change,
+disclosed in `Docs/User_Guide/library/search-and-rag.md` and live-checked.
+
+**What this arc did NOT touch, stated so nobody re-measures it.** The engine's
+hybrid keyword leg is a different module: TASK-15700's leg-level census
+(23/53) and residual zero-row count (36/60) are properties of `RAGService`'s
+sub-leg merge and its MATCH construction, and nothing in the retrieval path
+imports `library_local_rag_search_service`. Those two numbers were therefore
+not re-measured and cannot have moved; the observable consequence that *was*
+measured is that hybrid's gated cells are bit-exact unchanged.
+
+**The production consumer with a hard cut, named (final review, 2026-08-14).**
+Enumerating consumers of the private `_search_keyword` was one level too low:
+the public `search()` has a second production caller —
+`Agents/library_rag_tool_provider.py:216-219` issues `mode="rag"` and `:250-252`
+truncates to `_MAX_TOP_K` (10). It is the DEFAULT Console Library retrieval
+tool (bound whenever `direct_library_tools` is off) over notes/media/
+conversations. Under a plain profile this is the one place in production where
+**set membership**, not merely order, changes: the pre-fix window could be ten
+note rows carrying real `content`; the post-fix window is a ~4/3/3 rotation
+whose media and conversation rows carry `"Matched media · {type}"` /
+`"Matched conversation · N messages"` and no document text. That is the same
+mechanism as the probe's 18% → 54% label-only inversion, landing on an LLM's
+evidence rather than a probe's feed — an anticipated cost of rank-fairness on a
+path whose rows are not all text-bearing, and the sharpest argument for
+TASK-16174's expansion/fetch work. Not a regression of this arc's ACs (order
+was the change; the label-only rows were always in the corpus), but it belongs
+in the record rather than only in a probe's price line.
+
 ## Fail-first authoring: the admission protocol
 
 A fixture that the pipeline already answers measures nothing. P2ab
@@ -695,6 +802,20 @@ audited in place rather than by re-authoring the candidates.
 
 ### The fourth retired P2c premise: PRF, probed before built (TASK-15965, 2026-08-13)
 
+> **Every probe figure in this section was re-measured on 2026-08-14 under the
+> rank-fair four-seam merge (TASK-16071, the arc above), and the ones that
+> moved carry their pre-16071 value inline as dated history.** The section was
+> first written under the path's fixed-order concatenation; that merge no
+> longer exists, so a figure quoted without its date would describe a path the
+> code does not have. **The verdict did not move: NULL, and PRF stays
+> retired.** It is now measured on a wider basis — nine grid points instead of
+> one — and against a higher observability ceiling (14 of 22 cells rather than
+> 8 under the pre-registered selector), so the null is stronger than when it
+> was recorded, not weaker. What did not change at all: not one of the 105
+> gated golden-set metrics moved (bit-exact), because the shipped plain pass
+> returns ≤1 row per golden query and an ordering change over a one-row list
+> is the identity.
+
 The three premises retired above died to things the instrument could already
 show: query expansion to a **cell** (`vocabulary_mismatch` reads 1.000 in both
 vector modes — there is no ceiling left to improve against), `acronym` and
@@ -711,13 +832,15 @@ against a bar pre-registered in
 
 | # | pre-registered clause (spec, verbatim) | measured | result |
 |---|---|---|---|
-| 1 | "≥5 of the 22 plain-failing queries reach their target in the second pass's top-10" | **0 / 22 rescued** | **FAIL** |
-| 2 | "zero currently-hitting plain queries (any category) lose their target" | **10 of 21 hitters lost**, every one at rank 1 today | **FAIL** |
+| 1 | "≥5 of the 22 plain-failing queries reach their target in the second pass's top-10" | **2 / 22 rescued** at the base point (**0 / 22** pre-16071), and **2 / 22** is also the maximum over all nine grid points | **FAIL** |
+| 2 | "zero currently-hitting plain queries (any category) lose their target" | **10 of 21 hitters lost**, every one at rank 1 today (10 pre-16071 as well — but two of the ten are *different queries*; see the loss diagnosis) | **FAIL** |
 | 3 | "zero new rows on negatives" | 0 new rows and 0 new documents on all 7 — but **structural**, see below | PASS, worth nothing |
 | 4 | "the negation guard: no negation query's row set grows with assertion-side junk (measured, reported; expected to bind)" | all 3 negation queries went **0 → 30 rows, +10 new documents** | BINDS, as pre-registered |
 
-Two gating clauses fail, one at the maximum possible margin. Clause 4 was
-never a gate; clause 3's pass is not evidence of safety (below).
+Two gating clauses fail. Clause 1 misses its bar by 3 of the 5 rescues it
+needed — pre-16071 it missed by all 5, and the narrowing is the merge's doing,
+not PRF's (both rescues are conversation targets, the seam TASK-16071 freed).
+Clause 4 was never a gate; clause 3's pass is not evidence of safety (below).
 
 **Step 0 — fireability, which decided the regime in one command.** Before any
 grid point, the probe asked whether PRF can fire at all: does the shipped
@@ -730,19 +853,49 @@ returned rows, not the target's), so PRF's classic mechanism has literally
 nothing to feed on. That alone retires the un-varianted premise. The spec's
 ONE licensed variant then activated (an OR-of-content-terms pass used **for
 feedback selection only**, never shown to a user): **18 / 22 fire** under it.
-Every before-column in every table below remains the SHIPPED pass.
+Every before-column in every table below remains the SHIPPED pass. (This
+census is **byte-identical either side of TASK-16071** — an ordering change
+cannot create a row, which is the same identity the golden cells prove.)
 
 **The base point (N=8 terms, M=5 fed documents; RM3 `tf/|D|`, the
-pre-registered derivation): 0 / 22 rescued, 10 of 21 hitters lost.** The grid
-stopped there **by pre-registration** — the {4,8,16}×{3,5,10} sweep is
-licensed only if the base point shows signal, and "a null at every base point
-is a null, not an invitation to search the grid until something moves". One
-point run, one point recorded.
+pre-registered derivation): 2 / 22 rescued, 10 of 21 hitters lost.** Both
+rescues are conversation targets — `pr-platform-offline` →
+`conv-platform-offline` and `vm-nearsightedness` → `conv-myopia-visit`, the
+seam the rank-fair merge freed. **Pre-16071 this point read 0 / 22**, and that
+zero kept the grid shut: the {4,8,16}×{3,5,10} sweep is licensed only if the
+base point shows signal ("a null at every base point is a null, not an
+invitation to search the grid until something moves"), so **one point ran and
+one point was recorded**. With the base point off zero the sweep opened for
+the first time and **all nine points ran**: the maximum rescued anywhere on
+the grid is **2 / 22 against a bar of ≥5**, and clause [2] fails at 9-10
+hitters lost at every single point. State the direction carefully — the *gap
+to the bar* narrowed (0 → 2 against ≥5); what widened is the **evidential
+basis**, a nine-point sweep saying what one point used to.
 
 The 10 losses are diagnosed, not just counted: re-running the *same* expression
 at k=200 separates "the expansion never reached the document" from "it reached
-it and lost its slot". **0 of the 10 are unmatched** — 8 seam-displaced, 2
-merge-displaced. The loss channel is **pure dilution**: expansion-term rows
+it and lost its slot". **0 of the 10 are unmatched — 9 seam-displaced, 1
+merge-displaced** (pre-16071: 8 and 2).
+
+**The count is the same either side of the merge change; the identities are
+not, and that swap is a disclosed COST of the rank-fair merge.** Two of the
+ten differ: pre-fix it lost `kw-ashgrove-pump` and `kw-drayton-conveyor` —
+conversation targets merge-displaced at position 21, which the rotation now
+pulls back inside k — and post-fix it loses `kw-plant-maintenance-record` and
+`sc-meter-box-key`, both **NOTE** targets. The direction is the rotation's
+price: media and conversation rows now take top-M slots a full notes seam used
+to monopolise, so in a widened-feed regime the displacement cost lands on the
+notes seam. Net-neutral on this clause and on the verdict — named here because
+"10 lost both ways" would have been a misleadingly quiet way to report it.
+
+Under the shipped
+rank-fair three-seam rotation a within-seam rank `r` row lands at merged
+position at most `3r-1`, so a merged-position-`p` row has `r ≥ (p+1)/3` — the
+shallowest post-fix media miss sits at within-seam rank ≥7 against a reachable
+depth of 3 at k=10; no ORDERING change can surface it (the bound is rank-fair-
+qualified: a media-first concatenation could, but is not on the table). The
+loss channel is **pure dilution**:
+expansion-term rows
 evicting a rank-1 target from a 10-row per-seam budget. (This refuted the
 implementer's own prior, which was that the probe's expression — the engine's
 content-token form, without `build_fts_match_query`'s plural/singular widening
@@ -751,39 +904,67 @@ is the opposite one: 10 of the 18 fired queries are UNMATCHED at k=200 — the
 derived terms never touch the target document. That is the "poison feed" the
 spec pre-registered as PRF's central risk, measured.
 
-**The axis control: a narrower selector rescues nothing either.** Outside the
+**The axis control: a narrower selector rescues one, not five.** Outside the
 pre-registration (so it can never ADMIT), the same real feed was re-derived
-with a rarest-by-corpus-DF selector: **0 / 22 rescued at N=8 and 0 / 22 at
-N=4**, with collateral damage cut from 10 losses to 3 (and all 3
-merge-displaced rather than evicted from their own seam). We looked down the
-TF-vs-DF axis; it is still zero.
+with a rarest-by-corpus-DF selector: **1 / 22 rescued at N=8 and 1 / 22 at
+N=4** (**0 / 22 at both** pre-16071), the single rescue being
+`pr-platform-offline` — a conversation target, the same mechanism as the base
+point's two. Collateral damage stays 3 losses rather than 10, **unchanged in
+count AND identity** across the merge change (`kw-quillon-mast`,
+`kw-verdigris-coating`, `sc-storm-overflow-record`, all three merge-displaced
+rather than evicted from their own seam). We looked down the TF-vs-DF axis; it
+is one rescue against a bar of five.
 
 **How many cells a rescue could have been seen in — the corrected framing.**
 The probe's rescue-channel control feeds PRF the target document *itself* (the
-best expansion any feedback set could produce). Read this before the floor:
+best expansion any feedback set could produce). Read this before the floor —
+and read the columns as pre-16071 → **as shipped**, because the merge change
+is the only difference between them (same feed, same path, same k, same
+corpus, same selectors, re-measured in one session by reverting the merge site
+and restoring it):
 
 | selector (oracle feed, same path, same k) | N | reaches top-10 | note | media | conversation |
 |---|---|---|---|---|---|
-| TF `tf/\|D\|` — the pre-registered derivation | 8 | 8 / 22 | 7/7 | 1/9 | 0/6 |
-| rarest-by-corpus-DF — *ranking key only* | 8 | **15 / 22** | 7/7 | 6/9 | 2/6 |
-| rarest-1, query side dropped — *illustration, changes two things* | 1 | 22 / 22 | 7/7 | 9/9 | 6/6 |
+| TF `tf/\|D\|` — the pre-registered derivation | 8 | 8 / 22 → **14 / 22** | 7/7 → 7/7 | 1/9 → 1/9 | 0/6 → **6/6** |
+| rarest-by-corpus-DF — *ranking key only* | 8 | 15 / 22 → **19 / 22** | 7/7 → 7/7 | 6/9 → 6/9 | 2/6 → **6/6** |
+| rarest-1, query side dropped — *illustration, changes two things* | 1 | 22 / 22 → 22 / 22 | 7/7 | 9/9 | 6/6 |
 
 **22/22 of the oracle expressions match their target at k=200 in every row**,
 so every miss is displacement, not a control that failed to reach its document.
-The defensible reading: the plain four-seam path has **no cross-seam ranking**
-and a **per-seam `top_k`**, so any pass matching K or more notes buries every
-media and conversation target regardless of match quality — and **how hard that
-bites depends on expansion BREADTH, which is the selector's property, not the
-path's.** So the honest bound on this null is **≥15 of 22 cells observable,
-PRF rescued 0.**
+
+**The whole of the gain is the conversation column, and the media column did
+not move at all** — which splits what used to read as one defect into two. The
+conversation targets were buried by seam ORDER: their within-seam rank was 1
+all along, and all six now read merged position **3**, the conversation seam's
+rank-1 slot in the harness's three-seam rotation. The media misses are buried
+by per-seam VOLUME: the eight TF-8 misses sit at deep merged positions 18-82,
+i.e. within-media rank ≥7 by the `r ≥ (p+1)/3` bound above, against a
+reachable depth of 3 in a ten-row window — **no ordering change reaches them,
+and none ever could.** The note column is a floor rather than a risk: notes
+break the within-position tie, so a notes rank-1 row holds merged position 1
+by construction, and all 7 read position 1 in both selector rows before and
+after (read off the printed detail table, not inferred).
+
+The defensible reading, restated for the shipped path: the plain four-seam
+path merges **rank-fairly** (TASK-16071 — seam order decides nothing but ties),
+and what still binds is the **per-seam `top_k`**: under the harness's
+three-seam plain fan-out a seam can reach only ~⌈k/3⌉ of the k merged slots,
+so a target deeper than that *inside its own seam* is still unreachable — and
+**how hard that bites depends on expansion BREADTH, which is the selector's
+property, not the path's.** So the honest bound on this null is **≥19 of 22
+cells observable, PRF rescued 2 at its base point** (pre-16071: ≥15
+observable, 0 rescued).
 
 An earlier version of this probe printed the stronger claim — an 8/22 "ceiling
 imposed by the four-seam path", "14 of 22 never observable" — and its review
 refuted it by re-running the control with only the ranking key swapped. **Do
 not restate the ceiling form**: it is an artefact of one term selector, and the
 correction makes the null *stronger*, not weaker. The path property that
-survives is filed on its own as **TASK-16071** (it is not about PRF; it prices
-any query-widening technique on this path).
+survives was filed on its own as **TASK-16071** (it was never about PRF; it
+prices any query-widening technique on this path) and **shipped 2026-08-14** —
+the rank-fair merge above. What it did *not* fix is the per-seam volume
+constraint, which is where the residual headroom now sits; see "The sixth arc"
+above.
 
 **Two spec expectations the run corrected, recorded rather than smoothed:**
 
@@ -796,8 +977,16 @@ any query-widening technique on this path).
 - **The price is real and was paid.** 211 content fetches per grid point over
   60 queries — one read per fed row, because four-seam media and conversation
   rows carry no document text (`"Matched media · {type}"`, `"Matched
-  conversation · N messages"`). **39 of 211 fed rows (18%) were label-only**, so
-  without the fetch the feed would have skewed silently toward notes.
+  conversation · N messages"`), so without the fetch the feed would have
+  skewed silently toward notes. **113 of 211 fed rows (54%) are label-only**
+  — pre-16071 it was **39 of 211 (18%)**. The fetch count is identical either
+  way (one read per fed row); what changed is the composition of the top-M
+  window, and label-only went from the exception to the dominant case, because
+  the rank-fair rotation puts media and conversation rows into slots a full
+  notes seam used to hold. **The merge changes WHAT a top-M consumer sees, not
+  only the order it sees it in** — a live consequence for anything downstream
+  that reads a top-M window (RAG Answer's evidence, a PRF-style feed, a future
+  re-ranker) and assumes a fed row is self-describing.
 
 **One more finding for any future term-derivation candidate on this corpus:**
 the engine's `_FTS5_STOPWORDS` (67 words) is too short for TF-based derivation
@@ -1076,8 +1265,11 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
 - **Plain's MRR and NDCG track recall, not ranking.** The four-seam keyword
   path deliberately drops the FTS rank ("an FTS ranking artifact, not a
   retrieval similarity score" — every plain row carries `score=None`), and
-  rows arrive concatenated in a fixed seam order (notes, media,
-  conversations, prompts). There is no ranking signal to be right or wrong
+  the seams are merged by a rank-fair rotation (TASK-16071 replaced the old
+  fixed-order concatenation; each seam's rank-1 row, then each seam's rank-2
+  row, …) rather than by any cross-seam relevance signal. Rank position
+  within a seam is the only comparable cross-source signal there is, and it
+  is not a score. There is no ranking signal to be right or wrong
   about in plain mode, so its MRR/NDCG columns are recall in a different
   unit. They are still gated (they move when recall moves and catch the
   same regressions), but do not present them as a ranking-quality claim in
@@ -1194,7 +1386,9 @@ attempting anything here:
   that chose the engine's construction is a *hybrid-fusion* measurement —
   every constraint that decided it (the vector-blind rescue, the scoped
   collapse) is about rows competing inside a fused top-k, and the four-seam
-  path has no fusion, no ranking and no leg to be displaced in. Its
+  path has no fusion, no relevance ranking (TASK-16071's merge orders it by
+  within-seam rank position, which is not a score) and no leg to be
+  displaced in. Its
   construction therefore has to be decided on its own evidence, which is
   what TASK-3997 is for; `build_fts_match_query` was measured alongside the
   four swept rows (it rescues 1 of the 40 zero-row queries, the same order

@@ -333,6 +333,23 @@ Each hit is one block:
   **Select evidence**. On a selected row the button reads **"Selected
   evidence"** and an inline **"Use in Console"** button appears beside it.
 
+**Row order in Search mode: sources take turns.** When a query matches more
+than one source, the list interleaves by rank — each source's best hit, then
+each source's second-best, and so on — rather than listing all notes, then all
+media, then all conversations, then all prompts. Nothing is dropped and the
+count is unchanged; only the order differs, and "Evidence · top N per source"
+still means exactly what it says (each source is still capped at N on its own).
+Notes break ties at equal rank, so a note still holds row 1 whenever notes
+matched at all; what changed is that a media or conversation hit no longer
+waits behind *every* note. Concretely, on a library where twelve notes mention
+your words in passing and one media document is squarely about them, that
+document is now row 2 instead of row 13. **Which modes this reaches:** the
+reorder belongs to the plain (keyword) retrieval path, so it applies to Search
+mode always, and to RAG Answer mode whenever your active profile's search mode
+is plain — the shipped "BM25 Only" profile is exactly that case. Hybrid and
+semantic profiles are untouched: their retrieval runs the engine's own leg,
+which has ranked across sources since well before this change.
+
 Before any search the region shows "No evidence yet. Run Search/RAG to
 populate results." A search that runs cleanly but finds nothing is a quiet
 two-line note, not an error: "No evidence matched '\<your query>'." then
@@ -672,3 +689,35 @@ away.*
   log summary for a supervisor* as evidence row 4, typed `prompt` and
   banded **`| keyword match`** — the first time a prompt has appeared in
   these results at all.
+
+*Verified against fix/rag-four-seam-cross-ranking @ 6af4ea3bc — 2026-08-14
+(TASK-16071, the "Row order in Search mode" paragraph under
+[Evidence rows](#evidence-rows)). **Scratch profile** with its own
+`[paths] data_dir`, `HOME`/`XDG_*` redirected and `HF_HUB_OFFLINE=1`;
+isolation confirmed at the running PID (`lsof`: **0** handles under the real
+profile, 52 under the scratch) and the real `config.toml` byte-identical
+before and after. The library was built through the app's own writers — 12
+shift-log notes that mention "kestrel gearbox inspection" in passing, one
+media document that IS the inspection manual, and one conversation about
+scheduling it — because a real library rarely holds one query matching
+several notes AND a media item AND a conversation, and without that
+precondition this change has nothing to show. Library ▸ Search / RAG in
+**Search** mode on the default profile, heading "Evidence · top 15 per
+source" and **14 results** in both arms, same data, one code constant apart:*
+
+- *Shipped merge: **1.** Shift log 01 (note), **2. Kestrel gearbox inspection
+  manual** (Media), **3. Maintenance: kestrel gearbox inspection scheduling**
+  (conversation), then shift logs 02-12 filling rows 4-14.*
+- *The previous fixed-order concatenation, restored in the same session for
+  the comparison: shift logs 01-12 at rows **1-12**, the media manual at
+  **13**, the conversation at **14**.*
+
+*So the document the query is actually about moved from row 13 to row 2 on
+identical data, and the row count did not change (nothing is truncated here).
+**What was NOT exercised:** RAG Answer mode on a plain profile, which inherits
+this same reorder and was not run live (only Search mode was) — so the
+TASK-15810 first-query stall, which belongs to the embedding path, was never in
+play; the keyword-only Search run had its full list on screen at the first
+capture after Enter, in both arms. Hybrid and semantic profiles are untouched
+by the change rather than merely unexercised: their retrieval never enters this
+merge.*

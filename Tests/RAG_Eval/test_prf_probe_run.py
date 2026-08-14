@@ -53,27 +53,42 @@ without.**
   queries are unreachable in every plain pass and never enter the hitter
   population. The engine-side prompts sub-leg is a hybrid-mode thing and
   hybrid is not this probe's population.
-* *"Top-M" is seam order, not relevance order.* The four-seam path emits
-  notes, then media, then conversations, with no cross-seam score at all
-  (`_note_row` and friends set `"score": None` deliberately). Classic PRF
-  feeds from the top-M by relevance; the honest statement of what this probe
-  feeds from is "the first M documents the product would show", which is
-  what a plain-profile user's PRF would have to feed from too.
-* *That same seam order interacts with EXPRESSION BREADTH*, which is why
-  `_run_oracle_control` runs under several term SELECTORS rather than one.
-  `top_k` is a PER-SEAM limit and there is no cross-seam ranking, so any
-  pass that matches K or more notes buries every media and conversation
-  target regardless of how well the target itself matched -- and 15 of the
-  22 targets are media or conversation documents. How hard that bites is
-  **not a fixed property of the path**: it depends on how broad the
+* *"Top-M" is ROTATION order, not relevance order.* The four-seam path
+  interleaves its seams rank-fairly -- TASK-16071 replaced the fixed-order
+  concatenation with `interleave_rankings`, so the merged list runs each
+  seam's rank-1 row, then each seam's rank-2 row, and so on -- and the rows
+  still carry no cross-seam score at all (`_note_row` and friends set
+  `"score": None` deliberately), which is why rank POSITION within a seam is
+  the only comparable signal there is. Classic PRF feeds from the top-M by
+  relevance; the honest statement of what this probe feeds from is "the
+  first M documents the product would show", which is what a plain-profile
+  user's PRF would have to feed from too. That is not a cosmetic
+  distinction: when the merge changed, the fed set's label-only share (media
+  and conversation rows, which carry no text in the row itself) went 39/211
+  to 113/211 at the base point. WHAT a top-M consumer sees moved, not just
+  the order it sees it in.
+* *The merge order used to interact with EXPRESSION BREADTH; now the
+  per-seam BUDGET does*, which is why `_run_oracle_control` runs under
+  several term SELECTORS rather than one. `top_k` is a PER-SEAM limit, and
+  under a rank-fair rotation over this harness's three seams each seam holds
+  only about ceil(K/3) of the K merged slots -- so a target ranked deeper
+  than that WITHIN ITS OWN SEAM is unreachable however well it matched, and
+  15 of the 22 targets are media or conversation documents. How hard that
+  bites is **not a fixed property of the path**: it depends on how broad the
   expansion is, which is a property of the SELECTOR. Measured with oracle
   feeds (the target document itself), the pre-registered TF-8 selector
-  leaves 8/22 observable and a rarest-8-by-corpus-DF selector of the same
-  shape leaves 15/22. An earlier version of this module printed the 8/22 as
-  "could not have been rescued by any real feedback set"; a review refuted
-  that by running it, and the refutation is now part of the instrument
-  rather than a note about it. Measure the ceiling before reading the
-  floor, and measure it under more than one selector before calling it a
+  leaves 14/22 observable and a rarest-8-by-corpus-DF selector of the same
+  shape leaves 19/22. Before TASK-16071 those same two rows read 8/22 and
+  15/22, under a harsher constraint of a different kind: the merge
+  CONCATENATED in seam order, so a full notes seam pushed out every media
+  and conversation target whatever its own rank. That component is gone --
+  the entire 8->14 and 15->19 gain is the conversation column (0/6 -> 6/6,
+  2/6 -> 6/6), whose targets were all rank 1 in their own seam -- and what
+  survives is per-seam VOLUME. An earlier version of this module printed the
+  8/22 as "could not have been rescued by any real feedback set"; a review
+  refuted that by running it, and the refutation is now part of the
+  instrument rather than a note about it. Measure the ceiling before reading
+  the floor, and measure it under more than one selector before calling it a
   ceiling at all.
 * *The second pass drops the plural/singular widening the first pass has.*
   `build_fts_match_query` widens each term into an OR-group of naive
@@ -184,18 +199,23 @@ class _OracleRow:
     """One target query under a PERFECT feed — the rescue-channel control.
 
     A null rescue count only means "PRF did not rescue" if a rescue was
-    OBSERVABLE at all. The four-seam path emits notes, then media, then
-    conversations, with no cross-seam ranking, so once an expanded pass
-    fills the notes seam's `top_k` rows every media and conversation target
-    is pushed past rank 10 no matter how good the expansion was. 15 of the
-    22 targets are media or conversation documents (measured), so that is
-    not a hypothetical.
+    OBSERVABLE at all. The four-seam path interleaves its seams rank-fairly
+    (TASK-16071) and its rows carry no cross-seam score, so under this
+    harness's three-seam fan-out each seam holds only about ceil(k/3) of the
+    k merged slots: a target ranked deeper than that WITHIN ITS OWN SEAM is
+    pushed past rank 10 no matter how good the expansion was. 15 of the 22
+    targets are media or conversation documents (measured), so that is not a
+    hypothetical. Before TASK-16071 the constraint was harsher and of a
+    different kind -- the merge CONCATENATED in seam order, so once an
+    expanded pass filled the notes seam's `top_k` rows every media and
+    conversation target was pushed out whatever its own rank. That component
+    is gone; per-seam volume is what remains.
 
     This control removes the FEED from the question by feeding PRF the
     TARGET DOCUMENT ITSELF — the best feed any feedback set could supply.
     The resulting expression, and therefore the rank, is a JOINT property
     of that feed and the SELECTOR that built the expression from it (this
-    module measures 8/22 vs 15/22 vs 22/22 over the identical feed under
+    module measures 14/22 vs 19/22 vs 22/22 over the identical feed under
     three selectors — see the printed selector table): an oracle row's
     rank is a ceiling only UNDER THE SELECTOR THAT BUILT IT, never an
     absolute. It is a CONTROL and never an input to the verdict — an
@@ -422,10 +442,11 @@ class _Selector:
 
     The probe's verdict is computed from the PRE-REGISTERED selector alone
     (`derive_expansion_terms`, RM3 tf/|D|). The others exist because a
-    review refuted a claim this module used to print: that the 8/22 oracle
-    ceiling was a property of the four-seam path. It is not -- it is a
-    property of how BROAD the chosen terms are, and the only way to say so
-    honestly is to vary the selector and hold everything else fixed.
+    review refuted a claim this module used to print: that the oracle
+    ceiling (8/22 as it then read; 14/22 since TASK-16071) was a property of
+    the four-seam path. It is not -- it is a property of how BROAD the
+    chosen terms are, and the only way to say so honestly is to vary the
+    selector and hold everything else fixed.
 
     Attributes:
         name: Short label used in every table.
@@ -517,7 +538,9 @@ def _compose_terms_only(query: str, terms: Sequence[str]) -> str:
     that is not `compose_prf_expression`. It exists to show that the
     observability ceiling moves all the way to 22/22 when the expression
     stops matching everything the query's own content words match -- i.e.
-    that breadth, not the seam order alone, is what was binding. Because it
+    that breadth, not the seam order alone, was what bound. Since TASK-16071
+    removed seam order from the merge entirely, breadth against the per-seam
+    budget is the whole of what still binds here. Because it
     changes TWO things at once (selector AND composition) it is labelled an
     ILLUSTRATION rather than a controlled comparison wherever it is printed.
     """
@@ -892,25 +915,42 @@ def _format_oracle_comparison(
         )
     lines.append("")
     lines.append(
-        "  THE READING. The plain path has no cross-seam ranking and a "
-        f"PER-SEAM top_k, so any pass matching {K} or"
+        "  THE READING. The plain path now interleaves its seams RANK-FAIRLY "
+        "(TASK-16071), but top_k is still a"
     )
     lines.append(
-        "  more notes buries every media/conversation target regardless of "
-        "match quality. How hard that bites"
+        "  PER-SEAM limit, so across this harness's three seams one seam "
+        f"holds only about ceil({K}/3) of the {K} merged"
     )
     lines.append(
-        "  depends on EXPANSION BREADTH, which is the selector's property, "
-        "not the path's — the rows above are the"
+        "  slots: a target ranked deeper than that WITHIN ITS OWN SEAM "
+        "cannot be seen however well it matched."
     )
     lines.append(
-        "  same path at different breadths. So 'this target could not have "
-        "been rescued by any feedback set' is NOT"
+        "  Rank position, not seam order, is what decides now. Before "
+        "TASK-16071 this merge CONCATENATED in seam"
     )
     lines.append(
-        "  a conclusion this control supports, and an earlier version of "
-        "this module printed it anyway."
+        "  order and buried every media/conversation target behind a full "
+        "notes seam regardless of match quality;"
     )
+    lines.append(
+        "  that component is what the conversation column above lost (0/6 "
+        "and 2/6 then, 6/6 in both rows now)."
+    )
+    lines.append(
+        "  How hard the SURVIVING constraint bites depends on EXPANSION "
+        "BREADTH, which is the selector's property,"
+    )
+    lines.append(
+        "  not the path's — the rows above are the same path at different "
+        "breadths. So 'this target could not have"
+    )
+    lines.append(
+        "  been rescued by any feedback set' is NOT a conclusion this "
+        "control supports, and an earlier version of"
+    )
+    lines.append("  this module printed it anyway.")
     return "\n".join(lines)
 
 

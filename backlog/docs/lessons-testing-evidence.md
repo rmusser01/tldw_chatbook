@@ -4105,3 +4105,82 @@ boundary and compare it only after authoritative recomputation. An override must
 cover every current match; bounded identity material must record truncation and
 fail closed. Test mutations between the two user actions through at least one
 real UI-to-authority path, not only each boundary in isolation.
+---
+
+## An expected value computed THROUGH the code under test cannot fail — the reference has to come from upstream of it (TASK-16071, 2026-08-14)
+
+**Incident.** The rank-fair four-seam merge arc pinned that the merge preserves
+each seam's own ordering: whatever order a seam returned its rows in, the
+merged list must contain that seam's rows in exactly that relative order. The
+pin needed a reference — "the order the notes seam returned" — and it got one
+the obvious way: a **single-source `search()` call** per seam, notes only, then
+media only, and so on. That reads like the seam's own ranking, and for a
+one-seam query it *is* the same rows in the same order.
+
+It is also the code under test. `search()` runs the merge on its way out, so
+the reference travelled through the very function the pin was written to
+police. The mutation exposed it: **reverse every seam's ranking before the
+interleave**, and the merged list and the reference both came back reversed —
+identical to each other, as always. The suite reported **5 passed**. A test
+suite reported green against an implementation that had inverted the ordering
+property it existed to pin.
+
+The fix is one line of plumbing and no cleverness: a `_seam_ranking` helper
+that calls the seam methods directly (`_search_notes` / `_search_media` /
+`_search_conversations` / `_search_prompts`), upstream of the merge. With the
+reference sourced there, the same mutation reds immediately:
+
+```
+E  AssertionError: the notes seam's rows were reordered by the merge:
+   seam order [('note','7820e1a3…'), ('note','59470e66…')],
+   merged order [('note','59470e66…'), ('note','7820e1a3…')]
+2 failed, 3 passed
+```
+
+**Why it was invisible.** Every version of the trap looks like reuse, which is
+usually a virtue: the reference is fetched by the same public API, on the same
+data, in the same test — and a single-source search really is "the same"
+ranking, right up until the merge is the thing you are measuring. Nothing about
+the call site says "this expression is a function of the code under test"; you
+have to ask.
+
+**What to do.** For any test whose assertion compares an output against an
+expected value the test itself computes, write down where that expected value
+came from and check it does not route through the function under test — a
+public API that *wraps* the unit is the common way it does. Source references
+from the layer below (the seam method, the raw query, a pasted fixture), and
+prove it by mutation: if the mutation moves the output and the expected value
+identically, the test is measuring nothing. Sibling of "A surviving mutant
+usually means a SECOND writer satisfies your assertion" but distinct in cause —
+there a second mechanism produced the asserted state; here there is only one
+mechanism and the test asked it to grade its own work.
+
+---
+
+## A fix recorded only in a gitignored file is not a fix — the diff is the deliverable, the scratch is the diary (TASK-16071, 2026-08-14)
+
+**Incident.** A review round on the same arc raised four minors. The
+implementer's close-out reported all four addressed, and the working ledger and
+task report — both under the worktree's gitignored `.superpowers/sdd/`
+directory — described the corrections in detail and accurately. The re-review
+checked the **diff** rather than the write-up and found two of the four existed
+nowhere else: the collateral-swap identities with their direction (the
+rank-fair rotation's cost landing on the NOTE seam) and the rigorous
+`r ≥ (p+1)/3` rank-fair bound had been *written down*, not *shipped*. Both were
+supposed to land in the tracked `Tests/RAG_Eval/README.md`, which a later
+reader would consult; instead they lived in a file that is deleted with the
+worktree and invisible to anyone who does not have it.
+
+Nothing was wrong with the corrections themselves, which is what makes the
+shape durable: writing the fix and shipping the fix feel identical while you
+are doing it, and the bookkeeping that says "addressed" is written by the same
+person in the same session, from the same paragraph.
+
+**What to do.** When a review item's remedy is *prose* — a README correction, a
+docstring, a task's Notes — close it by naming the tracked file and the text,
+then verify with `git diff`/`git status` that the change is in the diff before
+recording it as addressed. Treat any scratch or SDD directory as a diary: it is
+where you think, never where a deliverable lives. Sibling of the hygiene entry
+"Gitignored working files die with their worktree", which is about the same
+directory but a different failure — that one loses a record you correctly wrote
+there; this one never wrote it anywhere else in the first place.
