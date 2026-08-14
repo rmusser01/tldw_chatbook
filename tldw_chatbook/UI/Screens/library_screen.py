@@ -28683,6 +28683,7 @@ class LibraryScreen(BaseAppScreen):
                 classes="destination-purpose",
                 markup=False,
             )
+        self._library_media_composed_detail = self._library_media_detail
         arrival_note = self._pop_library_media_arrival_note()
         viewer = LibraryMediaViewer(
             build_library_media_viewer_state(
