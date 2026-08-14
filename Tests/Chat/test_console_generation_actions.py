@@ -40,12 +40,14 @@ from tldw_chatbook.Chat.console_generate_image import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_speech import ConsoleSpeechSnapshotRejected
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+    TTSEventHandler,
     TTSMessageSpeechRequestEvent,
     TTSPlaybackEvent,
+    TTSPlaybackLifecycle,
 )
-from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
@@ -841,8 +843,9 @@ async def test_handle_console_message_action_routes_speak_stop_to_tts_playback_e
     assert isinstance(event, TTSPlaybackEvent)
     assert event.action == "stop"
     assert event.message_id == message.id
+    event.report_outcome(True)
     assert screen._console_speaking_message_id is None
-    screen._sync_native_console_chat_ui.assert_awaited()
+    await asyncio.sleep(0)
     assert len(notified) == 1
     assert notified[0][0][0] == "Stopped speaking."
 
@@ -911,6 +914,136 @@ async def test_handle_console_message_action_speak_stop_does_not_clear_other_mes
     assert handled is True
     assert screen._console_speaking_message_id == message_b.id
     assert notified == []
+
+
+@pytest.mark.asyncio
+async def test_failed_speech_clears_on_any_next_message_action():
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Copy me.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    screen._console_speech_states[message.id] = "failed"
+    copied: list[str] = []
+    screen.app_instance.copy_to_clipboard = copied.append
+    button = Button("copy", id=f"console-message-action-copy-{message.id}")
+
+    assert await screen.handle_console_message_action(Button.Pressed(button)) is True
+
+    assert copied == ["Copy me."]
+    assert screen._console_speech_states == {}
+
+
+@pytest.mark.asyncio
+async def test_rejected_stop_post_does_not_claim_stopped():
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Speaking.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    screen._console_speaking_message_id = message.id
+    screen._console_speech_states[message.id] = "playing"
+    screen.app_instance.post_message = lambda *_args, **_kwargs: False
+    notified: list[tuple[tuple, dict]] = []
+    screen.app_instance.notify = lambda *args, **kwargs: notified.append((args, kwargs))
+    button = Button("stop", id=f"console-message-action-speak-stop-{message.id}")
+
+    assert await screen.handle_console_message_action(Button.Pressed(button)) is True
+
+    assert screen._console_speech_states[message.id] == "failed"
+    assert screen._console_speaking_message_id is None
+    assert not any(args and args[0] == "Stopped speaking." for args, _ in notified)
+
+
+@pytest.mark.asyncio
+async def test_real_handler_stop_order_settles_and_notifies_once(monkeypatch):
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Speaking.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    generation = screen._message._begin_console_speech_presentation(message.id)
+    lifecycle = TTSPlaybackLifecycle(
+        message_id=message.id,
+        request_id=generation,
+        validator=lambda: True,
+        callback=lambda state: screen._message._settle_console_speech_presentation(
+            message.id,
+            generation,
+            state=state,
+        ),
+    )
+    screen._message._console_speech_owner = lifecycle
+    assert lifecycle.report("playing") is True
+    handler = TTSEventHandler()
+    handler._active_stream_playback_owner = lifecycle
+    screen.app_instance.control_tts_playback = handler.handle_tts_playback
+    notified: list[tuple[tuple, dict]] = []
+    screen.app_instance.notify = lambda *args, **kwargs: notified.append((args, kwargs))
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events.stop_live_sink",
+        lambda: None,
+    )
+    button = Button("stop", id=f"console-message-action-speak-stop-{message.id}")
+
+    assert await screen.handle_console_message_action(Button.Pressed(button)) is True
+
+    assert lifecycle.state == "stopped"
+    assert screen._console_speech_states[message.id] == "stopped"
+    assert screen._console_speaking_message_id is None
+    assert [args[0] for args, _kwargs in notified] == ["Stopped speaking."]
+
+
+@pytest.mark.asyncio
+async def test_rejected_owned_stop_retains_lifecycle_for_retry():
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Speaking.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    generation = screen._message._begin_console_speech_presentation(message.id)
+    lifecycle = TTSPlaybackLifecycle(
+        message_id=message.id,
+        request_id=generation,
+        validator=lambda: True,
+        callback=lambda state: screen._message._settle_console_speech_presentation(
+            message.id,
+            generation,
+            state=state,
+        ),
+    )
+    screen._message._console_speech_owner = lifecycle
+    lifecycle.report("playing")
+
+    async def reject_stop(event: TTSPlaybackEvent) -> None:
+        event.report_outcome(False)
+
+    screen.app_instance.control_tts_playback = reject_stop
+    button = Button("stop", id=f"console-message-action-speak-stop-{message.id}")
+
+    assert await screen.handle_console_message_action(Button.Pressed(button)) is True
+
+    assert lifecycle.state == "playing"
+    assert screen._message._console_speech_owner is lifecycle
+    assert screen._console_speaking_message_id == message.id
+    assert screen._console_speech_states[message.id] == "failed"
+    assert screen._message._console_speech_request_generation == generation
 
 
 # --- F5 (task-9 review): /generate-image dispatch gate in a temporary chat --

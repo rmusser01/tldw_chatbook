@@ -17,20 +17,25 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from rich.text import Text
 from textual.message import Message
 from textual.widgets import Button, Select, Static
 
+from tldw_chatbook.Constants import TAB_PERSONAS
 from tldw_chatbook.TTS import (
     LoadedTTSProfile,
     ProfileAvailabilityState,
+    STTSGeneratedAudio,
+    STTSPlaygroundResultProjection,
     TTSPlaygroundSelectionPreset,
+    TTSProfileAvailabilitySnapshot,
+    TTSProfilePageSnapshot,
 )
 from tldw_chatbook.TTS.adapter_types import TTSRegistryClosedError
-from tldw_chatbook.Constants import TAB_PERSONAS
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-
+from tldw_chatbook.UI.Speech.speech_axis_row import axis_chip_id
 from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
     CatalogRequestToken,
@@ -40,15 +45,19 @@ from tldw_chatbook.UI.stts_playground_catalog import (
 from tldw_chatbook.UI.stts_profile_library import (
     PROFILE_ACTION_FAILED_COPY,
     PROFILE_STORE_UNAVAILABLE_COPY,
+    ProfileTestVerified,
+    ProfileVerificationResult,
     TTSCloneProfileSaveReview,
     TTSCloneProfileSaveReviewModal,
     TTSProfileNameModal,
+    _consume_profile_test_context,
+    _resolve_profile_test_context,
+    _retire_profile_test_context,
     profile_action_error_copy,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_tts_widget import (
     CharacterTTSProfileSuggestion,
 )
-
 
 #: Copy shown when the generated audio predates the current settings, so
 #: saving it as a profile would record something the user did not hear.
@@ -98,7 +107,11 @@ class SpeechProfileMixin:
 
         def _apply_controls(self, controls: Any) -> None: ...
 
-    def init_profile_state(self, profile_preset: Any = None) -> None:
+    def init_profile_state(
+        self,
+        profile_preset: Any = None,
+        profile_context_token: UUID | None = None,
+    ) -> None:
         """Initialise the state the profile path reads.
 
         Call from the host's ``__init__``. Same contract shape as the other
@@ -136,6 +149,16 @@ class SpeechProfileMixin:
         self._profile_save_suppressed = False
         #: The open name modal, so a second one is not stacked.
         self._active_profile_name_modal: Any = None
+        self._profile_test_context_token = profile_context_token
+        self._profile_test_context = (
+            _resolve_profile_test_context(profile_context_token, profile_preset)
+            if type(profile_preset) is TTSPlaygroundSelectionPreset
+            else None
+        )
+        self._profile_exact_artifacts: dict[str, STTSGeneratedAudio] = {}
+        self._profile_matching_artifact_operation: str | None = None
+        self._profile_evidence_generation = 0
+        self._profile_test_error = False
 
     def _clear_profile_voice_validation(
         self,
@@ -160,15 +183,28 @@ class SpeechProfileMixin:
             return False
         if not before_controls and not self._profile_controls_applied:
             return False
+        self._retire_profile_test_authority()
         self._profile_preset = None
         self._profile_effective_availability = None
         self._profile_preview_loading = False
         self._profile_configuration_revision = None
         self._profile_voice_validation_token = None
         self._profile_controls_applied = True
+        self._profile_test_context = None
+        self._profile_exact_artifacts.clear()
+        self._profile_matching_artifact_operation = None
+        self._profile_evidence_generation += 1
+        self._profile_test_error = False
         self._sync_profile_preview_status()
         self._sync_generate_enabled()
         return True
+
+    def _retire_profile_test_authority(self) -> None:
+        """Release this pane's active context without touching replacements."""
+
+        _retire_profile_test_context(self._profile_test_context_token)
+        self._profile_test_context_token = None
+        self._profile_test_context = None
 
     def _prime_profile_preset_controls(self) -> None:
         """Show one exact preset disabled before service discovery completes."""
@@ -323,7 +359,152 @@ class SpeechProfileMixin:
             ),
         )
         self._apply_controls(replace(controls, generation_allowed=generation_allowed))
+        self._mark_profile_test_axes()
         return True
+
+    def _mark_profile_test_axes(self) -> None:
+        """Identify the exact profile-owned axes without exposing stored values."""
+
+        preset = self._profile_preset
+        if preset is None or preset.profile_id is None:
+            return
+        for axis in (
+            "tts-provider-select",
+            "tts-model-select",
+            "tts-voice-select",
+            "tts-format-select",
+            "tts-speed-input",
+        ):
+            try:
+                label = self.query_one(f"#{axis_chip_id(axis)}", Static)
+            except Exception:  # noqa: BLE001 - axis may not be mounted yet
+                continue
+            label.tooltip = "Profile test selection — session only"
+            label.add_class("profile-test-source")
+
+    def _retain_profile_generation_artifact(self, artifact: object) -> None:
+        """Retain one exact artifact only for the active profile-test operation."""
+
+        if (
+            type(artifact) is not STTSGeneratedAudio
+            or self._profile_preset is None
+            or self._profile_test_context is None
+        ):
+            return
+        exact = artifact
+        self._profile_exact_artifacts = {exact.operation_id: exact}
+
+    def _handle_profile_generation_result(self, artifact: object) -> None:
+        """Verify one accepted result against its exact profile test context."""
+
+        preset = self._profile_preset
+        if preset is None:
+            return
+        self._profile_matching_artifact_operation = None
+        self._profile_test_error = False
+        self._profile_evidence_generation += 1
+        generation = self._profile_evidence_generation
+        if type(artifact) is not STTSPlaygroundResultProjection:
+            self._profile_exact_artifacts.clear()
+            self._retire_profile_test_authority()
+            self._sync_profile_preview_status()
+            self._sync_save_profile_action()
+            return
+        projection = artifact
+        exact = self._profile_exact_artifacts.pop(projection.operation_id, None)
+        context = _consume_profile_test_context(
+            self._profile_test_context_token,
+            preset,
+        )
+        self._profile_test_context_token = None
+        self._profile_test_context = None
+        if exact is None or context is None:
+            self._profile_exact_artifacts.clear()
+            self._sync_profile_preview_status()
+            self._sync_save_profile_action()
+            return
+        self.run_worker(
+            self._verify_profile_sample(
+                preset,
+                context,
+                exact,
+                projection.operation_id,
+                generation,
+            ),
+            name="verify_voice_profile_sample",
+            group="verify_voice_profile_sample",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _verify_profile_sample(
+        self,
+        preset: TTSPlaygroundSelectionPreset,
+        context: Any,
+        artifact: STTSGeneratedAudio,
+        operation_id: str,
+        generation: int,
+    ) -> None:
+        """Record and re-observe evidence with profile/edit/delete race fences."""
+
+        try:
+            await asyncio.to_thread(
+                context.service.record_sample_evidence,
+                context.loaded,
+                artifact,
+            )
+            page = TTSProfilePageSnapshot(
+                repository_generation=context.loaded.repository_generation,
+                profiles=(context.loaded.profile,),
+                total=1,
+            )
+            snapshot = await context.service.observe_availability(page)
+            if type(snapshot) is not TTSProfileAvailabilitySnapshot:
+                raise TypeError("invalid profile availability")
+            availability = snapshot.profiles[0] if len(snapshot.profiles) == 1 else None
+            verified = bool(
+                snapshot.repository_generation == context.loaded.repository_generation
+                and availability is not None
+                and availability.profile_id == context.loaded.profile.profile_id
+                and availability.state == "available"
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - provider/profile values stay private
+            verified = False
+            availability = None
+
+        current = self.current_audio_artifact
+        if (
+            not self.is_mounted
+            or self._profile_evidence_generation != generation
+            or self._profile_preset is not preset
+            or current is None
+            or current.operation_id != operation_id
+        ):
+            return
+        if verified:
+            self._profile_effective_availability = "available"
+            self._profile_preview_loading = False
+            self._profile_voice_validation_token = None
+            self._profile_matching_artifact_operation = operation_id
+            if availability is not None:
+                self.post_message(
+                    ProfileTestVerified(
+                        ProfileVerificationResult(
+                            profile_id=context.loaded.profile.profile_id,
+                            repository_generation=(
+                                context.loaded.repository_generation
+                            ),
+                            profile_revision=context.loaded.profile.revision,
+                            availability=availability,
+                        )
+                    )
+                )
+        else:
+            self._profile_test_error = True
+        self._sync_profile_preview_status()
+        self._sync_save_profile_action()
 
     async def _save_current_result_as_profile(self) -> None:
         """Save a captured eligible artifact without rereading selectors."""
@@ -333,6 +514,8 @@ class SpeechProfileMixin:
             or not artifact.profile_save_eligible
             or self._generation_operation_id is not None
             or self._profile_save_suppressed
+            or self._profile_preset is not None
+            and artifact.operation_id != self._profile_matching_artifact_operation
         ):
             self._sync_save_profile_action()
             return
@@ -445,10 +628,25 @@ class SpeechProfileMixin:
             adopt.disabled = True
             return
         style_state = availability
-        if availability == "unavailable":
+        is_profile_test = preset.profile_id is not None
+        if self._profile_test_error and is_profile_test:
+            copy = "Testing voice profile — Needs test. The sample could not be verified."
+            style_state = "unverified"
+        elif availability == "unavailable":
             copy = (
                 "Profile preview unavailable — return to Voice profiles and "
                 "choose Edit."
+            )
+        elif (
+            availability == "available"
+            and is_profile_test
+            and self._profile_matching_artifact_operation is not None
+        ):
+            copy = "Testing voice profile — Verified by this sample."
+        elif availability == "unverified" and is_profile_test:
+            copy = (
+                "Testing voice profile — Needs test. Generate one exact sample "
+                "without fallback."
             )
         elif (
             self._profile_preview_loading
@@ -472,7 +670,11 @@ class SpeechProfileMixin:
                     "attempt without fallback."
                 )
         else:
-            copy = "Profile preview — exact saved selection."
+            copy = (
+                "Testing voice profile — Verified by this sample."
+                if is_profile_test
+                else "Profile preview — exact saved selection."
+            )
         for state in ("loading", "available", "unverified", "unavailable"):
             banner.set_class(
                 style_state == state,
@@ -493,6 +695,10 @@ class SpeechProfileMixin:
             and artifact.profile_save_eligible
             and self._generation_operation_id is None
             and not self._profile_save_suppressed
+            and (
+                self._profile_preset is None
+                or artifact.operation_id == self._profile_matching_artifact_operation
+            )
         )
         button.set_class(not eligible, "hidden")
         button.disabled = not eligible

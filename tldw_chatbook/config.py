@@ -21,6 +21,7 @@ import portalocker
 from typing import (
     Any,
     Collection,
+    Callable,
     Dict,
     List,
     Literal,
@@ -414,54 +415,7 @@ DEFAULT_DIARIZATION_CONFIG = {
     "min_speaker_duration": 3.0,  # minimum total duration per speaker
 }
 
-
-def load_openai_mappings() -> Dict:
-    """Load OpenAI TTS mappings from packaged resources.
-
-    Prefer importlib.resources so this works when installed as a package.
-    Fallback to a file path inside the package directory if needed.
-    """
-    from importlib import resources as importlib_resources
-
-    package = "tldw_chatbook.Config_Files"
-    resource_name = "openai_tts_mappings.json"
-
-    # Try importlib.resources first (works in wheels and editable installs)
-    try:
-        mapping_path = importlib_resources.files(package).joinpath(resource_name)
-        logger.info(
-            f"Attempting to load OpenAI TTS mappings from resource: {mapping_path}"
-        )
-        with mapping_path.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e_res:
-        logger.debug(
-            f"OpenAI TTS mappings unavailable via importlib.resources: {e_res}"
-        )
-
-    # Fallback: direct path within the installed package directory
-    try:
-        current_file_path = Path(__file__).resolve()
-        mapping_path_fs = current_file_path.parent / "Config_Files" / resource_name
-        logger.info(
-            f"Attempting to load OpenAI TTS mappings from filesystem: {mapping_path_fs}"
-        )
-        with open(mapping_path_fs, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e_fs:
-        logger.warning(
-            f"OpenAI TTS mappings unavailable; using built-in defaults. Reason: {e_fs}"
-        )
-        return {
-            "models": {"tts-1": "openai_official_tts-1"},
-            "voices": {"alloy": "alloy"},
-        }
-
-
-_openai_mappings = load_openai_mappings()
-
-# This hardcoded mapping can also be moved to TOML or be a fallback for the JSON loaded one
-openai_tts_mappings = {
+_BUILT_IN_OPENAI_TTS_MAPPINGS = {
     "models": {
         "tts-1": "openai_official_tts-1",
         "tts-1-hd": "openai_official_tts-1-hd",
@@ -480,6 +434,47 @@ openai_tts_mappings = {
         "k_adam": "am_v0adam",
     },
 }
+
+
+def _validate_openai_tts_mappings(payload: object) -> Dict[str, Dict[str, str]]:
+    """Return the bounded mapping schema or raise without payload details."""
+
+    if not isinstance(payload, dict):
+        raise ValueError("OpenAI TTS mapping schema is invalid")
+    validated: Dict[str, Dict[str, str]] = {}
+    for section_name in ("models", "voices"):
+        section = payload.get(section_name)
+        if not isinstance(section, dict) or any(
+            type(key) is not str or type(value) is not str
+            for key, value in section.items()
+        ):
+            raise ValueError("OpenAI TTS mapping schema is invalid")
+        validated[section_name] = dict(section)
+    return validated
+
+
+def load_openai_mappings() -> Dict:
+    """Load OpenAI TTS mappings from packaged resources.
+
+    Load through importlib.resources so wheels and editable installs agree.
+    """
+    from importlib import resources as importlib_resources
+
+    package = "tldw_chatbook.Config_Files"
+    resource_name = "openai_tts_mappings.json"
+
+    try:
+        mapping_path = importlib_resources.files(package).joinpath(resource_name)
+        with mapping_path.open("r", encoding="utf-8") as f:
+            return _validate_openai_tts_mappings(json.load(f))
+    except Exception:
+        logger.info("OpenAI TTS mappings unavailable; using built-in defaults")
+        return copy.deepcopy(_BUILT_IN_OPENAI_TTS_MAPPINGS)
+
+
+_openai_mappings = load_openai_mappings()
+
+openai_tts_mappings = copy.deepcopy(_BUILT_IN_OPENAI_TTS_MAPPINGS)
 # Update openai_tts_mappings with values from _openai_mappings (JSON file takes precedence)
 if _openai_mappings:
     openai_tts_mappings["models"].update(_openai_mappings.get("models", {}))
@@ -1275,6 +1270,7 @@ def load_settings(force_reload: bool = False) -> Dict:
     final_providers_settings = get_toml_section("providers")
     final_general_settings_cli = get_toml_section("general")
     final_database_settings_cli = get_toml_section("database")
+    final_model_catalog_settings_cli = get_toml_section("model_catalog")
     final_chat_defaults_cli = get_toml_section("chat_defaults")
     final_character_defaults_cli = get_toml_section("character_defaults")
     final_notes_settings_cli = get_toml_section("notes")
@@ -1452,6 +1448,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         "database": final_database_settings_cli,  # For TUI DB paths
         "api_settings": final_api_settings,  # CRUCIAL for local API calls
         "providers": final_providers_settings,  # For UI dropdowns
+        "model_catalog": final_model_catalog_settings_cli,
         "chat_defaults": final_chat_defaults_cli,
         "character_defaults": final_character_defaults_cli,
         "notes": final_notes_settings_cli,  # For notes auto-save settings
@@ -4764,6 +4761,37 @@ class RuntimeConfigSnapshot(NamedTuple):
     values: Dict[str, Any]
 
 
+class AtomicConfigSnapshot(NamedTuple):
+    """A locked authoritative config view paired with its published generation."""
+
+    generation: int
+    values: Dict[str, Any]
+
+
+def _atomic_config_values_from_raw(
+    config_data: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Merge and decrypt the exact raw mapping already read under the write lock."""
+
+    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(config_data))
+    decryption = _decrypt_config_section_with_status(merged, strict=True)
+    if not decryption.succeeded:
+        raise ValueError("Authoritative configuration could not be decrypted")
+    return decryption.config
+
+
+def get_atomic_config_snapshot() -> AtomicConfigSnapshot:
+    """Read the authoritative config through the same lock used by mutations."""
+
+    config_path = _get_effective_config_path()
+    with _config_write_lock(config_path):
+        raw = _read_raw_cli_config_unlocked(config_path)
+        return AtomicConfigSnapshot(
+            generation=_CONFIG_GENERATION,
+            values=_atomic_config_values_from_raw(raw),
+        )
+
+
 def get_runtime_config_snapshot(
     *,
     force_reload: bool = False,
@@ -4776,6 +4804,36 @@ def get_runtime_config_snapshot(
             generation=_CONFIG_GENERATION,
             values=copy.deepcopy(values),
         )
+
+
+def run_if_runtime_config_generation_current(
+    expected_generation: int,
+    action: Callable[[], bool],
+) -> bool:
+    """Linearize a nonblocking action against runtime config publication.
+
+    Lock order is always ``config -> action-owned lock``. The supplied action
+    must be process-local and nonblocking; first-chat handoff acknowledgement
+    uses this to acquire only the pending-handoff lock. Pending handoff stage,
+    claim, and release paths never acquire the config lock, so there is no
+    reverse ``handoff -> config`` edge.
+
+    Args:
+        expected_generation: Runtime generation the caller validated.
+        action: Nonblocking action to execute while publication is fenced.
+
+    Returns:
+        ``True`` only when the generation matched and the action succeeded.
+    """
+
+    if type(expected_generation) is not int or expected_generation < 0:
+        raise ValueError("Expected config generation must be nonnegative")
+    if not callable(action):
+        raise TypeError("Config generation action must be callable")
+    with _config_file_lock():
+        if _CONFIG_GENERATION != expected_generation:
+            return False
+        return action() is True
 
 
 def _encryption_enabled(config_data: Mapping[str, Any]) -> bool:
@@ -5017,6 +5075,7 @@ class ConfigMutationResult:
     caches_reloaded: bool
     failure_phase: Literal["before_replace", "cache_reload"] | None
     conflict: bool = False
+    conflict_reason: Literal["identity_changed"] | None = None
 
     @property
     def fully_applied(self) -> bool:
@@ -5247,11 +5306,20 @@ def apply_settings_mutation_to_cli_config(
     section_values: Mapping[str, Mapping[Any, Any]],
     *,
     delete_keys: Mapping[str, Collection[str]] | None = None,
+    mutation_precondition: Callable[[], bool] | None = None,
+    locked_snapshot_precondition: Callable[[AtomicConfigSnapshot], bool]
+    | None = None,
 ) -> ConfigMutationResult:
     """Atomically apply exact config sets/deletes, then refresh caches."""
     global _CONFIG_CACHE, _SETTINGS_CACHE, settings
     requested_deletes = {} if delete_keys is None else delete_keys
     try:
+        if mutation_precondition is not None and not callable(mutation_precondition):
+            raise TypeError("Configuration mutation precondition must be callable")
+        if locked_snapshot_precondition is not None and not callable(
+            locked_snapshot_precondition
+        ):
+            raise TypeError("Locked configuration precondition must be callable")
         config_path = _get_effective_config_path()
     except Exception as error:
         logger.error(
@@ -5302,6 +5370,50 @@ def apply_settings_mutation_to_cli_config(
                 type(error).__name__,
             )
             return ConfigMutationResult(False, False, "before_replace")
+
+        if mutation_precondition is not None:
+            try:
+                is_current = mutation_precondition()
+            except Exception as error:
+                logger.error(
+                    "Configuration mutation failed "
+                    "(phase=precondition, config_path={}, error_type={}).",
+                    config_path,
+                    type(error).__name__,
+                )
+                return ConfigMutationResult(False, False, "before_replace")
+            if is_current is not True:
+                return ConfigMutationResult(
+                    False,
+                    False,
+                    None,
+                    conflict=True,
+                    conflict_reason="identity_changed",
+                )
+
+        if locked_snapshot_precondition is not None:
+            try:
+                locked_snapshot = AtomicConfigSnapshot(
+                    generation=_CONFIG_GENERATION,
+                    values=_atomic_config_values_from_raw(config_data),
+                )
+                is_current = locked_snapshot_precondition(locked_snapshot)
+            except Exception as error:
+                logger.error(
+                    "Configuration mutation failed "
+                    "(phase=locked_precondition, config_path={}, error_type={}).",
+                    config_path,
+                    type(error).__name__,
+                )
+                return ConfigMutationResult(False, False, "before_replace")
+            if is_current is not True:
+                return ConfigMutationResult(
+                    False,
+                    False,
+                    None,
+                    conflict=True,
+                    conflict_reason="identity_changed",
+                )
 
         deleted_any = _delete_config_keys(config_data, requested_deletes)
         for section, values in section_values.items():

@@ -14,6 +14,8 @@ import pytest
 from textual.app import App
 from textual.screen import Screen
 
+from tldw_chatbook import config as config_module
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
     ModelCatalogRefreshed,
     ProviderRefreshOutcome,
@@ -21,8 +23,6 @@ from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
     format_refresh_notification,
     forward_model_catalog_refreshed,
 )
-from tldw_chatbook.app import TldwCli
-
 
 # ---------------------------------------------------------------------------
 # Routing: App.post_message must be forwarded DOWN to a mounted screen handler
@@ -134,6 +134,29 @@ async def test_refresh_skips_when_auto_refresh_disabled(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_refresh_honors_disabled_setting_from_canonical_config(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "model-catalog-disabled.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    assert config_module.save_settings_to_cli_config(
+        {"model_catalog": {"auto_refresh_enabled": False}}
+    )
+
+    settings = config_module.load_settings(force_reload=True)
+    assert settings["model_catalog"]["auto_refresh_enabled"] is False
+
+    service = _StubCatalogService(report=RefreshReport())
+    app = _StubApp(disk_store=object(), service=service)
+    await TldwCli._refresh_model_catalogs(app)
+
+    assert service.calls == []
+    assert app.posted_messages == []
+    assert app.notifications == []
+
+
+@pytest.mark.asyncio
 async def test_refresh_skips_when_disk_store_missing(monkeypatch):
     app, service = _stub(monkeypatch, disk_store=None)
     await TldwCli._refresh_model_catalogs(app)
@@ -195,6 +218,36 @@ async def test_refresh_notifies_with_warning_severity_on_write_failure(monkeypat
     await TldwCli._refresh_model_catalogs(app)
     expected = format_refresh_notification(report)
     assert expected is not None
+    assert app.notifications == [(expected, "Model catalog", "warning")]
+
+
+@pytest.mark.asyncio
+async def test_refresh_notifies_with_warning_severity_on_disk_write_failure(
+    monkeypatch,
+):
+    endpoint_canary = "https://user:disk-secret@example.test/v1?token=disk-secret"
+    exception_canary = f"ValueError({endpoint_canary})"
+    report = RefreshReport(
+        outcomes=(
+            ProviderRefreshOutcome(
+                provider_list_key="OpenAI",
+                status="refreshed",
+                new_model_ids=(endpoint_canary,),
+                error_kind=exception_canary,
+            ),
+        ),
+        disk_write_failed=True,
+    )
+    app, _service = _stub(monkeypatch, report=report)
+
+    await TldwCli._refresh_model_catalogs(app)
+
+    expected = format_refresh_notification(report)
+    assert expected is not None
+    assert len(expected) < 500
+    assert endpoint_canary not in expected
+    assert exception_canary not in expected
+    assert "disk-secret" not in expected
     assert app.notifications == [(expected, "Model catalog", "warning")]
 
 

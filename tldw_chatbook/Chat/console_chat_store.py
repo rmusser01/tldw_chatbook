@@ -42,7 +42,6 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
     effective_user_display_name,
@@ -51,11 +50,13 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
 from tldw_chatbook.Chat.console_roleplay_metadata import ConsoleRoleplayContext
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_speech import (
     ConsoleSpeechSnapshotRejected,
     ConsoleSpeechSnapshotRejectionCode,
     TTSMessageSpeechSnapshot,
 )
+from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.provider_continuation import (
@@ -316,6 +317,20 @@ class ConsoleChatPersistence(Protocol):
     def get_conversation_version(self, conversation_id: str) -> int | None:
         """Return the current positive durable conversation row version."""
 
+    def get_conversation_speech_preferences(
+        self, conversation_id: str
+    ) -> ConsoleSpeechPreferences:
+        """Return fail-closed reply-speech preferences for one conversation."""
+
+    def update_conversation_speech_preferences(
+        self,
+        *,
+        conversation_id: str,
+        preferences: ConsoleSpeechPreferences,
+        expected_version: int,
+    ) -> bool:
+        """Optimistically merge reply-speech preferences into metadata."""
+
     def update_conversation_system_prompt(
         self,
         *,
@@ -454,6 +469,12 @@ class ConsoleChatSession:
     id: str = field(default_factory=lambda: str(uuid4()))
     persisted_conversation_id: str | None = None
     settings: ConsoleSessionSettings | None = None
+    #: Exact canonical defaults from which an untouched initial session was
+    #: created. ``None`` means the settings have no proven default provenance.
+    canonical_settings_baseline: ConsoleSessionSettings | None = field(
+        default=None,
+        kw_only=True,
+    )
     #: Sparse conversation-owned context policy. For an empty unsaved tab this
     #: remains staged only in the session/screen snapshot and is flushed after
     #: the first durable conversation row is created.
@@ -463,6 +484,9 @@ class ConsoleChatSession:
     #: Bounded persistence diagnostic for a corrupt/unreadable stored policy.
     context_policy_error: str | None = None
     draft: str = ""
+    #: Session-lifetime evidence that the composer has held user-authored text.
+    #: Clearing the draft does not make that work safe to overwrite.
+    has_user_work: bool = False
     updated_at: str = field(default_factory=_utc_now_iso)
     pending_attachments: list[PendingAttachment] = field(default_factory=list)
     one_shot_prefill: str | None = None
@@ -485,6 +509,9 @@ class ConsoleChatSession:
     user_display_name_override: str | None = None
     #: Trusted character system source; materialized into ``settings.system_prompt``.
     character_system_template: str | None = None
+    speech_preferences: ConsoleSpeechPreferences = field(
+        default_factory=ConsoleSpeechPreferences
+    )
     #: Monotonic identity projection fence for labels and trusted templates.
     identity_revision: int = 0
     #: Temporary conversation (spec 2026-07-31): this session is never written
@@ -541,6 +568,54 @@ class ConsoleChatSession:
     todo_store: SessionTodoStore = field(default_factory=SessionTodoStore)
 
 
+def is_untouched_default_session(
+    session: ConsoleChatSession,
+    messages: Iterable[object],
+    draft: str,
+    staged_attachments: Iterable[object],
+) -> bool:
+    """Return whether visible session state proves a default tab is untouched."""
+
+    if not isinstance(session, ConsoleChatSession):
+        return False
+    if type(draft) is not str or draft:
+        return False
+    sentinel = object()
+    try:
+        if next(iter(messages), sentinel) is not sentinel:
+            return False
+        if next(iter(staged_attachments), sentinel) is not sentinel:
+            return False
+    except (TypeError, RuntimeError):
+        return False
+    baseline = session.canonical_settings_baseline
+    if baseline is None or session.settings != baseline:
+        return False
+    return not (
+        session.title != DEFAULT_CONSOLE_SESSION_TITLE
+        or session.persisted_conversation_id is not None
+        or session.draft != ""
+        or session.has_user_work
+        or session.pending_attachments
+        or session.one_shot_prefill is not None
+        or session.rag_scope_holder.scope is not None
+        or not session.context_policy_overrides.is_empty
+        or session.context_policy_error is not None
+        or session.runtime_backend != "local"
+        or session.assistant_kind != "generic"
+        or session.assistant_id != "console"
+        or session.assistant_authority_id is not None
+        or session.character_id is not None
+        or session.character_name is not None
+        or session.user_display_name_override is not None
+        or session.character_system_template is not None
+        or session.speech_preferences != ConsoleSpeechPreferences()
+        or session.identity_revision != 0
+        or session.ephemeral
+        or session.todo_store.list_after(None)
+    )
+
+
 class ConsoleChatStore:
     """Manage native Console sessions and messages before UI integration."""
 
@@ -590,6 +665,8 @@ class ConsoleChatStore:
         self.sync_v2_workspace_scope = sync_v2_workspace_scope
         self.on_scope_flushed = on_scope_flushed
         self.active_session_id: str | None = None
+        self._active_session_epoch = 0
+        self._speech_preference_epoch_sequence = 0
         self._sessions: dict[str, ConsoleChatSession] = {}
         #: Derived VIEW = the current active path only (root -> active leaf).
         #: Written ONLY by ``_recompute_active_path`` (single-writer invariant);
@@ -647,6 +724,11 @@ class ConsoleChatStore:
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
+        # Content-free fence that advances only for live successful
+        # completions. It distinguishes duplicate callback delivery from a
+        # later regeneration of the same message without retaining text.
+        self._message_completion_generations: dict[str, int] = {}
+        self._message_completion_epoch = 0
         # Cost-ticker PR3: per-session monotonic counter of payload-affecting
         # mutations, so the cost chip knows when its cache-break fingerprint
         # needs recomputing. Process-local, like the speech revisions above.
@@ -661,6 +743,62 @@ class ConsoleChatStore:
         # stopped terminal must advance the context epoch when the row becomes
         # provider-visible history. A repeat failure stays excluded and stable.
         self._failed_retry_message_ids: set[str] = set()
+        # Process-local observers for the first LIVE transition of a message
+        # into the complete state. Restored/already-complete rows never pass
+        # through the publisher, so hydration cannot replay speech.
+        self._message_completed_subscribers: dict[
+            int, Callable[[tuple[str, str]], None]
+        ] = {}
+        self._next_message_completed_subscriber_id = 1
+        self._speech_preference_epochs: dict[str, int] = {}
+
+    def subscribe_message_completed(
+        self,
+        callback: Callable[[tuple[str, str]], None],
+    ) -> Callable[[], None]:
+        """Observe successful live completion tokens until unsubscribe.
+
+        The callback receives only an immutable ``(session_id, message_id)``
+        token. Subscriber failures are isolated from message finalization.
+        """
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        subscriber_id = self._next_message_completed_subscriber_id
+        self._next_message_completed_subscriber_id += 1
+        self._message_completed_subscribers[subscriber_id] = callback
+        subscribed = True
+
+        def unsubscribe() -> None:
+            nonlocal subscribed
+            if not subscribed:
+                return
+            subscribed = False
+            self._message_completed_subscribers.pop(subscriber_id, None)
+
+        return unsubscribe
+
+    def _publish_message_completed(self, session_id: str, message_id: str) -> None:
+        """Publish one validated live terminal transition without message content."""
+        if self._message_session_index.get(message_id) != session_id:
+            return
+        token = (session_id, message_id)
+        for callback in tuple(self._message_completed_subscribers.values()):
+            try:
+                callback(token)
+            except Exception:
+                logger.warning("Console completion subscriber failed")
+
+    def _record_message_completed(self, session_id: str, message_id: str) -> None:
+        self._message_completion_epoch += 1
+        self._message_completion_generations[message_id] = (
+            self._message_completion_epoch
+        )
+        self._publish_message_completed(session_id, message_id)
+
+    def message_completion_generation(self, message_id: str) -> int:
+        """Return the process-local generation of a live successful completion."""
+        self._message_or_raise(message_id)
+        return self._message_completion_generations[message_id]
 
     def ensure_session(
         self,
@@ -668,20 +806,26 @@ class ConsoleChatStore:
         title: str = DEFAULT_CONSOLE_SESSION_TITLE,
         workspace_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
+        canonical_settings_baseline: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
         """Return the active session, creating one when needed."""
         if self.active_session_id is not None:
             return self._sessions[self.active_session_id]
         return self.create_session(
-            title=title, workspace_id=workspace_id, settings=settings
+            title=title,
+            workspace_id=workspace_id,
+            settings=settings,
+            canonical_settings_baseline=canonical_settings_baseline,
         )
 
     def create_session(
         self,
         *,
+        session_id: str | None = None,
         title: str = DEFAULT_CONSOLE_SESSION_TITLE,
         workspace_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
+        canonical_settings_baseline: ConsoleSessionSettings | None = None,
         runtime_backend: str = "local",
         assistant_kind: str | None = "generic",
         assistant_id: str | None = "console",
@@ -689,18 +833,46 @@ class ConsoleChatStore:
         character_id: int | None = None,
         character_name: str | None = None,
         ephemeral: bool = False,
+        activate: bool = True,
     ) -> ConsoleChatSession:
         """Create and activate a new native Console session.
 
         Args:
+            session_id: Optional validated identity reserved by a typed handoff.
+            canonical_settings_baseline: Exact canonical defaults that equal
+                ``settings``. Omit when the settings have no proven provenance.
             ephemeral: When True the session is temporary -- never written to
                 local storage until ``promote_ephemeral_session`` clears the
                 flag.
+            activate: Whether to make the new session active immediately.
         """
+        if session_id is not None:
+            if (
+                type(session_id) is not str
+                or not session_id
+                or session_id != session_id.strip()
+                or len(session_id) > 256
+            ):
+                raise ValueError("session id is invalid")
+            if session_id in self._sessions:
+                raise ValueError("session id already exists")
+        if (
+            canonical_settings_baseline is not None
+            and (
+                not isinstance(
+                    canonical_settings_baseline,
+                    ConsoleSessionSettings,
+                )
+                or canonical_settings_baseline != settings
+            )
+        ):
+            raise ValueError("canonical baseline must equal the session settings.")
         session = ConsoleChatSession(
+            id=session_id or str(uuid4()),
             title=title,
             workspace_id=workspace_id or self.workspace_context.active_workspace_id,
             settings=settings,
+            canonical_settings_baseline=canonical_settings_baseline,
             runtime_backend=runtime_backend,
             assistant_kind=assistant_kind,
             assistant_id=assistant_id,
@@ -716,8 +888,250 @@ class ConsoleChatStore:
         self._active_leaf_by_session[session.id] = None
         self._context_summary_by_session[session.id] = (None, None)
         self._conversation_context_epochs[session.id] = 0
-        self.active_session_id = session.id
+        if activate:
+            self._activate_session(session.id)
         return session
+
+    def _activate_session(self, session_id: str | None) -> None:
+        """Publish one activation transition behind a monotonic process fence."""
+        self.active_session_id = session_id
+        self._active_session_epoch += 1
+
+    def active_session_epoch(self) -> int:
+        """Return the monotonic generation of the current activation state."""
+        return self._active_session_epoch
+
+    def is_pristine_session(
+        self,
+        session_id: str,
+        *,
+        expected_settings: ConsoleSessionSettings,
+    ) -> bool:
+        """Return whether a session is the untouched initial Console tab."""
+        session = self._sessions.get(session_id)
+        if session is None or not isinstance(expected_settings, ConsoleSessionSettings):
+            return False
+        if session.canonical_settings_baseline != expected_settings:
+            return False
+        if not is_untouched_default_session(
+            session,
+            self._messages_by_session.get(session_id, ()),
+            session.draft,
+            session.pending_attachments,
+        ):
+            return False
+        # Every real message and display-only tool marker is assigned to its
+        # session through the full tree and/or `_message_session_index` at its
+        # registration boundary. Any such ownership is therefore a complete
+        # strict disqualifier, even when the active-path message list is empty.
+        # Per-message cache entries without either ownership source are not
+        # attributable to this session and must not be guessed from key text.
+        owned_message_state = (
+            self._messages_by_session.get(session_id)
+            or self._nodes_by_session.get(session_id)
+            or self._children_by_parent.get(session_id)
+            or self._active_leaf_by_session.get(session_id) is not None
+            or any(owner == session_id for owner in self._message_session_index.values())
+            or bool(self._tool_markers_by_session.get(session_id))
+        )
+        session_live_state = (
+            self._context_summary_by_session.get(session_id) != (None, None)
+            or bool(self._roleplay_system_projection_candidates.get(session_id))
+            or self._conversation_context_epochs.get(session_id) != 0
+        )
+        return not (owned_message_state or session_live_state)
+
+    def repurpose_pristine_session(
+        self,
+        session_id: str,
+        *,
+        canonical_settings: ConsoleSessionSettings,
+        settings: ConsoleSessionSettings,
+        trusted_system_prompt: str,
+        title: str,
+        runtime_backend: str,
+        assistant_kind: str,
+        assistant_id: str,
+        assistant_authority_id: str | None,
+        character_id: int | None,
+        character_name: str,
+    ) -> ConsoleChatSession:
+        """Atomically replace an untouched initial tab with roleplay identity."""
+        if not isinstance(canonical_settings, ConsoleSessionSettings):
+            raise TypeError("canonical_settings must be ConsoleSessionSettings.")
+        if not isinstance(settings, ConsoleSessionSettings):
+            raise TypeError("settings must be ConsoleSessionSettings.")
+        if type(trusted_system_prompt) is not str or not trusted_system_prompt.strip():
+            raise ValueError("Trusted roleplay system prompt must be non-empty text.")
+        if runtime_backend not in {"local", "server"}:
+            raise ValueError("Roleplay runtime backend must be local or server.")
+        if assistant_kind != "character":
+            raise ValueError("Repurposed sessions require character identity.")
+        if type(assistant_id) is not str or not assistant_id:
+            raise ValueError("Roleplay assistant id must be non-empty text.")
+        if assistant_authority_id is not None and (
+            type(assistant_authority_id) is not str or not assistant_authority_id
+        ):
+            raise ValueError("Roleplay authority id must be non-empty text or None.")
+        if type(character_name) is not str or not character_name.strip():
+            raise ValueError("Roleplay character name must be non-empty text.")
+        if title != f"Chat with {character_name}":
+            raise ValueError("Roleplay title does not match the character identity.")
+        expected_roleplay_settings = replace(
+            canonical_settings,
+            system_prompt=trusted_system_prompt,
+            character_label=character_name,
+        )
+        if settings != expected_roleplay_settings:
+            raise ValueError("Roleplay settings contain noncanonical changes.")
+        if runtime_backend == "local":
+            if (
+                type(character_id) is not int
+                or character_id < 1
+                or assistant_id != str(character_id)
+            ):
+                raise ValueError("Local roleplay identity is inconsistent.")
+        elif character_id is not None:
+            raise ValueError("Server roleplay identity cannot carry a local id.")
+
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise ValueError("Session is no longer pristine.")
+        proposed_updated_at = _utc_now_iso()
+        proposed_identity_revision = session.identity_revision + 1
+        proposed_payload_revision = self._payload_revisions.get(session_id, 0) + 1
+        if not self.is_pristine_session(
+            session_id,
+            expected_settings=canonical_settings,
+        ):
+            raise ValueError("Session is no longer pristine.")
+
+        # All validation, derived values, and stale-eligibility checks are
+        # complete. ConsoleChatSession is a plain dataclass with no property
+        # setters, so these bounded assignments cannot raise application-level
+        # exceptions and preserve the live object references held by the UI.
+        session.title = title
+        session.settings = settings
+        session.canonical_settings_baseline = None
+        session.runtime_backend = runtime_backend
+        session.assistant_kind = assistant_kind
+        session.assistant_id = assistant_id
+        session.assistant_authority_id = assistant_authority_id
+        session.character_id = character_id
+        session.character_name = character_name
+        session.updated_at = proposed_updated_at
+        session.identity_revision = proposed_identity_revision
+        self._payload_revisions[session_id] = proposed_payload_revision
+        return session
+
+    def refresh_pristine_session_settings(
+        self,
+        session_id: str,
+        *,
+        prior_canonical_settings: ConsoleSessionSettings,
+        current_canonical_settings: ConsoleSessionSettings,
+    ) -> ConsoleChatSession:
+        """Atomically refresh proven canonical defaults on an untouched tab."""
+        if (
+            not isinstance(prior_canonical_settings, ConsoleSessionSettings)
+            or not isinstance(current_canonical_settings, ConsoleSessionSettings)
+        ):
+            raise TypeError("Canonical settings provenance is required.")
+        if not all(
+            settings.source == "derived"
+            and settings.system_prompt is None
+            and settings.character_label == ""
+            and settings.pinned_prefill is None
+            for settings in (
+                prior_canonical_settings,
+                current_canonical_settings,
+            )
+        ):
+            raise ValueError("Canonical settings must be unmodified derived defaults.")
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise ValueError("Session is no longer pristine.")
+        if session.canonical_settings_baseline != prior_canonical_settings:
+            raise ValueError("Session settings lack the expected canonical provenance.")
+        proposed_updated_at = _utc_now_iso()
+        if not self.is_pristine_session(
+            session_id,
+            expected_settings=prior_canonical_settings,
+        ):
+            raise ValueError("Session is no longer pristine.")
+
+        # Validation and stale-eligibility checks are complete. These are plain
+        # dataclass assignments with no property setters, so the bounded commit
+        # cannot raise application-level exceptions and preserves held references.
+        session.settings = current_canonical_settings
+        session.canonical_settings_baseline = current_canonical_settings
+        session.updated_at = proposed_updated_at
+        return session
+
+    def rollback_pristine_session_refresh(
+        self,
+        session_id: str,
+        *,
+        expected_current_settings: ConsoleSessionSettings,
+        prior_settings: ConsoleSessionSettings,
+        prior_canonical_settings: ConsoleSessionSettings,
+        prior_updated_at: str,
+    ) -> bool:
+        """Restore an exact first-chat refresh only while it remains pristine."""
+
+        session = self._sessions.get(session_id)
+        if (
+            session is None
+            or session.settings != expected_current_settings
+            or session.canonical_settings_baseline != expected_current_settings
+            or not self.is_pristine_session(
+                session_id,
+                expected_settings=expected_current_settings,
+            )
+        ):
+            return False
+        session.settings = prior_settings
+        session.canonical_settings_baseline = prior_canonical_settings
+        session.updated_at = prior_updated_at
+        return True
+
+    def rollback_created_pristine_session(
+        self,
+        session_id: str,
+        *,
+        expected_session: ConsoleChatSession,
+        expected_settings: ConsoleSessionSettings,
+        prior_active_session_id: str | None,
+    ) -> bool:
+        """Remove an exact newly-created target without touching claimed work."""
+
+        session = self._sessions.get(session_id)
+        if (
+            session is not expected_session
+            or not self.is_pristine_session(
+                session_id,
+                expected_settings=expected_settings,
+            )
+        ):
+            return False
+        self._messages_by_session.pop(session_id, None)
+        self._tool_markers_by_session.pop(session_id, None)
+        self._nodes_by_session.pop(session_id, None)
+        self._children_by_parent.pop(session_id, None)
+        self._active_leaf_by_session.pop(session_id, None)
+        self._context_summary_by_session.pop(session_id, None)
+        self._roleplay_system_projection_candidates.pop(session_id, None)
+        self._conversation_context_epochs.pop(session_id, None)
+        self._speech_preference_epochs.pop(session_id, None)
+        self._payload_revisions.pop(session_id, None)
+        self._sessions.pop(session_id, None)
+        if self.active_session_id == session_id:
+            self._activate_session(
+                prior_active_session_id
+                if prior_active_session_id in self._sessions
+                else None
+            )
+        return True
 
     def restore_persisted_session(
         self,
@@ -796,6 +1210,7 @@ class ConsoleChatStore:
             character_name=character_name,
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
+        self._restore_speech_preferences(session)
         self._resolve_context_policy_on_resume(session.id)
         restored_nodes = self._hydrate_provider_continuations_from_persistence(
             persisted_conversation_id,
@@ -940,6 +1355,28 @@ class ConsoleChatStore:
                         )
                         break
 
+    def _restore_speech_preferences(self, session: ConsoleChatSession) -> None:
+        """Fail closed while hydrating conversation-owned speech preferences."""
+        if self.persistence is None or session.persisted_conversation_id is None:
+            return
+        reader = getattr(
+            self.persistence,
+            "get_conversation_speech_preferences",
+            None,
+        )
+        if not callable(reader):
+            return
+        try:
+            restored = reader(session.persisted_conversation_id)
+        except Exception:
+            logger.bind(
+                session_id=session.id,
+                conversation_id=session.persisted_conversation_id,
+            ).exception("Failed to restore Console reply-speech preferences.")
+            return
+        if isinstance(restored, ConsoleSpeechPreferences):
+            session.speech_preferences = restored
+
     def _hydrate_generation_metadata_from_persistence(self, session_id: str) -> None:
         """Batch-fetch and apply generation-metadata sidecar rows on resume.
 
@@ -1030,7 +1467,7 @@ class ConsoleChatStore:
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing session."""
         session = self._session_or_raise(session_id)
-        self.active_session_id = session.id
+        self._activate_session(session.id)
         return session
 
     def rename_session(
@@ -1062,6 +1499,9 @@ class ConsoleChatStore:
         if not normalized_title:
             raise ValueError("Console chat session title cannot be blank.")
         session = self._session_or_raise(session_id)
+        if session.title != normalized_title:
+            session.has_user_work = True
+            session.canonical_settings_baseline = None
         session.title = normalized_title
         persisted = True
         if (
@@ -1125,6 +1565,7 @@ class ConsoleChatStore:
             self._variant_restored_message_ids.discard(message_id)
             self._failed_retry_message_ids.discard(message_id)
             self._message_speech_revisions.pop(message_id, None)
+            self._message_completion_generations.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
             self._roleplay_message_projection_candidates.pop(message_id, None)
 
@@ -1136,6 +1577,7 @@ class ConsoleChatStore:
         self._context_summary_by_session.pop(session_id, None)
         self._roleplay_system_projection_candidates.pop(session_id, None)
         self._conversation_context_epochs.pop(session_id, None)
+        self._speech_preference_epochs.pop(session_id, None)
         self._sessions.pop(session_id, None)
 
         if self.active_session_id != session_id:
@@ -1143,12 +1585,12 @@ class ConsoleChatStore:
 
         remaining_sessions = list(self._sessions.values())
         if not remaining_sessions:
-            self.active_session_id = None
+            self._activate_session(None)
             return None
 
         next_index = min(closed_index, len(remaining_sessions) - 1)
         next_session = remaining_sessions[next_index]
-        self.active_session_id = next_session.id
+        self._activate_session(next_session.id)
         return next_session
 
     def sessions(self) -> list[ConsoleChatSession]:
@@ -1200,6 +1642,104 @@ class ConsoleChatStore:
             return session, False
         return session, True
 
+    def set_auto_speak(
+        self, session_id: str, enabled: bool
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Enable or disable automatic reply speech for one conversation."""
+        if type(enabled) is not bool:
+            raise ValueError("enabled must be an exact boolean.")
+        session = self._session_or_raise(session_id)
+        return self._set_speech_preferences(
+            session,
+            replace(session.speech_preferences, auto_speak=enabled),
+        )
+
+    def speech_preference_epoch(self, session_id: str) -> int:
+        """Return the process-local revision of one session's speech opt-in."""
+        self._session_or_raise(session_id)
+        return self._speech_preference_epochs.get(session_id, 0)
+
+    def _bump_speech_preference_epoch(self, session_id: str) -> None:
+        self._speech_preference_epoch_sequence += 1
+        self._speech_preference_epochs[session_id] = (
+            self._speech_preference_epoch_sequence
+        )
+
+    def pause_auto_speak(self, session_id: str) -> tuple[ConsoleChatSession, bool]:
+        """Persistently pause automatic reply speech for one conversation."""
+        session = self._session_or_raise(session_id)
+        return self._set_speech_preferences(
+            session,
+            replace(session.speech_preferences, paused=True),
+        )
+
+    def resume_auto_speak(self, session_id: str) -> tuple[ConsoleChatSession, bool]:
+        """Resume automatic reply speech for one conversation."""
+        session = self._session_or_raise(session_id)
+        return self._set_speech_preferences(
+            session,
+            replace(session.speech_preferences, paused=False),
+        )
+
+    def confirm_auto_speak_destination(
+        self, session_id: str, destination: str
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Record consent for one canonical TTS destination fingerprint."""
+        session = self._session_or_raise(session_id)
+        return self._set_speech_preferences(
+            session,
+            replace(session.speech_preferences, consent_destination=destination),
+        )
+
+    def _set_speech_preferences(
+        self,
+        session: ConsoleChatSession,
+        preferences: ConsoleSpeechPreferences,
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Apply speech state after its versioned durable write succeeds."""
+        if session.persisted_conversation_id is None:
+            if preferences == session.speech_preferences:
+                return session, True
+            session.speech_preferences = preferences
+            session.updated_at = _utc_now_iso()
+            self._bump_speech_preference_epoch(session.id)
+            return session, True
+        if self.persistence is None:
+            return session, False
+        version_reader = getattr(self.persistence, "get_conversation_version", None)
+        writer = getattr(
+            self.persistence,
+            "update_conversation_speech_preferences",
+            None,
+        )
+        if not callable(version_reader) or not callable(writer):
+            return session, False
+        try:
+            expected_version = version_reader(session.persisted_conversation_id)
+            if type(expected_version) is not int or expected_version < 1:
+                return session, False
+            persisted = bool(
+                writer(
+                    conversation_id=session.persisted_conversation_id,
+                    preferences=preferences,
+                    expected_version=expected_version,
+                )
+            )
+        except Exception:
+            logger.bind(
+                session_id=session.id,
+                conversation_id=session.persisted_conversation_id,
+            ).exception("Failed to persist Console reply-speech preferences.")
+            return session, False
+        if not persisted:
+            return session, False
+        changed = preferences != session.speech_preferences
+        session.speech_preferences = preferences
+        session.updated_at = _utc_now_iso()
+        if changed:
+            self._bump_speech_preference_epoch(session.id)
+        return session, True
+
     def session_workspace_id(self, session_id: str) -> str:
         """Return the workspace id a native Console session is bound to.
 
@@ -1227,9 +1767,20 @@ class ConsoleChatStore:
         self,
         session_id: str,
         settings: ConsoleSessionSettings,
+        *,
+        mark_user_work: bool = True,
+        canonical_settings_baseline: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
         """Replace in-memory settings for a native Console session."""
         session = self._session_or_raise(session_id)
+        if mark_user_work and session.settings != settings:
+            session.has_user_work = True
+        elif not mark_user_work:
+            if canonical_settings_baseline != settings:
+                raise ValueError(
+                    "Automatic settings replacement requires an exact canonical baseline."
+                )
+            session.canonical_settings_baseline = canonical_settings_baseline
         session.settings = settings
         self._bump_payload_revision(session_id)
         return session
@@ -1242,6 +1793,8 @@ class ConsoleChatStore:
         """Replace the in-memory composer draft for a native Console session."""
         session = self._session_or_raise(session_id)
         session.draft = draft
+        if draft:
+            session.has_user_work = True
         return session
 
     def session_one_shot_prefill(self, session_id: str) -> str | None:
@@ -1399,7 +1952,7 @@ class ConsoleChatStore:
             active_session_id: Preferred active session after restoration.
         """
         restored_sessions = list(sessions)
-        self.active_session_id = None
+        self._activate_session(None)
         self._sessions.clear()
         self._messages_by_session.clear()
         self._message_session_index.clear()
@@ -1418,8 +1971,10 @@ class ConsoleChatStore:
         self._variant_restored_message_ids.clear()
         self._failed_retry_message_ids.clear()
         self._message_speech_revisions.clear()
+        self._message_completion_generations.clear()
         self._payload_revisions.clear()
         self._conversation_context_epochs.clear()
+        self._speech_preference_epochs.clear()
         self._nodes_by_session.clear()
         self._children_by_parent.clear()
         self._native_parent_by_message.clear()
@@ -1429,6 +1984,7 @@ class ConsoleChatStore:
         messages_by_session = messages_by_session or {}
         for session in restored_sessions:
             self._sessions[session.id] = replace(session)
+            self._bump_speech_preference_epoch(session.id)
             self._nodes_by_session[session.id] = {}
             self._children_by_parent[session.id] = {}
             self._active_leaf_by_session[session.id] = None
@@ -1441,9 +1997,9 @@ class ConsoleChatStore:
             self._bump_payload_revision(session.id)
 
         if active_session_id in self._sessions:
-            self.active_session_id = active_session_id
+            self._activate_session(active_session_id)
         elif self._sessions:
-            self.active_session_id = next(iter(self._sessions))
+            self._activate_session(next(iter(self._sessions)))
 
     @staticmethod
     def _set_message_attachments(
@@ -3322,6 +3878,7 @@ class ConsoleChatStore:
             self._variant_restored_message_ids.discard(node_id)
             self._failed_retry_message_ids.discard(node_id)
             self._message_speech_revisions.pop(node_id, None)
+            self._message_completion_generations.pop(node_id, None)
         # Only when the deleted branch was on the active path does the leaf move
         # (up to the deleted node's parent); an off-path delete leaves it alone.
         self._purge_tool_markers(session_id, set(subtree_ids))
@@ -3737,6 +4294,7 @@ class ConsoleChatStore:
             self._persist_existing_message(
                 message, preserve_provider_continuation=True
             )
+            self._record_message_completed(session_id, message.id)
             return self._snapshot(message)
 
         try:
@@ -3748,6 +4306,7 @@ class ConsoleChatStore:
                 self._persist_existing_message(
                     message, preserve_provider_continuation=True
                 )
+                self._record_message_completed(session_id, message.id)
                 return self._snapshot(message)
 
             citation_write = None
@@ -3771,6 +4330,7 @@ class ConsoleChatStore:
             except Exception:
                 self._pending_persistence_message_ids.discard(message.id)
                 logger.warning("terminal_citation_persistence_abandoned")
+            self._record_message_completed(session_id, message.id)
             return self._snapshot(message)
         finally:
             self.clear_terminal_citation_state(message.id)
@@ -3972,7 +4532,10 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != previous_content:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(message, force_metadata_write=provenance_cleared)
+        self._persist_existing_message(
+            message, force_metadata_write=provenance_cleared
+        )
+        self._record_message_completed(session_id, message.id)
         return self._snapshot(message)
 
     def begin_variant_stream(self, message_id: str) -> ConsoleChatMessage:
@@ -4025,10 +4588,15 @@ class ConsoleChatStore:
             KeyError: ``message_id`` does not reference a known message.
         """
         message = self._message_or_raise(message_id)
+        if (
+            message.status != "streaming"
+            or message.id not in self._variant_stream_bases
+        ):
+            raise ValueError("Message has no active variant stream.")
         self._materialize_stream_buffer(message)
         new_content = message.content
-        base_entry = self._variant_stream_bases.pop(message.id, None)
-        base = base_entry.content if base_entry is not None else ""
+        base_entry = self._variant_stream_bases.pop(message.id)
+        base = base_entry.content
         session_id = self._message_session_index[message.id]
         on_active_path = self._message_is_on_active_path(message.id)
         if message.variants is None:
@@ -4048,7 +4616,10 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != base:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(message, force_metadata_write=provenance_cleared)
+        self._persist_existing_message(
+            message, force_metadata_write=provenance_cleared
+        )
+        self._record_message_completed(session_id, message.id)
         return self._snapshot(message)
 
     def select_variant(
@@ -4124,7 +4695,8 @@ class ConsoleChatStore:
                 session.character_name if local_character_id is not None else None
             ),
         }
-        session.persisted_conversation_id = self.persistence.create_conversation(
+        create_conversation = self.persistence.create_conversation
+        create_kwargs: dict[str, Any] = dict(
             conversation_title=session.title,
             workspace_id=persisted_workspace_id,
             scope_type=scope_type,
@@ -4133,6 +4705,16 @@ class ConsoleChatStore:
             else None,
             **identity_kwargs,
         )
+        if session.speech_preferences != ConsoleSpeechPreferences():
+            if not self._persistence_accepts_kwarg(
+                create_conversation,
+                "speech_preferences",
+            ):
+                raise RuntimeError(
+                    "Persistence adapter cannot store staged reply-speech preferences."
+                )
+            create_kwargs["speech_preferences"] = session.speech_preferences
+        session.persisted_conversation_id = create_conversation(**create_kwargs)
         if (
             session.user_display_name_override is not None
             or session.character_system_template is not None
@@ -4464,6 +5046,8 @@ class ConsoleChatStore:
             if isinstance(system_prompt, str) and system_prompt.strip()
             else None
         )
+        if session.settings.system_prompt != normalized:
+            session.has_user_work = True
         session.settings = replace(session.settings, system_prompt=normalized)
         cleared_character_template = session.character_system_template is not None
         if cleared_character_template:
@@ -4539,6 +5123,8 @@ class ConsoleChatStore:
             )
             return session, False
         normalized = prefill if isinstance(prefill, str) and prefill.strip() else None
+        if session.settings.pinned_prefill != normalized:
+            session.has_user_work = True
         session.settings = replace(session.settings, pinned_prefill=normalized)
         self._bump_payload_revision(session_id)
         persisted = True
@@ -5702,6 +6288,7 @@ class ConsoleChatStore:
         ).append(message.id)
         self._message_session_index[message.id] = session_id
         self._message_speech_revisions[message.id] = 0
+        self._message_completion_generations[message.id] = 0
 
     def _ingest_linear_messages(
         self, session_id: str, messages: Iterable[ConsoleChatMessage]

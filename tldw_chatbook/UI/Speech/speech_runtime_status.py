@@ -86,6 +86,21 @@ class SpeechTTSStatusProjection:
             return SpeechTTSRuntimeState.NOT_CHECKED
         return self.runtime_status.runtime_state
 
+    @property
+    def runtime_ready(self) -> bool:
+        """Return remote provider readiness without consulting local packages."""
+
+        return self.runtime_state is SpeechTTSRuntimeState.READY
+
+    @property
+    def summary(self) -> str:
+        """Return a bounded provider summary independent of local capabilities."""
+
+        provider_label = (
+            "OpenAI-compatible" if self.provider_id == "openai" else self.provider_id
+        )
+        return f"{provider_label} speech: {self.runtime_state.value}"
+
     def rows(self, *, dirty_draft: bool = False) -> tuple[SpeechTTSStatusRow, ...]:
         """Return stable rows without provider payloads or arbitrary exceptions."""
 
@@ -113,19 +128,31 @@ class SpeechTTSStatusProjection:
                 catalog_detail,
             ),
         ]
-        for row_id, label, available in (
-            ("stt-dependency", "Local STT dependency", self.local_dependencies.stt),
+        for row_id, label, extra, available in (
+            (
+                "stt-dependency",
+                "Local transcription",
+                "transcription_faster_whisper",
+                self.local_dependencies.stt,
+            ),
             (
                 "kokoro-dependency",
-                "Kokoro dependency",
+                "Local Kokoro",
+                "local_tts",
                 self.local_dependencies.kokoro,
             ),
             (
                 "chatterbox-dependency",
-                "Chatterbox dependency",
+                "Local Chatterbox",
+                "chatterbox",
                 self.local_dependencies.chatterbox,
             ),
-            ("higgs-dependency", "Higgs dependency", self.local_dependencies.higgs),
+            (
+                "higgs-dependency",
+                "Local Higgs",
+                "higgs_tts",
+                self.local_dependencies.higgs,
+            ),
         ):
             rows.append(
                 SpeechTTSStatusRow(
@@ -136,6 +163,7 @@ class SpeechTTSStatusProjection:
                         if available
                         else SpeechTTSRuntimeState.UNAVAILABLE
                     ),
+                    "" if available else f"tldw_chatbook[{extra}]",
                 )
             )
         return tuple(rows)

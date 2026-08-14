@@ -15,6 +15,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSVoiceDiscoveryResult,
 )
+from tldw_chatbook.UI.Speech import speech_runtime_status
 from tldw_chatbook.UI.Speech.speech_runtime_status import (
     SpeechLocalDependencyAvailability,
     SpeechTTSRuntimeStatusStore,
@@ -77,6 +78,23 @@ def _missing_local_dependencies() -> SpeechLocalDependencyAvailability:
         kokoro=False,
         chatterbox=False,
         higgs=False,
+    )
+
+
+def _all_missing() -> SpeechLocalDependencyAvailability:
+    return _missing_local_dependencies()
+
+
+def _ready_openai_status() -> SpeechTTSRuntimeStatus:
+    return SpeechTTSRuntimeStatus(
+        provider_id="openai",
+        saved_configuration_revision=1,
+        runtime_revision=1,
+        catalog_revision=None,
+        model_scope=None,
+        runtime_state=SpeechTTSRuntimeState.READY,
+        observed_at=_OBSERVED_AT,
+        freshness=SpeechTTSStatusFreshness.FRESH,
     )
 
 
@@ -179,6 +197,28 @@ def test_external_audio_cpp_readiness_is_independent_of_every_local_dependency()
     assert rows["kokoro-dependency"].state is SpeechTTSRuntimeState.UNAVAILABLE
     assert rows["chatterbox-dependency"].state is SpeechTTSRuntimeState.UNAVAILABLE
     assert rows["higgs-dependency"].state is SpeechTTSRuntimeState.UNAVAILABLE
+
+
+@pytest.mark.unit
+def test_remote_openai_compatible_remains_available_without_local_packages() -> None:
+    assert not hasattr(speech_runtime_status, "build_speech_runtime_projection")
+    projection = project_speech_tts_status(
+        provider_id="openai",
+        configuration_state=SpeechTTSConfigurationState.SAVED,
+        current_configuration_revision=1,
+        model_id=None,
+        observation=None,
+        local_dependencies=_all_missing(),
+        runtime_status=_ready_openai_status(),
+    )
+
+    assert projection.runtime_ready
+    assert "OpenAI-compatible" in projection.summary
+    assert all(
+        row.state is SpeechTTSRuntimeState.UNAVAILABLE
+        for row in projection.rows()
+        if row.row_id.endswith("-dependency")
+    )
 
 
 @pytest.mark.unit

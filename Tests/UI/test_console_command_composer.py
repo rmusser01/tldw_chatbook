@@ -890,7 +890,7 @@ async def test_console_prompt_command_large_user_prompt_collapses_to_paste_token
         await pilot.pause(0.2)
 
         assert composer.draft_text() == large_body
-        assert "Pasted Text:" in composer._display_draft_text()
+        assert "Pasted text |" in composer._display_draft_text()
         assert large_body not in composer._display_draft_text()
 
 
@@ -1357,7 +1357,7 @@ async def test_console_consumes_pending_prompt_insert_large_body_appends_as_coll
         await console._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == f"abc\n{large_body}"
-        assert "Pasted Text:" in composer._display_draft_text()
+        assert "Pasted text |" in composer._display_draft_text()
         assert large_body not in composer._display_draft_text()
         assert not app.pending_handoffs.has_pending(
             HandoffChannel.CONSOLE_PROMPT_INSERT

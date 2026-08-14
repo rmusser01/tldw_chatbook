@@ -95,6 +95,9 @@ UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response 
 NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
+_CUSTOM_CREDENTIAL_DECISION_PROVIDERS = frozenset(
+    {"custom-openai-api", "custom-openai-api-2"}
+)
 MAX_AUXILIARY_OUTPUT_TOKENS = 16_384
 """Application hard ceiling for one auxiliary completion's output allowance."""
 PROVIDER_ERROR_MODEL_ID_MAX_CHARS = 256
@@ -409,6 +412,8 @@ class LlamaCppProviderConfig:
     base_url: str = DEFAULT_LLAMACPP_BASE_URL
     explicit_model: str | None = None
     configured_model: str | None = None
+    api_key: str | None = field(default=None, repr=False)
+    api_key_source: str | None = None
     temperature: float | None = None
     top_p: float | None = None
     min_p: float | None = None
@@ -1111,7 +1116,9 @@ class ConsoleProviderGateway:
         if continuation_target is not None and (
             continuation_target.provider,
             continuation_target.model,
-            continuation_target.api_base_url,
+            normalize_generic_endpoint_for_compare(
+                continuation_target.api_base_url
+            ),
         ) != (
             provider_config_key(resolution.provider),
             resolution.model or "",
@@ -1398,7 +1405,7 @@ class ConsoleProviderGateway:
             )
 
         if model is not None:
-            if await self._is_reachable(base_url):
+            if await self._is_reachable(base_url, api_key=config.api_key):
                 return ConsoleProviderResolution(
                     provider="llama_cpp",
                     base_url=base_url,
@@ -1422,6 +1429,7 @@ class ConsoleProviderGateway:
         try:
             response = await self._active_http_client().get(
                 f"{base_url.rstrip('/')}/v1/models",
+                headers=self._authorization_headers(config.api_key),
                 timeout=PROBE_TIMEOUT_SECONDS,
             )
         except httpx.HTTPError:
@@ -1479,11 +1487,28 @@ class ConsoleProviderGateway:
 
         identity = resolve_console_provider_identity(selection.provider)
         if identity.uses_direct_llama_path:
+            app_config = self._config_provider() or {}
+            readiness = get_provider_readiness(
+                identity.readiness_key,
+                app_config,
+                environ=self._environ,
+            )
+            if not readiness.ready:
+                return self._blocked_resolution(
+                    selection,
+                    provider=identity.execution_key,
+                    visible_copy=readiness.user_message,
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                    api_key_source=readiness.api_key_source,
+                )
             resolved = await self.resolve_llamacpp(
                 LlamaCppProviderConfig(
                     base_url=selection.base_url or DEFAULT_LLAMACPP_BASE_URL,
                     explicit_model=selection.explicit_model,
                     configured_model=selection.configured_model,
+                    api_key=readiness.api_key,
+                    api_key_source=readiness.api_key_source,
                     temperature=selection.temperature,
                     top_p=selection.top_p,
                     min_p=selection.min_p,
@@ -1778,6 +1803,7 @@ class ConsoleProviderGateway:
         min_p: float | None = None,
         top_k: int | None = None,
         max_tokens: int | None = None,
+        api_key: str | None = None,
     ) -> AsyncIterator[str]:
         """Stream OpenAI-compatible chat completion chunks from llama.cpp.
 
@@ -1815,6 +1841,7 @@ class ConsoleProviderGateway:
                 "POST",
                 f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
                 json=payload,
+                headers=self._authorization_headers(api_key),
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -1839,6 +1866,7 @@ class ConsoleProviderGateway:
             min_p=min_p,
             top_k=top_k,
             max_tokens=max_tokens,
+            api_key=api_key,
         )
         if fallback:
             yield fallback
@@ -1861,6 +1889,7 @@ class ConsoleProviderGateway:
         presence_penalty: float | None = None,
         frequency_penalty: float | None = None,
         strict_response: bool = False,
+        api_key: str | None = None,
     ) -> str:
         """Request a non-streaming OpenAI-compatible chat completion.
 
@@ -1906,9 +1935,14 @@ class ConsoleProviderGateway:
                 client,
                 request_url,
                 json_payload=payload,
+                headers=self._authorization_headers(api_key),
             )
             if is_sensitive_llm_request()
-            else await client.post(request_url, json=payload)
+            else await client.post(
+                request_url,
+                json=payload,
+                headers=self._authorization_headers(api_key),
+            )
         )
         response.raise_for_status()
         content = self._content_from_completion_response(response)
@@ -1925,10 +1959,11 @@ class ConsoleProviderGateway:
         url: str,
         *,
         json_payload: Mapping[str, Any],
+        headers: Mapping[str, str] | None = None,
     ) -> httpx.Response:
         """POST through this client's transport without HTTPX's URL-bearing INFO log."""
 
-        request = client.build_request("POST", url, json=json_payload)
+        request = client.build_request("POST", url, json=json_payload, headers=headers)
         transport = client._transport_for_url(request.url)
         response = await transport.handle_async_request(request)
         response.request = request
@@ -1983,6 +2018,7 @@ class ConsoleProviderGateway:
                         presence_penalty=resolution.presence_penalty,
                         frequency_penalty=resolution.frequency_penalty,
                         strict_response=True,
+                        api_key=resolution.api_key,
                     )
                 else:
                     kwargs = self._auxiliary_chat_api_kwargs(request, resolution)
@@ -2103,6 +2139,8 @@ class ConsoleProviderGateway:
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
+            kwargs["api_key_resolved"] = True
         return {key: value for key, value in kwargs.items() if value is not None}
 
     async def stream_chat(
@@ -2187,6 +2225,7 @@ class ConsoleProviderGateway:
                         min_p=resolution.min_p,
                         top_k=resolution.top_k,
                         max_tokens=effective_resolution.max_tokens,
+                        api_key=resolution.api_key,
                     )
                     if completion:
                         yield completion
@@ -2200,6 +2239,7 @@ class ConsoleProviderGateway:
                     min_p=resolution.min_p,
                     top_k=resolution.top_k,
                     max_tokens=effective_resolution.max_tokens,
+                    api_key=resolution.api_key,
                 ):
                     yield chunk
                 return
@@ -2483,8 +2523,16 @@ class ConsoleProviderGateway:
                 kwargs["provider_continuations"] = [
                     group.checkpoint for group in request.continuation_groups
                 ]
-        elif resolution.execution_key == "anthropic":
+        elif resolution.execution_key in {
+            "anthropic",
+            "custom-openai-api",
+            "custom-openai-api-2",
+            "mistral",
+            "mistralai",
+        }:
             kwargs["api_base_url"] = resolution.base_url or None
+            if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
+                kwargs["api_key_resolved"] = True
         elif (
             resolution.execution_key == "openai" and request.response_format is not None
         ):
@@ -2555,22 +2603,20 @@ class ConsoleProviderGateway:
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
-        elif resolution.execution_key == "anthropic":
-            # task-2114: `resolve_for_send` already resolves the effective
-            # endpoint (configured `[api_settings.anthropic].api_base_url`,
-            # or the built-in default when unset -- see
-            # `effective_provider_endpoint`) into `resolution.base_url`, but
-            # this dict never forwarded it, so a configured proxy/relay was
-            # silently a no-op on the main Console send: only the
-            # auxiliary/one-shot path's `_auxiliary_chat_api_kwargs` passed
-            # `api_base_url` through. Scoped to Anthropic only, matching
-            # this task's fix -- other adapters sharing the same gap are
-            # tracked separately (see the task's Implementation Notes).
-            # When unset, `resolution.base_url` is already the SAME
-            # built-in default `chat_with_anthropic` would fall back to on
-            # its own, so this is a byte-identical no-op for the common
-            # case, never a behavior change.
+        elif resolution.execution_key in {
+            "anthropic",
+            "custom-openai-api",
+            "custom-openai-api-2",
+            "mistral",
+            "mistralai",
+        }:
+            # These adapters otherwise consult process-global config after
+            # Console has resolved a provider-scoped endpoint and credential.
+            # Pinning the resolved base keeps that pair intact, including the
+            # custom aliases and distinct mistral config owners.
             kwargs["api_base_url"] = resolution.base_url or None
+            if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
+                kwargs["api_key_resolved"] = True
         return {key: value for key, value in kwargs.items() if value is not None}
 
     @staticmethod
@@ -2588,6 +2634,8 @@ class ConsoleProviderGateway:
     @staticmethod
     def _resolution_settings(config: LlamaCppProviderConfig) -> dict[str, Any]:
         return {
+            "api_key": config.api_key,
+            "api_key_source": config.api_key_source,
             "temperature": config.temperature,
             "top_p": config.top_p,
             "min_p": config.min_p,
@@ -2604,10 +2652,15 @@ class ConsoleProviderGateway:
             "streaming": config.streaming,
         }
 
-    async def _is_reachable(self, base_url: str) -> bool:
+    @staticmethod
+    def _authorization_headers(api_key: str | None) -> dict[str, str] | None:
+        return {"Authorization": f"Bearer {api_key}"} if api_key else None
+
+    async def _is_reachable(self, base_url: str, *, api_key: str | None = None) -> bool:
         try:
             await self._active_http_client().get(
                 f"{base_url.rstrip('/')}/health",
+                headers=self._authorization_headers(api_key),
                 timeout=PROBE_TIMEOUT_SECONDS,
             )
         except httpx.HTTPError:

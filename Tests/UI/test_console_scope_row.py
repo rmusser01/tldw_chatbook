@@ -11,6 +11,7 @@ session, and Clear working in both branches.
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Button, Static
@@ -307,6 +308,80 @@ async def test_narrow_button_opens_modal_with_real_listers_wired():
         # Real listers wired all the way through to the app-level seams
         # (the fake spies above), not a placeholder/no-op.
         assert media_spy.calls
+
+
+@pytest.mark.asyncio
+async def test_conversation_scope_picker_projects_raw_session_title_to_one_line():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    raw_title = "Ops\n\t\x00[bold]Alpha[/bold][/broken]"
+
+    async with host.run_test(size=(240, 64)) as pilot:
+        console = host.screen_stack[-1]
+        session = console._session._active_native_console_session()
+        session.title = raw_title
+
+        await console._open_console_retrieval_scope_picker()
+        await pilot.pause()
+
+        modal = next(
+            screen
+            for screen in host.screen_stack
+            if isinstance(screen, ConsoleScopePickerModal)
+        )
+        expected = "Ops ?[bold]Alpha[/bold][/broken]"
+        header = modal.query_one(".console-modal-header", Static)
+        assert modal._target_label == expected
+        assert header.visual.plain == f"Narrow RAG scope — {expected}"
+        assert "\n" not in header.visual.plain
+        assert "\t" not in header.visual.plain
+        assert session.title == raw_title
+
+
+@pytest.mark.asyncio
+async def test_conversation_inspector_projects_raw_title_and_workspace_to_one_line():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    raw_title = "Ops\n\t\x00[bold]Alpha[/bold][/broken]"
+    raw_workspace = "Lab\t\n\x00[green]North[/green][/bad]"
+
+    async with host.run_test(size=(160, 44)):
+        console = host.screen_stack[-1]
+        session = console._session._active_native_console_session()
+        session.title = raw_title
+        session.workspace_id = raw_workspace
+        console._workspace._build_console_workspace_context_state = lambda: (
+            SimpleNamespace(workspace_label=f"Workspace: {raw_workspace}")
+        )
+
+        rows = console._selected_console_conversation_inspector_rows()
+        values = {row.label: row.value for row in rows}
+
+        assert values["Selected conversation"] == (
+            "Ops ?[bold]Alpha[/bold][/broken]"
+        )
+        assert values["Workspace"] == "Lab ?[green]North[/green][/bad]"
+        assert all("\n" not in value and "\t" not in value for value in values.values())
+        assert session.title == raw_title
+        assert session.workspace_id == raw_workspace
+
+
+@pytest.mark.asyncio
+async def test_conversation_inspector_projection_does_not_reactivate_session():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)):
+        console = host.screen_stack[-1]
+        store = console._console_chat_store
+        active_session_id = store.active_session_id
+        active_session_epoch = store.active_session_epoch()
+
+        console._selected_console_conversation_inspector_rows()
+        console._selected_console_conversation_inspector_rows()
+
+        assert store.active_session_id == active_session_id
+        assert store.active_session_epoch() == active_session_epoch
 
 
 @pytest.mark.asyncio

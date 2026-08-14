@@ -111,7 +111,7 @@ def test_a_swallowed_block_still_fails_the_test() -> None:
     """
     try:
         socket.create_connection(("127.0.0.1", 8080), timeout=1)
-    except Exception:  # noqa: BLE001 - reproducing the swallowing caller
+    except Exception:  # noqa: BLE001, S110 - reproduces the swallowing caller
         pass
 
     recorded = _drain_expecting()
@@ -342,3 +342,119 @@ def test_repeated_install_keeps_one_guarded_socketpair_wrapper() -> None:
 
     assert socket.socketpair is wrapper
     assert socket.socketpair is network_guard._guarded_socketpair
+
+
+def test_loopback_destination_classification_is_numeric_and_family_specific() -> None:
+    assert network_guard.is_loopback_destination(
+        socket.AF_INET, ("127.0.0.1", 80)
+    )
+    assert network_guard.is_loopback_destination(
+        socket.AF_INET, ("127.255.255.254", 80)
+    )
+    assert not network_guard.is_loopback_destination(
+        socket.AF_INET, ("126.255.255.255", 80)
+    )
+    assert not network_guard.is_loopback_destination(
+        socket.AF_INET, ("localhost", 80)
+    )
+    assert network_guard.is_loopback_destination(socket.AF_INET6, ("::1", 80))
+    assert not network_guard.is_loopback_destination(
+        socket.AF_INET6, ("::ffff:127.0.0.1", 80)
+    )
+    assert not network_guard.is_loopback_destination(
+        socket.AF_INET6, ("localhost", 80)
+    )
+
+
+def test_network_mode_rejects_conflicting_loopback_and_allow_all_markers() -> None:
+    with pytest.raises(ValueError, match="loopback_network.*allow_network/live"):
+        network_guard.resolve_mode(allow_all=True, loopback_only=True)
+
+
+@pytest.mark.loopback_network
+def test_loopback_only_test_connects_owned_listener_and_blocks_remote_ip() -> None:
+    assert network_guard.is_allowed() is False
+    assert network_guard.is_loopback_only() is True
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    accepted: socket.socket | None = None
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=5):
+            accepted, _address = server.accept()
+        with pytest.raises(network_guard.BlockedNetworkAccess):
+            socket.create_connection(("192.0.2.1", 80), timeout=1)
+    finally:
+        if accepted is not None:
+            accepted.close()
+        server.close()
+
+    recorded = _drain_expecting()
+    assert recorded == (("socket.create_connection", "192.0.2.1:80"),)
+
+
+@pytest.mark.loopback_network
+def test_loopback_only_mode_covers_connect_connect_ex_and_sendto() -> None:
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(2)
+    port = server.getsockname()[1]
+    clients: list[socket.socket] = []
+    accepted: list[socket.socket] = []
+    udp_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_server.bind(("127.0.0.1", 0))
+    udp_client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        connect_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        connect_client.connect(("127.0.0.1", port))
+        clients.append(connect_client)
+
+        connect_ex_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        assert connect_ex_client.connect_ex(("127.0.0.1", port)) == 0
+        clients.append(connect_ex_client)
+
+        for _ in range(2):
+            connection, _address = server.accept()
+            accepted.append(connection)
+
+        assert udp_client.sendto(b"guard", udp_server.getsockname()) == 5
+        payload, _address = udp_server.recvfrom(16)
+        assert payload == b"guard"
+
+        with (
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocked_connect,
+            pytest.raises(network_guard.BlockedNetworkAccess),
+        ):
+            blocked_connect.connect(("192.0.2.1", 80))
+        with (
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocked_connect_ex,
+            pytest.raises(network_guard.BlockedNetworkAccess),
+        ):
+            blocked_connect_ex.connect_ex(("192.0.2.1", 80))
+        with pytest.raises(network_guard.BlockedNetworkAccess):
+            udp_client.sendto(b"guard", ("192.0.2.1", 80))
+    finally:
+        udp_client.close()
+        udp_server.close()
+        for connection in accepted:
+            connection.close()
+        for client in clients:
+            client.close()
+        server.close()
+
+    recorded = _drain_expecting(at_least=3)
+    assert {call for call, _address in recorded} == {
+        "socket.connect",
+        "socket.connect_ex",
+        "socket.sendto",
+    }
+
+
+def test_denial_is_restored_after_a_loopback_only_test() -> None:
+    assert network_guard.is_allowed() is False
+    assert network_guard.is_loopback_only() is False
+    with pytest.raises(network_guard.BlockedNetworkAccess):
+        socket.create_connection(("127.0.0.1", 8080), timeout=1)
+    _drain_expecting()

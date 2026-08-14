@@ -30,6 +30,7 @@ from tldw_chatbook.Widgets.Console.console_background_effect import (
     ConsoleTranscriptSurface,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 
 CONSOLE_CLOSE_TAB_BUTTON_WIDTH = 3
@@ -49,6 +50,7 @@ CONSOLE_NEW_TAB_BUTTON_HEIGHT = 1
 CONSOLE_SESSION_TAB_DISPLAY_CHARS = 19
 CONSOLE_SESSION_TAB_WIDTH = 21
 CONSOLE_TRANSCRIPT_TITLE = "Conversation"
+CONSOLE_SESSION_TITLE_MAX_CHARACTERS = 500
 #: Fleet-UX expert review F2 (task-1232): one-time coach-mark row mounted
 #: under the tab strip, hidden until `show_fleet_coachmark` reveals it.
 CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH = 3
@@ -84,18 +86,22 @@ def _session_tab_tooltip(
     that class of bug even though today's fixed vocabulary (the marker
     meaning, "Click again to rename.") happens to contain no brackets.
     """
+    display_title = sanitize_character_display_label(
+        session.title,
+        max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
+    ) or "Untitled"
     meaning = CONSOLE_RUN_MARKER_MEANINGS.get(marker, "")
     tail = f" — {meaning}." if meaning else "."
     # DS-04 (TASK-2154.15): the middle-click close accelerator is surfaced
     # here in the tab tooltip; it is documented nowhere else in the UI.
     if active:
         text = (
-            f"Active Console tab: {session.title}{tail} Click again to rename."
+            f"Active Console tab: {display_title}{tail} Click again to rename."
             " Middle-click closes the tab."
         )
     else:
         text = (
-            f"Switch to Console tab: {session.title}{tail}"
+            f"Switch to Console tab: {display_title}{tail}"
             " Middle-click closes the tab."
         )
     if session.ephemeral:
@@ -306,7 +312,10 @@ class ConsoleSessionSurface(Vertical):
         title always remains one hover away in the tab's tooltip
         (``_session_tab_tooltip``).
         """
-        normalized_title = title.strip() or "Untitled"
+        normalized_title = sanitize_character_display_label(
+            title,
+            max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
+        ) or "Untitled"
         if len(normalized_title) <= CONSOLE_SESSION_TAB_DISPLAY_CHARS:
             return normalized_title
         keep = CONSOLE_SESSION_TAB_DISPLAY_CHARS - 1  # room for the ellipsis cell
@@ -325,11 +334,13 @@ class ConsoleSessionSurface(Vertical):
         if active:
             classes = f"{classes} console-session-tab-active"
         button = ConsoleSessionTabButton(
-            self._tab_label(
-                session.title,
-                marker=marker,
-                ephemeral=session.ephemeral,
-                queued_count=queued_count,
+            Text(
+                self._tab_label(
+                    session.title,
+                    marker=marker,
+                    ephemeral=session.ephemeral,
+                    queued_count=queued_count,
+                )
             ),
             id=f"console-session-tab-{session.id}",
             classes=classes,
@@ -461,11 +472,13 @@ class ConsoleSessionSurface(Vertical):
                     streaming_session_id=streaming_session_id,
                     run_markers=run_markers,
                 )
-                child.label = self._tab_label(
-                    session.title,
-                    marker=marker,
-                    ephemeral=session.ephemeral,
-                    queued_count=(queue_counts or {}).get(session_id, 0),
+                child.label = Text(
+                    self._tab_label(
+                        session.title,
+                        marker=marker,
+                        ephemeral=session.ephemeral,
+                        queued_count=(queue_counts or {}).get(session_id, 0),
+                    )
                 )
                 child.tooltip = _session_tab_tooltip(
                     session,
@@ -615,7 +628,10 @@ class ConsoleSessionSurface(Vertical):
         Args:
             title: Active conversation/session title, or ``None`` to reset.
         """
-        normalized = (title or "").strip()
+        normalized = sanitize_character_display_label(
+            title,
+            max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
+        )
         self._session_title = normalized or None
         try:
             header = self.query_one("#console-transcript-title", Static)

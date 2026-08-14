@@ -351,6 +351,7 @@ class LLMProviderCatalogScopeService:
         mode: LLMProviderCatalogBackend | str | None = None,
         provider: str,
         staged_settings: dict[str, Any] | None = None,
+        use_shared_cache: bool = True,
     ) -> ModelDiscoveryResult:
         """Route manual model discovery by catalog source."""
         normalized_mode = self._normalize_mode(mode)
@@ -371,8 +372,14 @@ class LLMProviderCatalogScopeService:
             )
 
         service = self._service_for_mode(normalized_mode)
+        discovery_kwargs: dict[str, Any] = {
+            "provider": provider,
+            "staged_settings": staged_settings,
+        }
+        if not use_shared_cache:
+            discovery_kwargs["use_shared_cache"] = False
         result = await self._maybe_await(
-            service.discover_models(provider=provider, staged_settings=staged_settings)
+            service.discover_models(**discovery_kwargs)
         )
         if isinstance(result, ModelDiscoveryResult):
             return result

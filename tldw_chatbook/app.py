@@ -5129,6 +5129,23 @@ def _build_notes_scope_service(
     )
 
 
+_SETUP_STARTUP_NETWORKING_ACTIONS = frozenset({"offer", "prompt", "home"})
+
+
+def setup_owns_startup_networking(
+    app_config: Mapping[str, Any], environ: Mapping[str, str]
+) -> bool:
+    """Return whether first-run setup owns automatic networking this startup."""
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        setup_recovery_action,
+    )
+
+    return (
+        setup_recovery_action(app_config, environ)
+        in _SETUP_STARTUP_NETWORKING_ACTIONS
+    )
+
+
 class TldwCli(
     # TextSelectionCrashGuard sits before App so its on_event wrapper is the
     # last line of defense against Textual 8.x's text-selection MouseDown
@@ -8178,13 +8195,17 @@ class TldwCli(
             return TAB_HOME
         try:
             from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-                should_offer_wizard,
+                setup_recovery_action,
             )
 
-            if should_offer_wizard(self.app_config, os.environ):
+            if setup_recovery_action(self.app_config, os.environ) in {
+                "offer",
+                "prompt",
+                "home",
+            }:
                 return TAB_HOME
         except Exception:
-            logger.debug("Wizard-offer route check failed", exc_info=True)
+            logger.debug("Wizard startup route check failed (category=runtime)")
         return getattr(self, "_initial_tab_value", TAB_CHAT)
 
     def _current_runtime_identity(self) -> RuntimeIdentity:
@@ -8709,7 +8730,7 @@ class TldwCli(
             await handler.handle_tts_request(event)
         else:
             self.loguru_logger.error("TTS handler not initialized")
-            await self.post_message(
+            self.post_message(
                 TTSCompleteEvent(
                     message_id=event.message_id or "unknown",
                     error="TTS service not available",
@@ -8723,21 +8744,53 @@ class TldwCli(
     ) -> None:
         """Route a trusted Console snapshot without logging private content."""
         self.loguru_logger.info("Trusted Console speech request received")
-        handler = await self._ensure_tts_handler()
+        try:
+            handler = await self._ensure_tts_handler()
+        except asyncio.CancelledError:
+            event.report_outcome(False)
+            raise
+        except Exception as error:
+            self.loguru_logger.error(
+                "TTS handler initialization failed "
+                "(operation=trusted_console_speech, exception_category={})",
+                type(error).__name__,
+            )
+            event.report_outcome(False)
+            return
         if handler:
-            await handler.handle_tts_request(event)
+            try:
+                await handler.handle_tts_request(event)
+            except asyncio.CancelledError:
+                event.report_outcome(False)
+                raise
+            except Exception as error:
+                self.loguru_logger.error(
+                    "TTS handler request failed "
+                    "(operation=trusted_console_speech, exception_category={})",
+                    type(error).__name__,
+                )
+                event.report_outcome(False)
         else:
             self.loguru_logger.error(
                 "TTS handler not initialized "
                 "(operation=trusted_console_speech, "
                 "outcome_code=handler_unavailable)"
             )
-            await self.post_message(
-                TTSCompleteEvent(
-                    message_id=event.message_id,
-                    error="TTS service not available",
+            try:
+                self.post_message(
+                    TTSCompleteEvent(
+                        message_id=event.message_id,
+                        error="TTS service not available",
+                    )
                 )
-            )
+            except Exception as error:
+                self.loguru_logger.error(
+                    "TTS unavailable notice failed "
+                    "(operation=trusted_console_speech, exception_category={})",
+                    type(error).__name__,
+                )
+            finally:
+                event.report_outcome(False)
 
     @on(TTSGlobalOverrideDecisionEvent)
     async def handle_tts_global_override_decision_event(
@@ -8807,8 +8860,36 @@ class TldwCli(
     async def handle_tts_complete_event(self, event: TTSCompleteEvent) -> None:
         """Handle TTS generation completion."""
         self.loguru_logger.info(f"TTS complete for message {event.message_id}")
+        playback_lifecycle = getattr(event, "playback_lifecycle", None)
+
+        lifecycle_failure_completion = bool(
+            event.error
+            and playback_lifecycle is not None
+            and playback_lifecycle.state == "failed"
+        )
+        if (
+            playback_lifecycle is not None
+            and not playback_lifecycle.is_current()
+            and not lifecycle_failure_completion
+        ):
+            handler = getattr(self, "_tts_handler", None)
+            discard = getattr(handler, "discard_stale_console_completion", None)
+            if callable(discard):
+                try:
+                    await discard(
+                        event.message_id,
+                        event.audio_file,
+                        playback_lifecycle,
+                    )
+                except Exception:
+                    playback_lifecycle.report_terminal("failed")
+            else:
+                playback_lifecycle.report_terminal("stopped")
+            return
 
         if event.error:
+            if playback_lifecycle is not None:
+                playback_lifecycle.report("failed")
             self.notify(f"TTS failed: {event.error}", severity="error")
             # Update widget state back to idle on error
             try:
@@ -8836,22 +8917,23 @@ class TldwCli(
             # `_console_speaking_message_id`, not from a legacy widget — on
             # failure it must be cleared too, or the row keeps "⏹ Stop
             # speech" with no speech to stop (TASK-15422).
-            for screen in reversed(tuple(getattr(self, "screen_stack", ()))):
-                if (
-                    getattr(screen, "_console_speaking_message_id", None)
-                    == event.message_id
-                ):
-                    screen._console_speaking_message_id = None
-                    sync = getattr(screen, "_sync_native_console_chat_ui", None)
-                    if callable(sync):
-                        try:
-                            await sync()
-                        except Exception:
-                            self.loguru_logger.error(
-                                "Console speak-state resync failed after a "
-                                "TTS error"
-                            )
-                    break
+            if playback_lifecycle is None:
+                for screen in reversed(tuple(getattr(self, "screen_stack", ()))):
+                    if (
+                        getattr(screen, "_console_speaking_message_id", None)
+                        == event.message_id
+                    ):
+                        screen._console_speaking_message_id = None
+                        sync = getattr(screen, "_sync_native_console_chat_ui", None)
+                        if callable(sync):
+                            try:
+                                await sync()
+                            except Exception:
+                                self.loguru_logger.error(
+                                    "Console speak-state resync failed after a "
+                                    "TTS error"
+                                )
+                        break
             if event.global_override_token is not None:
                 self.run_worker(
                     self._offer_tts_global_override(event.global_override_token),
@@ -8860,6 +8942,11 @@ class TldwCli(
         else:
             # Update widget state to ready with audio file
             if event.audio_file and event.audio_file.exists():
+                if (
+                    playback_lifecycle is not None
+                    and not playback_lifecycle.is_current()
+                ):
+                    return
                 try:
                     widget_found = False
                     if event.message_id:
@@ -8900,12 +8987,25 @@ class TldwCli(
                         # which has no per-message playback control), so
                         # there is nothing for the user to click - play the
                         # generated audio immediately instead of going silent.
-                        self.post_message(
-                            TTSPlaybackEvent(action="play", message_id=event.message_id)
+                        accepted = self.post_message(
+                            TTSPlaybackEvent(
+                                action="play",
+                                message_id=event.message_id,
+                                playback_lifecycle=playback_lifecycle,
+                            )
                         )
+                        if accepted is False and playback_lifecycle is not None:
+                            playback_lifecycle.report("failed")
                 except Exception as e:
+                    if playback_lifecycle is not None:
+                        playback_lifecycle.report("failed")
                     self.loguru_logger.error(f"Error playing audio: {e}")
                     self.notify("Failed to play audio", severity="error")
+            elif (
+                playback_lifecycle is not None
+                and playback_lifecycle.state == "generating"
+            ):
+                playback_lifecycle.report("failed")
 
             # Remove TTS generating class from message
             try:
@@ -8971,9 +9071,25 @@ class TldwCli(
     @on(TTSPlaybackEvent)
     async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
         """Handle TTS playback control."""
-        handler = await self._ensure_tts_handler()
-        if handler:
-            await handler.handle_tts_playback(event)
+        await self.control_tts_playback(event)
+
+    async def control_tts_playback(self, event: TTSPlaybackEvent) -> None:
+        """Run playback control directly and preserve handler callback order."""
+        try:
+            handler = await self._ensure_tts_handler()
+            if handler:
+                await handler.handle_tts_playback(event)
+            else:
+                event.report_outcome(False)
+                if event.playback_lifecycle is not None:
+                    event.playback_lifecycle.report_terminal("failed")
+        except asyncio.CancelledError:
+            event.report_outcome(False)
+            raise
+        except Exception:
+            event.report_outcome(False)
+            if event.playback_lifecycle is not None:
+                event.playback_lifecycle.report_terminal("failed")
 
     @on(STTSPlaygroundGenerateEvent)
     async def handle_stts_playground_generate_event(
@@ -9450,12 +9566,9 @@ class TldwCli(
             group="scheduling",
         )
 
-        # ADR-020: non-blocking startup refresh of stale model catalogs.
-        self.run_worker(
-            self._refresh_model_catalogs(),
-            exclusive=True,
-            group="model-catalog-refresh",
-        )
+        # ADR-020: setup owns startup networking until it completes, so a
+        # stale configured cloud provider cannot be contacted behind it.
+        self._schedule_startup_model_catalog_refresh()
 
         # task-688: index subscription_items rows scraped before the FTS5
         # index existed, so search covers a user's whole back catalogue
@@ -9539,7 +9652,7 @@ class TldwCli(
                 self.post_message(ModelCatalogRefreshed(providers=refreshed))
             message = format_refresh_notification(report)
             if message:
-                has_failure = any(
+                has_failure = report.disk_write_failed or any(
                     outcome.status == "failed" or outcome.write_failed
                     for outcome in report.outcomes
                 )
@@ -9557,6 +9670,29 @@ class TldwCli(
                 f"{type(exc).__name__}"
             )
 
+    def _schedule_startup_model_catalog_refresh(
+        self,
+        *,
+        after_setup_completion: bool = False,
+        environ: Mapping[str, str] | None = None,
+    ) -> bool:
+        """Schedule the automatic catalog pass once when setup releases it."""
+        if getattr(self, "_startup_model_catalog_refresh_scheduled", False):
+            return False
+        if not after_setup_completion and setup_owns_startup_networking(
+            self.app_config,
+            os.environ if environ is None else environ,
+        ):
+            return False
+
+        self._startup_model_catalog_refresh_scheduled = True
+        self.run_worker(
+            self._refresh_model_catalogs,
+            exclusive=True,
+            group="model-catalog-refresh",
+        )
+        return True
+
     @on(ModelCatalogRefreshed)
     async def on_model_catalog_refreshed(self, event: ModelCatalogRefreshed) -> None:
         # Textual delivers App-posted messages to App handlers only; forward
@@ -9569,15 +9705,24 @@ class TldwCli(
 
     def _maybe_offer_first_run_wizard(self) -> None:
         """Offer the setup wizard once; otherwise nudge unfinished setups."""
+        if getattr(self, "_first_run_startup_action_scheduled", False):
+            return
         try:
             from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-                should_offer_wizard,
+                setup_recovery_action,
                 should_show_resume_toast,
             )
 
-            if should_offer_wizard(self.app_config, os.environ):
+            action = setup_recovery_action(self.app_config, os.environ)
+            if action == "offer":
+                self._first_run_startup_action_scheduled = True
                 self.call_after_refresh(self._push_first_run_wizard)
-            elif should_show_resume_toast(self.app_config, os.environ):
+            elif action == "prompt":
+                self._first_run_startup_action_scheduled = True
+                self.call_after_refresh(self._push_first_run_recovery_dialog)
+            elif action == "none" and should_show_resume_toast(
+                self.app_config, os.environ
+            ):
                 self.notify(
                     "Setup isn't finished — run it any time from "
                     "Settings ▸ Diagnostics ▸ Run setup wizard.",
@@ -9585,8 +9730,11 @@ class TldwCli(
                     severity="information",
                     timeout=8,
                 )
-        except Exception as e:
-            logger.error(f"First-run wizard offer failed: {e}")
+        except Exception as exc:
+            logger.error(
+                "First-run startup action failed (error_type={})",
+                type(exc).__name__,
+            )
 
     def _maybe_warn_config_load_failure(self) -> None:
         """Warn (never block) when boot's config load fell back to defaults.
@@ -9652,14 +9800,177 @@ class TldwCli(
             FirstRunSetupWizard(self), self._handle_first_run_wizard_result
         )
 
-    def _handle_first_run_wizard_result(self, result: dict | None) -> None:
-        if not isinstance(result, dict):
-            return  # cancelled / finish-later: resume toast handles next launch
-        exit_route = result.get("exit_route")
-        if exit_route:
-            from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    def _push_first_run_recovery_dialog(self) -> None:
+        from tldw_chatbook.UI.Wizards.first_run_recovery_dialog import (
+            SetupRecoveryDialog,
+        )
 
-            self.post_message(NavigateToScreen(str(exit_route)))
+        self.push_screen(SetupRecoveryDialog(), self._handle_first_run_recovery_result)
+
+    def _handle_first_run_recovery_result(self, result: str | None) -> None:
+        if result not in {"resume", "start_over", "later"}:
+            return
+        self.run_worker(
+            self._apply_first_run_recovery_result(result),
+            exclusive=True,
+            group="first-run-recovery",
+        )
+
+    async def _apply_first_run_recovery_result(self, result: str) -> None:
+        if result == "later":
+            return
+
+        from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
+        from tldw_chatbook.config import save_settings_to_cli_config
+
+        resume_draft = None
+        if result == "resume":
+            draft = wizard_state.read_setup_draft(self.app_config)
+            if draft is None or draft.resume_attempted:
+                return
+            resume_draft = wizard_state.SetupDraft(
+                version=draft.version,
+                track=draft.track,
+                active_step_id=draft.active_step_id,
+                values=draft.values,
+                resume_attempted=True,
+            )
+            settings, delete_keys = wizard_state.build_setup_draft_mutation(
+                resume_draft
+            )
+        elif result == "start_over":
+            settings, delete_keys = wizard_state.build_setup_draft_mutation(None)
+        else:
+            return
+
+        try:
+            if delete_keys:
+                saved = await asyncio.to_thread(
+                    save_settings_to_cli_config,
+                    settings,
+                    delete_keys=delete_keys,
+                )
+            else:
+                saved = await asyncio.to_thread(save_settings_to_cli_config, settings)
+        except Exception as exc:
+            logger.error(
+                "First-run recovery persistence failed (error_type={})",
+                type(exc).__name__,
+            )
+            saved = False
+        if not saved:
+            self.notify(
+                "Setup recovery could not be saved. Try again.",
+                severity="error",
+            )
+            self._schedule_first_run_recovery_retry()
+            return
+
+        self._mirror_first_run_setup_mutation(settings, delete_keys)
+        self.push_screen(
+            FirstRunSetupWizard(self, resume_draft=resume_draft),
+            self._handle_first_run_wizard_result,
+        )
+
+    def _schedule_first_run_recovery_retry(self) -> None:
+        """Reopen one actionable recovery prompt after a failed mutation."""
+
+        if getattr(self, "_first_run_recovery_retry_scheduled", False):
+            return
+        self._first_run_recovery_retry_scheduled = True
+        self._first_run_startup_action_scheduled = False
+        self.call_after_refresh(self._show_first_run_recovery_retry)
+
+    def _show_first_run_recovery_retry(self) -> None:
+        if not getattr(self, "_first_run_recovery_retry_scheduled", False):
+            return
+        self._first_run_recovery_retry_scheduled = False
+        self._first_run_startup_action_scheduled = True
+        current_screen = type(self.screen).__name__
+        if current_screen in {"SetupRecoveryDialog", "FirstRunSetupWizard"}:
+            return
+        self._push_first_run_recovery_dialog()
+
+    def _mirror_first_run_setup_mutation(
+        self,
+        settings: Mapping[str, Mapping[str, object]],
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> None:
+        """Mirror the exact first-run recovery mutation after a successful write."""
+
+        first_run = self.app_config.setdefault("first_run", {})
+        if not isinstance(first_run, dict):
+            first_run = {}
+            self.app_config["first_run"] = first_run
+        values = settings.get("first_run")
+        if isinstance(values, Mapping):
+            first_run.update(values)
+        for key in delete_keys.get("first_run", ()):
+            first_run.pop(key, None)
+
+    def _handle_first_run_wizard_result(self, result: dict | None) -> None:
+        if type(result) is not dict:
+            return  # cancelled / finish-later: recovery state handles next launch
+        exit_route = result.get("exit_route")
+        completed = result.get("completed")
+        exit_context = result.get("exit_context")
+        if exit_route is None:
+            if completed is not True or exit_context is not None:
+                return
+            self._schedule_startup_model_catalog_refresh(
+                after_setup_completion=True
+            )
+            return
+        if type(exit_route) is not str:
+            return
+
+        screen_context: dict[str, object] = {}
+        if exit_route == TAB_SETTINGS:
+            if completed is not False or type(exit_context) is not dict:
+                return
+            if set(exit_context) != {"category"}:
+                return
+            category = exit_context.get("category")
+            if type(category) is not str:
+                return
+            from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+                REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES,
+            )
+
+            if category not in set(
+                REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES.values()
+            ):
+                return
+            screen_context = {"category": category}
+        elif exit_route in {TAB_CHAT, TAB_HOME}:
+            if completed is not True:
+                return
+            if exit_context is not None and (
+                type(exit_context) is not dict or exit_context
+            ):
+                return
+        else:
+            return
+
+        if completed is True:
+            self._schedule_startup_model_catalog_refresh(
+                after_setup_completion=True
+            )
+
+        # Dismissing a rerun over Console already uncovers that same mounted
+        # Console. Replacing it here would interrupt first-chat rollback and
+        # focus resync. Other destinations still remount to refresh their state.
+        if (
+            not screen_context
+            and exit_route == TAB_CHAT
+            and getattr(self, "current_tab", None) == TAB_CHAT
+        ):
+            return
+
+        from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+        self.post_message(NavigateToScreen(exit_route, screen_context))
 
     def handle_first_run_wizard_result(self, result: dict | None) -> None:
         """Public alias for ``_handle_first_run_wizard_result``.

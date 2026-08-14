@@ -17,9 +17,10 @@ Regression coverage for UX-review findings LY-08/LY-09/LY-10
 from __future__ import annotations
 
 import time
+from unittest.mock import MagicMock
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import Button, Static, Switch
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_internals_decomposition import (
@@ -190,6 +191,79 @@ async def test_console_compact_marker_keeps_control_actions_on_screen():
             assert button.display is True
             assert button.region.y == marker.region.y
             assert button.region.x + button.region.width <= 90
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [90, 140])
+async def test_console_auto_speak_has_visible_nonoverlapping_hit_row(width: int) -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(width, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-auto-speak")
+        await pilot.pause(0.2)
+
+        bar = console.query_one("#console-control-bar")
+        action_row = console.query_one("#console-control-action-row")
+        speech_row = console.query_one("#console-auto-speak-row")
+        label = console.query_one("#console-auto-speak-label", Static)
+        toggle = console.query_one("#console-auto-speak", Switch)
+        retry = console.query_one("#console-auto-speak-retry", Button)
+        resume = console.query_one("#console-auto-speak-resume", Button)
+
+        assert bar.region.height == 2
+        assert speech_row.region.height == 1
+        assert speech_row.region.y >= action_row.region.y + action_row.region.height
+        assert label.region.height == 1
+        assert toggle.region.height == 1
+        assert toggle.region.width >= 4
+        assert toggle.region.y == label.region.y
+        assert toggle.region.x + toggle.region.width <= width
+        assert retry.display is False
+        assert resume.display is False
+
+        bar.sync_auto_speak(
+            enabled=True,
+            paused=True,
+            retry_available=True,
+        )
+        await pilot.pause()
+
+        assert retry.display is True
+        assert resume.display is True
+        assert retry.region.width > 0
+        assert resume.region.width > 0
+        assert retry.region.x >= toggle.region.x + toggle.region.width
+        assert resume.region.x >= retry.region.x + retry.region.width
+        assert resume.region.x + resume.region.width <= width
+
+
+@pytest.mark.asyncio
+async def test_console_retry_speech_button_routes_without_resuming() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(90, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-auto-speak-retry")
+        retry = MagicMock()
+        resume = MagicMock()
+        console._console_auto_speak.request_retry = retry
+        console._console_auto_speak.request_resume = resume
+        bar = console.query_one("#console-control-bar")
+        bar.sync_auto_speak(
+            enabled=True,
+            paused=True,
+            retry_available=True,
+        )
+        await pilot.pause()
+
+        await pilot.click("#console-auto-speak-retry")
+        await pilot.pause()
+
+        retry.assert_called_once_with()
+        resume.assert_not_called()
 
 
 @pytest.mark.asyncio

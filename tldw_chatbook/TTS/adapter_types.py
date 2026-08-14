@@ -769,6 +769,14 @@ class TTSAdapter(Protocol):
 
 
 @runtime_checkable
+class TTSOutboundEndpointAdapter(Protocol):
+    """Adapter exposing the exact endpoint used by its admitted lease."""
+
+    def admitted_outbound_endpoint(self) -> str:
+        raise NotImplementedError
+
+
+@runtime_checkable
 class TTSNativeCloneAdapter(Protocol):
     """Optional native contract for generation-fenced clone operations."""
 

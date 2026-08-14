@@ -372,6 +372,11 @@ class ConsoleMessageController:
         self._pending_console_delete_message_id: str | None = None
         self._console_original_attempt_previews: Dict[str, str] = {}
         self._console_speaking_message_id: str | None = None
+        self._console_speech_states: dict[str, str] = {}
+        self._console_speech_request_generation = 0
+        self._console_speech_lifetime_generation = 0
+        self._console_speech_owner: Any | None = None
+        self._console_speech_pending_stop: tuple[str, int] | None = None
         self._pending_console_swipe_selection: str | None = None
 
     # -- Framework services (live-read via `@property`) --------------------
@@ -1071,6 +1076,333 @@ class ConsoleMessageController:
             )
         await self._sync_native_console_chat_ui()
 
+    async def request_console_message_speech(
+        self,
+        message_id: str,
+        outcome_callback: Callable[[bool], None] | None = None,
+        expected_destination_fingerprint: str | None = None,
+        retry_failed_auto: bool = False,
+    ) -> bool:
+        """Dispatch Manual Speak's exact trusted snapshot/event path."""
+        from tldw_chatbook.Chat.console_speech import ConsoleSpeechSnapshotRejected
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            TTSMessageSpeechRequestEvent,
+            TTSPlaybackEvent,
+            TTSPlaybackLifecycle,
+        )
+
+        outcome_reported = False
+        playback_lifecycle: TTSPlaybackLifecycle | None = None
+
+        def report_outcome(ok: bool) -> None:
+            nonlocal outcome_reported
+            if outcome_reported:
+                return
+            outcome_reported = True
+            if outcome_callback is None:
+                return
+            try:
+                outcome_callback(ok is True)
+            except Exception:
+                return
+
+        store = self._ensure_console_chat_store()
+        try:
+            speech_snapshot = store.issue_tts_message_speech_snapshot(
+                message_id,
+                presentation_context=self._screen._console_presentation_context(),
+            )
+        except ConsoleSpeechSnapshotRejected as error:
+            self.app_instance.notify(str(error), severity="warning")
+            report_outcome(False)
+            return False
+        except Exception:
+            self.app_instance.notify(
+                "Speech could not be requested. Try again.",
+                severity="warning",
+            )
+            report_outcome(False)
+            return False
+
+        def validate_speech_snapshot(snapshot):
+            return store.validate_tts_message_speech_snapshot(
+                snapshot,
+                presentation_context=self._screen._console_presentation_context(),
+            )
+
+        prior_message_id = self._console_speaking_message_id
+        prior_owner = self._console_speech_owner
+        if prior_message_id is not None:
+            prior_generation = self._console_speech_request_generation
+            prior_stop_outcome: bool | None = None
+            self._console_speech_pending_stop = (
+                prior_message_id,
+                prior_generation,
+            )
+
+            def settle_prior_stop(accepted: bool) -> None:
+                nonlocal prior_stop_outcome
+                prior_stop_outcome = accepted is True
+                pending = (prior_message_id, prior_generation)
+                if self._console_speech_pending_stop != pending:
+                    return
+                self._console_speech_pending_stop = None
+                if accepted and self._console_speech_states.get(prior_message_id) in {
+                    "generating",
+                    "playing",
+                }:
+                    self._settle_console_speech_presentation(
+                        prior_message_id,
+                        prior_generation,
+                        state="stopped",
+                    )
+
+            stop_event = TTSPlaybackEvent(
+                action="stop",
+                message_id=prior_message_id,
+                playback_lifecycle=prior_owner,
+                outcome_callback=settle_prior_stop,
+            )
+            await self._dispatch_console_speech_stop_event(stop_event)
+            if prior_stop_outcome is not True:
+                self._console_speech_pending_stop = None
+                report_outcome(False)
+                return False
+
+        request_generation = self._begin_console_speech_presentation(message_id)
+        lifetime_generation = self._console_speech_lifetime_generation
+        active_session_epoch = store.active_session_epoch()
+
+        def playback_is_current() -> bool:
+            if self._console_speech_request_generation != request_generation:
+                return False
+            if self._console_speech_lifetime_generation != lifetime_generation:
+                return False
+            if store.active_session_id != speech_snapshot.session_id:
+                return False
+            if store.active_session_epoch() != active_session_epoch:
+                return False
+            try:
+                validate_speech_snapshot(speech_snapshot)
+            except Exception:
+                return False
+            return True
+
+        def report_playback(state: str) -> None:
+            if playback_is_current():
+                self._settle_console_speech_presentation(
+                    message_id,
+                    request_generation,
+                    state=state,
+                )
+            if state == "stopped":
+                report_outcome(True)
+            elif state == "failed":
+                report_outcome(False)
+
+        playback_lifecycle = TTSPlaybackLifecycle(
+            message_id=message_id,
+            request_id=request_generation,
+            validator=playback_is_current,
+            callback=report_playback,
+        )
+        self._console_speech_owner = playback_lifecycle
+
+        def report_generation_outcome(ok: bool) -> None:
+            if ok is True:
+                report_outcome(True)
+            elif playback_lifecycle is not None:
+                playback_lifecycle.report("failed")
+
+        event = TTSMessageSpeechRequestEvent(
+            speech_snapshot,
+            validate_speech_snapshot,
+            outcome_callback=report_generation_outcome,
+            expected_destination_fingerprint=expected_destination_fingerprint,
+            retry_failed_auto=retry_failed_auto,
+            playback_lifecycle=playback_lifecycle,
+        )
+        try:
+            posted = self.app_instance.post_message(event)
+        except Exception:
+            event.report_outcome(False)
+            return False
+        if posted is False:
+            event.report_outcome(False)
+            return False
+        await self._sync_native_console_chat_ui()
+        return True
+
+    async def _dispatch_console_speech_stop_event(
+        self,
+        event: Any,
+        *,
+        post_first: bool = False,
+    ) -> None:
+        """Deliver one stop through the app handler with synchronous ack."""
+        control = getattr(self.app_instance, "control_tts_playback", None)
+        if not post_first and inspect.iscoroutinefunction(control):
+            await control(event)
+            return
+        try:
+            posted = self.app_instance.post_message(event)
+        except Exception:
+            posted = False
+        if posted is not False:
+            return
+        handler = getattr(self.app_instance, "_tts_handler", None)
+        handle = getattr(handler, "handle_tts_playback", None)
+        if inspect.iscoroutinefunction(handle):
+            try:
+                await handle(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                event.report_outcome(False)
+            return
+        event.report_outcome(False)
+
+    def _begin_console_speech_presentation(self, message_id: str) -> int:
+        """Start one owned request and invalidate every older callback."""
+        prior_message_id = self._console_speaking_message_id
+        for other_id, state in tuple(self._console_speech_states.items()):
+            if other_id == message_id:
+                continue
+            if (
+                other_id != prior_message_id
+                or state in {"stopped", "failed"}
+            ):
+                self._console_speech_states.pop(other_id, None)
+        self._console_speech_request_generation += 1
+        self._console_speech_states[message_id] = "generating"
+        self._console_speaking_message_id = message_id
+        return self._console_speech_request_generation
+
+    def _settle_console_speech_presentation(
+        self,
+        message_id: str,
+        generation: int,
+        *,
+        state: str,
+    ) -> bool:
+        """Accept one playback-owner state for the current screen request."""
+        if self._console_speech_request_generation != generation:
+            return False
+        current = self._console_speech_states.get(message_id)
+        allowed = {
+            "generating": {"playing", "stopped", "failed"},
+            "playing": {"stopped", "failed"},
+        }
+        if state not in allowed.get(current, set()):
+            return False
+        self._console_speech_states[message_id] = state
+        if state == "playing":
+            self._console_speaking_message_id = message_id
+        elif self._console_speaking_message_id == message_id:
+            self._console_speaking_message_id = None
+            self._console_speech_owner = None
+        self._schedule_console_speech_state_sync()
+        return True
+
+    def invalidate_console_speech_context(self) -> asyncio.Task[None] | None:
+        """Fence callbacks while retaining audio ownership until stop ack."""
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            TTSPlaybackEvent,
+        )
+
+        message_id = self._console_speaking_message_id
+        owner = self._console_speech_owner
+        self._console_speech_lifetime_generation += 1
+        if message_id is None:
+            self._console_speech_states.clear()
+            return None
+        generation = self._console_speech_request_generation
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        session_epoch = store.active_session_epoch()
+        lifetime_generation = self._console_speech_lifetime_generation
+        pending = (message_id, generation)
+        if self._console_speech_pending_stop == pending:
+            return None
+        self._console_speech_pending_stop = pending
+
+        def context_is_current() -> bool:
+            try:
+                return bool(
+                    self._ensure_console_chat_store() is store
+                    and self._console_speech_lifetime_generation
+                    == lifetime_generation
+                    and store.active_session_id == session_id
+                    and store.active_session_epoch() == session_epoch
+                )
+            except Exception:
+                return False
+
+        def settle_invalidation_stop(accepted: bool) -> None:
+            if self._console_speech_pending_stop != pending:
+                return
+            self._console_speech_pending_stop = None
+            if self._console_speech_request_generation != generation:
+                return
+            if accepted:
+                if context_is_current():
+                    self._console_speech_states = {message_id: "stopped"}
+                else:
+                    self._console_speech_states.pop(message_id, None)
+                if self._console_speech_owner is owner:
+                    self._console_speech_owner = None
+                if (
+                    self._console_speaking_message_id == message_id
+                    and self._console_speech_owner is None
+                ):
+                    self._console_speaking_message_id = None
+            else:
+                if context_is_current():
+                    self._console_speech_states = {message_id: "failed"}
+                else:
+                    self._console_speech_states.pop(message_id, None)
+                self._console_speech_owner = owner
+                self._console_speaking_message_id = message_id
+            self._schedule_console_speech_state_sync()
+
+        stop_event = TTSPlaybackEvent(
+            action="stop",
+            message_id=message_id,
+            playback_lifecycle=owner,
+            outcome_callback=settle_invalidation_stop,
+        )
+        try:
+            return asyncio.create_task(
+                self._dispatch_console_speech_stop_event(
+                    stop_event,
+                    post_first=True,
+                )
+            )
+        except RuntimeError:
+            stop_event.report_outcome(False)
+            return None
+
+    def reconcile_console_speech_context(self) -> None:
+        """Stop playback when the active store/screen owner became stale."""
+        owner = self._console_speech_owner
+        if owner is not None and not owner.is_current():
+            self.invalidate_console_speech_context()
+
+    def _schedule_console_speech_state_sync(self) -> None:
+        """Repaint a callback-driven state change without blocking its reporter."""
+        try:
+            task = asyncio.create_task(self._sync_native_console_chat_ui())
+        except RuntimeError:
+            return
+
+        def _consume_result(done: asyncio.Task) -> None:
+            try:
+                done.result()
+            except Exception:
+                logger.warning("Console speech-state repaint failed")
+
+        task.add_done_callback(_consume_result)
+
     async def handle_console_message_action(self, event: Button.Pressed) -> bool:
         """Route a transcript message action through the native action service.
 
@@ -1089,11 +1421,23 @@ class ConsoleMessageController:
                 message action, leaving the event to propagate.
         """
         button_id = event.button.id or ""
-        action_id, message_id = self._parse_console_message_action_button_id(button_id)
+        action_id = getattr(event.button, "console_action_id", None)
+        message_id = getattr(event.button, "console_message_id", None)
+        if not isinstance(action_id, str) or not isinstance(message_id, str):
+            action_id, message_id = self._parse_console_message_action_button_id(
+                button_id
+            )
         if action_id is None or message_id is None:
             return False
 
         event.stop()
+        failed_cleared = False
+        for failed_id, state in tuple(self._console_speech_states.items()):
+            if state == "failed":
+                self._console_speech_states.pop(failed_id, None)
+                failed_cleared = True
+        if failed_cleared:
+            self._schedule_console_speech_state_sync()
         store = self._ensure_console_chat_store()
 
         if action_id == "review-changes":
@@ -1185,42 +1529,12 @@ class ConsoleMessageController:
             copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
             if callable(copy_to_clipboard):
                 copy_to_clipboard(result.clipboard_text)
-        if action_id == "speak" and result.status == "completed":
-            from tldw_chatbook.Chat.console_speech import (
-                ConsoleSpeechSnapshotRejected,
-            )
-            from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-                TTSMessageSpeechRequestEvent,
-            )
-
-            try:
-                speech_snapshot = store.issue_tts_message_speech_snapshot(
-                    message.id,
-                    presentation_context=self._screen._console_presentation_context(),
-                )
-            except ConsoleSpeechSnapshotRejected as error:
-                self.app_instance.notify(str(error), severity="warning")
-                return True
-
-            def validate_speech_snapshot(snapshot):
-                return store.validate_tts_message_speech_snapshot(
-                    snapshot,
-                    presentation_context=self._screen._console_presentation_context(),
-                )
-
-            self.app_instance.post_message(
-                TTSMessageSpeechRequestEvent(
-                    speech_snapshot,
-                    validate_speech_snapshot,
-                )
-            )
-            # task-559 unit 2: track this message as "speaking" so the
-            # action row swaps 🔊 -> ⏹ (a fresh speak always supersedes
-            # whatever was previously tracked -- the underlying player is a
-            # single-slot global singleton that stops any prior clip before
-            # starting a new one, so the tracked id and reality agree).
-            self._console_speaking_message_id = message.id
-            await self._sync_native_console_chat_ui()
+        if (
+            action_id == "speak"
+            and result.status == "completed"
+            and not await self.request_console_message_speech(message.id)
+        ):
+            return True
         if action_id == "speak-stop" and result.status == "completed":
             # Reuses the legacy stop-button's exact plumbing (spec: "do not
             # invent a parallel audio-control path") -- safe to post
@@ -1230,25 +1544,50 @@ class ConsoleMessageController:
                 TTSPlaybackEvent,
             )
 
-            was_speaking = (
-                getattr(self, "_console_speaking_message_id", None) == message.id
-            )
-            self.app_instance.post_message(
-                TTSPlaybackEvent(action="stop", message_id=message.id)
-            )
+            was_speaking = self._console_speaking_message_id == message.id
+            stop_generation = self._console_speech_request_generation
+            stop_owner = self._console_speech_owner
+            stop_pending = (message.id, stop_generation)
             if was_speaking:
-                # Only when the screen itself believed this message was
-                # driving TTS do we clear state / re-sync / give feedback
-                # (fix round 1). A speak-stop dispatched for a message the
-                # screen never tracked as speaking -- e.g. a directly
-                # crafted button id, or a stale press racing an already-
-                # cleared state -- is a genuinely idle no-op: the stop
-                # event above is still posted for safety, but claiming
-                # "Stopped speaking." or forcing a re-sync for nothing
-                # would be misleading UI feedback.
-                self._console_speaking_message_id = None
-                await self._sync_native_console_chat_ui()
-                self.app_instance.notify(result.visible_copy, severity="information")
+                self._console_speech_pending_stop = stop_pending
+
+            def settle_stop(accepted: bool) -> None:
+                if not was_speaking:
+                    return
+                if self._console_speech_pending_stop != stop_pending:
+                    return
+                self._console_speech_pending_stop = None
+                if self._console_speech_request_generation != stop_generation:
+                    return
+                retryable_owner = bool(
+                    not accepted
+                    and stop_owner is not None
+                    and stop_owner.state not in {"stopped", "failed"}
+                    and self._console_speech_owner is stop_owner
+                )
+                if not retryable_owner:
+                    self._console_speech_request_generation += 1
+                    if self._console_speech_owner is stop_owner:
+                        self._console_speech_owner = None
+                    if self._console_speaking_message_id == message.id:
+                        self._console_speaking_message_id = None
+                self._console_speech_states[message.id] = (
+                    "stopped" if accepted else "failed"
+                )
+                self._schedule_console_speech_state_sync()
+                if accepted:
+                    self.app_instance.notify(
+                        result.visible_copy,
+                        severity="information",
+                    )
+
+            stop_event = TTSPlaybackEvent(
+                action="stop",
+                message_id=message.id,
+                playback_lifecycle=stop_owner,
+                outcome_callback=settle_stop if was_speaking else None,
+            )
+            await self._dispatch_console_speech_stop_event(stop_event)
             return True
         if action_id == "edit" and result.status == "edit_requested":
             await self._open_console_message_edit_modal(

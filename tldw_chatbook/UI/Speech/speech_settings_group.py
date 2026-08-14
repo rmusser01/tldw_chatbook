@@ -333,6 +333,8 @@ SETTING_LABELS: dict[str, str] = {
     "kokoro-performance-switch": "Performance Tracking",
     "kokoro-use-onnx-switch": "Use ONNX",
     "kokoro-voice-blends-list": "Voice Blends",
+    "voice-profiles": "Voice Profiles",
+    "voice-blends": "Voice Blends",
     "kokoro-voice-mixing-switch": "Enable Voice Mixing",
     "openai-api-key-input": "API Key",
     "openai-base-url-input": "Base URL",

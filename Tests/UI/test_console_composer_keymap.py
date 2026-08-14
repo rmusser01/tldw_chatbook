@@ -223,6 +223,26 @@ async def test_ctrl_z_undoes_a_typed_run_and_ctrl_shift_z_redoes_it():
         assert composer.draft_text() == "hi"
 
 
+@pytest.mark.asyncio
+async def test_enter_uses_expand_confirmation_copy_for_a_collapsed_paste():
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        composer = await _focused_composer(host, pilot)
+        pasted = "P" * (composer.paste_collapse_threshold + 1)
+        composer.insert_pasted_text(pasted)
+        await pilot.pause()
+
+        assert composer._display_draft_text() == (
+            f"Pasted text | {len(pasted)} characters | Expand"
+        )
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert composer._display_draft_text() == "Expand?"
+        assert composer.draft_text() == pasted
+
+
 # ---------------------------------------------------------------------------
 # Screen-level routing that the move must NOT change
 # ---------------------------------------------------------------------------

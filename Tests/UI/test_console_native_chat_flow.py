@@ -3011,12 +3011,15 @@ async def test_console_collapsed_paste_sends_full_payload_not_visible_token():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_pasted_text(long_text)
 
-        assert "Pasted Text: 80 Characters" in _visible_text(console)
+        assert "Pasted text | 80 characters | Expand" in _visible_text(console)
         console.query_one("#console-send-message", Button).press()
         await _wait_for_text(console, pilot, "accepted")
 
     assert gateway.sent_messages[-1][-1]["content"] == long_text
-    assert "Pasted Text: 80 Characters" not in gateway.sent_messages[-1][-1]["content"]
+    assert (
+        "Pasted text | 80 characters | Expand"
+        not in gateway.sent_messages[-1][-1]["content"]
+    )
 
 
 @pytest.mark.asyncio
@@ -3772,10 +3775,11 @@ async def test_transcript_role_label_renders_dim_body_full_contrast():
 
         row = console.query_one(f"#console-message-{message.id}")
         if isinstance(row, ConsoleMarkdownMessage):
-            # TASK-1990 markdown row: the dim role label lives in the header
-            # Static; the body is a separate Markdown widget, which never
-            # inherits the header's dim style (full contrast by construction).
-            rendered = row.query_one(".console-markdown-header", Static).renderable
+            # The dim role label lives inside the stable header; the body is a
+            # separate Markdown widget and keeps full contrast by construction.
+            rendered = row.query_one(
+                ".console-transcript-speaker-label", Static
+            ).renderable
             body_text = _message_row_plain_text(console, message.id)
         else:
             rendered = row.renderable
@@ -3933,8 +3937,7 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    # TASK-1: the row now carries a 9th always-visible action button (speak,
-    # right after copy). ConsoleHarness is a bare App (not TldwCli), so it
+    # ConsoleHarness is a bare App (not TldwCli), so it
     # never loads the app's built CSS bundle -- only widget DEFAULT_CSS (see
     # the note at chat_screen.py:726-728) -- so the bundle's
     # `.console-transcript-action-button { min-width: 5 }` override never
@@ -3975,12 +3978,6 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
             f"#console-message-action-copy-{message.id}", Button
         )
         await _wait_for_focus(console.app, pilot, copy_button)
-
-        await pilot.press("tab")
-        speak_button = console.query_one(
-            f"#console-message-action-speak-{message.id}", Button
-        )
-        await _wait_for_focus(console.app, pilot, speak_button)
 
         await pilot.press("tab")
         edit_button = console.query_one(
@@ -10570,7 +10567,7 @@ def test_paste_collapse_label_still_defaults_to_character_count():
     composer = ConsoleComposerBar(paste_collapse_threshold=5)
     composer.insert_pasted_text("0123456789")
 
-    assert composer._display_draft_text() == "Pasted Text: 10 Characters"
+    assert composer._display_draft_text() == "Pasted text | 10 characters | Expand"
 
 
 @pytest.mark.asyncio

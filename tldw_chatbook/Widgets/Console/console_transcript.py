@@ -36,9 +36,12 @@ from tldw_chatbook.Chat.console_image_view import (
     fit_image_cell_size,
 )
 from tldw_chatbook.Chat.console_message_actions import (
+    ConsoleHeaderSpeechPresentation,
     ConsoleMessageAction,
     ConsoleMessageActionService,
+    ConsoleSpeechPresentationState,
     action_row_guide,
+    resolve_console_header_speech,
 )
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
@@ -993,6 +996,143 @@ def _sync_message_classes(
         widget.add_class(class_name)
 
 
+class ConsoleMessageHeader(Horizontal):
+    """Stable one-line speaker header with its sole visible speech control."""
+
+    DEFAULT_CSS = """
+    ConsoleMessageHeader {
+        width: 100%;
+        height: 1;
+        min-height: 1;
+    }
+
+    ConsoleMessageHeader > .console-transcript-speaker-label {
+        width: 1fr;
+        height: 1;
+        min-height: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    ConsoleMessageHeader > .console-message-speech-presentation {
+        width: 14;
+        min-width: 14;
+        height: 1;
+        min-height: 1;
+    }
+    """
+
+    def __init__(
+        self,
+        message: ConsoleChatMessage,
+        presentation: ConsoleMessagePresentation,
+        speech_state: ConsoleSpeechPresentationState,
+        *,
+        markdown: bool,
+    ) -> None:
+        self._message = message
+        self._presentation = presentation
+        self._speech_state = speech_state
+        self._speech = resolve_console_header_speech(message, speech_state)
+        classes = ["console-message-header"]
+        if markdown:
+            classes.append("console-markdown-header")
+        super().__init__(
+            id=f"console-message-header-{message.id}",
+            classes=" ".join(classes),
+        )
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            self._speaker_copy(),
+            classes=" ".join(_speaker_label_classes(self._presentation)),
+            markup=False,
+        )
+        if self._speech.action is not None:
+            yield self._speech_controls(self._speech)
+
+    def _speaker_copy(self) -> Content:
+        if self.has_class("console-markdown-header"):
+            return _assistant_markdown_header(self._message, self._presentation)
+        return Content(self._speaker_label())
+
+    def _speaker_label(self) -> str:
+        return _speaker_label(self._message, self._presentation)
+
+    def _speech_controls(self, speech: ConsoleHeaderSpeechPresentation) -> Horizontal:
+        assert speech.action is not None
+        status = Static(
+            speech.status_label,
+            id=f"console-message-speech-status-{self._message.id}",
+            classes="console-message-speech-status",
+            markup=False,
+        )
+        action = Button(
+            speech.action.label,
+            id=f"console-message-speech-action-{self._message.id}",
+            classes="console-message-speech-action",
+            compact=True,
+            disabled=not speech.action.enabled,
+        )
+        action.console_action_id = speech.action.action_id
+        action.console_message_id = self._message.id
+        action.console_restore_focus = False
+        action.tooltip = speech.action.disabled_reason or _ACTION_TOOLTIPS.get(
+            speech.action.action_id
+        )
+        return Horizontal(
+            status,
+            action,
+            id=f"console-message-speech-presentation-{self._message.id}",
+            classes="console-message-speech-presentation",
+        )
+
+    def sync_header(
+        self,
+        message: ConsoleChatMessage,
+        presentation: ConsoleMessagePresentation,
+        speech_state: ConsoleSpeechPresentationState,
+    ) -> None:
+        """Update copy/state in place, recomposing only the fixed control slot."""
+        prior_has_action = self._speech.action is not None
+        self._message = message
+        self._presentation = presentation
+        self._speech_state = speech_state
+        self._speech = resolve_console_header_speech(message, speech_state)
+        next_has_action = self._speech.action is not None
+        try:
+            speaker = self.query_one(".console-transcript-speaker-label", Static)
+        except NoMatches:
+            return
+        speaker.set_classes(" ".join(_speaker_label_classes(presentation)))
+        speaker.update(self._speaker_copy())
+        if prior_has_action != next_has_action:
+            self.refresh(recompose=True)
+            return
+        if self._speech.action is None:
+            return
+        try:
+            status = self.query_one(".console-message-speech-status", Static)
+            action = self.query_one(".console-message-speech-action", Button)
+        except NoMatches:
+            self.refresh(recompose=True)
+            return
+        status.update(self._speech.status_label)
+        had_focus = action.has_focus
+        if had_focus and not self._speech.action.enabled:
+            action.console_restore_focus = True
+        action.label = self._speech.action.label
+        action.console_action_id = self._speech.action.action_id
+        action.console_message_id = self._message.id
+        action.disabled = not self._speech.action.enabled
+        action.tooltip = self._speech.action.disabled_reason or _ACTION_TOOLTIPS.get(
+            self._speech.action.action_id
+        )
+        if self._speech.action.enabled and action.console_restore_focus:
+            action.console_restore_focus = False
+            self.call_after_refresh(action.focus)
+
+
 class ConsoleMarkdownMessage(Vertical):
     """Assistant transcript row rendered with Textual's Markdown widget.
 
@@ -1029,6 +1169,7 @@ class ConsoleMarkdownMessage(Vertical):
         presentation: ConsoleMessagePresentation | None = None,
         *,
         selected: bool = False,
+        speech_state: ConsoleSpeechPresentationState = "idle",
     ) -> None:
         self.message_id = message.id
         self._presentation = presentation or resolve_console_message_presentation(
@@ -1041,6 +1182,7 @@ class ConsoleMarkdownMessage(Vertical):
         )
         super().__init__(id=f"console-message-{message.id}", classes=classes)
         self._message = message
+        self._speech_state = speech_state
         self._body_text = _assistant_markdown_body(message, self._presentation)
         # TASK-15456: text appended to ``self._body_text`` above but not yet
         # handed to the Markdown widget (deferred while streaming inside an
@@ -1049,12 +1191,11 @@ class ConsoleMarkdownMessage(Vertical):
         self._fence_defer_deadline: float | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            _assistant_markdown_header(self._message, self._presentation),
-            classes=" ".join(
-                ["console-markdown-header", *_speaker_label_classes(self._presentation)]
-            ),
-            markup=False,
+        yield ConsoleMessageHeader(
+            self._message,
+            self._presentation,
+            self._speech_state,
+            markdown=True,
         )
         yield ConsoleRoleplayMarkdown(
             self._body_text,
@@ -1075,12 +1216,14 @@ class ConsoleMarkdownMessage(Vertical):
         presentation: ConsoleMessagePresentation | None = None,
         *,
         selected: bool = False,
+        speech_state: ConsoleSpeechPresentationState = "idle",
     ) -> None:
         """Update header/body/footer in place; append-only growth avoids re-parse."""
         presentation = presentation or self._presentation
         self.message_id = message.id
         self._message = message
         self._presentation = presentation
+        self._speech_state = speech_state
         _sync_message_classes(
             self,
             message,
@@ -1089,17 +1232,12 @@ class ConsoleMarkdownMessage(Vertical):
             markdown=True,
         )
         try:
-            header = self.query_one(".console-markdown-header", Static)
+            header = self.query_one(ConsoleMessageHeader)
             markdown = self.query_one(Markdown)
             footer = self.query_one(".console-markdown-footer", Static)
         except NoMatches:
             return
-        header.set_classes(
-            " ".join(
-                ["console-markdown-header", *_speaker_label_classes(presentation)]
-            )
-        )
-        header.update(_assistant_markdown_header(message, presentation))
+        header.sync_header(message, presentation, speech_state)
         footer_content = _assistant_markdown_footer(message)
         footer.update(footer_content or "")
         footer.display = footer_content is not None
@@ -1204,6 +1342,11 @@ class ConsoleMarkdownMessage(Vertical):
             )
 
     def on_click(self, event: Click) -> None:
+        if event.control is not None and event.control.has_class(
+            "console-message-speech-action"
+        ):
+            event.stop()
+            return
         event.stop()
         transcript = self.parent
         while transcript is not None and not isinstance(transcript, ConsoleTranscript):
@@ -1223,6 +1366,7 @@ class ConsoleTranscriptMessage(Vertical):
         presentation: ConsoleMessagePresentation | None = None,
         *,
         selected: bool = False,
+        speech_state: ConsoleSpeechPresentationState = "idle",
     ) -> None:
         self.message_id = message.id
         self._message = message
@@ -1230,6 +1374,7 @@ class ConsoleTranscriptMessage(Vertical):
             message, ConsolePresentationContext()
         )
         self._selected = selected
+        self._speech_state = speech_state
         super().__init__(
             id=f"console-message-{message.id}",
             classes=" ".join(
@@ -1252,10 +1397,11 @@ class ConsoleTranscriptMessage(Vertical):
         )
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            Content(self._speaker_label()),
-            classes=" ".join(_speaker_label_classes(self._presentation)),
-            markup=False,
+        yield ConsoleMessageHeader(
+            self._message,
+            self._presentation,
+            self._speech_state,
+            markdown=False,
         )
         yield Static(
             _message_body_render_text(self._message, self._presentation),
@@ -1272,6 +1418,7 @@ class ConsoleTranscriptMessage(Vertical):
         presentation: ConsoleMessagePresentation | None = None,
         *,
         selected: bool = False,
+        speech_state: ConsoleSpeechPresentationState = "idle",
     ) -> None:
         """Update row content and selection styling without remounting the row."""
         presentation = presentation or self._presentation
@@ -1279,6 +1426,7 @@ class ConsoleTranscriptMessage(Vertical):
         self._message = message
         self._presentation = presentation
         self._selected = selected
+        self._speech_state = speech_state
         _sync_message_classes(
             self,
             message,
@@ -1287,15 +1435,19 @@ class ConsoleTranscriptMessage(Vertical):
             markdown=False,
         )
         try:
-            label = self.query_one(".console-transcript-speaker-label", Static)
+            header = self.query_one(ConsoleMessageHeader)
             body = self.query_one(".console-transcript-message-body", Static)
         except NoMatches:
             return
-        label.set_classes(" ".join(_speaker_label_classes(presentation)))
-        label.update(Content(self._speaker_label()))
+        header.sync_header(message, presentation, speech_state)
         body.update(_message_body_render_text(message, presentation))
 
     def on_click(self, event: Click) -> None:
+        if event.control is not None and event.control.has_class(
+            "console-message-speech-action"
+        ):
+            event.stop()
+            return
         event.stop()
         transcript = self.parent
         while transcript is not None and not isinstance(transcript, ConsoleTranscript):
@@ -1598,6 +1750,8 @@ class ConsoleTranscript(VerticalScroll):
         {
             "console-transcript-action-row",
             "console-transcript-action-guide",
+            "console-message-speech-presentation",
+            "console-message-speech-action",
             "console-transcript-empty-panel",
             "console-transcript-empty-body",
             "console-transcript-empty-state",
@@ -1651,6 +1805,7 @@ class ConsoleTranscript(VerticalScroll):
         self._video_card_specs: dict[str, ConsoleVideoCardSpec] = {}
         self._original_attempt_previews: dict[str, str] = {}
         self._citation_counts: dict[str, int] = {}
+        self._speech_states: dict[str, ConsoleSpeechPresentationState] = {}
         #: TASK-1860: ids of TOOL markers currently showing their FULL result.
         #: Pure view state, owned here: expansion never touches the store, is
         #: per row (so several calls in one turn expand independently), and is
@@ -2036,6 +2191,76 @@ class ConsoleTranscript(VerticalScroll):
         self, message: ConsoleChatMessage
     ) -> ConsoleMessagePresentation:
         return resolve_console_message_presentation(message, self._presentation_context)
+
+    def _speech_state_store(self) -> dict[str, ConsoleSpeechPresentationState]:
+        """Return remount-safe screen state, or a local store in bare harnesses."""
+        try:
+            screen = self.screen
+        except NoScreen:
+            return self._speech_states
+        states = getattr(screen, "_console_speech_states", None)
+        if isinstance(states, dict):
+            return states
+        try:
+            screen._console_speech_states = self._speech_states
+        except Exception:
+            return self._speech_states
+        return self._speech_states
+
+    def _console_speech_state(
+        self, message_id: str
+    ) -> ConsoleSpeechPresentationState:
+        state = self._speech_state_store().get(message_id)
+        if state in {"idle", "generating", "playing", "stopped", "failed"}:
+            return state
+        if self._console_tts_speaking_message_id() == message_id:
+            return "playing"
+        return "idle"
+
+    def set_speech_state(
+        self,
+        message_id: str,
+        state: ConsoleSpeechPresentationState,
+    ) -> bool:
+        """Apply one ordered speech transition and reject stale terminal events."""
+        if self._message_by_id(message_id) is None:
+            return False
+        states = self._speech_state_store()
+        current = states.get(message_id, "idle")
+        allowed = {
+            "idle": {"generating"},
+            "generating": {"playing", "stopped", "failed"},
+            "playing": {"stopped", "failed"},
+            "stopped": {"generating", "idle"},
+            "failed": {"generating", "idle"},
+        }
+        if state not in allowed.get(current, set()):
+            return False
+        if state in {"generating", "playing"}:
+            for other_id, other_state in tuple(states.items()):
+                if other_id == message_id:
+                    continue
+                if other_state in {"generating", "playing"}:
+                    states[other_id] = "stopped"
+                elif other_state in {"stopped", "failed"}:
+                    states.pop(other_id, None)
+        if state == "idle":
+            states.pop(message_id, None)
+        else:
+            states[message_id] = state
+        self._message_signature_cache.pop(message_id, None)
+        if self.is_mounted:
+            self.call_later(self.refresh_messages)
+        return True
+
+    def _clear_failed_speech_states(self) -> None:
+        states = self._speech_state_store()
+        failed_ids = [
+            message_id for message_id, state in states.items() if state == "failed"
+        ]
+        for message_id in failed_ids:
+            states.pop(message_id, None)
+            self._message_signature_cache.pop(message_id, None)
 
     def set_messages(self, messages: Iterable[ConsoleChatMessage]) -> None:
         """Replace transcript messages and refresh mounted rows when possible.
@@ -2480,6 +2705,8 @@ class ConsoleTranscript(VerticalScroll):
         """Select one message and show its contextual action row."""
         if not any(message.id == message_id for message in self._messages):
             return
+        if self.selected_message_id != message_id:
+            self._clear_failed_speech_states()
         # Keep the public pre-windowing contract: callers may select any
         # message in the complete transcript model.  Reveal the contiguous
         # prefix through that turn before mounting its action row.
@@ -2577,6 +2804,8 @@ class ConsoleTranscript(VerticalScroll):
             self.select_message(visible[0].id)
 
     def action_clear_selection(self) -> None:
+        if self.selected_message_id is not None:
+            self._clear_failed_speech_states()
         self.selected_message_id = None
         if self.is_mounted:
             self.call_later(self.refresh_messages)
@@ -2673,7 +2902,17 @@ class ConsoleTranscript(VerticalScroll):
         try:
             button = self.query_one(selector, Button)
         except NoMatches:
-            return False
+            if action_id not in {"speak", "speak-stop"}:
+                return False
+            try:
+                button = self.query_one(
+                    f"#console-message-speech-action-{message_id}",
+                    Button,
+                )
+            except NoMatches:
+                return False
+            if getattr(button, "console_action_id", None) != action_id:
+                return False
         button.press()
         return True
 
@@ -3076,10 +3315,16 @@ class ConsoleTranscript(VerticalScroll):
                 and self._assistant_markdown_enabled()
             ):
                 return ConsoleMarkdownMessage(
-                    row.message, presentation, selected=row.selected
+                    row.message,
+                    presentation,
+                    selected=row.selected,
+                    speech_state=self._console_speech_state(row.message.id),
                 )
             return ConsoleTranscriptMessage(
-                row.message, presentation, selected=row.selected
+                row.message,
+                presentation,
+                selected=row.selected,
+                speech_state=self._console_speech_state(row.message.id),
             )
         if (
             row.kind == "diff"
@@ -3163,6 +3408,7 @@ class ConsoleTranscript(VerticalScroll):
                 row.message,
                 self._message_presentation(row.message),
                 selected=row.selected,
+                speech_state=self._console_speech_state(row.message.id),
             )
             return widget
         if (
@@ -3174,6 +3420,7 @@ class ConsoleTranscript(VerticalScroll):
                 row.message,
                 self._message_presentation(row.message),
                 selected=row.selected,
+                speech_state=self._console_speech_state(row.message.id),
             )
             return widget
         if row.kind == "empty" and isinstance(widget, ConsoleTranscriptEmptyPanel):
@@ -3243,6 +3490,7 @@ class ConsoleTranscript(VerticalScroll):
             None if message.image_data is None else len(message.image_data),
             message.citation_presentation,
             presentation.revision_token,
+            self._console_speech_state(message.id),
         )
 
     def _cached_message_row_signature(
@@ -3344,6 +3592,7 @@ class ConsoleTranscript(VerticalScroll):
             selected,
             variants_signature,
             presentation.revision_token,
+            self._console_speech_state(message.id),
         )
 
     def _generation_browsed_index(self, message_id: str, variant_count: int) -> int:
@@ -3426,7 +3675,7 @@ class ConsoleTranscript(VerticalScroll):
 
     def _action_row_signature(self, message: ConsoleChatMessage) -> tuple:
         actions = []
-        for action in ConsoleMessageActionService().available_actions(
+        for action in ConsoleMessageActionService().selected_row_actions(
             message,
             speaking_message_id=self._console_tts_speaking_message_id(),
             original_attempt_available=bool(
@@ -3451,11 +3700,10 @@ class ConsoleTranscript(VerticalScroll):
         return ("actions", message.id, tuple(actions))
 
     def _action_guide(self, message: ConsoleChatMessage) -> str:
-        """Return the legend naming ``message``'s glyph-only action buttons.
+        """Return the legend naming row actions and the header speech action.
 
-        Reads the same ``available_actions`` inputs as ``_action_row``/
-        ``_action_row_signature`` so the guide always describes the buttons
-        actually mounted beside it (DS-01).
+        Speech remains in the guide because its button moved to the persistent
+        message header; only the selected-row button is removed.
         """
         return action_row_guide(
             ConsoleMessageActionService().available_actions(
@@ -3472,7 +3720,7 @@ class ConsoleTranscript(VerticalScroll):
 
     def _action_row(self, message: ConsoleChatMessage) -> Horizontal:
         buttons: list[Button] = []
-        for action in ConsoleMessageActionService().available_actions(
+        for action in ConsoleMessageActionService().selected_row_actions(
             message,
             speaking_message_id=self._console_tts_speaking_message_id(),
             original_attempt_available=bool(

@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from textual import on
 from textual.binding import Binding
@@ -39,6 +40,7 @@ from textual.message import Message
 from tldw_chatbook.TTS import (
     AudioCppRuntimeObservation,
     CanonicalTTSCloneReference,
+    STTSGeneratedAudio,
     STTSPlaygroundCloneSnapshot,
     TTSPlaygroundSelectionPreset,
     TTSPreferencesSnapshot,
@@ -87,6 +89,7 @@ from .speech_profile_mixin import (
 from .speech_synthesis_mixin import SpeechSynthesisMixin
 from .speech_param_group import SpeechParamGroup
 from .speech_runtime_status import (
+    SpeechLocalDependencyAvailability,
     SpeechTTSRuntimeStatusStore,
     newest_speech_tts_status,
     project_speech_tts_status,
@@ -285,6 +288,7 @@ class SpeechPlaygroundPane(
         *,
         provider: str = "audio_cpp",
         profile_preset: Any = None,
+        profile_context_token: UUID | None = None,
         axis_values: dict[str, str] | None = None,
         axis_defaults: dict[str, str] | None = None,
         capability_line: str = "",
@@ -294,6 +298,7 @@ class SpeechPlaygroundPane(
         provider_configuration_states: Mapping[str, SpeechTTSConfigurationState]
         | None = None,
         runtime_status_store: SpeechTTSRuntimeStatusStore | None = None,
+        local_dependencies: SpeechLocalDependencyAvailability | None = None,
         **kwargs: Any,
     ) -> None:
         """Create the pane.
@@ -303,6 +308,8 @@ class SpeechPlaygroundPane(
             axis_values: Effective value per comparison axis.
             axis_defaults: Persisted default per axis, for override marking.
             capability_line: One-line local-speech status.
+            local_dependencies: Shared local-capability snapshot. When omitted,
+                a fresh non-importing module-presence probe is used.
             kwargs: Forwarded to ``Vertical``.
         """
         classes = kwargs.pop("classes", "")
@@ -329,6 +336,7 @@ class SpeechPlaygroundPane(
         ):
             raise TypeError("global_preferences must be a TTS preferences snapshot")
         self.studio_preferences = studio_preferences
+        self._global_preferences = global_preferences
         self.global_preferences = global_preferences
         if navigation_target is not None and (
             type(navigation_target) is not SpeechTTSNavigationTarget
@@ -346,6 +354,11 @@ class SpeechPlaygroundPane(
         self._runtime_status_store = (
             runtime_status_store or SpeechTTSRuntimeStatusStore()
         )
+        if local_dependencies is None:
+            local_dependencies = speech_local_dependency_availability(refresh=True)
+        elif type(local_dependencies) is not SpeechLocalDependencyAvailability:
+            raise TypeError("local_dependencies must be a Speech dependency snapshot")
+        self._speech_local_dependencies = local_dependencies
         self._audio_cpp_runtime_observation: AudioCppRuntimeObservation | None = None
         self._audio_cpp_runtime_status_failed = False
         self._audio_cpp_runtime_request_generation = 0
@@ -367,11 +380,19 @@ class SpeechPlaygroundPane(
         self._clone_setup_retained_tasks: set[asyncio.Task[None]] = set()
         self._clone_setup_validation_lock = asyncio.Lock()
         self._clone_setup_error: str | None = None
+        self._profile_mount_generation = 0
         self.init_synthesis_state()
         self.init_catalog_state()
         self._seed_session_control_snapshot()
         self.init_playback_state()
-        self.init_profile_state(profile_preset)
+        self.init_profile_state(profile_preset, profile_context_token)
+
+    def _generation_complete(self, artifact: Any) -> None:
+        """Retain exact profile-test provenance before playback sanitizes it."""
+
+        if type(artifact) is STTSGeneratedAudio:
+            self._retain_profile_generation_artifact(artifact)
+        super()._generation_complete(artifact)
 
     def _seed_session_control_snapshot(self) -> None:
         """Restore bounded process-local axes after an internal Lab view switch."""
@@ -397,6 +418,105 @@ class SpeechPlaygroundPane(
         if snapshot:
             self._provider_control_snapshots[provider_id] = snapshot
 
+    @staticmethod
+    def _project_axis_defaults(
+        studio: StudioTTSPreferencesSnapshot | None,
+        global_preferences: TTSPreferencesSnapshot,
+    ) -> dict[str, str]:
+        """Project saved Studio overrides over one global preference snapshot."""
+
+        defaults = {
+            "tts-provider-select": global_preferences.provider_id,
+            "tts-format-select": global_preferences.response_format,
+            "tts-speed-input": str(global_preferences.speed),
+        }
+        if global_preferences.model_mode == "exact":
+            assert global_preferences.model_id is not None
+            defaults["tts-model-select"] = global_preferences.model_id
+        if global_preferences.voice_mode == "exact":
+            assert global_preferences.voice_id is not None
+            defaults["tts-voice-select"] = global_preferences.voice_id
+        if studio is None:
+            return defaults
+
+        selection = studio.selection
+        if selection.provider_id is not None:
+            if selection.provider_id != global_preferences.provider_id:
+                defaults = {}
+            defaults["tts-provider-select"] = selection.provider_id
+        if selection.model_mode == "exact" and selection.model_id is not None:
+            defaults["tts-model-select"] = selection.model_id
+        elif selection.model_mode == "first_available":
+            defaults.pop("tts-model-select", None)
+        if selection.voice_mode == "exact" and selection.voice_id is not None:
+            defaults["tts-voice-select"] = selection.voice_id
+        elif selection.voice_mode == "server_default":
+            defaults.pop("tts-voice-select", None)
+        if selection.response_format is not None:
+            defaults["tts-format-select"] = selection.response_format
+        if selection.speed is not None:
+            defaults["tts-speed-input"] = str(selection.speed)
+        return defaults
+
+    def refresh_global_preferences(self, snapshot: TTSPreferencesSnapshot) -> None:
+        """Rebase inherited axes while preserving every session override."""
+
+        if type(snapshot) is not TTSPreferencesSnapshot:
+            raise TypeError("global preferences must be a TTS preferences snapshot")
+        old_defaults = dict(self.axis_defaults)
+        new_defaults = self._project_axis_defaults(self.studio_preferences, snapshot)
+        protected_by_profile = self._profile_preset is not None
+        changed_inherited_axes: set[str] = set()
+        missing = object()
+        for axis in set(old_defaults) | set(new_defaults):
+            current = self.axis_values.get(axis, missing)
+            old_default = old_defaults.get(axis, missing)
+            new_default = new_defaults.get(axis, missing)
+            if old_default == new_default:
+                continue
+            is_session_override = protected_by_profile or (
+                current is not missing
+                and (old_default is missing or current != old_default)
+            )
+            if is_session_override:
+                continue
+            changed_inherited_axes.add(axis)
+            if new_default is missing:
+                self.axis_values.pop(axis, None)
+            else:
+                self.axis_values[axis] = new_default
+
+        self._global_preferences = snapshot
+        self.global_preferences = snapshot
+        self.axis_defaults = new_defaults
+        if not changed_inherited_axes or not self.is_mounted:
+            self._refresh_axis_markers()
+            return
+
+        provider_id = self.axis_values.get("tts-provider-select")
+        provider_select = self.query_one("#tts-provider-select", Select)
+        if (
+            "tts-provider-select" in changed_inherited_axes
+            and isinstance(provider_id, str)
+            and provider_select.value != provider_id
+        ):
+            provider_select.value = provider_id
+        elif isinstance(provider_id, str):
+            provider_snapshot = self._provider_control_snapshots.get(provider_id)
+            if provider_snapshot is not None:
+                snapshot_keys = {
+                    "tts-model-select": "model_id",
+                    "tts-voice-select": "voice_id",
+                    "tts-format-select": "response_format",
+                    "tts-speed-input": "speed",
+                }
+                for axis in changed_inherited_axes:
+                    snapshot_key = snapshot_keys.get(axis)
+                    if snapshot_key is not None:
+                        provider_snapshot.pop(snapshot_key, None)
+            self._reproject_current_catalog()
+        self._refresh_axis_markers()
+
     def _cli_setting(self, section: str, key: str, default: Any = None) -> Any:
         """Project saved Studio inheritance into the existing catalog loader.
 
@@ -406,7 +526,7 @@ class SpeechPlaygroundPane(
         """
 
         studio = self.studio_preferences
-        global_preferences = self.global_preferences
+        global_preferences = self._global_preferences
         if (
             section == "app_tts"
             and key == "default_provider"
@@ -1061,7 +1181,9 @@ class SpeechPlaygroundPane(
             row = self.query_one("#speech-axis-row", SpeechAxisRow)
         except NoMatches:
             return
+        row.update_defaults(self.axis_defaults)
         row.update_values(self.axis_values)
+        self._mark_profile_test_axes()
 
     # NOTE (task-15476): there used to be a second handler here,
     # `on_text_area_changed`, matched by Textual's implicit
@@ -1578,7 +1700,7 @@ class SpeechPlaygroundPane(
             applied_configuration_revision=applied_configuration_revision,
             model_id=model_id,
             observation=None,
-            local_dependencies=speech_local_dependency_availability(),
+            local_dependencies=self._speech_local_dependencies,
             runtime_status=runtime_status,
             catalog_status=catalog_status,
         )
@@ -2298,6 +2420,8 @@ class SpeechPlaygroundPane(
     def _on_generation_result(self, artifact: Any) -> None:
         """Project Retry/ready state only for the guided sample now in flight."""
 
+        self._handle_profile_generation_result(artifact)
+
         if self._audio_cpp_sample_state != "generating":
             return
         observation = self._audio_cpp_runtime_observation
@@ -2510,7 +2634,7 @@ class SpeechPlaygroundPane(
         # discovery runs, rather than showing a catalog the user did not ask
         # for and then replacing it.
         if self._profile_preset is not None:
-            self.call_after_refresh(self._finish_profile_preset_mount)
+            self._schedule_profile_preset_mount()
         else:
             self._sync_profile_preview_status()
             self.call_after_refresh(
@@ -2520,21 +2644,46 @@ class SpeechPlaygroundPane(
         if self._navigation_target is not None:
             self.call_after_refresh(self._focus_navigation_target)
 
-    def _finish_profile_preset_mount(self) -> None:
+    def _schedule_profile_preset_mount(self) -> None:
+        """Schedule one callback owned by the current pane/preset generation."""
+
+        self._profile_mount_generation += 1
+        self.call_after_refresh(
+            self._finish_profile_preset_mount,
+            self._profile_mount_generation,
+        )
+
+    def invalidate_profile_mount_callbacks(self) -> None:
+        """Fence callbacks queued by a superseded preset or pane mount."""
+
+        self._profile_mount_generation += 1
+
+    def _profile_mount_callback_is_current(self, generation: int) -> bool:
+        return self.is_mounted and generation == self._profile_mount_generation
+
+    def _finish_profile_preset_mount(self, generation: int) -> None:
         """Prime an exact preset after nested Select children are mounted."""
 
-        if not self.is_mounted:
+        if not self._profile_mount_callback_is_current(generation):
             return
         if self._profile_preset is not None:
+            if not self._profile_mount_callback_is_current(generation):
+                return
             self._prime_profile_preset_controls()
+            if not self._profile_mount_callback_is_current(generation):
+                return
             self.query_one("#tts-text-input", TextArea).focus()
         else:
             self._sync_profile_preview_status()
+        if not self._profile_mount_callback_is_current(generation):
+            return
         self._load_provider_catalog(initialize=True)
 
     def apply_profile_preset(
         self,
         preset: TTSPlaygroundSelectionPreset,
+        *,
+        context_token: UUID | None = None,
     ) -> None:
         """Apply one exact process-local preset to this mounted Playground.
 
@@ -2547,10 +2696,12 @@ class SpeechPlaygroundPane(
 
         if type(preset) is not TTSPlaygroundSelectionPreset:
             raise TypeError("preset must be TTSPlaygroundSelectionPreset")
+        self.invalidate_profile_mount_callbacks()
         self._retire_profile_generation_context()
-        self.init_profile_state(preset)
+        self._retire_profile_test_authority()
+        self.init_profile_state(preset, context_token)
         if self.is_mounted:
-            self.call_after_refresh(self._finish_profile_preset_mount)
+            self._schedule_profile_preset_mount()
 
     def _sync_split_layout(self) -> None:
         """Toggle the stacked class from the pane's measured width."""

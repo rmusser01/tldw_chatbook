@@ -8,13 +8,6 @@ from textual.app import App
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Input, Static, TextArea
 
-from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
-    CharacterEditorCancelled,
-    CharacterImageUploadRequested,
-    CharacterSaveRequested,
-    EditCharacterRequested,
-    EditorContentChanged,
-)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_card_widget import (
     PersonasCharacterCardWidget,
 )
@@ -23,6 +16,13 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget impo
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_conversation_transcript_widget import (
     PersonasConversationTranscriptWidget,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+    CharacterEditorCancelled,
+    CharacterImageUploadRequested,
+    CharacterSaveRequested,
+    EditCharacterRequested,
+    EditorContentChanged,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -259,6 +259,89 @@ class TestCharacterCard:
             assert "[/x]" in str(
                 pilot.app.query_one("#personas-character-card-name", Static).renderable
             )
+
+    async def test_load_sanitizes_malformed_display_text_without_mutating_card(self):
+        app = WidgetApp()
+        data = dict(CHARACTER)
+        data["name"] = "Detective\ufffdSam"
+        data["description"] = "Noir\x00detective"
+        data["alternate_greetings"] = ["Evening\u200b."]
+        original = dict(data)
+        original["alternate_greetings"] = list(data["alternate_greetings"])
+
+        async with app.run_test() as pilot:
+            card = pilot.app.query_one(PersonasCharacterCardWidget)
+            card.load_character(data)
+            await pilot.pause()
+
+            assert str(
+                pilot.app.query_one(
+                    "#personas-character-card-name", Static
+                ).renderable
+            ) == "Name: Detective?Sam"
+            assert str(
+                pilot.app.query_one(
+                    "#personas-character-card-description", Static
+                ).renderable
+            ) == "Description: Noir?detective"
+            assert str(
+                pilot.app.query_one(
+                    "#personas-character-card-greeting-preview", Static
+                ).renderable
+            ) == "Evening?."
+
+        assert data == original
+
+    async def test_load_handles_malformed_collection_shapes_without_iteration(self):
+        calls: list[str] = []
+
+        class DangerousIterable:
+            def __iter__(self):
+                calls.append("iter")
+                yield "unsafe"
+
+        app = WidgetApp()
+        data = dict(CHARACTER)
+        data["tags"] = "solo"
+        data["alternate_greetings"] = {"forged": "greeting"}
+
+        async with app.run_test() as pilot:
+            card = pilot.app.query_one(PersonasCharacterCardWidget)
+            card.load_character(data)
+            await pilot.pause()
+
+            assert str(
+                pilot.app.query_one("#personas-character-card-tags", Static).renderable
+            ) == "Tags: solo"
+            assert str(
+                pilot.app.query_one(
+                    "#personas-character-card-greeting-preview", Static
+                ).renderable
+            ) == "<dict>"
+
+            data["tags"] = DangerousIterable()
+            card.load_character(data)
+            await pilot.pause()
+            assert "<DangerousIterable>" in str(
+                pilot.app.query_one("#personas-character-card-tags", Static).renderable
+            )
+
+        assert calls == []
+
+    async def test_editor_reload_preserves_terminal_unsafe_source_fields_exactly(self):
+        app = WidgetApp()
+        data = dict(CHARACTER)
+        data["name"] = "Nyx\n\tAdmin\x00[/bold]"
+        data["description"] = "Lore\u200b stays exact."
+
+        async with app.run_test() as pilot:
+            editor = pilot.app.query_one(PersonasCharacterEditorWidget)
+            editor.load_character(data)
+            await pilot.pause()
+            collected = editor.get_character_data()
+
+        assert collected["name"] == data["name"]
+        assert collected["description"] == data["description"]
 
 
 # ===== Editor =====

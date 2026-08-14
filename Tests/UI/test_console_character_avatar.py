@@ -248,6 +248,31 @@ async def test_character_section_empty_state_for_generic_session(
     assert "No character" in str(name.renderable)  # empty-state copy
 
 
+@pytest.mark.asyncio
+async def test_initial_and_recomposed_avatar_caption_treat_rich_tags_as_literal(
+    console_screen_with_character,
+):
+    screen = console_screen_with_character
+    raw_initial = "Nyx\n\t\x00[/broken]"
+    screen._active_character_avatar_name = raw_initial
+
+    await screen.recompose()
+    initial = screen.query_one("#console-character-name", Static)
+    initial_visual = initial.visual
+    assert initial._render_markup is False
+    assert initial_visual.plain == "Nyx ?[/broken]"
+    assert "\n" not in initial_visual.plain
+    assert "\t" not in initial_visual.plain
+
+    raw_recomposed = "Lady\t[bold]Nyx[/bold]"
+    screen._active_character_avatar_name = raw_recomposed
+    await screen.recompose()
+    recomposed = screen.query_one("#console-character-name", Static)
+    assert recomposed._render_markup is False
+    assert recomposed.visual.plain == "Lady [bold]Nyx[/bold]"
+    assert screen._active_character_avatar_name == raw_recomposed
+
+
 # --- P3c Task 3: avatar cache + scope-guarded off-thread refresh + render ---
 #
 # Real screen + real ``CharactersRAGDB``: only a real DB round-trip proves
@@ -409,6 +434,23 @@ async def test_sync_tick_refreshes_avatar(console_screen_with_db):
     assert screen._active_character_avatar_name == "Ada"
     name = screen.query_one("#console-character-name")
     assert "Ada" in str(name.renderable)
+
+
+@pytest.mark.asyncio
+async def test_avatar_caption_projects_raw_character_name_to_one_line(
+    console_screen_with_db,
+):
+    _app, screen, db = console_screen_with_db
+    raw_name = "Nyx\n\tAdmin\x00[/bold]"
+    char_id = db.add_character_card({"name": raw_name})
+    _set_active_console_character(screen, char_id, raw_name)
+
+    await screen._refresh_active_character_avatar_if_scope_changed()
+
+    caption = screen.query_one("#console-character-name")
+    assert str(caption.renderable) == "Nyx Admin?[/bold]"
+    assert screen._active_character_avatar_name == raw_name
+    assert screen._session._active_native_console_session().character_name == raw_name
 
 
 # --- Whole-branch review fixes (P3c) -----------------------------------------

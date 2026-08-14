@@ -1,5 +1,8 @@
 import builtins
+from dataclasses import FrozenInstanceError
 import inspect
+
+import pytest
 
 import tldw_chatbook.Chat.console_session_settings as session_settings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
@@ -112,13 +115,134 @@ def test_default_settings_prefers_chat_defaults_and_provider_config() -> None:
     )
 
     assert settings.provider == "llama_cpp"
-    assert settings.model == "configured-model"
+    assert settings.model == "chat-default"
     assert settings.base_url == "http://127.0.0.1:9099"
     assert settings.temperature == 0.2
     assert settings.top_p == 0.8
     assert settings.min_p == 0.05
     assert settings.top_k == 40
     assert settings.max_tokens == 2048
+
+
+def test_chat_defaults_model_outranks_provider_fallback() -> None:
+    config = {
+        "chat_defaults": {"provider": "openai", "model": "chosen-model"},
+        "api_settings": {"openai": {"model": "legacy-model"}},
+    }
+
+    effective = session_settings.resolve_effective_chat_configuration(config)
+
+    assert effective.provider == "openai"
+    assert effective.model == "chosen-model"
+    assert effective.model_source == "chat_defaults"
+
+
+def test_explicit_model_outranks_chat_defaults_and_provider_fallback() -> None:
+    config = {
+        "chat_defaults": {"provider": "openai", "model": "global-model"},
+        "api_settings": {"openai": {"model": "legacy-model"}},
+    }
+
+    effective = session_settings.resolve_effective_chat_configuration(
+        config,
+        model="session-model",
+    )
+
+    assert effective.model == "session-model"
+    assert effective.model_source == "session"
+
+
+def test_provider_model_fallback_order_is_model_then_api_model_then_default_model() -> (
+    None
+):
+    provider_settings = {
+        "model": "model-value",
+        "api_model": "api-model-value",
+        "default_model": "default-model-value",
+    }
+    config = {
+        "chat_defaults": {"provider": "openai"},
+        "api_settings": {"openai": provider_settings},
+    }
+
+    effective = session_settings.resolve_effective_chat_configuration(config)
+    assert effective.model == "model-value"
+    assert effective.model_source == "provider_fallback"
+
+    del provider_settings["model"]
+    effective = session_settings.resolve_effective_chat_configuration(config)
+    assert effective.model == "api-model-value"
+    assert effective.model_source == "provider_fallback"
+
+    del provider_settings["api_model"]
+    effective = session_settings.resolve_effective_chat_configuration(config)
+    assert effective.model == "default-model-value"
+    assert effective.model_source == "provider_fallback"
+
+
+def test_missing_model_reports_none_provenance() -> None:
+    effective = session_settings.resolve_effective_chat_configuration(
+        {"chat_defaults": {"provider": "openai"}}
+    )
+
+    assert effective.model is None
+    assert effective.model_source == "none"
+
+
+def test_legacy_provider_alias_reads_without_rewrite_and_save_is_canonical() -> None:
+    config = {
+        "chat_defaults": {
+            "provider": "OpenAI-Compatible",
+            "model": "pocket-tts",
+        }
+    }
+
+    effective = session_settings.resolve_effective_chat_configuration(config)
+
+    assert effective.provider == "openai"
+    assert config["chat_defaults"]["provider"] == "OpenAI-Compatible"
+    assert session_settings.build_canonical_chat_defaults_mutation(effective) == {
+        "chat_defaults": {"provider": "openai", "model": "pocket-tts"}
+    }
+
+
+def test_explicit_provider_alias_is_canonicalized_for_read_only_resolution() -> None:
+    config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": "chat-model"},
+        "api_settings": {"custom": {"api_url": "https://example.test/v1"}},
+    }
+
+    effective = session_settings.resolve_effective_chat_configuration(
+        config,
+        provider="custom-openai-api",
+    )
+
+    assert effective.provider == "custom"
+    assert effective.base_url == "https://example.test/v1"
+    assert config["chat_defaults"]["provider"] == "llama_cpp"
+
+
+def test_effective_chat_configuration_is_frozen_and_slotted() -> None:
+    effective = session_settings.resolve_effective_chat_configuration(
+        {"chat_defaults": {"provider": "openai", "model": "gpt-test"}}
+    )
+
+    assert not hasattr(effective, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        effective.model = "replacement"
+
+
+def test_canonical_chat_defaults_mutation_omits_missing_values() -> None:
+    effective = session_settings.EffectiveChatConfiguration(
+        provider="",
+        model=None,
+        base_url=None,
+        model_source="none",
+    )
+
+    assert session_settings.build_canonical_chat_defaults_mutation(effective) == {
+        "chat_defaults": {}
+    }
 
 
 def test_qwencloud_default_settings_use_canonical_fields_with_alias_fallbacks() -> None:

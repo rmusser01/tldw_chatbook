@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 import toml
 from loguru import logger
 from rich.markup import escape as escape_markup
+from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -35,8 +36,10 @@ from textual.widgets import Button, Static, Select, Collapsible, Input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import (
+    ConsoleFirstChatIntent,
     ConsoleProviderIntent,
     HandoffChannel,
+    PendingHandoffStore,
 )
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
@@ -239,6 +242,7 @@ from ...Chat.console_fleet_attention import (
     fleet_unseen_conversation_ids,
 )
 from ...Chat.console_glyphs import GLYPH_VOICE_WORKING
+from ...UI.character_display_text import sanitize_character_display_label
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -416,7 +420,9 @@ from ...config import (
     get_api_key,
     get_cli_providers_and_models,
     get_cli_setting,
+    get_runtime_config_snapshot,
     load_settings,
+    run_if_runtime_config_generation_current,
     save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
@@ -455,6 +461,7 @@ from ...UI.Workbench import (
 )
 from ...UI.Workbench.focus import WorkbenchFocusRegistry
 from ...state.ui_state import UIState
+from ...TTS.profile_types import CharacterRef
 from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfirmCard
 from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
@@ -476,6 +483,12 @@ from ...Widgets.Console import (
     ConsoleStagedEvidenceStrip,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
+)
+from ...Widgets.Console.console_control_bar import (
+    ConsoleAutoSpeakChanged,
+    ConsoleAutoSpeakRetryRequested,
+    ConsoleAutoSpeakResumeRequested,
+    CONSOLE_CONTROL_BAR_HEIGHT,
 )
 from ...Widgets.Console.console_settings_modal import ConsoleSettingsResult
 from ...Widgets.Console.console_context_controls import (
@@ -3314,6 +3327,7 @@ class ChatScreen(BaseAppScreen):
         self._console_status_chips_layout_revision = 0
         self._state_dirty = False
         self._handoff_consumption_in_progress = False
+        self._first_chat_handoff_notified_revision: int | None = None
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
         self._pending_console_launch_auto_open_inspector = False
         # PR-4/task-1: source count of the evidence the LAST send consumed,
@@ -4253,6 +4267,344 @@ class ChatScreen(BaseAppScreen):
             )
             return False
         self.app_instance.pending_handoffs.acknowledge(claim)
+        return True
+
+    @staticmethod
+    def _first_chat_defaults_match(
+        intent: ConsoleFirstChatIntent,
+        settings: ConsoleSessionSettings,
+    ) -> bool:
+        return (
+            provider_config_key(settings.provider) == intent.provider
+            and str(settings.model or "").strip() == intent.model
+        )
+
+    def _current_first_chat_defaults(
+        self,
+        *,
+        provider: str,
+        model: str,
+        config_revision: int,
+    ) -> ConsoleSessionSettings | None:
+        """Resolve exact current defaults only while the config fence matches."""
+
+        snapshot = get_runtime_config_snapshot()
+        if snapshot.generation != config_revision:
+            return None
+        settings = build_default_console_session_settings(snapshot.values)
+        if (
+            provider_config_key(settings.provider) != provider_config_key(provider)
+            or str(settings.model or "").strip() != str(model or "").strip()
+        ):
+            return None
+        return settings
+
+    def eligible_console_first_chat_session_id(self) -> str | None:
+        """Return an exact untouched target without creating or changing Console."""
+
+        store = self._console_chat_store
+        if store is None:
+            return None
+        active_id = store.active_session_id
+        if active_id is None:
+            return None
+        active = next(
+            (session for session in store.sessions() if session.id == active_id),
+            None,
+        )
+        baseline = active.canonical_settings_baseline if active is not None else None
+        if (
+            baseline is None
+            or active.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
+            or not store.is_pristine_session(
+                active_id,
+                expected_settings=baseline,
+            )
+        ):
+            return None
+        return active_id
+
+    def _release_first_chat_claim(self, claim, message: str) -> bool:
+        """Release an exact claim without leaking failure-owned data."""
+
+        handoffs = self.app_instance.pending_handoffs
+        try:
+            claim_is_current = handoffs.is_current_claim(claim)
+        except Exception as exc:  # noqa: BLE001 - lifecycle boundary containment
+            claim_is_current = False
+            self._log_first_chat_handoff_exception("claim-current-check", exc)
+        try:
+            released = handoffs.release(claim)
+        except Exception as exc:  # noqa: BLE001 - keep the channel retryable
+            self._log_first_chat_handoff_exception("claim-release", exc)
+            released = False
+            if isinstance(handoffs, PendingHandoffStore):
+                try:
+                    # Bypass a failing instance wrapper while retaining the
+                    # store's exact-claim and replacement invariants.
+                    released = PendingHandoffStore.release(handoffs, claim)
+                except Exception as fallback_exc:  # noqa: BLE001
+                    self._log_first_chat_handoff_exception(
+                        "claim-release-fallback",
+                        fallback_exc,
+                    )
+        if not released:
+            return False
+        if not claim_is_current:
+            if self._first_chat_handoff_notified_revision == claim.revision:
+                self._first_chat_handoff_notified_revision = None
+            return False
+        if claim.revision != self._first_chat_handoff_notified_revision:
+            self._first_chat_handoff_notified_revision = claim.revision
+            try:
+                self.app_instance.notify(message, severity="warning")
+            except Exception as exc:  # noqa: BLE001 - lifecycle boundary containment
+                self._log_first_chat_handoff_exception("notification", exc)
+        return False
+
+    @staticmethod
+    def _log_first_chat_handoff_exception(category: str, exc: Exception) -> None:
+        """Log only allowlisted failure classification, never exception content."""
+
+        logger.warning(
+            "First-chat handoff operation failed (category={}, error_type={})",
+            category,
+            type(exc).__name__,
+        )
+
+    async def _resync_console_after_first_chat_rollback(
+        self,
+        prior_focused_widget: Widget | None,
+    ) -> None:
+        """Re-render restored Console state, then restore still-mounted focus."""
+
+        if not self.is_mounted:
+            return
+        await self._sync_native_console_chat_ui()
+        if not self.is_mounted:
+            return
+        if (
+            prior_focused_widget is not None
+            and prior_focused_widget.is_mounted
+        ):
+            prior_focused_widget.focus()
+
+    def _resync_mounted_console_after_first_chat_rollback(
+        self,
+        *,
+        prior_control_provider: str | None,
+        prior_control_model: str | None,
+        prior_focused_widget: Widget | None,
+    ) -> None:
+        """Restore first-chat-owned scalars and every mounted Console projection."""
+
+        self._console_control_provider = prior_control_provider
+        self._console_control_model = prior_control_model
+        if not self.is_mounted:
+            return
+        self._sync_console_chat_core_state()
+        self._sync_console_settings_summary()
+        self._sync_console_control_bar()
+        self.run_worker(
+            self._resync_console_after_first_chat_rollback(prior_focused_widget),
+            group="console-first-chat-rollback",
+            exit_on_error=False,
+        )
+
+    def consume_pending_console_first_chat_intent(self) -> bool:
+        """Activate one exact first-run target without overwriting user state."""
+
+        claim = self.app_instance.pending_handoffs.claim(
+            HandoffChannel.CONSOLE_FIRST_CHAT
+        )
+        if claim is None:
+            return False
+        intent = claim.value
+        if not isinstance(intent, ConsoleFirstChatIntent):
+            return self._release_first_chat_claim(
+                claim,
+                "The first chat could not be opened yet; review provider setup.",
+            )
+        defaults = self._current_first_chat_defaults(
+            provider=intent.provider,
+            model=intent.model,
+            config_revision=intent.config_revision,
+        )
+        if defaults is None:
+            return self._release_first_chat_claim(
+                claim,
+                "Provider settings changed before Console opened. Review setup and try again.",
+            )
+
+        store = self._ensure_console_chat_store()
+        prior_active_id = store.active_session_id
+        prior_control_provider = self._console_control_provider
+        prior_control_model = self._console_control_model
+        prior_focused_widget = self.app.focused if self.is_mounted else None
+        created_target = None
+        refreshed_prior: tuple[
+            ConsoleSessionSettings,
+            ConsoleSessionSettings,
+            str,
+        ] | None = None
+
+        def rollback_mutation() -> None:
+            if created_target is not None:
+                store.rollback_created_pristine_session(
+                    created_target.id,
+                    expected_session=created_target,
+                    expected_settings=defaults,
+                    prior_active_session_id=prior_active_id,
+                )
+            elif refreshed_prior is not None:
+                prior_settings, prior_baseline, prior_updated_at = refreshed_prior
+                store.rollback_pristine_session_refresh(
+                    intent.session_id,
+                    expected_current_settings=defaults,
+                    prior_settings=prior_settings,
+                    prior_canonical_settings=prior_baseline,
+                    prior_updated_at=prior_updated_at,
+                )
+            self._resync_mounted_console_after_first_chat_rollback(
+                prior_control_provider=prior_control_provider,
+                prior_control_model=prior_control_model,
+                prior_focused_widget=prior_focused_widget,
+            )
+
+        def rollback_and_release(message: str) -> bool:
+            try:
+                rollback_mutation()
+            except Exception as exc:  # noqa: BLE001 - lifecycle boundary containment
+                self._log_first_chat_handoff_exception("rollback", exc)
+            return self._release_first_chat_claim(claim, message)
+
+        def fence_matches(*, expected_active_id: str) -> bool:
+            current = self._current_first_chat_defaults(
+                provider=intent.provider,
+                model=intent.model,
+                config_revision=intent.config_revision,
+            )
+            return (
+                current == defaults
+                and store.active_session_id == expected_active_id
+                and self.app_instance.pending_handoffs.is_current_claim(claim)
+            )
+
+        reserves_new_target = (
+            self.app_instance.pending_handoffs.claim_reserves_new_console_session(
+                claim
+            )
+        )
+        target = next(
+            (session for session in store.sessions() if session.id == intent.session_id),
+            None,
+        )
+        if target is None:
+            if not reserves_new_target:
+                return self._release_first_chat_claim(
+                    claim,
+                    "The intended Console session is no longer available. Review setup and try again.",
+                )
+            try:
+                target = store.create_session(
+                    session_id=intent.session_id,
+                    workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
+                    settings=defaults,
+                    canonical_settings_baseline=defaults,
+                    activate=False,
+                )
+            except ValueError:
+                return self._release_first_chat_claim(
+                    claim,
+                    "The intended Console session was claimed before setup finished. It was left unchanged.",
+                )
+            created_target = target
+            if not fence_matches(expected_active_id=prior_active_id):
+                return rollback_and_release(
+                    "Provider settings changed while Console prepared the first chat. It will retry.",
+                )
+            store.switch_session(intent.session_id)
+            if not fence_matches(expected_active_id=intent.session_id):
+                return rollback_and_release(
+                    "Console changed while the first chat was opening. Your sessions were left unchanged.",
+                )
+        else:
+            if reserves_new_target:
+                return self._release_first_chat_claim(
+                    claim,
+                    "The intended Console session was claimed before setup finished. It was left unchanged.",
+                )
+            if store.active_session_id != intent.session_id:
+                return self._release_first_chat_claim(
+                    claim,
+                    "Console changed sessions before setup finished. Your current session was left unchanged.",
+                )
+            baseline = target.canonical_settings_baseline
+            if (
+                baseline is None
+                or target.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
+                or not store.is_pristine_session(
+                    intent.session_id,
+                    expected_settings=baseline,
+                )
+            ):
+                return self._release_first_chat_claim(
+                    claim,
+                    "The intended Console session now contains work. It was left unchanged.",
+                )
+            if baseline != defaults:
+                refreshed_prior = (target.settings, baseline, target.updated_at)
+                store.refresh_pristine_session_settings(
+                    intent.session_id,
+                    prior_canonical_settings=baseline,
+                    current_canonical_settings=defaults,
+                )
+                target = next(
+                    session
+                    for session in store.sessions()
+                    if session.id == intent.session_id
+                )
+                if not fence_matches(expected_active_id=intent.session_id):
+                    return rollback_and_release(
+                        "Provider settings changed while Console prepared the first chat. It will retry.",
+                    )
+
+        if (
+            target.settings is None
+            or not self._first_chat_defaults_match(intent, target.settings)
+            or not fence_matches(expected_active_id=intent.session_id)
+        ):
+            return rollback_and_release(
+                "The first chat target no longer matches provider setup. It was left unchanged.",
+            )
+
+        self._console_control_provider = target.settings.provider
+        self._console_control_model = target.settings.model
+        if self.is_mounted:
+            self._sync_console_chat_core_state()
+            self._sync_console_settings_summary()
+            self._sync_console_control_bar()
+        if not fence_matches(expected_active_id=intent.session_id):
+            return rollback_and_release(
+                "Console changed before the first chat finished opening. It will retry.",
+            )
+        try:
+            acknowledged = run_if_runtime_config_generation_current(
+                intent.config_revision,
+                lambda: self.app_instance.pending_handoffs.acknowledge_current(
+                    claim
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - mount/resume must not fail
+            self._log_first_chat_handoff_exception("guarded-acknowledgement", exc)
+            return rollback_and_release(
+                "The first chat could not be acknowledged yet. It will retry.",
+            )
+        if not acknowledged:
+            return rollback_and_release(
+                "The first chat could not be acknowledged yet. It will retry.",
+            )
+        self._first_chat_handoff_notified_revision = None
         return True
 
     def current_console_provider_for_command(self) -> str | None:
@@ -5638,6 +5990,14 @@ class ChatScreen(BaseAppScreen):
     @_console_speaking_message_id.setter
     def _console_speaking_message_id(self, value: str | None) -> None:
         self._message._console_speaking_message_id = value
+
+    @property
+    def _console_speech_states(self) -> dict[str, str]:
+        return self._message._console_speech_states
+
+    @_console_speech_states.setter
+    def _console_speech_states(self, value: dict[str, str]) -> None:
+        self._message._console_speech_states = value
 
     @property
     def _pending_console_swipe_selection(self) -> str | None:
@@ -9188,7 +9548,10 @@ class ChatScreen(BaseAppScreen):
                     (item.source_type, item.source_id) for item in ws_scope.items
                 )
 
-        title = session.title.strip() if session.title else ""
+        title = sanitize_character_display_label(
+            session.title,
+            max_characters=500,
+        )
         target_label = title or "this conversation"
         media_lister, notes_lister, tag_lister = self._console_scope_picker_listers()
 
@@ -9627,7 +9990,14 @@ class ChatScreen(BaseAppScreen):
             self._fetch_character_card_for_avatar, choice.character_id
         )
         if card is None:
-            self.app.notify(f"Could not load {choice.name}.", severity="error")
+            display_name = sanitize_character_display_label(
+                choice.name,
+                max_characters=180,
+            ) or "that character"
+            self.app.notify(
+                f"Could not load {escape_markup(display_name)}.",
+                severity="error",
+            )
             return
         # cubic PR #1153 P1: the store lives on the SCREEN behind a lazy
         # accessor -- `app_instance.console_chat_store` is always None, so
@@ -9648,6 +10018,11 @@ class ChatScreen(BaseAppScreen):
             choice.name,
             user_name=effective_name,
         )
+        display_name = sanitize_character_display_label(
+            seed.name,
+            max_characters=180,
+        ) or "that character"
+        notification_name = escape_markup(display_name)
         if choice.placement == "new":
             # cubic PR #1153 P1: the card's system prompt was computed and
             # discarded, leaving the new chat on the default prompt. Mirror
@@ -9684,7 +10059,7 @@ class ChatScreen(BaseAppScreen):
             # `_sync_native_console_chat_ui()` below never touches the
             # temporary chip (see `_sync_console_temporary_chip`).
             self._sync_console_temporary_chip()
-            self.app.notify(f"Started a new chat with {seed.name}.")
+            self.app.notify(f"Started a new chat with {notification_name}.")
         else:
             if not self._session._swap_console_session_character(
                 store,
@@ -9693,7 +10068,7 @@ class ChatScreen(BaseAppScreen):
                 global_default=global_name,
             ):
                 return
-            self.app.notify(f"This chat now uses {seed.name}.")
+            self.app.notify(f"This chat now uses {notification_name}.")
         # cubic PR #1153 P2: this refresher is async -- calling it without
         # awaiting produced a never-run coroutine (and a RuntimeWarning).
         await self._sync_native_console_chat_ui()
@@ -9914,7 +10289,13 @@ class ChatScreen(BaseAppScreen):
             )
             try:
                 self.query_one("#console-character-name", Static).update(
-                    self._active_character_avatar_name or "No character in this chat"
+                    Text(
+                        sanitize_character_display_label(
+                            self._active_character_avatar_name,
+                            max_characters=180,
+                        )
+                        or "No character in this chat"
+                    )
                 )
             except QueryError:
                 pass
@@ -9939,7 +10320,11 @@ class ChatScreen(BaseAppScreen):
         self.app.push_screen(
             ConsoleImageViewerModal(
                 pil,
-                title=self._active_character_avatar_name or "Character portrait",
+                title=sanitize_character_display_label(
+                    self._active_character_avatar_name,
+                    max_characters=180,
+                )
+                or "Character portrait",
             )
         )
 
@@ -12754,21 +13139,33 @@ class ChatScreen(BaseAppScreen):
                 ConsoleDisplayRow("Conversation source", "none"),
             )
 
-        try:
-            active_session = store.switch_session(store.active_session_id)
-        except KeyError:
+        active_session = next(
+            (
+                session
+                for session in store.sessions()
+                if session.id == store.active_session_id
+            ),
+            None,
+        )
+        if active_session is None:
             return (
                 ConsoleDisplayRow("Selected conversation", "No active conversation"),
                 ConsoleDisplayRow("Conversation source", "none"),
             )
 
         workspace_state = self._workspace._build_console_workspace_context_state()
-        workspace_label = str(workspace_state.workspace_label or "").strip()
-        if workspace_label.startswith("Workspace: "):
-            workspace_label = workspace_label.removeprefix("Workspace: ").strip()
-        workspace_label = workspace_label or str(
-            active_session.workspace_id or "Default"
-        )
+        workspace_value = workspace_state.workspace_label
+        if isinstance(workspace_value, str) and workspace_value.startswith(
+            "Workspace: "
+        ):
+            workspace_value = workspace_value.removeprefix("Workspace: ")
+        workspace_label = sanitize_character_display_label(
+            workspace_value,
+            max_characters=500,
+        ) or sanitize_character_display_label(
+            active_session.workspace_id,
+            max_characters=500,
+        ) or "Default"
         persisted_id = str(active_session.persisted_conversation_id or "").strip()
         source = "saved conversation" if persisted_id else "native Console session"
         resume_state = (
@@ -12793,7 +13190,13 @@ class ChatScreen(BaseAppScreen):
                 ConsoleDisplayRow("Prefill (pinned)", describe_prefill_preview(pinned))
             )
         return (
-            ConsoleDisplayRow("Selected conversation", active_session.title),
+            ConsoleDisplayRow(
+                "Selected conversation",
+                sanitize_character_display_label(
+                    active_session.title,
+                    max_characters=500,
+                ),
+            ),
             ConsoleDisplayRow("Conversation source", source),
             ConsoleDisplayRow("Workspace", workspace_label),
             ConsoleDisplayRow("Resume state", resume_state),
@@ -14290,7 +14693,7 @@ class ChatScreen(BaseAppScreen):
                     id="console-control-bar",
                     classes="console-control-bar",
                 ),
-                height=1,
+                height=CONSOLE_CONTROL_BAR_HEIGHT,
             )
             workspace_grid = self._frame_console_region(
                 Horizontal(
@@ -14368,7 +14771,10 @@ class ChatScreen(BaseAppScreen):
                         )
                     )
                     character_avatar_name = (
-                        self._active_character_avatar_name
+                        sanitize_character_display_label(
+                            self._active_character_avatar_name,
+                            max_characters=180,
+                        )
                         or "No character in this chat"
                     )
 
@@ -14632,12 +15038,17 @@ class ChatScreen(BaseAppScreen):
         self.app_instance._console_h3_image_edit_screen = self
         if not hasattr(self, "_console_h3_terminal_generations"):
             self._console_h3_terminal_generations: set[str] = set()
+        # This handoff is session/config only and does not need mounted DOM.
+        # Consume it before ordinary UI restoration can create a competing
+        # default session with a different identity.
+        self.consume_pending_console_first_chat_intent()
         self._notify_console_fleet_teardown_if_any()
         # PR3a-2 Task 5: claim staged auto-wakes SYNCHRONOUSLY, before any
         # timer or worker below can run the first tab sync -- whose
         # view-clear consumes the ACTIVE conversation's FLEET_UNSEEN mark
         # (Task 4's stated ordering hazard: read marks BEFORE activation).
         self._claim_console_fleet_wake_marks()
+        self._console_auto_speak.mount()
 
         # Restore collapsible states after mount
         self.set_timer(0.1, self._restore_collapsible_states)
@@ -14985,6 +15396,8 @@ class ChatScreen(BaseAppScreen):
         # raise, and a raised exception must not strand an unpersisted
         # toggle-then-quit.
         await self._flush_sidebar_state_now()
+        self._message.invalidate_console_speech_context()
+        self._console_auto_speak.unmount()
         registry = self._h3_image_edit_registry()
         store = self._console_chat_store
         if store is not None:
@@ -15276,6 +15689,7 @@ class ChatScreen(BaseAppScreen):
         active_session_id = (
             str(active_session_id) if active_session_id is not None else ""
         )
+        self._message.invalidate_console_speech_context()
         store.restore_state(
             sessions=restored_sessions,
             messages_by_session=restored_messages_by_session,
@@ -16107,6 +16521,7 @@ class ChatScreen(BaseAppScreen):
                 summary_boundary_id,
                 tuple(sorted(self._console_original_attempt_previews.items())),
                 tuple(sorted(visible_citation_counts.items())),
+                tuple(sorted(self._console_speech_states.items())),
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
@@ -16211,6 +16626,7 @@ class ChatScreen(BaseAppScreen):
         self._record_ui_worker_started("console-sync")
         try:
             store = self._console_chat_store
+            self._message.reconcile_console_speech_context()
             if store is not None:
                 live_session_ids = {session.id for session in store.sessions()}
                 registry = self._h3_image_edit_registry()
@@ -16328,12 +16744,14 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         store = self._ensure_console_chat_store()
+        defaults = self._session._default_console_session_settings()
         store.ensure_session(
             title=self._workspace._console_initial_session_title_for_workspace(
                 store.workspace_context.active_workspace_id
             ),
             workspace_id=store.workspace_context.active_workspace_id,
-            settings=self._session._default_console_session_settings(),
+            settings=defaults,
+            canonical_settings_baseline=defaults,
         )
         self._session._ensure_active_console_session_settings()
         controller = getattr(self, "_console_chat_controller", None)
@@ -20886,6 +21304,62 @@ class ChatScreen(BaseAppScreen):
         self._console_control_bar_sync_scheduled = True
         self.call_after_refresh(self._run_coalesced_control_bar_sync)
 
+    async def _resolve_console_auto_speak_destination(
+        self,
+        assistant_kind: str | None,
+        character_ref: CharacterRef | None,
+    ):
+        """Resolve the same effective TTS authority used by synthesis."""
+        ensure_handler = getattr(self.app_instance, "_ensure_tts_handler", None)
+        if not callable(ensure_handler):
+            return None
+        handler = await ensure_handler()
+        resolver = getattr(handler, "resolve_console_speech_destination", None)
+        if not callable(resolver):
+            return None
+        try:
+            return await resolver(assistant_kind, character_ref)
+        except Exception:
+            return None
+
+    def _sync_console_auto_speak_controls(
+        self,
+        enabled: bool,
+        paused: bool,
+        retry_available: bool = False,
+    ) -> None:
+        """Push authoritative active-conversation state into the control bar."""
+        try:
+            control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
+        except QueryError:
+            return
+        control_bar.sync_auto_speak(
+            enabled=enabled,
+            paused=paused,
+            retry_available=retry_available,
+        )
+
+    @on(ConsoleAutoSpeakChanged)
+    def on_console_auto_speak_changed(self, event: ConsoleAutoSpeakChanged) -> None:
+        event.stop()
+        self._console_auto_speak.request_enabled(event.enabled)
+
+    @on(ConsoleAutoSpeakResumeRequested)
+    def on_console_auto_speak_resume_requested(
+        self,
+        event: ConsoleAutoSpeakResumeRequested,
+    ) -> None:
+        event.stop()
+        self._console_auto_speak.request_resume()
+
+    @on(ConsoleAutoSpeakRetryRequested)
+    def on_console_auto_speak_retry_requested(
+        self,
+        event: ConsoleAutoSpeakRetryRequested,
+    ) -> None:
+        event.stop()
+        self._console_auto_speak.request_retry()
+
     def _run_coalesced_control_bar_sync(self) -> None:
         """Execute one coalesced control-bar sync (task-3010)."""
         self._console_control_bar_sync_scheduled = False
@@ -20955,6 +21429,7 @@ class ChatScreen(BaseAppScreen):
         # cache TTL counts down with no control-state change at all.
         # `_sync_console_cost_chip` owns its own equality guard.
         self._sync_console_cost_chip()
+        self._console_auto_speak.sync_controls()
 
     def _push_console_control_state_if_changed(
         self,
@@ -22062,6 +22537,7 @@ class ChatScreen(BaseAppScreen):
         # so every subsequent resume refreshes normally.
         mount_already_refreshed = self._console_mount_visit_refreshed
         self._console_mount_visit_refreshed = False
+        self.consume_pending_console_first_chat_intent()
         # Re-evaluate setup-card/model readiness before touching focus. Some
         # recovery flows (e.g. certain providers' API-key recovery) navigate to
         # the full Settings screen and back rather than completing setup via
@@ -22271,6 +22747,12 @@ class ChatScreen(BaseAppScreen):
                 controller, session_id
             )
         )
+        session_title = escape_markup(
+            sanitize_character_display_label(session_title, max_characters=500)
+        )
+        workspace_name = escape_markup(
+            sanitize_character_display_label(workspace_name, max_characters=500)
+        )
         self.app_instance.notify(
             f"Agent in {session_title} ({workspace_name}) needs approval."
         )
@@ -22352,6 +22834,12 @@ class ChatScreen(BaseAppScreen):
             self._workspace._console_session_title_and_workspace_name(
                 controller, session_id
             )
+        )
+        session_title = escape_markup(
+            sanitize_character_display_label(session_title, max_characters=500)
+        )
+        workspace_name = escape_markup(
+            sanitize_character_display_label(workspace_name, max_characters=500)
         )
         verb = "finished" if status is ConsoleRunStatus.COMPLETED else "failed"
         self.app_instance.notify(f"Agent in {session_title} ({workspace_name}) {verb}.")

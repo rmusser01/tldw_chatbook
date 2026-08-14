@@ -119,6 +119,37 @@ async def test_down_from_the_last_row_returns_false_and_moves_nothing():
         assert composer.cursor_index == before
 
 
+def test_middle_collapsed_paste_uses_the_actual_predecessor_and_maps_caret():
+    first = "A" * 80
+    second = "B" * 90
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.insert_pasted_text(first)
+    composer.insert_text("tail")
+    first_token_end = len(f"Pasted text | {len(first)} characters | Expand")
+    composer.position_cursor_from_display_index(first_token_end)
+
+    composer.insert_pasted_text(second)
+
+    assert composer.draft_text() == first + "\n" + second + "tail"
+    assert composer.cursor_index == len(first) + 1 + len(second)
+    assert composer._canonical_index_at_display(first_token_end) == len(first)
+    assert composer._cursor_display_index() == (
+        first_token_end + 1 + len(f"Pasted text | {len(second)} characters | Expand")
+    )
+
+
+def test_collapsed_paste_before_first_segment_has_no_synthetic_prefix_boundary():
+    pasted = "P" * 80
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+    composer.load_draft("tail")
+    composer.position_cursor_from_display_index(0)
+
+    composer.insert_pasted_text(pasted)
+
+    assert composer.draft_text() == pasted + "tail"
+    assert composer.cursor_index == len(pasted)
+
+
 @pytest.mark.asyncio
 async def test_up_from_a_long_rows_column_fifty_clamps_into_a_twenty_char_row():
     _, host = _ready_host()

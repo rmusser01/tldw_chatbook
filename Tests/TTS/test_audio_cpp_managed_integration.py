@@ -1216,6 +1216,50 @@ async def test_default_first_available_launches_applied_managed_first_use(
 
 
 @pytest.mark.asyncio
+async def test_managed_authorization_uses_exact_launched_outbound_origin(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    port = 19_152
+    managed = _managed_config(tmp_path, "authorized-origin", port)
+    requested_urls: list[str] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        return _handler(request)
+
+    service, _factory_configs = _service(
+        managed,
+        supervisor,
+        transport_handler=capture,
+    )
+    authorized: list[tuple[str, str]] = []
+
+    def authorize(provider_id: str, endpoint: str) -> bool:
+        authorized.append((provider_id, endpoint))
+        return endpoint == f"http://127.0.0.1:{port}"
+
+    try:
+        resolved_endpoint = await service.resolve_provider_outbound_endpoint(
+            "audio_cpp"
+        )
+        response = await service.synthesize_default(
+            text="Authorized managed reply.",
+            admission_authorizer=authorize,
+        )
+        await response.byte_stream.__anext__()
+        await response.aclose()
+
+        assert resolved_endpoint == f"http://127.0.0.1:{port}"
+        assert authorized == [("audio_cpp", f"http://127.0.0.1:{port}")]
+        speech_url = next(url for url in requested_urls if "/v1/audio/speech" in url)
+        assert speech_url == f"http://127.0.0.1:{port}/v1/audio/speech"
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_complete_wav_keeps_the_admitted_process_generation_if_exit_follows(
     tmp_path: Path,
 ) -> None:

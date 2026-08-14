@@ -35,15 +35,32 @@ from tldw_chatbook.TTS.audio_cpp_managed_config import (
     validate_audio_cpp_managed_launch,
 )
 from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+from tldw_chatbook.TTS.openai_compatible_config import (
+    OpenAIAuthenticationMode,
+    OpenAICompatibleEndpoint,
+    normalize_openai_authentication_mode,
+    normalize_openai_compatible_endpoint,
+    openai_destination_fingerprint,
+)
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
-from tldw_chatbook.Utils.path_validation import validate_path_simple
+from tldw_chatbook.TTS.sample_audio_validation import (
+    CONTENT_TYPES_BY_FORMAT,
+    MAX_PLAYABLE_AUDIO_BYTES,
+    audio_body_matches_format,
+    compressed_audio_has_decodable_frame,
+    wav_has_complete_frames,
+)
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    ProviderTestFingerprint,
     SpeechTTSConfigurationState,
+    SpeechTTSConnectionState,
+    SpeechTTSTestOperation,
 )
 from tldw_chatbook.Utils.input_validation import (
     provider_api_key_validation_error,
     validate_url,
 )
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 BUILT_IN_TTS_PROVIDER_ORDER = (
     "audio_cpp",
@@ -136,7 +153,12 @@ GLOBAL_TTS_PROVIDER_FIELD_IDS = MappingProxyType(
             "max_voices_per_model",
             "max_identifier_characters",
         ),
-        "openai": ("credential", "base_url", "organization_id"),
+        "openai": (
+            "credential",
+            "authentication_mode",
+            "base_url",
+            "organization_id",
+        ),
         "elevenlabs": (
             "credential",
             "output_format",
@@ -196,6 +218,7 @@ GLOBAL_TTS_PROVIDER_FIELD_IDS = MappingProxyType(
 _PROVIDER_NON_SECRET_DEFAULTS: dict[str, dict[str, object]] = {
     "audio_cpp": AudioCppSettingsConfig().to_mapping(),
     "openai": {
+        "authentication_mode": OpenAIAuthenticationMode.API_KEY.value,
         "base_url": "https://api.openai.com/v1/audio/speech",
         "organization_id": "",
     },
@@ -485,6 +508,22 @@ class GlobalSpeechTTSCredentialState:
     local_shadowed: bool
 
 
+@dataclass(frozen=True, slots=True)
+class OpenAIPlaintextConfirmation:
+    """Non-secret consent bound only to one normalized endpoint origin."""
+
+    origin_fingerprint: str
+
+    def __post_init__(self) -> None:
+        value = self.origin_fingerprint
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise ValueError("OpenAI plaintext confirmation is invalid")
+
+
 @dataclass
 class GlobalSpeechTTSState:
     """One editable global state; credentials contain metadata only."""
@@ -495,6 +534,8 @@ class GlobalSpeechTTSState:
     defaults_source: GlobalSpeechTTSEffectiveSource
     provider_sources: dict[str, GlobalSpeechTTSEffectiveSource]
     provider_field_sources: dict[str, dict[str, GlobalSpeechTTSEffectiveSource]]
+    openai_plaintext_confirmation: OpenAIPlaintextConfirmation | None = None
+    openai_plaintext_confirmation_cleanup_needed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -524,6 +565,212 @@ class GlobalSpeechTTSValidationError(ValueError):
         self.provider_id = provider_id
         self.field_id = field_id
         super().__init__(message)
+
+
+class ProcessProviderTestEvidenceStore:
+    """Process-only successful sample evidence keyed by provider fingerprint."""
+
+    _DEFAULT_MAX_SAMPLE_BYTES = MAX_PLAYABLE_AUDIO_BYTES
+    _CONTENT_TYPES_BY_FORMAT = CONTENT_TYPES_BY_FORMAT
+
+    def __init__(self) -> None:
+        self._successful_samples: dict[str, ProviderTestFingerprint] = {}
+        self._catalog_states: dict[
+            str, tuple[ProviderTestFingerprint, SpeechTTSConnectionState]
+        ] = {}
+
+    @staticmethod
+    def _wav_has_complete_frames(body: bytes) -> bool:
+        return wav_has_complete_frames(body)
+
+    @staticmethod
+    def _compressed_audio_has_decodable_frame(
+        body: bytes,
+        response_format: str,
+    ) -> bool:
+        """Decode at most one bounded audio frame, failing closed without PyAV."""
+
+        return compressed_audio_has_decodable_frame(body, response_format)
+
+    @classmethod
+    def _audio_body_matches_format(
+        cls,
+        body: bytes,
+        response_format: str,
+        *,
+        sample_rate_hz: int | None,
+        channels: int | None,
+        sample_width_bytes: int | None,
+    ) -> bool:
+        return audio_body_matches_format(
+            body,
+            response_format,
+            sample_rate_hz=sample_rate_hz,
+            channels=channels,
+            sample_width_bytes=sample_width_bytes,
+        )
+
+    def record_successful_sample(
+        self,
+        fingerprint: ProviderTestFingerprint,
+        *,
+        status_code: int,
+        response_format: str,
+        body: bytes,
+        content_type: str | None = None,
+        max_bytes: int = _DEFAULT_MAX_SAMPLE_BYTES,
+        sample_rate_hz: int | None = None,
+        channels: int | None = None,
+        sample_width_bytes: int | None = None,
+    ) -> bool:
+        """Record only a bounded, format-valid successful speech response."""
+
+        if type(fingerprint) is not ProviderTestFingerprint:
+            raise TypeError("Provider test fingerprint is invalid")
+        if (
+            type(status_code) is not int
+            or not 200 <= status_code < 300
+            or type(response_format) is not str
+            or type(body) is not bytes
+            or (
+                content_type is not None
+                and (
+                    type(content_type) is not str
+                    or content_type.split(";", 1)[0].strip().lower()
+                    not in self._CONTENT_TYPES_BY_FORMAT.get(
+                        response_format.lower(),
+                        frozenset(),
+                    )
+                )
+            )
+            or type(max_bytes) is not int
+            or max_bytes <= 0
+            or not 0 < len(body) <= max_bytes
+            or not self._audio_body_matches_format(
+                body,
+                response_format.lower(),
+                sample_rate_hz=sample_rate_hz,
+                channels=channels,
+                sample_width_bytes=sample_width_bytes,
+            )
+        ):
+            return False
+        self._successful_samples[fingerprint.provider_id] = fingerprint
+        return True
+
+    def record_catalog(
+        self,
+        fingerprint: ProviderTestFingerprint,
+        state: SpeechTTSConnectionState,
+    ) -> None:
+        """Record one bounded catalog observation for the exact fingerprint."""
+
+        if type(fingerprint) is not ProviderTestFingerprint:
+            raise TypeError("Provider test fingerprint is invalid")
+        if type(state) is not SpeechTTSConnectionState:
+            raise TypeError("Speech TTS catalog state is invalid")
+        self._catalog_states[fingerprint.provider_id] = (fingerprint, state)
+
+    def sample_state(
+        self, fingerprint: ProviderTestFingerprint
+    ) -> SpeechTTSConnectionState:
+        return (
+            SpeechTTSConnectionState.REACHABLE
+            if self._successful_samples.get(fingerprint.provider_id) == fingerprint
+            else SpeechTTSConnectionState.NOT_TESTED
+        )
+
+    def catalog_state(
+        self, fingerprint: ProviderTestFingerprint
+    ) -> SpeechTTSConnectionState:
+        evidence = self._catalog_states.get(fingerprint.provider_id)
+        if evidence is None or evidence[0] != fingerprint:
+            return SpeechTTSConnectionState.NOT_TESTED
+        return evidence[1]
+
+    def sample_operation(
+        self, fingerprint: ProviderTestFingerprint
+    ) -> SpeechTTSTestOperation:
+        return SpeechTTSTestOperation.SAMPLE
+
+
+def process_provider_test_evidence_store(
+    owner: object,
+) -> ProcessProviderTestEvidenceStore:
+    """Return one non-persisted evidence store for an app-process owner."""
+
+    attribute = "_tts_provider_test_evidence"
+    existing = getattr(owner, attribute, None)
+    if type(existing) is ProcessProviderTestEvidenceStore:
+        return existing
+    store = ProcessProviderTestEvidenceStore()
+    setattr(owner, attribute, store)
+    return store
+
+
+def build_provider_test_fingerprint(
+    state: GlobalSpeechTTSState,
+    *,
+    provider_id: str,
+    saved_revision: int,
+) -> ProviderTestFingerprint:
+    """Build the process-local test identity for one provider configuration."""
+
+    if provider_id not in BUILT_IN_TTS_PROVIDER_ORDER:
+        raise ValueError("Unknown built-in TTS provider")
+    if type(saved_revision) is not int or saved_revision < 0:
+        raise ValueError("Saved provider revision must be a non-negative integer")
+
+    raw_values = state.providers.get(provider_id)
+    if not isinstance(raw_values, Mapping):
+        raise TypeError("Provider configuration is unavailable")
+    allowed_fields = GLOBAL_TTS_PROVIDER_FIELD_IDS[provider_id]
+    validated = _validated_provider_values(
+        provider_id,
+        {
+            field_id: raw_values[field_id]
+            for field_id in allowed_fields
+            if field_id != "credential" and field_id in raw_values
+        },
+    )
+
+    def render(value: object) -> str:
+        if type(value) is bool:
+            return "true" if value else "false"
+        if value is None:
+            return ""
+        if isinstance(value, (tuple, list)):
+            return "[" + ",".join(render(item) for item in value) + "]"
+        if isinstance(value, Mapping):
+            return (
+                "{"
+                + ",".join(
+                    f"{key!s}:{render(value[key])}" for key in sorted(value, key=str)
+                )
+                + "}"
+            )
+        return str(value)
+
+    normalized = {key: render(value) for key, value in validated.items()}
+    credential = state.credentials.get(provider_id)
+    credential_required = not (
+        provider_id == "openai"
+        and validated.get("authentication_mode") == OpenAIAuthenticationMode.NONE.value
+    )
+    if credential is not None:
+        normalized["credential_present"] = (
+            "true"
+            if credential_required and credential.source is not CredentialSource.MISSING
+            else "false"
+        )
+        normalized["credential_source"] = (
+            credential.source.value if credential_required else "not_used"
+        )
+    return ProviderTestFingerprint(
+        provider_id=provider_id,
+        normalized_fields=tuple(sorted(normalized.items())),
+        saved_revision=saved_revision,
+    )
 
 
 def _raw_settings(settings: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -603,6 +850,50 @@ def _normalize_default_profile_id(value: object) -> str | None:
     return stripped or None
 
 
+def _load_openai_authentication_mode(
+    raw_mode: object,
+    base_url: object,
+) -> str:
+    """Load authentication fail-closed when mode or destination is untrusted."""
+
+    if raw_mode not in {
+        OpenAIAuthenticationMode.API_KEY.value,
+        OpenAIAuthenticationMode.NONE.value,
+    }:
+        return OpenAIAuthenticationMode.API_KEY.value
+    try:
+        endpoint = normalize_openai_compatible_endpoint(str(base_url))
+        return normalize_openai_authentication_mode(
+            raw_mode,
+            endpoint=endpoint,
+        ).value
+    except (TypeError, ValueError):
+        return OpenAIAuthenticationMode.API_KEY.value
+
+
+def _load_openai_plaintext_confirmation(
+    value: object,
+    *,
+    authentication_mode: object,
+    base_url: object,
+) -> OpenAIPlaintextConfirmation | None:
+    if authentication_mode != OpenAIAuthenticationMode.NONE.value:
+        return None
+    try:
+        confirmation = OpenAIPlaintextConfirmation(value)  # type: ignore[arg-type]
+        endpoint = normalize_openai_compatible_endpoint(str(base_url))
+    except (TypeError, ValueError):
+        return None
+    if (
+        urlsplit(endpoint.origin).scheme != "http"
+        or _is_loopback_openai_endpoint(endpoint)
+        or confirmation.origin_fingerprint
+        != openai_destination_fingerprint("openai", endpoint)
+    ):
+        return None
+    return confirmation
+
+
 def _credential_states(
     settings: Mapping[str, Any],
     environment: Mapping[str, str],
@@ -665,15 +956,30 @@ def load_global_speech_tts_state(
 
     providers = deepcopy(_PROVIDER_NON_SECRET_DEFAULTS)
     providers["audio_cpp"] = audio_cpp
+    openai_base_url = _value(
+        app_tts,
+        "OPENAI_BASE_URL",
+        providers["openai"]["base_url"],
+    )
     providers["openai"].update(
         {
-            "base_url": _value(
-                app_tts,
-                "OPENAI_BASE_URL",
-                providers["openai"]["base_url"],
+            "authentication_mode": _load_openai_authentication_mode(
+                app_tts.get("OPENAI_AUTH_MODE"),
+                openai_base_url,
             ),
+            "base_url": openai_base_url,
             "organization_id": _value(app_tts, "OPENAI_ORG_ID", ""),
         }
+    )
+    raw_app_tts = _raw_settings(settings).get("app_tts")
+    openai_confirmation_persisted = (
+        isinstance(raw_app_tts, Mapping)
+        and "OPENAI_NONE_HTTP_CONFIRMATION" in raw_app_tts
+    )
+    openai_plaintext_confirmation = _load_openai_plaintext_confirmation(
+        app_tts.get("OPENAI_NONE_HTTP_CONFIRMATION"),
+        authentication_mode=providers["openai"]["authentication_mode"],
+        base_url=providers["openai"]["base_url"],
     )
     providers["elevenlabs"].update(
         {
@@ -861,6 +1167,10 @@ def load_global_speech_tts_state(
         ),
         provider_sources=provider_sources,
         provider_field_sources=provider_field_sources,
+        openai_plaintext_confirmation=openai_plaintext_confirmation,
+        openai_plaintext_confirmation_cleanup_needed=(
+            openai_confirmation_persisted and openai_plaintext_confirmation is None
+        ),
     )
 
 
@@ -1456,14 +1766,38 @@ def _validated_provider_values(
         return durable
 
     if provider_id == "openai":
-        base_url = _url(provider_id, "base_url", values.get("base_url"))
+        try:
+            endpoint = normalize_openai_compatible_endpoint(
+                _string(provider_id, "base_url", values.get("base_url"))
+            )
+        except ValueError:
+            _validation_error(
+                provider_id,
+                "base_url",
+                "Enter a valid OpenAI-compatible speech endpoint.",
+            )
+        try:
+            authentication_mode = normalize_openai_authentication_mode(
+                values.get("authentication_mode"),
+                endpoint=endpoint,
+            ).value
+        except ValueError:
+            _validation_error(
+                provider_id,
+                "authentication_mode",
+                "Official OpenAI requires API key authentication.",
+            )
         organization_id = _string(
             provider_id,
             "organization_id",
             values.get("organization_id", ""),
             allow_empty=True,
         )
-        return {"base_url": base_url, "organization_id": organization_id}
+        return {
+            "authentication_mode": authentication_mode,
+            "base_url": endpoint.speech_url,
+            "organization_id": organization_id,
+        }
 
     if provider_id == "elevenlabs":
         return {
@@ -1712,6 +2046,7 @@ def _provider_event_settings(
         return {"audio_cpp": deepcopy(dict(values))}
     if provider_id == "openai":
         return {
+            "OPENAI_AUTH_MODE": values["authentication_mode"],
             "OPENAI_BASE_URL": values["base_url"],
             "OPENAI_ORG_ID": values["organization_id"],
         }
@@ -1779,6 +2114,37 @@ def _provider_event_settings(
     raise ValueError("Unknown built-in TTS provider")
 
 
+def _is_loopback_openai_endpoint(endpoint: OpenAICompatibleEndpoint) -> bool:
+    hostname = urlsplit(endpoint.origin).hostname
+    if hostname is None:
+        return False
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def required_openai_plaintext_confirmation_fingerprint(
+    state: GlobalSpeechTTSState,
+) -> str | None:
+    """Return the consent fingerprint required by the current OpenAI draft."""
+
+    try:
+        values = _validated_provider_values("openai", state.providers["openai"])
+        endpoint = normalize_openai_compatible_endpoint(str(values["base_url"]))
+    except (KeyError, GlobalSpeechTTSValidationError, TypeError, ValueError):
+        return None
+    if (
+        values["authentication_mode"] != OpenAIAuthenticationMode.NONE.value
+        or urlsplit(endpoint.origin).scheme != "http"
+        or _is_loopback_openai_endpoint(endpoint)
+    ):
+        return None
+    return openai_destination_fingerprint("openai", endpoint)
+
+
 def build_global_speech_tts_save_proposal(
     original: GlobalSpeechTTSState,
     draft: GlobalSpeechTTSState,
@@ -1805,10 +2171,32 @@ def build_global_speech_tts_save_proposal(
         configure_provider,
         draft.providers[configure_provider],
     )
-    original_validated = _validated_provider_values(
-        configure_provider,
-        original.providers[configure_provider],
-    )
+    try:
+        original_validated = _validated_provider_values(
+            configure_provider,
+            original.providers[configure_provider],
+        )
+    except GlobalSpeechTTSValidationError:
+        if configure_provider != "openai":
+            raise
+        # A valid OpenAI draft must be able to replace malformed persisted
+        # values; an empty comparison sentinel forces the bounded full update.
+        original_validated = {}
+    required_confirmation: str | None = None
+    if configure_provider == "openai":
+        required_confirmation = required_openai_plaintext_confirmation_fingerprint(
+            draft
+        )
+        confirmation = draft.openai_plaintext_confirmation
+        if required_confirmation is not None and (
+            confirmation is None
+            or confirmation.origin_fingerprint != required_confirmation
+        ):
+            raise GlobalSpeechTTSValidationError(
+                "openai",
+                "authentication_mode",
+                "Confirm unauthenticated plaintext HTTP before saving.",
+            )
     if validated == original_validated:
         settings: dict[str, object] = {}
         delete_setting_keys: list[str] = []
@@ -1823,6 +2211,29 @@ def build_global_speech_tts_save_proposal(
             else []
         )
         changed_provider_ids = (configure_provider,)
+    if configure_provider == "openai":
+        original_confirmation = original.openai_plaintext_confirmation
+        draft_confirmation = draft.openai_plaintext_confirmation
+        if required_confirmation is None:
+            if (
+                original_confirmation is not None
+                or original.openai_plaintext_confirmation_cleanup_needed
+                or draft.openai_plaintext_confirmation_cleanup_needed
+            ):
+                delete_setting_keys.append("OPENAI_NONE_HTTP_CONFIRMATION")
+        elif (
+            draft_confirmation is not None
+            and draft_confirmation != original_confirmation
+        ):
+            settings["OPENAI_NONE_HTTP_CONFIRMATION"] = (
+                draft_confirmation.origin_fingerprint
+            )
+    if (
+        original.openai_plaintext_confirmation_cleanup_needed
+        or draft.openai_plaintext_confirmation_cleanup_needed
+    ) and "OPENAI_NONE_HTTP_CONFIRMATION" not in settings:
+        if "OPENAI_NONE_HTTP_CONFIRMATION" not in delete_setting_keys:
+            delete_setting_keys.append("OPENAI_NONE_HTTP_CONFIRMATION")
     # The saved default-profile pick is a distinct precedence rung above the
     # raw defaults axes (`preferences`, above) and is never part of that
     # snapshot, so it is diffed here independent of `configure_provider`.
@@ -1874,7 +2285,16 @@ def global_speech_tts_provider_configuration_state(
             return SpeechTTSConfigurationState.INCOMPLETE
         return SpeechTTSConfigurationState.INVALID
     credential = state.credentials.get(provider_id)
-    if credential is not None and credential.source is CredentialSource.MISSING:
+    credential_required = not (
+        provider_id == "openai"
+        and state.providers["openai"].get("authentication_mode")
+        == OpenAIAuthenticationMode.NONE.value
+    )
+    if (
+        credential_required
+        and credential is not None
+        and credential.source is CredentialSource.MISSING
+    ):
         return SpeechTTSConfigurationState.INCOMPLETE
     source = state.provider_sources.get(
         provider_id,
@@ -1921,6 +2341,8 @@ def restore_non_secret_defaults(
         _PROVIDER_NON_SECRET_DEFAULTS[configure_provider]
     )
     restored.providers[configure_provider].update(environment_owned_values)
+    if configure_provider == "openai":
+        restored.openai_plaintext_confirmation = None
     return restored
 
 

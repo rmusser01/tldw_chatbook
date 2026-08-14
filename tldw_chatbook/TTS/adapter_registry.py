@@ -115,12 +115,14 @@ class TTSAdapterLease:
         adapter: TTSAdapter,
         configuration_revision: int,
         applied_generation: int,
+        applied_config: Mapping[str, Any],
         release_callback: Callable[[], Awaitable[None]],
     ) -> None:
         self.provider_id = provider_id
         self.adapter = adapter
         self.configuration_revision = configuration_revision
         self.applied_generation = applied_generation
+        self.applied_config = applied_config
         self._release_callback = release_callback
         self._release_task: asyncio.Future[None] | None = None
 
@@ -349,6 +351,7 @@ class TTSAdapterRegistry:
             record.leases += 1
             configuration_revision = slot.revision
             applied_generation = slot.applied_generation
+            applied_config = _freeze_configuration(slot.config)
 
         async def release() -> None:
             await self._release(slot, record)
@@ -358,6 +361,7 @@ class TTSAdapterRegistry:
             record.adapter,
             configuration_revision,
             applied_generation,
+            applied_config,
             release,
         )
 

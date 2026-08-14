@@ -1,11 +1,17 @@
 """Handler for character-related operations in the Personas screen."""
 import asyncio
 from functools import partial
-from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from loguru import logger
-from textual.widgets import Select, Input, TextArea, Static
+from rich.text import Text
+from textual.widgets import Input, Select, Static, TextArea
 
+from ..character_display_text import (
+    sanitize_character_display_items,
+    sanitize_character_display_label,
+    sanitize_character_display_text,
+)
 from .ccp_messages import CharacterMessage, ViewChangeMessage
 
 if TYPE_CHECKING:
@@ -13,6 +19,13 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="CCPCharacterHandler")
 CharacterId = Union[int, str]
+
+_OPTION_LABEL_MAX_CHARACTERS = 200
+_STATIC_FIELD_MAX_CHARACTERS = 1_000
+_READ_ONLY_TEXT_MAX_CHARACTERS = 20_000
+_COLLECTION_MAX_ITEMS = 50
+_COLLECTION_ITEM_MAX_CHARACTERS = 1_000
+_COLLECTION_TOTAL_MAX_CHARACTERS = 20_000
 
 
 def _coerce_local_character_id(character_id: CharacterId) -> CharacterId:
@@ -384,7 +397,15 @@ class CCPCharacterHandler:
             # stalling the loop for the same read.
             self.character_list = await asyncio.to_thread(fetch_all_characters)
             options = [
-                (char.get("name", "Unnamed"), str(char.get("id")))
+                (
+                    Text(
+                        sanitize_character_display_label(
+                            char.get("name", "Unnamed"),
+                            max_characters=_OPTION_LABEL_MAX_CHARACTERS,
+                        )
+                    ),
+                    str(char.get("id")),
+                )
                 for char in self.character_list
             ]
 
@@ -495,7 +516,11 @@ class CCPCharacterHandler:
                 if hasattr(card_widget, "load_character"):
                     card_widget.load_character(data)
                     logger.debug(
-                        f"Displayed character card for {data.get('name', 'Unknown')}"
+                        "Displayed character card for {}",
+                        sanitize_character_display_label(
+                            data.get("name", "Unknown"),
+                            max_characters=_OPTION_LABEL_MAX_CHARACTERS,
+                        ),
                     )
                     return
             except Exception as e:
@@ -529,15 +554,25 @@ class CCPCharacterHandler:
             )
 
             # Handle alternate greetings
-            alternate_greetings = data.get("alternate_greetings", [])
-            if alternate_greetings:
-                greetings_text = "\n".join(alternate_greetings)
-                self._update_textarea(
-                    "#ccp-card-alternate-greetings-display", greetings_text
-                )
+            alternate_greetings = sanitize_character_display_items(
+                data.get("alternate_greetings"),
+                max_items=_COLLECTION_MAX_ITEMS,
+                max_item_characters=_COLLECTION_ITEM_MAX_CHARACTERS,
+                max_total_characters=_COLLECTION_TOTAL_MAX_CHARACTERS,
+            )
+            self._update_textarea(
+                "#ccp-card-alternate-greetings-display",
+                "\n".join(alternate_greetings),
+            )
 
             # Handle tags
-            tags = data.get("tags", [])
+            tags = sanitize_character_display_items(
+                data.get("tags"),
+                max_items=_COLLECTION_MAX_ITEMS,
+                max_item_characters=_COLLECTION_ITEM_MAX_CHARACTERS,
+                max_total_characters=_STATIC_FIELD_MAX_CHARACTERS,
+                single_line=True,
+            )
             self._update_field(
                 "#ccp-card-tags-display", ", ".join(tags) if tags else "None"
             )
@@ -549,7 +584,13 @@ class CCPCharacterHandler:
             )
 
             # Keywords
-            keywords = data.get("keywords", [])
+            keywords = sanitize_character_display_items(
+                data.get("keywords"),
+                max_items=_COLLECTION_MAX_ITEMS,
+                max_item_characters=_COLLECTION_ITEM_MAX_CHARACTERS,
+                max_total_characters=_STATIC_FIELD_MAX_CHARACTERS,
+                single_line=True,
+            )
             self._update_field(
                 "#ccp-card-keywords-display",
                 ", ".join(keywords) if keywords else "None",
@@ -558,24 +599,37 @@ class CCPCharacterHandler:
             # Handle image display
             self._display_character_image(data)
 
-            logger.debug(f"Displayed character card for {data.get('name', 'Unknown')}")
+            logger.debug(
+                "Displayed character card for {}",
+                sanitize_character_display_label(
+                    data.get("name", "Unknown"),
+                    max_characters=_OPTION_LABEL_MAX_CHARACTERS,
+                ),
+            )
 
         except Exception as e:
             logger.opt(exception=True).error(f"Error displaying character card: {e}")
 
-    def _update_field(self, selector: str, value: str) -> None:
+    def _update_field(self, selector: str, value: object) -> None:
         """Update a Static field."""
         try:
             widget = self.window.query_one(selector, Static)
-            widget.update(value)
+            display_text = sanitize_character_display_text(
+                value,
+                max_characters=_STATIC_FIELD_MAX_CHARACTERS,
+            )
+            widget.update(Text(display_text))
         except Exception as e:
             logger.warning(f"Could not update field {selector}: {e}")
 
-    def _update_textarea(self, selector: str, value: str) -> None:
+    def _update_textarea(self, selector: str, value: object) -> None:
         """Update a TextArea field."""
         try:
             widget = self.window.query_one(selector, TextArea)
-            widget.text = value
+            widget.text = sanitize_character_display_text(
+                value,
+                max_characters=_READ_ONLY_TEXT_MAX_CHARACTERS,
+            )
         except Exception as e:
             logger.warning(f"Could not update textarea {selector}: {e}")
 
@@ -590,12 +644,15 @@ class CCPCharacterHandler:
             if data.get("image"):
                 # In a real implementation, we'd render the image
                 # For now, just indicate an image is present
-                image_placeholder.update("📷 Character Image")
+                image_placeholder.update(Text("📷 Character Image"))
             elif data.get("avatar"):
                 # URL to avatar
-                image_placeholder.update(f"🔗 Avatar: {data['avatar'][:50]}...")
+                avatar = sanitize_character_display_text(
+                    data["avatar"], max_characters=50
+                )
+                image_placeholder.update(Text(f"🔗 Avatar: {avatar}..."))
             else:
-                image_placeholder.update("No image")
+                image_placeholder.update(Text("No image"))
 
         except Exception as e:
             logger.warning(f"Could not display character image: {e}")
@@ -965,6 +1022,7 @@ class CCPCharacterHandler:
                 title="Import Character Card",
                 filters=filters,
                 context="character_import",
+                select_button="Import",
             )
 
             # Push the file picker screen

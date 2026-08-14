@@ -129,6 +129,7 @@ from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleLifecycleImpact,
+    ConsoleMessageRole,
 )
 from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from ...Chat.console_context_policy import (
@@ -1221,15 +1222,21 @@ class ConsoleSessionController:
         """Ensure the active native Console session owns a settings snapshot."""
         store = self._ensure_console_chat_store()
         workspace_id = store.workspace_context.active_workspace_id
+        defaults = self._default_console_session_settings()
         session = store.ensure_session(
             title=self._workspace_initial_session_title(workspace_id),
             workspace_id=workspace_id,
-            settings=self._default_console_session_settings(),
+            settings=defaults,
+            canonical_settings_baseline=defaults,
         )
         if session.settings is None:
-            settings = self._default_console_session_settings()
-            store.replace_session_settings(session.id, settings)
-            return settings
+            store.replace_session_settings(
+                session.id,
+                defaults,
+                mark_user_work=False,
+                canonical_settings_baseline=defaults,
+            )
+            return defaults
         return self._maybe_refresh_stale_default_console_settings(store, session)
 
     def _maybe_refresh_stale_default_console_settings(
@@ -1244,17 +1251,25 @@ class ConsoleSessionController:
         When the user then configures a working provider in Settings, an empty
         session the user never explicitly configured must converge on the new
         defaults instead of keeping the setup card blocked until restart
-        (task-177 live regression). Explicit selections (``source == "user"``),
-        sessions with any messages, and already-sendable settings are never
-        touched; stale defaults are only replaced when the re-derived defaults
-        are actually send-capable.
+        (task-177 live regression). Sessions with user work, settings that no
+        longer equal their explicit canonical baseline, any messages, or
+        already-sendable settings are never touched; stale defaults are only
+        replaced when the re-derived defaults are actually send-capable.
         """
         settings = session.settings
         if settings is None:
             settings = self._default_console_session_settings()
-            store.replace_session_settings(session.id, settings)
+            store.replace_session_settings(
+                session.id,
+                settings,
+                mark_user_work=False,
+                canonical_settings_baseline=settings,
+            )
             return settings
-        if getattr(settings, "source", "derived") == "user":
+        if (
+            session.has_user_work
+            or session.canonical_settings_baseline != settings
+        ):
             return settings
         try:
             if store.messages_for_session(session.id):
@@ -1280,19 +1295,12 @@ class ConsoleSessionController:
         )
         if not fresh_readiness.native_send_supported:
             return settings
-        if settings.system_prompt:
-            # Carry forward an already-applied `/system` prompt across this
-            # config-driven refresh -- it is explicit user intent, not part
-            # of the provider/model "default" this refresh re-derives.
-            # `fresh_defaults.system_prompt` is always ``None`` (defaults
-            # never seed it), so without this guard a message-less session
-            # where the user ran `/system` before fixing a blocked provider
-            # in Settings would have its applied system prompt silently
-            # discarded on the very next settings read.
-            fresh_defaults = replace(
-                fresh_defaults, system_prompt=settings.system_prompt
-            )
-        store.replace_session_settings(session.id, fresh_defaults)
+        store.replace_session_settings(
+            session.id,
+            fresh_defaults,
+            mark_user_work=False,
+            canonical_settings_baseline=fresh_defaults,
+        )
         return fresh_defaults
 
     def _replace_active_console_session_settings(
@@ -1707,8 +1715,9 @@ class ConsoleSessionController:
         )
 
         store = self._ensure_console_chat_store()
+        canonical_defaults = self._default_console_session_settings()
         settings = replace(
-            self._default_console_session_settings(),
+            canonical_defaults,
             system_prompt=seed.system_prompt,
             character_label=seed.name,
         )
@@ -1718,30 +1727,105 @@ class ConsoleSessionController:
             != payload.active_server_profile_id
         ):
             return False
-        session = store.create_session(
-            title=f"Chat with {seed.name}",
-            workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
-            settings=settings,
-            runtime_backend=runtime_backend,
-            assistant_kind="character",
-            assistant_id=assistant_id,
-            assistant_authority_id=assistant_authority_id,
-            character_id=local_character_id,
-            character_name=seed.name,
+        active = next(
+            (
+                candidate
+                for candidate in store.sessions()
+                if candidate.id == store.active_session_id
+            ),
+            None,
         )
-        try:
-            store.seed_character_roleplay(
-                session.id,
-                system_template=seed.system_template,
-                greeting_template=seed.greeting_template,
-                global_default=global_name,
+        if (
+            active is not None
+            and active.settings is not None
+            and active.settings != canonical_defaults
+            and active.canonical_settings_baseline == active.settings
+        ):
+            try:
+                active = store.refresh_pristine_session_settings(
+                    active.id,
+                    prior_canonical_settings=active.settings,
+                    current_canonical_settings=canonical_defaults,
+                )
+            except ValueError:
+                pass
+        active_messages = (
+            store.messages_for_session(active.id) if active is not None else []
+        )
+        duplicate_handoff = bool(
+            active is not None
+            and active.settings == settings
+            and active.runtime_backend == runtime_backend
+            and active.assistant_kind == "character"
+            and active.assistant_id == assistant_id
+            and active.assistant_authority_id == assistant_authority_id
+            and active.character_id == local_character_id
+            and active.character_name == seed.name
+            and active.character_system_template == seed.system_template
+            and (
+                (not seed.greeting_template.strip() and not active_messages)
+                or (
+                    bool(seed.greeting_template.strip())
+                    and len(active_messages) == 1
+                    and active_messages[0].role is ConsoleMessageRole.ASSISTANT
+                    and active_messages[0].metadata is not None
+                    and active_messages[0].metadata.template_kind
+                    == "character_greeting"
+                    and active_messages[0].metadata.template_source
+                    == seed.greeting_template
+                )
             )
-        except Exception as exc:
-            logger.warning(
-                "Start Chat: roleplay template seed/persist failed; continuing "
-                "(error_type={}).",
-                type(exc).__name__,
-            )
+        )
+        if duplicate_handoff:
+            session = active
+        else:
+            session = None
+            if active is not None and store.is_pristine_session(
+                active.id,
+                expected_settings=canonical_defaults,
+            ):
+                try:
+                    session = store.repurpose_pristine_session(
+                        active.id,
+                        canonical_settings=canonical_defaults,
+                        trusted_system_prompt=seed.system_prompt,
+                        title=f"Chat with {seed.name}",
+                        settings=settings,
+                        runtime_backend=runtime_backend,
+                        assistant_kind="character",
+                        assistant_id=assistant_id,
+                        assistant_authority_id=assistant_authority_id,
+                        character_id=local_character_id,
+                        character_name=seed.name,
+                    )
+                except ValueError:
+                    session = None
+            if session is None:
+                session = store.create_session(
+                    title=f"Chat with {seed.name}",
+                    workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
+                    settings=settings,
+                    runtime_backend=runtime_backend,
+                    assistant_kind="character",
+                    assistant_id=assistant_id,
+                    assistant_authority_id=assistant_authority_id,
+                    character_id=local_character_id,
+                    character_name=seed.name,
+                )
+            try:
+                store.seed_character_roleplay(
+                    session.id,
+                    system_template=seed.system_template,
+                    greeting_template=seed.greeting_template,
+                    global_default=global_name,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Start Chat: roleplay template seed/persist failed; continuing "
+                    "(error_type={}).",
+                    type(exc).__name__,
+                )
+        store.switch_session(session.id)
         try:
             await self._sync_native_console_chat_ui()
             self._focus_console_composer_if_needed(force=True)
@@ -1795,12 +1879,14 @@ class ConsoleSessionController:
         forward into the new session, in order (TASK-339).
         """
         store = self._ensure_console_chat_store()
+        defaults = self._default_console_session_settings()
         session = store.ensure_session(
             title=self._workspace_initial_session_title(
                 store.workspace_context.active_workspace_id
             ),
             workspace_id=store.workspace_context.active_workspace_id,
-            settings=self._default_console_session_settings(),
+            settings=defaults,
+            canonical_settings_baseline=defaults,
         )
         active_session_id = session.id
         composer = self._console_composer_or_none()
@@ -2027,8 +2113,14 @@ class ConsoleSessionController:
             "workspace_id": session.workspace_id,
             "persisted_conversation_id": session.persisted_conversation_id,
             "draft": session.draft,
+            "has_user_work": session.has_user_work,
             "settings": ConsoleSessionController._serialize_console_settings(
                 session.settings
+            ),
+            "canonical_settings_baseline": (
+                ConsoleSessionController._serialize_console_settings(
+                    session.canonical_settings_baseline
+                )
             ),
             "context_policy_overrides": session.context_policy_overrides.to_dict(),
             "updated_at": session.updated_at,
@@ -2083,7 +2175,14 @@ class ConsoleSessionController:
                 else None
             ),
             settings=self._restore_console_settings(raw_session.get("settings")),
+            canonical_settings_baseline=self._restore_console_settings(
+                raw_session.get("canonical_settings_baseline")
+            ),
             draft=str(raw_session.get("draft") or ""),
+            has_user_work=(
+                raw_session.get("has_user_work") is True
+                or bool(raw_session.get("draft"))
+            ),
         )
         todo_store = SessionTodoStore()
         if _CONSOLE_TODO_STATE_KEY in raw_session:

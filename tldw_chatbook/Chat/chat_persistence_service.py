@@ -4,6 +4,11 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 from loguru import logger as _logger
 
+from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
+from tldw_chatbook.Chat.citation_trace_repository import (
+    CitationPersistenceUnavailable,
+    CitationTraceRepository,
+)
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
@@ -15,16 +20,51 @@ from tldw_chatbook.Chat.console_roleplay_metadata import (
     merge_console_roleplay_context,
     parse_console_roleplay_context,
 )
-from tldw_chatbook.Chat.message_metadata import MessageMetadata
-from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
-from tldw_chatbook.Chat.citation_trace_repository import (
-    CitationPersistenceUnavailable,
-    CitationTraceRepository,
+from tldw_chatbook.Chat.console_speech_preferences import (
+    ConsoleSpeechPreferences,
+    merge_console_speech_preferences,
+    parse_console_speech_preferences,
 )
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 
 logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
+
+
+def _initial_metadata_object(metadata: object) -> dict[str, object]:
+    """Return strict JSON-object metadata without lossy key coercion."""
+
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"Non-finite JSON constant {value!r} is not supported.")
+
+    try:
+        if isinstance(metadata, Mapping):
+            candidate = dict(metadata)
+            if not _mapping_keys_are_strings(candidate):
+                raise ValueError("Mapping keys must be strings.")
+            serialized = json.dumps(candidate, allow_nan=False, sort_keys=True)
+            decoded = json.loads(serialized, parse_constant=reject_constant)
+        elif type(metadata) is str:
+            decoded = json.loads(metadata, parse_constant=reject_constant)
+        else:
+            raise ValueError("Unsupported metadata type.")
+    except (TypeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError("metadata must be a valid JSON object.") from exc
+    if not isinstance(decoded, dict):
+        raise ValueError("metadata must be a valid JSON object.")
+    return decoded
+
+
+def _mapping_keys_are_strings(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return all(
+            type(key) is str and _mapping_keys_are_strings(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return all(_mapping_keys_are_strings(item) for item in value)
+    return True
 
 
 class ChatPersistenceService:
@@ -91,6 +131,42 @@ class ChatPersistenceService:
             return None
         return version
 
+    def get_conversation_speech_preferences(
+        self, conversation_id: str
+    ) -> ConsoleSpeechPreferences:
+        """Read fail-closed reply-speech preferences from conversation metadata."""
+        if type(conversation_id) is not str or not conversation_id:
+            return ConsoleSpeechPreferences()
+        record = self.db.get_conversation_by_id(conversation_id)
+        if record is None or record.get("deleted"):
+            return ConsoleSpeechPreferences()
+        return parse_console_speech_preferences(record.get("metadata"))
+
+    def update_conversation_speech_preferences(
+        self,
+        *,
+        conversation_id: str,
+        preferences: ConsoleSpeechPreferences,
+        expected_version: int,
+    ) -> bool:
+        """Merge speech metadata using the caller's exact conversation version."""
+        if type(expected_version) is not int or expected_version < 1:
+            return False
+        record = self.db.get_conversation_by_id(str(conversation_id))
+        if record is None or record.get("version") != expected_version:
+            return False
+        metadata = merge_console_speech_preferences(
+            record.get("metadata"),
+            preferences,
+        )
+        return bool(
+            self.db.update_conversation(
+                str(conversation_id),
+                {"metadata": json.dumps(metadata, sort_keys=True)},
+                expected_version=expected_version,
+            )
+        )
+
     def get_conversation_context_policy(
         self, conversation_id: str
     ) -> ContextPolicyReadResult:
@@ -148,6 +224,8 @@ class ChatPersistenceService:
         workspace_id: Optional[str] = None,
         conversation_title: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        metadata: Mapping[str, object] | str | None = None,
+        speech_preferences: ConsoleSpeechPreferences | None = None,
     ) -> str:
         """Create a conversation and link it to a workspace when requested.
 
@@ -174,6 +252,10 @@ class ChatPersistenceService:
             conversation_title: Explicit title, which takes precedence when
                 truthy; otherwise the character or assistant-derived title is used.
             system_prompt: Initial system prompt persisted with the conversation.
+            metadata: Optional initial conversation metadata mapping or JSON object
+                string. Malformed or non-object values are rejected before creation.
+            speech_preferences: Optional staged Console reply-speech preferences
+                to include in the conversation metadata before returning.
 
         Returns:
             Persisted conversation ID.
@@ -213,6 +295,23 @@ class ChatPersistenceService:
         }
         if assistant_authority_id is not _ASSISTANT_AUTHORITY_UNSET:
             conversation_data["assistant_authority_id"] = assistant_authority_id
+        initial_metadata = (
+            _initial_metadata_object(metadata) if metadata is not None else None
+        )
+        if (
+            speech_preferences is not None
+            and speech_preferences != ConsoleSpeechPreferences()
+        ):
+            initial_metadata = merge_console_speech_preferences(
+                initial_metadata,
+                speech_preferences,
+            )
+        if initial_metadata is not None:
+            conversation_data["metadata"] = json.dumps(
+                initial_metadata,
+                allow_nan=False,
+                sort_keys=True,
+            )
         conversation_id = self.db.add_conversation(conversation_data)
         if safe_workspace_id is not None:
             try:

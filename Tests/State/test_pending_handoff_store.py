@@ -1,19 +1,20 @@
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields, replace
-import logging
 from typing import Any
 
 import pytest
 
-import tldw_chatbook.ACP_Interop.runtime_session as runtime_session
+from tldw_chatbook.ACP_Interop import runtime_session
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Prompt_Management.prompt_variables import (
     PromptVariableApplication,
 )
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    ConsoleFirstChatIntent,
     ConsoleProviderIntent,
     HandoffChannel,
     HandoffClaim,
@@ -187,6 +188,33 @@ def test_acknowledging_old_claim_preserves_newer_replacement() -> None:
 
     assert store.acknowledge(claim) is True
     assert _claim_title(store, HandoffChannel.CHAT) == "second"
+
+
+def test_acknowledge_current_rejects_replaced_claim_and_preserves_replacement(
+) -> None:
+    store = PendingHandoffStore()
+    store.stage(HandoffChannel.CHAT, _chat_payload("first"))
+    claim = store.claim(HandoffChannel.CHAT)
+    assert claim is not None
+    store.stage(HandoffChannel.CHAT, _chat_payload("replacement"))
+
+    assert store.acknowledge_current(claim) is False
+    assert store.release(claim) is True
+    replacement = store.claim(HandoffChannel.CHAT)
+
+    assert replacement is not None
+    assert replacement.value.title == "replacement"
+    assert store.acknowledge_current(replacement) is True
+
+
+def test_acknowledge_current_is_idempotent_for_exact_claim() -> None:
+    store = PendingHandoffStore()
+    store.stage(HandoffChannel.CHAT, _chat_payload())
+    claim = store.claim(HandoffChannel.CHAT)
+    assert claim is not None
+
+    assert store.acknowledge_current(claim) is True
+    assert store.acknowledge_current(claim) is False
 
 
 def test_chat_stage_claim_and_release_values_are_structurally_detached() -> None:
@@ -972,3 +1000,94 @@ def test_provider_intent_repr_cannot_contain_private_payload_fields() -> None:
     assert "openai" in rendered
     for sentinel in private_sentinels.values():
         assert sentinel not in rendered
+
+
+def test_first_chat_intent_has_only_secret_free_target_fields() -> None:
+    intent = ConsoleFirstChatIntent(
+        session_id="session-1",
+        provider="Custom-OpenAI API",
+        model="private-model-name",
+        config_revision=17,
+    )
+
+    assert tuple(item.name for item in fields(intent)) == (
+        "session_id",
+        "provider",
+        "model",
+        "config_revision",
+    )
+    assert intent.provider == "custom_openai_api"
+    assert "endpoint" not in repr(intent).casefold()
+    assert "credential" not in repr(intent).casefold()
+
+
+def test_first_chat_channel_replacement_and_release_preserve_latest_intent() -> None:
+    store = PendingHandoffStore()
+    first = ConsoleFirstChatIntent("session-1", "openai", "model-a", 17)
+    second = ConsoleFirstChatIntent("session-2", "llama_cpp", "model-b", 18)
+    first_revision = store.stage(HandoffChannel.CONSOLE_FIRST_CHAT, first)
+    first_claim = store.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    second_revision = store.stage(HandoffChannel.CONSOLE_FIRST_CHAT, second)
+
+    assert first_claim is not None
+    assert first_claim.revision == first_revision
+    assert store.release(first_claim) is True
+
+    replacement = store.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert replacement is not None
+    assert replacement.revision == second_revision
+    assert replacement.value == second
+    assert replacement.value is not second
+    assert store.acknowledge(replacement) is True
+
+
+def test_reserved_first_chat_target_metadata_follows_exact_claim_revision() -> None:
+    store = PendingHandoffStore()
+    reserved = ConsoleFirstChatIntent("reserved-1", "openai", "model-a", 17)
+    replacement = ConsoleFirstChatIntent("existing-2", "openai", "model-b", 18)
+    store.stage_reserved_console_first_chat(reserved)
+    reserved_claim = store.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+
+    assert reserved_claim is not None
+    assert store.claim_reserves_new_console_session(reserved_claim) is True
+    assert store.claim_reserves_new_console_session(replace(reserved_claim)) is False
+
+    store.stage(HandoffChannel.CONSOLE_FIRST_CHAT, replacement)
+    assert store.release(reserved_claim) is True
+    next_claim = store.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert next_claim is not None
+    assert next_claim.value == replacement
+    assert store.claim_reserves_new_console_session(next_claim) is False
+
+
+def test_reserved_first_chat_claim_release_retains_reservation_for_retry() -> None:
+    store = PendingHandoffStore()
+    intent = ConsoleFirstChatIntent("reserved-1", "llama_cpp", "model-a", 17)
+    store.stage_reserved_console_first_chat(intent)
+    first_claim = store.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+
+    assert first_claim is not None
+    assert store.release(first_claim) is True
+    retry = store.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert retry is not None
+    assert retry.revision == first_claim.revision
+    assert store.claim_reserves_new_console_session(retry) is True
+
+
+def test_first_chat_claim_is_current_only_until_replaced() -> None:
+    store = PendingHandoffStore()
+    first = ConsoleFirstChatIntent("session-1", "openai", "model-a", 17)
+    replacement = ConsoleFirstChatIntent("session-2", "openai", "model-b", 18)
+    store.stage(HandoffChannel.CONSOLE_FIRST_CHAT, first)
+    claim = store.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+
+    assert claim is not None
+    assert store.is_current_claim(claim) is True
+
+    store.stage(HandoffChannel.CONSOLE_FIRST_CHAT, replacement)
+
+    assert store.is_current_claim(claim) is False
+    assert store.release(claim) is True
+    next_claim = store.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert next_claim is not None
+    assert next_claim.value == replacement

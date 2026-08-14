@@ -18,6 +18,15 @@ brief's exact code intact); every other test below is this task's own,
 written one statement per line.
 """
 
+from tldw_chatbook.Chat.console_auto_speak import (
+    AutoSpeakContext,
+    AutoSpeakDisposition,
+    decide_auto_speak,
+)
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_hands_free import (
     AWAITING_REPLY_DEADLINE_SECONDS,
     CloseCapture,
@@ -30,6 +39,9 @@ from tldw_chatbook.Chat.console_hands_free import (
     SilenceSpeech,
     SuppressReplySpeech,
 )
+from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+DESTINATION = "sha256:" + "a" * 64
 
 
 def mk(**kw):
@@ -976,3 +988,29 @@ def test_transition_rejects_an_invalid_state():
     except AssertionError:
         return
     raise AssertionError("expected _transition to reject an invalid state")
+
+
+def test_active_hands_free_loop_explicitly_owns_reply_speech() -> None:
+    controller, _events = mk()
+    controller.enter(capture_live=True)
+    context = AutoSpeakContext(
+        preferences=ConsoleSpeechPreferences(
+            auto_speak=True,
+            consent_destination=DESTINATION,
+        ),
+        destination_fingerprint=DESTINATION,
+        active_session_id="active-session",
+        hands_free_active=controller.state != "idle",
+    )
+
+    disposition = decide_auto_speak(
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Ready.",
+            status="complete",
+        ),
+        session_id="active-session",
+        context=context,
+    )
+
+    assert disposition is AutoSpeakDisposition.HANDSFREE_OWNS

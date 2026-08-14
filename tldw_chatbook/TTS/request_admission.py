@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, cast
@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 
 _AudioFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 _VALID_AUDIO_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
+TTSAdmissionAuthorizer = Callable[[str, str], bool]
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -239,6 +240,7 @@ class TTSRequestAdmissionCoordinator:
         profile_preview: STTSPlaygroundProfilePreview | None = None,
         profile_reference_resolver: TTSProfileReferenceResolver | None = None,
         progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> tuple[TTSAudioResponse, TTSEffectiveSelectionSnapshot]:
         """Resolve and synthesize while preserving the established public API."""
 
@@ -253,6 +255,7 @@ class TTSRequestAdmissionCoordinator:
             profile_preview=profile_preview,
             profile_reference_resolver=profile_reference_resolver,
             progress_sink=progress_sink,
+            admission_authorizer=admission_authorizer,
         )
         return response, selection
 
@@ -269,6 +272,7 @@ class TTSRequestAdmissionCoordinator:
         profile_preview: STTSPlaygroundProfilePreview | None = None,
         profile_reference_resolver: TTSProfileReferenceResolver | None = None,
         progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> tuple[
         TTSAudioResponse,
         TTSEffectiveSelectionSnapshot,
@@ -309,6 +313,8 @@ class TTSRequestAdmissionCoordinator:
             profile_reference_resolver
         ):
             raise TypeError("Profile reference resolver is invalid")
+        if admission_authorizer is not None and not callable(admission_authorizer):
+            raise TypeError("TTS admission authorizer is invalid")
         if clone_audition is not None and profile_preview is not None:
             raise TypeError("Clone audition and profile preview are mutually exclusive")
 
@@ -527,6 +533,7 @@ class TTSRequestAdmissionCoordinator:
                                 selection.revisions.provider_configuration
                             ),
                             clone_execution=clone_execution,
+                            admission_authorizer=admission_authorizer,
                         )
                         operation.claim()
                     break
@@ -686,6 +693,7 @@ class TTSRequestAdmissionCoordinator:
         text: str,
         voice_override: str | None = None,
         progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> TTSAudioResponse:
         """Resolve and admit one coherent default request, then execute it.
 
@@ -720,6 +728,7 @@ class TTSRequestAdmissionCoordinator:
             text=text,
             explicit=explicit,
             progress_sink=progress_sink,
+            admission_authorizer=admission_authorizer,
         )
         return response
 

@@ -19,6 +19,13 @@ ConsoleActionStatus = Literal[
     "continue_requested",
     "edit_requested",
 ]
+ConsoleSpeechPresentationState = Literal[
+    "idle",
+    "generating",
+    "playing",
+    "stopped",
+    "failed",
+]
 
 
 @dataclass(frozen=True)
@@ -29,6 +36,60 @@ class ConsoleMessageAction:
     label: str
     enabled: bool = True
     disabled_reason: str = ""
+
+
+@dataclass(frozen=True)
+class ConsoleHeaderSpeechPresentation:
+    """Visible speech action and bounded lifecycle copy for one message header."""
+
+    action: ConsoleMessageAction | None
+    status_label: str = ""
+
+
+def _speech_visible(message: ConsoleChatMessage) -> bool:
+    """Return whether a message may expose trusted Manual Speak."""
+    return (
+        message.role is ConsoleMessageRole.ASSISTANT
+        and message.status == "complete"
+        and bool(message.content.strip())
+    )
+
+
+def resolve_console_header_speech(
+    message: ConsoleChatMessage,
+    state: ConsoleSpeechPresentationState,
+) -> ConsoleHeaderSpeechPresentation:
+    """Resolve the sole visible speech control for a Console message."""
+    if not _speech_visible(message):
+        return ConsoleHeaderSpeechPresentation(action=None)
+    if state == "generating":
+        return ConsoleHeaderSpeechPresentation(
+            action=ConsoleMessageAction(
+                "speak-stop",
+                "⏹",
+                enabled=False,
+                disabled_reason="Speech audio is being generated.",
+            ),
+            status_label="Generating",
+        )
+    if state == "playing":
+        return ConsoleHeaderSpeechPresentation(
+            action=ConsoleMessageAction("speak-stop", "⏹"),
+            status_label="Playing",
+        )
+    if state == "stopped":
+        return ConsoleHeaderSpeechPresentation(
+            action=ConsoleMessageAction("speak", "🔊"),
+            status_label="Stopped",
+        )
+    if state == "failed":
+        return ConsoleHeaderSpeechPresentation(
+            action=ConsoleMessageAction("speak", "🔊"),
+            status_label="Failed",
+        )
+    return ConsoleHeaderSpeechPresentation(
+        action=ConsoleMessageAction("speak", "🔊")
+    )
 
 
 @dataclass(frozen=True)
@@ -182,11 +243,7 @@ class ConsoleMessageActionService:
     @staticmethod
     def _speak_visible(message: ConsoleChatMessage) -> bool:
         """Offer speech only for trusted completed assistant text."""
-        return (
-            message.role is ConsoleMessageRole.ASSISTANT
-            and message.status == "complete"
-            and bool(message.content.strip())
-        )
+        return _speech_visible(message)
 
     def __init__(
         self,
@@ -344,6 +401,33 @@ class ConsoleMessageActionService:
     def plain_action_labels(self, message: ConsoleChatMessage) -> list[str]:
         """Return terminal-width labels for a message action row."""
         return self.expand_plain_action_labels(self.available_actions(message))
+
+    def selected_row_actions(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        generation_variant_count: int = 0,
+        generation_browsed_index: int = 0,
+        speaking_message_id: str | None = None,
+        original_attempt_available: bool = False,
+        ephemeral: bool = False,
+        video_file_available: bool = False,
+    ) -> list[ConsoleMessageAction]:
+        """Return contextual actions excluding header-owned Speak/Stop."""
+        actions = self.available_actions(
+            message,
+            generation_variant_count=generation_variant_count,
+            generation_browsed_index=generation_browsed_index,
+            speaking_message_id=speaking_message_id,
+            original_attempt_available=original_attempt_available,
+            ephemeral=ephemeral,
+            video_file_available=video_file_available,
+        )
+        return [
+            action
+            for action in actions
+            if action.action_id not in {"speak", "speak-stop"}
+        ]
 
     def plain_action_row(self, message: ConsoleChatMessage) -> str:
         """Return a terminal-readable action row for plain transcript exports."""

@@ -17,6 +17,7 @@ from textual.widgets import (
     Checkbox,
     Collapsible,
     Input,
+    OptionList,
     Select,
     SelectionList,
     Static,
@@ -31,6 +32,8 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
 )
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
+from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Utils import input_validation as input_validation_module
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_effective_provider_model,
@@ -47,6 +50,7 @@ from tldw_chatbook.UI.Screens.settings_config_models import (
 )
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
+    SettingsEndpointProbePurpose,
     probe_settings_endpoint,
 )
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
@@ -80,6 +84,28 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 DUMMY_REDACTION_ENV_VALUE = "redaction-fixture-env-value"
 DUMMY_REDACTION_CONFIG_VALUE = "redaction-fixture-config-value"
 DUMMY_REDACTION_SERVER_VALUE = "redaction-fixture-server-value"
+
+PERSISTED_PROVIDER_ALIASES = (
+    ("llama.cpp", "llama_cpp"),
+    ("Hugging Face", "huggingface"),
+    ("Custom OpenAI", "custom"),
+    ("custom-openai-api", "custom"),
+)
+
+
+def _capture_provider_settings_mutations(monkeypatch):
+    calls = []
+
+    def apply_mutation(section_values, *, delete_keys=None):
+        calls.append((section_values, delete_keys or {}))
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        provider_persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        apply_mutation,
+    )
+    return calls
 
 
 class StyledSettingsDestinationHarness(DestinationHarness):
@@ -1920,7 +1946,7 @@ async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Active server profile: Loading Settings details" in text
+        assert "Server connection: Loading Settings details" in text
 
 
 @pytest.mark.asyncio
@@ -2246,7 +2272,7 @@ def test_settings_status_language_agrees_with_home_console_and_library_contracts
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_renders_server_sync_workspace_handoff_contracts():
+async def test_settings_overview_renders_server_sync_workspace_contracts_in_diagnostics():
     class FakeWorkspaceRegistry:
         def get_active_workspace(self):
             return WorkspaceRecord(
@@ -2279,20 +2305,21 @@ async def test_settings_overview_renders_server_sync_workspace_handoff_contracts
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_settings_text(
-            screen, pilot, "Active server profile: Main Server"
+            screen, pilot, "Server connection: Main Server"
         )
         text = _visible_text(screen)
 
-        assert "Server, sync, workspace, and handoff" in text
-        assert "Active server profile: Main Server (server-main)" in text
-        assert "Local/server authority: server; Settings is read-only" in text
+        assert "Advanced / Diagnostics" in text
+        assert "Server connection: Main Server (server-main)" in text
+        assert "Active source: server; Settings is read-only" in text
         assert "Collections: dry-run only" in text
         assert "Workspaces: dry-run only" in text
         assert "Research (research); authority local-only; sync not-configured" in text
         assert LIBRARY_WORKSPACE_VISIBILITY_COPY in text
-        assert (
-            "ACP handoff readiness: ACP session ready: Ticket triage (running)" in text
-        )
+        assert "Conversation updates: copy/reference/" in text
+        assert "Console staging is limited to the active workspace" in text
+        assert "ACP session ready: Ticket triage (running)" in text
+        assert "handoff" not in text.lower()
 
 
 def test_settings_ownership_record_falls_back_without_crashing():
@@ -2537,6 +2564,523 @@ async def test_settings_overview_leads_with_readiness_before_manual_sync():
 
 
 @pytest.mark.asyncio
+async def test_settings_overview_renders_primary_user_tasks_before_diagnostics():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        card = screen.query_one("#settings-overview-card")
+        primary = card.query_one("#settings-overview-primary")
+        rows = list(primary.query(".settings-detail-row"))
+
+        assert [row.id for row in rows] == [
+            "settings-overview-configuration",
+            "settings-overview-last-connection-test",
+            "settings-overview-storage-privacy",
+            "settings-overview-sync",
+        ]
+        assert "handoff" not in " ".join(
+            str(row.renderable).lower() for row in rows
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_search_keeps_draft_endpoint_and_api_key():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        endpoint.value = "https://draft.example/v1"
+        api_key.value = "draft-provider-key"
+        await pilot.pause()
+
+        search = screen.query_one("#settings-provider-search", Input)
+        search.value = "openai"
+        await pilot.pause()
+
+        assert screen.query_one("#settings-provider-endpoint-value", Input) is endpoint
+        assert screen.query_one("#settings-provider-api-key", Input) is api_key
+        assert endpoint.value == "https://draft.example/v1"
+        assert api_key.value == "draft-provider-key"
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        headings = [
+            picker.get_option_at_index(index)
+            for index in range(picker.option_count)
+            if str(picker.get_option_at_index(index).id or "").startswith(
+                "provider-picker-group-"
+            )
+        ]
+        assert headings
+        assert all(option.disabled for option in headings)
+
+
+def _provider_picker_option_index(
+    picker: OptionList,
+    *,
+    provider_id: str | None = None,
+    action: str | None = None,
+) -> int:
+    for index in range(picker.option_count):
+        option = picker.get_option_at_index(index)
+        if (
+            provider_id is not None
+            and getattr(option, "provider_id", None) == provider_id
+        ):
+            return index
+        if action is not None and getattr(option, "action", None) == action:
+            return index
+    raise AssertionError(
+        f"picker option not found: provider_id={provider_id!r}, action={action!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_initial_known_provider_enter_is_noop_for_drafts():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        endpoint.value = "https://draft.example/v1"
+        api_key.value = "draft-provider-key"
+        await pilot.pause()
+
+        highlighted = picker.get_option_at_index(picker.highlighted)
+        assert getattr(highlighted, "provider_id", None) == "openai"
+
+        picker.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert screen._provider_setting_values_mapping()["provider"] == "OpenAI"
+        assert screen.query_one("#settings-provider-endpoint-value", Input) is endpoint
+        assert screen.query_one("#settings-provider-api-key", Input) is api_key
+        assert endpoint.value == "https://draft.example/v1"
+        assert api_key.value == "draft-provider-key"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_initial_unknown_provider_is_selected_exactly():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "Exact_Custom-ID",
+        "model": "custom-model",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        highlighted = picker.get_option_at_index(picker.highlighted)
+
+        assert getattr(highlighted, "provider_id", None) == "Exact_Custom-ID"
+        assert (
+            screen.query_one("#settings-provider-manual-value", Input).value
+            == "Exact_Custom-ID"
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_saved_unknown_activation_is_exact_noop():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "Exact_Custom-ID",
+        "model": "custom-model",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+        model = screen.query_one("#settings-model-value", Input)
+        endpoint.value = "https://draft.example/v1"
+        api_key.value = "draft-provider-key"
+        await pilot.pause()
+
+        highlighted = picker.get_option_at_index(picker.highlighted)
+        assert getattr(highlighted, "provider_id", None) == "Exact_Custom-ID"
+        assert manual.value == "Exact_Custom-ID"
+
+        picker.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert host._exception is None
+        assert picker.has_focus
+        assert screen.query_one("#settings-provider-endpoint-value", Input) is endpoint
+        assert screen.query_one("#settings-provider-api-key", Input) is api_key
+        assert endpoint.value == "https://draft.example/v1"
+        assert api_key.value == "draft-provider-key"
+        assert manual.value == "Exact_Custom-ID"
+        assert screen.query_one("#settings-provider-value", Select).value == "__manual__"
+        assert screen._provider_setting_values_mapping()["provider"] == "Exact_Custom-ID"
+        assert screen._provider_setting_values_mapping()["model"] == "custom-model"
+        assert model.value == "custom-model"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_filter_clear_restores_current_highlight():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+
+        search.value = "anthropic"
+        await pilot.pause()
+        assert getattr(
+            picker.get_option_at_index(picker.highlighted), "provider_id", None
+        ) == "anthropic"
+
+        search.value = ""
+        await pilot.pause()
+        assert getattr(
+            picker.get_option_at_index(picker.highlighted), "provider_id", None
+        ) == "openai"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_filtered_selection_uses_provider_lifecycle():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    app.app_config["api_settings"] = {
+        "anthropic": {"model": "claude-3-7-sonnet-latest"}
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+
+        search.value = "anthropic"
+        await pilot.pause()
+        picker.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert screen._provider_setting_values_mapping()["provider"] == "anthropic"
+        assert (
+            screen.query_one("#settings-model-value", Input).value
+            == "claude-3-7-sonnet-latest"
+        )
+        assert str(
+            screen.query_one("#settings-category-providers-models", Button).label
+        ).endswith(" *")
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_no_match_is_honest_with_manual_action():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+
+        search.value = "provider-that-does-not-exist"
+        await pilot.pause()
+
+        status = screen.query_one("#settings-provider-search-status", Static)
+        assert "No catalog providers match" in str(status.renderable)
+        manual_index = _provider_picker_option_index(
+            picker, action="enter_provider_id"
+        )
+        assert picker.get_option_at_index(manual_index).disabled is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved_provider", ["OpenAI", "Exact_Custom-ID"])
+async def test_settings_provider_picker_enter_provider_id_focuses_manual_field(
+    saved_provider,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": saved_provider,
+        "model": "saved-model",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        search.value = "provider-that-does-not-exist"
+        await pilot.pause()
+        picker.highlighted = _provider_picker_option_index(
+            picker, action="enter_provider_id"
+        )
+        picker.focus()
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+        assert manual.disabled is False
+        assert manual.has_focus, repr(host.focused)
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_rejects_unsupported_manual_id_without_losing_drafts():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        search.value = "provider-that-does-not-exist"
+        await pilot.pause()
+        picker.highlighted = _provider_picker_option_index(
+            picker, action="enter_provider_id"
+        )
+        picker.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        model = screen.query_one("#settings-model-value", Input)
+        endpoint.value = "https://draft.example/v1"
+        api_key.value = "draft-provider-key"
+        model.value = "draft-model"
+        await pilot.pause()
+
+        manual.value = "Exact_Custom-ID"
+        await pilot.pause()
+
+        assert host._exception is None
+        assert manual.value == "Exact_Custom-ID"
+        assert screen._provider_widget_value() == "openai"
+        values = screen._provider_setting_values_mapping()
+        assert values["provider"] == "OpenAI"
+        assert values["model"] == "draft-model"
+        assert endpoint.value == "https://draft.example/v1"
+        assert api_key.value == "draft-provider-key"
+        assert "Choose a listed provider or enter a supported alias" in _visible_text(
+            screen
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_supported_manual_alias_uses_catalog_lifecycle():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        search.value = "provider-that-does-not-exist"
+        await pilot.pause()
+        picker.highlighted = _provider_picker_option_index(
+            picker, action="enter_provider_id"
+        )
+        picker.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+        manual.value = "LOCAL-OLLAMA"
+        await pilot.pause()
+
+        assert host._exception is None
+        assert (
+            screen.query_one("#settings-provider-value", Select).value
+            == "local_ollama"
+        )
+        assert screen._provider_setting_values_mapping()["provider"] == "local_ollama"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alias, canonical_provider", PERSISTED_PROVIDER_ALIASES)
+async def test_settings_provider_picker_persistence_alias_uses_catalog_lifecycle(
+    alias,
+    canonical_provider,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen._show_provider_manual_editor("OpenAI")
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+
+        manual.value = alias
+        await pilot.pause()
+
+        assert host._exception is None
+        assert (
+            screen.query_one("#settings-provider-value", Select).value
+            == canonical_provider
+        )
+        assert (
+            screen._provider_setting_values_mapping()["provider"]
+            == canonical_provider
+        )
+        assert manual.value == ""
+        assert manual.disabled is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alias, canonical_provider", PERSISTED_PROVIDER_ALIASES)
+async def test_settings_provider_picker_persistence_alias_saves_canonical_provider(
+    monkeypatch,
+    alias,
+    canonical_provider,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen._show_provider_manual_editor("OpenAI")
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+
+        manual.value = alias
+        await pilot.pause()
+        await pilot.click("#settings-save-category")
+        await pilot.pause()
+
+        assert host._exception is None
+
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["chat_defaults"]["provider"] == canonical_provider
+    assert app.app_config["chat_defaults"]["provider"] == canonical_provider
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alias, canonical_provider", PERSISTED_PROVIDER_ALIASES)
+async def test_settings_provider_picker_current_alias_preserves_connection_drafts(
+    alias,
+    canonical_provider,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": canonical_provider,
+        "model": "saved-model",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        endpoint.value = "https://draft.example/v1"
+        api_key.value = "draft-provider-key"
+        await pilot.pause()
+
+        screen._show_provider_manual_editor(canonical_provider)
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+        manual.value = alias
+        await pilot.pause()
+
+        assert (
+            screen._provider_setting_values_mapping()["provider"]
+            == canonical_provider
+        )
+        assert endpoint.value == "https://draft.example/v1"
+        assert api_key.value == "draft-provider-key"
+        assert manual.value == ""
+        assert manual.disabled is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_size", [(180, 50), (80, 24)])
+async def test_settings_provider_picker_geometry_is_bounded_and_non_overlapping(
+    terminal_size,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=terminal_size) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        status = screen.query_one("#settings-provider-search-status", Static)
+        model = screen.query_one("#settings-model-value", Input)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        regions = [
+            search.region,
+            picker.region,
+            status.region,
+            model.region,
+            endpoint.region,
+        ]
+
+        for index in range(len(regions) - 1):
+            upper, lower = regions[index : index + 2]
+            assert not upper.overlaps(lower), (
+                f"provider controls overlap at {terminal_size}: {upper} vs {lower}"
+            )
+            assert upper.bottom <= lower.y
+        assert 4 <= picker.region.height <= 8
+        assert picker.virtual_size.height > picker.container_size.height
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_api_key_focus_style_has_no_underline():
     """task-185 in passing: focused inputs must not underline placeholder copy."""
     app = _build_test_app()
@@ -2677,7 +3221,7 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
     probe_calls = []
 
     async def fake_probe(base_url, **kwargs):
-        probe_calls.append(base_url)
+        probe_calls.append((base_url, kwargs))
         return SettingsEndpointProbeOutcome(
             reachable=True,
             summary="reachable (3 models)",
@@ -2699,7 +3243,15 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
         while time.monotonic() < deadline and not toasts:
             await pilot.pause(0.01)
 
-        assert probe_calls == ["http://127.0.0.1:11434"]
+        assert probe_calls == [
+            (
+                "http://127.0.0.1:11434",
+                {
+                    "provider": "ollama",
+                    "purpose": SettingsEndpointProbePurpose.CHAT_CATALOG,
+                },
+            )
+        ]
         message, kwargs = toasts[-1]
         assert message == (
             "Provider test passed: Ollama is ready; model llama3; "
@@ -2839,7 +3391,7 @@ async def test_probe_settings_endpoint_counts_models_and_normalizes_path():
     (
         (
             httpx.ConnectError("All connection attempts failed"),
-            "unreachable: connection refused",
+            "unreachable: connection error",
         ),
         (httpx.ConnectTimeout("timed out"), "unreachable: timeout"),
         (httpx.ReadTimeout("timed out"), "unreachable: timeout"),
@@ -2880,7 +3432,9 @@ async def test_probe_settings_endpoint_reports_http_status_and_invalid_url():
         await client.aclose()
 
     assert outcome.reachable is False
-    assert outcome.summary == "unreachable: HTTP 404"
+    assert outcome.state == "model_listing_unavailable"
+    assert outcome.category == "http_status"
+    assert outcome.summary == "Model listing unavailable; chat endpoint not tested"
 
     invalid = await probe_settings_endpoint("")
     assert invalid.reachable is False
@@ -4923,6 +5477,8 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         "paste_collapse_threshold": 50,
     }
     app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "gpt-4o",
         "streaming": True,
         "temperature": 0.7,
         "top_p": 0.95,
@@ -4977,6 +5533,8 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         }
     ]
     assert app.app_config["console"]["paste_collapse_threshold"] == 120
+    assert app.app_config["chat_defaults"]["provider"] == "llama_cpp"
+    assert app.app_config["chat_defaults"]["model"] == "gpt-4o"
     assert app.app_config["chat_defaults"]["streaming"] is False
     assert legacy_calls == [], (
         "Console Behavior must save atomically through the batched adapter; "
@@ -5316,6 +5874,115 @@ async def test_settings_provider_category_renders_catalog_select_with_visible_va
 # -- is untouched and remains that task's to close. Its sibling xfail
 # (`..._does_not_create_provider_draft`) still xfails for the same reason.
 # The strict marker did its job by flipping loudly; the test is a live pin now.
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_navigation_context_uses_one_presentation_identity():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099/v1"},
+        "huggingface": {
+            "api_url": "https://huggingface.example/v1",
+            "api_key_env_var": "HUGGINGFACE_API_KEY",
+        },
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(
+            {
+                "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+                "provider": "huggingface",
+                "model": "meta-llama/test-model",
+            }
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        highlighted = picker.get_option_at_index(picker.highlighted)
+        assert getattr(highlighted, "provider_id", None) == "huggingface"
+        assert screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        assert screen.query_one("#settings-model-value", Input).value == (
+            "meta-llama/test-model"
+        )
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        credential = screen.query_one(
+            "#settings-provider-credential-env-var", Input
+        )
+        assert endpoint.value == "https://huggingface.example/v1"
+        assert credential.value == "HUGGINGFACE_API_KEY"
+        assert screen._provider_loaded_setting_values()["provider"] == "llama_cpp"
+        assert not screen._category_has_unsaved_changes(
+            SettingsCategoryId.PROVIDERS_MODELS
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lifecycle", ["category_departure", "recompose"])
+async def test_settings_provider_route_echoes_do_not_survive_widget_lifecycle(
+    lifecycle,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:8080/v1",
+            "api_key_env_var": "LLAMA_CPP_API_KEY",
+        },
+        "huggingface": {
+            "api_url": "https://huggingface.example/v1/route-target",
+            "api_key_env_var": "HUGGINGFACE_ROUTE_TARGET_API_KEY",
+        },
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        target_endpoint = "https://huggingface.example/v1/route-target"
+        target_env = "HUGGINGFACE_ROUTE_TARGET_API_KEY"
+        screen._navigation_provider = "huggingface"
+        screen._navigation_model = "meta-llama/route-target"
+
+        screen._apply_navigation_provider_context(
+            "huggingface",
+            "meta-llama/route-target",
+        )
+
+        assert screen._provider_endpoint_suppress_queue == [target_endpoint]
+        assert screen._provider_credential_env_var_suppress_queue == [target_env]
+        screen._clear_navigation_provider_context()
+        if lifecycle == "category_departure":
+            screen._select_category(SettingsCategoryId.OVERVIEW.value)
+            await pilot.pause()
+            screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+            await pilot.pause()
+        else:
+            await screen.recompose()
+            await pilot.pause()
+
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        credential_env = screen.query_one(
+            "#settings-provider-credential-env-var", Input
+        )
+        endpoint.value = target_endpoint
+        credential_env.value = target_env
+        await pilot.pause()
+
+        draft = screen._provider_draft()
+        assert draft is not None
+        assert draft.values["endpoint"] == target_endpoint
+        assert draft.values["credential_env_var"] == target_env
+        assert endpoint.value == target_endpoint
+        assert credential_env.value == target_env
+        assert screen.query_one("#settings-save-category", Button).disabled is False
+        assert screen._provider_endpoint_suppress_queue == []
+        assert screen._provider_credential_env_var_suppress_queue == []
+
+
 @pytest.mark.asyncio
 async def test_settings_navigation_context_can_preselect_provider_category_target():
     app = _build_test_app()
@@ -5691,12 +6358,7 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
     # persisted chat_defaults directly, not an app-instance reactive), so
     # this asserts against app_config instead of the removed attribute.
     assert app.app_config["chat_defaults"]["provider"] == "OpenAI"
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -5709,10 +6371,9 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        ("chat_defaults", "provider", "llama_cpp"),
-        ("chat_defaults", "model", "qwen"),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["chat_defaults"] == {"provider": "llama_cpp", "model": "qwen"}
     assert app.app_config["chat_defaults"] == {
         "provider": "llama_cpp",
         "model": "qwen",
@@ -5742,12 +6403,7 @@ async def test_settings_provider_category_saves_selected_model_profile(monkeypat
             },
         },
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -5760,24 +6416,32 @@ async def test_settings_provider_category_saves_selected_model_profile(monkeypat
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        (
-            "api_settings.openai",
-            "model_defaults",
-            {
-                "gpt-4.1": {
-                    "temperature": 0.2,
-                    "top_p": 0.88,
-                    "streaming": False,
-                },
-            },
-        ),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.openai"]["model_defaults"] == {
+        "gpt-4.1": {
+            "temperature": 0.2,
+            "top_p": 0.88,
+            "streaming": False,
+        },
+    }
+    assert set(sections) == {"api_settings.openai"}
+    assert set(sections["api_settings.openai"]) == {"model_defaults"}
+    assert _deletes == {}
     assert app.app_config["chat_defaults"] == {
         "provider": "OpenAI",
         "model": "gpt-4.1",
         "streaming": True,
         "temperature": 0.7,
+    }
+    assert app.app_config["api_settings"]["openai"] == {
+        "model_defaults": {
+            "gpt-4.1": {
+                "temperature": 0.2,
+                "top_p": 0.88,
+                "streaming": False,
+            }
+        }
     }
     assert app.app_config["api_settings"]["openai"]["model_defaults"]["gpt-4.1"] == {
         "temperature": 0.2,
@@ -5787,16 +6451,57 @@ async def test_settings_provider_category_saves_selected_model_profile(monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["mistral", "mistralai"])
+async def test_settings_saves_each_mistral_entry_to_its_distinct_owner(
+    monkeypatch, provider
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    app.app_config["api_settings"] = {
+        "mistral": {
+            "api_base_url": "https://legacy.mistral.example/v1",
+            "model": "legacy-model",
+            "api_key_env_var": "MISTRAL_LEGACY_KEY",
+        },
+        "mistralai": {
+            "api_base_url": "https://catalog.mistral.example/v1",
+            "model": "catalog-model",
+            "api_key_env_var": "MISTRALAI_KEY",
+        },
+    }
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        provider_select = screen.query_one("#settings-provider-value", Select)
+        provider_select.value = provider
+        screen.handle_provider_value_changed(Select.Changed(provider_select, provider))
+        screen.query_one("#settings-model-value", Input).value = f"{provider}-new"
+
+        await pilot.click("#settings-save-category")
+
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["chat_defaults"] == {
+        "provider": provider,
+        "model": f"{provider}-new",
+    }
+    assert sections[f"api_settings.{provider}"]["model"] == f"{provider}-new"
+    other = "mistralai" if provider == "mistral" else "mistral"
+    assert f"api_settings.{other}" not in sections
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_category_saves_openai_generation_profile(monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "o3"}
     app.app_config["api_settings"] = {"openai": {"model_defaults": {"o3": {}}}}
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 55)) as pilot:
@@ -5848,28 +6553,24 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        (
-            "api_settings.openai",
-            "model_defaults",
-            {
-                "o3": {
-                    "temperature": 0.3,
-                    "top_p": 0.86,
-                    "min_p": 0.04,
-                    "top_k": 42,
-                    "max_tokens": 2048,
-                    "seed": 123,
-                    "presence_penalty": 0.2,
-                    "frequency_penalty": 0.3,
-                    "reasoning_effort": "high",
-                    "reasoning_summary": "auto",
-                    "verbosity": "medium",
-                    "streaming": False,
-                },
-            },
-        ),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.openai"]["model_defaults"] == {
+        "o3": {
+            "temperature": 0.3,
+            "top_p": 0.86,
+            "min_p": 0.04,
+            "top_k": 42,
+            "max_tokens": 2048,
+            "seed": 123,
+            "presence_penalty": 0.2,
+            "frequency_penalty": 0.3,
+            "reasoning_effort": "high",
+            "reasoning_summary": "auto",
+            "verbosity": "medium",
+            "streaming": False,
+        },
+    }
 
 
 def test_settings_enum_select_value_clamps_case_and_unknown_values():
@@ -5954,12 +6655,7 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
     app.app_config["api_settings"] = {
         "anthropic": {"model_defaults": {"claude-opus-4-7": {}}},
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 55)) as pilot:
@@ -6008,20 +6704,16 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        (
-            "api_settings.anthropic",
-            "model_defaults",
-            {
-                "claude-opus-4-7": {
-                    "max_tokens": 12000,
-                    "thinking_effort": "xhigh",
-                    "thinking_budget_tokens": 4096,
-                    "streaming": False,
-                },
-            },
-        ),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.anthropic"]["model_defaults"] == {
+        "claude-opus-4-7": {
+            "max_tokens": 12000,
+            "thinking_effort": "xhigh",
+            "thinking_budget_tokens": 4096,
+            "streaming": False,
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -6045,11 +6737,7 @@ async def test_settings_provider_category_rejects_out_of_range_model_profile(
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {"openai": {"model_defaults": {}}}
-    saved = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6061,7 +6749,7 @@ async def test_settings_provider_category_rejects_out_of_range_model_profile(
 
         assert message in _visible_text(screen)
 
-    assert saved == []
+    assert mutations == []
     assert app.app_config["api_settings"]["openai"]["model_defaults"] == {}
 
 
@@ -6216,11 +6904,7 @@ async def test_settings_provider_model_switch_does_not_save_unedited_profile(
             },
         },
     }
-    saved = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6232,7 +6916,13 @@ async def test_settings_provider_model_switch_does_not_save_unedited_profile(
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [("chat_defaults", "model", "gpt-4.1-mini")]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["chat_defaults"] == {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+    }
+    assert "model_defaults" not in sections["api_settings.openai"]
 
 
 @pytest.mark.asyncio
@@ -6243,24 +6933,19 @@ async def test_settings_provider_category_does_not_save_unedited_effective_defau
     app.chat_api_provider_value = "OpenAI"
     app.chat_api_model_value = "gpt-4.1"
     app.app_config["chat_defaults"] = {}
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await pilot.click("#settings-save-category")
 
-    assert saved == []
+    assert mutations == []
     assert app.app_config["chat_defaults"] == {}
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_only_dirty_provider_fields(monkeypatch):
+async def test_settings_provider_category_saves_exact_provider_model_pair(monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -6268,12 +6953,7 @@ async def test_settings_provider_category_saves_only_dirty_provider_fields(monke
         "streaming": True,
         "temperature": 0.7,
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6283,9 +6963,14 @@ async def test_settings_provider_category_saves_only_dirty_provider_fields(monke
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [("chat_defaults", "model", "gpt-4.1-mini")]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["chat_defaults"] == {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+    }
     assert app.app_config["chat_defaults"] == {
-        "provider": "OpenAI",
+        "provider": "openai",
         "model": "gpt-4.1-mini",
         "streaming": True,
         "temperature": 0.7,
@@ -6304,12 +6989,7 @@ async def test_settings_provider_category_saves_llamacpp_endpoint(monkeypatch):
     app.app_config["api_settings"] = {
         "llama_cpp": {"api_url": "http://127.0.0.1:8080/v1"}
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6327,12 +7007,14 @@ async def test_settings_provider_category_saves_llamacpp_endpoint(monkeypatch):
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        ("api_settings.llama_cpp", "api_url", "http://127.0.0.1:9099/v1"),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.llama_cpp"]["api_url"] == (
+        "http://127.0.0.1:9099"
+    )
     assert (
         app.app_config["api_settings"]["llama_cpp"]["api_url"]
-        == "http://127.0.0.1:9099/v1"
+        == "http://127.0.0.1:9099"
     )
 
 
@@ -6348,12 +7030,7 @@ async def test_settings_provider_category_preserves_existing_endpoint_key(monkey
     app.app_config["api_settings"] = {
         "openai": {"api_base_url": "https://api.openai.com/v1"}
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6366,9 +7043,11 @@ async def test_settings_provider_category_preserves_existing_endpoint_key(monkey
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        ("api_settings.openai", "api_base_url", "https://proxy.example.com/v1"),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.openai"]["api_base_url"] == (
+        "https://proxy.example.com/v1"
+    )
     assert (
         app.app_config["api_settings"]["openai"]["api_base_url"]
         == "https://proxy.example.com/v1"
@@ -6389,12 +7068,7 @@ async def test_settings_provider_save_button_works_with_endpoint_input_focus(
     app.app_config["api_settings"] = {
         "openai": {"api_base_url": "https://api.openai.com/v1"}
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6404,14 +7078,18 @@ async def test_settings_provider_save_button_works_with_endpoint_input_focus(
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
         endpoint.focus()
         endpoint.value = "https://proxy.example.com/v1"
+        await pilot.pause()
 
         screen.handle_save_category(
             Button.Pressed(screen.query_one("#settings-save-category", Button))
         )
+        await pilot.pause()
 
-    assert saved == [
-        ("api_settings.openai", "api_base_url", "https://proxy.example.com/v1"),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.openai"]["api_base_url"] == (
+        "https://proxy.example.com/v1"
+    )
     assert (
         app.app_config["api_settings"]["openai"]["api_base_url"]
         == "https://proxy.example.com/v1"
@@ -6426,12 +7104,7 @@ async def test_settings_provider_category_saves_credential_env_var(monkeypatch):
         "model": "gpt-4.1",
     }
     app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6447,9 +7120,11 @@ async def test_settings_provider_category_saves_credential_env_var(monkeypatch):
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        ("api_settings.openai", "api_key_env_var", "CHATBOOK_OPENAI_API_KEY"),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.openai"]["api_key_env_var"] == (
+        "CHATBOOK_OPENAI_API_KEY"
+    )
     assert app.app_config["api_settings"]["openai"]["api_key_env_var"] == (
         "CHATBOOK_OPENAI_API_KEY"
     )
@@ -6489,12 +7164,7 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
         "model": "gpt-4.1",
     }
     app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6506,7 +7176,10 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
         screen.handle_provider_api_key_changed(Input.Changed(api_key, api_key.value))
         await pilot.click("#settings-save-category")
 
-        assert ("api_settings.openai", "api_key", "sk-test-new-local-key") in saved
+        assert len(mutations) == 1
+        assert mutations[0][0]["api_settings.openai"]["api_key"] == (
+            "sk-test-new-local-key"
+        )
         assert (
             app.app_config["api_settings"]["openai"]["api_key"]
             == "sk-test-new-local-key"
@@ -6522,8 +7195,9 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
         assert draft.values["api_key"] == ""
         await pilot.click("#settings-save-category")
 
-    assert ("api_settings.openai", "api_key", "") in saved
-    assert app.app_config["api_settings"]["openai"]["api_key"] == ""
+    assert len(mutations) == 2
+    assert "api_key" in mutations[1][1]["api_settings.openai"]
+    assert "api_key" not in app.app_config["api_settings"]["openai"]
 
 
 def test_settings_provider_api_key_validation_rejects_placeholder_values():
@@ -6544,12 +7218,7 @@ async def test_settings_provider_category_rejects_invalid_credential_env_var(
         "model": "gpt-4.1",
     }
     app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6567,7 +7236,7 @@ async def test_settings_provider_category_rejects_invalid_credential_env_var(
 
         assert "Credential env var must use environment variable syntax" in text
 
-    assert saved == []
+    assert mutations == []
     assert (
         app.app_config["api_settings"]["openai"]["api_key_env_var"] == "OPENAI_API_KEY"
     )
@@ -6588,12 +7257,7 @@ async def test_settings_provider_category_updates_existing_non_normalized_provid
             "api_key_env_var": "OPENAI_API_KEY",
         }
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6610,14 +7274,20 @@ async def test_settings_provider_category_updates_existing_non_normalized_provid
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        ("api_settings.OpenAI", "api_base_url", "https://proxy.example.com/v1"),
-        ("api_settings.OpenAI", "api_key_env_var", "CHATBOOK_OPENAI_API_KEY"),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.OpenAI"]["api_base_url"] == (
+        "https://proxy.example.com/v1"
+    )
+    assert sections["api_settings.OpenAI"]["api_key_env_var"] == (
+        "CHATBOOK_OPENAI_API_KEY"
+    )
     assert "openai" not in app.app_config["api_settings"]
     assert app.app_config["api_settings"]["OpenAI"] == {
         "api_base_url": "https://proxy.example.com/v1",
+        "model": "gpt-4.1",
         "api_key_env_var": "CHATBOOK_OPENAI_API_KEY",
+        "credential_source": "environment",
     }
 
 
@@ -6633,12 +7303,7 @@ async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch)
     app.app_config["api_settings"] = {
         "llama_cpp": {"api_url": "http://127.0.0.1:8080/v1"}
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6653,7 +7318,7 @@ async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch)
 
         assert "Endpoint must start with http:// or https://" in text
 
-    assert saved == []
+    assert mutations == []
     assert (
         app.app_config["api_settings"]["llama_cpp"]["api_url"]
         == "http://127.0.0.1:8080/v1"
@@ -6670,12 +7335,7 @@ async def test_settings_provider_endpoint_save_blocks_blank_provider(monkeypatch
         "temperature": 0.7,
     }
     app.app_config["api_settings"] = {}
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6699,7 +7359,7 @@ async def test_settings_provider_endpoint_save_blocks_blank_provider(monkeypatch
 
         assert "Provider is required." in text
 
-    assert saved == []
+    assert mutations == []
     assert app.app_config["api_settings"] == {}
 
 
@@ -6714,12 +7374,7 @@ async def test_settings_provider_category_blocks_empty_manual_provider_save(
         "streaming": True,
         "temperature": 0.7,
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6740,7 +7395,7 @@ async def test_settings_provider_category_blocks_empty_manual_provider_save(
 
         assert "Provider is required." in text
 
-    assert saved == []
+    assert mutations == []
     assert app.app_config["chat_defaults"]["provider"] == "OpenAI"
 
 
@@ -6913,12 +7568,7 @@ async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch
         "openai": {"api_base_url": "https://api.openai.com/v1"},
         "llama_cpp": {},
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6945,13 +7595,18 @@ async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch
         await pilot.click("#settings-save-category")
         await pilot.click("#settings-save-category")
 
-    assert (
-        "api_settings.llama_cpp",
-        "api_url",
-        "https://api.openai.com/v1",
-    ) not in saved
-    assert saved == [("chat_defaults", "provider", "llama_cpp")]
-    assert app.app_config["api_settings"]["llama_cpp"] == {}
+    assert len(mutations) == 1
+    sections, deletes = mutations[0]
+    assert "api_url" not in sections["api_settings.llama_cpp"]
+    assert "api_url" in deletes["api_settings.llama_cpp"]
+    assert sections["chat_defaults"] == {
+        "provider": "llama_cpp",
+        "model": "",
+    }
+    assert app.app_config["api_settings"]["llama_cpp"] == {
+        "model": "",
+        "credential_source": "none",
+    }
 
 
 @pytest.mark.asyncio
@@ -9291,10 +9946,10 @@ async def test_settings_overview_front_door_is_four_status_rows_with_open_afford
         screen = _active_destination_screen(host)
 
         for row_id in (
-            "#settings-overview-provider-readiness",
-            "#settings-overview-storage",
-            "#settings-overview-privacy",
-            "#settings-overview-sync-summary",
+            "#settings-overview-configuration",
+            "#settings-overview-last-connection-test",
+            "#settings-overview-storage-privacy",
+            "#settings-overview-sync",
         ):
             assert screen.query_one(row_id, Static)
 

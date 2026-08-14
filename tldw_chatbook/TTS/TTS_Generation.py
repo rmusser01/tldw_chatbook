@@ -38,11 +38,13 @@ from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
     ProviderHealth,
     TTSAudioResponse,
+    TTSCloneGenerationEvidence,
+    TTSConfigurationRevisionError,
     TTSNativeCapabilityObservation,
     TTSNativeCapabilitySnapshot,
     TTSNativeCloneAdapter,
     TTSNativeCloneDependencyAdapter,
-    TTSCloneGenerationEvidence,
+    TTSOutboundEndpointAdapter,
     TTSOperationError,
     TTSProgress,
     TTSProviderCatalog,
@@ -54,7 +56,6 @@ from tldw_chatbook.TTS.adapter_types import (
     _new_admitted_audio_cpp_clone_request,
     _new_tts_clone_generation_evidence,
 )
-from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.audio_cpp_guided_config import AudioCppSettingsConfig
 from tldw_chatbook.TTS.audio_cpp_recipes import (
@@ -68,13 +69,7 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppTTSCapability,
     _AudioCppGenerationChanged,
 )
-from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
-from tldw_chatbook.TTS.playground_types import (
-    STTSPlaygroundCloneSnapshot,
-    STTSPlaygroundProfilePreview,
-    TTSRequestedSelectionSnapshot,
-)
-from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.effective_settings import (
     NativeCapabilityReader,
     TTSCharacterProfileSelection,
@@ -82,7 +77,15 @@ from tldw_chatbook.TTS.effective_settings import (
     TTSEffectiveSelectionSnapshot,
     TTSSelectionOverrides,
     TTSStudioDraftSelection,
+    tts_configuration_is_active,
 )
+from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
+from tldw_chatbook.TTS.playground_types import (
+    STTSPlaygroundCloneSnapshot,
+    STTSPlaygroundProfilePreview,
+    TTSRequestedSelectionSnapshot,
+)
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.profile_reference_materialization import (
     TTSCloneMaterializationError,
     TTSCloneReferenceMaterialization,
@@ -94,8 +97,9 @@ from tldw_chatbook.TTS.profile_reference_types import (
     TTSCloneRecipeRequirement,
 )
 from tldw_chatbook.TTS.request_admission import (
-    TTSRequestAdmissionCoordinator,
+    TTSAdmissionAuthorizer,
     TTSProfileReferenceResolver,
+    TTSRequestAdmissionCoordinator,
     _ResolvedTTSCloneExecutionAuthority,
 )
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
@@ -489,6 +493,37 @@ class TTSSettingsPersistenceOutcome:
             raise ValueError("Cache-reload failure requires a replaced settings file")
 
 
+TTSDefaultActivationStatus = Literal[
+    "activation_not_ready",
+    "committed",
+    "rolled_back",
+    "rollback_failed",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class TTSDefaultActivationOutcome:
+    """Truthful result of one generation-fenced default activation attempt."""
+
+    status: TTSDefaultActivationStatus
+
+    def __post_init__(self) -> None:
+        if self.status not in {
+            "activation_not_ready",
+            "committed",
+            "rolled_back",
+            "rollback_failed",
+        }:
+            raise ValueError("Unknown TTS default activation status")
+
+    @property
+    def activated(self) -> bool:
+        return self.status == "committed"
+
+    def __bool__(self) -> bool:
+        return self.activated
+
+
 @dataclass(frozen=True, slots=True)
 class TTSSettingsPublication:
     """One safe settings-publication result for foreground or final observers."""
@@ -730,6 +765,7 @@ class _AdmittedTTSOperation:
         clone_execution: _ResolvedTTSCloneExecutionAuthority | None,
         clone_requirement: TTSCloneRecipeRequirement | None,
         clone_materializer: TTSCloneReferenceMaterializer | None,
+        admission_authorizer: TTSAdmissionAuthorizer | None,
     ) -> None:
         self._request = request
         self._resources = resources
@@ -741,6 +777,7 @@ class _AdmittedTTSOperation:
         self._clone_execution = clone_execution
         self._clone_requirement = clone_requirement
         self._clone_materializer = clone_materializer
+        self._admission_authorizer = admission_authorizer
         self._claimed = False
         self._used = False
         self._executing = False
@@ -794,6 +831,7 @@ class _AdmittedTTSOperation:
             ):
                 await lease.adapter.ensure_ready()
                 if self._clone_execution is None:
+                    self._authorize_outbound(lease)
                     response = await lease.adapter.synthesize(self._request, safe_sink)
                 else:
                     adapter = lease.adapter
@@ -872,6 +910,7 @@ class _AdmittedTTSOperation:
                         provider_revision=lease.configuration_revision,
                         applied_provider_generation=lease.applied_generation,
                     )
+                    self._authorize_outbound(lease)
                     response = await adapter.synthesize_clone(
                         admitted_request,
                         safe_sink,
@@ -965,6 +1004,25 @@ class _AdmittedTTSOperation:
                 cleanup_task.add_done_callback(self._observe_cleanup)
             raise closed_error
         return managed_response, clone_evidence
+
+    def _authorize_outbound(self, lease: TTSAdapterLease) -> None:
+        authorizer = self._admission_authorizer
+        if authorizer is None:
+            return
+        adapter = lease.adapter
+        authorized = False
+        try:
+            if isinstance(adapter, TTSOutboundEndpointAdapter):
+                authorized = authorizer(
+                    lease.provider_id,
+                    adapter.admitted_outbound_endpoint(),
+                )
+        except Exception:
+            authorized = False
+        if authorized is not True:
+            raise TTSConfigurationRevisionError(
+                "TTS provider destination authorization changed"
+            )
 
     async def close(self) -> None:
         """Release an admitted operation that has not started execution."""
@@ -1186,6 +1244,7 @@ class TTSService:
         request: TTSRequest,
         *,
         expected_configuration_revision: int | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> _AdmittedTTSOperation:
         """Reserve service capacity and a revision-matched provider lease.
 
@@ -1213,6 +1272,7 @@ class TTSService:
                             expected_configuration_revision=(
                                 expected_configuration_revision
                             ),
+                            admission_authorizer=admission_authorizer,
                         )
                 except _AudioCppGenerationChanged:
                     continue
@@ -1287,6 +1347,7 @@ class TTSService:
         *,
         expected_configuration_revision: int | None = None,
         clone_execution: _ResolvedTTSCloneExecutionAuthority | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> _AdmittedTTSOperation:
         """Acquire a provider lease using capacity reserved by this service."""
         try:
@@ -1373,6 +1434,7 @@ class TTSService:
                         )
             except BaseException as error:
                 await _cleanup_preserving_primary(lease.release, error)
+                reservation.release_if_untransferred()
                 raise
 
         resources = _OperationResources(lease, reservation)
@@ -1392,6 +1454,7 @@ class TTSService:
             clone_execution=clone_execution,
             clone_requirement=clone_requirement,
             clone_materializer=self._clone_materializer,
+            admission_authorizer=admission_authorizer,
         )
         self._admitted_operations.add(operation)
         if self._close_signal.is_set():
@@ -1399,6 +1462,26 @@ class TTSService:
             await _cleanup_preserving_primary(operation.close, closed_error)
             raise closed_error
         return operation
+
+    async def resolve_provider_outbound_endpoint(self, provider_id: str) -> str:
+        """Resolve the exact endpoint of one ready adapter under its lease."""
+        lease = await self.registry.acquire(provider_id)
+        try:
+            if provider_id == "audio_cpp":
+                await lease.adapter.ensure_ready()
+            adapter = lease.adapter
+            if not isinstance(adapter, TTSOutboundEndpointAdapter):
+                raise TTSConfigurationRevisionError(
+                    "TTS provider destination is unavailable"
+                )
+            endpoint = adapter.admitted_outbound_endpoint()
+            if not isinstance(endpoint, str) or not endpoint:
+                raise TTSConfigurationRevisionError(
+                    "TTS provider destination is unavailable"
+                )
+            return endpoint
+        finally:
+            await lease.release()
 
     async def _close_admitted_operation_preserving_primary(
         self,
@@ -1412,6 +1495,7 @@ class TTSService:
         self,
         request: TTSRequest,
         progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> TTSAudioResponse:
         """Synthesize audio while retaining provider resources for the response.
 
@@ -1424,7 +1508,10 @@ class TTSService:
         """
         if type(request) is not TTSRequest:
             raise TypeError("TTS request is invalid")
-        operation = await self.admit(request)
+        operation = await self.admit(
+            request,
+            admission_authorizer=admission_authorizer,
+        )
         return await operation.synthesize(progress_sink)
 
     async def synthesize_exact(
@@ -2140,12 +2227,14 @@ class TTSService:
         text: str,
         voice_override: str | None = None,
         progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> TTSAudioResponse:
         """Resolve and synthesize one revision-coherent default request."""
         return await self._request_admission.synthesize_default(
             text=text,
             voice_override=voice_override,
             progress_sink=progress_sink,
+            admission_authorizer=admission_authorizer,
         )
 
     async def synthesize_effective(
@@ -2161,6 +2250,7 @@ class TTSService:
         profile_preview: STTSPlaygroundProfilePreview | None = None,
         profile_reference_resolver: TTSProfileReferenceResolver | None = None,
         progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> tuple[TTSAudioResponse, TTSEffectiveSelectionSnapshot]:
         """Resolve owner-scoped settings and synthesize one admitted request."""
 
@@ -2175,6 +2265,7 @@ class TTSService:
             profile_preview=profile_preview,
             profile_reference_resolver=profile_reference_resolver,
             progress_sink=progress_sink,
+            admission_authorizer=admission_authorizer,
         )
 
     async def synthesize_effective_with_evidence(
@@ -2190,6 +2281,7 @@ class TTSService:
         profile_preview: STTSPlaygroundProfilePreview | None = None,
         profile_reference_resolver: TTSProfileReferenceResolver | None = None,
         progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> tuple[
         TTSAudioResponse,
         TTSEffectiveSelectionSnapshot,
@@ -2208,6 +2300,7 @@ class TTSService:
             profile_preview=profile_preview,
             profile_reference_resolver=profile_reference_resolver,
             progress_sink=progress_sink,
+            admission_authorizer=admission_authorizer,
         )
 
     async def generate_audio_stream(
@@ -2908,6 +3001,7 @@ class TTSService:
         persistence: Callable[[], TTSSettingsPersistenceOutcome],
         *,
         foreground_timeout_seconds: float = (_TTS_SETTINGS_FOREGROUND_TIMEOUT_SECONDS),
+        publish_preferences: bool = True,
     ) -> TTSSettingsPublicationTicket:
         """Start one retained settings persistence and runtime publication.
 
@@ -2936,6 +3030,8 @@ class TTSService:
             raise TypeError("provider_configs must be a mapping")
         if not callable(persistence):
             raise TypeError("persistence must be callable")
+        if type(publish_preferences) is not bool:
+            raise TypeError("publish_preferences must be a boolean")
         if (
             isinstance(foreground_timeout_seconds, bool)
             or not isinstance(foreground_timeout_seconds, (int, float))
@@ -2974,6 +3070,7 @@ class TTSService:
                 persistence=persistence,
                 foreground_timeout_seconds=float(foreground_timeout_seconds),
                 foreground=foreground,
+                publish_preferences=publish_preferences,
             ),
             name=f"tts_settings_publication_{generation}",
         )
@@ -2995,6 +3092,7 @@ class TTSService:
         persistence: Callable[[], TTSSettingsPersistenceOutcome],
         foreground_timeout_seconds: float,
         foreground: asyncio.Future[TTSSettingsPublication],
+        publish_preferences: bool,
     ) -> TTSSettingsPublication:
         tickets: dict[str, TTSReconfigurationTicket] = {}
         provider_statuses: dict[str, TTSSettingsProviderStatus] = {}
@@ -3077,7 +3175,6 @@ class TTSService:
                         break
 
                 if transition_failed:
-                    await self._seal_provider_configs(provider_configs)
                     provider_statuses.update(
                         {provider_id: "unavailable" for provider_id in provider_configs}
                     )
@@ -3090,10 +3187,16 @@ class TTSService:
                         )
                     )
 
-                self._request_admission._publish_preferences(
+                if publish_preferences and self._preferences_can_activate(
                     preferences,
                     generation,
-                )
+                    provider_configs,
+                    provider_statuses,
+                ):
+                    self._request_admission._publish_preferences(
+                        preferences,
+                        generation,
+                    )
                 provider_revisions.update(
                     self._safe_provider_revisions(provider_configs)
                 )
@@ -3120,6 +3223,18 @@ class TTSService:
                 await asyncio.shield(ticket.completion)
             except BaseException:
                 pass
+        if publish_preferences:
+            async with self._request_admission._gate.write():
+                if self._preferences_can_activate(
+                    preferences,
+                    generation,
+                    provider_configs,
+                    final_statuses,
+                ):
+                    self._request_admission._publish_preferences(
+                        preferences,
+                        generation,
+                    )
         final_revisions = self._safe_provider_revisions(provider_configs)
         return self._settings_publication_result(
             generation=generation,
@@ -3130,6 +3245,156 @@ class TTSService:
             published=True,
             staged_provider_ids=staged_provider_ids,
         )
+
+    def _preferences_can_activate(
+        self,
+        preferences: TTSPreferencesSnapshot,
+        generation: int,
+        provider_configs: Mapping[str, Mapping[str, Any]],
+        provider_statuses: Mapping[str, TTSSettingsProviderStatus],
+    ) -> bool:
+        """Fence one default snapshot against its provider handoff."""
+
+        provider_id = preferences.provider_id
+        if provider_id not in provider_configs:
+            return True
+        if provider_statuses.get(provider_id) not in {"applied", "unchanged"}:
+            return False
+        return tts_configuration_is_active(self, provider_id, generation)
+
+    async def commit_voice_setup_default(
+        self,
+        preferences: TTSPreferencesSnapshot,
+        *,
+        expected_saved_revision: int,
+    ) -> bool:
+        """Publish one default only while its exact provider generation is active."""
+
+        outcome = await self._commit_voice_setup_default(
+            preferences,
+            expected_saved_revision=expected_saved_revision,
+        )
+        return outcome.activated
+
+    async def _commit_voice_setup_default(
+        self,
+        preferences: TTSPreferencesSnapshot,
+        *,
+        expected_saved_revision: int,
+        persistence: Callable[[], TTSSettingsPersistenceOutcome] | None = None,
+        rollback: (
+            Callable[
+                [TTSPreferencesSnapshot | None],
+                TTSSettingsPersistenceOutcome,
+            ]
+            | None
+        ) = None,
+    ) -> TTSDefaultActivationOutcome:
+        """Fence optional defaults persistence and active-snapshot publication."""
+
+        if not isinstance(preferences, TTSPreferencesSnapshot):
+            raise TypeError("preferences must be a TTSPreferencesSnapshot")
+        if type(expected_saved_revision) is not int or expected_saved_revision < 0:
+            raise ValueError("expected_saved_revision must be nonnegative")
+        if persistence is not None and not callable(persistence):
+            raise TypeError("persistence must be callable")
+        if rollback is not None and not callable(rollback):
+            raise TypeError("rollback must be callable")
+
+        async def compensate(prior: TTSPreferencesSnapshot | None) -> bool:
+            if rollback is None:
+                logger.error(
+                    "TTS default activation failed after persistence without rollback"
+                )
+                return False
+            try:
+                outcome = await asyncio.to_thread(rollback, prior)
+            except BaseException as error:
+                logger.error(
+                    "TTS default rollback raised %s",
+                    type(error).__name__,
+                )
+                return False
+            restored = bool(
+                isinstance(outcome, TTSSettingsPersistenceOutcome)
+                and outcome.file_replaced
+                and outcome.caches_reloaded
+            )
+            if not restored:
+                logger.error("TTS default rollback did not restore persisted settings")
+            return restored
+
+        async with self._request_admission._publication_lock:
+            async with self._request_admission._gate.write():
+                prior_preferences = self.preferences_snapshot()
+                prior_generation = self.preferences_generation()
+                if self.preferences_generation() > expected_saved_revision:
+                    return TTSDefaultActivationOutcome("activation_not_ready")
+                if not tts_configuration_is_active(
+                    self,
+                    preferences.provider_id,
+                    expected_saved_revision,
+                ):
+                    return TTSDefaultActivationOutcome("activation_not_ready")
+                if persistence is not None:
+                    try:
+                        outcome = await asyncio.to_thread(persistence)
+                    except BaseException:
+                        return TTSDefaultActivationOutcome("activation_not_ready")
+                    if not isinstance(outcome, TTSSettingsPersistenceOutcome):
+                        return TTSDefaultActivationOutcome("activation_not_ready")
+                    if not outcome.file_replaced:
+                        return TTSDefaultActivationOutcome("activation_not_ready")
+                    if not outcome.caches_reloaded:
+                        restored = await compensate(prior_preferences)
+                        return TTSDefaultActivationOutcome(
+                            "rolled_back" if restored else "rollback_failed"
+                        )
+                    if not tts_configuration_is_active(
+                        self,
+                        preferences.provider_id,
+                        expected_saved_revision,
+                    ):
+                        restored = await compensate(prior_preferences)
+                        return TTSDefaultActivationOutcome(
+                            "rolled_back" if restored else "rollback_failed"
+                        )
+                try:
+                    self._request_admission._publish_preferences(
+                        preferences,
+                        expected_saved_revision,
+                    )
+                except BaseException:
+                    restored = False
+                    if persistence is not None:
+                        restored = await compensate(prior_preferences)
+                    self._request_admission._preferences = prior_preferences
+                    self._request_admission._preferences_generation = prior_generation
+                    return TTSDefaultActivationOutcome(
+                        "rolled_back"
+                        if persistence is not None and restored
+                        else "rollback_failed"
+                        if persistence is not None
+                        else "activation_not_ready"
+                    )
+                activated = bool(
+                    self.preferences_generation() == expected_saved_revision
+                    and self.preferences_snapshot() == preferences
+                )
+                if activated:
+                    return TTSDefaultActivationOutcome("committed")
+                restored = False
+                if persistence is not None:
+                    restored = await compensate(prior_preferences)
+                self._request_admission._preferences = prior_preferences
+                self._request_admission._preferences_generation = prior_generation
+                return TTSDefaultActivationOutcome(
+                    "rolled_back"
+                    if persistence is not None and restored
+                    else "rollback_failed"
+                    if persistence is not None
+                    else "activation_not_ready"
+                )
 
     async def _stage_managed_boundary(
         self,
@@ -3196,7 +3461,6 @@ class TTSService:
         try:
             result = await asyncio.shield(ticket.completion)
         except BaseException:
-            await self._seal_provider_configs((provider_id,))
             return "unavailable"
         if result is ReconfigureResult.CHANGED:
             return "applied"
@@ -3207,18 +3471,7 @@ class TTSService:
             > ticket.generation
         ):
             return "superseded"
-        await self._seal_provider_configs((provider_id,))
         return "unavailable"
-
-    async def _seal_provider_configs(
-        self,
-        provider_configs: Mapping[str, object] | tuple[str, ...],
-    ) -> None:
-        for provider_id in reversed(tuple(provider_configs)):
-            try:
-                await self.registry.seal_provider_unavailable(provider_id)
-            except BaseException:
-                pass
 
     def _safe_provider_revisions(
         self,

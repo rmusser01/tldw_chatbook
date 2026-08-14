@@ -2914,6 +2914,44 @@ with stray left-edge border fragments), and padding 0 1 so the full
     align: left middle;
 }
 
+#console-auto-speak-row,
+#console-auto-speak-control {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+#console-auto-speak-label {
+    width: auto;
+    height: 1;
+    margin-right: 1;
+}
+
+#console-auto-speak {
+    width: 8;
+    min-width: 8;
+    max-width: 8;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    padding: 0;
+    margin: 0 1 0 0;
+    border: none;
+}
+
+#console-auto-speak-retry,
+#console-auto-speak-resume {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0 1 0 0;
+}
+
 #console-status-chips {
     width: 100%;
     min-width: 0;
@@ -4186,6 +4224,56 @@ with stray left-edge border fragments), and padding 0 1 so the full
 .console-transcript-speaker-label {
     color: $ds-text-primary;
     text-style: bold;
+}
+
+.console-message-header {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+}
+
+.console-message-header > .console-transcript-speaker-label {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.console-message-speech-presentation {
+    width: 14;
+    min-width: 14;
+    height: 1;
+    min-height: 1;
+    align: right middle;
+}
+
+.console-message-speech-status {
+    width: 10;
+    min-width: 10;
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    text-align: right;
+}
+
+Button.console-message-speech-action {
+    width: 4;
+    min-width: 4;
+    max-width: 4;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: $ds-text-primary;
+}
+
+Button.console-message-speech-action:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .console-transcript-roleplay-user-label {
@@ -5616,6 +5704,22 @@ Button.settings-category-group-toggle:focus {
     margin: 0;
 }
 
+/* The provider search is content-sized, while its OptionList owns a bounded
+   scrolling viewport. Explicit sizing keeps following fields in document
+   order at both the standard and compact Settings workbench widths. */
+#settings-provider-picker-block {
+    width: 100%;
+    height: auto;
+    min-height: 9;
+}
+
+#settings-provider-picker {
+    width: 100%;
+    height: 6;
+    min-height: 6;
+    max-height: 6;
+}
+
 .settings-select-row {
     width: 100%;
     height: 3;
@@ -6106,6 +6210,39 @@ _CredentialClearModal {
     width: 100%;
     min-width: 0;
     margin-right: 0;
+}
+
+#settings-speech-details,
+#settings-speech-scope-inspector {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    margin: 1 0 0 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+#settings-speech-inspector {
+    width: 100%;
+    height: auto;
+}
+
+#settings-speech-details > CollapsibleTitle,
+#settings-speech-scope-inspector > CollapsibleTitle {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    padding: 1;
+}
+
+#settings-speech-details > Contents,
+#settings-speech-scope-inspector > Contents {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    background: transparent;
 }
 
 /* One row per backend inside the Backends block -- label, status badge,

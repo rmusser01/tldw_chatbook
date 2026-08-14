@@ -512,8 +512,8 @@ def _no_network_io(request: pytest.FixtureRequest) -> Iterator[None]:
     """No test reaches a live endpoint unless it explicitly opts in (task-15111).
 
     The socket patch itself is installed once at conftest import time and is
-    denied by default; this fixture only (a) lifts the denial for a test that
-    opted in, and (b) turns a *swallowed* block into a failure.
+    denied by default; this fixture selects blocked, numeric-loopback-only, or
+    unrestricted mode and turns a *swallowed* block into a failure.
 
     (b) is the load-bearing half. `BlockedNetworkAccess` is an `OSError`, so
     `local_server_discovery._get_models_payload`'s `except Exception` absorbs
@@ -523,30 +523,40 @@ def _no_network_io(request: pytest.FixtureRequest) -> Iterator[None]:
     is the whole defect. Failing on a non-empty record makes the guard
     unswallowable.
 
-    Opt in with `@pytest.mark.allow_network`. `live` (real paid external APIs,
-    already gated behind `--run-live`) counts as an implicit opt-in.
+    Use `@pytest.mark.loopback_network` for an owned loopback listener or
+    `@pytest.mark.allow_network` for unrestricted sockets. `live` (real paid
+    external APIs, already gated behind `--run-live`) counts as unrestricted.
 
     Yields:
         None. The blocked-attempt record is asserted empty at teardown.
     """
-    opted_in = bool(
+    allow_all = bool(
         request.node.get_closest_marker("allow_network")
         or request.node.get_closest_marker("live")
     )
+    loopback_only = bool(request.node.get_closest_marker("loopback_network"))
+    try:
+        mode = network_guard.resolve_mode(
+            allow_all=allow_all,
+            loopback_only=loopback_only,
+        )
+    except ValueError as exc:
+        pytest.fail(f"conflicting network markers: {exc}", pytrace=False)
     network_guard.drain_blocked_attempts()
-    network_guard.set_allowed(opted_in)
+    network_guard.set_mode(mode)
     try:
         yield
     finally:
-        network_guard.set_allowed(False)
+        network_guard.set_mode(network_guard.NetworkMode.BLOCKED)
         attempts = network_guard.drain_blocked_attempts()
     if attempts:
         detail = ", ".join(f"{call} -> {address}" for call, address in attempts)
         raise AssertionError(
             "test attempted network egress (blocked): "
             + detail
-            + " — stub the client seam, or mark the test "
-            "@pytest.mark.allow_network if it genuinely needs a socket."
+            + " — stub the client seam, use @pytest.mark.loopback_network for "
+            "an owned numeric loopback listener, or use "
+            "@pytest.mark.allow_network for unrestricted sockets."
         )
 
 
@@ -636,11 +646,13 @@ def _console_gateway_http_client_is_offline(
 
     A test that is ABOUT the owned client itself (its timeouts, its per-loop
     cache) marks itself `@pytest.mark.owned_http_client` to opt out;
-    `allow_network` implies the same, since a test allowed a real socket
-    plainly wants a real client.
+    `allow_network` and `loopback_network` imply the same, since either marker
+    plainly requests the real owned client.
     """
-    if request.node.get_closest_marker("owned_http_client") or request.node.get_closest_marker(
-        "allow_network"
+    if (
+        request.node.get_closest_marker("owned_http_client")
+        or request.node.get_closest_marker("allow_network")
+        or request.node.get_closest_marker("loopback_network")
     ):
         return
     import httpx

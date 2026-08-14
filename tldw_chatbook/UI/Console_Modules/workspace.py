@@ -144,6 +144,7 @@ from ...Workspaces.registry_service import (
     WorkspaceRegistryServiceError,
     next_local_workspace_identity,
 )
+from ..character_display_text import sanitize_character_display_label
 
 if TYPE_CHECKING:
     from ...Chat.console_chat_controller import ConsoleChatController
@@ -2166,7 +2167,13 @@ class ConsoleWorkspaceController:
                 session_title = session.title
                 workspace_id = session.workspace_id
                 break
-        return session_title, self._console_workspace_display_name(workspace_id)
+        return (
+            sanitize_character_display_label(session_title, max_characters=500),
+            sanitize_character_display_label(
+                self._console_workspace_display_name(workspace_id),
+                max_characters=500,
+            ),
+        )
 
     def _console_workspace_display_name(self, workspace_id: str) -> str:
         """Return ``workspace_id``'s display name via the registry, falling

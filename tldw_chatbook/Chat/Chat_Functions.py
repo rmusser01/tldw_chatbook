@@ -534,6 +534,7 @@ PROVIDER_PARAM_MAP = {
     },
     "custom-openai-api": {
         "api_key": "api_key",
+        "api_key_resolved": "api_key_resolved",
         "messages_payload": "input_data",
         "temp": "temp",
         "system_message": "system_message",
@@ -558,6 +559,7 @@ PROVIDER_PARAM_MAP = {
     },
     "custom-openai-api-2": {
         "api_key": "api_key",
+        "api_key_resolved": "api_key_resolved",
         "messages_payload": "input_data",
         "temp": "temp",
         "system_message": "system_message",
@@ -830,6 +832,8 @@ def chat_api_call(
     request_timeout: Optional[float] = None,
     request_retries: Optional[int] = None,
     request_retry_delay: Optional[float] = None,
+    *,
+    api_key_resolved: bool | None = None,
 ):
     """
     Acts as a unified dispatcher to call various LLM API providers.
@@ -847,6 +851,8 @@ def chat_api_call(
         api_mode: Optional provider-specific external API mode. Only mapped
             providers receive this value.
         api_key: The API key for the specified provider.
+        api_key_resolved: Whether a trusted caller made the final credential
+            decision, including an explicit keyless decision.
         temp: Temperature for sampling, controlling randomness.
         system_message: An optional system-level instruction for the LLM. How this is
                         used depends on the provider; some prepend it to messages, others

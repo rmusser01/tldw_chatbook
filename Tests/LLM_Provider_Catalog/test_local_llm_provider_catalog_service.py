@@ -178,8 +178,6 @@ async def test_local_llm_provider_catalog_service_discovers_configured_openai_co
             "api_key": "sk-test",
         }
     ]
-
-
 @pytest.mark.asyncio
 async def test_local_llm_provider_catalog_service_staged_endpoint_and_key_win_for_discovery():
     discovery_calls = []
@@ -228,6 +226,130 @@ async def test_local_llm_provider_catalog_service_staged_endpoint_and_key_win_fo
             "api_key": "staged-key",
         }
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "provider_list_key", "settings_key"),
+    [
+        ("llama_cpp", "llama_cpp", "llama_cpp"),
+        ("custom_openai_api", "custom", "custom"),
+        ("custom_openai_api_2", "custom_2", "custom_2"),
+    ],
+)
+async def test_explicit_staged_keyless_discovery_never_falls_back_to_saved_credential(
+    provider: str,
+    provider_list_key: str,
+    settings_key: str,
+) -> None:
+    discovery_calls = []
+
+    async def discover_models(**kwargs):
+        discovery_calls.append(kwargs)
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint=fingerprint_endpoint(kwargs["endpoint"]),
+            status="success",
+        )
+
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {provider_list_key: []},
+        settings_loader=lambda: {
+            "providers": {provider_list_key: []},
+            "api_settings": {
+                settings_key: {
+                    "api_url": "https://saved.example.test/v1/chat/completions",
+                    "api_key": "saved-key-canary-never-send",
+                    "api_key_env_var": "SAVED_KEY_CANARY_ENV",
+                }
+            },
+        },
+        discovery_client=discover_models,
+        environ={"SAVED_KEY_CANARY_ENV": "environment-canary-never-send"},
+    )
+
+    result = await service.discover_models(
+        provider=provider,
+        staged_settings={
+            "api_settings": {
+                settings_key: {
+                    "api_url": "https://replacement.example.test/v1/chat/completions",
+                    "api_key": "",
+                }
+            }
+        },
+    )
+
+    assert result.status == "success"
+    assert discovery_calls == [
+        {
+            "provider": provider,
+            "provider_list_key": provider_list_key,
+            "endpoint": "https://replacement.example.test/v1/chat/completions",
+            "api_key": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("staged_credential", "environ", "expected_key"),
+    [
+        ({"api_key": "staged-inline-key"}, {}, "staged-inline-key"),
+        (
+            {"api_key_env_var": "STAGED_PROVIDER_KEY"},
+            {"STAGED_PROVIDER_KEY": "staged-environment-key"},
+            "staged-environment-key",
+        ),
+    ],
+)
+async def test_explicit_staged_credential_source_precedes_saved_inline_and_environment(
+    staged_credential: dict[str, str],
+    environ: dict[str, str],
+    expected_key: str,
+) -> None:
+    discovery_calls = []
+
+    async def discover_models(**kwargs):
+        discovery_calls.append(kwargs)
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint=fingerprint_endpoint(kwargs["endpoint"]),
+            status="success",
+        )
+
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {"custom": []},
+        settings_loader=lambda: {
+            "providers": {"custom": []},
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://saved.example.test/v1/chat/completions",
+                    "api_key": "saved-inline-key",
+                    "api_key_env_var": "SAVED_PROVIDER_KEY",
+                }
+            },
+        },
+        discovery_client=discover_models,
+        environ={"SAVED_PROVIDER_KEY": "saved-environment-key", **environ},
+    )
+
+    result = await service.discover_models(
+        provider="custom",
+        staged_settings={
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://staged.example.test/v1/chat/completions",
+                    **staged_credential,
+                }
+            }
+        },
+    )
+
+    assert result.status == "success"
+    assert discovery_calls[0]["api_key"] == expected_key
 
 
 @pytest.mark.asyncio
@@ -309,6 +431,55 @@ async def test_qwencloud_discovery_uses_only_its_modern_or_environment_key(
     assert all("secret-canary" not in message for message in log_messages)
     assert "secret-canary" not in repr(result)
     assert settings == original_settings
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "settings_key", "env_var"),
+    [
+        ("Custom OpenAI API", "custom", "CUSTOM_API_KEY"),
+        ("custom_openai_api_2", "custom_2", "CUSTOM_2_API_KEY"),
+        ("llama_cpp", "llama_cpp", "LLAMA_CPP_API_KEY"),
+    ],
+)
+async def test_persisted_explicit_keyless_source_is_authoritative_for_discovery(
+    provider,
+    settings_key,
+    env_var,
+) -> None:
+    discovery_calls = []
+
+    async def discover_models(**kwargs):
+        discovery_calls.append(kwargs)
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint=fingerprint_endpoint(kwargs["endpoint"]),
+            status="success",
+        )
+
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {settings_key: []},
+        settings_loader=lambda: {
+            "providers": {settings_key: []},
+            "api_settings": {
+                settings_key: {
+                    "api_url": "https://keyless.example.test/v1/chat/completions",
+                    "credential_source": "none",
+                    "api_key": "saved-discovery-canary",
+                    "api_key_env_var": env_var,
+                }
+            },
+        },
+        discovery_client=discover_models,
+        environ={env_var: "environment-discovery-canary"},
+    )
+
+    result = await service.discover_models(provider=provider)
+
+    assert result.status == "success"
+    assert len(discovery_calls) == 1
+    assert discovery_calls[0]["api_key"] is None
 
 
 @pytest.mark.asyncio
@@ -530,11 +701,7 @@ async def test_qwencloud_catalog_normalization_cache_fallback_and_write_through(
     )
     ModelCatalogDiskStore(dirty_cache_path).load_into(dirty_service.discovery_cache)
     dirty_merged = dirty_service.merge_saved_and_discovered_models(provider="QwenCloud")
-    assert [entry.model_id for entry in dirty_merged] == [
-        "configured-model",
-        "cached-model",
-        "runtime-model",
-    ]
+    assert [entry.model_id for entry in dirty_merged] == ["configured-model"]
 
 
 @pytest.mark.asyncio
@@ -572,6 +739,47 @@ async def test_local_llm_provider_catalog_service_uses_known_provider_default_en
             "api_key": "sk-test",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_local_model_discovery_can_skip_shared_cache_without_changing_default():
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import (
+        ModelDiscoveryCache,
+    )
+
+    async def discover_models(**kwargs):
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint=fingerprint_endpoint(kwargs["endpoint"]),
+            status="success",
+        )
+
+    discovery_cache = ModelDiscoveryCache()
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=_providers,
+        settings_loader=lambda: {
+            "providers": _providers(),
+            "api_settings": {"openai": {"api_key": "sk-test"}},
+        },
+        discovery_cache=discovery_cache,
+        discovery_client=discover_models,
+    )
+
+    isolated_result = await service.discover_models(
+        provider="OpenAI",
+        use_shared_cache=False,
+    )
+
+    assert isolated_result.status == "success"
+    assert discovery_cache.snapshot_count == 0
+    assert discovery_cache.model_count == 0
+
+    default_result = await service.discover_models(provider="OpenAI")
+
+    assert default_result.status == "success"
+    assert discovery_cache.snapshot_count == 1
+    assert service.has_discovered_model_snapshot(provider="OpenAI") is True
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from textual.app import App, ComposeResult
@@ -31,7 +33,19 @@ from tldw_chatbook.TTS.playground_types import (
     STTSPlaygroundResultProjection,
     TTSRequestedSelectionSnapshot,
 )
-from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.studio_preferences import (
+    StudioTTSPreferencesSnapshot,
+    StudioTTSSelectionOverrides,
+)
+from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+    SettingsEndpointProbeOutcome,
+)
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    build_provider_test_fingerprint,
+    load_global_speech_tts_state,
+    process_provider_test_evidence_store,
+)
 from tldw_chatbook.UI.Speech.speech_axis_row import axis_chip_id
 from tldw_chatbook.UI.Speech.speech_playground_model import AXIS_CONTROLS
 from tldw_chatbook.UI.Speech.speech_playground_pane import (
@@ -39,6 +53,7 @@ from tldw_chatbook.UI.Speech.speech_playground_pane import (
     SpeechPlaygroundPane,
 )
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSConnectionState,
     SpeechTTSNavigationIntent,
 )
 from tldw_chatbook.UI.stts_playground_catalog import (
@@ -1102,6 +1117,169 @@ class _AxisHarness(App[None]):
         yield SpeechPlaygroundPane(**self._pane_kwargs)
 
 
+def _global_preferences(
+    model_id: str,
+    voice_id: str,
+    *,
+    response_format: str = "mp3",
+    speed: float = 1.0,
+) -> TTSPreferencesSnapshot:
+    return TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id=model_id,
+        voice_mode="exact",
+        voice_id=voice_id,
+        response_format=response_format,
+        speed=speed,
+    )
+
+
+def test_playground_refresh_rebases_only_inherited_global_axes() -> None:
+    old_global = _global_preferences("old-model", "old-voice")
+    new_global = _global_preferences(
+        "pocket-tts",
+        "alba",
+        response_format="wav",
+        speed=1.2,
+    )
+    studio = StudioTTSPreferencesSnapshot(
+        selection=StudioTTSSelectionOverrides(
+            model_mode="exact",
+            model_id="studio-model",
+        )
+    )
+    old_defaults = {
+        "tts-provider-select": "openai",
+        "tts-model-select": "studio-model",
+        "tts-voice-select": "old-voice",
+        "tts-format-select": "mp3",
+        "tts-speed-input": "1.0",
+    }
+    pane = SpeechPlaygroundPane(
+        studio_preferences=studio,
+        global_preferences=old_global,
+        axis_defaults=old_defaults,
+        axis_values={**old_defaults, "tts-speed-input": "1.7"},
+    )
+
+    pane.refresh_global_preferences(new_global)
+
+    assert pane._global_preferences is new_global
+    assert pane.global_preferences is new_global
+    assert pane.axis_defaults == {
+        "tts-provider-select": "openai",
+        "tts-model-select": "studio-model",
+        "tts-voice-select": "alba",
+        "tts-format-select": "wav",
+        "tts-speed-input": "1.2",
+    }
+    assert pane.axis_values == {
+        "tts-provider-select": "openai",
+        "tts-model-select": "studio-model",
+        "tts-voice-select": "alba",
+        "tts-format-select": "wav",
+        "tts-speed-input": "1.7",
+    }
+
+
+def test_playground_refresh_moves_an_untouched_inherited_provider_axis() -> None:
+    old_global = _global_preferences("old-model", "old-voice")
+    new_global = TTSPreferencesSnapshot(
+        provider_id="elevenlabs",
+        model_mode="exact",
+        model_id="eleven_multilingual_v2",
+        voice_mode="exact",
+        voice_id="rachel",
+        response_format="mp3",
+        speed=1.1,
+    )
+    old_defaults = {
+        "tts-provider-select": "openai",
+        "tts-model-select": "old-model",
+        "tts-voice-select": "old-voice",
+        "tts-format-select": "mp3",
+        "tts-speed-input": "1.0",
+    }
+    pane = SpeechPlaygroundPane(
+        studio_preferences=StudioTTSPreferencesSnapshot(),
+        global_preferences=old_global,
+        axis_defaults=old_defaults,
+        axis_values=dict(old_defaults),
+    )
+
+    pane.refresh_global_preferences(new_global)
+
+    assert pane.axis_values == {
+        "tts-provider-select": "elevenlabs",
+        "tts-model-select": "eleven_multilingual_v2",
+        "tts-voice-select": "rachel",
+        "tts-format-select": "mp3",
+        "tts-speed-input": "1.1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_mounted_playground_refresh_preserves_draft_and_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda self, *args, **kwargs: None,
+    )
+    old_global = _global_preferences("old-model", "old-voice")
+    defaults = {
+        "tts-provider-select": "openai",
+        "tts-model-select": "old-model",
+        "tts-voice-select": "old-voice",
+        "tts-format-select": "mp3",
+        "tts-speed-input": "1.0",
+    }
+    app = _AxisHarness(
+        studio_preferences=StudioTTSPreferencesSnapshot(),
+        global_preferences=old_global,
+        axis_defaults=defaults,
+        axis_values={**defaults, "tts-speed-input": "1.7"},
+    )
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await pilot.pause()
+        pane = app.query_one(SpeechPlaygroundPane)
+        speed = app.query_one("#tts-speed-input", Input)
+        speed.value = "1.7"
+        speed.focus()
+        await pilot.pause()
+
+        pane.refresh_global_preferences(
+            _global_preferences("pocket-tts", "alba", response_format="wav", speed=1.2)
+        )
+        await pilot.pause()
+
+        assert speed.value == "1.7"
+        assert speed.has_focus
+        assert pane.axis_values["tts-speed-input"] == "1.7"
+        assert pane.axis_defaults["tts-speed-input"] == "1.2"
+        assert pane.axis_values["tts-model-select"] == "pocket-tts"
+        assert pane.axis_values["tts-voice-select"] == "alba"
+
+        row = pane.query_one("#speech-axis-row")
+        assert row.defaults == pane.axis_defaults
+        model_chip = pane.query_one(f"#{axis_chip_id('tts-model-select')}", Static)
+        speed_chip = pane.query_one(f"#{axis_chip_id('tts-speed-input')}", Static)
+        assert not model_chip.has_class("speech-chip-override")
+        assert "pocket-tts" in str(model_chip.tooltip)
+        assert speed_chip.has_class("speech-chip-override")
+        assert "1.2" in str(speed_chip.tooltip)
+
+
+def test_playground_refresh_requires_exact_global_snapshot_type() -> None:
+    pane = SpeechPlaygroundPane()
+
+    with pytest.raises(TypeError, match="global preferences"):
+        pane.refresh_global_preferences(object())  # type: ignore[arg-type]
+
+
 def _force_default_provider(monkeypatch: pytest.MonkeyPatch, provider_id: str) -> None:
     """Pin which provider `_load_provider_catalog`'s initialize branch picks.
 
@@ -1250,6 +1428,280 @@ async def test_cancelled_old_catalog_worker_cannot_clear_new_checking_state(
             pilot,
             lambda: "audio_cpp" not in pane._catalog_checking_providers,
         )
+
+
+@pytest.mark.asyncio
+async def test_openai_catalog_worker_uses_explicit_tts_probe_and_records_outcome(
+    faked_service: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _force_default_provider(monkeypatch, "openai")
+    faked_service.saved_configuration_revision = lambda provider_id: (
+        faked_service.revisions[provider_id]
+    )
+    captured: dict[str, object] = {}
+
+    async def probe(base_url: str, **kwargs: object) -> SettingsEndpointProbeOutcome:
+        captured["base_url"] = base_url
+        captured.update(kwargs)
+        return SettingsEndpointProbeOutcome(
+            state=SpeechTTSConnectionState.UNSUPPORTED,
+            operation="catalog",
+            summary="catalog unsupported; speech endpoint not tested",
+            category="http_status",
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Speech.speech_catalog_mixin.probe_settings_endpoint",
+        probe,
+        raising=False,
+    )
+    state = load_global_speech_tts_state({}, environment={})
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Speech.speech_catalog_mixin.get_runtime_config_snapshot",
+        lambda: type("Snapshot", (), {"values": {}})(),
+        raising=False,
+    )
+    app = _AxisHarness()
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        fingerprint = build_provider_test_fingerprint(
+            state,
+            provider_id="openai",
+            saved_revision=1,
+        )
+        evidence = process_provider_test_evidence_store(app)
+
+        assert captured["purpose"] == "tts_catalog"
+        assert captured["provider"] == "openai"
+        assert (
+            evidence.catalog_state(fingerprint)
+            is SpeechTTSConnectionState.UNSUPPORTED
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("latest_state", "hydration"),
+    (
+        (SpeechTTSConnectionState.UNREACHABLE, "success"),
+        (SpeechTTSConnectionState.UNSUPPORTED, "error"),
+        (SpeechTTSConnectionState.UNREACHABLE, "incompatible"),
+    ),
+)
+async def test_latest_openai_probe_replaces_success_independently_of_hydration(
+    faked_service: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+    latest_state: SpeechTTSConnectionState,
+    hydration: str,
+) -> None:
+    faked_service.saved_configuration_revision = lambda provider_id: (
+        faked_service.revisions[provider_id]
+    )
+
+    async def probe(*_args: object, **_kwargs: object) -> SettingsEndpointProbeOutcome:
+        return SettingsEndpointProbeOutcome(
+            state=latest_state,
+            operation="catalog",
+            summary=latest_state.value,
+        )
+
+    original_get_catalog = faked_service.get_catalog
+
+    async def get_catalog(
+        provider_id: str,
+        refresh: bool = False,
+    ) -> TTSProviderCatalog:
+        if hydration == "error":
+            raise RuntimeError("catalog hydration failed")
+        catalog = await original_get_catalog(provider_id, refresh=refresh)
+        if hydration == "incompatible":
+            return replace(catalog, provider_id="audio_cpp")
+        return catalog
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Speech.speech_catalog_mixin.get_runtime_config_snapshot",
+        lambda: type("Snapshot", (), {"values": {}})(),
+    )
+    state = load_global_speech_tts_state({}, environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=1,
+    )
+    app = _AxisHarness()
+
+    async with app.run_test(size=(160, 60)):
+        await app.workers.wait_for_complete()
+        evidence = process_provider_test_evidence_store(app)
+        evidence.record_catalog(
+            fingerprint,
+            SpeechTTSConnectionState.REACHABLE,
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Speech.speech_catalog_mixin.probe_settings_endpoint",
+            probe,
+        )
+        monkeypatch.setattr(faked_service, "get_catalog", get_catalog)
+
+        pane = app.query_one(SpeechPlaygroundPane)
+        pane._tts_service = faked_service
+        pane._provider_ids = frozenset(faked_service.revisions)
+        pane._selected_provider_id = "openai"
+        assert pane._catalog_test_fingerprint(faked_service, "openai", 1) is not None
+        request_generation = pane._reserve_catalog_request("openai")
+        await pane._load_provider_catalog_worker.__wrapped__(
+            pane,
+            "openai",
+            refresh=True,
+            request_generation=request_generation,
+        )
+
+        assert evidence.catalog_state(fingerprint) is latest_state
+
+
+@pytest.mark.asyncio
+async def test_openai_probe_result_is_not_attributed_after_revision_changes(
+    faked_service: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    faked_service.saved_configuration_revision = lambda provider_id: (
+        faked_service.revisions[provider_id]
+    )
+    probe_started = asyncio.Event()
+    release_probe = asyncio.Event()
+
+    async def probe(*_args: object, **_kwargs: object) -> SettingsEndpointProbeOutcome:
+        probe_started.set()
+        await release_probe.wait()
+        return SettingsEndpointProbeOutcome(
+            state=SpeechTTSConnectionState.REACHABLE,
+            operation="catalog",
+            summary="reachable",
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Speech.speech_catalog_mixin.get_runtime_config_snapshot",
+        lambda: type("Snapshot", (), {"values": {}})(),
+    )
+    state = load_global_speech_tts_state({}, environment={})
+    app = _AxisHarness()
+
+    async with app.run_test(size=(160, 60)):
+        await app.workers.wait_for_complete()
+        pane = app.query_one(SpeechPlaygroundPane)
+        pane._tts_service = faked_service
+        pane._provider_ids = frozenset(faked_service.revisions)
+        pane._selected_provider_id = "openai"
+        assert pane._catalog_test_fingerprint(faked_service, "openai", 1) is not None
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Speech.speech_catalog_mixin.probe_settings_endpoint",
+            probe,
+        )
+        request_generation = pane._reserve_catalog_request("openai")
+        worker = asyncio.create_task(
+            pane._load_provider_catalog_worker.__wrapped__(
+                pane,
+                "openai",
+                refresh=True,
+                request_generation=request_generation,
+            )
+        )
+        await wait_for_signal(probe_started, what="the explicit catalog probe")
+        faked_service.revisions["openai"] = 2
+        release_probe.set()
+        await worker
+
+        changed = build_provider_test_fingerprint(
+            state,
+            provider_id="openai",
+            saved_revision=2,
+        )
+        assert (
+            process_provider_test_evidence_store(app).catalog_state(changed)
+            is SpeechTTSConnectionState.NOT_TESTED
+        )
+
+
+@pytest.mark.asyncio
+async def test_openai_probe_result_is_not_attributed_after_fingerprint_changes(
+    faked_service: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    faked_service.saved_configuration_revision = lambda provider_id: (
+        faked_service.revisions[provider_id]
+    )
+    runtime_values: dict[str, object] = {}
+    probe_started = asyncio.Event()
+    release_probe = asyncio.Event()
+
+    async def probe(*_args: object, **_kwargs: object) -> SettingsEndpointProbeOutcome:
+        probe_started.set()
+        await release_probe.wait()
+        return SettingsEndpointProbeOutcome(
+            state=SpeechTTSConnectionState.REACHABLE,
+            operation="catalog",
+            summary="reachable",
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Speech.speech_catalog_mixin.get_runtime_config_snapshot",
+        lambda: type("Snapshot", (), {"values": runtime_values})(),
+    )
+    initial_state = load_global_speech_tts_state({}, environment={})
+    initial = build_provider_test_fingerprint(
+        initial_state,
+        provider_id="openai",
+        saved_revision=1,
+    )
+    app = _AxisHarness()
+
+    async with app.run_test(size=(160, 60)):
+        await app.workers.wait_for_complete()
+        pane = app.query_one(SpeechPlaygroundPane)
+        pane._tts_service = faked_service
+        pane._provider_ids = frozenset(faked_service.revisions)
+        pane._selected_provider_id = "openai"
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Speech.speech_catalog_mixin.probe_settings_endpoint",
+            probe,
+        )
+        request_generation = pane._reserve_catalog_request("openai")
+        worker = asyncio.create_task(
+            pane._load_provider_catalog_worker.__wrapped__(
+                pane,
+                "openai",
+                refresh=True,
+                request_generation=request_generation,
+            )
+        )
+        await wait_for_signal(probe_started, what="the explicit catalog probe")
+        runtime_values.update(
+            {
+                "COMPREHENSIVE_CONFIG_RAW": {
+                    "app_tts": {
+                        "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech"
+                    }
+                }
+            }
+        )
+        changed_state = load_global_speech_tts_state(runtime_values, environment={})
+        changed = build_provider_test_fingerprint(
+            changed_state,
+            provider_id="openai",
+            saved_revision=1,
+        )
+        assert initial != changed
+        release_probe.set()
+        await worker
+
+        evidence = process_provider_test_evidence_store(app)
+        assert (
+            evidence.catalog_state(initial) is SpeechTTSConnectionState.NOT_TESTED
+        )
+        assert evidence.catalog_state(changed) is SpeechTTSConnectionState.NOT_TESTED
 
 
 @pytest.mark.asyncio
@@ -1693,6 +2145,55 @@ async def test_a_user_edit_updates_the_marker(
         )
         assert chip.has_class("speech-chip-override")
         assert pane.axis_values.get("tts-speed-input") == "1.7"
+
+
+@pytest.mark.asyncio
+async def test_profile_test_preset_marks_exact_axes_as_profile_sourced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda self, *args, **kwargs: None,
+    )
+    preset = replace(
+        _profile_preset(
+            provider_id="openai",
+            model_id="pocket-tts",
+            voice_id="alba",
+            availability="unverified",
+        ),
+        profile_id=UUID(int=91),
+        repository_generation=7,
+        profile_revision=3,
+    )
+    defaults = {
+        "tts-provider-select": "audio_cpp",
+        "tts-model-select": "default-model",
+        "tts-voice-select": "default-voice",
+        "tts-format-select": "mp3",
+        "tts-speed-input": "1.5",
+    }
+    app = _AxisHarness(profile_preset=preset, axis_defaults=defaults)
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        for axis in (
+            "tts-provider-select",
+            "tts-model-select",
+            "tts-voice-select",
+            "tts-format-select",
+            "tts-speed-input",
+        ):
+            label = app.query_one(f"#{axis_chip_id(axis)}", Static)
+            assert "Profile test selection" in str(label.tooltip)
+        banner = str(
+            app.query_one("#tts-profile-preview-status", Static).render()
+        )
+        assert "Testing voice profile" in banner
+        assert "Needs test" in banner
 
 
 #: (provider_id, model_id, voice_id) for the two provider classes this

@@ -14,9 +14,11 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 
 CHAT_DISPLAY_NAME_MAX_CELLS = 48
+CHARACTER_SPEAKER_LABEL_MAX_CHARACTERS = 180
 
 
 class ConsoleTranscriptStyle(str, Enum):
@@ -140,20 +142,27 @@ def resolve_console_message_presentation(
     message: ConsoleChatMessage, context: ConsolePresentationContext
 ) -> ConsoleMessagePresentation:
     """Resolve the visible Console projection without parsing markup."""
-    character_name = (
+    raw_character_name = (
         context.character_name.strip()
         if isinstance(context.character_name, str)
         else ""
     )
     is_character_session = (
-        context.assistant_kind == "character" and bool(character_name)
+        context.assistant_kind == "character" and bool(raw_character_name)
+    )
+    character_display_name = sanitize_character_display_label(
+        raw_character_name,
+        max_characters=CHARACTER_SPEAKER_LABEL_MAX_CHARACTERS,
     )
     transcript_style = normalize_console_transcript_style(context.transcript_style)
     role_accents = transcript_style is not ConsoleTranscriptStyle.NEUTRAL
     content = message.variants.current.content if message.variants else message.content
 
     if message.role is ConsoleMessageRole.USER:
-        speaker_label = context.user_name
+        speaker_label = sanitize_character_display_label(
+            context.user_name,
+            max_characters=CHAT_DISPLAY_NAME_MAX_CELLS,
+        )
         speaker_tone = "user"
         row_class = None
         if role_accents:
@@ -163,7 +172,7 @@ def resolve_console_message_presentation(
                 else "console-transcript-message-role-user"
             )
     elif message.role is ConsoleMessageRole.ASSISTANT:
-        speaker_label = character_name if is_character_session else "Assistant"
+        speaker_label = character_display_name if is_character_session else "Assistant"
         speaker_tone = "character" if is_character_session else "assistant"
         row_class = None
         if role_accents:
@@ -183,7 +192,7 @@ def resolve_console_message_presentation(
             content = expand_character_template(
                 template_source,
                 user_name=context.user_name,
-                character_name=character_name,
+                character_name=raw_character_name,
             )
     else:
         speaker_label = message.role.value.title()

@@ -7158,6 +7158,7 @@ UPDATE db_schema_version
         `id` (UUID string) can be provided; if not, it's auto-generated.
         `root_id` (UUID string) should be provided; if not, `id` is used as `root_id`.
         Conversations may be character-backed, persona-backed, or generic.
+        Initial conversation metadata may be provided as a JSON object string.
         `client_id` defaults to the DB instance's `client_id` if not provided in `conv_data`.
         `version` defaults to 1. `created_at` and `last_modified` are set to current UTC time.
 
@@ -7168,7 +7169,8 @@ UPDATE db_schema_version
             conv_data: A dictionary containing conversation data.
                        Recommended: 'id' (if providing own UUID), 'root_id'.
                        Optional: 'forked_from_message_id', 'parent_conversation_id',
-                                 'title', 'rating' (1-5), 'client_id', assistant/scope/topic metadata.
+                                 'title', 'rating' (1-5), 'client_id', 'metadata',
+                                 assistant/scope/topic metadata.
 
         Returns:
             The string UUID of the newly created conversation.
@@ -7180,6 +7182,33 @@ UPDATE db_schema_version
             CharactersRAGDBError: For other database-related errors.
         """
         start_time = time.time()
+        raw_metadata = conv_data.get("metadata")
+        metadata = None
+        if raw_metadata is not None:
+            if type(raw_metadata) is not str:
+                raise InputError("metadata must be a valid JSON object string.")
+
+            def reject_constant(value: str) -> None:
+                raise ValueError(
+                    f"Non-finite JSON constant {value!r} is not supported."
+                )
+
+            try:
+                decoded_metadata = json.loads(
+                    raw_metadata,
+                    parse_constant=reject_constant,
+                )
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise InputError(
+                    "metadata must be a valid JSON object string."
+                ) from exc
+            if not isinstance(decoded_metadata, dict):
+                raise InputError("metadata must be a valid JSON object string.")
+            metadata = json.dumps(
+                decoded_metadata,
+                allow_nan=False,
+                sort_keys=True,
+            )
         conv_id = conv_data.get("id") or self._generate_uuid()
         root_id = (
             conv_data.get("root_id") or conv_id
@@ -7243,8 +7272,8 @@ UPDATE db_schema_version
                                            scope_type, workspace_id, state, topic_label, topic_label_source, \
                                            topic_last_tagged_at, topic_last_tagged_message_id, cluster_id, source, external_ref, \
                                            runtime_backend, discovery_owner, discovery_entity_id, system_prompt, \
-                                           title, rating, created_at, last_modified, client_id, version, deleted) \
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
+                                           metadata, title, rating, created_at, last_modified, client_id, version, deleted) \
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
                 """  # created_at added
         params = (
             conv_id,
@@ -7270,6 +7299,7 @@ UPDATE db_schema_version
             discovery_owner,
             discovery_entity_id,
             system_prompt,
+            metadata,
             conv_data.get("title"),
             conv_data.get("rating"),
             now,

@@ -34,6 +34,7 @@ class RefreshReport:
     """Aggregated result of one startup auto-refresh pass."""
 
     outcomes: tuple[ProviderRefreshOutcome, ...] = ()
+    disk_write_failed: bool = False
 
 
 def format_refresh_notification(report: RefreshReport) -> str | None:
@@ -64,6 +65,10 @@ def format_refresh_notification(report: RefreshReport) -> str | None:
     if write_failures:
         parts.append(
             f"config save failed for {', '.join(write_failures)} (models cached instead)"
+        )
+    if report.disk_write_failed:
+        parts.append(
+            "disk cache persistence failed; current model lists are available this session"
         )
     if not parts and not failures:
         return None

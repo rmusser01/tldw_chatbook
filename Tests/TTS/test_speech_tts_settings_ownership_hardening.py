@@ -50,6 +50,10 @@ from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSNavigationIntent,
     SpeechTTSNavigationTarget,
 )
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    build_global_speech_tts_save_proposal,
+    load_global_speech_tts_state,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -91,6 +95,33 @@ def _global_preferences(*, voice_id: str) -> TTSPreferencesSnapshot:
         response_format="mp3",
         speed=1.0,
     )
+
+
+def test_authentication_mode_save_never_projects_or_mutates_credentials() -> None:
+    settings = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "app_tts": {
+                "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech",
+                "OPENAI_AUTH_MODE": "api_key",
+            },
+            "api_settings": {"openai": {"api_key": "OWNERSHIP_SECRET_SENTINEL"}},
+        }
+    }
+    original = load_global_speech_tts_state(settings, environment={})
+    draft = replace(original, providers={**original.providers})
+    draft.providers = {key: dict(value) for key, value in original.providers.items()}
+    draft.providers["openai"]["authentication_mode"] = "none"
+
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        draft,
+        configure_provider="openai",
+    )
+
+    assert proposal.settings["OPENAI_AUTH_MODE"] == "none"
+    assert "openai_api_key" not in proposal.settings
+    assert "OWNERSHIP_SECRET_SENTINEL" not in repr(proposal)
+    assert original.credentials == draft.credentials
 
 
 async def _no_catalog(_provider_id: str) -> TTSProviderCatalog:

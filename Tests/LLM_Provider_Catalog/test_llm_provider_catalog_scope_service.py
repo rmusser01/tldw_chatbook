@@ -343,6 +343,36 @@ async def test_llm_provider_catalog_scope_service_routes_local_model_discovery_a
 
 
 @pytest.mark.asyncio
+async def test_llm_provider_catalog_scope_service_forwards_shared_cache_opt_out():
+    local = FakeCatalogService("local")
+    scope = LLMProviderCatalogScopeService(
+        local_service=local,
+        server_service=None,
+    )
+
+    result = await scope.discover_models(
+        mode="local",
+        provider="Custom",
+        staged_settings={"api_settings": {"custom": {"api_key": ""}}},
+        use_shared_cache=False,
+    )
+
+    assert result.status == "success"
+    assert local.calls == [
+        (
+            "discover_models",
+            {
+                "provider": "Custom",
+                "staged_settings": {
+                    "api_settings": {"custom": {"api_key": ""}}
+                },
+                "use_shared_cache": False,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_llm_provider_catalog_scope_service_routes_local_discovered_model_cache_contract():
     local = FakeCatalogService("local")
     server = FakeCatalogService("server")

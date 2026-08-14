@@ -268,6 +268,8 @@ class TTSEffectiveSelectionRevisions:
     default_profile_revision: int | None
     provider_configuration: int
     provider_catalog: int | None
+    provider_saved: int | None = None
+    provider_applied: int | None = None
 
     def __post_init__(self) -> None:
         _validate_nonnegative_revision(
@@ -286,6 +288,8 @@ class TTSEffectiveSelectionRevisions:
                 self.default_profile_repository,
             ),
             ("TTS provider catalog revision", self.provider_catalog),
+            ("Saved TTS provider publication generation", self.provider_saved),
+            ("Applied TTS provider publication generation", self.provider_applied),
         ):
             if value is not None:
                 _validate_nonnegative_revision(value, label)
@@ -309,6 +313,74 @@ class TTSEffectiveSelectionRevisions:
             self.default_profile_revision is None
         ):
             raise ValueError("Default-profile TTS revisions must be recorded together")
+
+    @property
+    def provider_active(self) -> int:
+        """Return the active registry revision used for runtime freshness.
+
+        ``provider_configuration`` remains the compatibility name for this
+        registry identity. It is intentionally distinct from saved/applied
+        publication generations.
+        """
+
+        return self.provider_configuration
+
+
+def tts_configuration_is_active(
+    service: object,
+    provider_id: str,
+    saved_revision: int,
+) -> bool:
+    """Return whether one saved provider generation is applied at runtime."""
+
+    if (
+        not isinstance(provider_id, str)
+        or not provider_id
+        or type(saved_revision) is not int
+        or saved_revision < 1
+    ):
+        return False
+    saved_reader = getattr(service, "saved_configuration_revision", None)
+    applied_reader = getattr(service, "applied_configuration_revision", None)
+    active_reader = getattr(service, "configuration_revision", None)
+    if not all(
+        callable(reader) for reader in (saved_reader, applied_reader, active_reader)
+    ):
+        return False
+    try:
+        saved = saved_reader(provider_id)
+        applied = applied_reader(provider_id)
+        active = active_reader(provider_id)
+    except Exception:
+        return False
+    return bool(
+        type(saved) is int
+        and type(applied) is int
+        and type(active) is int
+        and active >= 0
+        and saved == saved_revision
+        and applied == saved_revision
+    )
+
+
+def _provider_publication_generation(
+    provider_revision_reader: Callable[[str], int],
+    provider_id: str,
+    method_name: str,
+) -> int | None:
+    """Read publication provenance from a bound service reader when available."""
+
+    owner = getattr(provider_revision_reader, "__self__", None)
+    reader = getattr(owner, method_name, None)
+    if not callable(reader):
+        return None
+    try:
+        revision = reader(provider_id)
+    except Exception:
+        return None
+    if type(revision) is not int or revision < 0:
+        return None
+    return revision
 
 
 @dataclass(frozen=True, slots=True)
@@ -1238,6 +1310,16 @@ async def _resolve_layers(
         ),
         provider_configuration=provider_revision,
         provider_catalog=catalog_revision,
+        provider_saved=_provider_publication_generation(
+            provider_revision_reader,
+            provider_id,
+            "saved_configuration_revision",
+        ),
+        provider_applied=_provider_publication_generation(
+            provider_revision_reader,
+            provider_id,
+            "applied_configuration_revision",
+        ),
     )
     return TTSEffectiveSelectionSnapshot(
         provider_id=provider_id,
@@ -1497,4 +1579,5 @@ __all__ = [
     "TTSSelectionSource",
     "TTSStudioDraftSelection",
     "TTS_REQUEST_OPTION_KEYS",
+    "tts_configuration_is_active",
 ]

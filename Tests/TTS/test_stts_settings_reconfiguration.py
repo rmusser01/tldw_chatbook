@@ -5,6 +5,7 @@ import threading
 import tomllib
 from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from typing import Any
@@ -15,8 +16,8 @@ from loguru import logger
 
 from Tests.TTS.adapter_fakes import FakeAdapter, FakeAdapterFactory, provider_spec
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
-    STTSProviderConfigurationChanged,
     STTSEventHandler,
+    STTSProviderConfigurationChanged,
     STTSSettingsSaveEvent,
     STTSSettingsSaveResult,
     _effective_provider_config,
@@ -34,10 +35,15 @@ from tldw_chatbook.TTS.legacy_bridge import (
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import (
+    TTSDefaultActivationOutcome,
     TTSService,
     TTSSettingsPersistenceOutcome,
     TTSSettingsPublication,
     TTSSettingsPublicationTicket,
+)
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    build_global_speech_tts_save_proposal,
+    load_global_speech_tts_state,
 )
 
 
@@ -312,6 +318,62 @@ def test_settings_save_event_defaults_to_provider_settings_only() -> None:
     event = STTSSettingsSaveEvent({"audio_cpp": AudioCppConfig().to_mapping()})
 
     assert event.preferences is None
+
+
+@pytest.mark.asyncio
+async def test_cross_provider_event_persists_fields_and_removes_confirmation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[app_tts]\n"
+        'OPENAI_AUTH_MODE = "api_key"\n'
+        'OPENAI_BASE_URL = "https://api.openai.com/v1/audio/speech"\n'
+        'OPENAI_NONE_HTTP_CONFIRMATION = "stale-confirmation"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(
+        config_module,
+        "settings",
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_AUTH_MODE": "api_key",
+                    "OPENAI_BASE_URL": "https://api.openai.com/v1/audio/speech",
+                    "OPENAI_NONE_HTTP_CONFIRMATION": "stale-confirmation",
+                }
+            }
+        },
+    )
+    handler = STTSEventHandler(RecordingApp())
+    service = ImmediatePublicationService()
+    handler._stts_service = service
+    original = load_global_speech_tts_state(config_module.settings, environment={})
+    draft = deepcopy(original)
+    draft.providers["elevenlabs"]["stability"] = 0.7
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        draft,
+        configure_provider="elevenlabs",
+    )
+
+    await handler.handle_settings_save(
+        STTSSettingsSaveEvent(
+            proposal.settings,
+            delete_setting_keys=proposal.delete_setting_keys,
+        )
+    )
+
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert "OPENAI_NONE_HTTP_CONFIRMATION" not in saved["app_tts"]
+    assert saved["app_tts"]["OPENAI_AUTH_MODE"] == "api_key"
+    assert saved["app_tts"]["ELEVENLABS_VOICE_STABILITY"] == 0.7
+    service.reconfigure_provider.assert_awaited_once()
+    assert service.reconfigure_provider.await_args.args[0] == "elevenlabs"
 
 
 @pytest.mark.asyncio
@@ -1299,6 +1361,665 @@ async def test_later_transition_failure_clears_earlier_managed_staged_marker(
 
 
 @pytest.mark.asyncio
+async def test_failed_adapter_handoff_keeps_previous_active_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="old-model",
+        voice_mode="exact",
+        voice_id="old-voice",
+        response_format="wav",
+        speed=1.0,
+    )
+    new_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="new-model",
+        voice_mode="exact",
+        voice_id="new-voice",
+        response_format="wav",
+        speed=1.0,
+    )
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("openai", RecordingFactory("openai"), {}),),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=old_preferences)
+    prior_response = await service.synthesize_default(text="Before failed handoff")
+    await prior_response.aclose()
+    prior_runtime_revision = service.configuration_revision("openai")
+    monkeypatch.setattr(
+        registry,
+        "begin_reconfigure_provider",
+        AsyncMock(side_effect=RuntimeError("simulated handoff failure")),
+    )
+
+    try:
+        ticket = service.begin_preferences_publication(
+            new_preferences,
+            {"openai": {"base_url": "http://127.0.0.1:8765"}},
+            _mutation_outcome,
+        )
+        result = await asyncio.wait_for(ticket.completion, timeout=1)
+
+        assert result.persistence.file_replaced is True
+        assert result.provider_statuses == {"openai": "unavailable"}
+        assert service.saved_configuration_revision("openai") == result.generation
+        assert service.applied_configuration_revision("openai") == 0
+        assert result.provider_revisions["openai"] == prior_runtime_revision
+        assert service.preferences_snapshot() == old_preferences
+        assert service.preferences_generation() == 0
+        continued = await service.synthesize_default(text="After failed handoff")
+        await continued.aclose()
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_voice_setup_default_rejects_mismatched_saved_revision() -> None:
+    old_preferences = _audio_cpp_preferences(model_mode="exact", model_id="old-model")
+    new_preferences = _audio_cpp_preferences(model_mode="exact", model_id="new-model")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                RecordingFactory("audio_cpp"),
+                AudioCppConfig().to_mapping(),
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=old_preferences)
+
+    try:
+        changed = await service.commit_voice_setup_default(
+            new_preferences,
+            expected_saved_revision=7,
+        )
+
+        assert changed is False
+        assert service.preferences_snapshot() == old_preferences
+        assert service.preferences_generation() == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_voice_setup_default_activates_only_matching_applied_generation() -> None:
+    old_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="old-model",
+        voice_mode="exact",
+        voice_id="old-voice",
+        response_format="wav",
+        speed=1.0,
+    )
+    new_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="new-model",
+        voice_mode="exact",
+        voice_id="new-voice",
+        response_format="wav",
+        speed=1.0,
+    )
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("openai", RecordingFactory("openai"), {}),),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=old_preferences)
+
+    try:
+        ticket = service.begin_preferences_publication(
+            new_preferences,
+            {"openai": {"base_url": "http://127.0.0.1:8765"}},
+            _mutation_outcome,
+            publish_preferences=False,
+        )
+        publication = await asyncio.wait_for(ticket.completion, timeout=1)
+
+        assert publication.provider_statuses == {"openai": "applied"}
+        assert service.preferences_snapshot() == old_preferences
+        assert await service.commit_voice_setup_default(
+            new_preferences,
+            expected_saved_revision=publication.generation,
+        )
+        assert service.preferences_snapshot() == new_preferences
+        assert service.preferences_generation() == publication.generation
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_stale_voice_setup_completion_cannot_replace_newer_default() -> None:
+    old_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="old-model",
+        voice_mode="exact",
+        voice_id="old-voice",
+        response_format="wav",
+        speed=1.0,
+    )
+    first_preferences = replace(old_preferences, model_id="first-model")
+    latest_preferences = replace(old_preferences, model_id="latest-model")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("openai", RecordingFactory("openai"), {}),),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=old_preferences)
+
+    try:
+        first = service.begin_preferences_publication(
+            first_preferences,
+            {"openai": {"base_url": "http://127.0.0.1:8765/first"}},
+            _mutation_outcome,
+            publish_preferences=False,
+        )
+        first_result = await asyncio.wait_for(first.completion, timeout=1)
+        latest = service.begin_preferences_publication(
+            latest_preferences,
+            {"openai": {"base_url": "http://127.0.0.1:8765/latest"}},
+            _mutation_outcome,
+            publish_preferences=False,
+        )
+        latest_result = await asyncio.wait_for(latest.completion, timeout=1)
+
+        assert not await service.commit_voice_setup_default(
+            first_preferences,
+            expected_saved_revision=first_result.generation,
+        )
+        assert service.preferences_snapshot() == old_preferences
+        assert await service.commit_voice_setup_default(
+            latest_preferences,
+            expected_saved_revision=latest_result.generation,
+        )
+        assert service.preferences_snapshot() == latest_preferences
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_voice_setup_defaults_persist_only_after_matching_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    original = AudioCppConfig().to_mapping()
+    replacement = AudioCppConfig(
+        base_url="http://127.0.0.1:18080",
+    ).to_mapping()
+    old_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="tts-1",
+        voice_mode="exact",
+        voice_id="alloy",
+        response_format="mp3",
+        speed=1.0,
+    )
+    new_preferences = _audio_cpp_preferences(model_mode="exact", model_id="model")
+    current_settings = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "app_tts": {
+                "audio_cpp": deepcopy(original),
+                "default_provider": "openai",
+                "default_model_mode": "exact",
+                "default_model": "tts-1",
+                "default_voice_mode": "exact",
+                "default_voice": "alloy",
+                "default_format": "mp3",
+                "default_speed": 1.0,
+            }
+        }
+    }
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                RecordingFactory("audio_cpp"),
+                original,
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=old_preferences)
+    mutations: list[dict[str, dict[str, Any]]] = []
+
+    def apply_mutation(
+        section_values: Mapping[str, Mapping[Any, Any]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> Any:
+        del delete_keys
+        mutations.append(deepcopy(dict(section_values)))
+        return SimpleNamespace(
+            file_replaced=True,
+            caches_reloaded=True,
+            failure_phase=None,
+        )
+
+    monkeypatch.setattr(config_module, "settings", current_settings)
+    monkeypatch.setattr(
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        apply_mutation,
+    )
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = service
+    recorder = SettingsResultRecorder()
+
+    try:
+        await handler.handle_settings_save(
+            STTSSettingsSaveEvent(
+                {"audio_cpp": replacement},
+                preferences=new_preferences,
+                request_id=9,
+                reply_to=recorder,
+                commit_defaults_after_handoff=True,
+            )
+        )
+
+        assert len(mutations) == 2
+        assert mutations[0]["app_tts"]["audio_cpp"] == replacement
+        assert "default_provider" not in mutations[0]["app_tts"]
+        assert mutations[1]["app_tts"]["default_provider"] == "audio_cpp"
+        assert "audio_cpp" not in mutations[1]["app_tts"]
+        assert recorder.results[0].defaults_activated is True
+        assert service.preferences_snapshot() == new_preferences
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_failed_voice_setup_handoff_preserves_persisted_and_active_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    old_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="old-model",
+        voice_mode="exact",
+        voice_id="old-voice",
+        response_format="mp3",
+        speed=1.0,
+    )
+    new_preferences = replace(
+        old_preferences,
+        model_id="new-model",
+        voice_id="new-voice",
+    )
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("openai", RecordingFactory("openai"), {}),),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=old_preferences)
+    monkeypatch.setattr(
+        registry,
+        "begin_reconfigure_provider",
+        AsyncMock(side_effect=RuntimeError("simulated handoff failure")),
+    )
+    mutations: list[dict[str, dict[str, Any]]] = []
+
+    def apply_mutation(
+        section_values: Mapping[str, Mapping[Any, Any]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> Any:
+        del delete_keys
+        mutations.append(deepcopy(dict(section_values)))
+        return SimpleNamespace(
+            file_replaced=True,
+            caches_reloaded=True,
+            failure_phase=None,
+        )
+
+    monkeypatch.setattr(
+        config_module,
+        "settings",
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "default_provider": "openai",
+                    "default_model_mode": "exact",
+                    "default_model": "old-model",
+                    "default_voice_mode": "exact",
+                    "default_voice": "old-voice",
+                    "default_format": "mp3",
+                    "default_speed": 1.0,
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        apply_mutation,
+    )
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = service
+    recorder = SettingsResultRecorder()
+
+    try:
+        await handler.handle_settings_save(
+            STTSSettingsSaveEvent(
+                {"OPENAI_BASE_URL": "http://127.0.0.1:8765"},
+                preferences=new_preferences,
+                request_id=10,
+                reply_to=recorder,
+                commit_defaults_after_handoff=True,
+            )
+        )
+
+        assert len(mutations) == 1
+        assert mutations[0]["app_tts"] == {"OPENAI_BASE_URL": "http://127.0.0.1:8765"}
+        assert recorder.results[0].persisted is True
+        assert recorder.results[0].defaults_activated is False
+        assert service.preferences_snapshot() == old_preferences
+        assert service.preferences_generation() == 0
+        assert app.notifications[-1] == (
+            "Saved, activation failed. Previous TTS defaults remain active; retry.",
+            "error",
+        )
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_default_cache_reload_failure_rolls_back_persisted_voice_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    old_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="old-model",
+        voice_mode="exact",
+        voice_id="old-voice",
+        response_format="mp3",
+        speed=1.0,
+    )
+    new_preferences = replace(
+        old_preferences,
+        model_id="new-model",
+        voice_id="new-voice",
+    )
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("openai", RecordingFactory("openai"), {}),),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=old_preferences)
+    mutations: list[dict[str, dict[str, Any]]] = []
+
+    def apply_mutation(
+        section_values: Mapping[str, Mapping[Any, Any]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> Any:
+        del delete_keys
+        mutations.append(deepcopy(dict(section_values)))
+        call = len(mutations)
+        return SimpleNamespace(
+            file_replaced=True,
+            caches_reloaded=call != 2,
+            failure_phase="cache_reload" if call == 2 else None,
+        )
+
+    monkeypatch.setattr(
+        config_module,
+        "settings",
+        {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {}}},
+    )
+    monkeypatch.setattr(
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        apply_mutation,
+    )
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = service
+    recorder = SettingsResultRecorder()
+
+    try:
+        await handler.handle_settings_save(
+            STTSSettingsSaveEvent(
+                {"OPENAI_BASE_URL": "http://127.0.0.1:8765"},
+                preferences=new_preferences,
+                request_id=11,
+                reply_to=recorder,
+                commit_defaults_after_handoff=True,
+            )
+        )
+
+        assert len(mutations) == 3
+        assert mutations[1]["app_tts"]["default_model"] == "new-model"
+        assert mutations[2]["app_tts"]["default_model"] == "old-model"
+        assert recorder.results[0].defaults_activated is False
+        assert service.preferences_snapshot() == old_preferences
+        assert service.preferences_generation() == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_default_rollback_failure_never_reports_activation_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    old_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="old-model",
+        voice_mode="exact",
+        voice_id="old-voice",
+        response_format="mp3",
+        speed=1.0,
+    )
+    new_preferences = replace(
+        old_preferences,
+        model_id="new-model",
+        voice_id="new-voice",
+    )
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("openai", RecordingFactory("openai"), {}),),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=old_preferences)
+    mutations: list[dict[str, dict[str, Any]]] = []
+    persisted_default_model = "old-model"
+
+    def apply_mutation(
+        section_values: Mapping[str, Mapping[Any, Any]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> Any:
+        nonlocal persisted_default_model
+        del delete_keys
+        mutations.append(deepcopy(dict(section_values)))
+        call = len(mutations)
+        file_replaced = call != 3
+        caches_reloaded = call in {1, 4, 5}
+        if file_replaced:
+            model = section_values.get("app_tts", {}).get("default_model")
+            if isinstance(model, str):
+                persisted_default_model = model
+        return SimpleNamespace(
+            file_replaced=file_replaced,
+            caches_reloaded=caches_reloaded,
+            failure_phase=(
+                "before_replace" if call == 3 else "cache_reload" if call == 2 else None
+            ),
+        )
+
+    monkeypatch.setattr(
+        config_module,
+        "settings",
+        {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {}}},
+    )
+    monkeypatch.setattr(
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        apply_mutation,
+    )
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = service
+    recorder = SettingsResultRecorder()
+
+    try:
+        await handler.handle_settings_save(
+            STTSSettingsSaveEvent(
+                {"OPENAI_BASE_URL": "http://127.0.0.1:8765"},
+                preferences=new_preferences,
+                request_id=12,
+                reply_to=recorder,
+                commit_defaults_after_handoff=True,
+            )
+        )
+
+        assert len(mutations) == 3
+        assert mutations[2]["app_tts"]["default_model"] == "old-model"
+        assert recorder.results[0].defaults_activated is False
+        assert recorder.results[0].defaults_activation_status == "rollback_failed"
+        assert persisted_default_model == "new-model"
+        assert service.preferences_snapshot() == old_preferences
+        assert service.preferences_generation() == 0
+        assert app.notifications[-1] == (
+            "Defaults were saved, but rollback failed. Runtime still uses the previous "
+            "default; restart may use the new default. Retry to reconcile.",
+            "error",
+        )
+
+        await handler.handle_settings_save(
+            STTSSettingsSaveEvent(
+                {"OPENAI_BASE_URL": "http://127.0.0.1:8765"},
+                preferences=new_preferences,
+                request_id=14,
+                reply_to=recorder,
+                commit_defaults_after_handoff=True,
+            )
+        )
+
+        assert len(mutations) == 5
+        assert persisted_default_model == "new-model"
+        assert recorder.results[1].defaults_activated is True
+        assert recorder.results[1].defaults_activation_status == "committed"
+        assert service.preferences_snapshot() == new_preferences
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_default_publication_failure_restores_persisted_and_active_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    old_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="old-model",
+        voice_mode="exact",
+        voice_id="old-voice",
+        response_format="mp3",
+        speed=1.0,
+    )
+    new_preferences = replace(
+        old_preferences,
+        model_id="new-model",
+        voice_id="new-voice",
+    )
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("openai", RecordingFactory("openai"), {}),),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=old_preferences)
+    mutations: list[dict[str, dict[str, Any]]] = []
+
+    def apply_mutation(
+        section_values: Mapping[str, Mapping[Any, Any]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> Any:
+        del delete_keys
+        mutations.append(deepcopy(dict(section_values)))
+        return SimpleNamespace(
+            file_replaced=True,
+            caches_reloaded=True,
+            failure_phase=None,
+        )
+
+    publish = service._request_admission._publish_preferences
+
+    def fail_after_publish(
+        preferences: TTSPreferencesSnapshot,
+        generation: int,
+    ) -> None:
+        publish(preferences, generation)
+        raise RuntimeError("simulated publication failure")
+
+    monkeypatch.setattr(
+        config_module,
+        "settings",
+        {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {}}},
+    )
+    monkeypatch.setattr(
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        apply_mutation,
+    )
+    monkeypatch.setattr(
+        service._request_admission,
+        "_publish_preferences",
+        fail_after_publish,
+    )
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = service
+    recorder = SettingsResultRecorder()
+
+    try:
+        await handler.handle_settings_save(
+            STTSSettingsSaveEvent(
+                {"OPENAI_BASE_URL": "http://127.0.0.1:8765"},
+                preferences=new_preferences,
+                request_id=13,
+                reply_to=recorder,
+                commit_defaults_after_handoff=True,
+            )
+        )
+
+        assert len(mutations) == 3
+        assert mutations[1]["app_tts"]["default_model"] == "new-model"
+        assert mutations[2]["app_tts"]["default_model"] == "old-model"
+        assert recorder.results[0].defaults_activated is False
+        assert service.preferences_snapshot() == old_preferences
+        assert service.preferences_generation() == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_saved_config_snapshot_does_not_duplicate_legacy_credentials() -> None:
     external = AudioCppConfig().to_mapping()
     registry = TTSAdapterRegistry(
@@ -1603,6 +2324,9 @@ async def test_dynamic_selection_can_continue_against_clearly_applied_generation
 
         assert staged.provider_statuses == {"audio_cpp": "pending"}
         assert selection.revisions.provider_configuration == 1
+        assert selection.revisions.provider_active == 1
+        assert selection.revisions.provider_saved == staged.generation
+        assert selection.revisions.provider_applied == 0
         assert service.saved_configuration_revision("audio_cpp") == staged.generation
         assert service.applied_configuration_revision("audio_cpp") == 0
         assert factory.instances[0].synthesize_calls == 1
@@ -1831,6 +2555,212 @@ async def test_audio_cpp_pending_save_returns_without_cancelling_active_response
     assert recorder.runtime_results[0].provider_runtime_revisions == {"audio_cpp": 2}
     await service.close()
     await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_pending_voice_default_activates_once_after_slow_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    original = AudioCppConfig().to_mapping()
+    replacement = AudioCppConfig(
+        base_url="http://127.0.0.1:18080",
+    ).to_mapping()
+    old_preferences = _audio_cpp_preferences()
+    new_preferences = _audio_cpp_preferences()
+    factory = RecordingFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                factory,
+                original,
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=old_preferences)
+    response = await service.synthesize_default(text="active speech")
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = service
+    recorder = SettingsResultRecorder()
+    captured_ticket: TTSSettingsPublicationTicket | None = None
+    original_begin = service.begin_preferences_publication
+    mutations: list[dict[str, dict[str, Any]]] = []
+
+    def begin_with_zero_timeout(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_ticket
+        kwargs["foreground_timeout_seconds"] = 0
+        captured_ticket = original_begin(*args, **kwargs)
+        return captured_ticket
+
+    def apply_mutation(
+        section_values: Mapping[str, Mapping[Any, Any]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> Any:
+        del delete_keys
+        mutations.append(deepcopy(dict(section_values)))
+        return SimpleNamespace(
+            file_replaced=True,
+            caches_reloaded=True,
+            failure_phase=None,
+        )
+
+    service.begin_preferences_publication = begin_with_zero_timeout  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        config_module,
+        "settings",
+        {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": original}}},
+    )
+    monkeypatch.setattr(
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        apply_mutation,
+    )
+
+    try:
+        await handler.handle_settings_save(
+            STTSSettingsSaveEvent(
+                {"audio_cpp": replacement},
+                preferences=new_preferences,
+                request_id=23,
+                reply_to=recorder,
+                commit_defaults_after_handoff=True,
+            )
+        )
+
+        assert recorder.results[0].defaults_activated is False
+        assert recorder.results[0].defaults_activation_status == "activation_not_ready"
+        assert service.preferences_snapshot() == old_preferences
+        assert len(mutations) == 1
+
+        await response.aclose()
+        assert captured_ticket is not None
+        await asyncio.shield(captured_ticket.completion)
+        if handler._active_tasks:
+            await asyncio.gather(*tuple(handler._active_tasks))
+
+        assert service.preferences_snapshot() == new_preferences
+        assert service.preferences_generation() == captured_ticket.generation
+        assert len(mutations) == 2
+        assert mutations[1]["app_tts"]["default_provider"] == "audio_cpp"
+        assert recorder.runtime_results[-1].defaults_activated is True
+        assert recorder.runtime_results[-1].defaults_activation_status == "committed"
+    finally:
+        await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_newer_default_intent_makes_older_pending_completion_inert() -> None:
+    preferences = _audio_cpp_preferences()
+    newer_preferences = _audio_cpp_preferences(model_mode="exact", model_id="newer")
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = object()
+    commit = AsyncMock(return_value=TTSDefaultActivationOutcome("committed"))
+    handler.commit_voice_setup_default = commit  # type: ignore[method-assign]
+    older = handler._new_default_activation_intent(
+        preferences,
+        expected_saved_revision=7,
+    )
+    newer = handler._new_default_activation_intent(
+        newer_preferences,
+        expected_saved_revision=8,
+    )
+
+    async def completed(generation: int) -> TTSSettingsPublication:
+        return TTSSettingsPublication(
+            generation=generation,
+            preferences=(preferences if generation == 7 else newer_preferences),
+            persistence=_mutation_outcome(),
+            provider_statuses={"audio_cpp": "applied"},
+            provider_revisions={"audio_cpp": generation + 30},
+            published=True,
+        )
+
+    loop = asyncio.get_running_loop()
+    older_foreground: asyncio.Future[TTSSettingsPublication] = loop.create_future()
+    newer_foreground: asyncio.Future[TTSSettingsPublication] = loop.create_future()
+    older_task = asyncio.create_task(completed(7))
+    newer_task = asyncio.create_task(completed(8))
+    handler._observe_pending_settings_publication(
+        handler._stts_service,  # type: ignore[arg-type]
+        TTSSettingsPublicationTicket(7, older_foreground, older_task),
+        STTSSettingsSaveEvent({}, preferences=preferences),
+        activation_intent=older,
+    )
+    handler._observe_pending_settings_publication(
+        handler._stts_service,  # type: ignore[arg-type]
+        TTSSettingsPublicationTicket(8, newer_foreground, newer_task),
+        STTSSettingsSaveEvent({}, preferences=newer_preferences),
+        activation_intent=newer,
+    )
+    if handler._active_tasks:
+        await asyncio.gather(*tuple(handler._active_tasks))
+
+    commit.assert_awaited_once_with(
+        newer_preferences,
+        expected_saved_revision=8,
+    )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_pending_observers_commit_default_intent_once() -> None:
+    preferences = _audio_cpp_preferences()
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = object()
+    commit = AsyncMock(return_value=TTSDefaultActivationOutcome("committed"))
+    handler.commit_voice_setup_default = commit  # type: ignore[method-assign]
+    intent = handler._new_default_activation_intent(
+        preferences,
+        expected_saved_revision=7,
+    )
+    publication = TTSSettingsPublication(
+        generation=7,
+        preferences=preferences,
+        persistence=_mutation_outcome(),
+        provider_statuses={"audio_cpp": "applied"},
+        provider_revisions={"audio_cpp": 41},
+        published=True,
+    )
+
+    async def completed() -> TTSSettingsPublication:
+        return publication
+
+    loop = asyncio.get_running_loop()
+    foreground: asyncio.Future[TTSSettingsPublication] = loop.create_future()
+    ticket = TTSSettingsPublicationTicket(
+        7,
+        foreground,
+        asyncio.create_task(completed()),
+    )
+    event = STTSSettingsSaveEvent({}, preferences=preferences)
+    handler._observe_pending_settings_publication(
+        handler._stts_service,  # type: ignore[arg-type]
+        ticket,
+        event,
+        activation_intent=intent,
+    )
+    handler._observe_pending_settings_publication(
+        handler._stts_service,  # type: ignore[arg-type]
+        ticket,
+        event,
+        activation_intent=intent,
+    )
+    if handler._active_tasks:
+        await asyncio.gather(*tuple(handler._active_tasks))
+
+    commit.assert_awaited_once_with(
+        preferences,
+        expected_saved_revision=7,
+    )
 
 
 @pytest.mark.asyncio

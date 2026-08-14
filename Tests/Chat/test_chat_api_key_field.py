@@ -1,8 +1,8 @@
 """Unit tests for the inline Chat-Defaults API-key field state helpers."""
 
 from tldw_chatbook.Chat.provider_readiness import (
-    ProviderReadiness,
     ChatApiKeyFieldState,
+    ProviderReadiness,
     chat_api_key_field_state,
     chat_api_key_value_to_persist,
 )
@@ -26,8 +26,8 @@ def _readiness(
         api_key=api_key,
         api_key_source=api_key_source,
         env_var=env_var,
-        reason="test",
-        recovery=None,
+        reason="Ready" if ready else "Missing API key",
+        recovery=None if ready else "Configure an API key.",
     )
 
 

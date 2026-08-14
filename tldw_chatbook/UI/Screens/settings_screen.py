@@ -37,12 +37,14 @@ from textual.widgets import (
     Collapsible,
     Input,
     Markdown,
+    OptionList,
     Rule,
     Select,
     SelectionList,
     Static,
     TextArea,
 )
+from textual.widgets.option_list import Option
 
 from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN, get_app_version
 
@@ -64,6 +66,19 @@ from ...Chat.console_roleplay_identity import (
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
 from ...Chat.console_provider_endpoints import URL_BASED_PROVIDER_KEYS
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
+from ...Chat.provider_setup_persistence import (
+    ProviderSetupDraft,
+    build_provider_setup_mutation,
+    canonical_provider_key,
+    persist_provider_settings_atomic,
+    provider_setup_draft_identity,
+    resolve_remembered_provider_model,
+)
+from ...Chat.provider_test_evidence import (
+    ProviderDraftIdentity,
+    ProviderProbeResult,
+    ProviderTestEvidenceStore,
+)
 from ...Chat.console_provider_support import (
     ConsoleProviderCatalogEntry,
     supported_console_provider_catalog,
@@ -100,6 +115,7 @@ from ...Chat.provider_catalog import (
     PROVIDER_GROUP_ORDER,
 )
 from ...config import (
+    ConfigMutationResult,
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
@@ -161,7 +177,17 @@ from .settings_context_memory import (
     resolve_model_context_window,
 )
 from ...model_capabilities import reload_capabilities
-from .settings_endpoint_probe import probe_settings_endpoint
+from .settings_endpoint_probe import (
+    SettingsEndpointProbeOutcome,
+    SettingsEndpointProbePurpose,
+    probe_settings_endpoint,
+)
+from .settings_provider_view_model import (
+    ProviderPickerGroup,
+    SettingsOverviewPresentation,
+    build_provider_picker_groups,
+    build_settings_overview,
+)
 from .settings_config_models import (
     SettingsCategoryId,
     SettingsCategorySummary,
@@ -186,6 +212,7 @@ from ..Speech.speech_runtime_status import (
     speech_tts_runtime_status_store,
 )
 from ..Speech.speech_settings_contracts import (
+    SpeechTTSConnectionState,
     SpeechTTSNavigationIntent,
     SpeechTTSNavigationTarget,
 )
@@ -272,6 +299,7 @@ from .settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GlobalSpeechTTSState,
     load_global_speech_tts_state,
+    process_provider_test_evidence_store,
 )
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -386,6 +414,23 @@ PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
 PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
 # task-180/191: provider display names + grouping now come from the shared
 # catalog module (imported at the top) so Settings and Console match.
+
+
+class _SettingsProviderPickerOption(Option):
+    """A selectable provider/action row or a disabled group heading."""
+
+    def __init__(
+        self,
+        prompt: Text,
+        *,
+        option_id: str,
+        provider_id: str | None = None,
+        action: str | None = None,
+        heading: bool = False,
+    ) -> None:
+        super().__init__(prompt, id=option_id, disabled=heading)
+        self.provider_id = provider_id
+        self.action = action
 
 MODEL_DISCOVERY_IDLE_COPY = "Discover models from configured endpoint"
 MODEL_DISCOVERY_EMPTY_COPY = (
@@ -1763,6 +1808,34 @@ def overlay_provider_draft_config(
     return merged
 
 
+def _apply_sparse_config_mutation_in_memory(
+    app_config: dict,
+    section_values: Mapping[str, Mapping[str, object]],
+    delete_keys: Mapping[str, Sequence[str]],
+) -> None:
+    """Apply an already-persisted sparse mutation to the process-local config."""
+
+    for section, keys in delete_keys.items():
+        current: object = app_config
+        for part in section.split("."):
+            if not isinstance(current, dict):
+                current = None
+                break
+            current = current.get(part)
+        if isinstance(current, dict):
+            for key in keys:
+                current.pop(key, None)
+    for section, values in section_values.items():
+        current = app_config
+        for part in section.split("."):
+            next_level = current.get(part)
+            if not isinstance(next_level, dict):
+                next_level = {}
+                current[part] = next_level
+            current = next_level
+        current.update(copy.deepcopy(dict(values)))
+
+
 class RagProfileNameModal(ModalScreen[str | None]):
     """Minimal name-prompt modal for the RAG profile-manager Clone/Rename actions.
 
@@ -2062,6 +2135,9 @@ class SettingsScreen(BaseAppScreen):
         super().__init__(app_instance, "settings", **kwargs)
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
+        self._provider_test_evidence_store = ProviderTestEvidenceStore()
+        self._provider_draft_generation = 0
+        self._provider_credential_revision = 0
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
@@ -2073,7 +2149,10 @@ class SettingsScreen(BaseAppScreen):
         # Input.Changed is delivered after a programmatic value assignment
         # returns, so a synchronous boolean cannot suppress that deferred
         # message. Consume exact expected values once instead.
+        self._provider_endpoint_suppress_queue: list[str] = []
+        self._provider_credential_env_var_suppress_queue: list[str] = []
         self._provider_api_key_suppress_queue: list[str] = []
+        self._provider_context_window_suppress_queue: list[str] = []
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
         self._syncing_provider_model_value = False
@@ -2745,6 +2824,7 @@ class SettingsScreen(BaseAppScreen):
         # switch INTO the category.
         self._maybe_refresh_rag_index_status_on_show()
         self.call_after_refresh(self._update_inspector_overflow_hint)
+        self.call_after_refresh(self._refresh_provider_picker)
 
     def _workbench_compact_now(self) -> bool:
         return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
@@ -8414,9 +8494,17 @@ class SettingsScreen(BaseAppScreen):
                 else loaded_provider
             )
         )
-        model = self.query_one("#settings-model-value", Input).value.strip() or str(
-            loaded_values["model"]
-        )
+        model = self.query_one("#settings-model-value", Input).value.strip()
+        if not model:
+            if provider_config_key(provider) == provider_config_key(loaded_provider):
+                model = str(loaded_values["model"])
+            else:
+                model = (
+                    resolve_remembered_provider_model(
+                        self._app_config_mapping(), provider
+                    )
+                    or ""
+                )
         endpoint = self.query_one(
             "#settings-provider-endpoint-value", Input
         ).value.strip()
@@ -8535,8 +8623,129 @@ class SettingsScreen(BaseAppScreen):
         draft.set_value(key, original, value)
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
-        # TASK-366: any edit to a provider field outdates the last Test result.
-        self._mark_provider_test_result_stale()
+        self._update_provider_evidence_for_edit(key, value)
+
+    def _provider_evidence_store(self) -> ProviderTestEvidenceStore:
+        store = getattr(self, "_provider_test_evidence_store", None)
+        if not isinstance(store, ProviderTestEvidenceStore):
+            store = ProviderTestEvidenceStore()
+            self._provider_test_evidence_store = store
+        return store
+
+    def _update_provider_evidence_for_edit(self, key: str, value: object) -> None:
+        semantic_keys = {"provider", "endpoint", "credential_env_var", "api_key"}
+        if key in semantic_keys:
+            self._provider_draft_generation = (
+                getattr(self, "_provider_draft_generation", 0) + 1
+            )
+            if key in {"credential_env_var", "api_key"}:
+                self._provider_credential_revision = (
+                    getattr(self, "_provider_credential_revision", 0) + 1
+                )
+            self._provider_evidence_store().invalidate()
+            self._mark_provider_test_result_stale()
+            return
+        if key != "model":
+            return
+        identity = self._provider_current_draft_identity()
+        evidence = (
+            self._provider_evidence_store().evidence_for(identity)
+            if identity is not None
+            else None
+        )
+        selected_model = str(value or "").strip()
+        if evidence is not None and evidence.endpoint == "testing":
+            self._provider_evidence_store().invalidate(identity)
+            self._mark_provider_test_result_stale()
+            return
+        if evidence is None or selected_model not in evidence.model_ids:
+            self._mark_provider_test_result_stale()
+
+    def _provider_current_credential_source(self, provider: str) -> str:
+        from tldw_chatbook.Chat.provider_readiness import (
+            configured_provider_credential_source,
+        )
+
+        draft = self._provider_draft()
+        dirty = draft.dirty_keys if draft is not None else set()
+        api_key_dirty = "api_key" in dirty
+        credential_fields_dirty = bool(
+            {"api_key", "credential_env_var"}.intersection(dirty)
+        )
+        if not credential_fields_dirty and configured_provider_credential_source(
+            self._provider_config(provider)
+        ) == "none":
+            return "none"
+        if api_key_dirty:
+            try:
+                if self.query_one("#settings-provider-api-key", Input).value.strip():
+                    return "draft"
+            except QueryError:
+                if str(draft.values.get("api_key") or "").strip():
+                    return "draft"
+        try:
+            env_var = self.query_one(
+                "#settings-provider-credential-env-var", Input
+            ).value.strip()
+        except QueryError:
+            env_var = str(
+                self._provider_setting_values_mapping().get("credential_env_var") or ""
+            ).strip()
+        if api_key_dirty:
+            return "environment" if env_var else "none"
+        if "credential_env_var" in dirty and env_var:
+            return "environment"
+        if env_var:
+            return "environment"
+        if self._provider_api_key_value(provider):
+            return "stored"
+        readiness = get_provider_readiness(
+            provider,
+            self._provider_test_staged_config(provider),
+        )
+        source = readiness.api_key_source or ""
+        if source.startswith("env:"):
+            return "environment"
+        if source.startswith("config:"):
+            return "stored"
+        return "none"
+
+    def _provider_current_draft_identity(self) -> ProviderDraftIdentity | None:
+        try:
+            values = self._provider_form_values_from_widgets()
+        except (QueryError, ValueError, AttributeError):
+            values = self._provider_setting_values_mapping()
+        provider = str(values.get("provider") or "").strip()
+        endpoint = str(values.get("endpoint") or "").strip()
+        if not provider or not endpoint:
+            return None
+        credential_source = self._provider_current_credential_source(provider)
+        try:
+            return provider_setup_draft_identity(
+                ProviderSetupDraft(
+                    provider=provider,
+                    model=str(values.get("model") or "").strip(),
+                    endpoint=endpoint,
+                    credential_source=credential_source,
+                    credential_revision=getattr(
+                        self, "_provider_credential_revision", 0
+                    ),
+                    draft_generation=getattr(self, "_provider_draft_generation", 0),
+                    credential_value=(
+                        str(values.get("api_key") or "").strip()
+                        if credential_source == "draft"
+                        else None
+                    ),
+                    credential_env_var=(
+                        str(values.get("credential_env_var") or "").strip()
+                        if credential_source == "environment"
+                        else None
+                    ),
+                ),
+                self._app_config_mapping(),
+            )
+        except (ProviderSettingsError, ValueError):
+            return None
 
     def _provider_config_entry(
         self, provider: str
@@ -8737,11 +8946,115 @@ class SettingsScreen(BaseAppScreen):
         options.append((PROVIDER_MANUAL_SELECT_LABEL, PROVIDER_MANUAL_SELECT_VALUE))
         return options
 
+    def _provider_picker_groups(
+        self, query: str = ""
+    ) -> tuple[ProviderPickerGroup, ...]:
+        provider = str(
+            self._provider_display_setting_values().get("provider") or ""
+        )
+        return build_provider_picker_groups(
+            self._provider_catalog_entries(), provider, query
+        )
+
+    def _provider_picker_options(
+        self, groups: tuple[ProviderPickerGroup, ...]
+    ) -> list[Option]:
+        options: list[Option] = []
+        for group in groups:
+            options.append(
+                _SettingsProviderPickerOption(
+                    Text(group.label, style="bold"),
+                    option_id=f"provider-picker-group-{group.group_id}",
+                    heading=True,
+                )
+            )
+            options.extend(
+                _SettingsProviderPickerOption(
+                    Text(option.label),
+                    option_id=f"provider-picker-{group.group_id}-{index}",
+                    provider_id=option.provider_id,
+                    action=option.action,
+                )
+                for index, option in enumerate(group.options)
+            )
+        return options
+
+    @staticmethod
+    def _provider_picker_has_catalog_matches(
+        groups: tuple[ProviderPickerGroup, ...],
+    ) -> bool:
+        return any(group.group_id in {"cloud", "local", "custom"} for group in groups)
+
+    def _provider_picker_query(self) -> str:
+        try:
+            return self.query_one("#settings-provider-search", Input).value
+        except QueryError:
+            return ""
+
+    def _refresh_provider_picker(self, query: str | None = None) -> None:
+        try:
+            picker = self.query_one("#settings-provider-picker", OptionList)
+            status = self.query_one("#settings-provider-search-status", Static)
+        except QueryError:
+            return
+        search_query = self._provider_picker_query() if query is None else query
+        groups = self._provider_picker_groups(search_query)
+        picker.clear_options()
+        picker.add_options(self._provider_picker_options(groups))
+
+        current_provider = str(
+            self._provider_display_setting_values().get("provider") or ""
+        )
+        first_selectable: int | None = None
+        selected_index: int | None = None
+        for index in range(picker.option_count):
+            option = picker.get_option_at_index(index)
+            if option.disabled:
+                continue
+            if first_selectable is None:
+                first_selectable = index
+            option_provider = getattr(option, "provider_id", None)
+            if option_provider is not None and provider_config_key(
+                option_provider
+            ) == provider_config_key(current_provider):
+                selected_index = index
+                break
+        picker.highlighted = (
+            selected_index if selected_index is not None else first_selectable
+        )
+
+        normalized_query = search_query.strip()
+        if normalized_query and not self._provider_picker_has_catalog_matches(groups):
+            status.update(
+                f'No catalog providers match "{normalized_query}". '
+                "Enter a supported provider ID or alias."
+            )
+        elif any(group.group_id == "saved" for group in groups):
+            status.update(
+                "This legacy saved provider is not supported here. Choose a listed "
+                "provider to migrate it."
+            )
+        else:
+            status.update("Choose a provider or enter a supported provider alias.")
+
     def _provider_select_value_for_provider(self, provider: str) -> str:
-        provider_key = provider_config_key(provider)
-        if provider_key in self._provider_catalog_keys():
-            return provider_key
+        catalog_keys = self._provider_catalog_keys()
+        for candidate in (provider, provider_config_key(provider)):
+            try:
+                provider_key = canonical_provider_key(candidate)
+            except ValueError:
+                continue
+            if provider_key in catalog_keys:
+                return provider_key
         return PROVIDER_MANUAL_SELECT_VALUE
+
+    def _clear_provider_suppression_queues(self) -> None:
+        """Discard widget-scoped programmatic echoes before widget replacement."""
+
+        self._provider_endpoint_suppress_queue.clear()
+        self._provider_credential_env_var_suppress_queue.clear()
+        self._provider_api_key_suppress_queue.clear()
+        self._provider_context_window_suppress_queue.clear()
 
     def _provider_catalog_model_default(self, provider: str) -> str:
         providers_models = getattr(self.app_instance, "providers_models", None)
@@ -8763,10 +9076,13 @@ class SettingsScreen(BaseAppScreen):
         return ""
 
     def _provider_model_default(self, provider: str) -> str:
-        configured_model = str(
-            self._provider_config(provider).get("model") or ""
-        ).strip()
-        if configured_model and configured_model != "None":
+        try:
+            configured_model = resolve_remembered_provider_model(
+                self._app_config_mapping(), provider
+            )
+        except ValueError:
+            configured_model = None
+        if configured_model is not None and configured_model != "None":
             return configured_model
         return self._provider_catalog_model_default(provider)
 
@@ -8829,6 +9145,30 @@ class SettingsScreen(BaseAppScreen):
             )
         finally:
             self._syncing_provider_manual = False
+        self._refresh_provider_picker()
+
+    def _show_provider_manual_editor(self, provider: str) -> None:
+        """Expose the correction field without changing the active provider."""
+        try:
+            manual_row = self.query_one("#settings-provider-manual-row", Horizontal)
+            manual_input = self.query_one("#settings-provider-manual-value", Input)
+        except QueryError:
+            return
+        uses_manual_entry = (
+            self._provider_select_value_for_provider(provider)
+            == PROVIDER_MANUAL_SELECT_VALUE
+        )
+        self._syncing_provider_manual = True
+        try:
+            manual_input.disabled = False
+            if uses_manual_entry:
+                manual_input.value = provider
+            elif manual_input.value == provider:
+                manual_input.value = ""
+            manual_row.remove_class("settings-provider-manual-hidden")
+        finally:
+            self._syncing_provider_manual = False
+        manual_input.focus()
 
     def _sync_provider_api_mode_widget(self, provider: str) -> None:
         """Show QwenCloud's mode selector and hide it for every other provider."""
@@ -9159,6 +9499,17 @@ class SettingsScreen(BaseAppScreen):
             ).disabled = not state.has_configured_override
         except QueryError:
             pass
+
+    def _set_provider_context_window_input_value(
+        self,
+        context_window_input: Input,
+        value: str,
+    ) -> None:
+        """Assign a context value and queue its deferred change once."""
+        if context_window_input.value == value:
+            return
+        self._provider_context_window_suppress_queue.append(value)
+        context_window_input.value = value
 
     def _refresh_generation_support_summary(self, provider: str) -> None:
         """Update the one-line gated-controls summary and its visibility."""
@@ -10039,17 +10390,83 @@ class SettingsScreen(BaseAppScreen):
     async def _provider_endpoint_probe_worker(
         self,
         base_url: str,
+        provider: str,
         detail: str,
         summary: str,
+        identity: ProviderDraftIdentity | None = None,
+        token: object | None = None,
     ) -> None:
-        outcome = await probe_settings_endpoint(base_url)
-        self._apply_provider_endpoint_probe_outcome(detail, summary, outcome)
+        try:
+            outcome = await probe_settings_endpoint(
+                base_url,
+                provider=provider,
+                purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
+            )
+        except asyncio.CancelledError:
+            cancelled_current = bool(
+                token is not None
+                and self._provider_evidence_store().cancel_probe(token)
+            )
+            if cancelled_current:
+                self._provider_test_result = "Provider test cancelled; run again."
+                self._update_provider_test_result()
+            raise
+        except Exception:  # noqa: BLE001 - probe failures must settle as bounded UI state.
+            outcome = self._provider_probe_connection_error_outcome()
+        try:
+            self._apply_provider_endpoint_probe_outcome(
+                detail,
+                summary,
+                outcome,
+                identity=identity,
+                token=token,
+            )
+        except Exception:  # noqa: BLE001 - UI settlement must not strand probe state.
+            failure = self._provider_probe_connection_error_outcome()
+            if identity is not None and token is not None:
+                self._provider_evidence_store().settle(
+                    token,
+                    self._provider_probe_result_from_outcome(failure),
+                )
+            self._provider_test_result = redact_secret_text(
+                f"{detail} | endpoint {failure.summary}"
+            )
+            self._update_provider_test_result()
+
+    @staticmethod
+    def _provider_probe_connection_error_outcome() -> SettingsEndpointProbeOutcome:
+        return SettingsEndpointProbeOutcome(
+            state="unreachable",
+            summary="unreachable: connection error",
+            category="connection_error",
+        )
+
+    @staticmethod
+    def _provider_probe_result_from_outcome(
+        outcome: SettingsEndpointProbeOutcome,
+    ) -> ProviderProbeResult:
+        if type(outcome) is not SettingsEndpointProbeOutcome:
+            raise ValueError("Provider probe outcome is invalid.")
+        endpoint = {
+            SpeechTTSConnectionState.REACHABLE: "reachable",
+            SpeechTTSConnectionState.UNREACHABLE: "unreachable",
+            SpeechTTSConnectionState.NOT_TESTED: "not_tested",
+            SpeechTTSConnectionState.UNSUPPORTED: "model_listing_unavailable",
+        }.get(outcome.state, outcome.state)
+        return ProviderProbeResult(
+            endpoint=str(endpoint),
+            model_ids=outcome.model_ids,
+            category=outcome.category,
+        )
 
     def _apply_provider_endpoint_probe_outcome(
         self,
         detail: str,
         summary: str,
         outcome,
+        *,
+        identity: ProviderDraftIdentity | None = None,
+        token: object | None = None,
     ) -> None:
         """Fold a live endpoint probe outcome into the Test result and toast.
 
@@ -10058,6 +10475,12 @@ class SettingsScreen(BaseAppScreen):
             summary: Passing readiness toast summary the probe extends.
             outcome: ``SettingsEndpointProbeOutcome`` from the probe helper.
         """
+        if type(outcome) is not SettingsEndpointProbeOutcome:
+            outcome = self._provider_probe_connection_error_outcome()
+        if identity is not None and token is not None:
+            probe_result = self._provider_probe_result_from_outcome(outcome)
+            if not self._provider_evidence_store().settle(token, probe_result):
+                return
         self._provider_test_result = redact_secret_text(
             f"{detail} | endpoint {outcome.summary}"
         )
@@ -10889,7 +11312,17 @@ class SettingsScreen(BaseAppScreen):
     def _compose_server_sync_handoff_rows(self) -> ComposeResult:
         """Yield the server/sync/workspace/handoff detail rows."""
         for label, value in self.server_sync_workspace_handoff_rows:
-            yield self._detail_row(label, value)
+            if label in {
+                "Active server profile",
+                "Local/server authority",
+                "Handoff policy",
+                "ACP handoff readiness",
+            }:
+                continue
+            yield self._detail_row(
+                self._overview_user_language(label),
+                self._overview_user_language(value),
+            )
 
     def watch_manual_sync_rows(self) -> None:
         """Repaint the sync rows in place (task-15475)."""
@@ -10918,6 +11351,12 @@ class SettingsScreen(BaseAppScreen):
             "#settings-overview-sync-summary",
             f"Sync: {_fold_long_tokens(self._overview_sync_summary())}",
         )
+        presentation = self._settings_overview_presentation()
+        for row in presentation.advanced_rows:
+            self._set_static_text(
+                f"#settings-overview-{row.key.replace('_', '-')}",
+                f"{row.label}: {_fold_long_tokens(row.value)}",
+            )
         for region_id in (
             "#settings-overview-manual-sync-rows",
             "#settings-overview-handoff-rows",
@@ -10928,72 +11367,112 @@ class SettingsScreen(BaseAppScreen):
                 continue
             region.refresh(recompose=True)
 
+    @staticmethod
+    def _overview_user_language(value: object) -> str:
+        return re.sub(r"handoff", "transfer", str(value), flags=re.IGNORECASE)
+
+    def _settings_overview_presentation(self) -> SettingsOverviewPresentation:
+        resolved = self._resolve_provider_model_for_settings()
+        provider = self._provider_display_name(str(resolved.provider or ""))
+        model = str(resolved.model or "not selected")
+        source_rows = dict(self.server_sync_workspace_handoff_rows)
+        conversation_updates = "; ".join(
+            value
+            for value in (
+                source_rows.get("Handoff policy", ""),
+                source_rows.get("ACP handoff readiness", ""),
+            )
+            if value
+        )
+        return build_settings_overview(
+            {
+                "configuration": (
+                    f"{provider or 'Not selected'} / {model}; Status: "
+                    f"{self._provider_readiness_label().removeprefix('Provider readiness: ')}"
+                ),
+                "last_connection_test": self._provider_test_result,
+                "storage_privacy": (
+                    f"Config path: {self._config_path_overview_value()}; "
+                    "Privacy: local config by default; secret-looking diagnostics "
+                    "are redacted"
+                ),
+                "sync": self._overview_sync_summary(),
+                "runtime_ownership": source_rows.get(
+                    "Local/server authority", "Not available"
+                ),
+                "server_binding": source_rows.get(
+                    "Active server profile", "Not available"
+                ),
+                "handoff": self._overview_user_language(
+                    conversation_updates or "No conversation update is pending"
+                ),
+            }
+        )
+
     def _render_overview_detail(self) -> ComposeResult:
-        # task-1369: the landing card leads with four primary status rows,
-        # each with an Open-category affordance (the sync row carries the
-        # manual sync controls instead). The server/sync/handoff detail and
-        # the ownership summary stay one collapsed disclosure away.
+        presentation = self._settings_overview_presentation()
         yield Static("Overview", classes="destination-section settings-column-title")
         with Vertical(id="settings-overview-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.OVERVIEW)
             yield Static("Status", classes="destination-section")
-            yield self._detail_row(
-                "Active",
-                self._provider_readiness_label().removeprefix("Provider readiness: "),
-                identifier="settings-overview-provider-readiness",
-            )
-            with Horizontal(classes="settings-action-row"):
-                yield Button(
-                    "Open Providers & Models",
-                    id="settings-overview-open-providers-models",
-                    classes="settings-overview-open-category",
-                    tooltip="Open the Providers & Models category.",
-                )
-            yield self._detail_row(
-                "Config path",
-                self._config_path_overview_value(),
-                identifier="settings-overview-storage",
-            )
-            with Horizontal(classes="settings-action-row"):
-                yield Button(
-                    "Open Storage",
-                    id="settings-overview-open-storage",
-                    classes="settings-overview-open-category",
-                    tooltip="Open the Storage category.",
-                )
-            yield self._detail_row(
-                "Privacy",
-                "local config by default; secret-looking diagnostics are redacted",
-                identifier="settings-overview-privacy",
-            )
-            with Horizontal(classes="settings-action-row"):
-                yield Button(
-                    "Open Privacy & Security",
-                    id="settings-overview-open-privacy-security",
-                    classes="settings-overview-open-category",
-                    tooltip="Open the Privacy & Security category.",
-                )
-            yield self._detail_row(
-                "Sync",
-                self._overview_sync_summary(),
-                identifier="settings-overview-sync-summary",
-            )
-            with Horizontal(classes="settings-action-row"):
-                yield Button(
-                    "Preview manual sync",
-                    id="settings-manual-sync-preview",
-                    tooltip="Show pending Notes/Chat changes without mutating the server.",
-                )
-                yield Button(
-                    "Run manual sync",
-                    id="settings-manual-sync-run",
-                    tooltip="Apply the previewed Notes/Chat changes to the server.",
-                )
+            with Vertical(id="settings-overview-primary"):
+                for row in presentation.primary_rows:
+                    yield self._detail_row(
+                        row.label,
+                        row.value,
+                        identifier=f"settings-overview-{row.key.replace('_', '-')}",
+                    )
+                    if row.key == "configuration":
+                        with Horizontal(classes="settings-action-row"):
+                            yield Button(
+                                "Open Providers & Models",
+                                id="settings-overview-open-providers-models",
+                                classes="settings-overview-open-category",
+                                tooltip="Open the Providers & Models category.",
+                            )
+                    elif row.key == "storage_privacy":
+                        with Horizontal(classes="settings-action-row"):
+                            yield Button(
+                                "Open Storage",
+                                id="settings-overview-open-storage",
+                                classes="settings-overview-open-category",
+                                tooltip="Open the Storage category.",
+                            )
+                            yield Button(
+                                "Open Privacy & Security",
+                                id="settings-overview-open-privacy-security",
+                                classes="settings-overview-open-category",
+                                tooltip="Open the Privacy & Security category.",
+                            )
+                    elif row.key == "sync":
+                        with Horizontal(classes="settings-action-row"):
+                            yield Button(
+                                "Preview manual sync",
+                                id="settings-manual-sync-preview",
+                                tooltip=(
+                                    "Show pending Notes/Chat changes without "
+                                    "mutating the server."
+                                ),
+                            )
+                            yield Button(
+                                "Run manual sync",
+                                id="settings-manual-sync-run",
+                                tooltip=(
+                                    "Apply the previewed Notes/Chat changes to "
+                                    "the server."
+                                ),
+                            )
             with Collapsible(
-                title="Server, sync, workspace, and handoff",
+                title="Advanced / Diagnostics",
                 collapsed=self._overview_sync_details_collapsed,
                 id="settings-overview-sync-details",
             ):
+                for row in presentation.advanced_rows:
+                    yield self._detail_row(
+                        row.label,
+                        row.value,
+                        identifier=f"settings-overview-{row.key.replace('_', '-')}",
+                    )
                 yield Static("Manual sync", classes="destination-section")
                 yield Static(
                     "Preview pending Notes/Chat changes before anything is sent to a server.",
@@ -11056,8 +11535,26 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-provider-connect-title",
                 classes="destination-section",
             )
-            with Horizontal(classes="settings-input-row settings-select-row"):
+            with Vertical(id="settings-provider-picker-block"):
                 yield Static("Provider", classes="settings-input-label")
+                yield Input(
+                    id="settings-provider-search",
+                    placeholder="Search providers by name or ID",
+                )
+                yield OptionList(
+                    *self._provider_picker_options(self._provider_picker_groups()),
+                    id="settings-provider-picker",
+                    compact=True,
+                )
+                yield Static(
+                    "Choose a provider or enter a provider ID.",
+                    id="settings-provider-search-status",
+                    classes="settings-help-copy",
+                    markup=False,
+                )
+            with Horizontal(
+                classes="settings-input-row settings-provider-manual-hidden"
+            ):
                 yield Select(
                     self._provider_select_options(),
                     value=self._provider_select_value_for_provider(provider),
@@ -13862,6 +14359,9 @@ class SettingsScreen(BaseAppScreen):
                     provider_applied_configuration_revisions
                 ),
                 runtime_status_store=speech_tts_runtime_status_store(self.app_instance),
+                provider_test_evidence=process_provider_test_evidence_store(
+                    self.app_instance
+                ),
                 id="settings-speech-tts-panel",
             )
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:
@@ -15086,6 +15586,21 @@ class SettingsScreen(BaseAppScreen):
         provider_settings = self._provider_setting_values_mapping()
         model_value = str(model or provider_settings.get("model") or "").strip()
         self._sync_provider_manual_widget(provider_value)
+        try:
+            endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
+            self._syncing_provider_endpoint = True
+            try:
+                endpoint_value = self._provider_endpoint_value(provider_value)
+                if endpoint_input.value != endpoint_value:
+                    self._provider_endpoint_suppress_queue.append(endpoint_value)
+                    endpoint_input.value = endpoint_value
+                endpoint_input.placeholder = self._provider_endpoint_placeholder(
+                    provider_value
+                )
+            finally:
+                self._syncing_provider_endpoint = False
+        except QueryError:
+            pass
         self._sync_provider_credential_widget(provider_value)
         try:
             self._syncing_provider_model_value = True
@@ -15204,7 +15719,7 @@ class SettingsScreen(BaseAppScreen):
                 return
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._active_settings_field_id = None
-            self._provider_api_key_suppress_queue.clear()
+            self._clear_provider_suppression_queues()
         # Task 3 (541 v2 UX AC3): the remembered "last-expanded RAG group"
         # scope must not leak into a later LIBRARY_RAG visit -- e.g. leaving
         # with "Chunking" expanded and coming back to a freshly recomposed
@@ -15327,7 +15842,10 @@ class SettingsScreen(BaseAppScreen):
         screen-level `refresh(recompose=True)` still destroys the rail button
         the intent names.
         """
+        self._clear_provider_suppression_queues()
         await super().recompose()
+        if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
+            self._refresh_provider_picker()
         category_value = self._pending_category_focus_value
         if category_value is None:
             return
@@ -17480,13 +17998,18 @@ class SettingsScreen(BaseAppScreen):
         self._mark_storage_settings_staged()
 
     def _apply_provider_value_change(self, provider: str) -> None:
-        self._clear_navigation_provider_context()
         loaded_provider = str(
             self._provider_loaded_setting_values().get("provider") or ""
         )
         previous_provider = str(
             self._provider_setting_values_mapping().get("provider") or ""
         )
+        if provider and provider_config_key(provider) == provider_config_key(
+            previous_provider
+        ):
+            self._sync_provider_manual_widget(previous_provider)
+            return
+        self._clear_navigation_provider_context()
         self._snapshot_provider_api_mode_widget(previous_provider)
         provider_changed = bool(provider) and provider_config_key(
             provider
@@ -17548,6 +18071,44 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
+    @on(Input.Changed, "#settings-provider-search")
+    def handle_provider_search_changed(self, event: Input.Changed) -> None:
+        """Refresh only picker rows so provider connection drafts remain mounted."""
+
+        event.stop()
+        self._refresh_provider_picker(event.value)
+
+    @on(OptionList.OptionSelected, "#settings-provider-picker")
+    def handle_provider_picker_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        event.stop()
+        option = event.option
+        action = getattr(option, "action", None)
+        provider_id = getattr(option, "provider_id", None)
+        try:
+            selector = self.query_one("#settings-provider-value", Select)
+        except QueryError:
+            return
+        if action == "enter_provider_id":
+            current_provider = str(
+                self._provider_display_setting_values().get("provider") or ""
+            )
+            self._show_provider_manual_editor(current_provider)
+            return
+        if provider_id is None:
+            return
+        current_provider = str(
+            self._provider_setting_values_mapping().get("provider") or ""
+        )
+        if provider_config_key(provider_id) == provider_config_key(current_provider):
+            return
+        select_value = self._provider_select_value_for_provider(provider_id)
+        if select_value == PROVIDER_MANUAL_SELECT_VALUE:
+            self._apply_provider_value_change(provider_id)
+            return
+        selector.value = select_value
+
     @on(Select.Changed, "#settings-provider-value")
     def handle_provider_value_changed(self, event: Select.Changed) -> None:
         event.stop()
@@ -17569,12 +18130,27 @@ class SettingsScreen(BaseAppScreen):
         if provider_config_key(provider) == provider_config_key(current_provider):
             return
         self._apply_provider_value_change(provider)
+        if selected_value == PROVIDER_MANUAL_SELECT_VALUE:
+            self.query_one("#settings-provider-manual-value", Input).focus()
 
     @on(Input.Changed, "#settings-provider-manual-value")
     def handle_provider_manual_value_changed(self, event: Input.Changed) -> None:
         if self._syncing_provider_manual:
             return
-        self._apply_provider_value_change(event.value.strip())
+        provider = event.value.strip()
+        select_value = self._provider_select_value_for_provider(provider)
+        try:
+            status = self.query_one("#settings-provider-search-status", Static)
+        except QueryError:
+            status = None
+        if not provider or select_value == PROVIDER_MANUAL_SELECT_VALUE:
+            if status is not None:
+                status.update(
+                    "Unsupported provider ID. Choose a listed provider or enter a "
+                    "supported alias."
+                )
+            return
+        self._apply_provider_value_change(select_value)
 
     @on(Input.Changed, "#settings-model-value")
     def handle_model_value_changed(self, event: Input.Changed) -> None:
@@ -17598,6 +18174,10 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-model-context-window")
     def handle_model_context_window_changed(self, event: Input.Changed) -> None:
+        queue = self._provider_context_window_suppress_queue
+        if queue and event.value == queue[0]:
+            queue.pop(0)
+            return
         if self._syncing_provider_context_window:
             return
         try:
@@ -17663,6 +18243,16 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-provider-endpoint-value")
     def handle_provider_endpoint_changed(self, event: Input.Changed) -> None:
+        queue = self._provider_endpoint_suppress_queue
+        if queue and event.value == queue[0]:
+            queue.pop(0)
+            self._update_provider_dynamic_widgets()
+            return
+        if self._navigation_provider and event.value.strip() == self._provider_endpoint_value(
+            self._navigation_provider
+        ):
+            self._update_provider_dynamic_widgets()
+            return
         if self._syncing_provider_endpoint:
             self._update_provider_dynamic_widgets()
             return
@@ -17741,6 +18331,18 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-provider-credential-env-var")
     def handle_provider_credential_env_var_changed(self, event: Input.Changed) -> None:
+        queue = self._provider_credential_env_var_suppress_queue
+        if queue and event.value == queue[0]:
+            queue.pop(0)
+            self._update_provider_dynamic_widgets()
+            return
+        if (
+            self._navigation_provider
+            and event.value.strip()
+            == self._provider_credential_env_var(self._navigation_provider)
+        ):
+            self._update_provider_dynamic_widgets()
+            return
         if self._syncing_provider_credential_env_var:
             self._update_provider_dynamic_widgets()
             return
@@ -18224,7 +18826,10 @@ class SettingsScreen(BaseAppScreen):
             dirty_values = {
                 key: value
                 for key, value in values.items()
-                if key in chat_defaults_keys and loaded_values.get(key) != value
+                if key in chat_defaults_keys
+                and draft is not None
+                and key in draft.dirty_keys
+                and loaded_values.get(key) != value
             }
             dirty_keys = draft.dirty_keys if draft is not None else set()
             api_mode_draft_key = self._provider_api_mode_draft_key(provider)
@@ -18258,8 +18863,19 @@ class SettingsScreen(BaseAppScreen):
             current_provider_endpoint = self._provider_endpoint_value(provider)
             current_credential_env_var = self._provider_credential_env_var(provider)
             api_key_dirty = draft is not None and "api_key" in draft.dirty_keys
-            endpoint_dirty = endpoint != current_provider_endpoint
-            credential_dirty = credential_env_var != current_credential_env_var
+            endpoint_dirty = bool(
+                draft is not None
+                and "endpoint" in draft.dirty_keys
+                and endpoint != current_provider_endpoint
+            )
+            credential_dirty = bool(
+                draft is not None
+                and "credential_env_var" in draft.dirty_keys
+                and credential_env_var != current_credential_env_var
+            )
+            connection_dirty = bool(
+                dirty_values or endpoint_dirty or credential_dirty or api_key_dirty
+            )
             if endpoint_dirty and not provider_key:
                 self._provider_save_result = (
                     "Provider is required before saving an endpoint."
@@ -18351,60 +18967,19 @@ class SettingsScreen(BaseAppScreen):
                 )
                 self.app.notify("No Settings changes to save.", severity="information")
                 return
-            saved = True
-            if dirty_values:
-                saved = SettingsConfigAdapter().save_values(
-                    "chat_defaults", dirty_values
-                )
-            endpoint_key = self._provider_endpoint_setting_key(provider)
-            provider_settings_values = {}
-            if endpoint_dirty:
-                provider_settings_values[endpoint_key] = endpoint
-            if api_key_dirty:
-                provider_settings_values["api_key"] = api_key
-            if credential_dirty:
-                provider_settings_values["api_key_env_var"] = credential_env_var
-            if api_mode_dirty and normalized_api_mode is not None:
-                provider_settings_values["api_mode"] = normalized_api_mode
             alias_mode_sections = self._qwencloud_alias_mode_sections()
             qwencloud_mode_requires_canonical_save = bool(
                 api_mode_dirty
                 and normalized_api_mode is not None
                 and (provider_section_key != "qwencloud" or alias_mode_sections)
             )
-            if qwencloud_mode_requires_canonical_save:
-                provider_settings_values.pop("api_mode", None)
-            if provider_settings_values and provider_key:
-                provider_save_key = provider_section_key or provider_key
-                provider_section = f"api_settings.{provider_save_key}"
-                adapter = SettingsConfigAdapter()
-                if (
-                    provider_save_key == "qwencloud"
-                    and "api_mode" in provider_settings_values
-                    and len(provider_settings_values) > 1
-                ):
-                    provider_settings_saved = adapter.save_sections(
-                        {provider_section: provider_settings_values}
-                    )
-                else:
-                    provider_settings_saved = adapter.save_values(
-                        provider_section,
-                        provider_settings_values,
-                    )
-                saved = saved and provider_settings_saved
             next_model_defaults = None
             if model_profile_dirty and provider_key and model:
-                provider_save_key = provider_section_key or provider_key
                 next_model_defaults = self._updated_model_defaults_for_values(
                     provider,
                     model,
                     values,
                 )
-                profile_saved = SettingsConfigAdapter().save_values(
-                    f"api_settings.{provider_save_key}",
-                    {"model_defaults": next_model_defaults},
-                )
-                saved = saved and profile_saved
             next_model_capabilities = None
             delete_model_capabilities_entry = False
             if context_window_dirty and model:
@@ -18413,15 +18988,7 @@ class SettingsScreen(BaseAppScreen):
                         self._app_config_mapping(), model
                     )
                     if next_model_capabilities is None:
-                        capability_saved = SettingsConfigAdapter().delete_values(
-                            "model_capabilities.models", [model]
-                        )
                         delete_model_capabilities_entry = True
-                    else:
-                        capability_saved = SettingsConfigAdapter().save_values(
-                            "model_capabilities.models",
-                            {model: next_model_capabilities},
-                        )
                 else:
                     try:
                         next_model_capabilities = model_context_window_save_entry(
@@ -18438,84 +19005,140 @@ class SettingsScreen(BaseAppScreen):
                         )
                         self.app.notify(self._provider_save_result, severity="error")
                         return
-                    capability_saved = SettingsConfigAdapter().save_values(
-                        "model_capabilities.models",
-                        {model: next_model_capabilities},
+
+            tested_identity = (
+                self._provider_current_draft_identity() if connection_dirty else None
+            )
+            setup_mutation = None
+            section_values: dict[str, dict[str, object]] = {}
+            delete_keys: dict[str, list[str]] = {}
+            if connection_dirty:
+                credential_source = self._provider_current_credential_source(provider)
+                try:
+                    setup_mutation = build_provider_setup_mutation(
+                        ProviderSetupDraft(
+                            provider=provider,
+                            model=model,
+                            endpoint=endpoint,
+                            credential_source=credential_source,
+                            credential_revision=getattr(
+                                self, "_provider_credential_revision", 0
+                            ),
+                            draft_generation=getattr(
+                                self, "_provider_draft_generation", 0
+                            ),
+                            credential_value=(
+                                api_key if credential_source == "draft" else None
+                            ),
+                            credential_env_var=(
+                                credential_env_var
+                                if credential_source == "environment"
+                                else None
+                            ),
+                        ),
+                        self._app_config_mapping(),
                     )
-                saved = saved and capability_saved
-            if qwencloud_mode_requires_canonical_save and saved:
-                delete_keys = {
-                    f"api_settings.{section_key}": ("api_mode",)
-                    for section_key in alias_mode_sections
+                except ValueError:
+                    self._provider_save_result = (
+                        "Provider settings are invalid; review the endpoint and model."
+                    )
+                    self._set_static_text(
+                        "#settings-provider-save-result", self._provider_save_result
+                    )
+                    self.app.notify(self._provider_save_result, severity="error")
+                    return
+                section_values = {
+                    section: dict(section_data)
+                    for section, section_data in setup_mutation.section_values.items()
                 }
-                canonical_mode_saved = save_settings_to_cli_config(
-                    {
-                        "api_settings.qwencloud": {
-                            "api_mode": normalized_api_mode,
-                        }
-                    },
-                    delete_keys=delete_keys or None,
+                delete_keys = {
+                    section: list(keys)
+                    for section, keys in setup_mutation.delete_keys.items()
+                }
+                provider_section = next(
+                    section
+                    for section in section_values
+                    if section.startswith("api_settings.")
                 )
-                saved = saved and canonical_mode_saved
-            if saved:
-                defaults = self._chat_defaults()
-                defaults.update(dirty_values)
-                if (
-                    endpoint_dirty
-                    or credential_dirty
-                    or api_key_dirty
-                    or api_mode_dirty
-                    or next_model_defaults is not None
-                ) and provider_key:
-                    app_config = getattr(self.app_instance, "app_config", None)
-                    if not isinstance(app_config, dict):
-                        self.app_instance.app_config = {}
-                        app_config = self.app_instance.app_config
-                    api_settings = app_config.setdefault("api_settings", {})
-                    if not isinstance(api_settings, dict):
-                        api_settings = {}
-                        app_config["api_settings"] = api_settings
-                    provider_save_key = provider_section_key or provider_key
-                    provider_settings = api_settings.setdefault(provider_save_key, {})
-                    if not isinstance(provider_settings, dict):
-                        provider_settings = {}
-                        api_settings[provider_save_key] = provider_settings
-                    provider_settings.update(provider_settings_values)
-                    if (
-                        api_mode_dirty
-                        and normalized_api_mode is not None
-                        and qwencloud_mode_requires_canonical_save
-                    ):
-                        canonical_settings = api_settings.setdefault("qwencloud", {})
-                        if not isinstance(canonical_settings, dict):
-                            canonical_settings = {}
-                            api_settings["qwencloud"] = canonical_settings
-                        canonical_settings["api_mode"] = normalized_api_mode
-                        for alias_section in alias_mode_sections:
-                            alias_settings = api_settings.get(alias_section)
-                            if isinstance(alias_settings, dict):
-                                alias_settings.pop("api_mode", None)
-                    if next_model_defaults is not None:
-                        provider_settings["model_defaults"] = next_model_defaults
+            else:
+                provider_section = (
+                    f"api_settings.{provider_section_key or provider_key}"
+                )
+            if api_mode_dirty and normalized_api_mode is not None:
+                mode_section = (
+                    "api_settings.qwencloud"
+                    if qwencloud_mode_requires_canonical_save
+                    else provider_section
+                )
+                section_values.setdefault(mode_section, {})[
+                    "api_mode"
+                ] = normalized_api_mode
+                if qwencloud_mode_requires_canonical_save:
+                    for alias_section in alias_mode_sections:
+                        delete_keys.setdefault(
+                            f"api_settings.{alias_section}", []
+                        ).append("api_mode")
+            if next_model_defaults is not None:
+                section_values.setdefault(provider_section, {})[
+                    "model_defaults"
+                ] = next_model_defaults
+            if next_model_capabilities is not None:
+                section_values.setdefault("model_capabilities.models", {})[
+                    model
+                ] = next_model_capabilities
+            elif delete_model_capabilities_entry:
+                delete_keys.setdefault("model_capabilities.models", []).append(
+                    model
+                )
+
+            normalized_delete_keys = {
+                section: tuple(dict.fromkeys(keys))
+                for section, keys in delete_keys.items()
+                if keys
+            }
+            evidence_store = self._provider_evidence_store()
+            save_lease = (
+                evidence_store.begin_save(tested_identity)
+                if setup_mutation is not None and tested_identity is not None
+                else None
+            )
+            try:
+                mutation_result = persist_provider_settings_atomic(
+                    setup_mutation,
+                    provider=provider,
+                    model=model,
+                    section_values=section_values,
+                    delete_keys=normalized_delete_keys,
+                )
+            except ValueError:
+                mutation_result = ConfigMutationResult(
+                    False,
+                    False,
+                    "before_replace",
+                )
+            evidence_preserved = setup_mutation is None
+            if (
+                setup_mutation is not None
+                and save_lease is not None
+                and tested_identity is not None
+            ):
+                evidence_preserved = evidence_store.rebase_after_save(
+                    tested_identity,
+                    setup_mutation.semantic_identity,
+                    mutation_result,
+                    lease=save_lease,
+                )
+
+            if mutation_result.fully_applied:
+                _apply_sparse_config_mutation_in_memory(
+                    self._app_config_update_target(),
+                    section_values,
+                    normalized_delete_keys,
+                )
                 if (
                     next_model_capabilities is not None
                     or delete_model_capabilities_entry
                 ):
-                    app_config = self._app_config_update_target()
-                    capabilities_section = app_config.setdefault(
-                        "model_capabilities", {}
-                    )
-                    if not isinstance(capabilities_section, dict):
-                        capabilities_section = {}
-                        app_config["model_capabilities"] = capabilities_section
-                    model_entries = capabilities_section.setdefault("models", {})
-                    if not isinstance(model_entries, dict):
-                        model_entries = {}
-                        capabilities_section["models"] = model_entries
-                    if delete_model_capabilities_entry:
-                        model_entries.pop(model, None)
-                    elif next_model_capabilities is not None:
-                        model_entries[model] = dict(next_model_capabilities)
                     reload_capabilities()
                 self._settings_drafts.pop(category, None)
                 self._restore_provider_api_mode_draft_snapshot(
@@ -18525,9 +19148,8 @@ class SettingsScreen(BaseAppScreen):
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
-                # TASK-366: the last Test verdict described the pre-save draft;
-                # don't let a stale ready/blocked line persist after saving.
-                self._mark_provider_test_result_stale()
+                if not evidence_preserved:
+                    self._mark_provider_test_result_stale()
                 self._sync_provider_credential_widget(provider)
                 self._sync_provider_context_window_widget(provider, model)
                 self._update_provider_dynamic_widgets()
@@ -18536,14 +19158,22 @@ class SettingsScreen(BaseAppScreen):
                     "Provider and model settings saved.", severity="information"
                 )
             else:
-                self._provider_save_result = (
-                    "Failed to save provider and model settings."
-                )
+                if mutation_result.file_replaced:
+                    self._provider_save_result = (
+                        "Provider settings not fully applied: the file was written, "
+                        "but the app could not reload it. Draft retained; restart "
+                        "before retrying."
+                    )
+                else:
+                    self._provider_save_result = (
+                        "Provider settings not fully applied: the file was not "
+                        "written. Draft retained; check config access and retry."
+                    )
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
                 self.app.notify(
-                    "Failed to save provider and model settings.", severity="error"
+                    self._provider_save_result, severity="error"
                 )
             return
 
@@ -19037,7 +19667,21 @@ class SettingsScreen(BaseAppScreen):
                 # short live probe in a worker and fold it into the toast.
                 self._provider_test_result = f"{detail} | endpoint probe: checking"
                 self._update_provider_test_result()
-                self._provider_endpoint_probe_worker(probe_base_url, detail, summary)
+                identity = self._provider_current_draft_identity()
+                token = None
+                if identity is not None:
+                    try:
+                        token = self._provider_evidence_store().begin(identity)
+                    except ValueError:
+                        identity = None
+                self._provider_endpoint_probe_worker(
+                    probe_base_url,
+                    provider_config_key(self._provider_widget_value()),
+                    detail,
+                    summary,
+                    identity,
+                    token,
+                )
                 return
             self._provider_test_result = detail
             self._update_provider_test_result()

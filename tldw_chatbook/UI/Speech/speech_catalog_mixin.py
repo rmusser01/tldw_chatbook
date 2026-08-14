@@ -35,7 +35,7 @@ from textual import work
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Select, Static, Switch, TextArea
 
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import get_cli_setting, get_runtime_config_snapshot
 from tldw_chatbook.TTS import STTSPlaygroundResultProjection, get_tts_service
 from tldw_chatbook.TTS.adapter_types import (
     TTSOperationError,
@@ -51,6 +51,19 @@ from tldw_chatbook.TTS.legacy_catalogs import (
 )
 from tldw_chatbook.TTS.voice_blend_paths import kokoro_ui_blend_file
 from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
+from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+    SettingsEndpointProbePurpose,
+    probe_settings_endpoint,
+)
+from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    build_provider_test_fingerprint,
+    load_global_speech_tts_state,
+    process_provider_test_evidence_store,
+)
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    ProviderTestFingerprint,
+    SpeechTTSConnectionState,
+)
 from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
     CatalogRequestToken,
@@ -88,6 +101,90 @@ class SpeechCatalogMixin:
             An awaitable yielding the TTS service.
         """
         return get_tts_service()
+
+    @staticmethod
+    def _catalog_test_fingerprint(
+        service: object,
+        provider_id: str,
+        configuration_revision: int,
+    ) -> tuple[ProviderTestFingerprint, str] | None:
+        """Capture one saved catalog identity before provider work starts."""
+
+        saved_revision = getattr(service, "saved_configuration_revision", None)
+        if not callable(saved_revision):
+            return None
+        try:
+            revision = saved_revision(provider_id)
+            if revision != configuration_revision:
+                return None
+            values = get_runtime_config_snapshot().values
+            state = load_global_speech_tts_state(
+                values if isinstance(values, Mapping) else {}
+            )
+            fingerprint = build_provider_test_fingerprint(
+                state,
+                provider_id=provider_id,
+                saved_revision=revision,
+            )
+            base_url = state.providers[provider_id].get("base_url", "")
+            if type(base_url) is not str:
+                return None
+            return fingerprint, base_url
+        except Exception:  # noqa: BLE001 - catalog evidence is best effort
+            return None
+
+    async def _openai_catalog_test_state(
+        self,
+        captured: tuple[ProviderTestFingerprint, str] | None,
+    ) -> SpeechTTSConnectionState | None:
+        """Run the explicit OpenAI-compatible TTS catalog operation."""
+
+        if captured is None:
+            return None
+        _fingerprint, base_url = captured
+        outcome = await probe_settings_endpoint(
+            base_url,
+            provider="openai",
+            purpose=SettingsEndpointProbePurpose.TTS_CATALOG,
+        )
+        return SpeechTTSConnectionState(outcome.state)
+
+    def _record_catalog_test_state(
+        self,
+        service: object,
+        captured: tuple[ProviderTestFingerprint, str] | None,
+        state: SpeechTTSConnectionState | None,
+    ) -> None:
+        """Publish catalog evidence only while its saved identity is current."""
+
+        if captured is None or state is None:
+            return
+        fingerprint, base_url = captured
+        saved_revision = getattr(service, "saved_configuration_revision", None)
+        configuration_revision = getattr(service, "configuration_revision", None)
+        try:
+            if (
+                not callable(saved_revision)
+                or not callable(configuration_revision)
+                or saved_revision(fingerprint.provider_id)
+                != fingerprint.saved_revision
+                or configuration_revision(fingerprint.provider_id)
+                != fingerprint.saved_revision
+            ):
+                return
+            current = self._catalog_test_fingerprint(
+                service,
+                fingerprint.provider_id,
+                fingerprint.saved_revision,
+            )
+            if current != (fingerprint, base_url):
+                return
+            process_provider_test_evidence_store(self.app).record_catalog(
+                fingerprint,
+                state,
+            )
+        except Exception:  # noqa: BLE001 - evidence cannot fail catalog loading
+            return
 
     def _cli_setting(self, *args: Any, **kwargs: Any) -> Any:
         """Read a config setting.
@@ -281,6 +378,26 @@ class SpeechCatalogMixin:
             if preset is not None and preset.provider_id == provider_id:
                 self._profile_configuration_revision = configuration_revision
             self._set_provider_status("Loading selected provider models…")
+            catalog_test = self._catalog_test_fingerprint(
+                service,
+                provider_id,
+                configuration_revision,
+            )
+            catalog_test_state = (
+                await self._openai_catalog_test_state(catalog_test)
+                if provider_id == "openai"
+                else None
+            )
+            if catalog_test_state is not None:
+                if not self._catalog_token_is_current(token):
+                    if self._catalog_request_is_latest(token):
+                        self._mark_stale_catalog_result(token)
+                    return
+                self._record_catalog_test_state(
+                    service,
+                    catalog_test,
+                    catalog_test_state,
+                )
             catalog = await service.get_catalog(provider_id, refresh=refresh)
             if not self._catalog_token_is_current(token):
                 if self._catalog_request_is_latest(token):
@@ -292,7 +409,6 @@ class SpeechCatalogMixin:
                     "The selected provider returned an incompatible catalog",
                 )
                 return
-
             self._profile_preview_loading = False
             previous_catalog = self._catalogs.get(provider_id)
             if (

@@ -6,29 +6,30 @@ import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import islice
+from threading import RLock
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 from uuid import UUID, uuid4
 
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
+    TTSCloneGenerationEvidence,
     TTSConfigurationRevisionError,
     TTSModelInfo,
     TTSNativeCapabilitySnapshot,
     TTSProviderCatalog,
     TTSVoiceDiscoveryResult,
-    TTSCloneGenerationEvidence,
 )
 from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
     TTSRequestedSelectionSnapshot,
 )
-from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
 from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
     ProfileServiceError,
     ProfileValidationError,
 )
+from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
 from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
     TTSCloneReference,
@@ -46,7 +47,10 @@ from tldw_chatbook.TTS.profile_types import (
     TTSProfileCollisionSnapshot,
     TTSProfileDraft,
     TTSProfilePage,
+    TTSProfileVerificationEvidence,
+    profile_options_fingerprint,
 )
+from tldw_chatbook.TTS.sample_audio_validation import validate_playable_audio_file
 from tldw_chatbook.TTS.TTS_Generation import (
     AudioCppGuidedDependencySnapshot,
     validate_audio_cpp_guided_dependency_snapshot,
@@ -78,6 +82,7 @@ PortableProfileImportChoice: TypeAlias = Literal["create", "reuse", "copy"]
 
 _PROFILE_PROVIDER_ID = "audio_cpp"
 _PROFILE_PAGE_LIMIT = 50
+_PROFILE_SAMPLE_EVIDENCE_LIMIT = 256
 _CHARACTER_REF_TYPE: type[CharacterRef] = CharacterRef
 _CHARACTER_TTS_ASSIGNMENT_TYPE: type[CharacterTTSAssignment] = CharacterTTSAssignment
 _ASSIGNED_TTS_PROFILE_SNAPSHOT_TYPE: type[AssignedTTSProfileSnapshot] = (
@@ -870,6 +875,7 @@ def _availability(
     state: ProfileAvailabilityState,
     provider_id: str,
     dependency: TTSProfileDependencyProjection | None = None,
+    provider_configuration_revision: int | None = None,
 ) -> TTSProfileAvailability:
     return TTSProfileAvailability(
         profile_id=profile_id,
@@ -878,6 +884,7 @@ def _availability(
         dependency=(
             TTSProfileDependencyProjection() if dependency is None else dependency
         ),
+        provider_configuration_revision=provider_configuration_revision,
     )
 
 
@@ -1050,6 +1057,7 @@ class TTSProfileAvailability:
     dependency: TTSProfileDependencyProjection = field(
         default_factory=TTSProfileDependencyProjection
     )
+    provider_configuration_revision: int | None = None
 
     def __post_init__(self) -> None:
         if type(self.profile_id) is not UUID:
@@ -1070,6 +1078,19 @@ class TTSProfileAvailability:
         object.__setattr__(self, "state", state)
         object.__setattr__(self, "recovery_action", action)
         object.__setattr__(self, "dependency", dependency)
+        provider_revision = self.provider_configuration_revision
+        if provider_revision is not None:
+            provider_revision = _validate_nonnegative_integer(
+                provider_revision,
+                "configuration_revision",
+            )
+        object.__setattr__(self, "state", state)
+        object.__setattr__(self, "recovery_action", action)
+        object.__setattr__(
+            self,
+            "provider_configuration_revision",
+            provider_revision,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1166,6 +1187,14 @@ def _dependency_projection(
         advisory_display=advisory.advisory_display,
         advisory_action=advisory.advisory_action,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _ProfileEvidenceLifecycle:
+    """Latest profile revision or tombstone observed by this service."""
+
+    revision: int
+    deleted: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -1332,6 +1361,12 @@ class TTSProfileService:
             raise ProfileServiceError("operation_failed")
         self._repository = repository
         self._tts_service = tts_service
+        self._sample_evidence: dict[UUID, TTSProfileVerificationEvidence] = {}
+        self._sample_evidence_lock = RLock()
+        self._sample_evidence_lifecycle: dict[
+            UUID, _ProfileEvidenceLifecycle
+        ] = {}
+        self._sample_evidence_epoch = 0
         if _uuid_factory is not None:
             self._uuid_factory = _uuid_factory
 
@@ -1572,24 +1607,50 @@ class TTSProfileService:
         self._require_repository_generation(expected_generation)
         page = canonical_page
 
+        provider_revisions = {
+            provider_id: self._current_configuration_revision(provider_id)
+            for provider_id in dict.fromkeys(
+                profile.provider_id for profile in page.profiles
+            )
+            if provider_id != _PROFILE_PROVIDER_ID
+        }
+        audio_cpp_profiles = tuple(
+            profile
+            for profile in page.profiles
+            if profile.provider_id == _PROFILE_PROVIDER_ID
+        )
+        compatibility_revision: int | None = None
+        if not any(
+            _profile_is_structurally_supported(profile)
+            for profile in audio_cpp_profiles
+        ):
+            compatibility_revision = self._current_configuration_revision(
+                _PROFILE_PROVIDER_ID
+            )
+            if audio_cpp_profiles:
+                provider_revisions[_PROFILE_PROVIDER_ID] = compatibility_revision
+
         supported_profiles = tuple(
             profile
             for profile in page.profiles
             if _profile_is_structurally_supported(profile)
         )
         if not supported_profiles:
-            revision = self._current_configuration_revision()
             self._require_repository_generation(page.repository_generation)
+            self._require_provider_revisions_unchanged(provider_revisions)
             return TTSProfileAvailabilitySnapshot(
                 repository_generation=page.repository_generation,
-                configuration_revision=revision,
+                configuration_revision=compatibility_revision,
                 catalog_revision=None,
                 profiles=tuple(
                     _availability(
                         profile.profile_id,
                         "unavailable",
                         profile.provider_id,
-                        _provenance_projection(profile),
+                        dependency=_provenance_projection(profile),
+                        provider_configuration_revision=provider_revisions[
+                            profile.provider_id
+                        ],
                     )
                     for profile in page.profiles
                 ),
@@ -1601,24 +1662,32 @@ class TTSProfileService:
             if profile.provider_id == _PROFILE_PROVIDER_ID
         )
         if not audio_cpp_supported:
-            revision = self._current_configuration_revision()
             self._require_repository_generation(page.repository_generation)
+            self._require_provider_revisions_unchanged(provider_revisions)
             return TTSProfileAvailabilitySnapshot(
                 repository_generation=page.repository_generation,
-                configuration_revision=revision,
+                configuration_revision=compatibility_revision,
                 catalog_revision=None,
                 profiles=tuple(
-                    _availability(
-                        profile.profile_id,
-                        (
-                            "unverified"
-                            if _profile_is_structurally_supported(profile)
-                            else "unavailable"
+                    TTSProfileAvailability(
+                        profile_id=item.profile_id,
+                        state=item.state,
+                        recovery_action=item.recovery_action,
+                        dependency=_provenance_projection(profile),
+                        provider_configuration_revision=(
+                            item.provider_configuration_revision
                         ),
-                        profile.provider_id,
-                        _provenance_projection(profile),
                     )
-                    for profile in page.profiles
+                    for profile, item in (
+                        (
+                            profile,
+                            self._classify_profile_with_evidence(
+                                profile,
+                                provider_revisions[profile.provider_id],
+                            ),
+                        )
+                        for profile in page.profiles
+                    )
                 ),
             )
 
@@ -1648,9 +1717,28 @@ class TTSProfileService:
             _PROFILE_PROVIDER_ID,
             snapshot.configuration_revision,
         )
+        compatibility_revision = snapshot.configuration_revision
+        provider_revisions[_PROFILE_PROVIDER_ID] = snapshot.configuration_revision
 
         projected: list[TTSProfileAvailability] = []
         for profile in page.profiles:
+            if profile.provider_id != _PROFILE_PROVIDER_ID:
+                evidence_item = self._classify_profile_with_evidence(
+                    profile,
+                    provider_revisions[profile.provider_id],
+                )
+                projected.append(
+                    TTSProfileAvailability(
+                        profile_id=evidence_item.profile_id,
+                        state=evidence_item.state,
+                        recovery_action=evidence_item.recovery_action,
+                        dependency=_provenance_projection(profile),
+                        provider_configuration_revision=(
+                            evidence_item.provider_configuration_revision
+                        ),
+                    )
+                )
+                continue
             base = self._classify_profile(profile, snapshot)
             advisory = _provenance_projection(profile)
             requirement = (
@@ -1664,7 +1752,10 @@ class TTSProfileService:
                         profile.profile_id,
                         base.state,
                         profile.provider_id,
-                        advisory,
+                        dependency=advisory,
+                        provider_configuration_revision=(
+                            snapshot.configuration_revision
+                        ),
                     )
                 )
                 continue
@@ -1701,16 +1792,17 @@ class TTSProfileService:
                         else "unavailable"
                     ),
                     profile.provider_id,
-                    dependency_projection,
+                    dependency=dependency_projection,
+                    provider_configuration_revision=snapshot.configuration_revision,
                 )
             )
         availability = tuple(projected)
         self._require_repository_generation(page.repository_generation)
-        if self._current_configuration_revision() != snapshot.configuration_revision:
-            raise ProfileServiceError("stale_configuration")
+        self._require_provider_revisions_unchanged(provider_revisions)
+        assert compatibility_revision is not None
         return TTSProfileAvailabilitySnapshot(
             repository_generation=page.repository_generation,
-            configuration_revision=snapshot.configuration_revision,
+            configuration_revision=compatibility_revision,
             catalog_revision=(
                 None if snapshot.catalog is None else snapshot.catalog.revision
             ),
@@ -1735,7 +1827,7 @@ class TTSProfileService:
 
         repository_generation = self._current_repository_generation()
         if draft.provider_id != _PROFILE_PROVIDER_ID:
-            revision = self._current_configuration_revision()
+            revision = self._current_configuration_revision(_PROFILE_PROVIDER_ID)
             self._require_repository_generation(repository_generation)
             return PortableProfileAvailabilityObservation(
                 repository_generation=repository_generation,
@@ -1777,7 +1869,10 @@ class TTSProfileService:
             )
         )
         self._require_repository_generation(repository_generation)
-        if self._current_configuration_revision() != snapshot.configuration_revision:
+        if (
+            self._current_configuration_revision(_PROFILE_PROVIDER_ID)
+            != snapshot.configuration_revision
+        ):
             raise ProfileServiceError("stale_configuration")
         return PortableProfileAvailabilityObservation(
             repository_generation=repository_generation,
@@ -2014,10 +2109,104 @@ class TTSProfileService:
             expected_revision=1,
         )
         self._require_repository_generation(repository_generation)
-        return LoadedTTSProfile(
+        loaded = LoadedTTSProfile(
             repository_generation=repository_generation,
             profile=profile,
         )
+        self._mark_profile_evidence_current(profile)
+        self.record_sample_evidence(loaded, artifact)
+        return loaded
+
+    def record_sample_evidence(
+        self,
+        loaded: LoadedTTSProfile,
+        artifact: STTSGeneratedAudio,
+    ) -> None:
+        """Remember exact successful sample provenance for this process only."""
+
+        if type(artifact) is not STTSGeneratedAudio:
+            return
+        try:
+            profile = self._validate_loaded(loaded)
+            with self._sample_evidence_lock:
+                lifecycle = self._sample_evidence_lifecycle.get(profile.profile_id)
+                if lifecycle is not None and (
+                    lifecycle.deleted or lifecycle.revision != profile.revision
+                ):
+                    return
+                admission_epoch = self._sample_evidence_epoch
+            selection = artifact.requested_selection
+            if type(selection) is not TTSRequestedSelectionSnapshot:
+                return
+            if not all(
+                _matches_exact_canonical_value(source, expected)
+                for source, expected in (
+                    (selection.provider_id, profile.provider_id),
+                    (selection.model_id, profile.model_id),
+                    (selection.voice_id, profile.voice_id),
+                    (selection.response_format, profile.response_format),
+                    (selection.speed, profile.speed),
+                    (selection.options, profile.options),
+                    (artifact.provider_id, profile.provider_id),
+                    (artifact.model_id, profile.model_id),
+                    (artifact.voice_id, profile.voice_id),
+                )
+            ):
+                return
+            audio_format = artifact.audio_format
+            if (
+                type(audio_format) is not str
+                or audio_format.removeprefix(".") != profile.response_format
+            ):
+                return
+            if (
+                validate_playable_audio_file(
+                    artifact.path,
+                    profile.response_format,
+                    artifact.content_type,
+                    artifact.metadata,
+                )
+                is None
+            ):
+                return
+            provider_revision = self._current_configuration_revision(
+                profile.provider_id
+            )
+            if provider_revision != selection.configuration_revision:
+                return
+            evidence = TTSProfileVerificationEvidence(
+                profile_id=profile.profile_id,
+                profile_revision=profile.revision,
+                provider_id=profile.provider_id,
+                model_id=profile.model_id,
+                voice_id=profile.voice_id,
+                response_format=profile.response_format,
+                speed=profile.speed,
+                options_fingerprint=profile_options_fingerprint(profile.options),
+                provider_configuration_revision=provider_revision,
+            )
+            if (
+                self._current_configuration_revision(profile.provider_id)
+                != provider_revision
+            ):
+                return
+        except Exception:  # noqa: BLE001 - malformed artifacts are ineligible
+            return
+
+        with self._sample_evidence_lock:
+            lifecycle = self._sample_evidence_lifecycle.get(evidence.profile_id)
+            if (
+                self._sample_evidence_epoch != admission_epoch
+                or lifecycle is not None
+                and (lifecycle.deleted or lifecycle.revision != profile.revision)
+            ):
+                return
+            # FIFO is intentional: re-recording an existing UUID does not
+            # extend its residency; only first admission establishes order.
+            self._sample_evidence[evidence.profile_id] = evidence
+            while len(self._sample_evidence) > _PROFILE_SAMPLE_EVIDENCE_LIMIT:
+                oldest_profile_id = next(iter(self._sample_evidence))
+                self._sample_evidence.pop(oldest_profile_id, None)
 
     async def create_clone_from_artifact(
         self,
@@ -2176,6 +2365,7 @@ class TTSProfileService:
             required_profile_id=loaded_profile.profile_id,
         )
         self._require_repository_generation(loaded.repository_generation)
+        self._mark_profile_evidence_current(profile)
         return LoadedTTSProfile(
             repository_generation=loaded.repository_generation,
             profile=profile,
@@ -2423,6 +2613,8 @@ class TTSProfileService:
         )
         if value is not None:
             raise ProfileServiceError("operation_failed")
+        self._require_repository_generation(loaded.repository_generation)
+        self._mark_profile_evidence_deleted(profile)
 
     async def _read_portable_collisions(
         self,
@@ -2797,16 +2989,26 @@ class TTSProfileService:
             raise ProfileServiceError("operation_failed")
         return assignment
 
-    def _current_configuration_revision(self) -> int:
+    def _current_configuration_revision(self, provider_id: str) -> int:
+        """Return one provider's active runtime revision, not publication state."""
+
         failed = False
         revision = None
         try:
-            revision = self._tts_service.configuration_revision(_PROFILE_PROVIDER_ID)
+            revision = self._tts_service.configuration_revision(provider_id)
         except Exception:  # noqa: BLE001 - configuration detail is not public
             failed = True
         if failed or type(revision) is not int or revision < 0:
             raise ProfileServiceError("operation_failed")
         return revision
+
+    def _require_provider_revisions_unchanged(
+        self,
+        expected: Mapping[str, int],
+    ) -> None:
+        for provider_id, revision in expected.items():
+            if self._current_configuration_revision(provider_id) != revision:
+                raise ProfileServiceError("stale_configuration")
 
     async def _require_configuration_revision(
         self,
@@ -2907,6 +3109,60 @@ class TTSProfileService:
                 (draft.speed, profile.speed),
                 (draft.options, profile.options),
             )
+        )
+
+    def _mark_profile_evidence_current(self, profile: TTSGenerationProfile) -> None:
+        with self._sample_evidence_lock:
+            self._sample_evidence_epoch += 1
+            self._sample_evidence_lifecycle[profile.profile_id] = (
+                _ProfileEvidenceLifecycle(profile.revision, False)
+            )
+            self._sample_evidence.pop(profile.profile_id, None)
+
+    def _mark_profile_evidence_deleted(self, profile: TTSGenerationProfile) -> None:
+        with self._sample_evidence_lock:
+            self._sample_evidence_epoch += 1
+            self._sample_evidence_lifecycle[profile.profile_id] = (
+                _ProfileEvidenceLifecycle(profile.revision, True)
+            )
+            self._sample_evidence.pop(profile.profile_id, None)
+
+    def _classify_profile_with_evidence(
+        self,
+        profile: TTSGenerationProfile,
+        provider_configuration_revision: int,
+    ) -> TTSProfileAvailability:
+        if not _profile_is_structurally_supported(profile):
+            state: ProfileAvailabilityState = "unavailable"
+        else:
+            expected = TTSProfileVerificationEvidence(
+                profile_id=profile.profile_id,
+                profile_revision=profile.revision,
+                provider_id=profile.provider_id,
+                model_id=profile.model_id,
+                voice_id=profile.voice_id,
+                response_format=profile.response_format,
+                speed=profile.speed,
+                options_fingerprint=profile_options_fingerprint(profile.options),
+                provider_configuration_revision=provider_configuration_revision,
+            )
+            with self._sample_evidence_lock:
+                lifecycle = self._sample_evidence_lifecycle.get(profile.profile_id)
+                evidence = (
+                    None
+                    if lifecycle is not None
+                    and (lifecycle.deleted or lifecycle.revision != profile.revision)
+                    else self._sample_evidence.get(profile.profile_id)
+                )
+                if evidence is not None and evidence != expected:
+                    self._sample_evidence.pop(profile.profile_id, None)
+                    evidence = None
+            state = "available" if evidence == expected else "unverified"
+        return _availability(
+            profile.profile_id,
+            state,
+            profile.provider_id,
+            provider_configuration_revision=provider_configuration_revision,
         )
 
     @staticmethod

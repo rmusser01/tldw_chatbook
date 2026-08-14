@@ -3943,8 +3943,92 @@ def test_chat_api_kwargs_forwards_configured_anthropic_base_url() -> None:
     assert kwargs["api_base_url"] == "https://proxy.example.test/v1"
 
 
-def test_chat_api_kwargs_omits_api_base_url_for_non_anthropic() -> None:
-    """Confirm the api_base_url forwarding fix is scoped to Anthropic only."""
+@pytest.mark.parametrize("provider", ["mistral", "mistralai"])
+def test_all_primary_mistral_kwargs_paths_forward_resolved_base(provider) -> None:
+    resolution = ConsoleProviderResolution(
+        provider=provider,
+        base_url=f"https://{provider}.example.test/v1",
+        model="mistral-model",
+        ready=True,
+        execution_key=provider,
+        api_key="mistral-test-key",
+        streaming=False,
+    )
+    messages = [{"role": "user", "content": "hi"}]
+    gateway = ConsoleProviderGateway()
+    prepared = gateway.prepare_chat_request(resolution, messages)
+
+    assert gateway._chat_api_kwargs(resolution, messages)["api_base_url"] == (
+        resolution.base_url
+    )
+    assert (
+        gateway._chat_api_kwargs_from_prepared(
+            resolution,
+            prepared,
+        )["api_base_url"]
+        == resolution.base_url
+    )
+
+
+@pytest.mark.parametrize(
+    ("provider", "execution_key"),
+    [
+        ("Custom OpenAI API", "custom-openai-api"),
+        ("custom_openai_api_2", "custom-openai-api-2"),
+    ],
+)
+def test_all_primary_custom_kwargs_paths_forward_resolved_chat_url(
+    provider: str,
+    execution_key: str,
+) -> None:
+    chat_url = f"https://{execution_key}.example.test/proxy/v1/chat/completions"
+    resolution = ConsoleProviderResolution(
+        provider=provider,
+        base_url=chat_url,
+        model="custom-model",
+        ready=True,
+        execution_key=execution_key,
+        api_key="custom-test-credential",
+        streaming=False,
+    )
+    messages = [{"role": "user", "content": "hi"}]
+    gateway = ConsoleProviderGateway()
+    prepared = gateway.prepare_chat_request(resolution, messages)
+
+    assert gateway._chat_api_kwargs(resolution, messages)["api_base_url"] == chat_url
+    assert (
+        gateway._chat_api_kwargs_from_prepared(resolution, prepared)["api_base_url"]
+        == chat_url
+    )
+
+
+@pytest.mark.parametrize("execution_key", ["custom-openai-api", "custom-openai-api-2"])
+def test_all_primary_custom_kwargs_paths_preserve_explicit_keyless_decision(
+    execution_key: str,
+) -> None:
+    resolution = ConsoleProviderResolution(
+        provider=execution_key,
+        base_url=f"https://{execution_key}.example.test/proxy/v1/chat/completions",
+        model="custom-model",
+        ready=True,
+        execution_key=execution_key,
+        api_key=None,
+        streaming=False,
+    )
+    messages = [{"role": "user", "content": "hi"}]
+    gateway = ConsoleProviderGateway()
+    prepared = gateway.prepare_chat_request(resolution, messages)
+
+    for kwargs in (
+        gateway._chat_api_kwargs(resolution, messages),
+        gateway._chat_api_kwargs_from_prepared(resolution, prepared),
+    ):
+        assert "api_key" not in kwargs
+        assert kwargs["api_key_resolved"] is True
+
+
+def test_chat_api_kwargs_omits_api_base_url_for_unpinned_provider() -> None:
+    """Providers without an established pin keep their existing kwargs."""
     resolution = ConsoleProviderResolution(
         provider="openai",
         base_url="https://proxy.example.test/v1",
@@ -4144,6 +4228,573 @@ class _FakeAnthropicPostResponse:
 
     def json(self) -> dict:
         return _fake_anthropic_message_response()
+
+
+class _CapturedMistralSession:
+    def __init__(self, calls: list[tuple[str, str]]) -> None:
+        self._calls = calls
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc_info):
+        return False
+
+    def mount(self, *_args, **_kwargs) -> None:
+        return None
+
+    def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+        self._calls.append((url, (headers or {}).get("Authorization", "")))
+        return _FakeMistralPostResponse()
+
+
+class _FakeMistralPostResponse:
+    status_code = 200
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {},
+        }
+
+
+class _CapturedCustomSession:
+    def __init__(self, calls: list[tuple[str, str]]) -> None:
+        self._calls = calls
+
+    def mount(self, *_args, **_kwargs) -> None:
+        return None
+
+    def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+        self._calls.append((url, (headers or {}).get("Authorization", "")))
+        return _FakeMistralPostResponse()
+
+
+@pytest.mark.asyncio
+async def test_console_send_keeps_each_mistral_credential_on_its_own_endpoint(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+    class RuntimeConfigSnapshotStub:
+        def __init__(self, values) -> None:
+            self.values = values
+
+    config = {
+        "api_settings": {
+            "mistral": {
+                "api_key": "legacy-mistral-test-key",
+                "api_base_url": "https://legacy-mistral.example.test/v1",
+                "model": "legacy-model",
+            },
+            "mistralai": {
+                "api_key": "catalog-mistral-test-key",
+                "api_base_url": "https://catalog-mistral.example.test/v1",
+                "model": "catalog-model",
+            },
+        }
+    }
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        LLM_API_Calls.requests,
+        "Session",
+        lambda: _CapturedMistralSession(calls),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshotStub(config),
+    )
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: config,
+        environ={},
+    )
+
+    for provider in ("mistral", "mistralai"):
+        resolution = await gateway.resolve_for_send(
+            ConsoleProviderSelection(provider=provider, streaming=False)
+        )
+        assert resolution.ready is True
+        assert [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": "hello"}],
+            )
+        ] == ["ok"]
+
+    assert calls == [
+        (
+            "https://legacy-mistral.example.test/v1/chat/completions",
+            "Bearer legacy-mistral-test-key",
+        ),
+        (
+            "https://catalog-mistral.example.test/v1/chat/completions",
+            "Bearer catalog-mistral-test-key",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("builder", ["primary", "prepared"])
+@pytest.mark.parametrize("legacy_variant", ["stale_credential", "keyless", "absent"])
+@pytest.mark.parametrize(
+    ("provider", "owner", "configured_endpoint", "expected_chat_url"),
+    [
+        (
+            "Custom OpenAI API",
+            "custom",
+            "https://owner-custom.example.test/proxy",
+            "https://owner-custom.example.test/proxy/v1/chat/completions",
+        ),
+        (
+            "custom_openai_api_2",
+            "custom_2",
+            "https://owner-custom-2.example.test/proxy/v1/chat/completions",
+            "https://owner-custom-2.example.test/proxy/v1/chat/completions",
+        ),
+    ],
+)
+async def test_console_send_keeps_custom_endpoint_and_credential_paired(
+    monkeypatch,
+    builder: str,
+    legacy_variant: str,
+    provider: str,
+    owner: str,
+    configured_endpoint: str,
+    expected_chat_url: str,
+) -> None:
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local
+
+    class RuntimeConfigSnapshotStub:
+        def __init__(self, values) -> None:
+            self.values = values
+
+    owner_credential = f"{owner}-owner-credential"
+    config = {
+        "api_settings": {
+            owner: {
+                "api_key": owner_credential,
+                "api_url": configured_endpoint,
+                "model": f"{owner}-model",
+            }
+        }
+    }
+    legacy_endpoint = "https://legacy-fallback.example.test/v1/chat/completions"
+    legacy_values = (
+        {
+            "api_settings": {
+                "custom": {
+                    "api_url": legacy_endpoint,
+                    "model": "legacy-model",
+                },
+            },
+            "custom_openai_api_2": {
+                "api_ip": legacy_endpoint,
+                "model": "legacy-model",
+            },
+        }
+        if legacy_variant != "absent"
+        else {}
+    )
+    if legacy_variant == "stale_credential":
+        legacy_values["api_settings"]["custom"]["api_key"] = "stale-credential"
+        legacy_values["custom_openai_api_2"]["api_key"] = "stale-credential"
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        LLM_API_Calls_Local.requests,
+        "Session",
+        lambda: _CapturedCustomSession(calls),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls_Local,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshotStub(legacy_values),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls_Local,
+        "load_settings",
+        lambda: legacy_values,
+    )
+    gateway = ConsoleProviderGateway(config_provider=lambda: config, environ={})
+    if builder == "primary":
+        gateway._chat_api_kwargs_from_prepared = lambda resolution, request: (
+            gateway._chat_api_kwargs(
+                resolution,
+                [dict(message) for message in request.messages_payload],
+            )
+        )
+
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider, streaming=False)
+    )
+    assert resolution.ready is True
+    assert resolution.base_url == expected_chat_url
+    assert [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "hello"}],
+        )
+    ] == ["ok"]
+
+    assert calls == [(expected_chat_url, f"Bearer {owner_credential}")]
+    assert legacy_endpoint not in {url for url, _credential in calls}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("builder", ["primary", "prepared"])
+@pytest.mark.parametrize("legacy_credential", ["stale-legacy-credential", None])
+@pytest.mark.parametrize(
+    ("provider", "owner", "configured_endpoint", "expected_chat_url"),
+    [
+        (
+            "Custom OpenAI API",
+            "custom",
+            "https://keyless-custom.example.test/proxy",
+            "https://keyless-custom.example.test/proxy/v1/chat/completions",
+        ),
+        (
+            "custom_openai_api_2",
+            "custom_2",
+            "https://keyless-custom-2.example.test/proxy/v1/chat/completions",
+            "https://keyless-custom-2.example.test/proxy/v1/chat/completions",
+        ),
+    ],
+)
+async def test_console_keyless_custom_send_never_falls_back_to_legacy_credential(
+    monkeypatch,
+    caplog,
+    builder: str,
+    legacy_credential: str | None,
+    provider: str,
+    owner: str,
+    configured_endpoint: str,
+    expected_chat_url: str,
+) -> None:
+    from tldw_chatbook.Chat import Chat_Functions
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local
+
+    class RuntimeConfigSnapshotStub:
+        def __init__(self, values) -> None:
+            self.values = values
+
+    config = {
+        "api_settings": {
+            owner: {
+                "api_url": configured_endpoint,
+                "model": f"{owner}-model",
+            }
+        }
+    }
+    legacy_endpoint = "https://legacy-fallback.example.test/v1/chat/completions"
+    legacy_values = {
+        "api_settings": {
+            "custom": {"api_url": legacy_endpoint, "model": "legacy-model"}
+        },
+        "custom_openai_api_2": {
+            "api_ip": legacy_endpoint,
+            "model": "legacy-model",
+        },
+    }
+    if legacy_credential is not None:
+        legacy_values["api_settings"]["custom"]["api_key"] = legacy_credential
+        legacy_values["custom_openai_api_2"]["api_key"] = legacy_credential
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        LLM_API_Calls_Local.requests,
+        "Session",
+        lambda: _CapturedCustomSession(calls),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls_Local,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshotStub(legacy_values),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls_Local,
+        "load_settings",
+        lambda: legacy_values,
+    )
+    gateway = ConsoleProviderGateway(config_provider=lambda: config, environ={})
+    if builder == "primary":
+        gateway._chat_api_kwargs_from_prepared = lambda resolution, request: (
+            gateway._chat_api_kwargs(
+                resolution,
+                [dict(message) for message in request.messages_payload],
+            )
+        )
+
+    loguru_messages: list[str] = []
+    sink_id = Chat_Functions.logger.add(
+        lambda message: loguru_messages.append(str(message)),
+        level="DEBUG",
+    )
+    try:
+        resolution = await gateway.resolve_for_send(
+            ConsoleProviderSelection(provider=provider, streaming=False)
+        )
+        assert resolution.ready is True
+        assert resolution.api_key is None
+        assert [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": "hello"}],
+            )
+        ] == ["ok"]
+    finally:
+        Chat_Functions.logger.remove(sink_id)
+
+    assert calls == [(expected_chat_url, "")]
+    if legacy_credential is not None:
+        assert legacy_credential not in repr(calls)
+        assert legacy_credential not in caplog.text
+        assert legacy_credential not in "".join(loguru_messages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "owner", "env_var"),
+    [
+        ("Custom OpenAI API", "custom", "CUSTOM_API_KEY"),
+        ("custom_openai_api_2", "custom_2", "CUSTOM_2_API_KEY"),
+    ],
+)
+async def test_console_persisted_explicit_keyless_ignores_saved_env_and_legacy_keys(
+    monkeypatch,
+    provider: str,
+    owner: str,
+    env_var: str,
+) -> None:
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local
+
+    class RuntimeConfigSnapshotStub:
+        def __init__(self, values) -> None:
+            self.values = values
+
+    endpoint = f"https://{owner}.keyless.example.test/v1/chat/completions"
+    config = {
+        "api_settings": {
+            owner: {
+                "api_url": endpoint,
+                "model": "keyless-model",
+                "credential_source": "none",
+                "api_key": "saved-chat-canary",
+                "api_key_env_var": env_var,
+            }
+        }
+    }
+    legacy_values = {
+        "api_settings": {
+            "custom": {
+                "api_url": endpoint,
+                "api_key": "legacy-chat-canary",
+            }
+        },
+        "custom_openai_api_2": {
+            "api_ip": endpoint,
+            "api_key": "legacy-chat-canary",
+        },
+    }
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        LLM_API_Calls_Local.requests,
+        "Session",
+        lambda: _CapturedCustomSession(calls),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls_Local,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshotStub(legacy_values),
+    )
+    monkeypatch.setattr(LLM_API_Calls_Local, "load_settings", lambda: legacy_values)
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: config,
+        environ={env_var: "environment-chat-canary"},
+    )
+
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider, streaming=False)
+    )
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "hello"}],
+        )
+    ]
+
+    assert resolution.ready is True
+    assert resolution.api_key is None
+    assert resolution.api_key_source is None
+    assert chunks == ["ok"]
+    assert calls == [(endpoint, "")]
+    rendered = repr((resolution, calls))
+    assert "saved-chat-canary" not in rendered
+    assert "environment-chat-canary" not in rendered
+    assert "legacy-chat-canary" not in rendered
+
+
+def test_custom_adapter_fallback_honors_persisted_explicit_keyless(monkeypatch):
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local
+
+    class RuntimeConfigSnapshotStub:
+        values = {
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://adapter-keyless.example/v1/chat/completions",
+                    "model": "adapter-model",
+                    "credential_source": "none",
+                    "api_key": "saved-adapter-canary",
+                    "api_key_env_var": "CUSTOM_API_KEY",
+                }
+            }
+        }
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setenv("CUSTOM_API_KEY", "environment-adapter-canary")
+    monkeypatch.setattr(
+        LLM_API_Calls_Local.requests,
+        "Session",
+        lambda: _CapturedCustomSession(calls),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls_Local,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshotStub(),
+    )
+
+    result = LLM_API_Calls_Local.chat_with_custom_openai(
+        [{"role": "user", "content": "hello"}],
+        streaming=False,
+    )
+
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert calls == [
+        ("https://adapter-keyless.example/v1/chat/completions", "")
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["llama_cpp", "local_llamacpp"])
+async def test_console_persisted_explicit_keyless_llamacpp_sends_no_authorization(
+    provider: str,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            content=(
+                b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+        )
+
+    endpoint = "http://127.0.0.1:19090"
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = ConsoleProviderGateway(
+        http_client=client,
+        config_provider=lambda: {
+            "api_settings": {
+                provider: {
+                    "api_url": endpoint,
+                    "model": "keyless-model",
+                    "credential_source": "none",
+                    "api_key": "saved-llama-chat-canary",
+                    "api_key_env_var": "LLAMA_CPP_API_KEY",
+                }
+            }
+        },
+        environ={"LLAMA_CPP_API_KEY": "environment-llama-chat-canary"},
+    )
+    try:
+        resolution = await gateway.resolve_for_send(
+            ConsoleProviderSelection(
+                provider=provider,
+                base_url=endpoint,
+                explicit_model="keyless-model",
+            )
+        )
+        chunks = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": "hello"}],
+            )
+        ]
+    finally:
+        await client.aclose()
+
+    assert resolution.ready is True
+    assert resolution.api_key is None
+    assert chunks == ["ok"]
+    assert [request.method for request in requests] == ["GET", "POST"]
+    assert all("Authorization" not in request.headers for request in requests)
+
+
+@pytest.mark.asyncio
+async def test_console_llamacpp_explicit_stored_source_reaches_probe_and_chat():
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            content=(
+                b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+        )
+
+    endpoint = "http://127.0.0.1:19091"
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = ConsoleProviderGateway(
+        http_client=client,
+        config_provider=lambda: {
+            "api_settings": {
+                "llama_cpp": {
+                    "api_url": endpoint,
+                    "model": "authenticated-model",
+                    "credential_source": "stored",
+                    "api_key": "stored-llama-request-canary",
+                    "api_key_env_var": "LLAMA_CPP_API_KEY",
+                }
+            }
+        },
+        environ={"LLAMA_CPP_API_KEY": "ignored-llama-environment-canary"},
+    )
+    try:
+        resolution = await gateway.resolve_for_send(
+            ConsoleProviderSelection(
+                provider="llama_cpp",
+                base_url=endpoint,
+                explicit_model="authenticated-model",
+            )
+        )
+        chunks = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": "hello"}],
+            )
+        ]
+    finally:
+        await client.aclose()
+
+    assert resolution.ready is True
+    assert resolution.api_key_source == "config:api_settings.llama_cpp.api_key"
+    assert chunks == ["ok"]
+    assert [request.headers.get("Authorization") for request in requests] == [
+        "Bearer stored-llama-request-canary",
+        "Bearer stored-llama-request-canary",
+    ]
+    assert "stored-llama-request-canary" not in repr(resolution)
 
 
 @pytest.mark.asyncio

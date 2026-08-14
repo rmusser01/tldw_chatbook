@@ -1076,7 +1076,8 @@ Input.speech-setting-control:focus {
 }
 
 #speech-settings-actions Button.workbench-action,
-#studio-tts-voice-profile-actions Button.workbench-action {
+#studio-tts-voice-destination-actions Button.workbench-action,
+#voice-blends-actions Button.workbench-action {
     width: auto;
     min-width: 0;
     height: 1;
@@ -1140,18 +1141,19 @@ Input.speech-setting-control:focus {
     height: auto;
 }
 
-#studio-tts-voice-profile-actions {
+#studio-tts-voice-destination-actions,
+#voice-blends-actions {
     height: auto;
     min-height: 1;
     margin: 0 1 1 1;
 }
 
-.studio-tts-settings-stacked #studio-tts-voice-profile-actions {
+.studio-tts-settings-stacked #studio-tts-voice-destination-actions {
     layout: vertical;
-    height: 3;
+    height: 2;
 }
 
-.studio-tts-settings-stacked #studio-tts-voice-profile-actions Button.workbench-action {
+.studio-tts-settings-stacked #studio-tts-voice-destination-actions Button.workbench-action {
     width: 100%;
     margin-right: 0;
 }

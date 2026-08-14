@@ -14,8 +14,10 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     first_configured_endpoint,
 )
 from tldw_chatbook.Chat.provider_readiness import (
+    configured_provider_credential_source,
     get_provider_readiness,
     provider_config_key,
+    resolve_provider_credential,
 )
 from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
     ProviderRefreshOutcome,
@@ -64,7 +66,6 @@ from ..config import (
     get_cli_providers_and_models,
     load_settings,
     provider_settings_for_key,
-    resolve_provider_api_key,
 )
 
 
@@ -302,16 +303,16 @@ class LocalLLMProviderCatalogService:
         )
 
     def _api_key_from_provider_settings(
-        self, provider_settings: Mapping[str, Any]
+        self,
+        provider_key: str,
+        provider_settings: Mapping[str, Any],
     ) -> str | None:
-        configured_key = resolve_provider_api_key(provider_settings.get("api_key"))
-        if configured_key:
-            return configured_key
-
-        env_var = self._valid_text(provider_settings.get("api_key_env_var"))
-        if env_var:
-            return resolve_provider_api_key(self.environ.get(env_var))
-        return None
+        credential, _source, _env_var = resolve_provider_credential(
+            provider_key,
+            provider_settings,
+            environ=self.environ,
+        )
+        return credential
 
     def _resolve_api_key(
         self,
@@ -330,10 +331,25 @@ class LocalLLMProviderCatalogService:
             )
         except ProviderSettingsError:
             return None
-        staged_key = self._api_key_from_provider_settings(staged_provider_settings)
-        if staged_key:
+        staged_source = configured_provider_credential_source(
+            staged_provider_settings
+        )
+        if staged_source == "stored":
+            pinned_saved_settings = dict(saved_provider_settings)
+            pinned_saved_settings["credential_source"] = "stored"
+            return self._api_key_from_provider_settings(
+                provider_key, pinned_saved_settings
+            )
+        staged_key = self._api_key_from_provider_settings(
+            provider_key, staged_provider_settings
+        )
+        if "api_key" in staged_provider_settings or (
+            "api_key_env_var" in staged_provider_settings
+        ) or "credential_source" in staged_provider_settings:
             return staged_key
-        saved_key = self._api_key_from_provider_settings(saved_provider_settings)
+        saved_key = self._api_key_from_provider_settings(
+            provider_key, saved_provider_settings
+        )
         if saved_key:
             return saved_key
 
@@ -464,6 +480,7 @@ class LocalLLMProviderCatalogService:
         *,
         provider: str,
         staged_settings: Mapping[str, Any] | None = None,
+        use_shared_cache: bool = True,
     ) -> ModelDiscoveryResult:
         """Discover OpenAI-compatible models from a configured provider endpoint."""
         self._enforce("llm.catalog.models.discover.local")
@@ -582,7 +599,7 @@ class LocalLLMProviderCatalogService:
             endpoint=endpoint,
             api_key=api_key,
         )
-        if result.status == "success":
+        if use_shared_cache and result.status == "success":
             self.discovery_cache.replace(
                 provider_list_key,
                 result.endpoint_fingerprint or fingerprint_endpoint(endpoint),
@@ -623,6 +640,7 @@ class LocalLLMProviderCatalogService:
         """
         self._enforce("llm.catalog.models.discover.local")
         outcomes: list[ProviderRefreshOutcome] = []
+        disk_write_failed = False
         catalog = self._catalog()
         saved_settings = self._settings()
 
@@ -742,7 +760,14 @@ class LocalLLMProviderCatalogService:
                                     f"{persist_result.message}"
                                 )
 
-                    disk_store.record(list_key, fingerprint, fresh_ids)
+                    try:
+                        disk_store.record(list_key, fingerprint, fresh_ids)
+                    except (TypeError, ValueError):
+                        disk_write_failed = True
+                        logger.warning(
+                            f"Model catalog disk cache skipped for {list_key} "
+                            "(reason=validation_error)"
+                        )
                     outcomes.append(ProviderRefreshOutcome(
                         provider_list_key=list_key,
                         status=status,
@@ -766,11 +791,17 @@ class LocalLLMProviderCatalogService:
             disk_store.prune(set(catalog))
             try:
                 disk_store.save()
-            except OSError as exc:
+            except (OSError, TypeError, ValueError) as exc:
                 # Persistence hiccup: in-memory cache is updated for this session;
                 # don't discard the whole report over it.
-                logger.warning(f"Could not persist model catalog cache: {exc}")
-        return RefreshReport(outcomes=tuple(outcomes))
+                disk_write_failed = True
+                logger.warning(
+                    "Could not persist model catalog cache "
+                    f"(reason={type(exc).__name__})"
+                )
+        return RefreshReport(
+            outcomes=tuple(outcomes), disk_write_failed=disk_write_failed
+        )
 
     def list_discovered_models(
         self,
