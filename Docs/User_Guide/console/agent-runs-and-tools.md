@@ -722,4 +722,21 @@ misleading "finish provider setup" composer state — the delivery itself
 was always correct and durable); one deferred wake's notice labeled a
 `done` child "running"; and after a restart the staged wake's `◈` badge
 did not render on the sidebar row, with delivery waiting on the next
-retry trigger rather than on opening the conversation.)*
+retry trigger rather than on opening the conversation.) The off-view
+delivery contract (the honest-limits correction above and the `◈`
+clear-semantics rewrite) verified @ 9144b235e — 2026-08-14
+(wake-integrity arc, tasks 15970/15971: driven live against a real
+Anthropic model on an isolated scratch profile. Confirmed by pane and by
+both databases: a draft typed with real keys DURING the spawning turn
+held a due wake back for the full ~90 seconds it existed (child `done`
+with a NULL `wake_delivered_at` stamp throughout) and clearing the draft
+delivered it within ~2 seconds; a completion landing while the
+conversation was not in view was DELIVERED immediately (stamped while a
+palette covered Console and another session tab was active) and left the
+`◈` marker set on the conversation's tab, which cleared — mark row gone —
+the moment the conversation was activated and viewed; and restart staging
+still held: SIGKILL with a wake owed left mark + NULL stamp in place, the
+relaunch rendered `◈` on the sidebar row before the conversation was
+opened, and one click on that row delivered the owed wake exactly once,
+stamped ~2s later. Every one of the five sub-agent runs in the session's
+ledger ended stamped exactly once.)*
