@@ -24,7 +24,12 @@
   Ruff targets, and downstream commands. This includes event-loop offloading,
   cooperative cancellation, and serialization discovered after the first fix.
 - Never log or store query text, note bodies, retrieved content, answer prompts, credentials, or secrets in profiler/diagnostic artifacts. The approved fixed query may appear in the fixture description, but profile output remains symbol/timing-only.
-- No new dependency, retrieval implementation, runtime, process pool, cache layer, or background warm-up. If profiling demands a new durable/runtime/service boundary, stop and revisit the ADR decision.
+- No new dependency, retrieval implementation, runtime, process pool, cache
+  layer, or background warm-up. The QA harness may clone the already-cached
+  MiniLM artifact into its disposable scratch root solely to preserve read-only
+  model isolation when macOS requires the live PTY to share an elevated
+  loopback namespace. If profiling demands a new durable/runtime/service
+  boundary, stop and revisit the ADR decision.
 - Use @superpowers:systematic-debugging through the profile checkpoint, @superpowers:test-driven-development for every bug fix, @ponytail for the smallest measured correction, @textual-tui for event-loop/worker behavior, and @superpowers:verification-before-completion before any completion claim.
 
 ## File map
@@ -123,8 +128,8 @@ XDG_CONFIG_HOME=<scratch>/xdg-config
 TLDW_CONFIG_PATH=<scratch>/config.toml
 HF_HUB_OFFLINE=1
 TRANSFORMERS_OFFLINE=1
-HF_HOME=/Users/macbook-dev/.cache/huggingface
-HF_HUB_CACHE=/Users/macbook-dev/.cache/huggingface/hub
+HF_HOME=<scratch>/hf-home
+HF_HUB_CACHE=<scratch>/hf-home/hub
 NO_PROXY=127.0.0.1,localhost
 PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
 PYTHONPATH=<this-worktree>
@@ -133,12 +138,38 @@ LANG=en_US.UTF-8
 ```
 
 Do not add `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, any `*_API_KEY`, or any
-provider-specific environment variable. Run without filesystem or network
-escalation: the real Hugging Face cache is readable but outside writable roots.
-Preflight that
-`models--sentence-transformers--all-MiniLM-L6-v2/snapshots` exists beneath the
-declared cache. `curl -sf http://127.0.0.1:19090/health` must succeed; no other
-network destination is configured.
+provider-specific environment variable. The real cache is an un-escalated copy
+source only. Preflight that
+`models--sentence-transformers--all-MiniLM-L6-v2/snapshots` exists beneath it;
+resolve and assert the source model directory stays beneath the real cache.
+Enumerate every source symlink and assert its resolved target stays beneath that
+model directory. Copy that one model directory (refs, blobs, snapshots) into
+`<scratch>/hf-home/hub` without dereferencing symlinks; resolve and assert the
+clone stays beneath the scratch root. Before changing permissions, enumerate
+every clone symlink and assert its resolved target stays beneath the clone.
+Compare source and clone manifests containing each relative path, entry type,
+symlink target, and regular-file SHA-256. Only after the manifests match,
+recursively remove write permission from the clone and verify a normal write
+attempt fails. The canonical clean environment above points only at this
+verified scratch clone.
+
+First attempt the stub, health probe, and TUI without escalation. If macOS
+sandboxing rejects the loopback bind or separates the listener from the TUI's
+network namespace, record that failure and request escalation for exactly the
+discard-only stub, body-free health probe, and clean-environment TUI launch so
+those three processes share one loopback namespace. No seed, DB maintenance,
+model-cache preparation, config write, profiler report, or other command may be
+escalated. The escalated commands retain `/usr/bin/env -i`, the scratch
+read-only cache, offline flags, disabled model catalog, fixed
+`127.0.0.1:19090` endpoint, no credentials/proxies, effective-TOML checks,
+running-PID `lsof`, and real-profile fingerprints. `curl -sf
+http://127.0.0.1:19090/health` must succeed in the same namespace before the
+TUI starts; no other network destination is configured. Use one-shot exact
+escalation commands without a reusable prefix approval. Capture the stub PID,
+assert it is the sole listener on strict `127.0.0.1:19090`, and reuse that exact
+validated listener across the profiling and acceptance runs. In final cleanup,
+terminate the stub PID cleanly, verify with `lsof` that the port has no listener,
+and verify the loopback health connection fails.
 
 Parse the TOML with `tomllib` before launch and after every boot. Resolve
 `[paths].data_dir`; assert it is beneath the scratch root and differs from the
@@ -461,6 +492,11 @@ After each boot/run:
 - capture validated-PID `lsof` evidence (zero real-profile handles, scratch handles present);
 - compare real config/data fingerprints to the before state; and
 - terminate the app cleanly.
+
+After the final run, terminate the previously validated loopback-stub PID
+cleanly. Confirm with `lsof` and a failing health connection that nothing is
+listening on `127.0.0.1:19090`; do not substitute or terminate any unvalidated
+PID.
 
 Using `apply_patch`, write `live-verification.md` with exact commands, fixture manifest hash, aggregate seed/index counts, timestamps/elapsed time, visible statuses/evidence title, responsiveness result, PID-handle summary, and before/after fingerprints. Do not include note bodies or secrets.
 
