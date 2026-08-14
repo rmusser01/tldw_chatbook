@@ -9,6 +9,24 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Textual's geometric center is not the painted row for an even-height one-line control
+
+**TASK-16001, 2026-08-13.** A compositor regression helper sampled
+`region.center.y` to verify that collapsed rail copy was vertically centered.
+The focused RED failures initially hid the helper defect. Once the rail copy was
+correct, all eight visual cases raised `AttributeError`: in the installed Textual,
+`Region.center` is a `(float, float)` tuple, not an object with `.y`. Replacing it
+with `region.y + region.height // 2` removed that error but still sampled an empty
+row for even-height controls. Measurement showed a 28-row button at `y=7` painted
+its sole centered row at `y=20`, the upper middle:
+`7 + (28 - 1) // 2`.
+
+**What to do.** For a one-line Textual control, sample the integer painted middle
+row with `region.y + (region.height - 1) // 2`; do not assume `Region.center` has
+named coordinates or that lower-middle sampling matches Textual's alignment.
+Keep a separate one-painted-row assertion so the midpoint check cannot pass on a
+multi-line control.
+
 ## An exact live-test gate must be the first gate that can skip the test
 
 **TASK-15676, 2026-08-13.** The opt-in Moonshot/Z.ai paid harness required an
