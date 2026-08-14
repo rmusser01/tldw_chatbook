@@ -747,6 +747,20 @@ Check all acceptance criteria, add concise Implementation Notes with the exact r
   result/callback, guard, MRO, focus, click-through, and video-player evidence.
   No new lessons entry was added because the observed Textual MRO behavior is
   already covered in `backlog/docs/lessons-testing-evidence.md`.
+- Cumulative final review added cancellation-resistant same-instance remount
+  proofs around async review validation. Both validation success and failure
+  went RED: the former invoked the stale commit callback, while the latter
+  cleared the new mount's latch. Mount generation is now checked before
+  validation-side UI/latch mutation and again before apply coordination, whose
+  own early generation gate protects every claimed apply worker.
+- The launch fixed point now scans the defining class body of every reachable
+  screen, treating owners without a declared edge as an explicit zero-launch
+  contract. A synthetic reachable rowless owner constructing an aliased nested
+  modal proved the inventory fails instead of silently skipping it.
+- Cumulative-review verification stayed bounded to the owned high-risk files:
+  17 focused correction tests and the complete two-file matrix of 216 tests
+  passed. Ruff check/format, compileall, and `git diff --check` passed; targeted
+  MyPy retained only the same two untouched baseline diagnostics.
 
 - [x] **Step 8: Commit closeout**
 

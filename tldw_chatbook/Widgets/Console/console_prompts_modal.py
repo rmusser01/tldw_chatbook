@@ -1240,6 +1240,8 @@ class ConsolePromptsModal(
             generation = self._claim_apply_transaction()
             if generation is None:
                 return
+        if not self._apply_presentation_is_current(generation):
+            return
         self._reset_persistence_retry()
         if self._apply_improvement_result is None:
             self.dismiss_safe_once(result)
@@ -1344,6 +1346,8 @@ class ConsolePromptsModal(
         )
 
     async def _apply_review_candidate(self, generation: int) -> None:
+        if not self._apply_presentation_is_current(generation):
+            return
         captured = self._captured_improvement_request
         if captured is None:
             self._set_improvement_status("The captured request is no longer available.")
@@ -1354,10 +1358,14 @@ class ConsolePromptsModal(
             if self._validate_improvement is not None:
                 await _maybe_await(self._validate_improvement(captured, candidate))
         except Exception:
+            if not self._apply_presentation_is_current(generation):
+                return
             self._set_improvement_status(
                 "Protected prompt material changed. Restore the protected placeholders before applying."
             )
             self._set_apply_in_progress(False)
+            return
+        if not self._apply_presentation_is_current(generation):
             return
         await self._coordinate_apply(
             self._result_for(

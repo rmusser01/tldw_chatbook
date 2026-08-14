@@ -829,6 +829,7 @@ def _constructed_modal_types(
     *,
     source_overrides: dict[str, str] | None = None,
     included_functions: set[str] | None = None,
+    included_classes: set[str] | None = None,
     excluded_functions: set[str] | None = None,
 ) -> set[type[ModalScreen[Any]]]:
     """Resolve actual modal constructors in source, including imported aliases."""
@@ -871,6 +872,12 @@ def _constructed_modal_types(
         class _ConstructorVisitor(ast.NodeVisitor):
             def __init__(self) -> None:
                 self.function_stack: list[str] = []
+                self.class_stack: list[str] = []
+
+            def visit_ClassDef(self, node: ast.ClassDef) -> None:
+                self.class_stack.append(node.name)
+                self.generic_visit(node)
+                self.class_stack.pop()
 
             def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
                 self.function_stack.append(node.name)
@@ -881,9 +888,13 @@ def _constructed_modal_types(
 
             def visit_Call(self, node: ast.Call) -> None:
                 functions = set(self.function_stack)
+                classes = set(self.class_stack)
                 if included_functions is not None and not (
                     functions & included_functions
                 ):
+                    self.generic_visit(node)
+                    return
+                if included_classes is not None and not (classes & included_classes):
                     self.generic_visit(node)
                     return
                 if excluded_functions and functions & excluded_functions:
@@ -906,6 +917,72 @@ def _binding_key_action(binding: object) -> tuple[str, str]:
     return binding[0], binding[1]  # type: ignore[index,return-value]
 
 
+def _walk_modal_launch_graph(
+    root: str | type[Screen[Any]],
+    edges: tuple[_ModalLaunchEdge, ...],
+    *,
+    source_overrides: dict[str, str] | None = None,
+    owner_source_paths: dict[type[Screen[Any]], tuple[str, ...]] | None = None,
+) -> set[str | type[Screen[Any]]]:
+    """Assert every reachable screen's actual modal launches match its row."""
+    edges_by_owner = {edge.owner: edge for edge in edges}
+    source_paths_by_owner = owner_source_paths or {}
+    reachable: set[str | type[Screen[Any]]] = {root}
+    frontier: list[str | type[Screen[Any]]] = [root]
+    while frontier:
+        owner = frontier.pop()
+        edge = edges_by_owner.get(owner)
+        if edge is None:
+            assert inspect.isclass(owner) and issubclass(owner, Screen)
+            source_paths = source_paths_by_owner.get(owner)
+            if source_paths is None:
+                source_file = inspect.getsourcefile(owner)
+                assert source_file is not None
+                source_paths = (str(Path(source_file).relative_to(_REPO_ROOT)),)
+            declared: tuple[type[Screen[Any]], ...] = ()
+            included_functions = None
+            included_classes = {owner.__name__}
+        else:
+            source_paths = edge.source_paths
+            declared = edge.launched
+            included_functions = (
+                set(edge.source_functions) if edge.source_functions else None
+            )
+            included_classes = None
+
+        nested_functions = {
+            function
+            for other_edge in edges
+            if other_edge is not edge
+            and set(other_edge.source_paths) & set(source_paths)
+            for function in (other_edge.source_functions or ())
+        }
+        actual = _constructed_modal_types(
+            source_paths,
+            source_overrides=source_overrides,
+            included_functions=included_functions,
+            included_classes=included_classes,
+            excluded_functions=nested_functions,
+        )
+        expected = {
+            launched
+            for launched in declared
+            if inspect.isclass(launched) and issubclass(launched, ModalScreen)
+        }
+        unexpected = actual - expected
+        missing = expected - actual
+        assert not unexpected and not missing, (
+            f"{getattr(owner, '__name__', owner)} modal launch mismatch; "
+            f"unexpected={sorted(item.__name__ for item in unexpected)}, "
+            f"missing={sorted(item.__name__ for item in missing)}"
+        )
+        for launched in declared:
+            if launched not in reachable:
+                reachable.add(launched)
+                frontier.append(launched)
+    return reachable
+
+
 def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -> None:
     console_contract_types = {
         contract.modal_type
@@ -920,38 +997,7 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     assert len(discovered_console_types) == 27
     assert discovered_console_types == console_contract_types
 
-    edges_by_owner = {edge.owner: edge for edge in CONSOLE_MODAL_LAUNCH_EDGES}
-    reachable: set[str | type[Screen[Any]]] = {_CONSOLE_ROOT}
-    frontier: list[str | type[Screen[Any]]] = [_CONSOLE_ROOT]
-    while frontier:
-        owner = frontier.pop()
-        edge = edges_by_owner.get(owner)
-        if edge is None:
-            continue
-        nested_functions = {
-            function
-            for other_edge in CONSOLE_MODAL_LAUNCH_EDGES
-            if other_edge is not edge
-            and set(other_edge.source_paths) & set(edge.source_paths)
-            for function in (other_edge.source_functions or ())
-        }
-        actual_modal_types = _constructed_modal_types(
-            edge.source_paths,
-            included_functions=(
-                set(edge.source_functions) if edge.source_functions else None
-            ),
-            excluded_functions=nested_functions,
-        )
-        expected_modal_types = {
-            launched
-            for launched in edge.launched
-            if inspect.isclass(launched) and issubclass(launched, ModalScreen)
-        }
-        assert actual_modal_types == expected_modal_types
-        for launched in edge.launched:
-            if launched not in reachable:
-                reachable.add(launched)
-                frontier.append(launched)
+    reachable = _walk_modal_launch_graph(_CONSOLE_ROOT, CONSOLE_MODAL_LAUNCH_EDGES)
 
     reachable_modal_types = {
         node
@@ -990,6 +1036,39 @@ def launch():
     assert actual == {ConsoleCostModal, ConsoleRunLogModal}
     with pytest.raises(AssertionError):
         assert actual == {ConsoleCostModal}
+
+
+class _SyntheticRowlessOwner(Screen[None]):
+    pass
+
+
+def test_launch_inventory_scans_reachable_owners_without_declared_rows() -> None:
+    root_path = "synthetic_root.py"
+    rowless_path = "synthetic_rowless_owner.py"
+    edges = (
+        _ModalLaunchEdge(
+            "SyntheticRoot",
+            (_SyntheticRowlessOwner,),
+            (root_path,),
+        ),
+    )
+    sources = {
+        root_path: "",
+        rowless_path: """
+class _SyntheticRowlessOwner:
+    def launch_nested(self):
+        from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal as Extra
+        Extra(run_id='extra', log_text='extra')
+""",
+    }
+
+    with pytest.raises(AssertionError, match="ConsoleRunLogModal"):
+        _walk_modal_launch_graph(
+            "SyntheticRoot",
+            edges,
+            source_overrides=sources,
+            owner_source_paths={_SyntheticRowlessOwner: (rowless_path,)},
+        )
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:

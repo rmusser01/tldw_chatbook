@@ -2607,6 +2607,91 @@ async def test_apply_completion_keeps_nested_top_and_reports_committed_state() -
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("validation_result", ["success", "failure"])
+async def test_stale_review_validation_cannot_mutate_or_commit_after_remount(
+    validation_result: str,
+) -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    driver.outcomes.append(
+        PromptImprovementOutcome(
+            request_id="ignored",
+            kind="success",
+            rewritten_prompt=driver.preview.text.replace(
+                "Draft question", "Reviewed candidate"
+            ),
+        )
+    )
+    validation_started = asyncio.Event()
+    validation_finished = asyncio.Event()
+    release_validation = asyncio.Event()
+    apply_calls = 0
+
+    async def validate(_snapshot: Any, _candidate: str) -> None:
+        validation_started.set()
+        try:
+            await release_validation.wait()
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None:
+                task.uncancel()
+            await release_validation.wait()
+        validation_finished.set()
+        if validation_result == "failure":
+            raise ValueError("stale validation failure")
+
+    async def apply(_result: Any, _snapshot: Any) -> Any:
+        nonlocal apply_calls
+        apply_calls += 1
+        return SimpleNamespace(kind="applied", user_message="")
+
+    kwargs = driver.kwargs()
+    kwargs["validate_improvement"] = validate
+    kwargs["apply_improvement_result"] = apply
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-review-improve", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        modal.query_one("#console-prompts-review-apply", Button).press()
+        await wait_for_signal(
+            validation_started, what="the stale review validation starting"
+        )
+        old_generation = modal._safe_mount_generation
+
+        modal.dismiss(None)
+        await pilot.pause()
+        await app.push_screen(modal)
+        await pilot.pause()
+        assert modal._safe_mount_generation > old_generation
+        await modal.enter_mode("improve")
+        assert modal._claim_apply_transaction() == modal._safe_mount_generation
+        modal._set_improvement_status("New presentation transaction")
+
+        release_validation.set()
+        await wait_for_signal(
+            validation_finished, what="the stale review validation finishing"
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert apply_calls == 0
+        assert modal._apply_in_progress is True
+        assert (
+            str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            )
+            == "New presentation transaction"
+        )
+
+
+@pytest.mark.asyncio
 async def test_review_success_exposes_exactly_one_editable_user_area_then_applies() -> (
     None
 ):
