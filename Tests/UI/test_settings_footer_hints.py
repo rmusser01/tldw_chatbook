@@ -269,20 +269,15 @@ async def test_revert_without_changes_keeps_the_nothing_to_revert_path():
 async def test_narrow_footer_collapses_but_f1_help_stays_truthful():
     """The screen's own hints outrank the global cluster (task-2860/LIB-18).
 
-    The ladder compacts the globals first and keeps the Storage category's
-    ``s``/``r``/``t`` hints intact all the way down to 84 cols -- confirmed
-    directly against the widget's own responsive steps in
-    ``AppFooterStatus._apply_responsive_footer``. Only below that does the
-    screen context itself collapse to an ellipsis; F1 help must still list
-    the ACTIVE category's working shortcuts once that happens, so the
-    bindings stay discoverable."""
+    The ladder compacts the globals first, then retains the highest-priority
+    screen actions that fit. At 70 columns Storage keeps ``s`` visible while
+    lower-priority ``r``/``t`` move to F1 help, where every active shortcut
+    remains discoverable."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    # 70 cols sits well inside the range that forces the screen context to
-    # ellipsis (measured: full context text survives compacting the globals
-    # down to width=84; it collapses at width=83 and stays collapsed through
-    # width=56, only compacting the *globals* further at width<=55).
+    # At 70 columns the responsive prefix keeps only the primary Settings
+    # action alongside compact globals.
     async with host.run_test(size=(70, 28)) as pilot:
         await _settle_settings(pilot)
         await _click_settings_category(pilot, "storage")
@@ -290,12 +285,9 @@ async def test_narrow_footer_collapses_but_f1_help_stays_truthful():
         footer = screen.query_one(AppFooterStatus)
 
         collapsed_text = str(footer.query_one("#footer-key-quit", Static).renderable)
-        assert "save category" not in collapsed_text, (
-            f"expected collapsed footer at 70 cols, got {collapsed_text!r}"
-        )
-        assert collapsed_text.startswith("…"), (
-            f"expected the screen context to collapse to an ellipsis, got {collapsed_text!r}"
-        )
+        assert collapsed_text.startswith("s save category"), collapsed_text
+        assert "revert category" not in collapsed_text
+        assert "check storage" not in collapsed_text
 
         screen.action_show_workbench_help()
         await pilot.pause()
