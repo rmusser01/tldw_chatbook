@@ -738,9 +738,10 @@ def _format_summary(report: EvalReport) -> str:
         "little scores high precision for returning little."
     )
     lines.append(
-        "plain-mode MRR/NDCG do not measure ranking: its rows carry no score "
-        "and arrive in a fixed seam order (notes, media, conversations, "
-        "prompts), so for that mode those two columns track recall."
+        "plain-mode MRR/NDCG do not measure ranking: its rows carry no score, "
+        "and the seams are merged by rank-fair rotation (TASK-16071) rather "
+        "than by any cross-seam relevance signal, so for that mode those two "
+        "columns track recall."
     )
 
     categories = sorted(

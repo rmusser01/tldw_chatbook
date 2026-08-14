@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-14 02:40'
+updated_date: '2026-08-14 06:29'
 labels:
   - rag
   - agents
@@ -33,6 +34,21 @@ That is a notch worse than the reranker's "constructed but unmeasured": this one
 The capability the owner described is therefore one missing tool plus a policy for when to use it, plus an evaluation question the current instrument cannot answer -- and a decision about the inert knobs that must not be postponed a second time.
 
 Evaluation is the part most likely to be underestimated. The golden set scores RETRIEVAL (does the target document reach top-k), and an agentic expansion loop's whole value is at the ANSWER level: did following the chunk into the document produce a better answer for the same or less spend. That is P3 grader territory - a different instrument, not a new cell in this one.
+
+**MEASURED UPDATE 2026-08-14 (TASK-16071 Task 2): AC#4's premise TRIPLED, and it is now measured in both directions.** AC#4 was filed against the label-only problem as a known but unquantified hazard. TASK-16071 replaced the plain four-seam path's fixed-order concatenation with a rank-fair interleave, and the PRF probe's price line measured the same top-M window before and after:
+
+- **BEFORE (concatenating merge): 39 of 211 fed rows label-only (18%).**
+- **AFTER (rank-fair merge): 113 of 211 label-only (54%).**
+
+Same corpus, same k, same M, same 211 fetches (one read per fed row) - only the merge changed. The mechanism is the point: media and conversation rows are exactly the rows that carry no document text ('Matched media - {type}', 'Matched conversation - N messages'), and a rank-fair rotation puts them into the top-M slots that a full notes seam used to monopolise. **The merge changes WHAT a top-M consumer sees, not merely the order it sees it in.** Any consumer of this path - RAG Answer evidence, a PRF-style feedback loop, a future re-ranker, and the expansion tool this task proposes - now receives a window in which the majority of rows are self-describing labels rather than content.
+
+Consequences for this task, stated so AC#4 is not evaluated against the old 18%:
+
+- The label-only share is no longer a minority case to be handled defensively; at 54% it is the dominant case, which strengthens 'addressed' and weakens 'explicitly scoped out' as an acceptable resolution of AC#4.
+- It raises the value of the tool in AC#1/#2 (without expansion, a majority of what an agent is shown is a label) and simultaneously raises its expected call volume, which is a cost input to the AC#3 policy - expanding every label-only row is a different budget from expanding the occasional one.
+- The 'one read per fed row' price the PRF probe paid is the same read an expansion tool would pay. That probe's numbers are a usable cost baseline for AC#3/#5, measured on this corpus.
+
+Source: `.superpowers/sdd/2026-08-14-rag-four-seam-cross-ranking/task-2-report.md` and the staleness marker in `Tests/RAG_Eval/README.md`'s PRF section.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -45,3 +61,9 @@ Evaluation is the part most likely to be underestimated. The golden set scores R
 - [ ] #6 The relationship to the re-ranking gap is recorded: whether the expansion loop presumes a working reranker (TASK-3502, cross_encoder unimplemented) or is independent of it
 - [ ] #7 The inert parent-inclusion config surface is resolved, not left standing: include_parent_docs / parent_size_threshold / parent_inclusion_strategy (config.py:559-561, set by three shipped profiles) are either WIRED to the expansion work or RETIRED from config and from those profiles. A user-switchable knob that silently does nothing must not survive alongside a new tool that does the same job
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Linkage from TASK-16071 Task 2 (2026-08-14): AC#4's label-only premise is now MEASURED in both directions and has TRIPLED — 39/211 fed rows label-only (18%) under the pre-16071 concatenating merge, 113/211 (54%) under the rank-fair interleave, same corpus/k/M/fetch count, only the merge changed. Mechanism: media and conversation rows are precisely the rows carrying no document text, and a rank-fair rotation puts them into the top-M slots a full notes seam used to monopolise — the merge changes WHAT a top-M consumer sees, not just the order. At 54% the label-only case is dominant rather than a minority, which strengthens 'addressed' and weakens 'explicitly scoped out' as an AC#4 resolution, raises the expected call volume feeding the AC#3 policy budget, and supplies a measured per-row cost baseline (one read per fed row) for AC#3/#5. Full measurement in .superpowers/sdd/2026-08-14-rag-four-seam-cross-ranking/task-2-report.md; Tests/RAG_Eval/README.md's PRF section carries a staleness marker with the same figures.
+<!-- SECTION:NOTES:END -->

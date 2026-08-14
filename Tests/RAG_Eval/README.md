@@ -695,6 +695,35 @@ audited in place rather than by re-authoring the candidates.
 
 ### The fourth retired P2c premise: PRF, probed before built (TASK-15965, 2026-08-13)
 
+> **STALENESS MARKER — added 2026-08-14 (TASK-16071 Task 2). THE VERDICT IS
+> UNCHANGED (NULL, PRF stays retired); the FIGURES below were measured under
+> the pre-16071 concatenating merge and several have moved.** TASK-16071
+> replaced the four-seam path's fixed-order concatenation with a rank-fair
+> interleave, and the PRF probe was re-run under it as a control. Every gated
+> golden-set metric was unmoved (105/105 bit-exact), but this section's probe
+> figures were not. Re-measured, in this section's own order:
+>
+> | this section says | re-measured 2026-08-14 | where |
+> |---|---|---|
+> | clause [1] "0 / 22 rescued" | **2 / 22** at the base point | the bar table |
+> | "The grid stopped there … one point run, one point recorded" | **9 points ran** — the base point's signal licensed the sweep; max 2/22 vs a bar of ≥5 | the base-point paragraph |
+> | "8 seam-displaced, 2 merge-displaced" | **9 seam-displaced, 1 merge-displaced** | the loss-diagnosis paragraph (corrected inline below) |
+> | axis control "0 / 22 rescued at N=8 and 0 / 22 at N=4 … it is still zero" | **1 / 22 at both**; collateral unchanged at 3, same three queries | the axis paragraph |
+> | oracle table: TF-8 **8/22** (note 7/7, media 1/9, conv 0/6); rarest-DF **15/22** (7/7, 6/9, 2/6) | TF-8 **14/22** (7/7, 1/9, **6/6**); rarest-DF **19/22** (7/7, 6/9, **6/6**) | the oracle table |
+> | "the plain four-seam path has **no cross-seam ranking**" | **false at HEAD** — it interleaves rank-fairly; the surviving constraint is the per-seam budget (~⌈k/3⌉ slots per seam under the harness's three-seam fan-out) | the "defensible reading" |
+> | "≥15 of 22 cells observable, PRF rescued 0" | **≥19 of 22 observable**; PRF rescued 2 at the base point, still far under the bar | the bound |
+> | "39 of 211 fed rows (18%) were label-only" | **113 of 211 (54%)** (corrected inline below) | the price paragraph |
+>
+> The null is **not** weakened by this: the gap to the bar NARROWED (0 → 2
+> against ≥5), but the *evidential basis* WIDENED — a nine-point sweep now
+> says what one point used to, over an observability ceiling that rose from
+> 8 to 14 cells under the pre-registered selector. Clause [2] still fails at
+> every one of the nine points. **Task 3 owns the prose rewrite of this
+> section** (`Docs/superpowers/plans/2026-08-14-rag-four-seam-cross-ranking.md`);
+> this marker exists so that nothing below reads as authoritative-and-current
+> in the meantime. Full measurement:
+> `.superpowers/sdd/2026-08-14-rag-four-seam-cross-ranking/task-2-report.md`.
+
 The three premises retired above died to things the instrument could already
 show: query expansion to a **cell** (`vocabulary_mismatch` reads 1.000 in both
 vector modes — there is no ceiling left to improve against), `acronym` and
@@ -742,7 +771,10 @@ point run, one point recorded.
 The 10 losses are diagnosed, not just counted: re-running the *same* expression
 at k=200 separates "the expansion never reached the document" from "it reached
 it and lost its slot". **0 of the 10 are unmatched** — 8 seam-displaced, 2
-merge-displaced. The loss channel is **pure dilution**: expansion-term rows
+merge-displaced (**re-measured under the rank-fair merge, 2026-08-14: still 10
+lost, now 9 seam-displaced / 1 merge-displaced, and 2 of the 10 are different
+queries — see the staleness marker**). The loss channel is **pure dilution**:
+expansion-term rows
 evicting a rank-1 target from a 10-row per-seam budget. (This refuted the
 implementer's own prior, which was that the probe's expression — the engine's
 content-token form, without `build_fts_match_query`'s plural/singular widening
@@ -798,6 +830,11 @@ any query-widening technique on this path).
   rows carry no document text (`"Matched media · {type}"`, `"Matched
   conversation · N messages"`). **39 of 211 fed rows (18%) were label-only**, so
   without the fetch the feed would have skewed silently toward notes.
+  **Re-measured under the rank-fair merge, 2026-08-14: 113 of 211 (54%)** — the
+  fetch count is unchanged (one read per fed row) but the label-only share
+  TRIPLED, because the rank-fair rotation puts media and conversation rows into
+  the top-M slots that notes used to hold. The merge changes WHAT a top-M
+  consumer sees, not only the order it sees it in.
 
 **One more finding for any future term-derivation candidate on this corpus:**
 the engine's `_FTS5_STOPWORDS` (67 words) is too short for TF-based derivation
@@ -1076,8 +1113,11 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
 - **Plain's MRR and NDCG track recall, not ranking.** The four-seam keyword
   path deliberately drops the FTS rank ("an FTS ranking artifact, not a
   retrieval similarity score" — every plain row carries `score=None`), and
-  rows arrive concatenated in a fixed seam order (notes, media,
-  conversations, prompts). There is no ranking signal to be right or wrong
+  the seams are merged by a rank-fair rotation (TASK-16071 replaced the old
+  fixed-order concatenation; each seam's rank-1 row, then each seam's rank-2
+  row, …) rather than by any cross-seam relevance signal. Rank position
+  within a seam is the only comparable cross-source signal there is, and it
+  is not a score. There is no ranking signal to be right or wrong
   about in plain mode, so its MRR/NDCG columns are recall in a different
   unit. They are still gated (they move when recall moves and catch the
   same regressions), but do not present them as a ranking-quality claim in
