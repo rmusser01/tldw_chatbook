@@ -7612,7 +7612,7 @@ class TldwCli(
             )
         except Exception as exc:
             logger.warning(
-                "Runtime source change was not committed (exception_category=%s).",
+                "Runtime source change was not committed (exception_category={}).",
                 type(exc).__name__,
             )
             self.notify(
@@ -7648,7 +7648,7 @@ class TldwCli(
             except Exception as exc:
                 logger.warning(
                     "Runtime screen callback failed after runtime commit "
-                    "(exception_category=%s).",
+                    "(exception_category={}).",
                     type(exc).__name__,
                 )
         return True
