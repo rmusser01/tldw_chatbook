@@ -12,6 +12,7 @@ import pytest
 import tldw_chatbook.TTS.audio_cpp_artifact_dependencies as dependency_module
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactNotInstalledError,
+    ArtifactRemovalAvailability,
     ArtifactRef,
 )
 from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
@@ -24,6 +25,7 @@ from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
     project_audio_cpp_artifact_removal_evidence,
 )
 from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    AudioCppAcceptedPackage,
     AudioCppManagedArtifactIdentity,
     AudioCppSettingsConfig,
 )
@@ -147,7 +149,40 @@ def _catalog_profile(*, with_requirement: bool) -> tuple[object, TTSGenerationPr
     return descriptor, profile
 
 
-def test_reference_free_profile_requires_exact_managed_settings_identity() -> None:
+def _managed_package_for_descriptor(
+    descriptor: object,
+    *,
+    variant: str | None = None,
+) -> AudioCppAcceptedPackage:
+    from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+
+    recipe = next(
+        item
+        for item in AUDIO_CPP_RECIPE_REGISTRY.recipes
+        if descriptor.reference.artifact_id in item.model_library_artifact_ids
+    )
+    return AudioCppAcceptedPackage(
+        package_uuid="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        recipe_id=recipe.recipe_id,
+        recipe_revision=recipe.recipe_revision,
+        package_variant=recipe.package_variant,
+        public_model_id=descriptor.model_id,
+        canonical_root="/private/model",
+        canonical_root_identity="1" * 64,
+        configuration_identity="2" * 64,
+        weight_identity="3" * 64,
+        projection=recipe.projection,
+        managed_artifact=AudioCppManagedArtifactIdentity(
+            artifact_id=descriptor.reference.artifact_id,
+            revision=descriptor.reference.revision,
+            variant=variant or descriptor.reference.variant,
+        ),
+    )
+
+
+def test_reference_free_profile_uses_unique_exact_catalog_identity_without_settings() -> (
+    None
+):
     descriptor, profile = _catalog_profile(with_requirement=False)
 
     evidence = project_audio_cpp_artifact_removal_evidence(
@@ -156,7 +191,122 @@ def test_reference_free_profile_requires_exact_managed_settings_identity() -> No
         profiles=((profile, 0),),
     )
 
-    assert evidence.profile_consumers == ()
+    assert len(evidence.profile_consumers) == 1
+
+
+def test_reference_free_profile_fails_closed_on_catalog_identity_ambiguity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_artifact_catalog as catalog_module
+
+    descriptor, profile = _catalog_profile(with_requirement=False)
+    ambiguous = SimpleNamespace(
+        model_id=descriptor.model_id,
+        reference=ArtifactRef(
+            descriptor.reference.artifact_id,
+            descriptor.reference.revision,
+            "different-variant",
+        ),
+    )
+    monkeypatch.setattr(
+        catalog_module,
+        "audio_cpp_curated_entries",
+        lambda: ((descriptor, ()), (ambiguous, ())),
+    )
+
+    with pytest.raises(AudioCppArtifactDependencyError):
+        project_audio_cpp_artifact_removal_evidence(
+            descriptor.reference,
+            saved_settings=AudioCppSettingsConfig(),
+            profiles=((profile, 0),),
+        )
+
+
+def test_reference_free_profile_fails_closed_on_catalog_and_saved_disagreement() -> (
+    None
+):
+    from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+
+    descriptor, profile = _catalog_profile(with_requirement=False)
+    recipe = next(
+        item
+        for item in AUDIO_CPP_RECIPE_REGISTRY.recipes
+        if descriptor.reference.artifact_id in item.model_library_artifact_ids
+    )
+    package = AudioCppAcceptedPackage(
+        package_uuid="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        recipe_id=recipe.recipe_id,
+        recipe_revision=recipe.recipe_revision,
+        package_variant=recipe.package_variant,
+        public_model_id=descriptor.model_id,
+        canonical_root="/private/model",
+        canonical_root_identity="1" * 64,
+        configuration_identity="2" * 64,
+        weight_identity="3" * 64,
+        projection=recipe.projection,
+        managed_artifact=AudioCppManagedArtifactIdentity(
+            artifact_id=descriptor.reference.artifact_id,
+            revision=descriptor.reference.revision,
+            variant="different-variant",
+        ),
+    )
+    settings = AudioCppSettingsConfig(
+        mode="managed",
+        managed_setup_source="guided",
+        guided_packages=(package,),
+    )
+
+    with pytest.raises(AudioCppArtifactDependencyError):
+        project_audio_cpp_artifact_removal_evidence(
+            descriptor.reference,
+            saved_settings=settings,
+            profiles=((profile, 0),),
+        )
+
+
+def test_reference_free_profile_uses_matching_saved_identity_after_catalog_withdrawal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_artifact_catalog as catalog_module
+    from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+
+    descriptor, profile = _catalog_profile(with_requirement=False)
+    recipe = next(
+        item
+        for item in AUDIO_CPP_RECIPE_REGISTRY.recipes
+        if descriptor.reference.artifact_id in item.model_library_artifact_ids
+    )
+    package = AudioCppAcceptedPackage(
+        package_uuid="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        recipe_id=recipe.recipe_id,
+        recipe_revision=recipe.recipe_revision,
+        package_variant=recipe.package_variant,
+        public_model_id=descriptor.model_id,
+        canonical_root="/private/model",
+        canonical_root_identity="1" * 64,
+        configuration_identity="2" * 64,
+        weight_identity="3" * 64,
+        projection=recipe.projection,
+        managed_artifact=AudioCppManagedArtifactIdentity(
+            artifact_id=descriptor.reference.artifact_id,
+            revision=descriptor.reference.revision,
+            variant=descriptor.reference.variant,
+        ),
+    )
+    settings = AudioCppSettingsConfig(
+        mode="managed",
+        managed_setup_source="guided",
+        guided_packages=(package,),
+    )
+    monkeypatch.setattr(catalog_module, "audio_cpp_curated_entries", lambda: ())
+
+    evidence = project_audio_cpp_artifact_removal_evidence(
+        descriptor.reference,
+        saved_settings=settings,
+        profiles=((profile, 0),),
+    )
+
+    assert len(evidence.profile_consumers) == 1
 
 
 def test_clone_profile_joins_exact_recipe_and_future_recipe_is_not_a_consumer() -> None:
@@ -173,6 +323,17 @@ def test_clone_profile_joins_exact_recipe_and_future_recipe_is_not_a_consumer() 
             ),
         ),
     )
+    local = replace(
+        exact,
+        reference=replace(
+            exact.reference,
+            recipe_requirement=TTSCloneRecipeRequirement(
+                "audio-cpp-local.same-model",
+                1,
+                exact.model_id,
+            ),
+        ),
+    )
 
     exact_evidence = project_audio_cpp_artifact_removal_evidence(
         descriptor.reference,
@@ -184,13 +345,41 @@ def test_clone_profile_joins_exact_recipe_and_future_recipe_is_not_a_consumer() 
         saved_settings=AudioCppSettingsConfig(),
         profiles=((future, 1),),
     )
+    local_evidence = project_audio_cpp_artifact_removal_evidence(
+        descriptor.reference,
+        saved_settings=AudioCppSettingsConfig(),
+        profiles=((local, 1),),
+    )
 
     assert len(exact_evidence.profile_consumers) == 1
     assert future_evidence.profile_consumers == ()
+    assert local_evidence.profile_consumers == ()
     assert (
         build_audio_cpp_artifact_removal_preview(exact_evidence).fingerprint
         != build_audio_cpp_artifact_removal_preview(future_evidence).fingerprint
     )
+
+
+def test_clone_profile_uses_matching_recipe_identity_after_catalog_withdrawal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_artifact_catalog as catalog_module
+
+    descriptor, profile = _catalog_profile(with_requirement=True)
+    settings = AudioCppSettingsConfig(
+        mode="managed",
+        managed_setup_source="guided",
+        guided_packages=(_managed_package_for_descriptor(descriptor),),
+    )
+    monkeypatch.setattr(catalog_module, "audio_cpp_curated_entries", lambda: ())
+
+    evidence = project_audio_cpp_artifact_removal_evidence(
+        descriptor.reference,
+        saved_settings=settings,
+        profiles=((profile, 0),),
+    )
+
+    assert len(evidence.profile_consumers) == 1
 
 
 def test_global_saved_and_draft_defaults_are_fingerprinted_exact_consumers() -> None:
@@ -224,6 +413,33 @@ def test_global_saved_and_draft_defaults_are_fingerprinted_exact_consumers() -> 
         preview.fingerprint
         != build_audio_cpp_artifact_removal_preview(without).fingerprint
     )
+
+
+def test_global_default_fails_closed_on_catalog_and_saved_disagreement() -> None:
+    descriptor, _profile = _catalog_profile(with_requirement=False)
+    selected = TTSPreferencesSnapshot(
+        provider_id="audio_cpp",
+        model_mode="exact",
+        model_id=descriptor.model_id,
+        voice_mode="server_default",
+        voice_id=None,
+        response_format="wav",
+        speed=1.0,
+    )
+    settings = AudioCppSettingsConfig(
+        mode="managed",
+        managed_setup_source="guided",
+        guided_packages=(
+            _managed_package_for_descriptor(descriptor, variant="different-variant"),
+        ),
+    )
+
+    with pytest.raises(AudioCppArtifactDependencyError, match="disagreement"):
+        project_audio_cpp_artifact_removal_evidence(
+            descriptor.reference,
+            saved_settings=settings,
+            saved_preferences=selected,
+        )
 
 
 @pytest.mark.parametrize(
@@ -364,6 +580,225 @@ async def test_failed_handle_close_is_retained_and_blocks_until_retry_succeeds(
 
 
 @pytest.mark.asyncio
+async def test_shutdown_cancels_blocked_consumer_acquire_before_body_and_joins_close() -> (
+    None
+):
+    acquire_entered = threading.Event()
+    release_acquire = threading.Event()
+    events: list[str] = []
+
+    class Handle:
+        def close(self) -> None:
+            events.append("close")
+
+    class BlockingService:
+        def acquire_installed_root(self, _reference: ArtifactRef) -> Handle:
+            events.append("acquire-start")
+            acquire_entered.set()
+            assert release_acquire.wait(timeout=3.0)
+            events.append("acquire-end")
+            return Handle()
+
+    coordinator = AudioCppArtifactLeaseCoordinator(
+        BlockingService(),
+        saved_settings_snapshot=lambda: (),
+        catalog_entries=_catalog,
+    )
+
+    async def mutate() -> None:
+        async with coordinator.lease_consumers((_requirement(),)):
+            events.append("body")
+
+    mutation = asyncio.create_task(mutate())
+    assert await asyncio.to_thread(acquire_entered.wait, 1.0)
+    shutdown = asyncio.create_task(coordinator.shutdown())
+    await asyncio.sleep(0)
+    assert shutdown.done() is False
+
+    release_acquire.set()
+    await shutdown
+    with pytest.raises(asyncio.CancelledError):
+        await mutation
+    assert events == ["acquire-start", "acquire-end", "close"]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_active_consumer_body_and_joins_definitive_close() -> (
+    None
+):
+    body_entered = asyncio.Event()
+    cancellation_seen = asyncio.Event()
+    release_body = asyncio.Event()
+    events: list[str] = []
+
+    class Handle:
+        def close(self) -> None:
+            events.append("close")
+
+    class Service:
+        def acquire_installed_root(self, _reference: ArtifactRef) -> Handle:
+            events.append("acquire")
+            return Handle()
+
+    coordinator = AudioCppArtifactLeaseCoordinator(
+        Service(),
+        saved_settings_snapshot=lambda: (),
+        catalog_entries=_catalog,
+    )
+
+    async def mutate() -> None:
+        async with coordinator.lease_consumers((_requirement(),)):
+            events.append("body")
+            body_entered.set()
+            try:
+                await release_body.wait()
+            except asyncio.CancelledError:
+                cancellation_seen.set()
+                await asyncio.shield(release_body.wait())
+                raise
+
+    mutation = asyncio.create_task(mutate())
+    await body_entered.wait()
+    shutdown = asyncio.create_task(coordinator.shutdown())
+    await asyncio.sleep(0)
+    if shutdown.done():
+        release_body.set()
+        mutation.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await mutation
+        pytest.fail("shutdown returned before the active consumer lease settled")
+    await asyncio.wait_for(cancellation_seen.wait(), timeout=1.0)
+    assert shutdown.done() is False
+    assert events == ["acquire", "body"]
+
+    release_body.set()
+    await shutdown
+    with pytest.raises(asyncio.CancelledError):
+        await mutation
+    assert events == ["acquire", "body", "close"]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_retries_active_consumer_close_failure_before_return() -> None:
+    body_entered = asyncio.Event()
+    events: list[str] = []
+
+    class Handle:
+        attempts = 0
+
+        def close(self) -> None:
+            self.attempts += 1
+            events.append(f"close-{self.attempts}")
+            if self.attempts == 1:
+                raise RuntimeError("PRIVATE /managed/root")
+
+    class Service:
+        def acquire_installed_root(self, _reference: ArtifactRef) -> Handle:
+            return Handle()
+
+    coordinator = AudioCppArtifactLeaseCoordinator(
+        Service(),
+        saved_settings_snapshot=lambda: (),
+        catalog_entries=_catalog,
+    )
+
+    async def mutate() -> None:
+        async with coordinator.lease_consumers((_requirement(),)):
+            body_entered.set()
+            await asyncio.Event().wait()
+
+    mutation = asyncio.create_task(mutate())
+    await body_entered.wait()
+    shutdown = asyncio.create_task(coordinator.shutdown())
+    await asyncio.sleep(0)
+    if shutdown.done():
+        mutation.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await mutation
+        pytest.fail("shutdown returned before consumer cleanup")
+    await shutdown
+    with pytest.raises(asyncio.CancelledError):
+        await mutation
+    assert events == ["close-1", "close-2"]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_and_joins_blocked_probe() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    events: list[str] = []
+
+    class ProbeService(_Service):
+        def probe_removal_availability(
+            self,
+            _reference: ArtifactRef,
+        ) -> ArtifactRemovalAvailability:
+            events.append("probe-start")
+            entered.set()
+            assert release.wait(timeout=3.0)
+            events.append("probe-end")
+            return ArtifactRemovalAvailability(True, None)
+
+    coordinator = AudioCppArtifactLeaseCoordinator(
+        ProbeService(),
+        saved_settings_snapshot=lambda: (),
+        catalog_entries=_catalog,
+    )
+    probe = asyncio.create_task(coordinator.probe_removal_availability(REFERENCE))
+    assert await asyncio.to_thread(entered.wait, 1.0)
+
+    shutdown = asyncio.create_task(coordinator.shutdown())
+    await asyncio.sleep(0)
+    assert shutdown.done() is False
+    release.set()
+    await shutdown
+    with pytest.raises(asyncio.CancelledError):
+        await probe
+    assert events == ["probe-start", "probe-end"]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_seals_all_public_operation_admission() -> None:
+    calls: list[str] = []
+
+    class Service(_Service):
+        def acquire_installed_root(self, reference: ArtifactRef) -> _Handle:
+            calls.append("lease")
+            return super().acquire_installed_root(reference)
+
+        def probe_removal_availability(
+            self,
+            _reference: ArtifactRef,
+        ) -> ArtifactRemovalAvailability:
+            calls.append("probe")
+            return ArtifactRemovalAvailability(True, None)
+
+        def acquire_removal_authority(self, _reference: ArtifactRef) -> object:
+            calls.append("remove")
+            raise AssertionError("unreachable")
+
+    coordinator = AudioCppArtifactLeaseCoordinator(
+        Service(),
+        saved_settings_snapshot=lambda: (),
+        catalog_entries=_catalog,
+    )
+    await coordinator.shutdown()
+
+    with pytest.raises(AudioCppArtifactDependencyError, match="closed"):
+        async with coordinator.lease_consumers((_requirement(),)):
+            raise AssertionError("unreachable")
+    with pytest.raises(AudioCppArtifactDependencyError, match="closed"):
+        await coordinator.probe_removal_availability(REFERENCE)
+    with pytest.raises(AudioCppArtifactDependencyError, match="closed"):
+        await coordinator.remove_if_unchanged(
+            REFERENCE,
+            "fingerprint",
+            lambda: asyncio.sleep(0, result="fingerprint"),
+        )
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_identical_saved_package_instances_are_deduped_not_disagreement() -> None:
     service = _Service()
     saved = AudioCppManagedConsumerIdentity(
@@ -475,6 +910,56 @@ async def test_shutdown_cancels_blocked_removal_then_joins_authority_cleanup() -
     assert shutdown.done() is False
     release.set()
     await shutdown
+    with pytest.raises(asyncio.CancelledError):
+        await removal
+    assert events == ["acquire-start", "acquire-end", "close"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_shutdown_joins_blocked_removal_then_preserves_cancellation() -> (
+    None
+):
+    entered = threading.Event()
+    release = threading.Event()
+    events: list[str] = []
+
+    class Authority:
+        def commit(self) -> None:
+            events.append("commit")
+
+        def close(self) -> None:
+            events.append("close")
+
+    class BlockingRemovalService(_Service):
+        def acquire_removal_authority(self, _reference: ArtifactRef) -> Authority:
+            events.append("acquire-start")
+            entered.set()
+            assert release.wait(timeout=3.0)
+            events.append("acquire-end")
+            return Authority()
+
+    coordinator = AudioCppArtifactLeaseCoordinator(
+        BlockingRemovalService(),
+        saved_settings_snapshot=lambda: (),
+        catalog_entries=_catalog,
+    )
+    removal = asyncio.create_task(
+        coordinator.remove_if_unchanged(
+            REFERENCE,
+            "fingerprint",
+            lambda: asyncio.sleep(0, result="fingerprint"),
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 1.0)
+
+    shutdown = asyncio.create_task(coordinator.shutdown())
+    await asyncio.sleep(0)
+    shutdown.cancel("caller stopped shutdown")
+    await asyncio.sleep(0)
+    assert shutdown.done() is False
+    release.set()
+    with pytest.raises(asyncio.CancelledError, match="caller stopped shutdown"):
+        await shutdown
     with pytest.raises(asyncio.CancelledError):
         await removal
     assert events == ["acquire-start", "acquire-end", "close"]

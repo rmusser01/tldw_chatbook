@@ -1312,6 +1312,64 @@ def test_audio_cpp_delete_failure_on_app_loop_is_bounded_and_clears_lane(
     assert "exception': True" not in rendered
 
 
+@pytest.mark.parametrize("hostile_code", ["PRIVATE-TOKEN-123", "short-secret"])
+def test_audio_cpp_delete_failure_never_logs_untrusted_exception_code(
+    monkeypatch,
+    hostile_code: str,
+) -> None:
+    import tldw_chatbook.UI.Screens.model_installed_view as installed_module
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    class CollaboratorFailure(RuntimeError):
+        code = hostile_code
+
+    logged: list[object] = []
+
+    class BoundedLogger:
+        def error(self, *args, **kwargs):
+            logged.extend((args, kwargs))
+
+        def warning(self, *args, **kwargs):
+            logged.extend((args, kwargs))
+
+    monkeypatch.setattr(installed_module, "logger", BoundedLogger())
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "q8_0")
+
+    InstalledView._bounded_delete_failure(reference, CollaboratorFailure("private"))
+
+    assert hostile_code not in repr(logged)
+    assert "operation_failed" in repr(logged)
+
+
+def test_audio_cpp_delete_failure_does_not_read_hostile_exception_code(
+    monkeypatch,
+) -> None:
+    import tldw_chatbook.UI.Screens.model_installed_view as installed_module
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    class CollaboratorFailure(RuntimeError):
+        @property
+        def code(self) -> str:
+            raise AssertionError("PRIVATE hostile property was evaluated")
+
+    logged: list[object] = []
+
+    class BoundedLogger:
+        def error(self, *args, **kwargs):
+            logged.extend((args, kwargs))
+
+        def warning(self, *args, **kwargs):
+            logged.extend((args, kwargs))
+
+    monkeypatch.setattr(installed_module, "logger", BoundedLogger())
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "q8_0")
+
+    InstalledView._bounded_delete_failure(reference, CollaboratorFailure("private"))
+
+    assert "operation_failed" in repr(logged)
+    assert "PRIVATE" not in repr(logged)
+
+
 def test_deletion_guard_blocks_before_and_after_confirmation(monkeypatch) -> None:
     """A dependency that becomes required cannot enter the delete worker."""
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView

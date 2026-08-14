@@ -669,7 +669,7 @@ async def test_profile_service_concurrent_first_use_joins_one_open_and_construct
 
 
 @pytest.mark.asyncio
-async def test_removal_evidence_fails_closed_when_profile_inventory_exceeds_bound(
+async def test_removal_evidence_fails_closed_when_profile_inventory_is_incoherent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
@@ -683,10 +683,15 @@ async def test_removal_evidence_fails_closed_when_profile_inventory_exceeds_boun
         async def list_profiles(self, *, search: object, offset: int):
             assert search is None
             assert offset == 0
-            return SimpleNamespace(profiles=summaries, total=201)
+            return SimpleNamespace(
+                profiles=summaries, total=201, repository_generation=7
+            )
 
         async def get_profile(self, profile_id: UUID):
-            return SimpleNamespace(profile=SimpleNamespace(profile_id=profile_id))
+            return SimpleNamespace(
+                profile=SimpleNamespace(profile_id=profile_id),
+                repository_generation=7,
+            )
 
         async def assignment_count(self, _loaded: object) -> int:
             return 0
@@ -740,8 +745,10 @@ async def test_removal_evidence_fails_closed_when_profile_inventory_exceeds_boun
         async def list_profiles(self, *, search: object, offset: int):
             assert search is None
             if offset == 0:
-                return SimpleNamespace(profiles=summaries[:1], total=2)
-            return SimpleNamespace(profiles=(), total=2)
+                return SimpleNamespace(
+                    profiles=summaries[:1], total=2, repository_generation=7
+                )
+            return SimpleNamespace(profiles=(), total=2, repository_generation=7)
 
     incomplete = IncompleteProfiles()
 
@@ -749,6 +756,53 @@ async def test_removal_evidence_fails_closed_when_profile_inventory_exceeds_boun
         return incomplete
 
     owner._ensure_tts_profile_service = ensure_incomplete_profiles
+    with pytest.raises(ProfileRepositoryError, match="unavailable"):
+        await TldwCli._audio_cpp_artifact_removal_evidence(
+            owner,
+            ArtifactRef("audio-cpp-model", "a" * 40, "q8_0"),
+        )
+
+    class ChurningProfiles(Profiles):
+        async def list_profiles(self, *, search: object, offset: int):
+            assert search is None
+            return SimpleNamespace(
+                profiles=(summaries[offset],),
+                total=2,
+                repository_generation=7 + offset,
+            )
+
+    churning = ChurningProfiles()
+
+    async def ensure_churning_profiles() -> ChurningProfiles:
+        return churning
+
+    owner._ensure_tts_profile_service = ensure_churning_profiles
+    with pytest.raises(ProfileRepositoryError, match="unavailable"):
+        await TldwCli._audio_cpp_artifact_removal_evidence(
+            owner,
+            ArtifactRef("audio-cpp-model", "a" * 40, "q8_0"),
+        )
+
+    class LoadedDriftProfiles(Profiles):
+        async def list_profiles(self, *, search: object, offset: int):
+            assert search is None
+            assert offset == 0
+            return SimpleNamespace(
+                profiles=summaries[:1], total=1, repository_generation=7
+            )
+
+        async def get_profile(self, profile_id: UUID):
+            return SimpleNamespace(
+                profile=SimpleNamespace(profile_id=profile_id),
+                repository_generation=8,
+            )
+
+    loaded_drift = LoadedDriftProfiles()
+
+    async def ensure_loaded_drift_profiles() -> LoadedDriftProfiles:
+        return loaded_drift
+
+    owner._ensure_tts_profile_service = ensure_loaded_drift_profiles
     with pytest.raises(ProfileRepositoryError, match="unavailable"):
         await TldwCli._audio_cpp_artifact_removal_evidence(
             owner,

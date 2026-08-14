@@ -9484,6 +9484,7 @@ class TldwCli(
         profiles_with_counts: list[tuple[Any, int]] = []
         seen_profile_ids: set[Any] = set()
         expected_total: int | None = None
+        expected_repository_generation: int | None = None
         offset = 0
         while len(profiles_with_counts) < 200:
             page = await profile_service.list_profiles(search=None, offset=offset)
@@ -9492,6 +9493,13 @@ class TldwCli(
             if expected_total is None:
                 expected_total = page.total
             elif page.total != expected_total:
+                raise ProfileRepositoryError("unavailable")
+            page_generation = getattr(page, "repository_generation", None)
+            if type(page_generation) is not int or page_generation < 0:
+                raise ProfileRepositoryError("unavailable")
+            if expected_repository_generation is None:
+                expected_repository_generation = page_generation
+            elif page_generation != expected_repository_generation:
                 raise ProfileRepositoryError("unavailable")
             if not page.profiles:
                 break
@@ -9502,6 +9510,11 @@ class TldwCli(
                     raise ProfileRepositoryError("unavailable")
                 seen_profile_ids.add(profile.profile_id)
                 loaded = await profile_service.get_profile(profile.profile_id)
+                if (
+                    getattr(loaded, "repository_generation", None)
+                    != expected_repository_generation
+                ):
+                    raise ProfileRepositoryError("unavailable")
                 count = await profile_service.assignment_count(loaded)
                 profiles_with_counts.append((loaded.profile, count))
             offset += len(page.profiles)

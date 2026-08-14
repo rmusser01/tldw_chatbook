@@ -1320,19 +1320,13 @@ class InstalledView(Widget):
         if isinstance(exc, ArtifactInUseError):
             logger.warning("Managed model deletion blocked by a lease")
         else:
-            try:
-                code = getattr(exc, "code", "operation_failed")
-            except BaseException:
-                code = "operation_failed"
-            if type(code) is not str or not code or len(code) > 64:
-                code = "operation_failed"
             logger.error(
                 "Managed model deletion failed for {}@{}/{}; error_type={} code={}",
                 reference.artifact_id,
                 reference.revision,
                 reference.variant,
                 type(exc).__name__,
-                code,
+                "operation_failed",
             )
         return lifecycle_failure_message(exc, operation="deletion")
 

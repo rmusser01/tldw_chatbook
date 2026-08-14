@@ -362,6 +362,7 @@ def project_audio_cpp_artifact_removal_evidence(
     except (OSError, TypeError, ValueError):
         raise AudioCppArtifactDependencyError("dependency projection failed") from None
     managed_model_references: dict[str, set[ArtifactRef]] = {}
+    managed_requirement_references: dict[tuple[str, int, str], set[ArtifactRef]] = {}
     scoped_managed_model_references: dict[str, dict[str, set[ArtifactRef]]] = {
         "saved": {},
         "draft": {},
@@ -380,6 +381,14 @@ def project_audio_cpp_artifact_removal_evidence(
             managed_model_references.setdefault(package.public_model_id, set()).add(
                 package_reference
             )
+            managed_requirement_references.setdefault(
+                (
+                    package.recipe_id,
+                    package.recipe_revision,
+                    package.public_model_id,
+                ),
+                set(),
+            ).add(package_reference)
             scoped_managed_model_references[scope].setdefault(
                 package.public_model_id, set()
             ).add(package_reference)
@@ -395,22 +404,18 @@ def project_audio_cpp_artifact_removal_evidence(
         ("saved", "Saved global TTS default", saved_preferences),
         ("draft", "Unsaved global TTS default", draft_preferences),
     ):
-        preference_references = set(
-            catalog_model_references.get(
-                preferences.model_id if preferences is not None else "", set()
-            )
-        )
-        if preferences is not None and preferences.model_id is not None:
-            preference_references.update(
-                scoped_managed_model_references[scope].get(preferences.model_id, set())
-            )
         if (
-            preferences is not None
-            and preferences.provider_id == "audio_cpp"
-            and preferences.model_mode == "exact"
-            and preferences.model_id is not None
-            and reference in preference_references
+            preferences is None
+            or preferences.provider_id != "audio_cpp"
+            or preferences.model_mode != "exact"
+            or preferences.model_id is None
         ):
+            continue
+        preference_reference = _resolve_exact_projection_reference(
+            catalog_model_references.get(preferences.model_id, set()),
+            scoped_managed_model_references[scope].get(preferences.model_id, set()),
+        )
+        if preference_reference == reference:
             settings.append((f"{scope}-default", label, preferences.model_id))
     projected_profiles: list[tuple[str, str, int, bool]] = []
     projected_provenance: list[tuple[str, str]] = []
@@ -428,19 +433,25 @@ def project_audio_cpp_artifact_removal_evidence(
             )
             provenance = ""
             if requirement is None:
-                references = managed_model_references.get(profile.model_id, set())
+                profile_reference_match = _resolve_exact_projection_reference(
+                    catalog_model_references.get(profile.model_id, set()),
+                    managed_model_references.get(profile.model_id, set()),
+                )
             else:
                 requirement_key = (
                     requirement.recipe_id,
                     requirement.recipe_revision,
                     requirement.model_id,
                 )
-                references = catalog_requirement_references.get(requirement_key, set())
+                profile_reference_match = _resolve_exact_projection_reference(
+                    catalog_requirement_references.get(requirement_key, set()),
+                    managed_requirement_references.get(requirement_key, set()),
+                )
                 provenance = (
                     f"{requirement.recipe_id}@{requirement.recipe_revision}:"
                     f"{requirement.model_id}"
                 )
-            if reference not in references:
+            if profile_reference_match != reference:
                 continue
             profile_identity = str(profile.profile_id)
             projected_profiles.append(
@@ -471,6 +482,30 @@ def _reference_from_identity(identity: AudioCppManagedArtifactIdentity) -> Artif
 
 def _reference_key(reference: ArtifactRef) -> tuple[str, str, str]:
     return reference.artifact_id, reference.revision, reference.variant
+
+
+def _resolve_exact_projection_reference(
+    catalog_references: Iterable[ArtifactRef],
+    persisted_references: Iterable[ArtifactRef],
+) -> ArtifactRef | None:
+    """Resolve one exact catalog/persisted join or fail closed on ambiguity."""
+
+    try:
+        catalog = set(catalog_references)
+        persisted = set(persisted_references)
+    except (TypeError, ValueError):
+        raise AudioCppArtifactDependencyError("dependency resolution failed") from None
+    if len(catalog) > 1 or len(persisted) > 1:
+        raise AudioCppArtifactDependencyError("dependency resolution failed")
+    catalog_reference = None if not catalog else next(iter(catalog))
+    persisted_reference = None if not persisted else next(iter(persisted))
+    if (
+        catalog_reference is not None
+        and persisted_reference is not None
+        and catalog_reference != persisted_reference
+    ):
+        raise AudioCppArtifactDependencyError("managed artifact identity disagreement")
+    return persisted_reference or catalog_reference
 
 
 def is_curated_audio_cpp_artifact_reference(reference: ArtifactRef) -> bool:
@@ -512,8 +547,11 @@ class AudioCppArtifactLeaseCoordinator:
         self._catalog_entries = catalog_entries or self._default_catalog_entries
         self._cleanup_owners: list[_InstalledRootHandle | _RemovalAuthority] = []
         self._cleanup_lock = asyncio.Lock()
+        self._admission_lock = asyncio.Lock()
         self._blocking_tasks: set[asyncio.Task[object]] = set()
+        self._operations: dict[asyncio.Future[None], asyncio.Task[Any]] = {}
         self._removal_tasks: set[asyncio.Task[str]] = set()
+        self._shutdown_task: asyncio.Task[None] | None = None
         self._closed = False
 
     @staticmethod
@@ -558,7 +596,7 @@ class AudioCppArtifactLeaseCoordinator:
             if consumer.provider_id != "audio_cpp":
                 continue
             requirement = consumer.recipe_requirement
-            candidates: list[tuple[ArtifactRef, object]] = []
+            catalog_references: set[ArtifactRef] = set()
             for entry in entries:
                 try:
                     descriptor, _sources, recipe = cast(tuple[Any, Any, Any], entry)
@@ -570,14 +608,11 @@ class AudioCppArtifactLeaseCoordinator:
                             and recipe.default_public_model_id == requirement.model_id
                         )
                     if matches:
-                        candidates.append((descriptor.reference, recipe))
+                        catalog_references.add(descriptor.reference)
                 except Exception:
                     raise AudioCppArtifactDependencyError(
                         "dependency resolution failed"
                     ) from None
-            if len(candidates) > 1:
-                raise AudioCppArtifactDependencyError("dependency resolution failed")
-            catalog_reference = candidates[0][0] if candidates else None
             saved_matches = tuple(
                 item
                 for item in saved
@@ -594,27 +629,17 @@ class AudioCppArtifactLeaseCoordinator:
                 _reference_from_identity(item.managed_artifact)
                 for item in saved_matches
             }
-            if len(persisted_references) > 1:
-                raise AudioCppArtifactDependencyError("dependency resolution failed")
-            persisted_reference = (
-                None if not persisted_references else next(iter(persisted_references))
+            reference = _resolve_exact_projection_reference(
+                catalog_references,
+                persisted_references,
             )
-            if (
-                catalog_reference is not None
-                and persisted_reference is not None
-                and catalog_reference != persisted_reference
-            ):
-                raise AudioCppArtifactDependencyError(
-                    "managed artifact identity disagreement"
-                )
-            reference = persisted_reference or catalog_reference
             if reference is not None:
                 resolved[_reference_key(reference)] = reference
         return tuple(resolved[key] for key in sorted(resolved))
 
     async def _settle_task(
         self,
-        task: asyncio.Task[Any],
+        task: asyncio.Future[Any],
     ) -> tuple[asyncio.CancelledError | None, object | None, BaseException | None]:
         cancellation: asyncio.CancelledError | None = None
         waiter = asyncio.current_task()
@@ -688,6 +713,22 @@ class AudioCppArtifactLeaseCoordinator:
         async with self._cleanup_lock:
             await self._drain_cleanup_locked()
 
+    async def _admit_operation(self) -> asyncio.Future[None]:
+        owner = asyncio.current_task()
+        if owner is None:
+            raise AudioCppArtifactDependencyError("artifact operation admission failed")
+        async with self._admission_lock:
+            if self._closed:
+                raise AudioCppArtifactDependencyError("lease coordinator is closed")
+            completion = asyncio.get_running_loop().create_future()
+            self._operations[completion] = owner
+            return completion
+
+    def _complete_operation(self, completion: asyncio.Future[None]) -> None:
+        self._operations.pop(completion, None)
+        if not completion.done():
+            completion.set_result(None)
+
     @asynccontextmanager
     async def lease_consumers(
         self,
@@ -695,8 +736,20 @@ class AudioCppArtifactLeaseCoordinator:
     ) -> AsyncIterator[None]:
         """Hold sorted exact shared-root leases through caller commit/rollback."""
 
-        if self._closed:
-            raise AudioCppArtifactDependencyError("lease coordinator is closed")
+        completion = await self._admit_operation()
+        try:
+            async with self._lease_consumer_operation(consumers):
+                yield
+        finally:
+            self._complete_operation(completion)
+
+    @asynccontextmanager
+    async def _lease_consumer_operation(
+        self,
+        consumers: Iterable[AudioCppArtifactConsumerRequirement],
+    ) -> AsyncIterator[None]:
+        """Run one admitted consumer lease through definitive cleanup."""
+
         await self.drain_cleanup()
         handles: list[_InstalledRootHandle] = []
         primary_error: BaseException | None = None
@@ -750,21 +803,25 @@ class AudioCppArtifactLeaseCoordinator:
     ) -> ArtifactRemovalAvailability:
         """Probe off-loop while retaining any escaped cleanup authority."""
 
-        await self.drain_cleanup()
-        cancellation, value, error = await self._settle_blocking(
-            self._artifact_service.probe_removal_availability,
-            reference,
-        )
-        if error is not None:
-            self._retain_error_owner(error)
+        completion = await self._admit_operation()
+        try:
+            await self.drain_cleanup()
+            cancellation, value, error = await self._settle_blocking(
+                self._artifact_service.probe_removal_availability,
+                reference,
+            )
+            if error is not None:
+                self._retain_error_owner(error)
+                if cancellation is not None:
+                    raise cancellation
+                raise AudioCppArtifactDependencyError("removal probe failed") from None
             if cancellation is not None:
                 raise cancellation
-            raise AudioCppArtifactDependencyError("removal probe failed") from None
-        if cancellation is not None:
-            raise cancellation
-        if type(value) is not ArtifactRemovalAvailability:
-            raise AudioCppArtifactDependencyError("removal probe failed")
-        return value
+            if type(value) is not ArtifactRemovalAvailability:
+                raise AudioCppArtifactDependencyError("removal probe failed")
+            return value
+        finally:
+            self._complete_operation(completion)
 
     async def _remove_if_unchanged(
         self,
@@ -829,12 +886,13 @@ class AudioCppArtifactLeaseCoordinator:
     ) -> str:
         """Own one retained acquire/revalidate/commit/close operation."""
 
-        if self._closed:
-            raise AudioCppArtifactDependencyError("lease coordinator is closed")
-        task = asyncio.create_task(
-            self._remove_if_unchanged(reference, fingerprint, collect_fingerprint)
-        )
-        self._removal_tasks.add(task)
+        async with self._admission_lock:
+            if self._closed:
+                raise AudioCppArtifactDependencyError("lease coordinator is closed")
+            task = asyncio.create_task(
+                self._remove_if_unchanged(reference, fingerprint, collect_fingerprint)
+            )
+            self._removal_tasks.add(task)
         cancellation: asyncio.CancelledError | None = None
         waiter = asyncio.current_task()
         requests = waiter.cancelling() if waiter is not None else 0
@@ -858,15 +916,46 @@ class AudioCppArtifactLeaseCoordinator:
             raise cancellation
         return result
 
-    async def shutdown(self) -> None:
-        """Stop admission, join removal work, then drain retained owners."""
+    async def _shutdown_owned(self) -> None:
+        """Seal admission and definitively settle every admitted operation."""
 
-        self._closed = True
-        for task in tuple(self._removal_tasks):
-            task.cancel()
-        for task in tuple(self._removal_tasks):
-            await self._settle_task(task)
+        async with self._admission_lock:
+            self._closed = True
+        while self._operations or self._removal_tasks:
+            operations = tuple(self._operations.items())
+            removals = tuple(self._removal_tasks)
+            for _completion, owner in operations:
+                owner.cancel()
+            for task in removals:
+                task.cancel()
+            for completion, _owner in operations:
+                await self._settle_task(completion)
+            for task in removals:
+                await self._settle_task(task)
+                self._removal_tasks.discard(task)
+        for blocking_task in tuple(self._blocking_tasks):
+            await self._settle_task(blocking_task)
         await self.drain_cleanup()
+
+    async def shutdown(self) -> None:
+        """Stop admission and retain shutdown through definitive cleanup."""
+
+        current = asyncio.current_task()
+        if any(owner is current for owner in self._operations.values()):
+            raise AudioCppArtifactDependencyError(
+                "cannot shut down from an active artifact operation"
+            )
+        task = self._shutdown_task
+        if task is None:
+            task = asyncio.create_task(self._shutdown_owned())
+            self._shutdown_task = task
+        cancellation, _result, error = await self._settle_task(task)
+        if error is not None:
+            if cancellation is not None:
+                error.add_note("shutdown caller was cancelled")
+            raise error
+        if cancellation is not None:
+            raise cancellation
 
 
 __all__ = [
