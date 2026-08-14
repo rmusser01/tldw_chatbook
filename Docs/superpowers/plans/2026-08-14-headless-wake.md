@@ -137,6 +137,40 @@ Both are recorded in `DECISIONS.md`. Neither blocks Tasks 1–2.
 
 ---
 
+## EXECUTION ORDER — reconciliation (coordinator, 2026-08-14)
+
+**The executed order differs from the numbering below. Read this before picking up work.**
+
+The owner approved design A on a staging condition: *the pure ownership move lands first,
+with ZERO semantic change, separately reviewable and separately revertable from any lifetime
+semantics.* That inverts the plan's Task 1/Task 2 order, so the coordinator dispatched the
+ownership move first.
+
+| Shipped | Commit | = plan task | State |
+|---|---|---|---|
+| Four execution probes | `25bc081b2` (PR #1641) | Task 0 | DONE |
+| App-owned `ConsoleRuntime` holder, **still disposed at unmount** (zero semantic change) | `f09bb991d` | Task 2's ownership half ONLY | DONE |
+| Teardown split (`leave_console` vs `dispose`) + the runtime SURVIVING unmount | — | Task 1 + Task 2's lifetime half | NEXT |
+| Tasks 3-8 | — | unchanged | pending |
+
+**Two hazards the seam map did not name, found while executing the ownership move — the next
+task must handle both:**
+
+1. **`_complete_screen_navigation` constructs the incoming screen and calls `restore_state`
+   BEFORE `switch_screen` unmounts the outgoing one**, and `_restore_native_console_state`
+   reaches `_ensure_console_chat_store`. A naive app-owned holder therefore hands the
+   incoming screen the OUTGOING screen's controller, which `on_unmount` then shuts down
+   underneath it — a dead Console after a same-target navigation (reachable via the
+   `coding → chat` alias). `ConsoleRuntime.view` currently closes this by replacing a runtime
+   claimed by a different view. **That is a lifetime-preservation device standing in for
+   today's semantics; the attach/detach seam must REPLACE it, not build on it.**
+2. **`ChatScreen` still holds its own `_console_chat_store` / `_console_provider_gateway` /
+   `_console_chat_controller` handles** — ~40 sites read them as "built yet?" probes and 59
+   test sites assign them. Identical lifetimes today, so they cannot diverge. The moment the
+   runtime outlives the screen, a fresh screen's `None` handle SHADOWS a live runtime object
+   until `_ensure_*` runs. **Repointing them is the next task's FIRST move, not an
+   afterthought.**
+
 ### Task 0 — the four execution probes (DONE)
 
 Delivered: `Docs/superpowers/plans/2026-08-14-headless-wake-task-0-report.md`,
