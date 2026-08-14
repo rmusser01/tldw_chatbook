@@ -1231,6 +1231,38 @@ async def test_prompts_guard_visible_cannot_be_bypassed(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["edit", "recipe"])
+async def test_prompts_repeated_visible_close_preserves_guard_editor_focus(
+    mode: str,
+) -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        editor = await _open_dirty_prompt_mode(modal, pilot, mode)
+        close = modal.query_one("#console-prompts-close", Button)
+        close.press()
+        await pilot.pause()
+        guard = modal.query_one("#console-prompts-dirty-guard")
+        assert guard.display is True
+        assert getattr(app.focused, "id", None) == "console-prompts-keep-editing"
+
+        close.press()
+        await pilot.pause()
+        assert guard.display is True
+        assert getattr(app.focused, "id", None) == "console-prompts-keep-editing"
+        assert app.results == []
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert guard.display is False
+        assert app.focused is editor
+        assert app.results == []
+
+
+@pytest.mark.asyncio
 async def test_prompts_expanded_select_descendant_owns_primary_click() -> None:
     backend = _PromptBackend()
     app = _Harness(backend)

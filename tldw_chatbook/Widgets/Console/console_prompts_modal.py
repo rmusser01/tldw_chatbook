@@ -1397,8 +1397,10 @@ class ConsolePromptsModal(
         )
 
     def _show_dirty_guard(self) -> None:
-        self._remember_current_focus()
         guard = self.query_one("#console-prompts-dirty-guard", Vertical)
+        if guard.display:
+            return
+        self._remember_current_focus()
         guard.add_class("visible")
         guard.display = True
         self.call_after_refresh(self._focus_widget, "console-prompts-keep-editing")
