@@ -34,7 +34,63 @@ test only after the product behaviour is confirmed intended.
 
 ## Acceptance Criteria
 
-- [ ] The StopIteration pair is attributed (real bug vs test artifact) with evidence, before any contract is updated
-- [ ] Each cluster is attributed to its causing commit
-- [ ] Genuine product breaks are fixed rather than absorbed into expectations
+- [x] The StopIteration pair is attributed (real bug vs test artifact) with evidence, before any contract is updated
+- [x] Each cluster is attributed to its causing commit
+- [x] Genuine product breaks are fixed rather than absorbed into expectations (one found and fixed: the skills trust-panel ordering)
 - [ ] The listed modules pass whole on dev
+
+## Implementation Notes (batch 1)
+
+Re-baselined every module on CURRENT dev before touching anything -- dev had
+moved so fast that the sweep's inventory was already partly stale in both
+directions: `test_library_prompts_canvas.py` (the filed StopIteration pair)
+now passes whole (280/280), while the file-notes cluster had GROWN to 28
+failures.
+
+**The StopIteration class: test artifact, twice over.** Both remaining
+instances were `next(gen)` with no default in tests, converting "expected
+tree node missing" into an opaque `RuntimeError: coroutine raised
+StopIteration`. The nodes were missing because folders in the file-notes
+navigator now carry `_FolderNodeData(relative_path)` (a frozen dataclass)
+while the tests matched the old `("folder", value)` tuples. Both lookups now
+match the dataclass field and fail with a message listing actual node data.
+
+**One real product bug found and fixed: the skills trust panel could stick at
+"not granted" for a granted skill.** task-15457 made the skill editor's
+recompose CANVAS-scoped, driven by the canvas's own message pump -- which a
+screen-level `call_after_refresh` has no ordering against. The grant-fetch
+coroutine's deferred `_render_library_skill_trust_panel` fired before the
+canvas's children existed, swallowed `NoMatches`, and never retried (measured:
+grant stored True, render ran, button absent). It now rides the same canvas
+post-recompose hook the editor's arming follow-up already rides. This is the
+exact stuck-forever race the method's own docstring said `call_after_refresh`
+prevented -- 15457 quietly invalidated its premise.
+
+**Stale contracts updated with attribution** (each verified deliberate via
+its causing commit): the file-notes-git focus color x10 (task-15509 made
+focus theme-driven; the helper now asserts the active theme's
+`primary-background`, the same way 15509's own test does); Protect joining
+the structurally-gated set (dca0594a5); confirm-delete span under the new
+`-single-editor-actions` narrow mode (a85232c37); the disabled-marker prefix
+on the commit label (Library a11y convention); "Push checking" -> the
+"· Checking push" phase suffix x4 (67fec3f35). Stale doubles taught 4 new
+production attributes (export-quality visibility, notes/prompts mutation
+in-flight). Two measurement repairs in ingest_structural: the fold's cost is
+now the collapsible's own height delta (`virtual_region.y` stopped being an
+absolute anchor when 15513 nested the actions), and the contrast probe
+scrolls its fields on-screen first (15513's new controls pushed Language
+below the 46-row viewport -- an off-screen widget paints nothing).
+
+Green after batch 1: file_notes_git 148/148, git_push 60/60, export_receipt +
+multiselect 17/17, choice_strips + skills_canvas 230/230 (incl. the product
+fix), ingest_structural 22/22, prompts_canvas 280/280 (no change needed).
+
+## Remainder (open)
+
+- `test_library_file_notes_workspace.py` x2 and `test_library_shell.py` x6:
+  both workspace failures are FOCUS assertions (cancel-first confirmation no
+  longer focuses Cancel; editor focus lost to NOWHERE at 40x20). dca0594a5
+  ("quiet focus and distill file actions") deliberately changed focus
+  behaviour, so each needs the deliberate-or-regression call made against
+  that commit's intent -- focus lost to nowhere is suspicious. Not batched
+  with the mechanical fixes above on purpose.

@@ -513,6 +513,8 @@ def test_prompts_sort_choice_requests_exact_scope():
 
     def make_fake(sort_by: str):
         return SimpleNamespace(
+            # task-15790: production gained this in-flight guard; stale double.
+            _library_prompts_mutation_in_flight=False,
             _library_prompts_sort_choices_visible=True,
             _library_prompt_browse_controller=SimpleNamespace(
                 scope=PromptBrowseScope(sort_by=sort_by)

@@ -17234,11 +17234,19 @@ class LibraryScreen(BaseAppScreen):
         # ``except (NoMatches, QueryError): pass`` guards, and never retry
         # -- leaving the panel stuck showing "not granted"/disabled forever
         # even though ``_library_skill_script_grant`` is correctly True in
-        # memory. ``call_after_refresh`` (the same deferral this method's
-        # caller already uses for ``_arm_library_skill_editor``) posts an
-        # ``InvokeLater`` behind whatever recompose is already queued, so
-        # it always fires after the editor's widgets are actually mounted.
-        self.call_after_refresh(self._render_library_skill_trust_panel)
+        # memory. ``call_after_refresh`` was the original answer, and
+        # task-15457 quietly invalidated it: the editor recompose it was
+        # ordering against became CANVAS-scoped (`_sync_library_canvas`,
+        # driven by the canvas's own message pump), which a SCREEN-level
+        # ``call_after_refresh`` has no ordering against -- the render fired
+        # before the canvas's children existed, swallowed ``NoMatches``, and
+        # never retried (task-15790, measured: grant stored True, render ran,
+        # button absent). Ride the same canvas post-recompose hook the
+        # caller's arming follow-up already rides; it runs `then` only once
+        # the canvas's new children are actually mounted.
+        _sync_library_canvas(
+            self, "skills", then=self._render_library_skill_trust_panel
+        )
 
     async def _request_library_skill_trust_bootstrap_passphrase(self) -> str | None:
         """Push the confirm-passphrase bootstrap modal and await a passphrase.
