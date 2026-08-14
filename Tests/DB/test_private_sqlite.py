@@ -68,6 +68,23 @@ RESTORE_BACKUP_OWNER_IDS = (
 MIGRATION_BOUNDARY_BACKUP_OWNER_IDS = ("tts.profile_migration_boundary",)
 
 
+def test_notes_sync_state_owner_is_private_file_only_and_not_backup_enabled() -> None:
+    policy = SQLITE_OWNER_REGISTRY["notes.sync_state"]
+
+    assert policy.allowed_target_kinds == frozenset({SQLiteTargetKind.PRIVATE_FILE})
+    assert policy.centralized_backup_allowed is False
+    reason = policy.reason.casefold()
+    assert "device-private import receipts" in reason
+    assert "future lasting-sync state" in reason
+    assert "notes.sync_state" not in {
+        *CONNECTION_BACKUP_OWNER_IDS,
+        *COPY_BACKUP_OWNER_IDS,
+        *OPEN_CONNECTION_BACKUP_OWNER_IDS,
+        *RESTORE_BACKUP_OWNER_IDS,
+        *MIGRATION_BOUNDARY_BACKUP_OWNER_IDS,
+    }
+
+
 @pytest.mark.parametrize(
     ("owner_id", "target_kind"),
     OWNER_KIND_CASES,

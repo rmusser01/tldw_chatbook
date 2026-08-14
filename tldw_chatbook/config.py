@@ -6217,6 +6217,12 @@ def get_tts_profiles_db_path() -> Path:
     return get_user_data_dir() / "tldw_chatbook_tts_profiles.db"
 
 
+def get_notes_sync_state_db_path() -> Path:
+    """Return the device-private Notes import/sync state database path."""
+
+    return get_user_data_dir() / "tldw_chatbook_notes_sync_state.db"
+
+
 def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
     """Get the resolved path for the Prompts database.
 
