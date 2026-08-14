@@ -87,7 +87,6 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
-from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
 
@@ -7161,8 +7160,7 @@ async def test_console_browser_selecting_global_persisted_row_switches_context_t
             f"{getattr(after, 'workspace_id', None)!r}"
         )
         assert (
-            store.workspace_context.active_workspace_id
-            == CONSOLE_GLOBAL_WORKSPACE_ID
+            store.workspace_context.active_workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
         )
         assert session.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
 
