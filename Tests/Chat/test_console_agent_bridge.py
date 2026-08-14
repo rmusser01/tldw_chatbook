@@ -7,7 +7,6 @@ import json
 import threading
 import time
 from dataclasses import replace
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
