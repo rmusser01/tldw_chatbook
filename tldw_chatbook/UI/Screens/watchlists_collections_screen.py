@@ -2680,6 +2680,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 # place via `set_collapsed_suffixes`.
                 collapsed_suffixes={Region.LEFT_RAIL: self._rail_unread_suffix()},
                 id="wl-workbench",
+                classes=(
+                    "watchlists-read-mode"
+                    if self.active_section == "items"
+                    else ""
+                ),
             )
 
     def _hidden_centre_regions(self) -> frozenset[Region]:
@@ -3921,6 +3926,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # Asked BEFORE the swap: afterwards the widget is already gone and
         # Textual has already re-homed focus (see `_restore_focus_after_swap`).
         rehome_focus = self._swap_will_destroy_focus()
+        workbench.set_class(
+            self.active_section == "items", "watchlists-read-mode"
+        )
         await workbench.apply_section_view(
             hidden=self._hidden_centre_regions(),
             layout=self._rendered_region_layout(),

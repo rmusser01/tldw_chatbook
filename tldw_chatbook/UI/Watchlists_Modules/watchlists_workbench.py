@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
@@ -177,13 +177,13 @@ class WatchlistsWorkbench(Horizontal):
         regions whose form actually changed — see that watcher.
 
         Returns:
-            The left-rail region, the centre `Vertical` (an optional header,
-            then ITEMS/CONTENT minus anything in `self._hidden`), and
+            The left-rail region, the centre `VerticalScroll` (an optional
+            header, then ITEMS/CONTENT minus anything in `self._hidden`), and
             the right-rail region, in that order.
         """
         yield self._region_widget(Region.LEFT_RAIL)
 
-        with Vertical(id="wl-centre", classes="watchlists-centre"):
+        with VerticalScroll(id="wl-centre", classes="watchlists-centre"):
             if self._header is not None:
                 yield self._header()
             for region in CENTRE_REGIONS:

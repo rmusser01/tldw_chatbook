@@ -9,10 +9,12 @@ in-place row repaints, open-item pinning).
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.containers import Vertical
 from textual.widgets import Button, Input, ListView, Select, Static
 
 from tldw_chatbook.UI.Watchlists_Modules.article_list import (
@@ -90,6 +92,24 @@ class ArticleListHarness(App):
 
     def on_items_filter_changed(self, message: ItemsFilterChanged) -> None:
         self.captured_messages.append(("filter_changed", message.status_filter))
+
+
+class ProductionCssArticleListHarness(ArticleListHarness):
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+    def compose(self) -> ComposeResult:
+        pane = ArticleListPane(id="watchlists-detail-pane")
+        pane.items = [
+            _item(index, published_offset_hours=index * 12 + 1)
+            for index in range(50)
+        ]
+        with Vertical(classes="watchlists-read-mode"):
+            yield pane
 
 
 def _row_texts(pane: ArticleListPane) -> list[str]:
@@ -388,6 +408,45 @@ async def test_pager_buttons_post_narrow_page_requests():
 
         assert ("previous_page", None) in app.captured_messages
         assert ("next_page", None) in app.captured_messages
+
+
+async def test_read_list_scrolls_rows_without_scrolling_its_fixed_chrome():
+    app = ProductionCssArticleListHarness()
+    async with app.run_test(size=(120, 70)) as pilot:
+        await pilot.pause()
+        table = app.query_one("#items-table", ListView)
+        toolbar = app.query_one("#items-toolbar")
+        legend = app.query_one("#items-queued-legend")
+        pager = app.query_one("#items-pagination")
+        fixed_regions = (toolbar.region, legend.region, pager.region)
+
+        def composited_text(widget) -> str:
+            strips = widget.screen._compositor.render_strips()
+            region = widget.region
+            return "\n".join(
+                "".join(segment.text for segment in strips[y])[
+                    region.x : region.x + region.width
+                ]
+                for y in range(region.y, region.y + region.height)
+            )
+
+        assert table.region.height <= 42
+        assert table.max_scroll_y > 0
+        assert "Refresh" in composited_text(toolbar)
+        for label in ("Previous", "Page 1", "Next"):
+            assert label in composited_text(pager)
+
+        table.scroll_end(animate=False)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert table.scroll_y == table.max_scroll_y
+        assert (toolbar.region, legend.region, pager.region) == fixed_regions
+        assert "Article 49" in composited_text(table)
+        assert "Refresh" in composited_text(toolbar)
+        assert "unread" in composited_text(legend)
+        for label in ("Previous", "Page 1", "Next"):
+            assert label in composited_text(pager)
 
 
 async def test_authoritative_backend_search_does_not_refilter_returned_rows():

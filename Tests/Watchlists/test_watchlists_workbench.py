@@ -1,7 +1,9 @@
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button
+from textual.containers import Vertical, VerticalScroll
+from textual.widgets import Button, Static
 
+from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
     REGION_TITLES,
@@ -23,10 +25,184 @@ class _WorkbenchApp(App):
         self.toggles.append(message.region)
 
 
+def _article(item_id: int) -> dict:
+    return {
+        "id": f"local:watchlist_item:{item_id}",
+        "item_id": item_id,
+        "title": f"Article {item_id:02d}",
+        "source_name": "Geometry Feed",
+        "status": "new",
+        "published_date": "2026-08-13T12:00:00+00:00",
+        "created_at": "2026-08-13T12:00:00+00:00",
+        "content_preview": f"Preview for article {item_id:02d}.",
+        "queued_for_briefing": False,
+        "is_flagged": False,
+    }
+
+
+class _ReadGeometryApp(App):
+    """Production-CSS harness for the Read centre's nested scroll owners."""
+
+    from pathlib import Path
+
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+    def __init__(
+        self,
+        item_count: int,
+        *,
+        read_mode: bool = True,
+        layout: RegionLayout = RegionLayout(),
+    ) -> None:
+        super().__init__()
+        self.item_count = item_count
+        self.read_mode = read_mode
+        self.initial_layout = layout
+
+    def _items_pane(self) -> ArticleListPane:
+        pane = ArticleListPane(id="watchlists-detail-pane")
+        pane.items = [_article(index) for index in range(self.item_count)]
+        return pane
+
+    def compose(self) -> ComposeResult:
+        classes = "watchlists-read-mode" if self.read_mode else ""
+        yield WatchlistsWorkbench(
+            self.initial_layout,
+            content={
+                Region.LEFT_RAIL: lambda: Static("fixed-left", id="left-probe"),
+                Region.ITEMS: self._items_pane,
+                Region.CONTENT: lambda: Vertical(
+                    *[Static(f"content-{row:02d}") for row in range(30)],
+                    id="watchlists-content-pane",
+                ),
+                Region.RIGHT_RAIL: lambda: Static("fixed-right", id="right-probe"),
+            },
+            hidden=(frozenset() if self.read_mode else frozenset({Region.CONTENT})),
+            header=lambda: Static("Read status", id="wl-centre-status"),
+            id="wl-workbench",
+            classes=classes,
+        )
+
+
 def test_region_titles_cover_exactly_the_live_regions():
     # No FEEDS entry left over from the five-region era (task-2513), and no
     # live region missing a title -- `_region_widget` would KeyError.
     assert set(REGION_TITLES) == set(Region)
+
+
+@pytest.mark.asyncio
+async def test_only_the_centre_is_the_workbench_scroll_viewport():
+    app = _WorkbenchApp(RegionLayout())
+    async with app.run_test():
+        workbench = app.query_one(WatchlistsWorkbench)
+        centre = app.query_one("#wl-centre")
+
+        assert isinstance(centre, VerticalScroll)
+        assert list(workbench.children) == [
+            app.query_one("#wl-region-left_rail"),
+            centre,
+            app.query_one("#wl-region-right_rail"),
+        ]
+
+
+@pytest.mark.parametrize(
+    ("item_count", "expected_relation"),
+    [(0, "floor"), (3, "natural"), (50, "cap")],
+)
+@pytest.mark.asyncio
+async def test_read_items_region_grows_from_ten_rows_to_a_fifty_row_cap(
+    item_count, expected_relation
+):
+    app = _ReadGeometryApp(item_count)
+    async with app.run_test(size=(180, 100)) as pilot:
+        await pilot.pause()
+        items = app.query_one("#wl-region-items")
+
+        assert 10 <= items.region.height <= 50, items.region
+        if expected_relation == "floor":
+            assert items.styles.min_height.value == 10
+            assert items.region.height <= 12, items.region
+        elif expected_relation == "natural":
+            assert 10 < items.region.height < 50, items.region
+        else:
+            assert items.region.height == 50, items.region
+
+
+@pytest.mark.parametrize("size", [(120, 36), (180, 50)])
+@pytest.mark.asyncio
+async def test_outer_centre_reaches_content_without_moving_either_rail(size):
+    app = _ReadGeometryApp(50)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        centre = app.query_one("#wl-centre", VerticalScroll)
+        left = app.query_one("#wl-region-left_rail")
+        right = app.query_one("#wl-region-right_rail")
+        content = app.query_one("#wl-region-content")
+        rail_regions = (left.region, right.region)
+
+        assert centre.max_scroll_y > 0
+        centre.scroll_end(animate=False)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert centre.scroll_y == centre.max_scroll_y
+        assert (left.region, right.region) == rail_regions
+        assert content.region.intersection(centre.content_region).height > 0
+        screenshot = app.export_screenshot()
+        assert "Content" in screenshot and "content-00" in screenshot
+
+
+@pytest.mark.asyncio
+async def test_non_read_items_pane_keeps_its_fill_layout_above_fifty_rows():
+    app = _ReadGeometryApp(0, read_mode=False)
+    async with app.run_test(size=(180, 90)) as pilot:
+        await pilot.pause()
+        items = app.query_one("#wl-region-items")
+
+        assert not app.query_one(WatchlistsWorkbench).has_class(
+            "watchlists-read-mode"
+        )
+        assert items.region.height > 50, items.region
+
+
+@pytest.mark.asyncio
+async def test_solo_items_lifts_caps_and_restore_rebounds_without_replacing_list():
+    app = _ReadGeometryApp(50)
+    async with app.run_test(size=(180, 90)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(WatchlistsWorkbench)
+        pane = app.query_one(ArticleListPane)
+        table = app.query_one("#items-table")
+        bounded_items = app.query_one("#wl-region-items")
+
+        assert bounded_items.region.height == 50
+        assert table.region.height < bounded_items.region.height
+        bounded_table_height = table.region.height
+        table.focus()
+
+        workbench.region_layout = RegionLayout().solo(Region.ITEMS)
+        await pilot.pause()
+        await pilot.pause()
+
+        solo_items = app.query_one("#wl-region-items")
+        solo_table = app.query_one("#items-table")
+        assert solo_items.region.height > 50, solo_items.region
+        assert solo_table.region.height > bounded_table_height
+        assert app.query_one(ArticleListPane) is pane
+        assert solo_table is table and table.has_focus
+
+        workbench.region_layout = RegionLayout()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.query_one("#wl-region-items").region.height == 50
+        assert app.query_one("#items-table").region.height < 50
+        assert app.query_one(ArticleListPane) is pane
 
 
 @pytest.mark.asyncio
