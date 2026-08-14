@@ -191,12 +191,15 @@ class _OracleRow:
     22 targets are media or conversation documents (measured), so that is
     not a hypothetical.
 
-    This control removes the feed from the question by feeding PRF the
-    TARGET DOCUMENT ITSELF: the best expansion any feedback set could
-    possibly produce. Its rank is the ceiling on what this population's
-    rescue clause could ever have measured. It is a CONTROL and never an
-    input to the verdict — an oracle feed is not something a retrieval
-    system has.
+    This control removes the FEED from the question by feeding PRF the
+    TARGET DOCUMENT ITSELF — the best feed any feedback set could supply.
+    The resulting expression, and therefore the rank, is a JOINT property
+    of that feed and the SELECTOR that built the expression from it (this
+    module measures 8/22 vs 15/22 vs 22/22 over the identical feed under
+    three selectors — see the printed selector table): an oracle row's
+    rank is a ceiling only UNDER THE SELECTOR THAT BUILT IT, never an
+    absolute. It is a CONTROL and never an input to the verdict — an
+    oracle feed is not something a retrieval system has.
     """
 
     query_id: str

@@ -722,9 +722,11 @@ never a gate; clause 3's pass is not evidence of safety (below).
 **Step 0 — fireability, which decided the regime in one command.** Before any
 grid point, the probe asked whether PRF can fire at all: does the shipped
 first pass return ANY rows for the 22 plain-failing queries? **0 / 22 on the
-shipped four-seam AND-strict pass** — the builder requires every query term in
-one document, and a paraphrase query shares no content word with its target by
-construction of the fixture class, so PRF's classic mechanism has literally
+shipped four-seam AND-strict pass** — the builder requires every query term to
+appear together in one document, and no document in the corpus holds all of a
+paraphrase query's content terms (a corpus-wide property of the AND across
+query terms — NOT a fact about the target's vocabulary; PRF feeds on any
+returned rows, not the target's), so PRF's classic mechanism has literally
 nothing to feed on. That alone retires the un-varianted premise. The spec's
 ONE licensed variant then activated (an OR-of-content-terms pass used **for
 feedback selection only**, never shown to a user): **18 / 22 fire** under it.

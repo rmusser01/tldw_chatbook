@@ -70,7 +70,7 @@ Code, as it stands (`tldw_chatbook/Library/library_local_rag_search_service.py`)
   `for source_type in _KNOWN_KEYWORD_SOURCE_TYPES: ... rows.extend(outcomes[source_type][1])`.
   A fixed-order concatenation, and the only `sort` in the module (`:677`) is
   on the SEMANTIC path, not this one.
-- `:1080-1118` — `_note_row` / `_media_row` / `_conversation_row`, all setting
+- `:1080-1118` (`_note_row`/`_media_row`/`_conversation_row`) **and `_prompt_row` at `:1123` (`"score": None` at `:1136`) — FOUR row builders, prompts the last and most buried seam; a cross-seam key added to only the cited three leaves prompt rows silently un-rankable** — `_note_row` / `_media_row` / `_conversation_row`, all setting
   `"score": None`, so there is no cross-seam key to sort on even if a sort
   were added today.
 - Each seam is called with `limit=top_k` (e.g. `_search_notes`, `:467+`), so
@@ -97,6 +97,15 @@ probe's verbatim output:
 §4a, §5) — an untracked SDD record; the run is reproducible with
 `RAG_EVAL=1 .venv/bin/python -m pytest Tests/RAG_Eval/test_prf_probe_run.py -s -q`.
 <!-- SECTION:DESCRIPTION:END -->
+
+
+### Worked examples (from the probe's own printed table, so AC#1 is writable from this file alone)
+
+- `kw-quillon-mast` -> `media-quillon-antenna`: media-seam rank 1, merged position 14 under the narrow selector (13 notes ahead of it by seam order alone).
+- `kw-ashgrove-pump` -> `conv-ashgrove-pump`: conversation-seam hit, merged position 21 (two full seams ahead of it).
+- `sc-storm-overflow-record` -> `media-kelsingham-angling` displacement case: position 13 — the widened pass filled the notes seam and the media target never reached the merged top-10.
+
+(Full per-query tables: re-run `RAG_EVAL=1 pytest Tests/RAG_Eval/test_prf_probe_run.py -s`.)
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
