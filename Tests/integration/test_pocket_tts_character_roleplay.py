@@ -41,9 +41,6 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Audio.streaming_sink import SinkStarted, SinkStopped
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.config import save_settings_to_cli_config
-from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
-    fingerprint_endpoint,
-)
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
@@ -544,14 +541,6 @@ async def launch_clean_chatbook():
     )
     assert app.media_db is not None
     assert app.chachanotes_db is not None
-    assert app.model_catalog_disk_store is not None
-    # Keep the real post-setup catalog refresh on its normal fresh-cache path.
-    app.model_catalog_disk_store.record(
-        "OpenRouter",
-        fingerprint_endpoint("https://openrouter.ai/api/v1"),
-        ["openai/gpt-4o-mini"],
-    )
-    app.model_catalog_disk_store.save()
     context.app = app
     context.run_context = app.run_test(size=(180, 55))
     try:

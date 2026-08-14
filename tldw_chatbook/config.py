@@ -1270,6 +1270,7 @@ def load_settings(force_reload: bool = False) -> Dict:
     final_providers_settings = get_toml_section("providers")
     final_general_settings_cli = get_toml_section("general")
     final_database_settings_cli = get_toml_section("database")
+    final_model_catalog_settings_cli = get_toml_section("model_catalog")
     final_chat_defaults_cli = get_toml_section("chat_defaults")
     final_character_defaults_cli = get_toml_section("character_defaults")
     final_notes_settings_cli = get_toml_section("notes")
@@ -1447,6 +1448,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         "database": final_database_settings_cli,  # For TUI DB paths
         "api_settings": final_api_settings,  # CRUCIAL for local API calls
         "providers": final_providers_settings,  # For UI dropdowns
+        "model_catalog": final_model_catalog_settings_cli,
         "chat_defaults": final_chat_defaults_cli,
         "character_defaults": final_character_defaults_cli,
         "notes": final_notes_settings_cli,  # For notes auto-save settings

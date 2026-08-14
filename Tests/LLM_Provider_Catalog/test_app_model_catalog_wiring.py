@@ -14,6 +14,8 @@ import pytest
 from textual.app import App
 from textual.screen import Screen
 
+from tldw_chatbook import config as config_module
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
     ModelCatalogRefreshed,
     ProviderRefreshOutcome,
@@ -21,8 +23,6 @@ from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
     format_refresh_notification,
     forward_model_catalog_refreshed,
 )
-from tldw_chatbook.app import TldwCli
-
 
 # ---------------------------------------------------------------------------
 # Routing: App.post_message must be forwarded DOWN to a mounted screen handler
@@ -128,6 +128,29 @@ async def test_refresh_skips_when_auto_refresh_disabled(monkeypatch):
         settings={"model_catalog": {"auto_refresh_enabled": False}},
     )
     await TldwCli._refresh_model_catalogs(app)
+    assert service.calls == []
+    assert app.posted_messages == []
+    assert app.notifications == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_honors_disabled_setting_from_canonical_config(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "model-catalog-disabled.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    assert config_module.save_settings_to_cli_config(
+        {"model_catalog": {"auto_refresh_enabled": False}}
+    )
+
+    settings = config_module.load_settings(force_reload=True)
+    assert settings["model_catalog"]["auto_refresh_enabled"] is False
+
+    service = _StubCatalogService(report=RefreshReport())
+    app = _StubApp(disk_store=object(), service=service)
+    await TldwCli._refresh_model_catalogs(app)
+
     assert service.calls == []
     assert app.posted_messages == []
     assert app.notifications == []
