@@ -33,9 +33,7 @@ def _collection(db: SubscriptionsDB, name: str) -> int:
         return int(cursor.lastrowid)
 
 
-def _add_to_collection(
-    db: SubscriptionsDB, collection_id: int, source_id: int
-) -> None:
+def _add_to_collection(db: SubscriptionsDB, collection_id: int, source_id: int) -> None:
     with db.transaction() as conn:
         conn.execute(
             "INSERT INTO watchlist_sources (watchlist_id, subscription_id) VALUES (?, ?)",
@@ -81,7 +79,9 @@ def _search(db: SubscriptionsDB, **kwargs):
     return db.search_items_for_agent(**kwargs)
 
 
-def test_blank_search_returns_every_status_newest_effective_first(db: SubscriptionsDB) -> None:
+def test_blank_search_returns_every_status_newest_effective_first(
+    db: SubscriptionsDB,
+) -> None:
     source_id = _source(db, "Status feed")
     expected = []
     for index, status in enumerate(("new", "reviewed", "ingested", "ignored", "error")):
@@ -108,7 +108,9 @@ def test_blank_search_returns_every_status_newest_effective_first(db: Subscripti
     assert all("effective_date" in row for row in page["items"])
 
 
-def test_agent_search_rows_have_an_exact_narrow_key_allowlist(db: SubscriptionsDB) -> None:
+def test_agent_search_rows_have_an_exact_narrow_key_allowlist(
+    db: SubscriptionsDB,
+) -> None:
     source_id = _source(db, "Narrow projection")
     item_id = _item(db, source_id, "narrow", content="bounded body")
     with db.transaction() as conn:
@@ -155,7 +157,9 @@ def test_agent_search_rows_have_an_exact_narrow_key_allowlist(db: SubscriptionsD
     }
 
 
-def test_literal_and_terms_match_title_author_and_deep_body(db: SubscriptionsDB) -> None:
+def test_literal_and_terms_match_title_author_and_deep_body(
+    db: SubscriptionsDB,
+) -> None:
     source_id = _source(db, "Search feed")
     deep = "prefix " * 1_000 + "deep-body-token" + " suffix" * 1_000
     title_id = _item(db, source_id, "title", title="literal title-token")
@@ -176,8 +180,12 @@ def test_literal_and_terms_match_title_author_and_deep_body(db: SubscriptionsDB)
     )
     _item(db, source_id, "operator-decoy", title="retrieval rubric")
 
-    assert [row["id"] for row in _search(db, query="title-token")["items"]] == [title_id]
-    assert [row["id"] for row in _search(db, query="author-token")["items"]] == [author_id]
+    assert [row["id"] for row in _search(db, query="title-token")["items"]] == [
+        title_id
+    ]
+    assert [row["id"] for row in _search(db, query="author-token")["items"]] == [
+        author_id
+    ]
     body_row = _search(db, query="deep-body-token")["items"][0]
     assert body_row["id"] == body_id
     assert "content" not in body_row
@@ -220,7 +228,11 @@ def test_fts_match_context_uses_fts_token_normalization_for_deep_passages(
 
 @pytest.mark.parametrize(
     ("query", "matching_title"),
-    (("100%", "literal 100% marker"), ("a_b", "literal a_b marker"), (r"a\b", r"literal a\b marker")),
+    (
+        ("100%", "literal 100% marker"),
+        ("a_b", "literal a_b marker"),
+        (r"a\b", r"literal a\b marker"),
+    ),
 )
 def test_absent_fts_like_fallback_escapes_wildcards(
     db: SubscriptionsDB, query: str, matching_title: str
@@ -279,14 +291,19 @@ def test_equal_fts_cardinality_with_wrong_membership_forces_like(
     wanted = _item(db, source_id, "wanted", content="membership-token")
     _item(db, source_id, "other", content="other")
     with db.transaction() as conn:
-        conn.execute("DELETE FROM subscription_items_fts_docsize WHERE id = ?", (wanted,))
+        conn.execute(
+            "DELETE FROM subscription_items_fts_docsize WHERE id = ?", (wanted,)
+        )
         conn.execute(
             "INSERT INTO subscription_items_fts_docsize (id, sz) VALUES (?, ?)",
             (999_999, sqlite3.Binary(b"")),
         )
-        assert conn.execute("SELECT COUNT(*) FROM subscription_items").fetchone()[0] == conn.execute(
-            "SELECT COUNT(*) FROM subscription_items_fts_docsize"
-        ).fetchone()[0]
+        assert (
+            conn.execute("SELECT COUNT(*) FROM subscription_items").fetchone()[0]
+            == conn.execute(
+                "SELECT COUNT(*) FROM subscription_items_fts_docsize"
+            ).fetchone()[0]
+        )
 
     assert [row["id"] for row in _search(db, query="membership-token")["items"]] == [
         wanted
@@ -385,7 +402,9 @@ def test_keyset_traversal_handles_ties_null_sink_deletion_and_later_inserts(
     assert first["has_more"] is True
     assert first["snapshot_max_item_id"] == null_second
 
-    later_future = _item(db, source_id, "later-future", published="2040-01-01T00:00:00Z")
+    later_future = _item(
+        db, source_id, "later-future", published="2040-01-01T00:00:00Z"
+    )
     _item(db, source_id, "later-null", published=None, created="not-a-date")
     with db.transaction() as conn:
         conn.execute("DELETE FROM subscription_items WHERE id = ?", (tied_first,))
@@ -410,13 +429,22 @@ def test_keyset_traversal_handles_ties_null_sink_deletion_and_later_inserts(
     assert third["has_more"] is False
     traversed = [row["id"] for page in (first, second, third) for row in page["items"]]
     assert later_future not in traversed
-    assert traversed == [future, tied_first, tied_second, older, null_first, null_second]
+    assert traversed == [
+        future,
+        tied_first,
+        tied_second,
+        older,
+        null_first,
+        null_second,
+    ]
 
 
 def test_one_lookahead_sets_has_more_and_is_not_returned(db: SubscriptionsDB) -> None:
     source_id = _source(db, "Lookahead feed")
     ids = [
-        _item(db, source_id, str(index), published=f"2026-08-{14 - index:02d}T00:00:00Z")
+        _item(
+            db, source_id, str(index), published=f"2026-08-{14 - index:02d}T00:00:00Z"
+        )
         for index in range(3)
     ]
 
@@ -452,7 +480,10 @@ def test_source_and_collection_candidate_resolution_is_bounded_and_deterministic
     with db.transaction() as conn:
         conn.executemany(
             "INSERT INTO subscriptions (name, type, source) VALUES (?, 'rss', ?)",
-            [(f"Source {index:04d}", f"https://bulk.test/{index}") for index in range(1_005)],
+            [
+                (f"Source {index:04d}", f"https://bulk.test/{index}")
+                for index in range(1_005)
+            ],
         )
         target = conn.execute(
             "INSERT INTO subscriptions (name, type, source) VALUES (?, 'rss', ?)",
@@ -475,8 +506,12 @@ def test_source_and_collection_candidate_resolution_is_bounded_and_deterministic
     assert exact_source[0]["last_successful_check"] is None
     assert exact_source[0]["created_at"]
     assert exact_source[0]["updated_at"]
-    assert [row["id"] for row in db.resolve_source_candidates("needle", limit=5)] == [target]
-    assert [row["id"] for row in db.resolve_source_candidates(target, limit=5)] == [target]
+    assert [row["id"] for row in db.resolve_source_candidates("needle", limit=5)] == [
+        target
+    ]
+    assert [row["id"] for row in db.resolve_source_candidates(target, limit=5)] == [
+        target
+    ]
 
     exact = db.resolve_collection_candidates("ALPHA", limit=10)
     partial = db.resolve_collection_candidates("alp", limit=3)
@@ -541,9 +576,9 @@ def test_unicode_scope_casefold_is_registered_on_read_only_connections(
 
     reader = SubscriptionsDB(path, read_only=True)
     try:
-        assert [row["id"] for row in reader.resolve_source_candidates("équipe cert")] == [
-            source_id
-        ]
+        assert [
+            row["id"] for row in reader.resolve_source_candidates("équipe cert")
+        ] == [source_id]
         assert [
             row["id"] for row in reader.resolve_collection_candidates("équipe watch")
         ] == [collection_id]
@@ -568,7 +603,9 @@ def test_authoritative_joined_detail_distinguishes_missing_from_null_content(
     assert db.get_item_detail_for_agent(999_999) is None
 
 
-def test_source_collection_memberships_use_one_bounded_query(db: SubscriptionsDB) -> None:
+def test_source_collection_memberships_use_one_bounded_query(
+    db: SubscriptionsDB,
+) -> None:
     source_ids = [_source(db, f"Source {index}") for index in range(3)]
     collection_ids = [_collection(db, name) for name in ("Zulu", "Alpha")]
     _add_to_collection(db, collection_ids[0], source_ids[0])

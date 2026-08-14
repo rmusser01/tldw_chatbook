@@ -85,7 +85,9 @@ def _default_auto_pause_threshold() -> int:
         `_DEFAULT_AUTO_PAUSE_THRESHOLD` if the config value is absent, not
         parseable as an int, or not positive.
     """
-    configured = get_cli_setting("subscriptions", "auto_pause_after_failures", _DEFAULT_AUTO_PAUSE_THRESHOLD)
+    configured = get_cli_setting(
+        "subscriptions", "auto_pause_after_failures", _DEFAULT_AUTO_PAUSE_THRESHOLD
+    )
     try:
         threshold = int(configured)
     except (TypeError, ValueError):
@@ -156,7 +158,9 @@ def ensure_site_configs_schema(db_path) -> None:
     # outside all of that, and would be an undocumented raw call site --
     # `Tests/DB/test_private_sqlite_inventory.py` audits exactly that and
     # caught this when the helper was first written.
-    with closing(connect_private_sqlite("db.subscriptions.site_configs", db_path)) as conn:
+    with closing(
+        connect_private_sqlite("db.subscriptions.site_configs", db_path)
+    ) as conn:
         if str(db_path) != ":memory:":
             conn.execute("PRAGMA journal_mode = WAL")
         # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
@@ -654,27 +658,41 @@ class SubscriptionsDB(BaseDB):
         cursor = conn.cursor()
 
         # Add columns to subscription_items
-        items_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")}
+        items_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")
+        }
         if "queued_for_briefing" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0"
+            )
         if "run_id" not in items_cols:
             cursor.execute("ALTER TABLE subscription_items ADD COLUMN run_id INTEGER")
         if "alert_matches" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT"
+            )
 
         # Add columns to subscription_filters
-        filters_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")}
+        filters_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")
+        }
         if "priority" not in filters_cols:
-            cursor.execute("ALTER TABLE subscription_filters ADD COLUMN priority INTEGER DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_filters ADD COLUMN priority INTEGER DEFAULT 0"
+            )
         if "is_include_required" not in filters_cols:
-            cursor.execute("ALTER TABLE subscription_filters ADD COLUMN is_include_required BOOLEAN DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_filters ADD COLUMN is_include_required BOOLEAN DEFAULT 0"
+            )
 
         # Widen CHECK constraint on subscription_filters.action.
         # Must check for the literal action value 'include' rather than the
         # bare substring, because the new column `is_include_required` would
         # otherwise make the substring match and skip the migration.
         existing_check = None
-        for row in cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"):
+        for row in cursor.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"
+        ):
             existing_check = row[0]
         if existing_check and "'include'" not in existing_check:
             # This rebuild predates FK enforcement (Task 1a) and may run
@@ -734,7 +752,9 @@ class SubscriptionsDB(BaseDB):
                     FROM subscription_filters
                 """)
                 cursor.execute("DROP TABLE subscription_filters")
-                cursor.execute("ALTER TABLE subscription_filters_new RENAME TO subscription_filters")
+                cursor.execute(
+                    "ALTER TABLE subscription_filters_new RENAME TO subscription_filters"
+                )
                 cursor.execute("""
                     CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp
                     AFTER UPDATE ON subscription_filters
@@ -766,8 +786,12 @@ class SubscriptionsDB(BaseDB):
                     )
 
         # Indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)"
+        )
 
         # Reader/body columns. `content` holds the renderable body: article text
         # for feed items, diff text for site changes. `url_snapshots` remains the
@@ -775,13 +799,19 @@ class SubscriptionsDB(BaseDB):
         if "content" not in items_cols:
             cursor.execute("ALTER TABLE subscription_items ADD COLUMN content TEXT")
         if "content_format" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN content_format TEXT")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN content_format TEXT"
+            )
         if "content_kind" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN content_kind TEXT")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN content_kind TEXT"
+            )
         # Flag is a separate boolean, not a status: the status CHECK has no
         # 'flagged' value, and an item can be flagged *and* reviewed at once.
         if "is_flagged" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN is_flagged BOOLEAN DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN is_flagged BOOLEAN DEFAULT 0"
+            )
 
         # TASK-15464: a stored, indexed effective-date column, replacing the
         # per-row `COALESCE(datetime(published_date), datetime(created_at))`
@@ -845,7 +875,9 @@ class SubscriptionsDB(BaseDB):
         # generated column cannot be written to directly (confirmed by the
         # same probe: an explicit INSERT/UPDATE naming it raises), so there
         # is no data-migration step for a crash to catch mid-way at all.
-        items_xcols = {row[1] for row in cursor.execute("PRAGMA table_xinfo(subscription_items)")}
+        items_xcols = {
+            row[1] for row in cursor.execute("PRAGMA table_xinfo(subscription_items)")
+        }
         if "effective_date" not in items_xcols:
             cursor.execute(
                 "ALTER TABLE subscription_items ADD COLUMN effective_date TEXT "
@@ -903,7 +935,9 @@ class SubscriptionsDB(BaseDB):
         # BEGIN IMMEDIATE exists precisely for that. The exemption is
         # deliberate, not ignorance of the rule; pinned by
         # `test_migration_rolls_back_atomically_on_mid_migration_failure`.
-        snapshot_cols = {row[1] for row in cursor.execute("PRAGMA table_info(url_snapshots)")}
+        snapshot_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(url_snapshots)")
+        }
         if "extraction_fingerprint" not in snapshot_cols:
             from ..Subscriptions.noise_defaults import default_ignore_selectors_text
 
@@ -1116,7 +1150,9 @@ class SubscriptionsDB(BaseDB):
         # _initialize_schema (base_db.py:76), which creates it and then calls
         # this method. Only the column needs checking, for databases created
         # before batch_id existed.
-        run_cols = {row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")}
+        run_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")
+        }
         if "batch_id" not in run_cols:
             cursor.execute("ALTER TABLE local_watchlist_runs ADD COLUMN batch_id TEXT")
         cursor.execute(
@@ -1308,16 +1344,13 @@ class SubscriptionsDB(BaseDB):
                    SUM(CASE WHEN si.status = 'new' THEN 1 ELSE 0 END)
             FROM subscription_items si
             """,
-            (self.UNASSIGNED_BUCKET, self.ALL_SOURCES_BUCKET),
-        ).fetchall()
+                (self.UNASSIGNED_BUCKET, self.ALL_SOURCES_BUCKET),
+            ).fetchall()
 
         # No `if row[0] is not None` filter here: watchlists.id and
         # watchlist_sources.watchlist_id are NOT NULL, and both sentinels
         # bind non-null literals, so every row's bucket id is always non-null.
-        return {
-            row[0]: {"total": row[1] or 0, "unread": row[2] or 0}
-            for row in rows
-        }
+        return {row[0]: {"total": row[1] or 0, "unread": row[2] or 0} for row in rows}
 
     def get_source_item_counts(self) -> Dict[int, Dict[str, int]]:
         """Per-source item totals and unread counts, for rail badges.
@@ -1338,11 +1371,8 @@ class SubscriptionsDB(BaseDB):
             FROM subscription_items
             GROUP BY subscription_id
             """
-        ).fetchall()
-        return {
-            row[0]: {"total": row[1] or 0, "unread": row[2] or 0}
-            for row in rows
-        }
+            ).fetchall()
+        return {row[0]: {"total": row[1] or 0, "unread": row[2] or 0} for row in rows}
 
     @property
     def conn(self):
@@ -2119,9 +2149,7 @@ class SubscriptionsDB(BaseDB):
             )
             projection_params.extend((term, term))
         start_expression = (
-            f"CASE {' '.join(deep_match_legs)} ELSE 1 END"
-            if deep_match_legs
-            else "1"
+            f"CASE {' '.join(deep_match_legs)} ELSE 1 END" if deep_match_legs else "1"
         )
         return (
             cls._AGENT_LIST_ITEM_COLUMNS
@@ -2276,9 +2304,7 @@ class SubscriptionsDB(BaseDB):
         like_clauses: List[str] = []
         like_params: List[Any] = []
         for term in search_terms:
-            escaped = (
-                term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            )
+            escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             like_clauses.append(
                 "(i.title LIKE ? ESCAPE '\\' OR i.content LIKE ? ESCAPE '\\' "
                 "OR i.author LIKE ? ESCAPE '\\')"
@@ -2286,7 +2312,9 @@ class SubscriptionsDB(BaseDB):
             like_params.extend([f"%{escaped}%"] * 3)
         like_predicates = " AND ".join(like_clauses)
         like_where = (
-            f"{where_clause} AND {like_predicates}" if where_clause else f"WHERE {like_predicates}"
+            f"{where_clause} AND {like_predicates}"
+            if where_clause
+            else f"WHERE {like_predicates}"
         )
         return conn.execute(
             f"""
@@ -2352,9 +2380,7 @@ class SubscriptionsDB(BaseDB):
         if limit < 1:
             raise ValueError("limit must be at least 1")
         if limit > self._AGENT_SEARCH_PAGE_LIMIT:
-            raise ValueError(
-                f"limit must be at most {self._AGENT_SEARCH_PAGE_LIMIT}"
-            )
+            raise ValueError(f"limit must be at most {self._AGENT_SEARCH_PAGE_LIMIT}")
         if after_effective_date is not None and after_item_id is None:
             raise ValueError("after_item_id is required with after_effective_date")
 
@@ -2641,9 +2667,7 @@ class SubscriptionsDB(BaseDB):
             if row["membership_rank"] > self._AGENT_MEMBERSHIP_COLLECTION_LIMIT:
                 result["has_more"] = True
                 continue
-            result["collections"].append(
-                {"id": int(row["id"]), "name": row["name"]}
-            )
+            result["collections"].append({"id": int(row["id"]), "name": row["name"]})
         return memberships
 
     def get_new_items(
