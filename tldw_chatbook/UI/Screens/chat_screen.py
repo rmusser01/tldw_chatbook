@@ -14777,6 +14777,20 @@ class ChatScreen(BaseAppScreen):
         (``_on_console_composer_draft_changed``'s poke) and on every
         terminal run-state transition.
 
+        task-15970: "the Console composer" means the one the user can
+        actually TYPE into. This screen can outlive its display (a
+        navigation issued while a pushed screen sat above it pops the
+        MODAL off the stack and leaves this screen resident-but-hidden --
+        the residue arc's live ``mounted=True`` state), and the live bug
+        was exactly this probe reading the hidden screen's own empty
+        composer while the user held a typed draft in the DISPLAYED
+        screen's: the wake fired straight through it, twice. When the
+        displayed screen is a different Console screen, ITS composer is
+        the user's hands; this screen's own composer is the fallback
+        (nobody can type into any composer while e.g. Library is
+        displayed, and a stale non-empty draft deferring is the probe's
+        conservative direction).
+
         Args:
             session_id: The session the wake would fire into (unused by
                 the any-session rule; part of the probe contract).
@@ -14784,10 +14798,39 @@ class ChatScreen(BaseAppScreen):
         Returns:
             Whether the user currently holds a sending claim.
         """
-        composer = self._console_composer_or_none()
+        composer = self._console_wake_probe_composer()
         if composer is None:
             return False
         return bool(composer.draft_text().strip())
+
+    def _console_wake_probe_composer(self) -> ConsoleComposerBar | None:
+        """The composer the user's keystrokes actually reach (task-15970).
+
+        The displayed screen's composer when the displayed screen is a
+        (different) Console screen; this screen's own otherwise.
+        Duck-typed on ``_console_composer_or_none`` rather than an
+        ``isinstance`` so screen doubles keep working. ``self.app`` is
+        resolved defensively: the coordinator calls this probe from a
+        bare loop callback whose context may lack ``active_app`` (the
+        task-15862 ContextVar lesson) -- ``DOMNode.app`` then walks
+        ``_parent`` to the App, and a screen with no reachable App simply
+        falls back to its own composer.
+        """
+        displayed: Any | None
+        try:
+            displayed = self.app.screen
+        except Exception:  # noqa: BLE001 -- no reachable app: own composer
+            displayed = None
+        if displayed is not None and displayed is not self:
+            resolve = getattr(displayed, "_console_composer_or_none", None)
+            if callable(resolve):
+                try:
+                    composer = resolve()
+                except Exception:  # noqa: BLE001 -- a broken foreign screen
+                    composer = None
+                if composer is not None:
+                    return composer
+        return self._console_composer_or_none()
 
     def _console_screen_displayed(self) -> bool:
         """Whether THIS screen is the one the user is looking at.

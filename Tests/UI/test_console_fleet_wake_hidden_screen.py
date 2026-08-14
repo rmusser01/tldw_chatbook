@@ -120,6 +120,81 @@ async def test_probe_sees_a_draft_typed_with_real_keys(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_hidden_screens_probe_sees_the_displayed_screens_typed_draft(
+    tmp_path,
+):
+    """task-15970, the live shape: the resident hidden Chat screen's
+    coordinator consults the probe while the user types into the
+    DISPLAYED Chat screen's composer. RED before the fix: the hidden
+    probe read its own (empty) composer -- ``probe: composer=True
+    draft=''`` while the pane visibly held the text -- and the wake fired
+    through the held draft."""
+    app = _build_app(tmp_path)
+    async with app.run_test(size=(160, 48)) as pilot:
+        hidden = await _leak_resident_chat(app, pilot)
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        await pilot.pause()
+        displayed = app.screen
+        assert isinstance(displayed, ChatScreen) and displayed is not hidden
+        await _wait_for_composer(displayed, pilot)
+        assert hidden in app.screen_stack, "the leak must survive the return nav"
+
+        await pilot.press(*"drafting")
+        await pilot.pause()
+        displayed_composer = displayed._console_composer_or_none()
+        assert displayed_composer is not None
+        assert displayed_composer.draft_text() == "drafting", (
+            "harness precondition: the typed keys must land in the "
+            "displayed composer through the production key path"
+        )
+        hidden_session_id = (
+            hidden._ensure_console_chat_store().ensure_session().id
+        )
+        hidden_probe = (
+            hidden._console_chat_controller.wake_user_priority_probe
+        )
+        assert hidden_probe(hidden_session_id) is True, (
+            "the user-wins-ties probe must see the draft the user is "
+            "actually holding -- the hidden screen's coordinator firing "
+            "through the displayed composer's text is the live 15970 bug"
+        )
+
+
+@pytest.mark.asyncio
+async def test_typed_draft_defers_the_hidden_coordinators_due_wake(tmp_path):
+    """task-15970 AC#1, outcome level: a due wake on the hidden resident
+    screen's coordinator DEFERS (no delivery scheduled, pending intact)
+    while a real-keys draft is held in the displayed composer."""
+    app = _build_app(tmp_path)
+    async with app.run_test(size=(160, 48)) as pilot:
+        hidden = await _leak_resident_chat(app, pilot)
+        hidden_controller = hidden._console_chat_controller
+        wake = hidden_controller.fleet_wake
+        hidden_session = hidden._ensure_console_chat_store().ensure_session()
+
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        await pilot.pause()
+        displayed = app.screen
+        assert isinstance(displayed, ChatScreen) and displayed is not hidden
+        await _wait_for_composer(displayed, pilot)
+        await pilot.press(*"drafting my next thought".replace(" ", "_"))
+        await pilot.pause()
+
+        with wake._registry_lock:
+            wake._pending[hidden_session.id] = {"r-held": "done"}
+        wake._attempt(hidden_session.id)
+        assert wake.delivering_conversation_id() is None, (
+            "a wake must defer while the user holds a typed draft -- "
+            "delivering here is the live 'wake fired straight through a "
+            "held draft' failure"
+        )
+        assert not wake._delivery_tasks
+        assert wake.has_pending(hidden_session.id), (
+            "deferral must leave the pending bit untouched"
+        )
+
+
+@pytest.mark.asyncio
 async def test_hidden_screen_sync_never_view_clears_the_unseen_mark(tmp_path):
     """task-15971 AC#2: 'viewing IS the clear' requires VIEWING. The
     resident hidden screen's own sync tick kept running during Library
