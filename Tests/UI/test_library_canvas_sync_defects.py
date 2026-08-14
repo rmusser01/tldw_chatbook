@@ -442,9 +442,26 @@ async def test_entry_canvas_sync_restores_portable_focus_and_scroll(
         canvas = screen.query_one(canvas_selector)
         focused_before = screen.query_one(focus_selector)
         focused_before.focus()
-        canvas.scroll_to(y=4, animate=False, force=True, immediate=True)
+        scroll_before: tuple[int, int] | None = None
+        if kind == "skills":
+            canvas.styles.height = 6
+            canvas.refresh(layout=True)
         await pilot.pause()
-        scroll_before = (int(canvas.scroll_x), int(canvas.scroll_y))
+        if kind == "skills":
+            assert int(canvas.max_scroll_y) > 0, (
+                "Skills scroll preservation needs an overflowing canvas."
+            )
+            canvas.scroll_to(
+                y=canvas.max_scroll_y,
+                animate=False,
+                force=True,
+                immediate=True,
+            )
+            await pilot.pause()
+            scroll_before = (int(canvas.scroll_x), int(canvas.scroll_y))
+            assert scroll_before != (0, 0), (
+                "Skills scroll preservation needs a genuinely scrolled setup."
+            )
 
         if kind == "prompts":
             screen._library_prompts_browse_error = "Changed prompt entry data"
@@ -515,7 +532,7 @@ async def test_entry_canvas_sync_restores_portable_focus_and_scroll(
         assert screen.query_one(canvas_selector) is canvas
         assert screen.focused is not None
         assert screen.focused.id == focus_selector.lstrip("#")
-        if scroll_before != (0, 0):
+        if scroll_before is not None:
             assert (int(canvas.scroll_x), int(canvas.scroll_y)) == scroll_before
         assert screen._library_snapshot_rendered_generation == (
             screen._library_snapshot_state_generation

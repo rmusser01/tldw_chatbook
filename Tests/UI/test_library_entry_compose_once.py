@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import math
 import statistics
 import threading
 import time
@@ -11,6 +12,8 @@ from typing import Any
 
 import pytest
 from textual.widget import Widget
+from textual.widgets import Input
+from textual.widgets._input import Selection
 
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
@@ -686,6 +689,77 @@ async def test_stale_skills_generation_cannot_project_on_the_same_route() -> Non
 
 
 @pytest.mark.asyncio
+async def test_skills_posture_sync_composes_focus_with_render_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A posture callback must not replace the pending generation completion."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[{"name": "code-review"}]
+    )
+    screen = LibraryScreen(app)
+    screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_SKILLS})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        focus = await _wait_for_selector(
+            active_screen, pilot, "#library-skills-filter"
+        )
+        await active_screen.workers.wait_for_complete()
+        canvas = active_screen.query_one(
+            "#library-skills-canvas", LibrarySkillsListCanvas
+        )
+        focus = active_screen.query_one("#library-skills-filter", Input)
+        focus.focus()
+        await pilot.pause()
+        restore_calls: list[str | None] = []
+        original_restore = active_screen._restore_library_entry_focus
+
+        def record_restore(identity, **kwargs) -> None:
+            restore_calls.append(identity.widget_id)
+            original_restore(identity, **kwargs)
+
+        monkeypatch.setattr(
+            active_screen,
+            "_restore_library_entry_focus",
+            record_restore,
+        )
+
+        # Hold both canvas refreshes before their shared replace-latest callback
+        # slot fires: source reconciliation queues completion first, then the
+        # automatic posture result queues its focus intent.
+        monkeypatch.setattr(canvas, "refresh", lambda *args, **kwargs: canvas)
+        generation = active_screen._library_snapshot_state_generation + 1
+        route_key = active_screen._library_entry_route_key()
+        active_screen._library_snapshot_state_generation = generation
+        active_screen._library_entry_reconcile_dirty = True
+        active_screen._library_entry_reconcile_pending = (generation, route_key)
+
+        result = await active_screen._reconcile_library_entry_state(
+            generation, route_key
+        )
+        await pilot.pause()
+        posture_result = await active_screen._load_library_skills_trust_posture(
+            lambda: "ready"
+        )
+        callback = canvas._post_recompose_callback
+        assert callback is not None
+        canvas._post_recompose_callback = None
+        callback()
+
+        assert (result, posture_result) == (
+            LibraryEntryReconcileResult.APPLIED,
+            LibraryEntryReconcileResult.APPLIED,
+        )
+        assert "library-skills-filter" in restore_calls
+        assert active_screen._library_snapshot_rendered_generation == generation
+        assert active_screen._library_entry_reconcile_dirty is False
+        assert active_screen._library_entry_reconcile_pending is None
+
+
+@pytest.mark.asyncio
 async def test_stale_collections_snapshot_cannot_project_after_route_switch() -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -767,6 +841,310 @@ async def test_stale_collections_generation_cannot_project_on_the_same_route() -
         assert result is LibraryEntryReconcileResult.SUPERSEDED
         assert active_screen._library_entry_canvas_owner() is owner
         assert active_screen.focused is focus
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("intervening_focus", [False, True], ids=["restore", "veto"])
+async def test_automatic_collections_result_preserves_input_semantics_unless_focus_moves(
+    monkeypatch: pytest.MonkeyPatch,
+    intervening_focus: bool,
+) -> None:
+    """Collections refresh restores one live Input but never overrides a later focus."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.library_collections_service = StaticLibraryCollectionsService([])
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({"mode": "collections"})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await _wait_for_selector(
+            active_screen, pilot, "#library-collection-name-input"
+        )
+        await active_screen.workers.wait_for_complete()
+        await pilot.pause()
+        panel = active_screen.query_one(
+            "#library-collections-panel", LibraryCollectionsPanel
+        )
+        name_input = active_screen.query_one(
+            "#library-collection-name-input", Input
+        )
+        name_input.value = "Launch Evidence"
+        await pilot.pause()
+        name_input = active_screen.query_one(
+            "#library-collection-name-input", Input
+        )
+        name_input.focus()
+        await pilot.pause()
+        expected_selection = Selection(2, 9)
+        name_input.selection = expected_selection
+        await pilot.pause()
+
+        recompose_started = asyncio.Event()
+        release_recompose = asyncio.Event()
+        original_recompose = panel.recompose
+
+        async def gated_recompose() -> None:
+            recompose_started.set()
+            await release_recompose.wait()
+            await original_recompose()
+
+        monkeypatch.setattr(panel, "recompose", gated_recompose)
+        app.library_collections_service = StaticLibraryCollectionsService(
+            [
+                {
+                    "collection_id": "collection-1",
+                    "name": "Release Sources",
+                    "description": "Fresh automatic result.",
+                    "item_count": 1,
+                    "source_authority": "local",
+                    "sync_status": "local-only",
+                    "updated_at": "2026-08-13T10:00:00Z",
+                }
+            ]
+        )
+
+        if intervening_focus:
+            monkeypatch.setattr(panel, "refresh", lambda *args, **kwargs: panel)
+            result = await active_screen._sync_collections_panel(
+                refresh_snapshot=True
+            )
+            callback = panel._post_recompose_callback
+            assert callback is not None
+            intervening_target = active_screen.query_one(
+                "#console-rail-section-toggle-library-details"
+            )
+            active_screen.set_focus(intervening_target)
+            panel._post_recompose_callback = None
+            callback()
+
+            assert result is LibraryEntryReconcileResult.APPLIED
+            assert active_screen.focused is intervening_target
+            return
+
+        sync_task = asyncio.create_task(
+            active_screen._sync_collections_panel(refresh_snapshot=True)
+        )
+        await asyncio.wait_for(
+            recompose_started.wait(),
+            timeout=10,
+        )
+        release_recompose.set()
+        result = await sync_task
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(active_screen.query("#library-collection-select-0")),
+            message="Collections automatic result never rendered its row.",
+        )
+        await pilot.pause()
+
+        assert result is LibraryEntryReconcileResult.APPLIED
+        restored = active_screen.query_one(
+            "#library-collection-name-input", Input
+        )
+        assert restored.value == "Launch Evidence"
+        assert restored.disabled is False
+        assert active_screen.focused is restored
+        assert restored.selection == expected_selection
+        assert restored.cursor_position == expected_selection.end
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("intervening_focus", [False, True], ids=["restore", "veto"])
+async def test_coalesced_collections_sync_preserves_pending_input_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    intervening_focus: bool,
+) -> None:
+    """A capture-less second sync must retain the first sync's focus intent."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.library_collections_service = StaticLibraryCollectionsService([])
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({"mode": "collections"})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await _wait_for_selector(
+            active_screen, pilot, "#library-collection-name-input"
+        )
+        await active_screen.workers.wait_for_complete()
+        await pilot.pause()
+        panel = active_screen.query_one(
+            "#library-collections-panel", LibraryCollectionsPanel
+        )
+        name_input = active_screen.query_one(
+            "#library-collection-name-input", Input
+        )
+        name_input.value = "Coalesced Evidence"
+        name_input.focus()
+        await pilot.pause()
+        expected_selection = Selection(3, 11)
+        name_input.selection = expected_selection
+        await pilot.pause()
+
+        monkeypatch.setattr(panel, "refresh", lambda *args, **kwargs: panel)
+        sync_kwargs = {
+            "name_value": "stale worker value",
+            "description_value": panel.description_value,
+            "delete_pending": panel.delete_pending,
+            "deferred_guard": lambda: True,
+        }
+        panel.sync_state(panel.state, **sync_kwargs)
+        assert active_screen.focused is None
+        panel.sync_state(panel.state, **sync_kwargs)
+
+        callback = panel._post_recompose_callback
+        assert callback is not None
+        if intervening_focus:
+            intervening_target = active_screen.query_one(
+                "#console-rail-section-toggle-library-details"
+            )
+            active_screen.set_focus(intervening_target)
+        panel._post_recompose_callback = None
+        callback()
+
+        if intervening_focus:
+            assert active_screen.focused is intervening_target
+        else:
+            assert active_screen.focused is name_input
+            assert name_input.value == "Coalesced Evidence"
+            assert name_input.selection == expected_selection
+            assert name_input.cursor_position == expected_selection.end
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["media", "export", "collections"])
+async def test_superseded_entry_result_converges_on_current_dirty_generation(
+    surface: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A same-route dirty generation must admit automatic-result repair."""
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        media=_two_media_items(),
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    if surface == "media":
+
+        def gated_media(**kwargs):
+            started.set()
+            assert release.wait(timeout=10), "Media detail gate was not released."
+            return _two_media_items()[0]
+
+        app.media_reading_scope_service = SimpleNamespace(
+            get_media_item=gated_media,
+        )
+        screen = LibraryScreen(app)
+        screen.restore_state(
+            {
+                "library_selected_row_id": LIBRARY_ROW_BROWSE_MEDIA,
+                "selected_media_id": "media-1",
+                "library_media_view": "viewer",
+            }
+        )
+    elif surface == "collections":
+
+        def gated_collections():
+            started.set()
+            assert release.wait(timeout=10), "Collections gate was not released."
+            return (
+                {
+                    "collection_id": "collection-1",
+                    "name": "Dirty-generation sources",
+                    "description": "Must replace Loading.",
+                    "item_count": 1,
+                    "source_authority": "local",
+                    "sync_status": "local-only",
+                    "updated_at": "2026-08-13T10:00:00Z",
+                },
+            )
+
+        app.library_collections_service = SimpleNamespace(
+            list_collections=gated_collections
+        )
+        screen = LibraryScreen(app)
+        screen.apply_navigation_context({"mode": "collections"})
+    else:
+        _wire_entry_export_databases(app, tmp_path)
+        original_compute = LibraryScreen._compute_library_export_counts
+        compute_calls = 0
+
+        def gated_export(*args, **kwargs):
+            nonlocal compute_calls
+            compute_calls += 1
+            if compute_calls == 1:
+                started.set()
+                assert release.wait(timeout=10), "Export counts gate was not released."
+            return original_compute(*args, **kwargs)
+
+        monkeypatch.setattr(
+            LibraryScreen,
+            "_compute_library_export_counts",
+            staticmethod(gated_export),
+        )
+        screen = LibraryScreen(app)
+        screen.restore_state({"library_selected_row_id": LIBRARY_ROW_INGEST_EXPORT})
+
+    host = LibraryHarness(app, screen=screen)
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            active_screen = _active_library_screen(host)
+            await _wait_for_condition(
+                pilot,
+                started.is_set,
+                message=f"{surface} automatic worker did not reach its gate.",
+            )
+            await _wait_for_library_shell(active_screen, pilot)
+            current_generation = (
+                active_screen._library_snapshot_state_generation + 1
+            )
+            active_screen._library_snapshot_state_generation = current_generation
+            active_screen._library_snapshot_rendered_generation = (
+                current_generation - 1
+            )
+            active_screen._library_entry_reconcile_dirty = True
+            active_screen._library_entry_reconcile_pending = None
+            active_screen._library_entry_reconcile_retry_generation = None
+            release.set()
+
+            def rendered_result() -> bool:
+                if surface == "media":
+                    titles = list(active_screen.query("#library-media-viewer-title"))
+                    return bool(
+                        titles
+                        and "Interview Recording"
+                        in str(titles[0].renderable)
+                    )
+                if surface == "collections":
+                    titles = list(active_screen.query("#library-collections-title"))
+                    return bool(
+                        titles and "Collections (1)" in str(titles[0].renderable)
+                    )
+                scope_lines = list(active_screen.query("#library-export-scope-line"))
+                return bool(
+                    scope_lines
+                    and not str(scope_lines[0].renderable).startswith("Counting")
+                )
+
+            await _wait_for_condition(
+                pilot,
+                rendered_result,
+                timeout=4.0,
+                message=(
+                    f"{surface} automatic result did not converge on the "
+                    "current dirty generation."
+                ),
+            )
+            await active_screen.workers.wait_for_complete()
+    finally:
+        release.set()
 
 
 @pytest.mark.asyncio
@@ -2659,7 +3037,7 @@ async def test_library_source_snapshot_stale_route_clears_retry_markers():
         stale_route = screen._library_entry_route_key()
         screen._library_entry_reconcile_dirty = True
         screen._library_entry_reconcile_pending = (generation, stale_route)
-        screen._library_entry_reconcile_retry_generation = generation
+        screen._library_entry_reconcile_retry_generation = (generation, stale_route)
         screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
 
         result = await screen._reconcile_library_entry_state(
@@ -2669,6 +3047,50 @@ async def test_library_source_snapshot_stale_route_clears_retry_markers():
         assert result is LibraryEntryReconcileResult.SUPERSEDED
         assert screen._library_entry_reconcile_pending is None
         assert screen._library_entry_reconcile_retry_generation is None
+
+
+@pytest.mark.asyncio
+async def test_same_generation_new_route_receives_its_own_first_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A route-A retry marker must not consume route B's first retry."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
+        await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
+        await screen.workers.wait_for_complete()
+        generation = screen._library_snapshot_state_generation
+        route_a = screen._library_entry_route_key()
+        queued: list[tuple[object, tuple[object, ...]]] = []
+
+        def capture_call_later(callback, *args):
+            queued.append((callback, args))
+
+        monkeypatch.setattr(screen, "call_later", capture_call_later)
+        first = screen._retry_or_fail_library_entry_reconcile(generation, route_a)
+        assert first is LibraryEntryReconcileResult.FAILED
+        assert screen._library_entry_reconcile_retry_generation == (
+            generation,
+            route_a,
+        )
+        assert len(queued) == 1
+
+        screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+        route_b = screen._library_entry_route_key()
+        second = screen._retry_or_fail_library_entry_reconcile(generation, route_b)
+
+        assert second is LibraryEntryReconcileResult.FAILED
+        assert screen._library_entry_reconcile_pending == (generation, route_b)
+        assert screen._library_entry_reconcile_retry_generation == (
+            generation,
+            route_b,
+        )
+        assert len(queued) == 2
 
 
 @pytest.mark.asyncio
@@ -2706,7 +3128,10 @@ async def test_library_source_snapshot_missing_skills_retries_then_equal_can_ret
         assert reconcile_results == [LibraryEntryReconcileResult.FAILED]
         assert screen._library_entry_reconcile_dirty is True
         assert screen._library_entry_reconcile_pending == (generation, route_key)
-        assert screen._library_entry_reconcile_retry_generation == generation
+        assert screen._library_entry_reconcile_retry_generation == (
+            generation,
+            route_key,
+        )
         assert len(queued) == 1
 
         callback, args = queued.pop()
@@ -2756,7 +3181,7 @@ async def test_library_source_snapshot_shell_exception_releases_retry_markers(
         route_key = screen._library_entry_route_key()
         screen._library_entry_reconcile_dirty = True
         screen._library_entry_reconcile_pending = (generation, route_key)
-        screen._library_entry_reconcile_retry_generation = generation
+        screen._library_entry_reconcile_retry_generation = (generation, route_key)
         queued: list[tuple[object, tuple[object, ...]]] = []
 
         def capture_call_later(callback, *args):
@@ -2877,3 +3302,28 @@ def test_cache_seed_rejects_future_and_ttl_boundary_stamps():
         is True
     )
     assert screen._library_loaded is True
+
+
+def test_cache_seed_rejects_non_finite_timestamp():
+    """A NaN stamp must not bypass both cache-age comparisons."""
+    app = _build_test_app()
+    app._library_source_snapshot_cache = (
+        {
+            "notes": (),
+            "media": (),
+            "conversations": (),
+            "prompts": (None, ()),
+            "skills": (None, {"available_skills": [], "blocked_skills": []}),
+        },
+        {"notes": 0, "media": 0, "conversations": 0},
+        {"notes": True, "media": True, "conversations": True},
+        None,
+        None,
+        {"study_decks": None, "flashcards_due": None, "quizzes": None},
+    )
+    app._library_source_snapshot_cache_stamp = math.nan
+
+    screen = LibraryScreen(app)
+
+    assert screen._library_loaded is False
+    assert screen._library_snapshot_state_generation == 0

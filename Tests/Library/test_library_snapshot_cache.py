@@ -30,6 +30,11 @@ def _snapshot():
     )
 
 
+class _DeepcopyBomb:
+    def __deepcopy__(self, memo):
+        raise RuntimeError("deepcopy must degrade to a cache miss")
+
+
 def test_clone_accepts_real_prompt_and_skill_shapes_without_aliasing():
     original = _snapshot()
     cloned = clone_library_source_snapshot(original)
@@ -49,6 +54,28 @@ def test_clone_accepts_real_prompt_and_skill_shapes_without_aliasing():
     [None, (), ({},), ({"notes": []}, {}, {}, None, None, {})],
 )
 def test_clone_rejects_malformed_outer_or_source_shapes(malformed):
+    assert clone_library_source_snapshot(malformed) is None
+
+
+@pytest.mark.parametrize(
+    "skills_context",
+    [
+        {"available_skills": 7, "blocked_skills": []},
+        {"available_skills": [{"name": "alpha"}, "not-a-record"], "blocked_skills": []},
+        {"available_skills": [], "blocked_skills": [object()]},
+    ],
+)
+def test_clone_rejects_malformed_nested_skills_payloads(skills_context):
+    malformed = _snapshot()
+    malformed[0]["skills"] = (1, skills_context)
+
+    assert clone_library_source_snapshot(malformed) is None
+
+
+def test_clone_treats_deepcopy_failure_as_a_cache_miss():
+    malformed = _snapshot()
+    malformed[0]["skills"][1]["available_skills"][0]["opaque"] = _DeepcopyBomb()
+
     assert clone_library_source_snapshot(malformed) is None
 
 

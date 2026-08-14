@@ -16,54 +16,74 @@ LibrarySourceSnapshot = tuple[
 ]
 
 _RECORD_SOURCES = ("notes", "media", "conversations")
+_SKILL_RECORD_LISTS = ("available_skills", "blocked_skills")
 
 
-def clone_library_source_snapshot(snapshot: object) -> LibrarySourceSnapshot | None:
+def _is_valid_library_source_snapshot(snapshot: object) -> bool:
     if not isinstance(snapshot, tuple) or len(snapshot) != 6:
-        return None
-    records, counts, total_known, lookup_error, recovery_state, study_counts = snapshot
+        return False
+    records, counts, total_known, lookup_error, _recovery_state, study_counts = (
+        snapshot
+    )
     if not all(
         isinstance(value, Mapping)
         for value in (records, counts, total_known, study_counts)
     ):
-        return None
+        return False
     if any(not isinstance(records.get(source), tuple) for source in _RECORD_SOURCES):
-        return None
+        return False
     if any(
         not isinstance(record, Mapping)
         for source in _RECORD_SOURCES
         for record in records[source]
     ):
-        return None
+        return False
     if any(not isinstance(counts.get(source), int) for source in _RECORD_SOURCES):
-        return None
+        return False
     if any(
         not isinstance(total_known.get(source), bool) for source in _RECORD_SOURCES
     ):
-        return None
+        return False
     if any(
         study_counts.get(key) is not None
         and not isinstance(study_counts.get(key), int)
         for key in ("study_decks", "flashcards_due", "quizzes")
     ):
-        return None
+        return False
     if lookup_error is not None and not isinstance(lookup_error, str):
-        return None
+        return False
     prompts = records.get("prompts")
     skills = records.get("skills")
     if not isinstance(prompts, tuple) or len(prompts) != 2 or not isinstance(
         prompts[1], tuple
     ):
-        return None
+        return False
     if not isinstance(skills, tuple) or len(skills) != 2 or not isinstance(
         skills[1], Mapping
     ):
-        return None
+        return False
     if prompts[0] is not None and not isinstance(prompts[0], int):
-        return None
+        return False
     if skills[0] is not None and not isinstance(skills[0], int):
+        return False
+    for key in _SKILL_RECORD_LISTS:
+        skill_records = skills[1].get(key, ())
+        if not isinstance(skill_records, (list, tuple)):
+            return False
+        if any(not isinstance(record, Mapping) for record in skill_records):
+            return False
+    return True
+
+
+def clone_library_source_snapshot(snapshot: object) -> LibrarySourceSnapshot | None:
+    if not _is_valid_library_source_snapshot(snapshot):
         return None
-    cloned = copy.deepcopy(snapshot)
+    try:
+        cloned = copy.deepcopy(snapshot)
+    except Exception:
+        return None
+    if not _is_valid_library_source_snapshot(cloned):
+        return None
     return (
         dict(cloned[0]),
         dict(cloned[1]),

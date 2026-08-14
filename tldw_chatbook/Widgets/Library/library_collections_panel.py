@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Collapsible, Input, Static
+from textual.widgets._input import Selection
 
 from ...Library.library_collections_state import LibraryCollectionsPanelState
 from ...Library.library_shell_state import library_disabled_action_label
+from .library_canvas_sync import PostRecomposeCallback
 
 
 LIBRARY_COLLECTIONS_STATUS_LINE = (
@@ -24,7 +30,18 @@ def _compact_receipt_name(value: str, limit: int = 42) -> str:
     return normalized[: limit - 1].rstrip() + "…"
 
 
-class LibraryCollectionsPanel(Vertical):
+@dataclass(frozen=True)
+class _CollectionsInputCapture:
+    """Portable state for one focused Input replaced by panel recompose."""
+
+    widget_id: str
+    value: str
+    selection: Selection
+    select_on_focus: bool
+    outgoing_focus: Input
+
+
+class LibraryCollectionsPanel(PostRecomposeCallback, Vertical):
     """Render-only Library Collections list, detail, and form controls."""
 
     def __init__(
@@ -41,6 +58,7 @@ class LibraryCollectionsPanel(Vertical):
         self.name_value = name_value
         self.description_value = description_value
         self.delete_pending = delete_pending
+        self._pending_input_capture: _CollectionsInputCapture | None = None
 
     def sync_state(
         self,
@@ -49,13 +67,107 @@ class LibraryCollectionsPanel(Vertical):
         name_value: str,
         description_value: str,
         delete_pending: bool,
+        deferred_guard: Callable[[], bool] | None = None,
     ) -> None:
         """Synchronize every compose input on the retained Collections owner."""
+        captured_now = self._capture_focused_input()
+        if captured_now is not None:
+            self._pending_input_capture = captured_now
+        capture = self._pending_input_capture
+        if capture is not None:
+            if capture.widget_id == "library-collection-name-input":
+                name_value = capture.value
+            elif capture.widget_id == "library-collection-description-input":
+                description_value = capture.value
         self.state = state
         self.name_value = name_value
         self.description_value = description_value
         self.delete_pending = delete_pending
+        self.queue_after_recompose(
+            None
+            if capture is None
+            else lambda: self._restore_pending_focused_input(
+                capture, deferred_guard
+            )
+        )
         self.refresh(recompose=True)
+
+    def _restore_pending_focused_input(
+        self,
+        capture: _CollectionsInputCapture,
+        deferred_guard: Callable[[], bool] | None,
+    ) -> None:
+        """Consume the latest focus capture after coalesced panel syncs."""
+        if self._pending_input_capture is not capture:
+            return
+        self._pending_input_capture = None
+        self._restore_focused_input(capture, deferred_guard)
+
+    def _capture_focused_input(self) -> _CollectionsInputCapture | None:
+        """Detach and capture the focused form Input before replacing it."""
+        if not self.is_attached:
+            return None
+        focused = self.screen.focused
+        if (
+            not isinstance(focused, Input)
+            or self not in focused.ancestors_with_self
+            or focused.disabled
+            or not focused.id
+        ):
+            return None
+        capture = _CollectionsInputCapture(
+            widget_id=str(focused.id),
+            value=focused.value,
+            selection=focused.selection,
+            select_on_focus=focused.select_on_focus,
+            outgoing_focus=focused,
+        )
+        self.screen.set_focus(None)
+        return capture
+
+    def _restore_focused_input(
+        self,
+        capture: _CollectionsInputCapture,
+        deferred_guard: Callable[[], bool] | None,
+    ) -> None:
+        """Restore one current, enabled Input without stealing later focus."""
+        if deferred_guard is not None and not deferred_guard():
+            return
+        if not self.is_attached or getattr(self, "_pruning", False):
+            return
+        try:
+            panels = list(self.screen.query("#library-collections-panel"))
+            target = self.query_one(f"#{capture.widget_id}", Input)
+        except (NoMatches, QueryError):
+            return
+        if len(panels) != 1 or panels[0] is not self or target.disabled:
+            return
+        if self.screen.focused not in (None, capture.outgoing_focus, target):
+            return
+        target.value = capture.value
+        target.select_on_focus = False
+        self.screen.set_focus(target)
+        target.selection = capture.selection
+        target.call_later(
+            self._restore_input_selection,
+            target,
+            capture,
+            deferred_guard,
+        )
+
+    def _restore_input_selection(
+        self,
+        target: Input,
+        capture: _CollectionsInputCapture,
+        deferred_guard: Callable[[], bool] | None,
+    ) -> None:
+        """Restore selection after Input's own focus handler has settled."""
+        target.select_on_focus = capture.select_on_focus
+        if deferred_guard is not None and not deferred_guard():
+            return
+        if not target.is_attached or self.screen.focused is not target:
+            return
+        target.selection = capture.selection
 
     def _compose_collection_form(self) -> ComposeResult:
         with Vertical(id="library-collection-form"):

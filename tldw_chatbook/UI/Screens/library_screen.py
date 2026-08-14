@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import inspect
 import json
+import math
 import re
 import threading
 import time
@@ -3619,7 +3620,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_entry_reconcile_pending: (
             tuple[int, tuple[object, ...]] | None
         ) = None
-        self._library_entry_reconcile_retry_generation: int | None = None
+        self._library_entry_reconcile_retry_generation: (
+            tuple[int, tuple[object, ...]] | None
+        ) = None
         self._library_entry_focus_capture: _LibraryEntryFocusCapture | None = None
         self._seed_local_source_snapshot_from_cache()
 
@@ -7085,7 +7088,7 @@ class LibraryScreen(BaseAppScreen):
         pending = (generation, route_key)
         if self._library_entry_reconcile_pending == pending:
             self._library_entry_reconcile_pending = None
-            if self._library_entry_reconcile_retry_generation == generation:
+            if self._library_entry_reconcile_retry_generation == pending:
                 self._library_entry_reconcile_retry_generation = None
         return LibraryEntryReconcileResult.SUPERSEDED
 
@@ -7098,9 +7101,10 @@ class LibraryScreen(BaseAppScreen):
         if route_key != self._library_entry_route_key():
             return self._supersede_library_entry_reconcile(generation, route_key)
         self._library_entry_reconcile_dirty = True
-        if self._library_entry_reconcile_retry_generation != generation:
-            self._library_entry_reconcile_retry_generation = generation
-            self._library_entry_reconcile_pending = (generation, route_key)
+        pending = (generation, route_key)
+        if self._library_entry_reconcile_retry_generation != pending:
+            self._library_entry_reconcile_retry_generation = pending
+            self._library_entry_reconcile_pending = pending
             self.call_later(
                 self._reconcile_library_entry_state, generation, route_key
             )
@@ -7117,7 +7121,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_entry_reconcile_dirty = True
         if self._library_entry_reconcile_pending == pending:
             self._library_entry_reconcile_pending = None
-            if self._library_entry_reconcile_retry_generation == generation:
+            if self._library_entry_reconcile_retry_generation == pending:
                 self._library_entry_reconcile_retry_generation = None
         return LibraryEntryReconcileResult.FAILED
 
@@ -7228,11 +7232,18 @@ class LibraryScreen(BaseAppScreen):
         elif isinstance(owner, LibraryStudyHandoffCanvas):
             kind = "handoff"
         elif isinstance(owner, LibraryCollectionsPanel):
+            generation = self._library_snapshot_state_generation
+            route_key = self._library_entry_route_key()
             owner.sync_state(
                 self._library_collections_panel_state(),
                 name_value=self._library_collection_name_input,
                 description_value=self._library_collection_description_input,
                 delete_pending=bool(self._library_collection_pending_delete_id),
+                deferred_guard=partial(
+                    self._library_entry_reconcile_is_current,
+                    generation,
+                    route_key,
+                ),
             )
             return True
         if kind is None:
@@ -7395,6 +7406,11 @@ class LibraryScreen(BaseAppScreen):
                 name_value=self._library_collection_name_input,
                 description_value=self._library_collection_description_input,
                 delete_pending=bool(self._library_collection_pending_delete_id),
+                deferred_guard=partial(
+                    self._library_entry_reconcile_is_current,
+                    generation,
+                    route_key,
+                ),
             )
 
         if sync_kind is not None:
@@ -7744,7 +7760,7 @@ class LibraryScreen(BaseAppScreen):
     ) -> bool:
         """Apply a recent detached cache snapshot before first composition."""
         stamp = getattr(self.app_instance, "_library_source_snapshot_cache_stamp", None)
-        if not isinstance(stamp, (int, float)):
+        if not isinstance(stamp, (int, float)) or not math.isfinite(float(stamp)):
             return False
         age = (time.monotonic() if now is None else now) - float(stamp)
         if age < 0 or age >= LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS:
@@ -11174,14 +11190,34 @@ class LibraryScreen(BaseAppScreen):
         ):
             return LibraryEntryReconcileResult.SUPERSEDED
         identity = self._capture_library_entry_focus()
+        prior_callback: Callable[[], None] | None = None
+        pending = (generation, route_key)
+        if (
+            self._library_entry_reconcile_dirty
+            and self._library_entry_reconcile_pending == pending
+        ):
+            try:
+                canvas = self.query_one(
+                    "#library-skills-canvas", LibrarySkillsListCanvas
+                )
+            except (NoMatches, QueryError):
+                canvas = None
+            if canvas is not None:
+                prior_callback = canvas._post_recompose_callback
+
+        def finish_posture_sync() -> None:
+            if prior_callback is not None:
+                prior_callback()
+            if identity is not None:
+                self._restore_library_entry_focus(
+                    identity,
+                    generation=generation,
+                    route_key=route_key,
+                )
+
         follow_up = (
-            partial(
-                self._restore_library_entry_focus,
-                identity,
-                generation=generation,
-                route_key=route_key,
-            )
-            if identity is not None
+            finish_posture_sync
+            if prior_callback is not None or identity is not None
             else None
         )
         if _sync_library_canvas(
@@ -11322,6 +11358,7 @@ class LibraryScreen(BaseAppScreen):
                         entry_route_key == current_pending[1]
                         and (
                             self._library_entry_reconcile_pending == current_pending
+                            or self._library_entry_reconcile_dirty
                             or self._library_snapshot_rendered_generation
                             == current_pending[0]
                         )
@@ -11959,6 +11996,7 @@ class LibraryScreen(BaseAppScreen):
                 route_key == current_pending[1]
                 and (
                     self._library_entry_reconcile_pending == current_pending
+                    or self._library_entry_reconcile_dirty
                     or self._library_snapshot_rendered_generation == current_pending[0]
                 )
             ):
@@ -29231,6 +29269,7 @@ class LibraryScreen(BaseAppScreen):
                 route_key == current_pending[1]
                 and (
                     self._library_entry_reconcile_pending == current_pending
+                    or self._library_entry_reconcile_dirty
                     or self._library_snapshot_rendered_generation == current_pending[0]
                 )
             ):
@@ -29261,6 +29300,11 @@ class LibraryScreen(BaseAppScreen):
             name_value=name_value,
             description_value=description_value,
             delete_pending=delete_pending,
+            deferred_guard=partial(
+                self._library_entry_reconcile_is_current,
+                generation,
+                route_key,
+            ),
         )
         if wait_for_recompose:
             await asyncio.sleep(0)

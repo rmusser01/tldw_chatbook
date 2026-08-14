@@ -16567,8 +16567,16 @@ async def test_library_shell_ingest_canvas_happy_path_open_in_library(tmp_path):
 
         # Path clears immediately on submit (metadata fields would persist).
         # A registry-driven targeted canvas refresh may briefly detach the
-        # Input, so assert the screen-owned form state at this boundary.
-        assert screen._library_ingest_form.path == ""
+        # Input, so poll across that gap and assert the eventual rendered
+        # control rather than only the screen-owned mirror.
+        path_input = await _wait_for_widget_state(
+            screen,
+            pilot,
+            "#library-ingest-path",
+            lambda widget: isinstance(widget, Input) and widget.value == "",
+            what="the rendered ingest path Input never cleared after submit",
+        )
+        assert path_input.value == ""
 
         # Task 4 has no live-update listener yet (that's Task 5) -- the
         # canvas only re-renders on a user-triggered recompose, so poll the
