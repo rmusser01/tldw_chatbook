@@ -13,23 +13,33 @@ import json
 import threading
 import time
 import wave
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
 import pytest
-from textual.widgets import Button, Checkbox, Input, RadioButton, Static, Switch
+from textual.css.query import NoMatches
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Input,
+    Markdown,
+    RadioButton,
+    Static,
+    Switch,
+)
 
 from Tests.Character_Chat.test_character_card_lenient_import import (
     _v2_card,
     _write_png_with_trailing_metadata,
 )
-from Tests.UI.app_factory import _build_test_app
-from tldw_chatbook.Audio.streaming_sink import SinkDrained, SinkStarted, SinkStopped
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Audio.streaming_sink import SinkStarted, SinkStopped
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
@@ -37,6 +47,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_PROVIDER,
     STEP_SUMMARY,
     STEP_VOICE,
+    STEP_WELCOME,
     TRACK_QUICK,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
@@ -46,7 +57,6 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     VoiceSetupStep,
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
-
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.allow_network]
 
@@ -126,14 +136,14 @@ def fake_chat():
             self.end_headers()
             self.wfile.write(body)
 
-        def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
+        def do_GET(self) -> None:
             self._capture()
             body = json.dumps(
                 {"object": "list", "data": [{"id": "test-chat-model"}]}
             ).encode("utf-8")
             self._send(body, "application/json")
 
-        def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+        def do_POST(self) -> None:
             request = self._capture()
             payload = request.json()
             if payload.get("stream") is True:
@@ -172,7 +182,6 @@ def fake_chat():
     server, thread = _start_server(Handler)
     endpoint = SimpleNamespace(
         base_url=f"http://127.0.0.1:{server.server_port}",
-        chat_url=f"http://127.0.0.1:{server.server_port}/v1/chat/completions",
         requests=requests,
     )
     try:
@@ -190,7 +199,7 @@ def fake_pocket_tts():
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
-        def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+        def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length)
             requests.append(
@@ -239,7 +248,7 @@ class _PlaybackDeviceSink:
         self,
         *,
         on_event: Callable[[object], None],
-        owner: "_PlaybackBoundary",
+        owner: _PlaybackBoundary,
     ) -> None:
         self.on_event = on_event
         self.owner = owner
@@ -275,14 +284,6 @@ class _PlaybackDeviceSink:
             if self.state == "open":
                 self.state = "draining"
 
-    def finish(self) -> None:
-        with self._lock:
-            if self.terminal_reason is not None:
-                return
-            self.state = "stopped"
-            self.terminal_reason = "drained"
-        self.on_event(SinkDrained())
-
     def stop(self) -> None:
         with self._lock:
             if self.terminal_reason is not None:
@@ -316,15 +317,16 @@ class _PlaybackBoundary:
 class _JourneyContext:
     fake_chat: Any
     fake_pocket_tts: Any
-    tmp_path: Path
     monkeypatch: pytest.MonkeyPatch
     playback: _PlaybackBoundary
     app: Any = None
     pilot: Any = None
     run_context: Any = None
-    db: CharactersRAGDB | None = None
     chat_screen: Any = None
+    greeting_message_id: str | None = None
     reply_message_id: str | None = None
+    tts_request_baseline: int | None = None
+    playback_sink_baseline: int | None = None
 
 
 _ACTIVE_JOURNEY: _JourneyContext | None = None
@@ -339,7 +341,6 @@ def _journey() -> _JourneyContext:
 async def _journey_context(
     fake_chat,
     fake_pocket_tts,
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
     global _ACTIVE_JOURNEY
@@ -352,7 +353,6 @@ async def _journey_context(
     context = _JourneyContext(
         fake_chat=fake_chat,
         fake_pocket_tts=fake_pocket_tts,
-        tmp_path=tmp_path,
         monkeypatch=monkeypatch,
         playback=playback,
     )
@@ -361,8 +361,6 @@ async def _journey_context(
         yield context
     finally:
         assert context.run_context is None, "clean app context was not closed"
-        if context.db is not None:
-            context.db.close_connection()
         _ACTIVE_JOURNEY = None
 
 
@@ -386,26 +384,26 @@ async def _wait_for(
 
 async def launch_clean_chatbook():
     context = _journey()
-    import tldw_chatbook.config as config_module
-
-    db = CharactersRAGDB(
-        str(context.tmp_path / "clean-profile-chachanotes.db"),
-        "pocket-roleplay-uat",
+    assert save_settings_to_cli_config(
+        {
+            "general": {"default_tab": "chat"},
+            "splash_screen": {"enabled": False},
+            "scheduling": {
+                "watchlist_checks_enabled": False,
+                "watchlist_checks_shadow": False,
+                "briefing_schedules_enabled": False,
+            },
+            "media_cleanup": {"enabled": False},
+            "model_catalog": {"auto_refresh_enabled": False},
+            "diagnostics": {"ui_responsiveness_enabled": False},
+        }
     )
-    context.monkeypatch.setattr(config_module, "chachanotes_db", db)
-    app = _build_test_app(first_run_setup_completed=False)
-    app.chachanotes_db = db
-    app.app_config["_first_run"] = True
-    app._initial_tab_value = "chat"
-    for service_name in (
-        "local_chat_dictionary_service",
-        "local_character_persona_service",
-    ):
-        service = getattr(app, service_name, None)
-        if service is not None and getattr(service, "db", None) is None:
-            service.db = db
-
-    context.db = db
+    app = TldwCli()
+    assert app.notes_service is not None, (
+        "journey must use production TldwCli service initialization"
+    )
+    assert app.media_db is not None
+    assert app.chachanotes_db is not None
     context.app = app
     context.run_context = app.run_test(size=(180, 55))
     context.pilot = await context.run_context.__aenter__()
@@ -448,16 +446,25 @@ async def complete_quick_setup(
     assert auth == "none"
     wizard = app.screen
     container = wizard.query_one(SetupWizardContainer)
-    container.select_track(TRACK_QUICK)
 
+    welcome_index = container._step_index_for_id(STEP_WELCOME)
     provider_index = container._step_index_for_id(STEP_PROVIDER)
     model_index = container._step_index_for_id(STEP_MODEL)
     voice_index = container._step_index_for_id(STEP_VOICE)
+    assert welcome_index is not None
     assert provider_index is not None
     assert model_index is not None
     assert voice_index is not None
 
-    container.show_step(provider_index)
+    assert container.current_step == welcome_index
+    quick_setup = wizard.query_one("#setup-track-quick", RadioButton)
+    await context.pilot.click("#setup-track-quick")
+    await context.pilot.pause()
+    assert quick_setup.value is True
+    assert container.track == TRACK_QUICK
+    await context.pilot.click("#wizard-next")
+    await _wait_for(app, lambda: container.current_step == provider_index)
+
     provider_step = container.steps[provider_index]
     assert isinstance(provider_step, ProviderStep)
     await _wait_for(
@@ -489,7 +496,7 @@ async def complete_quick_setup(
     readiness = provider_step._current_provider_readiness()
     assert readiness.ready, readiness
     assert container.steps[provider_index] is provider_step
-    wizard.query_one("#wizard-next", Button).press()
+    await context.pilot.click("#wizard-next")
     await _wait_for(app, lambda: container.current_step == model_index)
 
     model_step = container.steps[model_index]
@@ -508,7 +515,7 @@ async def complete_quick_setup(
     model_button = await _wait_for(app, discovered_model_button)
     model_button.value = True
     await context.pilot.pause()
-    wizard.query_one("#wizard-next", Button).press()
+    await context.pilot.click("#wizard-next")
     await _wait_for(app, lambda: container.current_step == voice_index)
 
     voice_step = container.steps[voice_index]
@@ -527,11 +534,20 @@ async def complete_quick_setup(
         lambda: "Verified"
         in str(voice_step.query_one("#setup-voice-status", Static).renderable),
     )
-    wizard.query_one("#wizard-next", Button).press()
+    await context.pilot.click("#wizard-next")
     await _wait_for(
         app,
         lambda: next(iter(wizard.query("#setup-exit-home")), None)
         if container.steps[container.current_step].config.id == STEP_SUMMARY
+        else None,
+    )
+    await _wait_for(
+        app,
+        lambda: wizard.query_one("#setup-summary-rows", Static)
+        if str(wizard.query_one("#setup-summary-rows", Static).renderable).strip()
+        and str(wizard.query_one("#setup-summary-footer", Static).renderable).startswith(
+            "Config file:"
+        )
         else None,
     )
     wizard.query_one("#setup-exit-home", Button).press()
@@ -542,6 +558,9 @@ async def complete_quick_setup(
 
     assert app.app_config["chat_defaults"]["provider"] == "llama_cpp"
     assert app.app_config["chat_defaults"]["model"] == "test-chat-model"
+    assert len(context.fake_pocket_tts.requests) == 1
+    context.tts_request_baseline = len(context.fake_pocket_tts.requests)
+    context.playback_sink_baseline = len(context.playback.sinks)
 
 
 async def import_character_and_start_chat(app, character_png: Path) -> None:
@@ -554,11 +573,17 @@ async def import_character_and_start_chat(app, character_png: Path) -> None:
         else None,
         timeout=30.0,
     )
+    await _wait_for(
+        app,
+        lambda: next(iter(personas.query(".loading-text")), None)
+        if personas.state.active_mode == "characters"
+        else None,
+    )
     await personas._import_character_from_path(str(character_png))
     await context.pilot.pause(0.3)
     imported = [
         card
-        for card in context.db.list_character_cards()
+        for card in app.chachanotes_db.list_character_cards()
         if card.get("name") == "Pocket Ann"
     ]
     assert len(imported) == 1
@@ -586,6 +611,45 @@ async def import_character_and_start_chat(app, character_png: Path) -> None:
         )
 
     await _wait_for(app, character_handoff_consumed)
+    store = chat_screen._ensure_console_chat_store()
+    session = store.sessions()[0]
+    assert session.character_name == "Pocket Ann"
+    assert session.title == "Chat with Pocket Ann"
+    messages = store.messages_for_session(session.id)
+    assert len(messages) == 1
+    greeting = messages[0]
+    assert greeting.role is ConsoleMessageRole.ASSISTANT
+    assert greeting.content == "Hello, I am Ann."
+    assert greeting.status == "complete"
+    context.greeting_message_id = greeting.id
+
+    def greeting_visible():
+        try:
+            title = chat_screen.query_one("#console-transcript-title", Static)
+            speaker = chat_screen.query_one(
+                f"#console-message-header-{greeting.id} "
+                ".console-transcript-speaker-label",
+                Static,
+            )
+            action = chat_screen.query_one(
+                f"#console-message-speech-action-{greeting.id}",
+                Button,
+            )
+        except NoMatches:
+            return None
+        return title, speaker, action
+
+    title, speaker, greeting_action = await _wait_for(app, greeting_visible)
+    greeting_body = chat_screen.query_one(
+        f"#console-message-{greeting.id} .console-markdown-body",
+        Markdown,
+    )
+    assert title.visual.plain == "Conversation | Chat with Pocket Ann"
+    assert speaker.visual.plain == "Pocket Ann"
+    assert greeting_body.source == "Hello, I am Ann."
+    assert greeting_action.console_action_id == "speak"
+    assert greeting_action.disabled is False
+    assert len(context.fake_pocket_tts.requests) == context.tts_request_baseline
 
 
 async def enable_speak_replies_and_confirm(app) -> None:
@@ -629,6 +693,15 @@ async def enable_speak_replies_and_confirm(app) -> None:
 async def send_roleplay_message(app, message: str) -> None:
     context = _journey()
     chat_screen = context.chat_screen
+    greeting_message_id = context.greeting_message_id
+    assert greeting_message_id is not None
+    greeting_action = chat_screen.query_one(
+        f"#console-message-speech-action-{greeting_message_id}",
+        Button,
+    )
+    assert greeting_action.console_action_id == "speak"
+    assert greeting_action.disabled is False
+    assert len(context.fake_pocket_tts.requests) == context.tts_request_baseline
     composer = chat_screen.query_one("#console-native-composer", ConsoleComposerBar)
     composer.load_draft(message)
     await context.pilot.pause()
@@ -659,6 +732,8 @@ async def wait_for_audio_playback(app) -> None:
     chat_screen = context.chat_screen
     message_id = context.reply_message_id
     assert message_id is not None
+    assert context.tts_request_baseline is not None
+    assert context.playback_sink_baseline is not None
 
     def playing_controls():
         try:
@@ -668,23 +743,36 @@ async def wait_for_audio_playback(app) -> None:
             action = chat_screen.query_one(
                 f"#console-message-speech-action-{message_id}", Button
             )
-        except Exception:
+        except NoMatches:
             return None
         return (status, action) if str(status.renderable) == "Playing" else None
 
     status, action = await _wait_for(app, playing_controls, timeout=30.0)
     assert context.playback.started.is_set()
+    assert len(context.fake_pocket_tts.requests) == context.tts_request_baseline + 1
+    assert len(context.playback.sinks) == context.playback_sink_baseline + 1
     assert action.console_action_id == "speak-stop"
     assert action.disabled is False
     assert "Playing" in app.export_screenshot()
-    assert context.playback.sinks
     sink = context.playback.sinks[-1]
     assert sink.fed
-    sink.finish()
-    await _wait_for(
-        app,
-        lambda: str(status.renderable) == "Stopped",
-    )
+    action.press()
+
+    def stopped_controls():
+        return (
+            status,
+            action,
+        ) if (
+            str(status.renderable) == "Stopped"
+            and action.console_action_id == "speak"
+        ) else None
+
+    stopped_status, speak_action = await _wait_for(app, stopped_controls)
+    assert str(stopped_status.renderable) == "Stopped"
+    assert speak_action.console_action_id == "speak"
+    assert speak_action.disabled is False
+    assert sink.state == "stopped"
+    assert sink.terminal_reason == "stopped"
 
 
 async def test_clean_profile_character_roleplay_uses_pocket_tts(
@@ -707,6 +795,7 @@ async def test_clean_profile_character_roleplay_uses_pocket_tts(
         await enable_speak_replies_and_confirm(app)
         await send_roleplay_message(app, "Hello there")
         await wait_for_audio_playback(app)
+        assert len(fake_pocket_tts.requests) == 2
         assert fake_chat.requests[-1].json()["model"] == "test-chat-model"
         assert fake_pocket_tts.requests[-1].json() == {
             "model": "pocket-tts",
