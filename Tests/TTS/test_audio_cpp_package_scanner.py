@@ -3,15 +3,62 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import os
 import stat
 import struct
 import threading
 import time
+import traceback
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+NEW_SCANNER_FIXTURES = {
+    "qwen3_tts_1_7b_base_q8_0": (("qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf", "gguf"),),
+    "omnivoice_safetensors": (
+        ("config.json", "json"),
+        ("tokenizer.json", "json"),
+        ("tokenizer_config.json", "json"),
+        ("audio_tokenizer/config.json", "json"),
+        ("audio_tokenizer/preprocessor_config.json", "json"),
+        ("model.safetensors", "safetensors"),
+        ("audio_tokenizer/model.safetensors", "safetensors"),
+    ),
+    "voxcpm2_safetensors": (
+        ("config.json", "json"),
+        ("tokenizer_config.json", "json"),
+        ("tokenizer.json", "json"),
+        ("special_tokens_map.json", "json"),
+        ("model.safetensors", "safetensors"),
+        ("audiovae.safetensors", "safetensors"),
+    ),
+    "index_tts2_safetensors": (
+        ("config.yaml", "other"),
+        ("bpe.model", "other"),
+        ("w2v-bert-2.0/config.json", "json"),
+        ("w2v-bert-2.0/preprocessor_config.json", "json"),
+        ("bigvgan/config.json", "json"),
+        ("qwen0.6bemo4-merge/config.json", "json"),
+        ("qwen0.6bemo4-merge/generation_config.json", "json"),
+        ("qwen0.6bemo4-merge/tokenizer.json", "json"),
+        ("qwen0.6bemo4-merge/tokenizer_config.json", "json"),
+        ("qwen0.6bemo4-merge/vocab.json", "json"),
+        ("qwen0.6bemo4-merge/merges.txt", "other"),
+        ("gpt.safetensors", "safetensors"),
+        ("s2mel.safetensors", "safetensors"),
+        ("feat1.safetensors", "safetensors"),
+        ("feat2.safetensors", "safetensors"),
+        ("wav2vec2bert_stats.safetensors", "safetensors"),
+        ("w2v-bert-2.0/model.safetensors", "safetensors"),
+        ("semantic_codec_model.safetensors", "safetensors"),
+        ("campplus.safetensors", "safetensors"),
+        ("bigvgan/model.safetensors", "safetensors"),
+        ("qwen0.6bemo4-merge/model.safetensors", "safetensors"),
+    ),
+    "glm_tts_q8_0": (("Text to audio (TTS)/GLM-TTS_Q8.gguf", "gguf"),),
+}
 
 
 def _api():
@@ -38,6 +85,51 @@ def _write_gguf(path: Path, *, version: int = 3) -> None:
 def _write_safetensors(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(struct.pack("<Q", 2) + b"{}")
+
+
+def _write_recipe_fixture(root: Path, package_variant: str) -> None:
+    for relative_path, kind in NEW_SCANNER_FIXTURES[package_variant]:
+        target = root / relative_path
+        if kind == "gguf":
+            _write_gguf(target)
+        elif kind == "safetensors":
+            _write_safetensors(target)
+        elif kind == "json":
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("{}", encoding="utf-8")
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"fixture")
+
+
+def _managed_identity(**changes: str):
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        AUDIO_CPP_ARTIFACT_COMMIT,
+    )
+    from tldw_chatbook.TTS.audio_cpp_guided_config import (
+        AudioCppManagedArtifactIdentity,
+    )
+
+    values = {
+        "artifact_id": "audio-cpp-supertonic-3-orig",
+        "revision": AUDIO_CPP_ARTIFACT_COMMIT,
+        "variant": "orig",
+    }
+    values.update(changes)
+    return AudioCppManagedArtifactIdentity(**values)
+
+
+def _managed_root_evidence(root: Path):
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    initial = scanner.scan_audio_cpp_package_root(root)
+    candidate = tuple(
+        candidate
+        for discovery in initial.discoveries
+        for candidate in discovery.match.candidates
+    )
+    assert len(candidate) == 1
+    return initial, candidate[0]
 
 
 def test_exact_gguf_package_is_discovered_from_only_the_selected_root(
@@ -191,6 +283,88 @@ def test_multifile_safetensors_layout_requires_every_companion(tmp_path: Path) -
     assert complete.discoveries[0].match.state is api["AudioCppMatchState"].EXACT
     assert incomplete.discoveries[0].match.state is (
         api["AudioCppMatchState"].INCOMPLETE
+    )
+
+
+@pytest.mark.parametrize(
+    "package_variant",
+    (
+        "qwen3_tts_1_7b_base_q8_0",
+        "omnivoice_safetensors",
+        "voxcpm2_safetensors",
+        "index_tts2_safetensors",
+        "glm_tts_q8_0",
+    ),
+)
+def test_new_recipe_layouts_are_exact_through_the_bounded_scanner(
+    tmp_path: Path,
+    package_variant: str,
+) -> None:
+    api = _api()
+    root = tmp_path / package_variant
+    root.mkdir()
+    _write_recipe_fixture(root, package_variant)
+
+    exact = api["scan_audio_cpp_package_root"](root)
+    candidate = next(
+        candidate
+        for discovery in exact.discoveries
+        for candidate in discovery.match.candidates
+        if candidate.recipe.package_variant == package_variant
+    )
+    (root / NEW_SCANNER_FIXTURES[package_variant][-1][0]).unlink()
+    incomplete = api["scan_audio_cpp_package_root"](root)
+
+    exact_matches = tuple(
+        discovery
+        for discovery in exact.discoveries
+        if discovery.match.state is api["AudioCppMatchState"].EXACT
+    )
+    assert len(exact_matches) == 1
+    assert exact_matches[0].match.candidates[0] is candidate
+    assert all(
+        candidate.recipe.package_variant != package_variant
+        for discovery in incomplete.discoveries
+        for candidate in discovery.match.candidates
+    )
+
+
+def test_new_qwen_extra_variant_signal_is_ambiguous_not_selected(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    root = tmp_path / "qwen-conflict"
+    root.mkdir()
+    _write_gguf(root / "qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf")
+    _write_gguf(root / "qwen3-tts-12hz-1.7b-base-bf16.gguf")
+
+    result = api["scan_audio_cpp_package_root"](root)
+
+    exact = next(
+        discovery.match
+        for discovery in result.discoveries
+        if discovery.match.state is api["AudioCppMatchState"].AMBIGUOUS
+    )
+    assert {candidate.recipe.package_variant for candidate in exact.candidates} == {
+        "qwen3_tts_1_7b_base_q8_0",
+        "qwen3_tts_1_7b_base_bf16",
+    }
+
+
+def test_unrelated_generic_model_gguf_is_not_classified_as_vietneu(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    root = tmp_path / "unrelated-model"
+    root.mkdir()
+    _write_gguf(root / "model.gguf")
+
+    result = api["scan_audio_cpp_package_root"](root)
+
+    assert all(
+        candidate.recipe.package_variant != "vietneu_tts_v3_turbo_q8_0"
+        for discovery in result.discoveries
+        for candidate in discovery.match.candidates
     )
 
 
@@ -415,6 +589,540 @@ async def test_cancelling_async_scan_signals_the_worker_and_drops_late_result(
     with pytest.raises(asyncio.CancelledError):
         await task
     assert await asyncio.to_thread(stopped.wait, 1.0)
+
+
+def test_local_candidate_accept_call_and_serialized_shape_stay_unchanged(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "local-package"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    _, candidate = _managed_root_evidence(root)
+
+    accepted = candidate.accept()
+
+    assert accepted.managed_artifact is None
+    assert "managed_artifact" not in accepted.model_dump(mode="json")
+
+
+def test_candidate_accepts_only_its_exact_managed_artifact_mapping(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "managed-package"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    _, candidate = _managed_root_evidence(root)
+    identity = _managed_identity()
+
+    accepted = candidate.accept(managed_artifact=identity)
+
+    assert accepted.managed_artifact == identity
+
+
+def test_repeated_managed_accepts_reuse_the_strict_offline_manifest(
+    tmp_path: Path,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_artifact_catalog as catalog
+
+    root = tmp_path / "managed-package"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    _, candidate = _managed_root_evidence(root)
+    catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
+    try:
+        candidate.accept(managed_artifact=_managed_identity())
+        candidate.accept(managed_artifact=_managed_identity())
+
+        cache_info = catalog._cached_audio_cpp_artifact_source_manifest.cache_info()
+        assert cache_info.misses == 1
+        assert cache_info.hits == 1
+    finally:
+        catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
+
+
+def _exception_graph_text(error: BaseException) -> str:
+    nodes: list[BaseException] = []
+    pending: BaseException | None = error
+    while pending is not None and pending not in nodes:
+        nodes.append(pending)
+        pending = pending.__cause__ or pending.__context__
+    return "\n".join(
+        [*(str(node) for node in nodes), "".join(traceback.format_exception(error))]
+    )
+
+
+def test_candidate_manifest_failure_is_private_and_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_artifact_catalog as catalog
+
+    root = tmp_path / "managed-package"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    _, candidate = _managed_root_evidence(root)
+    real_loader = catalog.load_audio_cpp_artifact_source_manifest
+    private_canary = "/private/managed/store/secret-manifest.json"
+    calls = 0
+
+    def fail_once():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError(f"cannot read {private_canary}")
+        return real_loader()
+
+    catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
+    monkeypatch.setattr(catalog, "load_audio_cpp_artifact_source_manifest", fail_once)
+    try:
+        with pytest.raises(
+            ValueError,
+            match="audio.cpp managed artifact does not match recipe",
+        ) as raised:
+            candidate.accept(managed_artifact=_managed_identity())
+
+        assert raised.value.__cause__ is None
+        assert raised.value.__context__ is None
+        assert private_canary not in _exception_graph_text(raised.value)
+        assert candidate.accept(managed_artifact=_managed_identity()).managed_artifact
+        assert calls == 2
+    finally:
+        catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
+
+
+def test_managed_scanner_manifest_failure_is_private_and_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+    import tldw_chatbook.TTS.audio_cpp_artifact_catalog as catalog
+
+    root = tmp_path / "managed-package"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    real_loader = catalog.load_audio_cpp_artifact_source_manifest
+    private_canary = "/private/managed/store/secret-manifest.json"
+    calls = 0
+
+    def fail_once():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError(f"cannot read {private_canary}")
+        return real_loader()
+
+    catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
+    monkeypatch.setattr(catalog, "load_audio_cpp_artifact_source_manifest", fail_once)
+    scan_kwargs = {
+        "expected_managed_artifact": _managed_identity(),
+        "expected_canonical_root": str(root.resolve()),
+    }
+    try:
+        with pytest.raises(
+            scanner.AudioCppPackageScanError,
+            match="Managed audio.cpp package no longer matches its installed identity",
+        ) as raised:
+            scanner.scan_audio_cpp_package_root(root, **scan_kwargs)
+
+        assert raised.value.__cause__ is None
+        assert raised.value.__context__ is None
+        assert private_canary not in _exception_graph_text(raised.value)
+        assert scanner.scan_audio_cpp_package_root(root, **scan_kwargs).discoveries
+        assert calls == 2
+    finally:
+        catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
+
+
+@pytest.mark.parametrize(
+    "control_flow",
+    (KeyboardInterrupt(), SystemExit(), asyncio.CancelledError()),
+)
+def test_manifest_control_flow_exceptions_are_not_swallowed(
+    monkeypatch: pytest.MonkeyPatch,
+    control_flow: BaseException,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_artifact_catalog as catalog
+    from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+
+    def interrupt():
+        raise control_flow
+
+    recipe = AUDIO_CPP_RECIPE_REGISTRY.for_package("supertonic_3_orig")
+    identity = _managed_identity()
+    catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
+    monkeypatch.setattr(catalog, "load_audio_cpp_artifact_source_manifest", interrupt)
+    try:
+        with pytest.raises(type(control_flow)):
+            catalog.audio_cpp_artifact_identity_matches_recipe(
+                recipe_id=recipe.recipe_id,
+                recipe_revision=recipe.recipe_revision,
+                package_variant=recipe.package_variant,
+                recipe_artifact_ids=recipe.model_library_artifact_ids,
+                recipe_precision=recipe.precision,
+                artifact_id=identity.artifact_id,
+                revision=identity.revision,
+                variant=identity.variant,
+            )
+    finally:
+        catalog._cached_audio_cpp_artifact_source_manifest.cache_clear()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    (
+        {"artifact_id": "audio-cpp-supertonic-3-f16"},
+        {"revision": "a" * 40},
+        {"variant": "f16"},
+    ),
+)
+def test_candidate_rejects_managed_artifact_recipe_disagreement(
+    tmp_path: Path,
+    changes: dict[str, str],
+) -> None:
+    root = tmp_path / "managed-mismatch"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    _, candidate = _managed_root_evidence(root)
+
+    with pytest.raises(ValueError, match="managed artifact does not match") as raised:
+        candidate.accept(managed_artifact=_managed_identity(**changes))
+
+    assert str(root) not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "recipe_changes",
+    (
+        {"recipe_revision": 2},
+        {"package_variant": "supertonic_3_orig_drifted"},
+    ),
+)
+def test_candidate_rejects_managed_artifact_manifest_package_key_drift(
+    tmp_path: Path,
+    recipe_changes: dict[str, object],
+) -> None:
+    root = tmp_path / "managed-recipe-drift"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    _, candidate = _managed_root_evidence(root)
+    candidate = replace(candidate, recipe=replace(candidate.recipe, **recipe_changes))
+
+    with pytest.raises(ValueError, match="managed artifact does not match"):
+        candidate.accept(managed_artifact=_managed_identity())
+
+
+@pytest.mark.asyncio
+async def test_managed_exact_root_contract_returns_one_exact_candidate(
+    tmp_path: Path,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    root = tmp_path / "managed-exact"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    expected_root = str(root.resolve())
+    identity = _managed_identity()
+
+    result = await scanner.scan_audio_cpp_package_root_async(
+        root,
+        expected_managed_artifact=identity,
+        expected_canonical_root=expected_root,
+    )
+    candidates = tuple(
+        candidate
+        for discovery in result.discoveries
+        for candidate in discovery.match.candidates
+    )
+
+    assert result.outcome is scanner.AudioCppScanOutcome.COMPLETE
+    assert len(result.discoveries) == len(candidates) == 1
+    assert result.canonical_root == candidates[0].canonical_root == expected_root
+    assert result.canonical_root_identity == candidates[0].canonical_root_identity
+    assert candidates[0].accept(managed_artifact=identity).managed_artifact == identity
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    (
+        {
+            "expected_managed_artifact": object(),
+            "expected_canonical_root": "/tmp/root",
+        },
+        {"expected_managed_artifact": None, "expected_canonical_root": "/tmp/root"},
+    ),
+)
+def test_managed_exact_root_contract_must_be_complete_and_typed(
+    tmp_path: Path,
+    kwargs: dict[str, object],
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    root = tmp_path / "typed-contract"
+    root.mkdir()
+
+    with pytest.raises((TypeError, ValueError)):
+        scanner.scan_audio_cpp_package_root(root, **kwargs)
+
+
+@pytest.mark.parametrize("raised_error", (OSError, ValueError, TypeError))
+@pytest.mark.parametrize("use_async", (False, True))
+@pytest.mark.asyncio
+async def test_hostile_managed_root_pathlike_is_normalized_without_private_context(
+    tmp_path: Path,
+    raised_error: type[Exception],
+    use_async: bool,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    private_canary = "/private/managed/store/secret-root"
+
+    class HostilePath:
+        def __fspath__(self):
+            raise raised_error(private_canary)
+
+    root = tmp_path / "managed"
+    root.mkdir()
+    kwargs = {
+        "expected_managed_artifact": _managed_identity(),
+        "expected_canonical_root": HostilePath(),
+    }
+
+    with pytest.raises(
+        TypeError,
+        match="audio.cpp managed canonical root is required",
+    ) as raised:
+        if use_async:
+            await scanner.scan_audio_cpp_package_root_async(root, **kwargs)
+        else:
+            scanner.scan_audio_cpp_package_root(root, **kwargs)
+
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert private_canary not in _exception_graph_text(raised.value)
+
+
+@pytest.mark.parametrize(
+    "control_flow",
+    (KeyboardInterrupt(), SystemExit(), asyncio.CancelledError()),
+)
+def test_hostile_managed_root_pathlike_preserves_control_flow(
+    tmp_path: Path,
+    control_flow: BaseException,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    class InterruptingPath:
+        def __fspath__(self):
+            raise control_flow
+
+    root = tmp_path / "managed"
+    root.mkdir()
+
+    with pytest.raises(type(control_flow)):
+        scanner.scan_audio_cpp_package_root(
+            root,
+            expected_managed_artifact=_managed_identity(),
+            expected_canonical_root=InterruptingPath(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_managed_exact_root_contract_rejects_wrong_canonical_root(
+    tmp_path: Path,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    root = tmp_path / "managed-root"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    other_root = tmp_path / "other-root"
+    other_root.mkdir()
+
+    with pytest.raises(scanner.AudioCppPackageScanError):
+        await scanner.scan_audio_cpp_package_root_async(
+            root,
+            expected_managed_artifact=_managed_identity(),
+            expected_canonical_root=str(other_root.resolve()),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changes",
+    (
+        {"artifact_id": "audio-cpp-supertonic-3-f16"},
+        {"revision": "a" * 40},
+        {"variant": "f16"},
+    ),
+)
+async def test_managed_exact_root_contract_rejects_wrong_artifact_ref_axis(
+    tmp_path: Path,
+    changes: dict[str, str],
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    root = tmp_path / "private-managed-axis"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+
+    with pytest.raises(
+        scanner.AudioCppPackageScanError,
+        match="Managed audio.cpp package no longer matches its installed identity",
+    ) as raised:
+        await scanner.scan_audio_cpp_package_root_async(
+            root,
+            expected_managed_artifact=_managed_identity(**changes),
+            expected_canonical_root=str(root.resolve()),
+        )
+
+    assert "private-managed-axis" not in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_managed_exact_root_contract_rejects_sibling_candidate(
+    tmp_path: Path,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    _write_gguf(selected / "sibling" / "supertonic-3-orig.gguf")
+
+    with pytest.raises(scanner.AudioCppPackageScanError):
+        await scanner.scan_audio_cpp_package_root_async(
+            selected,
+            expected_managed_artifact=_managed_identity(),
+            expected_canonical_root=str(selected.resolve()),
+        )
+
+
+@pytest.mark.asyncio
+async def test_managed_exact_root_contract_rejects_multiple_candidates(
+    tmp_path: Path,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    root = tmp_path / "multiple"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    _write_gguf(root / "supertonic-3-f16.gguf")
+
+    with pytest.raises(scanner.AudioCppPackageScanError):
+        await scanner.scan_audio_cpp_package_root_async(
+            root,
+            expected_managed_artifact=_managed_identity(),
+            expected_canonical_root=str(root.resolve()),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "recipe_changes",
+    (
+        {"model_library_artifact_ids": ()},
+        {"recipe_revision": 2},
+        {"package_variant": "supertonic_3_orig_drifted"},
+    ),
+)
+async def test_managed_exact_root_contract_rejects_recipe_mapping_drift(
+    tmp_path: Path,
+    recipe_changes: dict[str, object],
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+    from tldw_chatbook.TTS.audio_cpp_recipes import (
+        AUDIO_CPP_RECIPE_REGISTRY,
+        AudioCppRecipeRegistry,
+    )
+
+    root = tmp_path / "recipe-drift"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    recipe = AUDIO_CPP_RECIPE_REGISTRY.for_package("supertonic_3_orig")
+    drifted = replace(recipe, **recipe_changes)
+
+    with pytest.raises(scanner.AudioCppPackageScanError):
+        await scanner.scan_audio_cpp_package_root_async(
+            root,
+            registry=AudioCppRecipeRegistry((drifted,)),
+            expected_managed_artifact=_managed_identity(),
+            expected_canonical_root=str(root.resolve()),
+        )
+
+
+def test_managed_exact_root_contract_revalidates_root_after_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    root = tmp_path / "private-substituted-root"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    expected_root = str(root.resolve())
+    displaced = tmp_path / "displaced-root"
+    real_scandir = scanner._scandir
+
+    class SubstitutingIterator:
+        def __init__(self) -> None:
+            self._iterator = real_scandir(root)
+            self._substituted = False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            try:
+                return next(self._iterator)
+            except StopIteration:
+                if not self._substituted:
+                    self._iterator.close()
+                    root.rename(displaced)
+                    root.mkdir()
+                    _write_gguf(root / "supertonic-3-orig.gguf")
+                    self._substituted = True
+                raise
+
+        def close(self) -> None:
+            self._iterator.close()
+
+    monkeypatch.setattr(
+        scanner,
+        "_scandir",
+        lambda path: (
+            SubstitutingIterator() if Path(path) == root else real_scandir(path)
+        ),
+    )
+
+    with pytest.raises(scanner.AudioCppPackageScanError) as raised:
+        scanner.scan_audio_cpp_package_root(
+            root,
+            expected_managed_artifact=_managed_identity(),
+            expected_canonical_root=expected_root,
+        )
+
+    assert "private-substituted-root" not in str(raised.value)
+
+
+def test_managed_exact_root_contract_preserves_pre_cancellation(
+    tmp_path: Path,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    root = tmp_path / "managed-cancelled"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    cancellation = threading.Event()
+    cancellation.set()
+
+    result = scanner.scan_audio_cpp_package_root(
+        root,
+        cancellation_event=cancellation,
+        expected_managed_artifact=_managed_identity(),
+        expected_canonical_root=str(root.resolve()),
+    )
+
+    assert result.outcome is scanner.AudioCppScanOutcome.CANCELLED
+    assert result.discoveries == ()
 
 
 def test_nested_symlink_and_windows_reparse_points_are_never_traversed(

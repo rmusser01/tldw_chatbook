@@ -4259,3 +4259,18 @@ reachable through a defect, say so in the docstring and file the defect. Note al
 what the wording cost: "the nav path MUST leave the screen resident" is how a
 known bug acquires a guard, and the next reader has to decide whether the test or
 the fix is wrong.
+## A screen refresh is not evidence that a restored child tree is settled (TASK-13207, 2026-08-14)
+
+TASK-13207's real Settings → Model Library → Settings run returned the reviewed
+package while an unrelated Speech/TTS draft was detached. The result worker
+merged correctly, but publishing the draft before terminal acknowledgement
+overlapped the restored panel's queued recompose: Textual `Select` mount events
+occasionally observed their overlay children between removal and mount, and the
+short cleanup fence could remain attached. Immediate fake leases hid the race;
+a mounted test with a deliberately slow lease exit reproduced it.
+
+**What to do.** Treat result acknowledgement, lease exit, and restored-child
+composition as separate observation boundaries. Do not publish draft state
+until the exact result claim is acknowledged and cleanup authority is released.
+Exercise mounted handoffs with a delayed lease exit; a screen-level idle or
+refresh observation alone does not prove that a recomposing child tree settled.

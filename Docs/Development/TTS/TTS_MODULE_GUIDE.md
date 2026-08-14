@@ -639,15 +639,36 @@ remains mandatory on every platform.
 
 ### Guided Managed audio.cpp launch (POSIX)
 
+Curated Model Library packages are joined to recipes at the exact reviewed
+audio.cpp inventory commit
+`597048d9a920592808d7d4e2acd7b9c4596a143a`. The join keeps three states
+distinct: downloadable, local-only, and unsupported. Provisioning always uses
+the shared artifact service with `activate=False`; installing bytes does not
+select a model, publish Settings, install the server binary, or launch a child.
+The Settings handoff leases the exact inactive root while it rescans and merges
+one non-stale result into the detached draft.
+
+Lease ownership follows the artifact, not the screen: the shared service owns
+installed roots, the unsaved Settings draft holds exact roots while reviewing
+and saving, a staged generation holds them until cancellation/transfer, and an
+owned child retains its immutable runtime handle until the child has stopped.
+Removal goes through the public artifact-service deletion boundary only after
+an ordered dependency preview and a final fingerprint recheck. Contention,
+interruption, or changed source state leaves the registry and package
+recoverable for a fresh preview; private clone-reference assets are separate
+owners and are never deleted implicitly.
+
 Guided setup is a structured Managed source alongside the existing advanced
-user-provided `server.json` source. The current reviewed package subset is
-audio.cpp release 0.5.1 Supertonic 3 and PocketTTS: four Supertonic package
-variants and eleven PocketTTS package variants. Each accepted package freezes
-its recipe revision, canonical root and file identities, safe model projection,
-public model ID, speech capabilities, and backend posture. A scan that finds
-multiple exact candidates never chooses one silently; explicitly reviewed
-candidates remain individually identifiable even when they share one selected
-root.
+user-provided `server.json` source. The pinned release accounting covers all 21
+families and 67 package variants: 45 reviewed variants are downloadable in
+Model Library, 8 approved variants are local-only, and 14 are explicitly
+unsupported. Model Library shows only the downloadable set; local-only
+variants enter through the same bounded **Add local package…** scanner and do
+not become a parallel installer path. Each accepted package freezes its recipe
+revision, canonical root and file identities, safe model projection, public
+model ID, speech capabilities, and backend posture. A scan that finds multiple
+exact candidates never chooses one silently; explicitly reviewed candidates
+remain individually identifiable even when they share one selected root.
 
 The exact recipe, not the family task label alone, determines first-sample
 readiness. Supertonic is text-ready. PocketTTS standalone GGUF recipes are
@@ -657,6 +678,16 @@ synthesis. The PocketTTS Safetensors layout includes reviewed embeddings and
 remains `Reference: Optional`. A voice-required default is still registered in
 the one child, but Settings hands off to **Test Connection** rather than
 promising **Hear a Sample**.
+
+Inflect Micro v2 also depends on eSpeak-ng and its English data. The pinned
+upstream 0.5.1 guide documents explicit `inflect_v2.espeak_library_path` and
+`inflect_v2.espeak_data_path` session options only when eSpeak-ng is outside
+the dynamic-loader/data search locations. An installed library or data package
+is not sufficient evidence that the server process can resolve its default
+names. Guided configuration intentionally does not discover or persist private
+host paths. Verify loader/data discoverability before testing Inflect; when the
+defaults are not discoverable, provide the explicit options through the
+advanced user-owned `server.json` flow.
 
 Saving Guided Settings remains passive. The first deliberate Test, Start,
 Restart & Apply, catalog refresh, voice refresh, or synthesis revalidates the

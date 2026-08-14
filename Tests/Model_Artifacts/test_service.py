@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import concurrent.futures
 import dataclasses
@@ -37,6 +38,48 @@ from tldw_chatbook.Model_Artifacts import (
     ArtifactRole,
     ProvenanceClass,
     closure_fingerprint,
+)
+
+
+class FutureRemovalControl(BaseException):
+    """Stand-in for future non-Exception control-flow families."""
+
+
+class UnsafeExitCode(int):
+    """Numeric-looking exit code whose representation is not trusted."""
+
+
+class HostileCleanupControl(BaseException):
+    """Control whose similarly named method must not shadow private ownership."""
+
+    def __init__(self, private: str) -> None:
+        self.method_called = False
+        super().__init__(private)
+
+    def take_cleanup_owner(self) -> None:
+        self.method_called = True
+
+
+class HostileRemovalCleanupError(service_module.ArtifactRemovalCleanupError):
+    """Carrier subclass whose override must not intercept nominal extraction."""
+
+    def __init__(
+        self,
+        cleanup_owner: service_module.ArtifactRemovalAuthority,
+    ) -> None:
+        self.method_called = False
+        super().__init__(cleanup_owner)
+
+    def take_cleanup_owner(self) -> None:
+        self.method_called = True
+
+
+REMOVAL_CONTROL_TYPES = (
+    KeyboardInterrupt,
+    SystemExit,
+    GeneratorExit,
+    asyncio.CancelledError,
+    FutureRemovalControl,
 )
 
 
@@ -77,11 +120,15 @@ def test_package_exports_the_complete_public_artifact_api() -> None:
         "ArtifactLeaseKey",
         "ArtifactLeaseTimeoutError",
         "ArtifactNotReadyError",
+        "ArtifactNotInstalledError",
         "ArtifactOperationLease",
         "ArtifactOperationLeaseSet",
         "ArtifactPathError",
         "ArtifactPreflightEntry",
         "ArtifactRef",
+        "ArtifactRemovalAuthority",
+        "ArtifactRemovalAvailability",
+        "ArtifactRemovalCleanupError",
         "ArtifactRole",
         "ArtifactSourceMap",
         "ArtifactStateError",
@@ -107,6 +154,7 @@ def test_package_exports_the_complete_public_artifact_api() -> None:
         "TransferError",
         "closure_fingerprint",
         "stream_fetch",
+        "take_artifact_removal_cleanup_owner",
     }
 
     assert set(artifacts_module.__all__) == expected
@@ -256,6 +304,58 @@ def regular_tree_size(root: Path) -> int:
     return total
 
 
+def removal_exception_graph_text(error: BaseException) -> str:
+    """Return bounded exception values/notes across cause and context links."""
+
+    pending = [error]
+    seen: set[int] = set()
+    values: list[str] = []
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        values.extend((str(current), repr(current)))
+        values.extend(str(value) for value in current.args)
+        if isinstance(current, SystemExit):
+            values.append(str(current.code))
+        values.extend(getattr(current, "__notes__", ()))
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions)
+    return "\n".join(values)
+
+
+def assert_cleanup_owner_releases(
+    error: BaseException,
+    targets: tuple[
+        tuple[service_module.ModelArtifactService, ArtifactRef],
+        ...,
+    ],
+    *,
+    drained_errors: tuple[BaseException, ...] = (),
+) -> None:
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(error)
+    assert cleanup_owner is not None
+    assert service_module.take_artifact_removal_cleanup_owner(error) is None
+    for contender, reference in targets:
+        assert (
+            contender.probe_removal_availability(reference)
+            is service_module.ArtifactRemovalAvailability.BUSY
+        )
+    cleanup_owner.close()
+    for drained_error in drained_errors:
+        assert service_module.take_artifact_removal_cleanup_owner(drained_error) is None
+    for contender, reference in targets:
+        assert (
+            contender.probe_removal_availability(reference)
+            is service_module.ArtifactRemovalAvailability.AVAILABLE
+        )
+
+
 def test_delete_and_reconcile_expose_stable_frozen_contracts() -> None:
     assert issubclass(
         service_module.ArtifactInUseError,
@@ -272,6 +372,921 @@ def test_delete_and_reconcile_expose_stable_frozen_contracts() -> None:
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         report.state_removed = 1  # type: ignore[misc]
+
+
+def test_removal_authority_acquires_lifecycle_then_exact_target_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _final = installed_artifact(tmp_path)
+    events: list[tuple[str, ArtifactLeaseKey]] = []
+    real_lease = service_module.ArtifactOperationLease
+
+    class RecordingLease:
+        def __init__(
+            self,
+            lock_root: Path,
+            key: ArtifactLeaseKey,
+            mode: object,
+            **kwargs: object,
+        ) -> None:
+            assert mode is service_module.LeaseMode.EXCLUSIVE
+            self._lease = real_lease(lock_root, key, mode, **kwargs)
+            self.key = key
+
+        def acquire(self) -> RecordingLease:
+            events.append(("acquire", self.key))
+            self._lease.acquire()
+            return self
+
+        def release(self) -> None:
+            events.append(("release", self.key))
+            self._lease.release()
+
+    monkeypatch.setattr(service_module, "ArtifactOperationLease", RecordingLease)
+
+    authority = service.acquire_removal_authority(item.reference)
+    assert events == [
+        ("acquire", ArtifactLeaseKey("!lifecycle", "1", "writer")),
+        ("acquire", item.reference.lease_key()),
+    ]
+
+    authority.close()
+    authority.close()
+    assert events[2:] == [
+        ("release", item.reference.lease_key()),
+        ("release", ArtifactLeaseKey("!lifecycle", "1", "writer")),
+    ]
+
+
+def test_removal_authority_pins_target_and_revalidates_before_commit(
+    tmp_path: Path,
+) -> None:
+    service, item, _source, target = installed_artifact(tmp_path)
+    authority = service.acquire_removal_authority(item.reference)
+    moved = target.with_name(f"{target.name}-moved")
+    target.rename(moved)
+    shutil.copytree(moved, target)
+    try:
+        with pytest.raises(service_module.ArtifactStateError, match="target changed"):
+            authority.commit()
+        assert target.is_dir()
+        assert moved.is_dir()
+    finally:
+        authority.close()
+
+
+def test_removal_authority_commits_once_without_calling_public_delete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    calls: list[ArtifactRef] = []
+    real_delete_under_leases = service._delete_under_leases
+
+    def delete_under_leases(reference: ArtifactRef) -> None:
+        calls.append(reference)
+        real_delete_under_leases(reference)
+
+    monkeypatch.setattr(service, "_delete_under_leases", delete_under_leases)
+    monkeypatch.setattr(
+        service,
+        "delete",
+        lambda _reference: (_ for _ in ()).throw(
+            AssertionError("authority must not call public delete")
+        ),
+    )
+
+    authority = service.acquire_removal_authority(item.reference)
+    try:
+        authority.commit()
+        with pytest.raises(
+            service_module.ArtifactStateError, match="already committed"
+        ):
+            authority.commit()
+    finally:
+        authority.close()
+
+    assert calls == [item.reference]
+
+
+def test_public_delete_delegates_to_authority_without_reacquiring(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    reference = ref("delegated", "revision", "v1")
+    events: list[str] = []
+
+    class FakeAuthority:
+        def __enter__(self) -> FakeAuthority:
+            events.append("enter")
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            events.append("close")
+
+        def commit(self) -> None:
+            events.append("commit")
+
+    monkeypatch.setattr(
+        service,
+        "acquire_removal_authority",
+        lambda exact: FakeAuthority() if exact == reference else None,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "ArtifactOperationLease",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("delete must not acquire leases itself")
+        ),
+    )
+
+    service.delete(reference)
+
+    assert events == ["enter", "commit", "close"]
+
+
+def test_removal_authority_close_retains_failed_cleanup_for_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    events: list[tuple[str, ArtifactLeaseKey]] = []
+    target_release_attempts = 0
+
+    class RetryLease:
+        def __init__(
+            self,
+            _lock_root: Path,
+            key: ArtifactLeaseKey,
+            _mode: object,
+            **_kwargs: object,
+        ) -> None:
+            self.key = key
+
+        def acquire(self) -> RetryLease:
+            events.append(("acquire", self.key))
+            return self
+
+        def release(self) -> None:
+            nonlocal target_release_attempts
+            events.append(("release", self.key))
+            if self.key == item.reference.lease_key():
+                target_release_attempts += 1
+                if target_release_attempts == 1:
+                    raise service_module.ArtifactLeaseError("retry cleanup")
+
+    monkeypatch.setattr(service_module, "ArtifactOperationLease", RetryLease)
+    authority = service.acquire_removal_authority(item.reference)
+
+    with pytest.raises(service_module.ArtifactLeaseError, match="retry cleanup"):
+        authority.close()
+    assert events[-1] == ("release", item.reference.lease_key())
+    assert ("release", ArtifactLeaseKey("!lifecycle", "1", "writer")) not in events
+
+    authority.close()
+    authority.close()
+    assert events[-2:] == [
+        ("release", item.reference.lease_key()),
+        ("release", ArtifactLeaseKey("!lifecycle", "1", "writer")),
+    ]
+
+
+def test_removal_authority_retains_exclusion_and_retries_failed_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, target = installed_artifact(tmp_path)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    real_rmtree = shutil.rmtree
+    attempts = 0
+
+    def fail_once(path: Path, *args: object, **kwargs: object) -> None:
+        nonlocal attempts
+        if Path(path) == target:
+            attempts += 1
+            if attempts == 1:
+                raise OSError("retry removal")
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", fail_once)
+    authority = service.acquire_removal_authority(item.reference)
+    try:
+        with pytest.raises(service_module.ArtifactStateError):
+            authority.commit()
+        assert (
+            contender.probe_removal_availability(item.reference)
+            is service_module.ArtifactRemovalAvailability.BUSY
+        )
+        authority.commit()
+    finally:
+        authority.close()
+
+    assert attempts == 2
+    assert target.exists() is False
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_acquire_failure_transfers_exact_cleanup_owner_for_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_ACQUIRE:{tmp_path}:pid={os.getpid()}:owner"
+    real_release = service_module.ArtifactOperationLease.release
+    release_events: list[ArtifactLeaseKey] = []
+    target_attempts = 0
+
+    def fail_target_release_once(lease: object) -> None:
+        nonlocal target_attempts
+        if lease.key == item.reference.lease_key():
+            release_events.append(lease.key)
+            target_attempts += 1
+            if target_attempts == 1:
+                raise service_module.ArtifactLeaseError(private)
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service,
+        "_removal_target_identity",
+        lambda _reference: (_ for _ in ()).throw(
+            service_module.ArtifactPathError(private)
+        ),
+    )
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_target_release_once,
+    )
+
+    with pytest.raises(service_module.ArtifactRemovalCleanupError) as caught:
+        service.acquire_removal_authority(item.reference)
+
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+
+    def record_successful_release(lease: object) -> None:
+        release_events.append(lease.key)
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        record_successful_release,
+    )
+    cleanup_owner.close()
+    assert release_events == [
+        item.reference.lease_key(),
+        item.reference.lease_key(),
+        ArtifactLeaseKey("!lifecycle", "1", "writer"),
+    ]
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_probe_release_failure_transfers_cleanup_only_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_PROBE_RELEASE:{tmp_path}:pid={os.getpid()}:owner"
+    real_release = service_module.ArtifactOperationLease.release
+    target_attempts = 0
+
+    def fail_target_release_once(lease: object) -> None:
+        nonlocal target_attempts
+        if lease.key == item.reference.lease_key():
+            target_attempts += 1
+            if target_attempts == 1:
+                raise service_module.ArtifactLeaseError(private)
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_target_release_once,
+    )
+
+    with pytest.raises(service_module.ArtifactRemovalCleanupError) as caught:
+        service.probe_removal_availability(item.reference)
+
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    with pytest.raises(service_module.ArtifactStateError, match="cleanup-only"):
+        cleanup_owner.commit()
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_partial_acquire_cleanup_failure_transfers_lifecycle_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_PARTIAL_ACQUIRE:{tmp_path}:pid={os.getpid()}:owner"
+    real_acquire = service_module.ArtifactOperationLease.acquire
+    real_release = service_module.ArtifactOperationLease.release
+    lifecycle_attempts = 0
+
+    def fail_target_acquire(lease: object) -> object:
+        if lease.key == item.reference.lease_key():
+            raise service_module.ArtifactLeaseError(private)
+        return real_acquire(lease)
+
+    def fail_lifecycle_release_once(lease: object) -> None:
+        nonlocal lifecycle_attempts
+        if lease.key == ArtifactLeaseKey("!lifecycle", "1", "writer"):
+            lifecycle_attempts += 1
+            if lifecycle_attempts == 1:
+                raise service_module.ArtifactLeaseError(private)
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        fail_target_acquire,
+    )
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_lifecycle_release_once,
+    )
+
+    with pytest.raises(service_module.ArtifactRemovalCleanupError) as caught:
+        service.acquire_removal_authority(item.reference)
+
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    with pytest.raises(service_module.ArtifactStateError, match="cleanup-only"):
+        cleanup_owner.commit()
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        real_acquire,
+    )
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    cleanup_owner.close()
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+@pytest.mark.parametrize("control_type", REMOVAL_CONTROL_TYPES)
+def test_acquire_post_lock_cleanup_control_continues_and_transfers_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    control_type: type[BaseException],
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_POST_LOCK:{tmp_path}:pid={os.getpid()}:owner"
+    signal = control_type(private)
+    real_release = service_module.ArtifactOperationLease.release
+    release_events: list[ArtifactLeaseKey] = []
+    target_attempts = 0
+
+    def interrupt_target_release_once(lease: object) -> None:
+        nonlocal target_attempts
+        release_events.append(lease.key)
+        if lease.key == item.reference.lease_key():
+            target_attempts += 1
+            if target_attempts == 1:
+                raise signal
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service,
+        "_removal_target_identity",
+        lambda _reference: (_ for _ in ()).throw(
+            service_module.ArtifactPathError(private)
+        ),
+    )
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        interrupt_target_release_once,
+    )
+
+    with pytest.raises(control_type) as caught:
+        service.acquire_removal_authority(item.reference)
+
+    assert caught.value is signal
+    assert private not in removal_exception_graph_text(caught.value)
+    assert caught.value.__notes__ == [
+        "artifact removal also encountered an ordinary failure"
+    ]
+    if isinstance(caught.value, SystemExit):
+        assert caught.value.code == 1
+    assert release_events == [
+        item.reference.lease_key(),
+        ArtifactLeaseKey("!lifecycle", "1", "writer"),
+    ]
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    ("probe_removal_availability", "acquire_removal_authority"),
+)
+@pytest.mark.parametrize("control_type", REMOVAL_CONTROL_TYPES)
+def test_removal_setup_cleanup_control_wins_and_continues_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    control_type: type[BaseException],
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    private = f"PRIVATE_SETUP:{tmp_path}:pid={os.getpid()}:owner"
+    signal = control_type(private)
+    real_acquire = service_module.ArtifactOperationLease.acquire
+    real_release = service_module.ArtifactOperationLease.release
+    release_events: list[ArtifactLeaseKey] = []
+
+    def fail_target_acquire(lease: object) -> object:
+        if lease.key == item.reference.lease_key():
+            raise service_module.ArtifactLeaseError(private)
+        return real_acquire(lease)
+
+    def interrupt_target_release(lease: object) -> None:
+        release_events.append(lease.key)
+        if lease.key == item.reference.lease_key():
+            raise signal
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        fail_target_acquire,
+    )
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        interrupt_target_release,
+    )
+
+    with pytest.raises(control_type) as caught:
+        getattr(service, method_name)(item.reference)
+
+    assert caught.value is signal
+    assert private not in removal_exception_graph_text(caught.value)
+    assert caught.value.__notes__ == [
+        "artifact removal also encountered an ordinary failure"
+    ]
+    if isinstance(caught.value, SystemExit):
+        assert caught.value.code == 1
+    assert release_events == [
+        item.reference.lease_key(),
+        ArtifactLeaseKey("!lifecycle", "1", "writer"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "signal",
+    (
+        asyncio.CancelledError("PRIVATE_CANCELLED_SETUP"),
+        FutureRemovalControl("PRIVATE_FUTURE_SETUP"),
+    ),
+)
+def test_acquire_setup_preserves_generic_control_object(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    signal: BaseException,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    real_acquire = service_module.ArtifactOperationLease.acquire
+
+    def interrupt_target_acquire(lease: object) -> object:
+        if lease.key == item.reference.lease_key():
+            raise signal
+        return real_acquire(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        interrupt_target_acquire,
+    )
+
+    with pytest.raises(type(signal)) as caught:
+        service.acquire_removal_authority(item.reference)
+
+    assert caught.value is signal
+    assert "PRIVATE_" not in removal_exception_graph_text(caught.value)
+
+
+@pytest.mark.parametrize("code", (23, None))
+def test_acquire_setup_preserves_bounded_system_exit_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    code: int | None,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    signal = SystemExit(code)
+    real_acquire = service_module.ArtifactOperationLease.acquire
+
+    def interrupt_target_acquire(lease: object) -> object:
+        if lease.key == item.reference.lease_key():
+            raise signal
+        return real_acquire(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        interrupt_target_acquire,
+    )
+
+    with pytest.raises(SystemExit) as caught:
+        service.acquire_removal_authority(item.reference)
+
+    assert caught.value is signal
+    assert caught.value.code is code
+
+
+def test_acquire_setup_bounds_base_exception_group_and_exit_children(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    private = f"PRIVATE_GROUP_SETUP:{tmp_path}:pid={os.getpid()}:owner"
+    signal = BaseExceptionGroup(
+        private,
+        [
+            asyncio.CancelledError(private),
+            SystemExit(23),
+            SystemExit(None),
+            SystemExit(True),
+            SystemExit(UnsafeExitCode(7)),
+            SystemExit(private),
+        ],
+    )
+    real_acquire = service_module.ArtifactOperationLease.acquire
+
+    def interrupt_target_acquire(lease: object) -> object:
+        if lease.key == item.reference.lease_key():
+            raise signal
+        return real_acquire(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        interrupt_target_acquire,
+    )
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        service.acquire_removal_authority(item.reference)
+
+    assert caught.value is not signal
+    assert caught.value.message == "artifact removal control group"
+    assert private not in removal_exception_graph_text(caught.value)
+    exits = [
+        error.code for error in caught.value.exceptions if isinstance(error, SystemExit)
+    ]
+    assert exits == [23, None, 1, 1, 1]
+
+
+def test_group_sanitizer_composes_child_and_root_cleanup_owners(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, first_item, _source, _target = installed_artifact(tmp_path / "first")
+    second, second_item, _source, _target = installed_artifact(tmp_path / "second")
+    trigger, trigger_item, _source, _target = installed_artifact(tmp_path / "trigger")
+    first_contender = service_module.ModelArtifactService(
+        tmp_path / "first" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    second_contender = service_module.ModelArtifactService(
+        tmp_path / "second" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_GROUP_ROOT_CHILD:{tmp_path}:pid={os.getpid()}:owner"
+    first_owner = first.acquire_removal_authority(first_item.reference)
+    second_owner = second.acquire_removal_authority(second_item.reference)
+    first_owner._make_cleanup_only()
+    second_owner._make_cleanup_only()
+    child = KeyboardInterrupt(private)
+    setattr(child, "_artifact_removal_cleanup_owner", first_owner)
+    signal = BaseExceptionGroup(private, [child])
+    setattr(signal, "_artifact_removal_cleanup_owner", second_owner)
+    real_acquire = service_module.ArtifactOperationLease.acquire
+
+    def interrupt_trigger_target(lease: object) -> object:
+        if (
+            lease._lock_root == trigger._locks_path
+            and lease.key == trigger_item.reference.lease_key()
+        ):
+            raise signal
+        return real_acquire(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        interrupt_trigger_target,
+    )
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        trigger.acquire_removal_authority(trigger_item.reference)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        real_acquire,
+    )
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert service_module.take_artifact_removal_cleanup_owner(caught.value) is None
+    bounded_child = caught.value.exceptions[0]
+    assert service_module.take_artifact_removal_cleanup_owner(bounded_child) is None
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    cleanup_owner.close()
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_group_sanitizer_composes_control_and_carrier_child_owners(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, first_item, _source, _target = installed_artifact(tmp_path / "first")
+    second, second_item, _source, _target = installed_artifact(tmp_path / "second")
+    trigger, trigger_item, _source, _target = installed_artifact(tmp_path / "trigger")
+    first_contender = service_module.ModelArtifactService(
+        tmp_path / "first" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    second_contender = service_module.ModelArtifactService(
+        tmp_path / "second" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_GROUP_CARRIERS:{tmp_path}:pid={os.getpid()}:owner"
+    first_owner = first.acquire_removal_authority(first_item.reference)
+    second_owner = second.acquire_removal_authority(second_item.reference)
+    first_owner._make_cleanup_only()
+    cancelled = asyncio.CancelledError(private)
+    setattr(cancelled, "_artifact_removal_cleanup_owner", first_owner)
+    carrier = service_module.ArtifactRemovalCleanupError(second_owner)
+    signal = BaseExceptionGroup(private, [cancelled, carrier])
+    real_acquire = service_module.ArtifactOperationLease.acquire
+
+    def interrupt_trigger_target(lease: object) -> object:
+        if (
+            lease._lock_root == trigger._locks_path
+            and lease.key == trigger_item.reference.lease_key()
+        ):
+            raise signal
+        return real_acquire(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        interrupt_trigger_target,
+    )
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        trigger.acquire_removal_authority(trigger_item.reference)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        real_acquire,
+    )
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert service_module.take_artifact_removal_cleanup_owner(caught.value) is None
+    assert service_module.take_artifact_removal_cleanup_owner(cancelled) is None
+    assert service_module.take_artifact_removal_cleanup_owner(carrier) is None
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    cleanup_owner.close()
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    ("probe_removal_availability", "acquire_removal_authority"),
+)
+def test_removal_store_path_failures_are_bounded_state_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    reference = ref("bounded", "revision", "v1")
+    private = f"PRIVATE_STORE_PATH:{tmp_path}:pid={os.getpid()}:owner"
+    monkeypatch.setattr(
+        service,
+        "_assert_managed_path",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            service_module.ArtifactPathError(private)
+        ),
+    )
+
+    with pytest.raises(service_module.ArtifactStateError) as caught:
+        getattr(service, method_name)(reference)
+
+    assert type(caught.value) is service_module.ArtifactStateError
+    assert private not in removal_exception_graph_text(caught.value)
+
+
+@pytest.mark.parametrize(
+    "control",
+    (
+        KeyboardInterrupt(),
+        SystemExit(23),
+        GeneratorExit("stop"),
+        asyncio.CancelledError("cancel"),
+        FutureRemovalControl("future"),
+    ),
+)
+def test_removal_authority_propagates_commit_control_flow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    control: BaseException,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    authority = service.acquire_removal_authority(item.reference)
+    monkeypatch.setattr(
+        service,
+        "_delete_under_leases",
+        lambda _reference: (_ for _ in ()).throw(control),
+    )
+    try:
+        with pytest.raises(type(control)) as caught:
+            authority.commit()
+        assert caught.value is control
+    finally:
+        authority.close()
+
+
+def test_probe_removal_availability_is_bounded_ordered_and_non_mutating(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, target = installed_artifact(tmp_path)
+    before = tuple(
+        (path.relative_to(service._root), path.read_bytes())
+        for path in sorted(service._root.rglob("*"))
+        if path.is_file() and service._locks_path not in path.parents
+    )
+    events: list[tuple[str, ArtifactLeaseKey]] = []
+    real_lease = service_module.ArtifactOperationLease
+
+    class RecordingLease:
+        def __init__(
+            self,
+            lock_root: Path,
+            key: ArtifactLeaseKey,
+            mode: object,
+            **kwargs: object,
+        ) -> None:
+            assert mode is service_module.LeaseMode.EXCLUSIVE
+            self._lease = real_lease(lock_root, key, mode, **kwargs)
+            self.key = key
+
+        def acquire(self) -> RecordingLease:
+            events.append(("acquire", self.key))
+            self._lease.acquire()
+            return self
+
+        def release(self) -> None:
+            events.append(("release", self.key))
+            self._lease.release()
+
+    monkeypatch.setattr(service_module, "ArtifactOperationLease", RecordingLease)
+
+    available = service.probe_removal_availability(item.reference)
+
+    assert available is service_module.ArtifactRemovalAvailability.AVAILABLE
+    assert {member.value for member in service_module.ArtifactRemovalAvailability} == {
+        "available",
+        "busy",
+    }
+    assert events == [
+        ("acquire", ArtifactLeaseKey("!lifecycle", "1", "writer")),
+        ("acquire", item.reference.lease_key()),
+        ("release", item.reference.lease_key()),
+        ("release", ArtifactLeaseKey("!lifecycle", "1", "writer")),
+    ]
+    assert target.is_dir()
+    after = tuple(
+        (path.relative_to(service._root), path.read_bytes())
+        for path in sorted(service._root.rglob("*"))
+        if path.is_file() and service._locks_path not in path.parents
+    )
+    assert after == before
+
+
+def test_probe_reports_only_busy_while_exact_artifact_is_shared(tmp_path: Path) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    service.activate(item.reference)
+    handle = service.acquire(item.reference)
+    try:
+        result = service.probe_removal_availability(item.reference)
+    finally:
+        handle.close()
+
+    assert result is service_module.ArtifactRemovalAvailability.BUSY
+    assert repr(result) == "<ArtifactRemovalAvailability.BUSY: 'busy'>"
+    assert not any(
+        token in repr(result).casefold()
+        for token in (str(tmp_path).casefold(), "pid", "owner", "lock")
+    )
 
 
 def test_loaded_root_blocks_delete_without_mutation_then_closes_cleanly(
@@ -464,8 +1479,9 @@ def test_delete_corrupt_target_but_reject_missing_and_symlinked_target(
     target.parent.mkdir(parents=True, exist_ok=True)
     symlink_or_skip(target, external, target_is_directory=True)
 
-    with pytest.raises(service_module.ArtifactPathError):
+    with pytest.raises(service_module.ArtifactStateError) as caught:
         service.delete(root.reference)
+    assert type(caught.value) is service_module.ArtifactStateError
     assert external_payload.read_bytes() == b"keep"
 
 
@@ -572,39 +1588,32 @@ def test_delete_failure_before_target_exclusive_does_not_mutate_store(
     ) == before
 
 
-def test_delete_preserves_body_error_over_target_release_failure(
+def test_delete_body_and_close_failure_transfers_exact_cleanup_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service, root, _dependency = installed_root_and_dependency(tmp_path)
-    body_error = service_module.ArtifactStateError("injected deletion body failure")
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_DELETE:{tmp_path}:pid={os.getpid()}:owner"
+    body_error = service_module.ArtifactStateError(private)
+    real_release = service_module.ArtifactOperationLease.release
+    release_attempts = 0
 
-    class FailingTargetReleaseLease:
-        def __init__(
-            self,
-            _lock_root: Path,
-            key: ArtifactLeaseKey,
-            _mode: object,
-            **_kwargs: object,
-        ) -> None:
-            self.key = key
-
-        def __enter__(self) -> FailingTargetReleaseLease:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def acquire(self) -> FailingTargetReleaseLease:
-            return self
-
-        def release(self) -> None:
-            raise service_module.ArtifactLeaseError("injected target release failure")
+    def fail_target_release_once(lease: object) -> None:
+        nonlocal release_attempts
+        if lease.key == root.reference.lease_key():
+            release_attempts += 1
+            if release_attempts == 1:
+                raise service_module.ArtifactLeaseError(private)
+        real_release(lease)
 
     monkeypatch.setattr(
-        service_module,
-        "ArtifactOperationLease",
-        FailingTargetReleaseLease,
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_target_release_once,
     )
     monkeypatch.setattr(
         service,
@@ -612,13 +1621,1044 @@ def test_delete_preserves_body_error_over_target_release_failure(
         lambda _reference: (_ for _ in ()).throw(body_error),
     )
 
-    with pytest.raises(service_module.ArtifactStateError) as caught:
+    with pytest.raises(service_module.ArtifactRemovalCleanupError) as caught:
         service.delete(root.reference)
 
-    assert caught.value is body_error
-    assert any(
-        "lease cleanup failed" in note and "target release failure" in note
-        for note in getattr(body_error, "__notes__", ())
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert (
+        contender.probe_removal_availability(root.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+    assert release_attempts == 1
+    assert (
+        contender.probe_removal_availability(root.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_delete_partial_mutation_transfers_cleanup_only_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    target = service.artifact_path(root.reference)
+    private = f"PRIVATE_PARTIAL_DELETE:{tmp_path}:pid={os.getpid()}:owner"
+    real_delete_under_leases = service._delete_under_leases
+    real_release = service_module.ArtifactOperationLease.release
+    target_attempts = 0
+
+    def delete_then_fail(reference: ArtifactRef) -> None:
+        real_delete_under_leases(reference)
+        raise service_module.ArtifactStateError(private)
+
+    def fail_target_release_once(lease: object) -> None:
+        nonlocal target_attempts
+        if lease.key == root.reference.lease_key():
+            target_attempts += 1
+            if target_attempts == 1:
+                raise service_module.ArtifactLeaseError(private)
+        real_release(lease)
+
+    monkeypatch.setattr(service, "_delete_under_leases", delete_then_fail)
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_target_release_once,
+    )
+
+    with pytest.raises(service_module.ArtifactRemovalCleanupError) as caught:
+        service.delete(root.reference)
+
+    assert target.exists() is False
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    with pytest.raises(service_module.ArtifactStateError, match="cleanup-only"):
+        cleanup_owner.commit()
+    with pytest.raises(service_module.ArtifactStateError, match="cleanup-only"):
+        cleanup_owner.__enter__()
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+
+
+def test_nested_control_cleanup_composes_all_cleanup_only_owners(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, first_item, _source, _target = installed_artifact(tmp_path / "first")
+    second, second_item, _source, _target = installed_artifact(tmp_path / "second")
+    first_contender = service_module.ModelArtifactService(
+        tmp_path / "first" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    second_contender = service_module.ModelArtifactService(
+        tmp_path / "second" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_NESTED:{tmp_path}:pid={os.getpid()}:owner"
+    signal = BaseExceptionGroup(
+        private,
+        [
+            asyncio.CancelledError(private),
+            BaseExceptionGroup(private, [SystemExit(private)]),
+        ],
+    )
+    real_release = service_module.ArtifactOperationLease.release
+    failed_targets: set[int] = set()
+    first_authority = first.acquire_removal_authority(first_item.reference)
+    second_authority = second.acquire_removal_authority(second_item.reference)
+    target_lease_ids = {
+        id(first_authority._target_lease),
+        id(second_authority._target_lease),
+    }
+
+    def fail_each_target_once(lease: object) -> None:
+        lease_id = id(lease)
+        if lease_id in target_lease_ids and lease_id not in failed_targets:
+            failed_targets.add(lease_id)
+            raise service_module.ArtifactLeaseError(private)
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_each_target_once,
+    )
+    with pytest.raises(BaseExceptionGroup) as caught:
+        with second_authority:
+            with first_authority:
+                raise signal
+
+    assert caught.value is not signal
+    assert private not in removal_exception_graph_text(caught.value)
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert service_module.take_artifact_removal_cleanup_owner(caught.value) is None
+    with pytest.raises(service_module.ArtifactStateError, match="cleanup-only"):
+        cleanup_owner.commit()
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_hostile_control_method_cannot_hide_attached_cleanup_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_HOSTILE:{tmp_path}:pid={os.getpid()}:owner"
+    signal = HostileCleanupControl(private)
+    real_release = service_module.ArtifactOperationLease.release
+    target_attempts = 0
+
+    def interrupt_target_release_once(lease: object) -> None:
+        nonlocal target_attempts
+        if lease.key == item.reference.lease_key():
+            target_attempts += 1
+            if target_attempts == 1:
+                raise signal
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        interrupt_target_release_once,
+    )
+    monkeypatch.setattr(
+        service,
+        "_delete_under_leases",
+        lambda _reference: (_ for _ in ()).throw(
+            service_module.ArtifactStateError(private)
+        ),
+    )
+
+    with pytest.raises(HostileCleanupControl) as caught:
+        service.delete(item.reference)
+
+    assert caught.value is signal
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert signal.method_called is False
+    assert service_module.take_artifact_removal_cleanup_owner(caught.value) is None
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_hostile_cleanup_carrier_override_cannot_hide_nominal_owner(
+    tmp_path: Path,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    authority = service.acquire_removal_authority(item.reference)
+    error = HostileRemovalCleanupError(authority)
+
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(error)
+
+    assert cleanup_owner is authority
+    assert error.method_called is False
+    assert service_module.take_artifact_removal_cleanup_owner(error) is None
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    cleanup_owner.close()
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_losing_control_cleanup_owner_composes_into_winning_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, first_item, _source, _target = installed_artifact(tmp_path / "first")
+    second, second_item, _source, _target = installed_artifact(tmp_path / "second")
+    first_contender = service_module.ModelArtifactService(
+        tmp_path / "first" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    second_contender = service_module.ModelArtifactService(
+        tmp_path / "second" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_DIFFERENT_CONTROL:{tmp_path}:pid={os.getpid()}:owner"
+    cleanup_signal = GeneratorExit(private)
+    body_signal = KeyboardInterrupt(private)
+    real_release = service_module.ArtifactOperationLease.release
+    first_authority = first.acquire_removal_authority(first_item.reference)
+    second_authority = second.acquire_removal_authority(second_item.reference)
+    first_target_id = id(first_authority._target_lease)
+    second_target_id = id(second_authority._target_lease)
+    first_failed = False
+    second_failed = False
+
+    def fail_both_targets_once(lease: object) -> None:
+        nonlocal first_failed, second_failed
+        if id(lease) == first_target_id and not first_failed:
+            first_failed = True
+            raise service_module.ArtifactLeaseError(private)
+        if id(lease) == second_target_id and not second_failed:
+            second_failed = True
+            raise cleanup_signal
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_both_targets_once,
+    )
+
+    with pytest.raises(GeneratorExit) as inner:
+        with first_authority:
+            raise cleanup_signal
+    assert inner.value is cleanup_signal
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        with second_authority:
+            raise body_signal
+
+    assert caught.value is body_signal
+    assert private not in removal_exception_graph_text(caught.value)
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert service_module.take_artifact_removal_cleanup_owner(caught.value) is None
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_losing_group_child_owner_moves_to_winning_release_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, first_item, _source, _target = installed_artifact(tmp_path / "first")
+    second, second_item, _source, _target = installed_artifact(tmp_path / "second")
+    first_contender = service_module.ModelArtifactService(
+        tmp_path / "first" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    second_contender = service_module.ModelArtifactService(
+        tmp_path / "second" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_LOSING_GROUP:{tmp_path}:pid={os.getpid()}:owner"
+    first_owner = first.acquire_removal_authority(first_item.reference)
+    first_owner._make_cleanup_only()
+    losing_child = SystemExit(private)
+    setattr(losing_child, "_artifact_removal_cleanup_owner", first_owner)
+    losing_group = BaseExceptionGroup(
+        private,
+        [BaseExceptionGroup(private, [losing_child])],
+    )
+    winner = KeyboardInterrupt(private)
+    second_owner = second.acquire_removal_authority(second_item.reference)
+    target_id = id(second_owner._target_lease)
+    lifecycle_id = id(second_owner._lifecycle_lease)
+    real_release = service_module.ArtifactOperationLease.release
+
+    def interrupt_both_releases(lease: object) -> None:
+        if id(lease) == target_id:
+            raise winner
+        if id(lease) == lifecycle_id:
+            raise losing_group
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        interrupt_both_releases,
+    )
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        with second_owner:
+            raise service_module.ArtifactStateError(private)
+
+    assert caught.value is winner
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert service_module.take_artifact_removal_cleanup_owner(caught.value) is None
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_losing_ordinary_carrier_owner_moves_to_winning_release_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, first_item, _source, _target = installed_artifact(tmp_path / "first")
+    second, second_item, _source, _target = installed_artifact(tmp_path / "second")
+    first_contender = service_module.ModelArtifactService(
+        tmp_path / "first" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    second_contender = service_module.ModelArtifactService(
+        tmp_path / "second" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_LOSING_CARRIER:{tmp_path}:pid={os.getpid()}:owner"
+    first_owner = first.acquire_removal_authority(first_item.reference)
+    losing_carrier = service_module.ArtifactRemovalCleanupError(first_owner)
+    winner = KeyboardInterrupt(private)
+    second_owner = second.acquire_removal_authority(second_item.reference)
+    target_id = id(second_owner._target_lease)
+    lifecycle_id = id(second_owner._lifecycle_lease)
+    real_release = service_module.ArtifactOperationLease.release
+
+    def interrupt_both_releases(lease: object) -> None:
+        if id(lease) == target_id:
+            raise winner
+        if id(lease) == lifecycle_id:
+            raise losing_carrier
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        interrupt_both_releases,
+    )
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        with second_owner:
+            raise service_module.ArtifactStateError(private)
+
+    assert caught.value is winner
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert service_module.take_artifact_removal_cleanup_owner(losing_carrier) is None
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_context_cleanup_wrapper_composes_nominal_cleanup_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external, external_item, _source, _target = installed_artifact(
+        tmp_path / "external"
+    )
+    service, item, _source, _target = installed_artifact(tmp_path / "trigger")
+    external_contender = service_module.ModelArtifactService(
+        tmp_path / "external" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    contender = service_module.ModelArtifactService(
+        tmp_path / "trigger" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    external_owner = external.acquire_removal_authority(external_item.reference)
+    cleanup_carrier = service_module.ArtifactRemovalCleanupError(external_owner)
+    authority = service.acquire_removal_authority(item.reference)
+    target_id = id(authority._target_lease)
+    real_release = service_module.ArtifactOperationLease.release
+
+    def fail_target_release(lease: object) -> None:
+        if id(lease) == target_id:
+            raise cleanup_carrier
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_target_release,
+    )
+
+    with pytest.raises(service_module.ArtifactRemovalCleanupError) as caught:
+        with authority:
+            pass
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    assert_cleanup_owner_releases(
+        caught.value,
+        (
+            (external_contender, external_item.reference),
+            (contender, item.reference),
+        ),
+        drained_errors=(cleanup_carrier,),
+    )
+
+
+def test_probe_cleanup_wrapper_composes_nominal_cleanup_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external, external_item, _source, _target = installed_artifact(
+        tmp_path / "external"
+    )
+    service, item, _source, _target = installed_artifact(tmp_path / "trigger")
+    external_contender = service_module.ModelArtifactService(
+        tmp_path / "external" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    contender = service_module.ModelArtifactService(
+        tmp_path / "trigger" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    external_owner = external.acquire_removal_authority(external_item.reference)
+    cleanup_carrier = service_module.ArtifactRemovalCleanupError(external_owner)
+    real_release = service_module.ArtifactOperationLease.release
+
+    def fail_probe_target_release(lease: object) -> None:
+        if (
+            lease._lock_root == service._locks_path
+            and lease.key == item.reference.lease_key()
+        ):
+            raise cleanup_carrier
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_probe_target_release,
+    )
+
+    with pytest.raises(service_module.ArtifactRemovalCleanupError) as caught:
+        service.probe_removal_availability(item.reference)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    assert_cleanup_owner_releases(
+        caught.value,
+        (
+            (external_contender, external_item.reference),
+            (contender, item.reference),
+        ),
+        drained_errors=(cleanup_carrier,),
+    )
+
+
+def test_pre_authority_cleanup_wrapper_composes_nominal_cleanup_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external, external_item, _source, _target = installed_artifact(
+        tmp_path / "external"
+    )
+    service, item, _source, _target = installed_artifact(tmp_path / "trigger")
+    external_contender = service_module.ModelArtifactService(
+        tmp_path / "external" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    contender = service_module.ModelArtifactService(
+        tmp_path / "trigger" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    external_owner = external.acquire_removal_authority(external_item.reference)
+    cleanup_carrier = service_module.ArtifactRemovalCleanupError(external_owner)
+    real_acquire = service_module.ArtifactOperationLease.acquire
+    real_release = service_module.ArtifactOperationLease.release
+
+    def fail_target_acquire(lease: object) -> object:
+        if (
+            lease._lock_root == service._locks_path
+            and lease.key == item.reference.lease_key()
+        ):
+            raise service_module.ArtifactLeaseError("target setup failed")
+        return real_acquire(lease)
+
+    def fail_lifecycle_release(lease: object) -> None:
+        if lease._lock_root == service._locks_path and lease.key == ArtifactLeaseKey(
+            "!lifecycle", "1", "writer"
+        ):
+            raise cleanup_carrier
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        fail_target_acquire,
+    )
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_lifecycle_release,
+    )
+
+    with pytest.raises(service_module.ArtifactRemovalCleanupError) as caught:
+        service.acquire_removal_authority(item.reference)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        real_acquire,
+    )
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    assert_cleanup_owner_releases(
+        caught.value,
+        (
+            (external_contender, external_item.reference),
+            (contender, item.reference),
+        ),
+        drained_errors=(cleanup_carrier,),
+    )
+
+
+def test_post_pin_cleanup_wrapper_composes_nominal_cleanup_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external, external_item, _source, _target = installed_artifact(
+        tmp_path / "external"
+    )
+    service, item, _source, _target = installed_artifact(tmp_path / "trigger")
+    external_contender = service_module.ModelArtifactService(
+        tmp_path / "external" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    contender = service_module.ModelArtifactService(
+        tmp_path / "trigger" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    external_owner = external.acquire_removal_authority(external_item.reference)
+    cleanup_carrier = service_module.ArtifactRemovalCleanupError(external_owner)
+    real_release = service_module.ArtifactOperationLease.release
+
+    monkeypatch.setattr(
+        service,
+        "_removal_target_identity",
+        lambda _reference: (_ for _ in ()).throw(
+            service_module.ArtifactStateError("target setup failed")
+        ),
+    )
+
+    def fail_target_release(lease: object) -> None:
+        if (
+            lease._lock_root == service._locks_path
+            and lease.key == item.reference.lease_key()
+        ):
+            raise cleanup_carrier
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_target_release,
+    )
+
+    with pytest.raises(service_module.ArtifactRemovalCleanupError) as caught:
+        service.acquire_removal_authority(item.reference)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    assert_cleanup_owner_releases(
+        caught.value,
+        (
+            (external_contender, external_item.reference),
+            (contender, item.reference),
+        ),
+        drained_errors=(cleanup_carrier,),
+    )
+
+
+def test_cleanup_control_composes_losing_body_cleanup_carrier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external, external_item, _source, _target = installed_artifact(
+        tmp_path / "external"
+    )
+    service, item, _source, _target = installed_artifact(tmp_path / "trigger")
+    external_contender = service_module.ModelArtifactService(
+        tmp_path / "external" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    contender = service_module.ModelArtifactService(
+        tmp_path / "trigger" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    body_carrier = service_module.ArtifactRemovalCleanupError(
+        external.acquire_removal_authority(external_item.reference)
+    )
+    signal = KeyboardInterrupt("private cleanup control")
+    authority = service.acquire_removal_authority(item.reference)
+    target_id = id(authority._target_lease)
+    real_release = service_module.ArtifactOperationLease.release
+
+    def interrupt_target_release(lease: object) -> None:
+        if id(lease) == target_id:
+            raise signal
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        interrupt_target_release,
+    )
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        with authority:
+            raise body_carrier
+
+    assert caught.value is signal
+    assert "private cleanup control" not in removal_exception_graph_text(caught.value)
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    assert_cleanup_owner_releases(
+        caught.value,
+        (
+            (external_contender, external_item.reference),
+            (contender, item.reference),
+        ),
+        drained_errors=(body_carrier,),
+    )
+
+
+def test_ordinary_cleanup_composes_losing_body_group_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external, external_item, _source, _target = installed_artifact(
+        tmp_path / "external"
+    )
+    service, item, _source, _target = installed_artifact(tmp_path / "trigger")
+    external_contender = service_module.ModelArtifactService(
+        tmp_path / "external" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    contender = service_module.ModelArtifactService(
+        tmp_path / "trigger" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    body_carrier = service_module.ArtifactRemovalCleanupError(
+        external.acquire_removal_authority(external_item.reference)
+    )
+    private = f"PRIVATE_BODY_GROUP:{tmp_path}:pid={os.getpid()}:owner"
+    body_group = ExceptionGroup(private, [body_carrier])
+    authority = service.acquire_removal_authority(item.reference)
+    target_id = id(authority._target_lease)
+    real_release = service_module.ArtifactOperationLease.release
+
+    def fail_target_release(lease: object) -> None:
+        if id(lease) == target_id:
+            raise service_module.ArtifactLeaseError(private)
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_target_release,
+    )
+
+    with pytest.raises(service_module.ArtifactRemovalCleanupError) as caught:
+        with authority:
+            raise body_group
+
+    assert private not in removal_exception_graph_text(caught.value)
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    assert_cleanup_owner_releases(
+        caught.value,
+        (
+            (external_contender, external_item.reference),
+            (contender, item.reference),
+        ),
+        drained_errors=(body_carrier,),
+    )
+
+
+def test_cleanup_owner_identity_dedupe_bounds_self_carrier_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path / "parent")
+    child_service, child_item, _source, _target = installed_artifact(tmp_path / "child")
+    owner = service.acquire_removal_authority(item.reference)
+    child_owner = child_service.acquire_removal_authority(child_item.reference)
+    owner._absorb_cleanup_owner(child_owner)
+    parent_target_id = id(owner._target_lease)
+    real_release = service_module.ArtifactOperationLease.release
+    real_child_close = child_owner.close
+    child_attempts = 0
+
+    def fail_parent_target(lease: object) -> None:
+        if id(lease) == parent_target_id:
+            raise service_module.ArtifactLeaseError("parent cleanup failed")
+        real_release(lease)
+
+    def fresh_self_carrier() -> None:
+        nonlocal child_attempts
+        child_attempts += 1
+        if child_attempts > 1:
+            raise AssertionError("duplicate child cleanup attempt")
+        raise service_module.ArtifactRemovalCleanupError(child_owner)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_parent_target,
+    )
+    monkeypatch.setattr(child_owner, "close", fresh_self_carrier)
+
+    with pytest.raises(service_module.ArtifactLeaseError, match="parent cleanup"):
+        owner.close()
+
+    assert child_attempts == 1
+    assert len(owner._additional_cleanup_owners) == 1
+    assert owner._additional_cleanup_owners[0] is child_owner
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    monkeypatch.setattr(child_owner, "close", real_child_close)
+    owner.close()
+
+
+def test_close_absorbs_nominal_owner_from_later_ordinary_loser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path / "root")
+    first, first_item, _source, _target = installed_artifact(tmp_path / "first")
+    second, second_item, _source, _target = installed_artifact(tmp_path / "second")
+    external, external_item, _source, _target = installed_artifact(
+        tmp_path / "external"
+    )
+    external_contender = service_module.ModelArtifactService(
+        tmp_path / "external" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    owner = service.acquire_removal_authority(item.reference)
+    first_owner = first.acquire_removal_authority(first_item.reference)
+    second_owner = second.acquire_removal_authority(second_item.reference)
+    owner._absorb_cleanup_owner(first_owner)
+    owner._absorb_cleanup_owner(second_owner)
+    cleanup_carrier = service_module.ArtifactRemovalCleanupError(
+        external.acquire_removal_authority(external_item.reference)
+    )
+    first_target_id = id(first_owner._target_lease)
+    second_target_id = id(second_owner._target_lease)
+    real_release = service_module.ArtifactOperationLease.release
+
+    def fail_child_targets(lease: object) -> None:
+        if id(lease) == first_target_id:
+            raise service_module.ArtifactLeaseError("first cleanup failed")
+        if id(lease) == second_target_id:
+            raise cleanup_carrier
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        fail_child_targets,
+    )
+
+    with pytest.raises(service_module.ArtifactLeaseError, match="first cleanup"):
+        owner.close()
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    assert service_module.take_artifact_removal_cleanup_owner(cleanup_carrier) is None
+    assert (
+        external_contender.probe_removal_availability(external_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+    owner.close()
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    ("probe_removal_availability", "acquire_removal_authority"),
+)
+def test_primary_setup_carrier_is_exposed_as_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+) -> None:
+    external, external_item, _source, _target = installed_artifact(
+        tmp_path / "external"
+    )
+    service, item, _source, _target = installed_artifact(tmp_path / "trigger")
+    external_contender = service_module.ModelArtifactService(
+        tmp_path / "external" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    cleanup_carrier = service_module.ArtifactRemovalCleanupError(
+        external.acquire_removal_authority(external_item.reference)
+    )
+    real_acquire = service_module.ArtifactOperationLease.acquire
+
+    def fail_target_acquire(lease: object) -> object:
+        if (
+            lease._lock_root == service._locks_path
+            and lease.key == item.reference.lease_key()
+        ):
+            raise cleanup_carrier
+        return real_acquire(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        fail_target_acquire,
+    )
+
+    with pytest.raises(service_module.ArtifactRemovalCleanupError) as caught:
+        getattr(service, method_name)(item.reference)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        real_acquire,
+    )
+    assert_cleanup_owner_releases(
+        caught.value,
+        ((external_contender, external_item.reference),),
+        drained_errors=(cleanup_carrier,),
+    )
+
+
+@pytest.mark.parametrize("control_type", REMOVAL_CONTROL_TYPES)
+def test_delete_context_cleanup_control_wins_and_transfers_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    control_type: type[BaseException],
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_CONTEXT:{tmp_path}:pid={os.getpid()}:owner"
+    signal = control_type(private)
+    real_release = service_module.ArtifactOperationLease.release
+    target_attempts = 0
+    release_events: list[ArtifactLeaseKey] = []
+
+    def interrupt_target_release_once(lease: object) -> None:
+        nonlocal target_attempts
+        release_events.append(lease.key)
+        if lease.key == root.reference.lease_key():
+            target_attempts += 1
+            if target_attempts == 1:
+                raise signal
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        interrupt_target_release_once,
+    )
+    monkeypatch.setattr(
+        service,
+        "_delete_under_leases",
+        lambda _reference: (_ for _ in ()).throw(
+            service_module.ArtifactStateError(private)
+        ),
+    )
+
+    with pytest.raises(control_type) as caught:
+        service.delete(root.reference)
+
+    assert caught.value is signal
+    assert private not in removal_exception_graph_text(caught.value)
+    assert caught.value.__notes__ == [
+        "artifact removal also encountered an ordinary failure"
+    ]
+    if isinstance(caught.value, SystemExit):
+        assert caught.value.code == 1
+    assert release_events == [
+        root.reference.lease_key(),
+        ArtifactLeaseKey("!lifecycle", "1", "writer"),
+    ]
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert (
+        contender.probe_removal_availability(root.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+    assert (
+        contender.probe_removal_availability(root.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
     )
 
 
@@ -2579,7 +4619,9 @@ def test_download_stage_finalizes_only_verified_payload(tmp_path: Path) -> None:
     assert not stage.operation.exists()
 
 
-def test_download_stage_create_false_is_non_mutating_when_absent(tmp_path: Path) -> None:
+def test_download_stage_create_false_is_non_mutating_when_absent(
+    tmp_path: Path,
+) -> None:
     service = service_module.ModelArtifactService(tmp_path / "store")
     item = descriptor()
 
@@ -2623,7 +4665,9 @@ def test_invalid_download_stage_payload_never_creates_final_directory(
             target_is_directory=False,
         )
 
-    with pytest.raises((service_module.ArtifactIntegrityError, service_module.ArtifactPathError)):
+    with pytest.raises(
+        (service_module.ArtifactIntegrityError, service_module.ArtifactPathError)
+    ):
         service._finalize_download_stage(item, stage)
 
     assert service.artifact_path(item.reference).exists() is False
@@ -2767,7 +4811,9 @@ def test_download_stage_validates_before_identical_destination_convergence(
         external.write_bytes(b"model")
         symlink_or_skip(payload, external, target_is_directory=False)
 
-    with pytest.raises((service_module.ArtifactIntegrityError, service_module.ArtifactPathError)):
+    with pytest.raises(
+        (service_module.ArtifactIntegrityError, service_module.ArtifactPathError)
+    ):
         service._finalize_download_stage(item, stage)
 
     assert stage.operation.exists()
@@ -2940,10 +4986,14 @@ def test_download_stage_never_publishes_partial_canonical_operation(
 
     def fail_temporary_identity(path: Path, *, directory: bool) -> tuple[int, int, int]:
         if path.parent == service.staging_path and path.name.startswith(".download-"):
-            raise service_module.ArtifactPathError("injected temporary identity failure")
+            raise service_module.ArtifactPathError(
+                "injected temporary identity failure"
+            )
         return original_identity(path, directory=directory)
 
-    monkeypatch.setattr(service, "_download_stage_node_identity", fail_temporary_identity)
+    monkeypatch.setattr(
+        service, "_download_stage_node_identity", fail_temporary_identity
+    )
     with pytest.raises(service_module.ArtifactPathError):
         service._download_stage_for(item, create=True)
 
@@ -2983,11 +5033,14 @@ def test_download_stage_discards_losing_temporary_publication_candidate(
 
     assert stage is not None
     assert stage.operation == operation
-    assert tuple(
-        candidate
-        for candidate in service.staging_path.iterdir()
-        if candidate.name.startswith(".download-")
-    ) == ()
+    assert (
+        tuple(
+            candidate
+            for candidate in service.staging_path.iterdir()
+            if candidate.name.startswith(".download-")
+        )
+        == ()
+    )
 
 
 def test_download_stage_retries_after_marker_write_failure(
@@ -4724,6 +6777,125 @@ def test_acquire_dependencies_rejects_invalid_reference_collections(
         service.acquire_dependencies(())
 
 
+def test_acquire_installed_root_verifies_exact_root_without_derived_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, final = installed_artifact(tmp_path)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("inactive root acquisition must not use derived state")
+
+    monkeypatch.setattr(service, "_read_readiness", forbidden)
+    monkeypatch.setattr(service, "_try_read_readiness", forbidden)
+    monkeypatch.setattr(service, "_write_readiness", forbidden)
+    monkeypatch.setattr(service, "_read_active", forbidden)
+
+    with service.acquire_installed_root(item.reference) as leased:
+        assert isinstance(leased, service_module.LeasedArtifactHandle)
+        assert leased.handle.root == item.reference
+        assert leased.handle.closure == (item.reference,)
+        assert leased.handle.paths == ((item.reference, final.resolve()),)
+        assert leased.handle.lease_keys == (item.reference.lease_key(),)
+        with pytest.raises(service_module.ArtifactInUseError):
+            contender.delete(item.reference)
+
+    assert service.readiness_path(item.reference).exists() is False
+    assert service.active_path(item.reference.artifact_id).exists() is False
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        ("absent", "ArtifactNotInstalledError"),
+        ("dependency", "ArtifactDependencyError"),
+        ("corrupt", "ArtifactIntegrityError"),
+    ],
+)
+def test_acquire_installed_root_keeps_absent_role_and_corruption_distinct(
+    tmp_path: Path,
+    failure: str,
+    expected: str,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    reference = ref("audio-cpp-model", "a" * 40, "f16")
+    if failure != "absent":
+        role = ArtifactRole.DEPENDENCY if failure == "dependency" else ArtifactRole.ROOT
+        item = descriptor(
+            reference=reference,
+            role=role,
+            format=ArtifactFormat.GGUF,
+            consumer="audio_cpp",
+            precision="f16",
+            files=(artifact_file(b"payload", "model.gguf"),),
+        )
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "model.gguf").write_bytes(b"payload")
+        service.install(item, source)
+        if failure == "corrupt":
+            (service.artifact_path(reference) / "model.gguf").write_bytes(b"changed")
+
+    error_type = getattr(service_module, expected)
+    with pytest.raises(error_type) as caught:
+        service.acquire_installed_root(reference)
+
+    assert str(tmp_path) not in str(caught.value)
+    assert not service.readiness_path(reference).exists()
+    assert not service.active_path(reference.artifact_id).exists()
+
+
+def test_acquire_installed_root_contention_is_not_reported_as_absent(
+    tmp_path: Path,
+) -> None:
+    service, item, _source = install_inputs(tmp_path)
+    service = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.0,
+    )
+    source = tmp_path / "source"
+    service.install(item, source)
+    lease = service_module.ArtifactOperationLease(
+        service.locks_path,
+        item.reference.lease_key(),
+        service_module.LeaseMode.EXCLUSIVE,
+        timeout_seconds=0.0,
+    )
+    lease.acquire()
+    try:
+        with pytest.raises(service_module.ArtifactStateError) as caught:
+            service.acquire_installed_root(item.reference)
+        assert not isinstance(caught.value, service_module.ArtifactNotInstalledError)
+    finally:
+        lease.release()
+
+
+def test_acquire_installed_root_base_exception_releases_shared_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _final = installed_artifact(tmp_path)
+
+    def interrupt(*_args: object, **_kwargs: object) -> None:
+        raise KeyboardInterrupt("cancelled")
+
+    monkeypatch.setattr(service, "_verify_installed", interrupt)
+    with pytest.raises(KeyboardInterrupt, match="cancelled"):
+        service.acquire_installed_root(item.reference)
+
+    with service_module.ArtifactOperationLease(
+        service.locks_path,
+        item.reference.lease_key(),
+        service_module.LeaseMode.EXCLUSIVE,
+        timeout_seconds=0.0,
+    ):
+        pass
+
+
 def test_closed_leased_handle_cannot_be_reentered(tmp_path: Path) -> None:
     service, root, _dependency = installed_root_and_dependency(tmp_path)
     service.activate(root.reference)
@@ -4835,10 +7007,17 @@ def test_leased_handle_release_error_preserves_body_exception() -> None:
     )
 
     class FailingLeaseSet:
-        def release(self) -> None:
-            raise service_module.ArtifactLeaseError("injected release failure")
+        def __init__(self, *, fail_once: bool = False) -> None:
+            self.calls = 0
+            self.fail_once = fail_once
 
-    leased = service_module.LeasedArtifactHandle(handle, FailingLeaseSet())
+        def release(self) -> None:
+            self.calls += 1
+            if not self.fail_once or self.calls == 1:
+                raise service_module.ArtifactLeaseError("injected release failure")
+
+    lease_set = FailingLeaseSet(fail_once=True)
+    leased = service_module.LeasedArtifactHandle(handle, lease_set)
     body_error = ValueError("body failure")
 
     with pytest.raises(ValueError) as caught:
@@ -4851,11 +7030,19 @@ def test_leased_handle_release_error_preserves_body_exception() -> None:
         for note in getattr(body_error, "__notes__", ())
     )
     leased.close()
+    leased.close()
+    assert lease_set.calls == 2
+
+    with pytest.raises(service_module.ArtifactStateError, match="closed"):
+        with leased:
+            pass
 
     cleanup_only = service_module.LeasedArtifactHandle(handle, FailingLeaseSet())
     with pytest.raises(service_module.ArtifactLeaseError, match="release failure"):
         with cleanup_only:
             pass
+    with pytest.raises(service_module.ArtifactLeaseError, match="release failure"):
+        cleanup_only.close()
 
 
 def test_inventory_reports_exact_ready_and_active_revision_flags(

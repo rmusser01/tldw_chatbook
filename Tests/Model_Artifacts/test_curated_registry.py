@@ -85,7 +85,11 @@ def test_default_registry_contains_four_parakeet_roots_and_the_vad_dependency() 
     from tldw_chatbook.Model_Artifacts.curated_registry import curated_registry
     from tldw_chatbook.Model_Artifacts.service import ArtifactRole
 
-    descriptors = curated_registry().list()
+    descriptors = tuple(
+        descriptor
+        for descriptor in curated_registry().list()
+        if descriptor.consumer != "audio_cpp"
+    )
     references = {descriptor.reference for descriptor in descriptors}
 
     assert references == {
@@ -97,3 +101,19 @@ def test_default_registry_contains_four_parakeet_roots_and_the_vad_dependency() 
     }
     assert sum(item.role is ArtifactRole.ROOT for item in descriptors) == 4
     assert sum(item.role is ArtifactRole.DEPENDENCY for item in descriptors) == 1
+
+
+def test_default_registry_contains_every_reviewed_audio_cpp_entry() -> None:
+    from tldw_chatbook.Model_Artifacts.curated_registry import curated_registry
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+
+    expected = audio_cpp_curated_entries()
+    registry = curated_registry()
+    actual = tuple(
+        (descriptor, registry.sources(descriptor.reference))
+        for descriptor in registry.list()
+        if descriptor.consumer == "audio_cpp"
+    )
+
+    assert actual == expected
+    assert len(actual) == 45

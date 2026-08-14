@@ -9,6 +9,7 @@ import pickle
 import stat
 import struct
 import threading
+from contextlib import asynccontextmanager
 from dataclasses import fields, is_dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -240,10 +241,16 @@ class _DependencyService:
         return self.snapshot
 
 
+@asynccontextmanager
+async def _profile_mutation_fence():
+    yield
+
+
 def _service(tmp_path: Path, **kwargs):
     tmp_path.mkdir(parents=True, exist_ok=True)
     repository = _Repository()
     dependency = _DependencyService()
+    kwargs.setdefault("profile_mutation_fence", _profile_mutation_fence)
     service = TTSVoiceBundlePortabilityService(
         tmp_path / "owned-portability",
         repository,
@@ -252,6 +259,72 @@ def _service(tmp_path: Path, **kwargs):
         **kwargs,
     )
     return service, repository, dependency
+
+
+class _ArtifactLeaseCoordinator:
+    def __init__(self) -> None:
+        self.active = False
+        self.calls: list[tuple[object, ...]] = []
+
+    @asynccontextmanager
+    async def lease_consumers(self, consumers):
+        self.calls.append(tuple(consumers))
+        self.active = True
+        try:
+            yield
+        finally:
+            self.active = False
+
+
+class _ProfileMutationFence:
+    def __init__(self) -> None:
+        self.active = False
+
+    @asynccontextmanager
+    async def hold(self):
+        self.active = True
+        try:
+            yield
+        finally:
+            self.active = False
+
+
+@pytest.mark.asyncio
+async def test_bundle_import_holds_artifact_lease_through_repository_commit(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "selected.tldw-voice.zip"
+    _write_source(source)
+    coordinator = _ArtifactLeaseCoordinator()
+    mutation_fence = _ProfileMutationFence()
+    service, repository, _dependency = _service(
+        tmp_path,
+        artifact_lease_coordinator=coordinator,
+        profile_mutation_fence=mutation_fence.hold,
+    )
+    repository_commit = repository.commit_bundle_import
+
+    async def guarded_commit(command):
+        assert coordinator.active is True
+        assert mutation_fence.active is True
+        return await repository_commit(command)
+
+    repository.commit_bundle_import = guarded_commit
+    review = await service.inspect(source)
+
+    await service.commit(
+        review.handle,
+        TTSVoiceBundleImportChoice("create", False),
+    )
+
+    assert coordinator.active is False
+    assert mutation_fence.active is False
+    assert len(coordinator.calls) == 1
+    requirement = coordinator.calls[0][0]
+    assert requirement.provider_id == "audio_cpp"
+    assert requirement.model_id == "model-a"
+    assert requirement.recipe_requirement == _requirement()
+    await service.close()
 
 
 def _write_source(path: Path, bundle: TTSCloneVoiceBundle | None = None) -> None:
@@ -559,7 +632,12 @@ async def test_operation_root_refuses_non_directory_or_symlink(
         root.symlink_to(target, target_is_directory=True)
     repository = _Repository()
     dependency = _DependencyService()
-    service = TTSVoiceBundlePortabilityService(root, repository, dependency)
+    service = TTSVoiceBundlePortabilityService(
+        root,
+        repository,
+        dependency,
+        profile_mutation_fence=_profile_mutation_fence,
+    )
 
     with pytest.raises(TTSVoiceBundleError, match="operation_failed"):
         await service.inspect(source)

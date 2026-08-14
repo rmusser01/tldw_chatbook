@@ -57,6 +57,9 @@ DICTIONARY_ATTACHMENTS_MIGRATION_PATH = (
 NOTE_FOLDER_MIGRATION_PATH = (
     "tldw_chatbook/DB/migrations/chachanotes_v35_to_v36_note_folders.sql"
 )
+AUDIO_CPP_ARTIFACT_MANIFEST_PATH = "tldw_chatbook/TTS/audio_cpp_artifact_manifest.json"
+AUDIO_CPP_ARTIFACT_REPOSITORY = "audio-cpp/audio.cpp-gguf"
+AUDIO_CPP_ARTIFACT_COMMIT = "597048d9a920592808d7d4e2acd7b9c4596a143a"
 RUNTIME_MIGRATION_PATHS = {
     CITATION_MIGRATION_PATH,
     CHARACTER_AUTHORITY_MIGRATION_PATH,
@@ -1023,6 +1026,7 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/Evals/config/eval_config.yaml",
         "tldw_chatbook/Third_Party/aider/LICENSE.txt",
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+        AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
     } | RUNTIME_MIGRATION_PATHS
     required_wheel = {
         "tldw_chatbook/css/tldw_cli_modular.tcss",
@@ -1030,6 +1034,7 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/Evals/config/eval_config.yaml",
         "tldw_chatbook/Third_Party/aider/LICENSE.txt",
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+        AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
     } | RUNTIME_MIGRATION_PATHS
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
@@ -1126,6 +1131,41 @@ def test_installed_wheel_migrates_v35_database_to_v36(
     )
 
     assert "installed-wheel-v35-to-v36-ok" in result.stdout
+
+
+def test_installed_wheel_loads_pinned_audio_cpp_artifact_manifest(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target"
+    state_root = tmp_path / "state"
+    run_root = tmp_path / "run"
+    state_root.mkdir(mode=0o700)
+    run_root.mkdir()
+    _install_wheel(built_distributions, target)
+    env = _private_child_env(state_root, target, built_distributions.source_root)
+    probe = f"""
+from pathlib import Path
+import os
+import urllib.request
+from tldw_chatbook.TTS.audio_cpp_artifact_catalog import load_audio_cpp_artifact_source_manifest
+import tldw_chatbook.TTS.audio_cpp_artifact_catalog as catalog_module
+
+expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
+assert Path(catalog_module.__file__).resolve(strict=True).is_relative_to(expected_target)
+def fail_network(*_args, **_kwargs):
+    raise AssertionError("installed manifest loader touched the network")
+urllib.request.urlopen = fail_network
+manifest = load_audio_cpp_artifact_source_manifest()
+assert manifest.repository == {AUDIO_CPP_ARTIFACT_REPOSITORY!r}
+assert manifest.commit == {AUDIO_CPP_ARTIFACT_COMMIT!r}
+assert len(manifest.packages) == 45
+print("installed-audio-cpp-manifest-ok")
+"""
+
+    result = _run_child([sys.executable, "-c", probe], run_root, env)
+
+    assert "installed-audio-cpp-manifest-ok" in result.stdout
 
 
 def test_installed_migration_probe_validates_environment_derived_path() -> None:

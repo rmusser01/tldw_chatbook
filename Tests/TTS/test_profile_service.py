@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import hashlib
 import inspect
 import os
@@ -26,6 +27,9 @@ from tldw_chatbook.TTS.adapter_registry import TTSProviderConfigurationSnapshot
 from tldw_chatbook.TTS.audio_cpp_guided_config import (
     AudioCppAcceptedPackage,
     AudioCppSettingsConfig,
+)
+from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+    AudioCppArtifactConsumerRequirement,
 )
 from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
 from tldw_chatbook.TTS.adapter_types import (
@@ -1379,6 +1383,7 @@ def _service(
     *,
     repository: _FakeRepository | None = None,
     tts_service: _FakeTTSService | None = None,
+    artifact_lease_coordinator: object | None = None,
 ) -> tuple[TTSProfileService, _FakeRepository, _FakeTTSService]:
     selected_repository = _FakeRepository() if repository is None else repository
     selected_tts_service = _FakeTTSService() if tts_service is None else tts_service
@@ -1389,10 +1394,203 @@ def _service(
         TTSProfileService(
             selected_repository,
             selected_tts_service,
+            artifact_lease_coordinator=artifact_lease_coordinator,
         ),
         selected_repository,
         selected_tts_service,
     )
+
+
+class _ArtifactLeaseCoordinator:
+    def __init__(self) -> None:
+        self.active = False
+        self.calls: list[tuple[AudioCppArtifactConsumerRequirement, ...]] = []
+
+    @asynccontextmanager
+    async def lease_consumers(self, consumers):
+        exact = tuple(consumers)
+        self.calls.append(exact)
+        self.active = True
+        try:
+            yield
+        finally:
+            self.active = False
+
+
+@pytest.mark.asyncio
+async def test_bounded_consumer_snapshot_serializes_constant_generation_reorder() -> (
+    None
+):
+    first_page_entered = asyncio.Event()
+    release_first_page = asyncio.Event()
+    update_called = asyncio.Event()
+    first = _profile(display_name="A")
+    middle = tuple(
+        _profile(
+            profile_id=UUID(int=index + 2),
+            display_name=f"C{index:02d}",
+        )
+        for index in range(49)
+    )
+    target = _profile(
+        profile_id=UUID(int=100),
+        display_name="TARGET",
+    )
+    last = _profile(profile_id=UUID(int=101), display_name="Z")
+
+    class ReorderingRepository(_FakeRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.profiles = {
+                profile.profile_id: profile
+                for profile in (first, *middle, target, last)
+            }
+
+        async def list_profiles(
+            self,
+            search: str | None = None,
+            limit: int = 50,
+            offset: int = 0,
+        ) -> ProfileStoreResult[TTSProfilePage]:
+            assert search is None
+            ordered = tuple(
+                sorted(self.profiles.values(), key=lambda item: item.normalized_name)
+            )
+            if offset == 0:
+                first_page_entered.set()
+                await release_first_page.wait()
+            return ProfileStoreResult(
+                generation=self.generation,
+                value=TTSProfilePage(
+                    profiles=ordered[offset : offset + limit],
+                    total=len(ordered),
+                ),
+            )
+
+        async def get_profile(
+            self,
+            profile_id: UUID,
+        ) -> ProfileStoreResult[TTSGenerationProfile]:
+            return ProfileStoreResult(
+                generation=self.generation,
+                value=self.profiles[profile_id],
+            )
+
+        async def assignment_count(
+            self,
+            profile_id: UUID,
+        ) -> ProfileStoreResult[int]:
+            assert profile_id in self.profiles
+            return ProfileStoreResult(generation=self.generation, value=0)
+
+        async def update_profile(
+            self,
+            profile_id: UUID,
+            expected_revision: int,
+            draft: TTSProfileDraft,
+            *,
+            expected_generation: int,
+        ) -> ProfileStoreResult[TTSGenerationProfile]:
+            update_called.set()
+            updated = _profile(
+                profile_id=profile_id,
+                display_name=draft.display_name,
+                provider_id=draft.provider_id,
+                model_id=draft.model_id,
+                voice_id=draft.voice_id,
+                response_format=draft.response_format,
+                speed=draft.speed,
+                options=dict(draft.options),
+                revision=expected_revision + 1,
+            )
+            self.profiles[profile_id] = updated
+            return ProfileStoreResult(generation=expected_generation, value=updated)
+
+    repository = ReorderingRepository()
+    service, _repository, _tts_service = _service(repository=repository)
+    loaded_first = LoadedTTSProfile(repository.generation, first)
+    renamed = TTSProfileDraft(
+        display_name="Y",
+        provider_id=first.provider_id,
+        model_id=first.model_id,
+        voice_id=first.voice_id,
+        response_format=first.response_format,
+        speed=first.speed,
+        options=first.options,
+    )
+
+    snapshot = asyncio.create_task(service.bounded_profile_assignment_snapshot())
+    await first_page_entered.wait()
+    rename = asyncio.create_task(service.update_profile(loaded_first, renamed))
+    await asyncio.sleep(0)
+    assert update_called.is_set() is False
+
+    release_first_page.set()
+    captured = await snapshot
+    await rename
+
+    assert target.profile_id in {profile.profile_id for profile, _count in captured}
+    assert len(captured) == 52
+    assert update_called.is_set() is True
+
+
+@pytest.mark.asyncio
+async def test_bounded_consumer_snapshot_rejects_inventory_over_limit() -> None:
+    repository = _FakeRepository()
+    repository.page = TTSProfilePage(profiles=(), total=201)
+    service, _repository, _tts_service = _service(repository=repository)
+
+    with pytest.raises(ProfileServiceError, match="operation_failed"):
+        await service.bounded_profile_assignment_snapshot()
+
+
+@pytest.mark.asyncio
+async def test_artifact_lease_covers_profile_create_repository_commit() -> None:
+    coordinator = _ArtifactLeaseCoordinator()
+    repository = _FakeRepository()
+    repository.coordinator_probe = lambda: coordinator.active
+    service, repository, _tts_service = _service(
+        repository=repository,
+        artifact_lease_coordinator=coordinator,
+    )
+    repository.coordinator_probe = lambda: coordinator.active
+
+    await service.create_from_artifact("Saved", _artifact(selection=_selection()))
+
+    assert repository.coordinator_active_at_repository_calls == [True]
+    assert coordinator.calls == [
+        (
+            AudioCppArtifactConsumerRequirement(
+                provider_id="audio_cpp",
+                model_id="selected-model",
+            ),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_artifact_lease_covers_profile_delete_repository_commit() -> None:
+    coordinator = _ArtifactLeaseCoordinator()
+    repository = _FakeRepository()
+    repository.coordinator_probe = lambda: coordinator.active
+    service, repository, _tts_service = _service(
+        repository=repository,
+        artifact_lease_coordinator=coordinator,
+    )
+    repository.coordinator_probe = lambda: coordinator.active
+    loaded = LoadedTTSProfile(repository.generation, _profile())
+
+    await service.delete_profile(loaded)
+
+    assert repository.coordinator_active_at_repository_calls == [True]
+    assert coordinator.calls == [
+        (
+            AudioCppArtifactConsumerRequirement(
+                provider_id="audio_cpp",
+                model_id="model-a",
+            ),
+        )
+    ]
 
 
 def _profile_advancing_repository_generation(
@@ -4195,7 +4393,9 @@ def test_unknown_provider_draft_is_unconstructable() -> None:
 
 @pytest.mark.asyncio
 async def test_update_profile_accepts_openai_draft_without_native_calls() -> None:
-    service, repository, tts_service = _service()
+    coordinator = _ArtifactLeaseCoordinator()
+    service, repository, tts_service = _service(artifact_lease_coordinator=coordinator)
+    repository.coordinator_probe = lambda: coordinator.active
     loaded = LoadedTTSProfile(
         repository_generation=repository.generation, profile=_profile()
     )
@@ -4213,6 +4413,7 @@ async def test_update_profile_accepts_openai_draft_without_native_calls() -> Non
 
     assert tts_service.capability_calls == []
     assert [name for name, _ in repository.calls] == ["update"]
+    assert repository.coordinator_active_at_repository_calls == [True]
 
 
 @pytest.mark.asyncio
@@ -4255,10 +4456,13 @@ async def test_duplicate_copies_immutable_loaded_version_at_revision_one() -> No
     tts_service.reconfigure_after_decision = True
     repository = _FakeRepository()
     repository.created_profile_id = _DUPLICATE_ID
+    coordinator = _ArtifactLeaseCoordinator()
     service, repository, tts_service = _service(
         repository=repository,
         tts_service=tts_service,
+        artifact_lease_coordinator=coordinator,
     )
+    repository.coordinator_probe = lambda: coordinator.active
     source = _profile(voice_id="voice-a", revision=8)
     loaded = LoadedTTSProfile(
         repository_generation=repository.generation,
@@ -4282,7 +4486,7 @@ async def test_duplicate_copies_immutable_loaded_version_at_revision_one() -> No
     assert draft.voice_id == source.voice_id
     assert profile_id is None
     assert expected_generation == loaded.repository_generation
-    assert repository.coordinator_active_at_repository_calls == [False]
+    assert repository.coordinator_active_at_repository_calls == [True]
 
 
 @pytest.mark.asyncio
@@ -5022,10 +5226,13 @@ async def test_set_assignment_uses_fresh_loaded_authority_and_exact_expected_sta
             voice_results={"model-a": voice},
         )
     )
+    coordinator = _ArtifactLeaseCoordinator()
     service, repository, tts_service = _service(
         repository=repository,
         tts_service=tts_service,
+        artifact_lease_coordinator=coordinator,
     )
+    repository.coordinator_probe = lambda: coordinator.active
     character_ref = _character_ref()
     loaded = LoadedTTSProfile(
         repository_generation=repository.generation,
@@ -5085,7 +5292,7 @@ async def test_set_assignment_uses_fresh_loaded_authority_and_exact_expected_sta
     assert forwarded_revision == loaded.profile.revision
     assert forwarded_current_profile_id == expected_current_profile_id
     assert generation_at_call == loaded.repository_generation
-    assert repository.coordinator_active_at_repository_calls == [False]
+    assert repository.coordinator_active_at_repository_calls == [True]
 
     assert tts_service.capability_calls == [
         ("audio_cpp", ("model-a",)),
@@ -5526,7 +5733,9 @@ async def test_set_assignment_rejects_nonexact_repository_success(
 
 @pytest.mark.asyncio
 async def test_detach_assignment_forwards_exact_state_without_capability_work() -> None:
-    service, repository, tts_service = _service()
+    coordinator = _ArtifactLeaseCoordinator()
+    service, repository, tts_service = _service(artifact_lease_coordinator=coordinator)
+    repository.coordinator_probe = lambda: coordinator.active
     assignment = _assignment(profile_id=_DUPLICATE_ID)
 
     result = await service.detach_assignment(
@@ -5535,8 +5744,9 @@ async def test_detach_assignment_forwards_exact_state_without_capability_work() 
     )
 
     assert result is None
-    assert len(repository.calls) == 1
-    call_name, call_value = repository.calls[0]
+    assert len(repository.calls) == 2
+    assert repository.calls[0][0] == "get_profile"
+    call_name, call_value = repository.calls[1]
     assert call_name == "remove_assignment"
     forwarded_ref, forwarded_generation, forwarded_profile_id, generation_at_call = (
         call_value  # type: ignore[misc]
@@ -5550,6 +5760,7 @@ async def test_detach_assignment_forwards_exact_state_without_capability_work() 
     assert tts_service.capability_calls == []
     assert tts_service.revision_decisions == []
     assert tts_service.revision_reads == []
+    assert repository.coordinator_active_at_repository_calls == [False, True]
 
 
 @pytest.mark.asyncio
@@ -5649,7 +5860,10 @@ async def test_detach_assignment_preserves_bounded_repository_errors(
     assert type(caught.value) is ProfileRepositoryError
     assert caught.value.code == error_code
     assert str(caught.value) == f"TTS profile repository failed: {error_code}"
-    assert [name for name, _value in repository.calls] == ["remove_assignment"]
+    assert [name for name, _value in repository.calls] == [
+        "get_profile",
+        "remove_assignment",
+    ]
     assert tts_service.capability_calls == []
     assert tts_service.revision_decisions == []
 
@@ -5696,7 +5910,10 @@ async def test_detach_assignment_rejects_nonexact_repository_success(
         assignment.character_ref.authority_id,
         assignment.character_ref.character_id,
     )
-    assert [name for name, _value in repository.calls] == ["remove_assignment"]
+    assert [name for name, _value in repository.calls] == [
+        "get_profile",
+        "remove_assignment",
+    ]
     assert tts_service.capability_calls == []
     assert tts_service.revision_decisions == []
 
@@ -5729,7 +5946,10 @@ async def test_detach_assignment_rechecks_generation_after_repository_result() -
 
     assert caught.value.code == "stale"
     assert boundary.settled.is_set()
-    assert [name for name, _value in repository.calls] == ["remove_assignment"]
+    assert [name for name, _value in repository.calls] == [
+        "get_profile",
+        "remove_assignment",
+    ]
     assert tts_service.capability_calls == []
     assert tts_service.revision_decisions == []
 
@@ -5809,7 +6029,12 @@ async def test_cancellation_propagates_unchanged_from_repository_wait() -> None:
     boundary = _AsyncBoundary()
     repository = _FakeRepository()
     repository.create_boundary = boundary
-    service, repository, tts_service = _service(repository=repository)
+    coordinator = _ArtifactLeaseCoordinator()
+    service, repository, tts_service = _service(
+        repository=repository,
+        artifact_lease_coordinator=coordinator,
+    )
+    repository.coordinator_probe = lambda: coordinator.active
     existing_tasks = set(asyncio.all_tasks())
     operation = asyncio.create_task(
         service.create_from_artifact(
@@ -5823,20 +6048,24 @@ async def test_cancellation_propagates_unchanged_from_repository_wait() -> None:
     cancellation_identity = object()
 
     operation.cancel(cancellation_identity)
+    await asyncio.sleep(0)
+    assert operation.done() is False
+    assert coordinator.active is True
+    boundary.release.set()
     with pytest.raises(asyncio.CancelledError) as caught:
         await operation
 
     assert caught.value.args == (cancellation_identity,)
     assert caught.value.args[0] is cancellation_identity
     assert boundary.settled.is_set()
-    assert not boundary.release.is_set()
+    assert boundary.release.is_set()
     assert operation.done()
     assert operation not in asyncio.all_tasks()
     assert set(asyncio.all_tasks()) == existing_tasks
     assert tts_service.capability_calls == []
     assert tts_service.revision_decisions == [("audio_cpp", 3)]
     assert [name for name, _value in repository.calls] == ["create"]
-    assert repository.coordinator_active_at_repository_calls == [False]
+    assert repository.coordinator_active_at_repository_calls == [True]
 
 
 @pytest.mark.asyncio

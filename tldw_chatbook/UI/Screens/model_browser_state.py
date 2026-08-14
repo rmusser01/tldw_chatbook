@@ -303,6 +303,7 @@ def install_failure_message(exc: BaseException, *, model_label: str) -> str:
         InsufficientSpaceError,
         PreflightNotGrantableError,
         TransferError,
+        TransferFailureCode,
     )
 
     if isinstance(exc, InsufficientSpaceError):
@@ -313,7 +314,9 @@ def install_failure_message(exc: BaseException, *, model_label: str) -> str:
             "HUGGINGFACE_API_KEY (or HF_TOKEN) and retry."
         )
     if isinstance(exc, AcquisitionBusyError):
-        return f"Another {model_label} install is already in progress. Try again shortly."
+        return (
+            f"Another {model_label} install is already in progress. Try again shortly."
+        )
     if isinstance(exc, ConsentMismatchError):
         return "The install plan changed. Retry Install to review the current plan."
     if isinstance(exc, PreflightNotGrantableError):
@@ -321,6 +324,28 @@ def install_failure_message(exc: BaseException, *, model_label: str) -> str:
     if isinstance(exc, CatalogError):
         return f"The {model_label} download source is misconfigured."
     if isinstance(exc, TransferError):
+        if exc.code is TransferFailureCode.VERIFICATION_FAILED:
+            return (
+                "Package verification failed (size or SHA-256). No package was "
+                "promoted. Select Retry install."
+            )
+        if exc.code is TransferFailureCode.SOURCE_UNAVAILABLE:
+            return (
+                "Pinned source unavailable — the app may be offline. Select Retry "
+                "install when connectivity returns."
+            )
+        if exc.code is TransferFailureCode.LOCAL_STATE:
+            if not exc.retryable:
+                return (
+                    "Package install found conflicting or invalid local state. "
+                    "Review or Repair the local model store before installing again."
+                )
+            return "Package install could not access local state. Select Retry install."
+        if exc.code is TransferFailureCode.SOURCE_BLOCKED:
+            return (
+                "Package install is blocked by local source-access policy. Review "
+                "network policy, then select Retry install."
+            )
         if exc.retryable:
             return "The download was interrupted. Retry Install to resume."
         return "The download failed and cannot be retried automatically."

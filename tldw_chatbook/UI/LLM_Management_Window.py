@@ -16,6 +16,7 @@ from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.message import Message
 from textual.reactive import reactive
+from textual.widget import Widget
 from textual.widgets import (
     Static,
     Button,
@@ -546,6 +547,14 @@ class LLMManagementWindow(Container):
         self._server_active_states = {
             provider: False for provider in self.SERVER_CONTROLS
         }
+        self._model_library_focus_ids = {
+            "curated": "curated-models-refresh",
+            "installed": "installed-models-refresh",
+        }
+        self._model_library_widget_ids = {
+            "curated": "curated-models-view",
+            "installed": "installed-models-view",
+        }
 
         # Map navigation button IDs to view IDs. Order matters: it drives the
         # [/] cycling and the position indicator, so it matches the sidebar's
@@ -567,6 +576,7 @@ class LLMManagementWindow(Container):
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         logger.debug("LLMManagementWindow.on_mount called")
+        self.watch(self.screen, "focused", self._record_model_library_focus, init=False)
         # task-2900: the five heavy hidden views — Ollama, Curated, Installed,
         # External, and Remote — mount here after the first refresh. The
         # eleven total views then share the normal activation path.
@@ -648,7 +658,17 @@ class LLMManagementWindow(Container):
 
                 legacy_dir = Path(str(configured)).expanduser()
 
-        await curated.mount(CuratedView(id="curated-models-view"))
+        observation_provider = getattr(
+            self.app_instance,
+            "_audio_cpp_model_library_observation_snapshot",
+            None,
+        )
+        await curated.mount(
+            CuratedView(
+                observation_provider=observation_provider,
+                id="curated-models-view",
+            )
+        )
         source_service = self.app_instance._ensure_parakeet_source_service()
         await installed.mount(
             InstalledView(
@@ -658,6 +678,7 @@ class LLMManagementWindow(Container):
                 recycle_idle=self.app_instance._recycle_idle_local_stt_reference,
                 can_start_import=self._can_start_import,
                 on_import_lane_changed=self._on_import_lane_changed,
+                observation_provider=observation_provider,
                 id="installed-models-view",
             )
         )
@@ -1917,9 +1938,71 @@ class LLMManagementWindow(Container):
 
                 # Populate help text for specific views
                 self._populate_help_text(new_view, target_view)
+                if new_view in self._model_library_focus_ids:
+                    self.call_after_refresh(
+                        self._restore_model_library_focus,
+                        new_view,
+                    )
                 self._start_view_work(new_view, target_view)
             except QueryError:
                 logger.error(f"Target view #{target_view_id} not found")
+
+    def _record_model_library_focus(self, focused: Widget | None) -> None:
+        """Retain stable row focus whenever the screen's reactive focus changes."""
+
+        if focused is None:
+            return
+        for view_name in self._model_library_focus_ids:
+            if view_name != self.active_view:
+                continue
+            view_id = self.view_mapping[view_name]
+            try:
+                pane = self.query_one(f"#{view_id}")
+            except QueryError:
+                continue
+            if pane not in focused.ancestors_with_self:
+                continue
+            try:
+                library = pane.query_one(
+                    f"#{self._model_library_widget_ids[view_name]}"
+                )
+            except QueryError:
+                return
+            locator = library.focus_locator(focused)
+            if locator is not None:
+                self._model_library_focus_ids[view_name] = locator
+            return
+
+    def _restore_model_library_focus(self, view_name: str) -> None:
+        """Move focus into the visible model-library pane after switching."""
+
+        if self.active_view != view_name:
+            return
+        target_id = self.view_mapping[view_name]
+        try:
+            target = self.query_one(f"#{target_id}")
+        except QueryError:
+            return
+        locator = self._model_library_focus_ids[view_name]
+        try:
+            library = target.query_one(f"#{self._model_library_widget_ids[view_name]}")
+        except QueryError:
+            library = None
+        if library is not None and callable(getattr(library, "restore_focus", None)):
+            library.restore_focus(locator)
+            if (
+                self.app.focused is not None
+                and target in self.app.focused.ancestors_with_self
+            ):
+                return
+        control = next(
+            (button for button in target.query(Button) if not button.disabled),
+            None,
+        )
+        if control is None or control.disabled:
+            return
+        control.focus()
+        control.scroll_visible(animate=False, immediate=True, force=True)
 
     def _start_view_work(self, view_name: str, view_widget) -> None:
         """Kick off work a view should only do once it is actually shown."""
@@ -1936,7 +2019,30 @@ class LLMManagementWindow(Container):
             except QueryError:
                 logger.debug(f"{view_name.title()} view is unavailable; skipped.")
                 return
+            already_loaded = bool(getattr(managed_view, "_loaded", False))
             managed_view.ensure_loaded()
+            if already_loaded:
+                # Restore the pane's semantic row focus first so the observer
+                # can retain that exact locator across its evidence recompose.
+                self.call_after_refresh(self.refresh_model_library_observations)
+            return
+
+    def refresh_model_library_observations(self) -> None:
+        """Refresh evidence only for the currently visible loaded library pane."""
+
+        view_name = self.active_view
+        if view_name not in {"curated", "installed"}:
+            return
+        try:
+            managed_view = self.query_one(
+                "#curated-models-view"
+                if view_name == "curated"
+                else "#installed-models-view"
+            )
+        except QueryError:
+            return
+        if getattr(managed_view, "_loaded", False):
+            managed_view.refresh_observations()
 
     def _populate_help_text(self, view_name: str, view_widget) -> None:
         """Populate help text for views that have it."""

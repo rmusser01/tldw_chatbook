@@ -20,6 +20,7 @@ from uuid import UUID
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -29,6 +30,20 @@ from .audio_cpp_config import AudioCppConfig, _nested_audio_cpp_config
 
 
 _IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z", re.ASCII)
+_MANAGED_ARTIFACT_COMPONENT = re.compile(
+    r"[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?\Z",
+    re.ASCII,
+)
+_WINDOWS_RESERVED_BASENAMES = frozenset(
+    {
+        "aux",
+        "con",
+        "nul",
+        "prn",
+        *(f"com{number}" for number in range(1, 10)),
+        *(f"lpt{number}" for number in range(1, 10)),
+    }
+)
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 _MAX_JSON_INTEGER = 2**53 - 1
 _MAX_INT32 = 2**31 - 1
@@ -94,6 +109,16 @@ def _safe_token(value: object, *, label: str) -> str:
         or _contains_unsafe_text(value)
     ):
         raise ValueError(f"audio.cpp {label} is invalid")
+    return value
+
+
+def _safe_managed_artifact_component(value: object, *, label: str) -> str:
+    if (
+        type(value) is not str
+        or _MANAGED_ARTIFACT_COMPONENT.fullmatch(value) is None
+        or value.split(".", 1)[0].casefold() in _WINDOWS_RESERVED_BASENAMES
+    ):
+        raise ValueError(f"audio.cpp managed artifact {label} is invalid")
     return value
 
 
@@ -297,6 +322,19 @@ class AudioCppSafeModelProjection(_FrozenModel):
         return self
 
 
+class AudioCppManagedArtifactIdentity(_FrozenModel):
+    """Exact managed-store identity retained without importing store domains."""
+
+    artifact_id: str
+    revision: str
+    variant: str
+
+    @field_validator("artifact_id", "revision", "variant", mode="before")
+    @classmethod
+    def _validate_component(cls, value: object, info: ValidationInfo) -> str:
+        return _safe_managed_artifact_component(value, label=info.field_name)
+
+
 class AudioCppAcceptedPackage(_FrozenModel):
     """Immutable accepted recipe snapshot stored by Guided Settings."""
 
@@ -310,6 +348,10 @@ class AudioCppAcceptedPackage(_FrozenModel):
     configuration_identity: str
     weight_identity: str
     projection: AudioCppSafeModelProjection
+    managed_artifact: AudioCppManagedArtifactIdentity | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
     @field_validator("package_uuid", mode="before")
     @classmethod
@@ -622,6 +664,7 @@ __all__ = (
     "AudioCppBackendPreference",
     "AudioCppBinarySelectionSource",
     "AudioCppManagedSetupSource",
+    "AudioCppManagedArtifactIdentity",
     "AudioCppRecipeOption",
     "AudioCppSafeModelProjection",
     "AudioCppSettingsConfig",

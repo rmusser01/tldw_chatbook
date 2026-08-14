@@ -8,13 +8,15 @@ legacy Chat window are deprecated parallels; new settings belong here.
 import asyncio
 import copy
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 import logging
 import os
 from pathlib import Path
 import re
+import threading
 import tomllib
-from typing import Any
+from typing import Any, cast
+from uuid import uuid4
 
 from rich.cells import cell_len
 from rich.markup import escape as escape_markup
@@ -105,7 +107,6 @@ from ...Workspaces.registry_service import (
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
-from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
     PROVIDER_DISPLAY_NAMES,
@@ -158,7 +159,6 @@ from ...Utils.console_background_effects import (
 )
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
-from ...UI.Workbench import WorkbenchHelpPanel, WorkbenchHelpState
 from .provider_model_resolution import (
     EffectiveProviderModel,
     resolve_effective_provider_model,
@@ -205,8 +205,20 @@ from ...Widgets.settings_image_gen_panel import (
     _secret_placeholder as _image_gen_secret_placeholder,
 )
 from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
+    SpeechTTSPanelDraftSnapshot,
     SpeechTTSSettingsPanel,
 )
+from ...Model_Artifacts.service import ArtifactRef
+from ...Model_Artifacts.store import managed_service
+from ...TTS.audio_cpp_guided_config import (
+    AudioCppAcceptedPackage,
+    AudioCppManagedArtifactIdentity,
+)
+from ...TTS.audio_cpp_package_scanner import (
+    AudioCppScanOutcome,
+    scan_audio_cpp_package_root,
+)
+from ...TTS.audio_cpp_recipes import AudioCppMatchState
 from ..Speech.speech_runtime_status import (
     speech_tts_navigation_target_from_context,
     speech_tts_runtime_status_store,
@@ -302,9 +314,146 @@ from .settings_speech_tts import (
     process_provider_test_evidence_store,
 )
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.audio_cpp_model_handoff import (
+    AudioCppModelLibraryRequest,
+    AudioCppModelLibraryResult,
+)
+from ..Navigation.pending_handoff_store import (
+    HandoffChannel,
+    HandoffClaim,
+    HandoffValueError,
+    PendingHandoffStore,
+)
 
 
 logger = logging.getLogger(__name__)
+
+
+class _AudioCppResultTransactionError(RuntimeError):
+    """Bounded internal failure for one Settings result transaction."""
+
+
+@dataclass(slots=True)
+class _AudioCppResultCleanup:
+    """One exact retryable result rollback retained by its Settings owner."""
+
+    claim: HandoffClaim[AudioCppModelLibraryResult]
+    panel: SpeechTTSSettingsPanel | None
+    before: SpeechTTSPanelDraftSnapshot | None
+    before_result_text: str | None
+    expected: AudioCppModelLibraryRequest
+    release_only: bool = False
+    merged: SpeechTTSPanelDraftSnapshot | None = None
+    panel_ready: threading.Event = field(default_factory=threading.Event, repr=False)
+    panel_mounted: bool = False
+    lease_released: bool = False
+    acknowledgement_started: bool = False
+    restore_complete: bool = False
+
+
+def _restore_audio_cpp_merge_delta(
+    before: SpeechTTSPanelDraftSnapshot,
+    merged: SpeechTTSPanelDraftSnapshot,
+    current: SpeechTTSPanelDraftSnapshot,
+) -> SpeechTTSPanelDraftSnapshot | None:
+    """Remove only this transaction's package/default delta from a newer draft."""
+
+    if (
+        merged.original_state != before.original_state
+        or merged.realtime_draft != before.realtime_draft
+        or merged.realtime_original != before.realtime_original
+        or merged.configure_provider != before.configure_provider
+        or merged.draft_revision != before.draft_revision + 1
+    ):
+        return None
+    if current == merged:
+        return before
+    before_values = before.state.providers.get("audio_cpp")
+    merged_values = merged.state.providers.get("audio_cpp")
+    current_values = current.state.providers.get("audio_cpp")
+    if not all(
+        type(values) is dict
+        for values in (before_values, merged_values, current_values)
+    ):
+        return None
+    before_values = cast(dict[str, object], before_values)
+    merged_values = cast(dict[str, object], merged_values)
+    current_values = cast(dict[str, object], current_values)
+    guided_keys = ("guided_packages", "guided_default_model_id")
+
+    # Prove the result merge changed no other global draft value.
+    inverse_merged_state = copy.deepcopy(merged.state)
+    inverse_merged_values = inverse_merged_state.providers["audio_cpp"]
+    for key in guided_keys:
+        if key in before_values:
+            inverse_merged_values[key] = copy.deepcopy(before_values[key])
+        else:
+            inverse_merged_values.pop(key, None)
+    if inverse_merged_state != before.state:
+        return None
+
+    # A later edit of the same package/default fields overlaps this delta.
+    if any(current_values.get(key) != merged_values.get(key) for key in guided_keys):
+        return None
+    restored_state = copy.deepcopy(current.state)
+    restored_values = restored_state.providers["audio_cpp"]
+    for key in guided_keys:
+        if key in before_values:
+            restored_values[key] = copy.deepcopy(before_values[key])
+        else:
+            restored_values.pop(key, None)
+    try:
+        return SpeechTTSPanelDraftSnapshot(
+            state=restored_state,
+            original_state=current.original_state,
+            realtime_draft=current.realtime_draft,
+            realtime_original=current.realtime_original,
+            configure_provider=current.configure_provider,
+            draft_revision=current.draft_revision + 1,
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _force_restore_audio_cpp_merge_delta(
+    before: SpeechTTSPanelDraftSnapshot,
+    merged: SpeechTTSPanelDraftSnapshot,
+    current: SpeechTTSPanelDraftSnapshot,
+) -> SpeechTTSPanelDraftSnapshot | None:
+    """Undo only the review delta during forced teardown, preserving other edits."""
+
+    if _restore_audio_cpp_merge_delta(before, merged, merged) != before:
+        return None
+    before_values = before.state.providers.get("audio_cpp")
+    current_values = current.state.providers.get("audio_cpp")
+    if type(before_values) is not dict or type(current_values) is not dict:
+        return None
+    restored_state = copy.deepcopy(current.state)
+    restored_values = restored_state.providers["audio_cpp"]
+    for key in ("guided_packages", "guided_default_model_id"):
+        if key in before_values:
+            restored_values[key] = copy.deepcopy(before_values[key])
+        else:
+            restored_values.pop(key, None)
+    if (
+        restored_state == before.state
+        and current.original_state == before.original_state
+        and current.realtime_draft == before.realtime_draft
+        and current.realtime_original == before.realtime_original
+        and current.configure_provider == before.configure_provider
+    ):
+        return before
+    try:
+        return SpeechTTSPanelDraftSnapshot(
+            state=restored_state,
+            original_state=current.original_state,
+            realtime_draft=current.realtime_draft,
+            realtime_original=current.realtime_original,
+            configure_provider=current.configure_provider,
+            draft_revision=current.draft_revision + 1,
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def _theme_save_target() -> Path:
@@ -431,6 +580,7 @@ class _SettingsProviderPickerOption(Option):
         super().__init__(prompt, id=option_id, disabled=heading)
         self.provider_id = provider_id
         self.action = action
+
 
 MODEL_DISCOVERY_IDLE_COPY = "Discover models from configured endpoint"
 MODEL_DISCOVERY_EMPTY_COPY = (
@@ -1984,6 +2134,8 @@ class SettingsRegion(Vertical):
 class SettingsScreen(BaseAppScreen):
     """Global preferences, appearance, storage, and app behavior."""
 
+    audio_cpp_result_cleanup_fenced = reactive(False)
+
     BINDINGS = [
         ("s", "settings_save_category", "Save Settings category"),
         ("r", "settings_revert_category", "Revert Settings category"),
@@ -2287,8 +2439,18 @@ class SettingsScreen(BaseAppScreen):
         self._speech_tts_navigation_target: SpeechTTSNavigationTarget | None = None
         self._speech_tts_draft_state: GlobalSpeechTTSState | None = None
         self._speech_tts_original_state: GlobalSpeechTTSState | None = None
+        self._speech_tts_draft_snapshot: SpeechTTSPanelDraftSnapshot | None = None
         self._speech_tts_leave_in_progress = False
         self._speech_tts_leave_bypass = False
+        self._speech_tts_model_library_route_token: str | None = None
+        self._speech_tts_navigation_attempts: list[
+            tuple[str, dict[str, object], str | None]
+        ] = []
+        self._audio_cpp_result_cancellation = threading.Event()
+        self._audio_cpp_result_cleanup: _AudioCppResultCleanup | None = None
+        self._audio_cpp_staged_request_cleanup: (
+            tuple[AudioCppModelLibraryRequest, int] | None
+        ) = None
         #: (display_name, profile_id) choices for the "Default voice profile"
         #: picker. `None` means the profile store hasn't answered yet (the
         #: default) OR answered with failure -- `_speech_tts_profile_choices_
@@ -2322,7 +2484,9 @@ class SettingsScreen(BaseAppScreen):
         self._pending_category_focus_value: str | None = None
         #: task-15475: per-instance queue for `_after_category_panes` (the
         #: class attribute is None precisely so this is never shared).
-        self._pending_pane_swap_callbacks: list[tuple[Callable[..., object], tuple]] = []
+        self._pending_pane_swap_callbacks: list[
+            tuple[Callable[..., object], tuple]
+        ] = []
         #: Serializes category-pane swaps so a superseded one never interrupts
         #: a teardown -- it loses the revision check and returns untouched.
         self._category_swap_lock = asyncio.Lock()
@@ -2453,6 +2617,22 @@ class SettingsScreen(BaseAppScreen):
             self.category_search_query
         )
         state["settings_drafts"] = copy.deepcopy(self._settings_drafts)
+        if self.active_category == SettingsCategoryId.SPEECH_TTS.value:
+            try:
+                panel = self.query_one(SpeechTTSSettingsPanel)
+            except QueryError:
+                pass
+            else:
+                self._speech_tts_draft_snapshot = panel.draft_snapshot()
+        if self._speech_tts_draft_snapshot is not None:
+            state["speech_tts_panel_draft"] = SpeechTTSPanelDraftSnapshot(
+                state=self._speech_tts_draft_snapshot.state,
+                original_state=self._speech_tts_draft_snapshot.original_state,
+                realtime_draft=self._speech_tts_draft_snapshot.realtime_draft,
+                realtime_original=self._speech_tts_draft_snapshot.realtime_original,
+                configure_provider=(self._speech_tts_draft_snapshot.configure_provider),
+                draft_revision=self._speech_tts_draft_snapshot.draft_revision,
+            )
         return state
 
     def restore_state(self, state: dict[str, object]) -> None:
@@ -2493,6 +2673,20 @@ class SettingsScreen(BaseAppScreen):
                 self._settings_drafts = copy.deepcopy(valid_drafts)
             except Exception:
                 logger.debug("Ignoring malformed Settings draft state", exc_info=True)
+
+        snapshot = state.get("speech_tts_panel_draft")
+        if type(snapshot) is SpeechTTSPanelDraftSnapshot:
+            try:
+                self._speech_tts_draft_snapshot = SpeechTTSPanelDraftSnapshot(
+                    state=snapshot.state,
+                    original_state=snapshot.original_state,
+                    realtime_draft=snapshot.realtime_draft,
+                    realtime_original=snapshot.realtime_original,
+                    configure_provider=snapshot.configure_provider,
+                    draft_revision=snapshot.draft_revision,
+                )
+            except (TypeError, ValueError):
+                self._speech_tts_draft_snapshot = None
 
     def _register_footer_shortcuts(self) -> None:
         """Register Settings shortcuts via BaseAppScreen's persisting API.
@@ -2825,6 +3019,20 @@ class SettingsScreen(BaseAppScreen):
         self._maybe_refresh_rag_index_status_on_show()
         self.call_after_refresh(self._update_inspector_overflow_hint)
         self.call_after_refresh(self._refresh_provider_picker)
+        self.call_after_refresh(self._consume_audio_cpp_model_library_result)
+
+    def on_unmount(self) -> None:
+        """Fence any late Model Library review before this screen is replaced."""
+
+        self._audio_cpp_result_cancellation.set()
+        try:
+            self._retry_audio_cpp_staged_request_cleanup()
+        except BaseException:
+            pass
+        try:
+            self._retry_audio_cpp_result_cleanup(force_overlap=True)
+        except BaseException:
+            pass
 
     def _workbench_compact_now(self) -> bool:
         return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
@@ -3979,9 +4187,7 @@ class SettingsScreen(BaseAppScreen):
         """Build the staged closed-enum Select for a model-profile field."""
         supported = self._model_profile_field_supported(provider, draft_key)
         allowed = (
-            self._model_profile_reasoning_effort_options(
-                provider, values.get("model")
-            )
+            self._model_profile_reasoning_effort_options(provider, values.get("model"))
             if draft_key == "model_profile_reasoning_effort"
             else CLOSED_ENUM_SELECT_OPTIONS[
                 PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
@@ -8028,9 +8234,7 @@ class SettingsScreen(BaseAppScreen):
             if key.startswith("provider_api_mode:") and key != excluded_key
         }
         originals = {
-            key: value
-            for key, value in draft.originals.items()
-            if key in values
+            key: value for key, value in draft.originals.items() if key in values
         }
         return originals, values
 
@@ -8390,8 +8594,7 @@ class SettingsScreen(BaseAppScreen):
     @staticmethod
     def _provider_supports_reasoning_effort(provider: object) -> bool:
         return (
-            provider_config_key(str(provider or ""))
-            in REASONING_EFFORT_PROVIDER_KEYS
+            provider_config_key(str(provider or "")) in REASONING_EFFORT_PROVIDER_KEYS
         )
 
     @staticmethod
@@ -8672,9 +8875,11 @@ class SettingsScreen(BaseAppScreen):
         credential_fields_dirty = bool(
             {"api_key", "credential_env_var"}.intersection(dirty)
         )
-        if not credential_fields_dirty and configured_provider_credential_source(
-            self._provider_config(provider)
-        ) == "none":
+        if (
+            not credential_fields_dirty
+            and configured_provider_credential_source(self._provider_config(provider))
+            == "none"
+        ):
             return "none"
         if api_key_dirty:
             try:
@@ -8949,9 +9154,7 @@ class SettingsScreen(BaseAppScreen):
     def _provider_picker_groups(
         self, query: str = ""
     ) -> tuple[ProviderPickerGroup, ...]:
-        provider = str(
-            self._provider_display_setting_values().get("provider") or ""
-        )
+        provider = str(self._provider_display_setting_values().get("provider") or "")
         return build_provider_picker_groups(
             self._provider_catalog_entries(), provider, query
         )
@@ -9473,9 +9676,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_context_window = True
         try:
             try:
-                context_input = self.query_one(
-                    "#settings-model-context-window", Input
-                )
+                context_input = self.query_one("#settings-model-context-window", Input)
             except QueryError:
                 pass
             else:
@@ -9715,8 +9916,7 @@ class SettingsScreen(BaseAppScreen):
         provider_key = provider_config_key(provider)
         api_mode_draft_key = self._provider_api_mode_draft_key(provider)
         if not (
-            {"endpoint", "credential_env_var", "api_key", api_mode_draft_key}
-            & dirty
+            {"endpoint", "credential_env_var", "api_key", api_mode_draft_key} & dirty
         ):
             return app_config
         provider_save_key, _config = self._provider_config_entry(provider)
@@ -10575,13 +10775,9 @@ class SettingsScreen(BaseAppScreen):
                 provider
             ) and not bool(api_key_input.value.strip())
             hosted_guidance = self._hosted_provider_guidance(provider, model)
-            guidance = self.query_one(
-                "#settings-hosted-provider-guidance", Static
-            )
+            guidance = self.query_one("#settings-hosted-provider-guidance", Static)
             guidance.update(hosted_guidance)
-            guidance.set_class(
-                not hosted_guidance, "settings-gated-profile-hidden"
-            )
+            guidance.set_class(not hosted_guidance, "settings-gated-profile-hidden")
         except QueryError:
             pass
         self._refresh_generation_support_summary(provider)
@@ -12335,7 +12531,9 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="80",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Reduce conversation to (%)", classes="settings-input-label")
+                yield Static(
+                    "Reduce conversation to (%)", classes="settings-input-label"
+                )
                 yield Input(
                     value=format_ratio_percent(
                         self._console_behavior_value("compaction_target_ratio")
@@ -14347,6 +14545,7 @@ class SettingsScreen(BaseAppScreen):
                 state=self._speech_tts_draft_state or speech_tts_state,
                 original_state=self._speech_tts_original_state,
                 configure_provider=self._speech_tts_configure_provider,
+                draft_snapshot=self._speech_tts_draft_snapshot,
                 profiles=self._speech_tts_profile_choices,
                 profiles_unavailable=self._speech_tts_profile_choices_unavailable,
                 audio_cpp_observation=audio_cpp_observation,
@@ -14361,6 +14560,12 @@ class SettingsScreen(BaseAppScreen):
                 runtime_status_store=speech_tts_runtime_status_store(self.app_instance),
                 provider_test_evidence=process_provider_test_evidence_store(
                     self.app_instance
+                ),
+                audio_cpp_result_cleanup_pending=(
+                    self.audio_cpp_result_cleanup_pending
+                ),
+                audio_cpp_result_cleanup_mounted=(
+                    self._mark_audio_cpp_result_panel_mounted
                 ),
                 id="settings-speech-tts-panel",
             )
@@ -15640,6 +15845,34 @@ class SettingsScreen(BaseAppScreen):
     async def flush_pending_work(self) -> bool:
         """Protect a mounted global Speech/TTS draft before dismissal."""
 
+        attempt = (
+            self._speech_tts_navigation_attempts.pop(0)
+            if self._speech_tts_navigation_attempts
+            else None
+        )
+        expected = getattr(
+            self.app_instance,
+            "_audio_cpp_settings_model_library_request",
+            None,
+        )
+        if self.audio_cpp_result_cleanup_pending():
+            try:
+                panel = self.query_one(SpeechTTSSettingsPanel)
+                panel._fence_audio_cpp_result_cleanup()  # noqa: SLF001
+            except QueryError:
+                pass
+            self._speech_tts_model_library_route_token = None
+            return False
+        if (
+            attempt is not None
+            and attempt[0] == "llm"
+            and attempt[1] == {"view": "curated", "consumer": "audio_cpp"}
+            and type(expected) is AudioCppModelLibraryRequest
+            and attempt[2] == cast(AudioCppModelLibraryRequest, expected).token
+            and attempt[2] == self._speech_tts_model_library_route_token
+        ):
+            self._speech_tts_model_library_route_token = None
+            return True
         if self.active_category != SettingsCategoryId.SPEECH_TTS.value:
             return True
         try:
@@ -15654,12 +15887,937 @@ class SettingsScreen(BaseAppScreen):
             self._clear_speech_tts_draft_cache()
         return allowed
 
+    @on(NavigateToScreen)
+    def track_speech_tts_navigation_attempt(self, message: NavigateToScreen) -> None:
+        """Record outgoing attempts so the pending-work flush can match FIFO."""
+
+        exact_audio_route = message.screen_name == "llm" and message.screen_context == {
+            "view": "curated",
+            "consumer": "audio_cpp",
+        }
+        self._speech_tts_navigation_attempts.append(
+            (
+                message.screen_name,
+                dict(message.screen_context),
+                self._speech_tts_model_library_route_token
+                if exact_audio_route
+                else None,
+            )
+        )
+
+    def _consume_audio_cpp_model_library_result(self) -> None:
+        """Claim one exact return only after the restored draft is mounted."""
+
+        if (
+            not self.is_mounted
+            or self.active_category != SettingsCategoryId.SPEECH_TTS.value
+            or self._speech_tts_draft_snapshot is None
+        ):
+            return
+        if self._audio_cpp_result_cleanup is not None:
+            try:
+                self._retry_audio_cpp_result_cleanup()
+            except BaseException as error:
+                if isinstance(
+                    error,
+                    (
+                        asyncio.CancelledError,
+                        GeneratorExit,
+                        KeyboardInterrupt,
+                        SystemExit,
+                    ),
+                ):
+                    raise
+                return
+            if self._audio_cpp_result_cleanup is not None:
+                return
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        expected = getattr(
+            self.app_instance,
+            "_audio_cpp_settings_model_library_request",
+            None,
+        )
+        if (
+            type(store) is not PendingHandoffStore
+            or type(expected) is not AudioCppModelLibraryRequest
+        ):
+            return
+        store = cast(PendingHandoffStore, store)
+        expected = cast(AudioCppModelLibraryRequest, expected)
+        try:
+            claim = store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT)
+        except (HandoffValueError, RuntimeError, TypeError, ValueError):
+            return
+        if claim is None:
+            return
+        result = claim.value
+        claim = cast(HandoffClaim[AudioCppModelLibraryResult], claim)
+        self._begin_audio_cpp_result_cleanup(
+            claim=claim,
+            expected=expected,
+        )
+        if type(result) is not AudioCppModelLibraryResult:
+            try:
+                self._retry_audio_cpp_result_cleanup()
+            except (HandoffValueError, RuntimeError, TypeError, ValueError):
+                pass
+            return
+        try:
+            panel = self.query_one(SpeechTTSSettingsPanel)
+            current = panel.draft_snapshot()
+        except (QueryError, TypeError, ValueError):
+            try:
+                self._retry_audio_cpp_result_cleanup()
+            except (HandoffValueError, RuntimeError, TypeError, ValueError):
+                pass
+            return
+        cleanup = self._audio_cpp_result_cleanup
+        if cleanup is None or cleanup.claim is not claim:
+            raise _AudioCppResultTransactionError(
+                "audio.cpp result cleanup ownership changed"
+            )
+        cleanup.panel = panel
+        cleanup.before = current
+        cleanup.before_result_text = panel.result_text
+        if panel.audio_cpp_result_cleanup_action_is_mounted():
+            cleanup.panel_ready.set()
+        if result.token != expected.token:
+            self._acknowledge_foreign_audio_cpp_model_library_result(claim)
+            return
+        cleanup.release_only = False
+        if (
+            result.draft_revision != expected.draft_revision
+            or current.draft_revision != expected.draft_revision
+        ):
+            self._acknowledge_stale_audio_cpp_model_library_result(
+                claim,
+                panel,
+                current,
+                expected,
+            )
+            return
+        self._review_audio_cpp_model_library_result(
+            claim,
+            result,
+            panel,
+            current,
+            panel.result_text,
+            expected,
+        )
+
+    def _begin_audio_cpp_result_cleanup(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+        expected: AudioCppModelLibraryRequest,
+        *,
+        panel: SpeechTTSSettingsPanel | None = None,
+        before: SpeechTTSPanelDraftSnapshot | None = None,
+        before_result_text: str | None = None,
+        release_only: bool = True,
+    ) -> None:
+        """Take bounded owner-thread cleanup authority for one claimed result."""
+
+        if self._audio_cpp_result_cleanup is not None:
+            raise _AudioCppResultTransactionError(
+                "another audio.cpp result cleanup is pending"
+            )
+        self._audio_cpp_result_cleanup = _AudioCppResultCleanup(
+            claim=claim,
+            panel=panel,
+            before=before,
+            before_result_text=before_result_text,
+            expected=expected,
+            release_only=release_only,
+        )
+        if panel is not None and panel.audio_cpp_result_cleanup_action_is_mounted():
+            self._audio_cpp_result_cleanup.panel_ready.set()
+        self.audio_cpp_result_cleanup_fenced = True
+        if panel is not None and panel.is_mounted:
+            panel.refresh_audio_cpp_result_cleanup_state()
+
+    def audio_cpp_result_cleanup_pending(self) -> bool:
+        """Return whether this screen owns unsettled Model Library cleanup."""
+
+        return bool(
+            self.audio_cpp_result_cleanup_fenced
+            or self._audio_cpp_result_cleanup is not None
+        )
+
+    @work(
+        exclusive=True,
+        thread=True,
+        group="settings-audio-cpp-model-library-result",
+        exit_on_error=False,
+    )
+    def _review_audio_cpp_model_library_result(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+        result: AudioCppModelLibraryResult,
+        panel: SpeechTTSSettingsPanel,
+        before: SpeechTTSPanelDraftSnapshot,
+        before_result_text: str,
+        expected: AudioCppModelLibraryRequest,
+    ) -> None:
+        """Lease, rescan, and merge one exact managed return off the UI loop."""
+
+        try:
+            reference = ArtifactRef(
+                result.artifact_id,
+                result.revision,
+                result.variant,
+            )
+            identity = AudioCppManagedArtifactIdentity(
+                artifact_id=result.artifact_id,
+                revision=result.revision,
+                variant=result.variant,
+            )
+            service = managed_service()
+            with service.acquire_installed_root(reference) as leased:
+                if (
+                    leased.handle.root != reference
+                    or leased.handle.closure != (reference,)
+                    or leased.handle.paths
+                    != ((reference, Path(result.canonical_root)),)
+                ):
+                    raise ValueError("managed root mismatch")
+                scan = scan_audio_cpp_package_root(
+                    result.canonical_root,
+                    cancellation_event=self._audio_cpp_result_cancellation,
+                    request_revision=result.draft_revision,
+                    expected_managed_artifact=identity,
+                    expected_canonical_root=result.canonical_root,
+                )
+                candidates = tuple(
+                    candidate
+                    for discovery in scan.discoveries
+                    if discovery.match.state is AudioCppMatchState.EXACT
+                    for candidate in discovery.match.candidates
+                )
+                if (
+                    self._audio_cpp_result_cancellation.is_set()
+                    or scan.outcome is not AudioCppScanOutcome.COMPLETE
+                    or scan.request_revision != result.draft_revision
+                    or len(scan.discoveries) != 1
+                    or len(candidates) != 1
+                ):
+                    raise ValueError("managed package review mismatch")
+                package = candidates[0].accept(managed_artifact=identity)
+                cleanup = self._audio_cpp_result_cleanup
+                if (
+                    cleanup is None
+                    or cleanup.claim is not claim
+                    or not cleanup.panel_ready.wait(timeout=8.0)
+                ):
+                    raise ValueError("Settings package review did not become ready")
+                merged = self.app.call_from_thread(
+                    self._merge_and_ack_audio_cpp_model_library_result,
+                    claim,
+                    result,
+                    package,
+                    False,
+                )
+                if type(merged) is not SpeechTTSPanelDraftSnapshot:
+                    return
+            settled = self.app.call_from_thread(
+                self._mark_audio_cpp_result_lease_released,
+                claim,
+            )
+            if not settled:
+                return
+        except BaseException as error:
+            logger.warning(
+                "Model Library return review failed; error_type=%s",
+                type(error).__name__,
+            )
+            cleanup_error: BaseException | None = None
+            try:
+                self.app.call_from_thread(
+                    self._rollback_and_release_audio_cpp_model_library_result,
+                    claim,
+                    panel,
+                    before,
+                    before_result_text,
+                    expected,
+                )
+            except BaseException as caught:
+                cleanup_error = caught
+                try:
+                    self.app.call_from_thread(
+                        self._rollback_and_release_audio_cpp_model_library_result,
+                        claim,
+                        panel,
+                        before,
+                        before_result_text,
+                        expected,
+                    )
+                    cleanup_error = None
+                except BaseException as retry_error:
+                    cleanup_error = retry_error
+            if isinstance(
+                error,
+                (
+                    asyncio.CancelledError,
+                    GeneratorExit,
+                    KeyboardInterrupt,
+                    SystemExit,
+                ),
+            ):
+                raise
+            if isinstance(
+                cleanup_error,
+                (
+                    asyncio.CancelledError,
+                    GeneratorExit,
+                    KeyboardInterrupt,
+                    SystemExit,
+                ),
+            ):
+                raise cleanup_error
+            if cleanup_error is not None:
+                raise cleanup_error
+
+    def _merge_and_ack_audio_cpp_model_library_result(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+        result: AudioCppModelLibraryResult,
+        package: object,
+        acknowledge: bool = True,
+    ) -> bool | SpeechTTSPanelDraftSnapshot:
+        """Merge on the owner thread while the worker still holds its lease."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        expected = getattr(
+            self.app_instance,
+            "_audio_cpp_settings_model_library_request",
+            None,
+        )
+        if (
+            type(store) is not PendingHandoffStore
+            or type(expected) is not AudioCppModelLibraryRequest
+            or type(package) is not AudioCppAcceptedPackage
+        ):
+            return False
+        store = cast(PendingHandoffStore, store)
+        expected = cast(AudioCppModelLibraryRequest, expected)
+        package = cast(AudioCppAcceptedPackage, package)
+        if not self.is_mounted:
+            self._rollback_and_release_audio_cpp_model_library_result(
+                claim,
+                None,
+                None,
+                None,
+                expected,
+            )
+            return False
+        try:
+            panel = self.query_one(SpeechTTSSettingsPanel)
+            current = panel.draft_snapshot()
+        except (QueryError, TypeError, ValueError):
+            self._rollback_and_release_audio_cpp_model_library_result(
+                claim,
+                None,
+                None,
+                None,
+                expected,
+            )
+            return False
+        if (
+            result.token != expected.token
+            or result.draft_revision != expected.draft_revision
+            or current.draft_revision != result.draft_revision
+        ):
+            self._acknowledge_stale_audio_cpp_model_library_result(
+                claim,
+                panel,
+                current,
+                expected,
+            )
+            return False
+        before = current
+        before_result_text = panel.result_text
+        try:
+            merged_from = panel.merge_managed_audio_cpp_package(
+                package,
+                expected_revision=result.draft_revision,
+            )
+            if merged_from is None:
+                raise _AudioCppResultTransactionError(
+                    "audio.cpp draft merge was rejected"
+                )
+            self._speech_tts_draft_snapshot = panel.draft_snapshot()
+            self._speech_tts_draft_state = copy.deepcopy(
+                self._speech_tts_draft_snapshot.state
+            )
+            self._speech_tts_original_state = copy.deepcopy(
+                self._speech_tts_draft_snapshot.original_state
+            )
+            cleanup = self._audio_cpp_result_cleanup
+            if (
+                cleanup is None
+                or cleanup.claim is not claim
+                or cleanup.release_only
+                or cleanup.before != before
+            ):
+                raise _AudioCppResultTransactionError(
+                    "audio.cpp result cleanup ownership is unavailable"
+                )
+            cleanup.merged = self._speech_tts_draft_snapshot
+            if acknowledge:
+                if hasattr(
+                    self.app_instance,
+                    "_audio_cpp_settings_model_library_request",
+                ):
+                    delattr(
+                        self.app_instance,
+                        "_audio_cpp_settings_model_library_request",
+                    )
+                if not store.acknowledge(claim):
+                    raise _AudioCppResultTransactionError(
+                        "audio.cpp result acknowledgement failed"
+                    )
+                self._finish_audio_cpp_result_cleanup(claim)
+        except BaseException as error:
+            self._rollback_and_release_audio_cpp_model_library_result(
+                claim,
+                panel,
+                before,
+                before_result_text,
+                expected,
+            )
+            if isinstance(
+                error,
+                (
+                    asyncio.CancelledError,
+                    GeneratorExit,
+                    KeyboardInterrupt,
+                    SystemExit,
+                ),
+            ):
+                raise
+            return False
+        return True if acknowledge else self._speech_tts_draft_snapshot
+
+    def _mark_audio_cpp_result_panel_mounted(
+        self,
+        panel: SpeechTTSSettingsPanel,
+    ) -> None:
+        """Publish the exact panel whose current Save control just mounted."""
+
+        cleanup = self._audio_cpp_result_cleanup
+        if cleanup is None:
+            return
+        try:
+            current_panel = self.query_one(SpeechTTSSettingsPanel)
+        except QueryError:
+            return
+        if current_panel is not panel:
+            return
+        cleanup.panel = panel
+        if cleanup.merged is None:
+            cleanup.panel_ready.set()
+            return
+        try:
+            current = panel.draft_snapshot()
+        except (TypeError, ValueError):
+            return
+        if current != cleanup.merged:
+            return
+        cleanup.panel_mounted = True
+        self._try_ack_published_audio_cpp_result(cleanup)
+
+    def _mark_audio_cpp_result_lease_released(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+    ) -> bool:
+        """Publish lease exit and settle once the current Save has mounted."""
+
+        cleanup = self._audio_cpp_result_cleanup
+        if cleanup is None or cleanup.claim is not claim:
+            return False
+        cleanup.lease_released = True
+        return self._try_ack_published_audio_cpp_result(cleanup)
+
+    def _try_ack_published_audio_cpp_result(
+        self,
+        cleanup: _AudioCppResultCleanup,
+    ) -> bool:
+        """Acknowledge once after lease exit and exact action remount."""
+
+        if not cleanup.panel_mounted or not cleanup.lease_released:
+            return True
+        if cleanup.acknowledgement_started:
+            return True
+        if (
+            cleanup.panel is None
+            or cleanup.before is None
+            or cleanup.before_result_text is None
+            or cleanup.merged is None
+        ):
+            return False
+        cleanup.acknowledgement_started = True
+        return self._ack_merged_audio_cpp_model_library_result(
+            cleanup.claim,
+            cleanup.panel,
+            cleanup.before,
+            cleanup.before_result_text,
+            cleanup.expected,
+            cleanup.claim.value,
+            cleanup.merged,
+        )
+
+    def _ack_merged_audio_cpp_model_library_result(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+        panel: SpeechTTSSettingsPanel,
+        before: SpeechTTSPanelDraftSnapshot,
+        before_result_text: str,
+        expected: AudioCppModelLibraryRequest,
+        result: AudioCppModelLibraryResult,
+        merged: object,
+    ) -> bool:
+        """Acknowledge only after the merge lease has exited successfully."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        current_expected = getattr(
+            self.app_instance,
+            "_audio_cpp_settings_model_library_request",
+            None,
+        )
+        try:
+            current_panel = self.query_one(SpeechTTSSettingsPanel)
+            current = current_panel.draft_snapshot()
+        except (QueryError, TypeError, ValueError):
+            current_panel = None
+            current = None
+        if (
+            type(store) is not PendingHandoffStore
+            or type(expected) is not AudioCppModelLibraryRequest
+            or type(result) is not AudioCppModelLibraryResult
+            or not self.is_mounted
+            or current_panel is not panel
+            or type(merged) is not SpeechTTSPanelDraftSnapshot
+            or current != merged
+            or getattr(merged, "draft_revision", None) != result.draft_revision + 1
+            or self._speech_tts_draft_snapshot != merged
+            or result.token != expected.token
+            or result.draft_revision != expected.draft_revision
+            or current_expected is not expected
+        ):
+            try:
+                self._rollback_and_release_audio_cpp_model_library_result(
+                    claim,
+                    panel,
+                    before,
+                    before_result_text,
+                    expected,
+                )
+            except BaseException as error:
+                if isinstance(
+                    error,
+                    (
+                        asyncio.CancelledError,
+                        GeneratorExit,
+                        KeyboardInterrupt,
+                        SystemExit,
+                    ),
+                ):
+                    raise
+            if self._audio_cpp_result_cleanup is not None and panel.is_mounted:
+                panel.refresh_audio_cpp_result_cleanup_state()
+            return False
+        if current_expected is expected:
+            delattr(
+                self.app_instance,
+                "_audio_cpp_settings_model_library_request",
+            )
+        try:
+            if not cast(PendingHandoffStore, store).acknowledge(claim):
+                raise _AudioCppResultTransactionError(
+                    "audio.cpp result acknowledgement failed"
+                )
+        except BaseException as error:
+            self._rollback_and_release_audio_cpp_model_library_result(
+                claim,
+                panel,
+                before,
+                before_result_text,
+                expected,
+            )
+            if isinstance(
+                error,
+                (
+                    asyncio.CancelledError,
+                    GeneratorExit,
+                    KeyboardInterrupt,
+                    SystemExit,
+                ),
+            ):
+                raise
+            return False
+        self._finish_audio_cpp_result_cleanup(claim)
+        current_panel._announce_draft_state()  # noqa: SLF001 - owned Settings boundary
+        current_panel.refresh_audio_cpp_result_cleanup_state()
+        return True
+
+    def _acknowledge_foreign_audio_cpp_model_library_result(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+    ) -> bool:
+        """Settle one foreign result without touching this screen's request."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return False
+        store = cast(PendingHandoffStore, store)
+        error: BaseException | None = None
+        try:
+            if store.acknowledge(claim):
+                self._finish_audio_cpp_result_cleanup(claim)
+                return True
+        except BaseException as caught:
+            error = caught
+        try:
+            self._retry_audio_cpp_result_cleanup()
+        except BaseException as cleanup_error:
+            if isinstance(
+                cleanup_error,
+                (
+                    asyncio.CancelledError,
+                    GeneratorExit,
+                    KeyboardInterrupt,
+                    SystemExit,
+                ),
+            ):
+                raise
+        if isinstance(
+            error,
+            (
+                asyncio.CancelledError,
+                GeneratorExit,
+                KeyboardInterrupt,
+                SystemExit,
+            ),
+        ):
+            raise error
+        return False
+
+    def _acknowledge_stale_audio_cpp_model_library_result(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+        panel: SpeechTTSSettingsPanel,
+        before: SpeechTTSPanelDraftSnapshot,
+        expected: AudioCppModelLibraryRequest,
+    ) -> bool:
+        """Settle a stale result with acknowledgement as the final operation."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return False
+        store = cast(PendingHandoffStore, store)
+        before_result_text = panel.result_text
+        try:
+            panel._set_result(  # noqa: SLF001 - same owned Settings boundary
+                "Installed, not added to this changed draft",
+                severity="warning",
+            )
+            if (
+                getattr(
+                    self.app_instance,
+                    "_audio_cpp_settings_model_library_request",
+                    None,
+                )
+                is expected
+            ):
+                delattr(
+                    self.app_instance,
+                    "_audio_cpp_settings_model_library_request",
+                )
+            if not store.acknowledge(claim):
+                raise _AudioCppResultTransactionError(
+                    "stale audio.cpp result acknowledgement failed"
+                )
+            self._finish_audio_cpp_result_cleanup(claim)
+        except BaseException as error:
+            self._rollback_and_release_audio_cpp_model_library_result(
+                claim,
+                panel,
+                before,
+                before_result_text,
+                expected,
+            )
+            if isinstance(
+                error,
+                (
+                    asyncio.CancelledError,
+                    GeneratorExit,
+                    KeyboardInterrupt,
+                    SystemExit,
+                ),
+            ):
+                raise
+            return False
+        return True
+
+    def _finish_audio_cpp_result_cleanup(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+    ) -> None:
+        """Forget one exact cleanup only after its claim is settled."""
+
+        cleanup = self._audio_cpp_result_cleanup
+        if cleanup is not None and cleanup.claim is claim:
+            self._audio_cpp_result_cleanup = None
+            self.audio_cpp_result_cleanup_fenced = False
+            if cleanup.panel is not None and cleanup.panel.is_mounted:
+                cleanup.panel.refresh_audio_cpp_result_cleanup_state()
+
+    def _rollback_and_release_audio_cpp_model_library_result(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+        panel: SpeechTTSSettingsPanel | None,
+        before: SpeechTTSPanelDraftSnapshot | None,
+        before_result_text: str | None,
+        expected: AudioCppModelLibraryRequest,
+    ) -> None:
+        """Retain, restore, and release one exact claim or leave it retryable."""
+
+        cleanup = self._audio_cpp_result_cleanup
+        if cleanup is None:
+            return
+        if cleanup.claim is not claim:
+            raise _AudioCppResultTransactionError(
+                "audio.cpp result cleanup ownership is unavailable"
+            )
+        if cleanup.release_only:
+            raise _AudioCppResultTransactionError(
+                "audio.cpp result cleanup mode is invalid"
+            )
+        if cleanup.panel is None:
+            cleanup.panel = panel
+        if cleanup.before is None:
+            cleanup.before = before
+        if cleanup.before_result_text is None:
+            cleanup.before_result_text = before_result_text
+        if cleanup.expected is not expected:
+            raise _AudioCppResultTransactionError(
+                "audio.cpp result cleanup request changed"
+            )
+        self._retry_audio_cpp_result_cleanup()
+
+    def _retry_audio_cpp_result_cleanup(self, *, force_overlap: bool = False) -> None:
+        """Retry the one retained owner-thread rollback without hiding failures."""
+
+        cleanup = self._audio_cpp_result_cleanup
+        if cleanup is None:
+            return
+        if not cleanup.restore_complete and not cleanup.release_only:
+            target = cleanup.before
+            if cleanup.merged is not None:
+                current: SpeechTTSPanelDraftSnapshot | None = None
+                if cleanup.panel is not None and cleanup.panel.is_mounted:
+                    current = cleanup.panel.draft_snapshot()
+                elif (
+                    type(self._speech_tts_draft_snapshot) is SpeechTTSPanelDraftSnapshot
+                ):
+                    current = self._speech_tts_draft_snapshot
+                if cleanup.before is None or current is None:
+                    raise _AudioCppResultTransactionError(
+                        "audio.cpp result rollback snapshot is unavailable"
+                    )
+                target = _restore_audio_cpp_merge_delta(
+                    cleanup.before,
+                    cleanup.merged,
+                    current,
+                )
+                if target is None and force_overlap:
+                    target = _force_restore_audio_cpp_merge_delta(
+                        cleanup.before,
+                        cleanup.merged,
+                        current,
+                    )
+                if target is None:
+                    raise _AudioCppResultTransactionError(
+                        "audio.cpp result rollback overlaps a newer package edit"
+                    )
+            if (
+                cleanup.panel is not None
+                and cleanup.panel.is_mounted
+                and target is not None
+            ):
+                cleanup.panel.restore_draft_snapshot(
+                    target,
+                    result_text=cleanup.before_result_text,
+                )
+            if target is not None:
+                self._speech_tts_draft_snapshot = target
+                self._speech_tts_draft_state = copy.deepcopy(target.state)
+                self._speech_tts_original_state = copy.deepcopy(target.original_state)
+                self._speech_tts_configure_provider = target.configure_provider
+            current_expected = getattr(
+                self.app_instance,
+                "_audio_cpp_settings_model_library_request",
+                None,
+            )
+            if current_expected is None or current_expected is cleanup.expected:
+                setattr(
+                    self.app_instance,
+                    "_audio_cpp_settings_model_library_request",
+                    cleanup.expected,
+                )
+            cleanup.restore_complete = True
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            raise _AudioCppResultTransactionError(
+                "audio.cpp result store is unavailable"
+            )
+        if not cast(PendingHandoffStore, store).release(cleanup.claim):
+            raise _AudioCppResultTransactionError(
+                "audio.cpp result claim could not be released"
+            )
+        self._audio_cpp_result_cleanup = None
+        self.audio_cpp_result_cleanup_fenced = False
+        if cleanup.panel is not None and cleanup.panel.is_mounted:
+            cleanup.panel.refresh_audio_cpp_result_cleanup_state()
+
+    def stage_audio_cpp_model_library_request(
+        self,
+        snapshot: SpeechTTSPanelDraftSnapshot,
+    ) -> bool:
+        """Stage one exact request and navigate without resolving the draft."""
+
+        if (
+            type(snapshot) is not SpeechTTSPanelDraftSnapshot
+            or self._audio_cpp_result_cleanup is not None
+        ):
+            return False
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return False
+        store = cast(PendingHandoffStore, store)
+        try:
+            request = AudioCppModelLibraryRequest(
+                token=uuid4().hex,
+                draft_revision=snapshot.draft_revision,
+            )
+            staged_store_revision = store.stage(
+                HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST,
+                request,
+            )
+        except BaseException as error:
+            if isinstance(
+                error,
+                (
+                    asyncio.CancelledError,
+                    GeneratorExit,
+                    KeyboardInterrupt,
+                    SystemExit,
+                ),
+            ):
+                raise
+            return False
+        setattr(
+            self.app_instance,
+            "_audio_cpp_settings_model_library_request",
+            request,
+        )
+        self._speech_tts_draft_snapshot = snapshot
+        self._speech_tts_draft_state = copy.deepcopy(snapshot.state)
+        self._speech_tts_original_state = copy.deepcopy(snapshot.original_state)
+        self._speech_tts_configure_provider = snapshot.configure_provider
+        self._speech_tts_model_library_route_token = request.token
+        dispatch_error: BaseException | None = None
+        try:
+            posted = self.post_message(
+                NavigateToScreen("llm", {"view": "curated", "consumer": "audio_cpp"})
+            )
+        except BaseException as error:
+            posted = False
+            dispatch_error = error
+        if not posted:
+            self._speech_tts_model_library_route_token = None
+            if (
+                getattr(
+                    self.app_instance,
+                    "_audio_cpp_settings_model_library_request",
+                    None,
+                )
+                is request
+            ):
+                delattr(
+                    self.app_instance,
+                    "_audio_cpp_settings_model_library_request",
+                )
+            self._audio_cpp_staged_request_cleanup = (
+                request,
+                staged_store_revision,
+            )
+            try:
+                self._retry_audio_cpp_staged_request_cleanup()
+            except BaseException as cleanup_error:
+                if isinstance(
+                    cleanup_error,
+                    (
+                        asyncio.CancelledError,
+                        GeneratorExit,
+                        KeyboardInterrupt,
+                        SystemExit,
+                    ),
+                ):
+                    raise
+            if isinstance(
+                dispatch_error,
+                (
+                    asyncio.CancelledError,
+                    GeneratorExit,
+                    KeyboardInterrupt,
+                    SystemExit,
+                ),
+            ):
+                raise dispatch_error
+            return False
+        return True
+
+    def _retry_audio_cpp_staged_request_cleanup(self) -> None:
+        """Settle only this screen's failed staged request when claimable."""
+
+        cleanup = self._audio_cpp_staged_request_cleanup
+        if cleanup is None:
+            return
+        request, staged_store_revision = cleanup
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            raise _AudioCppResultTransactionError(
+                "audio.cpp request store is unavailable"
+            )
+        store = cast(PendingHandoffStore, store)
+        if store.discard_pending_exact(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST,
+            staged_store_revision,
+            request,
+        ):
+            self._audio_cpp_staged_request_cleanup = None
+            return
+        claim = store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST)
+        if claim is None:
+            return
+        if claim.revision == staged_store_revision and claim.value == request:
+            if not store.acknowledge(claim):
+                raise _AudioCppResultTransactionError(
+                    "audio.cpp request claim could not be acknowledged"
+                )
+        elif not store.release(claim):
+            raise _AudioCppResultTransactionError(
+                "foreign audio.cpp request claim could not be released"
+            )
+        self._audio_cpp_staged_request_cleanup = None
+
     def _clear_speech_tts_draft_cache(self) -> None:
         """Forget a logically resolved Speech draft before its pane is removed."""
 
         category = SettingsCategoryId.SPEECH_TTS
         self._speech_tts_draft_state = None
         self._speech_tts_original_state = None
+        self._speech_tts_draft_snapshot = None
         self._settings_drafts.pop(category, None)
         self._update_draft_status_widgets(category)
 
@@ -15704,7 +16862,9 @@ class SettingsScreen(BaseAppScreen):
                 )
             except QueryError:
                 panel = None
-            if panel is not None and panel.has_unsaved_changes():
+            if panel is not None and (
+                panel.has_unsaved_changes() or panel.audio_cpp_result_cleanup_pending()
+            ):
                 if not self._speech_tts_leave_in_progress:
                     self._speech_tts_leave_in_progress = True
                     self.run_worker(
@@ -16094,6 +17254,7 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         category = SettingsCategoryId.SPEECH_TTS
         self._speech_tts_configure_provider = event.configure_provider
+        self._speech_tts_draft_snapshot = event.snapshot
         if event.is_modified:
             self._speech_tts_draft_state = event.state
             self._speech_tts_original_state = event.original_state
@@ -16217,9 +17378,7 @@ class SettingsScreen(BaseAppScreen):
         self._mark_appearance_settings_staged()
 
     @on(Select.Changed, "#settings-appearance-transcript-style")
-    def handle_appearance_transcript_style_changed(
-        self, event: Select.Changed
-    ) -> None:
+    def handle_appearance_transcript_style_changed(self, event: Select.Changed) -> None:
         event.stop()
         if self._syncing_appearance_defaults:
             return
@@ -18043,7 +19202,9 @@ class SettingsScreen(BaseAppScreen):
                 # test_settings_provider_switch_does_not_save_stale_endpoint
                 # pins against.
                 with endpoint_input.prevent(Input.Changed):
-                    endpoint_input.value = self._provider_endpoint_value(staged_provider)
+                    endpoint_input.value = self._provider_endpoint_value(
+                        staged_provider
+                    )
                 endpoint_input.placeholder = self._provider_endpoint_placeholder(
                     staged_provider
                 )
@@ -18079,9 +19240,7 @@ class SettingsScreen(BaseAppScreen):
         self._refresh_provider_picker(event.value)
 
     @on(OptionList.OptionSelected, "#settings-provider-picker")
-    def handle_provider_picker_selected(
-        self, event: OptionList.OptionSelected
-    ) -> None:
+    def handle_provider_picker_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
         option = event.option
         action = getattr(option, "action", None)
@@ -18248,8 +19407,10 @@ class SettingsScreen(BaseAppScreen):
             queue.pop(0)
             self._update_provider_dynamic_widgets()
             return
-        if self._navigation_provider and event.value.strip() == self._provider_endpoint_value(
+        if (
             self._navigation_provider
+            and event.value.strip()
+            == self._provider_endpoint_value(self._navigation_provider)
         ):
             self._update_provider_dynamic_widgets()
             return
@@ -18298,9 +19459,7 @@ class SettingsScreen(BaseAppScreen):
                     else QWENCLOUD_API_MODE_INVALID_COPY,
                 )
                 self._update_provider_dynamic_widgets()
-                self._update_draft_status_widgets(
-                    SettingsCategoryId.PROVIDERS_MODELS
-                )
+                self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
             return
         display_value, current_value_is_valid = self._provider_api_mode_display_value(
             provider
@@ -18774,9 +19933,9 @@ class SettingsScreen(BaseAppScreen):
                         "#settings-provider-save-result", self._provider_save_result
                     )
                     try:
-                        self.query_one(
-                            "#settings-provider-api-mode", Select
-                        ).add_class("settings-invalid-input")
+                        self.query_one("#settings-provider-api-mode", Select).add_class(
+                            "settings-invalid-input"
+                        )
                     except QueryError:
                         pass
                     self.app.notify(self._provider_save_result, severity="error")
@@ -18837,8 +19996,7 @@ class SettingsScreen(BaseAppScreen):
                 provider_key == "qwencloud"
                 and draft is not None
                 and api_mode_draft_key in dirty_keys
-                and normalized_api_mode
-                != self._provider_saved_api_mode_value(provider)
+                and normalized_api_mode != self._provider_saved_api_mode_value(provider)
             )
             selected_profile = self._provider_model_profile(provider, model)
             model_profile_dirty = any(
@@ -18956,9 +20114,7 @@ class SettingsScreen(BaseAppScreen):
                 and not context_window_dirty
             ):
                 self._settings_drafts.pop(category, None)
-                self._restore_provider_api_mode_draft_snapshot(
-                    retained_api_mode_draft
-                )
+                self._restore_provider_api_mode_draft_snapshot(retained_api_mode_draft)
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(category)
                 self._provider_save_result = "Provider settings: no changes to save."
@@ -19070,26 +20226,24 @@ class SettingsScreen(BaseAppScreen):
                     if qwencloud_mode_requires_canonical_save
                     else provider_section
                 )
-                section_values.setdefault(mode_section, {})[
-                    "api_mode"
-                ] = normalized_api_mode
+                section_values.setdefault(mode_section, {})["api_mode"] = (
+                    normalized_api_mode
+                )
                 if qwencloud_mode_requires_canonical_save:
                     for alias_section in alias_mode_sections:
                         delete_keys.setdefault(
                             f"api_settings.{alias_section}", []
                         ).append("api_mode")
             if next_model_defaults is not None:
-                section_values.setdefault(provider_section, {})[
-                    "model_defaults"
-                ] = next_model_defaults
-            if next_model_capabilities is not None:
-                section_values.setdefault("model_capabilities.models", {})[
-                    model
-                ] = next_model_capabilities
-            elif delete_model_capabilities_entry:
-                delete_keys.setdefault("model_capabilities.models", []).append(
-                    model
+                section_values.setdefault(provider_section, {})["model_defaults"] = (
+                    next_model_defaults
                 )
+            if next_model_capabilities is not None:
+                section_values.setdefault("model_capabilities.models", {})[model] = (
+                    next_model_capabilities
+                )
+            elif delete_model_capabilities_entry:
+                delete_keys.setdefault("model_capabilities.models", []).append(model)
 
             normalized_delete_keys = {
                 section: tuple(dict.fromkeys(keys))
@@ -19141,9 +20295,7 @@ class SettingsScreen(BaseAppScreen):
                 ):
                     reload_capabilities()
                 self._settings_drafts.pop(category, None)
-                self._restore_provider_api_mode_draft_snapshot(
-                    retained_api_mode_draft
-                )
+                self._restore_provider_api_mode_draft_snapshot(retained_api_mode_draft)
                 self._provider_save_result = "Provider settings saved."
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
@@ -19172,9 +20324,7 @@ class SettingsScreen(BaseAppScreen):
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
-                self.app.notify(
-                    self._provider_save_result, severity="error"
-                )
+                self.app.notify(self._provider_save_result, severity="error")
             return
 
         if category is SettingsCategoryId.STORAGE:
@@ -19588,8 +20738,8 @@ class SettingsScreen(BaseAppScreen):
                     revert_select = self.query_one("#settings-provider-value", Select)
                     # task-15740: prevent the posted echo the flag misses.
                     with revert_select.prevent(Select.Changed):
-                        revert_select.value = (
-                            self._provider_select_value_for_provider(provider)
+                        revert_select.value = self._provider_select_value_for_provider(
+                            provider
                         )
                 finally:
                     self._syncing_provider_selection = False

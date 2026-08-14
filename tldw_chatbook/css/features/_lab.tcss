@@ -1267,3 +1267,95 @@ STTSProfileLibrary #stts-profile-actions #stts-profile-import-btn:disabled {
     margin: 0 2 0 0;
     border: none;
 }
+
+/* Model Library is an operate surface: rows grow with truthful package facts,
+ * while the allocated pane (including a narrow Lab rail) owns scrolling. */
+#llm-view-curated,
+#llm-view-installed,
+CuratedView,
+InstalledView {
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+CuratedView .curated-header,
+InstalledView .installed-header {
+    layout: vertical;
+    height: auto;
+}
+
+CuratedView .curated-header Button,
+InstalledView .installed-header Button {
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 1 0;
+}
+
+CuratedView .curated-list,
+InstalledView .installed-list {
+    height: 1fr;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+CuratedView .curated-model-row,
+InstalledView .installed-model-row,
+CuratedView .audio-cpp-companions,
+InstalledView .audio-cpp-companions,
+CuratedView .audio-cpp-package-copy,
+InstalledView .audio-cpp-package-copy,
+InstalledView .installed-recovery-status {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+}
+
+CuratedView .audio-cpp-actions,
+InstalledView ModelActivationControls.audio-cpp-actions,
+InstalledView ModelActivationControls.audio-cpp-actions Horizontal {
+    layout: vertical;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+}
+
+CuratedView .audio-cpp-actions Button,
+InstalledView .audio-cpp-actions Button {
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 1 0;
+}
+
+InstalledView .installed-recovery-status {
+    color: $warning;
+    margin-bottom: 1;
+}
+
+CuratedView .curated-disabled-reason,
+CuratedView .curated-recovery-status,
+InstalledView .model-disabled-reason {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    margin-bottom: 1;
+    color: $warning;
+}
+
+CuratedView Button:focus,
+CuratedView CollapsibleTitle:focus,
+InstalledView Button:focus,
+InstalledView CollapsibleTitle:focus {
+    outline: heavy $accent;
+}
+
+/* App-tier disabled ink overrides Textual's generic dimming. The neutral
+ * surface plus normal text token remains >=3:1 in all five shipped themes. */
+CuratedView Button:disabled,
+InstalledView Button:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
+    color: $text;
+    background: $surface-darken-1;
+}

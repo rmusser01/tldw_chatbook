@@ -1,7 +1,7 @@
 """Sealed package recipes for guided audio.cpp setup.
 
 Recipes are inert data. Matching consumes a bounded pre-scanned description;
-this module performs no filesystem, network, process, download, or UI work.
+managed acceptance delegates exact identity validation to the offline catalog.
 """
 
 from __future__ import annotations
@@ -15,9 +15,11 @@ from pathlib import PurePosixPath, PureWindowsPath
 from types import MappingProxyType
 from uuid import uuid4
 
+from .audio_cpp_artifact_catalog import audio_cpp_artifact_identity_matches_recipe
 from .audio_cpp_guided_config import (
     AudioCppAcceptedPackage,
     AudioCppBackendPreference,
+    AudioCppManagedArtifactIdentity,
     AudioCppRecipeOption,
     AudioCppSafeModelProjection,
     AudioCppSettingsConfig,
@@ -35,6 +37,55 @@ _PINNED_MODEL_SPEC_BASE = (
 )
 _RECIPE_EVIDENCE_REFERENCE = (
     "Docs/superpowers/specs/2026-08-09-audio-cpp-guided-model-setup-design.md"
+)
+_MODEL_LIBRARY_ADMITTED_VARIANTS = frozenset(
+    {
+        "dramabox_q8_0",
+        "fish_audio_s2_pro_bf16",
+        "fish_audio_s2_pro_q8_0",
+        "higgs_audio_tts_4b_bf16",
+        "higgs_audio_tts_4b_q8_0",
+        "index_tts2_f16",
+        "index_tts2_orig",
+        "index_tts2_q8_0",
+        "inflect_micro_v2_orig",
+        "irodori_tts_500m_v3_f16",
+        "irodori_tts_500m_v3_q8_0",
+        "irodori_tts_600m_v3_voicedesign_f16",
+        "irodori_tts_600m_v3_voicedesign_q8_0",
+        "irodori_tts_v4_small_f16",
+        "irodori_tts_v4_small_q8_0",
+        "moss_tts_local_v1_5_bf16",
+        "moss_tts_local_v1_5_q8_0",
+        "moss_tts_nano_100m_bf16",
+        "moss_tts_nano_100m_q8_0",
+        "omnivoice_bf16",
+        "omnivoice_f16",
+        "omnivoice_q8_0",
+        "pocket_tts_english_bf16",
+        "pocket_tts_english_q8_0",
+        "pocket_tts_german_bf16",
+        "pocket_tts_german_q8_0",
+        "pocket_tts_italian_bf16",
+        "pocket_tts_italian_q8_0",
+        "pocket_tts_portuguese_bf16",
+        "pocket_tts_portuguese_q8_0",
+        "pocket_tts_spanish_bf16",
+        "pocket_tts_spanish_q8_0",
+        "qwen3_tts_1_7b_base_bf16",
+        "qwen3_tts_1_7b_base_orig",
+        "qwen3_tts_1_7b_base_q8_0",
+        "supertonic_3_f16",
+        "supertonic_3_orig",
+        "vevo2_f16",
+        "vevo2_orig",
+        "vevo2_q8_0",
+        "vibevoice_1_5b_bf16",
+        "vibevoice_1_5b_q8_0",
+        "voxcpm2_bf16",
+        "voxcpm2_orig",
+        "voxcpm2_q8_0",
+    }
 )
 
 
@@ -96,8 +147,11 @@ class AudioCppReferenceRequirement(StrEnum):
 class AudioCppVoiceReferencePolicy(StrEnum):
     """Exact native-voice/reference combinations admitted by one recipe."""
 
+    TEXT_ONLY = "text_only"
     NATIVE_ONLY = "native_only"
     REFERENCE_ONLY = "reference_only"
+    OPTIONAL_REFERENCE_ONLY = "optional_reference_only"
+    VOICE_OR_REFERENCE_REQUIRED = "voice_or_reference_required"
     EITHER = "either"
     BOTH_REQUIRED_COMBINED = "both_required_combined"
 
@@ -320,12 +374,24 @@ class AudioCppPackageRecipe:
         if len(self.capabilities) != len(set(self.capabilities)):
             raise ValueError("audio.cpp recipe capabilities must be unique")
         expected_reference_contracts = {
+            AudioCppVoiceReferencePolicy.TEXT_ONLY: (
+                AudioCppReferenceRequirement.NONE,
+                False,
+            ),
             AudioCppVoiceReferencePolicy.NATIVE_ONLY: (
                 AudioCppReferenceRequirement.NONE,
                 False,
             ),
             AudioCppVoiceReferencePolicy.REFERENCE_ONLY: (
                 AudioCppReferenceRequirement.REQUIRED,
+                True,
+            ),
+            AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY: (
+                AudioCppReferenceRequirement.OPTIONAL,
+                True,
+            ),
+            AudioCppVoiceReferencePolicy.VOICE_OR_REFERENCE_REQUIRED: (
+                AudioCppReferenceRequirement.OPTIONAL,
                 True,
             ),
             AudioCppVoiceReferencePolicy.EITHER: (
@@ -374,13 +440,22 @@ class AudioCppPackageRecipe:
 
         if type(has_voice) is not bool or type(has_reference) is not bool:
             raise TypeError("audio.cpp voice/reference markers must be boolean")
+        if self.voice_reference_policy is AudioCppVoiceReferencePolicy.TEXT_ONLY:
+            return not has_voice and not has_reference
         if self.voice_reference_policy is AudioCppVoiceReferencePolicy.NATIVE_ONLY:
             return not has_reference
+        if self.voice_reference_policy is AudioCppVoiceReferencePolicy.REFERENCE_ONLY:
+            return has_reference and not has_voice
         if (
             self.voice_reference_policy
-            is AudioCppVoiceReferencePolicy.REFERENCE_ONLY
+            is AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY
         ):
-            return has_reference and not has_voice
+            return not has_voice
+        if (
+            self.voice_reference_policy
+            is AudioCppVoiceReferencePolicy.VOICE_OR_REFERENCE_REQUIRED
+        ):
+            return has_voice is not has_reference
         if self.voice_reference_policy is AudioCppVoiceReferencePolicy.EITHER:
             return not (has_voice and has_reference)
         return has_voice and has_reference
@@ -435,6 +510,24 @@ def _identity(parts: tuple[str, ...]) -> str:
     return sha256("\x00".join(parts).encode("utf-8")).hexdigest()
 
 
+def _managed_artifact_matches_recipe(
+    recipe: AudioCppPackageRecipe,
+    identity: AudioCppManagedArtifactIdentity,
+) -> bool:
+    if type(identity) is not AudioCppManagedArtifactIdentity:
+        return False
+    return audio_cpp_artifact_identity_matches_recipe(
+        recipe_id=recipe.recipe_id,
+        recipe_revision=recipe.recipe_revision,
+        package_variant=recipe.package_variant,
+        recipe_artifact_ids=recipe.model_library_artifact_ids,
+        recipe_precision=recipe.precision,
+        artifact_id=identity.artifact_id,
+        revision=identity.revision,
+        variant=identity.variant,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class AudioCppPackageCandidate:
     """One exact candidate suitable for explicit user acceptance."""
@@ -447,18 +540,30 @@ class AudioCppPackageCandidate:
     safe_name: str
     evidence_relative_paths: tuple[str, ...]
 
-    def accept(self, *, public_model_id: str | None = None) -> AudioCppAcceptedPackage:
+    def accept(
+        self,
+        *,
+        public_model_id: str | None = None,
+        managed_artifact: AudioCppManagedArtifactIdentity | None = None,
+    ) -> AudioCppAcceptedPackage:
         """Freeze this exact match into a durable accepted snapshot.
 
         Args:
             public_model_id: Optional user-facing model ID override.
+            managed_artifact: Optional exact managed-store identity.
 
         Returns:
             A new immutable accepted-package snapshot with a durable UUID.
 
         Raises:
-            ValueError: If the requested public model ID is invalid.
+            ValueError: If the requested public model ID or managed identity is
+                invalid for this exact recipe.
         """
+        if managed_artifact is not None and not _managed_artifact_matches_recipe(
+            self.recipe,
+            managed_artifact,
+        ):
+            raise ValueError("audio.cpp managed artifact does not match recipe")
         return AudioCppAcceptedPackage(
             package_uuid=str(uuid4()),
             recipe_id=self.recipe.recipe_id,
@@ -474,6 +579,7 @@ class AudioCppPackageCandidate:
             configuration_identity=self.configuration_identity,
             weight_identity=self.weight_identity,
             projection=self.recipe.projection,
+            managed_artifact=managed_artifact,
         )
 
 
@@ -503,6 +609,9 @@ class AudioCppRecipeRegistry:
     """Small immutable registry with pure matching and snapshot validation."""
 
     __slots__ = ("_by_id", "_by_package", "_recipes")
+    _by_id: MappingProxyType[str, AudioCppPackageRecipe]
+    _by_package: MappingProxyType[str, AudioCppPackageRecipe]
+    _recipes: tuple[AudioCppPackageRecipe, ...]
 
     def __init__(self, recipes: tuple[AudioCppPackageRecipe, ...]) -> None:
         ordered = tuple(sorted(recipes, key=lambda item: item.recipe_id))
@@ -682,6 +791,13 @@ class AudioCppRecipeRegistry:
             accepted.recipe_revision != recipe.recipe_revision
             or accepted.package_variant != recipe.package_variant
             or accepted.projection != recipe.projection
+            or (
+                accepted.managed_artifact is not None
+                and not _managed_artifact_matches_recipe(
+                    recipe,
+                    accepted.managed_artifact,
+                )
+            )
         ):
             raise ValueError("audio.cpp accepted package requires recipe review")
         return recipe
@@ -728,6 +844,7 @@ class AudioCppReleaseAccountingEntry:
     state: AudioCppRecipeSupportState
     recipe_id: str | None = None
     reason: str | None = None
+    evidence_reference: str | None = None
 
 
 _EXPECTED_CPU_BACKENDS = tuple(
@@ -780,6 +897,7 @@ def _recipe(
     recipe_revision: int = 1,
     reference_requirement: AudioCppReferenceRequirement | None = None,
     voice_reference_policy: AudioCppVoiceReferencePolicy | None = None,
+    task: str = "tts",
 ) -> AudioCppPackageRecipe:
     options = (
         ()
@@ -788,7 +906,7 @@ def _recipe(
     )
     projection = AudioCppSafeModelProjection(
         family=family,
-        task="tts",
+        task=task,
         mode="offline",
         model_relative_path=model_relative_path,
         load_options=options,
@@ -830,6 +948,11 @@ def _recipe(
         support_state=AudioCppRecipeSupportState.APPROVED,
         evidence_reference=_RECIPE_EVIDENCE_REFERENCE,
         source_links=(f"{_PINNED_MODEL_SPEC_BASE}/{family}.json",),
+        model_library_artifact_ids=(
+            (f"audio-cpp-{package_variant.replace('_', '-')}",)
+            if package_variant in _MODEL_LIBRARY_ADMITTED_VARIANTS
+            else ()
+        ),
     )
 
 
@@ -950,10 +1073,510 @@ _INITIAL_RECIPES = (
         ),
         model_relative_path=None,
         language="english",
+        voice_reference_policy=(
+            AudioCppVoiceReferencePolicy.VOICE_OR_REFERENCE_REQUIRED
+        ),
     ),
 )
 
-AUDIO_CPP_RECIPE_REGISTRY = AudioCppRecipeRegistry(_INITIAL_RECIPES)
+
+_ADDITIONAL_VOICE_POLICIES = {
+    "dramabox_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "vibevoice_1_5b_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "vibevoice_1_5b_bf16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "moss_tts_nano_100m_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "moss_tts_nano_100m_bf16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "fish_audio_s2_pro_q8_0": AudioCppVoiceReferencePolicy.EITHER,
+    "fish_audio_s2_pro_bf16": AudioCppVoiceReferencePolicy.EITHER,
+    "omnivoice_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "omnivoice_bf16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "omnivoice_f16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "omnivoice_safetensors": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "voxcpm2_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "voxcpm2_bf16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "voxcpm2_orig": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "voxcpm2_safetensors": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "irodori_tts_v4_small_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "irodori_tts_v4_small_f16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "irodori_tts_600m_v3_voicedesign_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "irodori_tts_600m_v3_voicedesign_f16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "irodori_tts_500m_v3_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "irodori_tts_500m_v3_f16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "moss_tts_local_v1_5_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "moss_tts_local_v1_5_bf16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "outetts_1_0_1b_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "inflect_micro_v2_orig": AudioCppVoiceReferencePolicy.TEXT_ONLY,
+}
+
+
+_ADDITIONAL_GGUF_VARIANTS = (
+    # family, variant, display name, precision, relative model path, capabilities,
+    # reference requirement, projected task
+    (
+        "dramabox",
+        "dramabox_q8_0",
+        "DramaBox Q8_0 GGUF",
+        "q8_0",
+        "dramabox-q8_0.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "vibevoice",
+        "vibevoice_1_5b_q8_0",
+        "VibeVoice 1.5B Q8_0 GGUF",
+        "q8_0",
+        "vibevoice-1.5b-q8_0.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "vibevoice",
+        "vibevoice_1_5b_bf16",
+        "VibeVoice 1.5B BF16 GGUF",
+        "bf16",
+        "vibevoice-1.5b-bf16.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "moss_tts_nano",
+        "moss_tts_nano_100m_q8_0",
+        "MOSS-TTS-Nano 100M Q8_0 GGUF",
+        "q8_0",
+        "moss-tts-nano-100m-q8_0.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "moss_tts_nano",
+        "moss_tts_nano_100m_bf16",
+        "MOSS-TTS-Nano 100M BF16 GGUF",
+        "bf16",
+        "moss-tts-nano-100m-bf16.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "fish_audio",
+        "fish_audio_s2_pro_q8_0",
+        "Fish Audio S2 Pro Q8_0 GGUF",
+        "q8_0",
+        "fish-audio-s2-pro-q8_0.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "fish_audio",
+        "fish_audio_s2_pro_bf16",
+        "Fish Audio S2 Pro BF16 GGUF",
+        "bf16",
+        "fish-audio-s2-pro-bf16.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "higgs_audio_tts",
+        "higgs_audio_tts_4b_q8_0",
+        "Higgs Audio v3 TTS 4B Q8_0 GGUF",
+        "q8_0",
+        "higgs-audio-v3-tts-4b-q8_0.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
+        "tts",
+    ),
+    (
+        "higgs_audio_tts",
+        "higgs_audio_tts_4b_bf16",
+        "Higgs Audio v3 TTS 4B BF16 GGUF",
+        "bf16",
+        "higgs-audio-v3-tts-4b-bf16.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
+        "tts",
+    ),
+    (
+        "omnivoice",
+        "omnivoice_q8_0",
+        "OmniVoice Q8_0 GGUF",
+        "q8_0",
+        "omnivoice-q8_0.gguf",
+        ("tts", "clone", "design"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "omnivoice",
+        "omnivoice_bf16",
+        "OmniVoice BF16 GGUF",
+        "bf16",
+        "omnivoice-bf16.gguf",
+        ("tts", "clone", "design"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "omnivoice",
+        "omnivoice_f16",
+        "OmniVoice F16 GGUF",
+        "f16",
+        "omnivoice-f16.gguf",
+        ("tts", "clone", "design"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "qwen3_tts",
+        "qwen3_tts_1_7b_base_q8_0",
+        "Qwen3 TTS 12Hz 1.7B Base Q8_0 GGUF",
+        "q8_0",
+        "qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
+        "tts",
+    ),
+    (
+        "qwen3_tts",
+        "qwen3_tts_1_7b_base_bf16",
+        "Qwen3 TTS 12Hz 1.7B Base BF16 GGUF",
+        "bf16",
+        "qwen3-tts-12hz-1.7b-base-bf16.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
+        "tts",
+    ),
+    (
+        "qwen3_tts",
+        "qwen3_tts_1_7b_base_orig",
+        "Qwen3 TTS 12Hz 1.7B Base Original-Dtype GGUF",
+        "orig",
+        "qwen3-tts-12hz-1.7b-base-orig.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
+        "tts",
+    ),
+    (
+        "voxcpm2",
+        "voxcpm2_q8_0",
+        "VoxCPM2 Q8_0 GGUF",
+        "q8_0",
+        "voxcpm2-q8_0.gguf",
+        ("tts", "clone", "design"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "voxcpm2",
+        "voxcpm2_bf16",
+        "VoxCPM2 BF16 GGUF",
+        "bf16",
+        "voxcpm2-bf16.gguf",
+        ("tts", "clone", "design"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "voxcpm2",
+        "voxcpm2_orig",
+        "VoxCPM2 Original-Dtype GGUF",
+        "orig",
+        "voxcpm2-orig.gguf",
+        ("tts", "clone", "design"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "vevo2",
+        "vevo2_q8_0",
+        "Vevo2 Q8_0 GGUF",
+        "q8_0",
+        "vevo2-q8_0.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
+        "tts",
+    ),
+    (
+        "vevo2",
+        "vevo2_f16",
+        "Vevo2 F16 GGUF",
+        "f16",
+        "vevo2-f16.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
+        "tts",
+    ),
+    (
+        "vevo2",
+        "vevo2_orig",
+        "Vevo2 Original-Dtype GGUF",
+        "orig",
+        "vevo2-orig.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
+        "tts",
+    ),
+    (
+        "index_tts2",
+        "index_tts2_q8_0",
+        "IndexTTS2 Q8_0 GGUF",
+        "q8_0",
+        "index-tts2-q8_0.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
+        "tts",
+    ),
+    (
+        "index_tts2",
+        "index_tts2_f16",
+        "IndexTTS2 F16 GGUF",
+        "f16",
+        "index-tts2-f16.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
+        "tts",
+    ),
+    (
+        "index_tts2",
+        "index_tts2_orig",
+        "IndexTTS2 Original-Dtype GGUF",
+        "orig",
+        "index-tts2-orig.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
+        "tts",
+    ),
+    (
+        "irodori_tts",
+        "irodori_tts_v4_small_q8_0",
+        "Irodori-TTS v4 Small Q8_0 GGUF",
+        "q8_0",
+        "irodori-tts-v4-small-q8_0.gguf",
+        ("tts", "clone", "design"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "irodori_tts",
+        "irodori_tts_v4_small_f16",
+        "Irodori-TTS v4 Small F16 GGUF",
+        "f16",
+        "irodori-tts-v4-small-f16.gguf",
+        ("tts", "clone", "design"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "irodori_tts",
+        "irodori_tts_600m_v3_voicedesign_q8_0",
+        "Irodori-TTS 600M v3 VoiceDesign Q8_0 GGUF",
+        "q8_0",
+        "irodori-tts-600m-v3-voicedesign-q8_0.gguf",
+        ("tts", "clone", "design"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "irodori_tts",
+        "irodori_tts_600m_v3_voicedesign_f16",
+        "Irodori-TTS 600M v3 VoiceDesign F16 GGUF",
+        "f16",
+        "irodori-tts-600m-v3-voicedesign-f16.gguf",
+        ("tts", "clone", "design"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "irodori_tts",
+        "irodori_tts_500m_v3_q8_0",
+        "Irodori-TTS 500M v3 Q8_0 GGUF",
+        "q8_0",
+        "irodori-tts-500m-v3-q8_0.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "irodori_tts",
+        "irodori_tts_500m_v3_f16",
+        "Irodori-TTS 500M v3 F16 GGUF",
+        "f16",
+        "irodori-tts-500m-v3-f16.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "moss_tts_local",
+        "moss_tts_local_v1_5_q8_0",
+        "MOSS-TTS-Local v1.5 Q8_0 GGUF",
+        "q8_0",
+        "moss-tts-local-v1.5-q8_0.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "moss_tts_local",
+        "moss_tts_local_v1_5_bf16",
+        "MOSS-TTS-Local v1.5 BF16 GGUF",
+        "bf16",
+        "moss-tts-local-v1.5-bf16.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+    (
+        "glm_tts",
+        "glm_tts_q8_0",
+        "GLM-TTS mixed Q8_0/F16 GGUF",
+        "q8_0",
+        "Text to audio (TTS)/GLM-TTS_Q8.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.REQUIRED,
+        "tts",
+    ),
+    (
+        "inflect_v2",
+        "inflect_micro_v2_orig",
+        "Inflect Micro v2 Original-Dtype GGUF",
+        "orig",
+        "inflect-micro-v2-orig.gguf",
+        ("tts",),
+        AudioCppReferenceRequirement.NONE,
+        "tts",
+    ),
+    (
+        "outetts",
+        "outetts_1_0_1b_q8_0",
+        "Llama-OuteTTS 1.0 1B Q8_0 GGUF",
+        "q8_0",
+        "Text to audio (TTS)/Llama-OuteTTS-1.0-1B_Q8.gguf",
+        ("tts", "clone"),
+        AudioCppReferenceRequirement.OPTIONAL,
+        "tts",
+    ),
+)
+
+
+def _package_files(*paths: str) -> tuple[AudioCppFileSignal, ...]:
+    return tuple(
+        _safetensors_file(path, AudioCppFileRole.WEIGHT)
+        if path.endswith(".safetensors")
+        else _config_file(path)
+        for path in paths
+    )
+
+
+_ADDITIONAL_RECIPES = (
+    *(
+        _recipe(
+            family=family,
+            package_variant=variant,
+            display_name=display_name,
+            package_format=AudioCppFileKind.GGUF,
+            precision=precision,
+            capabilities=capabilities,
+            required_files=(_gguf_file(model_path),),
+            model_relative_path=model_path,
+            reference_requirement=reference_requirement,
+            voice_reference_policy=_ADDITIONAL_VOICE_POLICIES.get(variant),
+            task=task,
+        )
+        for (
+            family,
+            variant,
+            display_name,
+            precision,
+            model_path,
+            capabilities,
+            reference_requirement,
+            task,
+        ) in _ADDITIONAL_GGUF_VARIANTS
+    ),
+    _recipe(
+        family="omnivoice",
+        package_variant="omnivoice_safetensors",
+        display_name="OmniVoice Safetensors",
+        package_format=AudioCppFileKind.SAFETENSORS,
+        precision="native",
+        capabilities=("tts", "clone", "design"),
+        required_files=_package_files(
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "audio_tokenizer/config.json",
+            "audio_tokenizer/preprocessor_config.json",
+            "model.safetensors",
+            "audio_tokenizer/model.safetensors",
+        ),
+        model_relative_path=None,
+        reference_requirement=AudioCppReferenceRequirement.OPTIONAL,
+        voice_reference_policy=_ADDITIONAL_VOICE_POLICIES["omnivoice_safetensors"],
+    ),
+    _recipe(
+        family="voxcpm2",
+        package_variant="voxcpm2_safetensors",
+        display_name="VoxCPM2 Safetensors",
+        package_format=AudioCppFileKind.SAFETENSORS,
+        precision="native",
+        capabilities=("tts", "clone", "design"),
+        required_files=_package_files(
+            "config.json",
+            "tokenizer_config.json",
+            "tokenizer.json",
+            "special_tokens_map.json",
+            "model.safetensors",
+            "audiovae.safetensors",
+        ),
+        model_relative_path=None,
+        reference_requirement=AudioCppReferenceRequirement.OPTIONAL,
+        voice_reference_policy=_ADDITIONAL_VOICE_POLICIES["voxcpm2_safetensors"],
+    ),
+    _recipe(
+        family="index_tts2",
+        package_variant="index_tts2_safetensors",
+        display_name="IndexTTS2 Safetensors",
+        package_format=AudioCppFileKind.SAFETENSORS,
+        precision="native",
+        capabilities=("tts", "clone"),
+        required_files=_package_files(
+            "config.yaml",
+            "bpe.model",
+            "w2v-bert-2.0/config.json",
+            "w2v-bert-2.0/preprocessor_config.json",
+            "bigvgan/config.json",
+            "qwen0.6bemo4-merge/config.json",
+            "qwen0.6bemo4-merge/generation_config.json",
+            "qwen0.6bemo4-merge/tokenizer.json",
+            "qwen0.6bemo4-merge/tokenizer_config.json",
+            "qwen0.6bemo4-merge/vocab.json",
+            "qwen0.6bemo4-merge/merges.txt",
+            "gpt.safetensors",
+            "s2mel.safetensors",
+            "feat1.safetensors",
+            "feat2.safetensors",
+            "wav2vec2bert_stats.safetensors",
+            "w2v-bert-2.0/model.safetensors",
+            "semantic_codec_model.safetensors",
+            "campplus.safetensors",
+            "bigvgan/model.safetensors",
+            "qwen0.6bemo4-merge/model.safetensors",
+        ),
+        model_relative_path=None,
+        reference_requirement=AudioCppReferenceRequirement.REQUIRED,
+    ),
+)
+
+AUDIO_CPP_RECIPE_REGISTRY = AudioCppRecipeRegistry(
+    _INITIAL_RECIPES + _ADDITIONAL_RECIPES
+)
 
 
 def audio_cpp_guided_default_is_text_ready(
@@ -961,7 +1584,7 @@ def audio_cpp_guided_default_is_text_ready(
     *,
     registry: AudioCppRecipeRegistry = AUDIO_CPP_RECIPE_REGISTRY,
 ) -> bool:
-    """Return whether the exact Guided default can generate without a reference.
+    """Return whether the exact Guided default can generate without voice inputs.
 
     Args:
         settings: Validated full audio.cpp Settings snapshot.
@@ -969,7 +1592,7 @@ def audio_cpp_guided_default_is_text_ready(
 
     Returns:
         ``True`` only when the exact default package is a reviewed text-to-speech
-        recipe that does not require a voice reference.
+        recipe that admits a request with neither a native voice nor a reference.
     """
 
     default_model_id = settings.guided_default_model_id
@@ -984,8 +1607,10 @@ def audio_cpp_guided_default_is_text_ready(
             return False
         return bool(
             recipe.projection.task == "tts"
-            and recipe.reference_requirement
-            is not AudioCppReferenceRequirement.REQUIRED
+            and recipe.admits_voice_reference(
+                has_voice=False,
+                has_reference=False,
+            )
         )
     return False
 
@@ -1043,6 +1668,76 @@ _RELEASE_PACKAGES: dict[str, tuple[str, ...]] = {
     "vietneu_tts": ("vietneu_tts_v3_turbo_q8_0",),
 }
 
+_UNSUPPORTED_RELEASE_PACKAGES = {
+    "chatterbox_q8_0": (
+        "The exact clon/vc task tokens are outside the typed guided projection.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/tts.md#chatterbox",
+    ),
+    "chatterbox_f16": (
+        "The exact clon/vc task tokens are outside the typed guided projection.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/tts.md#chatterbox",
+    ),
+    "chatterbox_safetensors": (
+        "The exact clon/vc task tokens are outside the typed guided projection.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/tts.md#chatterbox",
+    ),
+    "confucius4_tts_orig": (
+        "The exact clon task token is outside the typed guided projection.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/tts.md#confucius4-tts",
+    ),
+    "miotts_1_7b_q8_0": (
+        "Guided projection cannot resolve the required sibling MioCodec path.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/tts.md#miotts",
+    ),
+    "miotts_1_7b_bf16": (
+        "Guided projection cannot resolve the required sibling MioCodec path.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/tts.md#miotts",
+    ),
+    "miotts_1_7b_orig": (
+        "Guided projection cannot resolve the required sibling MioCodec path.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/tts.md#miotts",
+    ),
+    "qwen3_tts_1_7b_base_safetensors": (
+        "Bounded file signals cannot distinguish the two Base Safetensors sizes.",
+        f"{_PINNED_MODEL_SPEC_BASE}/qwen3_tts.json",
+    ),
+    "qwen3_tts_0_6b_base_safetensors": (
+        "Bounded file signals cannot distinguish the two Base Safetensors sizes.",
+        f"{_PINNED_MODEL_SPEC_BASE}/qwen3_tts.json",
+    ),
+    "qwen3_tts_1_7b_customvoice_q8_0": (
+        "Packaged speaker input is required, but the typed policy permits no voice.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/models/qwen3.md#qwen3-tts-customvoice",
+    ),
+    "qwen3_tts_1_7b_customvoice_bf16": (
+        "Packaged speaker input is required, but the typed policy permits no voice.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/models/qwen3.md#qwen3-tts-customvoice",
+    ),
+    "qwen3_tts_1_7b_voicedesign_q8_0": (
+        "The exact vdes task token is outside the typed guided projection.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/models/qwen3.md#qwen3-tts-voicedesign",
+    ),
+    "qwen3_tts_1_7b_voicedesign_bf16": (
+        "The exact vdes task token is outside the typed guided projection.",
+        f"https://github.com/0xShug0/audio.cpp/blob/{AUDIO_CPP_PINNED_COMMIT}"
+        "/docs/models/qwen3.md#qwen3-tts-voicedesign",
+    ),
+    "vietneu_tts_v3_turbo_q8_0": (
+        "The official package exposes only generic model.gguf as a bounded signal.",
+        f"{_PINNED_MODEL_SPEC_BASE}/vietneu_tts.json",
+    ),
+}
+
 
 def _release_accounting() -> tuple[AudioCppReleaseAccountingEntry, ...]:
     approved = {
@@ -1056,13 +1751,26 @@ def _release_accounting() -> tuple[AudioCppReleaseAccountingEntry, ...]:
             state=(
                 AudioCppRecipeSupportState.APPROVED
                 if package_variant in approved
+                else AudioCppRecipeSupportState.EXPLICITLY_UNSUPPORTED
+                if package_variant in _UNSUPPORTED_RELEASE_PACKAGES
                 else AudioCppRecipeSupportState.OPEN_GAP
             ),
             recipe_id=approved.get(package_variant),
             reason=(
                 None
                 if package_variant in approved
-                else "Recipe review is not complete."
+                else _UNSUPPORTED_RELEASE_PACKAGES.get(
+                    package_variant,
+                    ("Recipe review is not complete.", None),
+                )[0]
+            ),
+            evidence_reference=(
+                None
+                if package_variant in approved
+                else _UNSUPPORTED_RELEASE_PACKAGES.get(
+                    package_variant,
+                    (None, None),
+                )[1]
             ),
         )
         for family, packages in _RELEASE_PACKAGES.items()

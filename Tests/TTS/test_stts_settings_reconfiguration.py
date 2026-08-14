@@ -303,15 +303,18 @@ def test_settings_save_event_copies_mapping_and_carries_preferences() -> None:
             "base_url": "http://127.0.0.1:8080",
         }
     }
+    publication_lease = SimpleNamespace(adopt=lambda: None, release=lambda: None)
 
     event = STTSSettingsSaveEvent(
         MappingProxyType(provider_settings),
         preferences=preferences,
+        publication_lease=publication_lease,
     )
     provider_settings["audio_cpp"]["base_url"] = "http://mutated.invalid"
 
     assert event.settings["audio_cpp"]["base_url"] == "http://127.0.0.1:8080"
     assert event.preferences is preferences
+    assert event.publication_lease is publication_lease
 
 
 def test_settings_save_event_defaults_to_provider_settings_only() -> None:
@@ -374,6 +377,216 @@ async def test_cross_provider_event_persists_fields_and_removes_confirmation(
     assert saved["app_tts"]["ELEVENLABS_VOICE_STABILITY"] == 0.7
     service.reconfigure_provider.assert_awaited_once()
     assert service.reconfigure_provider.await_args.args[0] == "elevenlabs"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_phase", ("already_started", "while_waiting"))
+async def test_cleanup_started_abandons_unadopted_settings_publication_lease(
+    cleanup_phase: str,
+) -> None:
+    """An ignored Save returns its transferred hold to app-owned cleanup."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+        AudioCppModelInstallOwner,
+    )
+
+    owner = AudioCppModelInstallOwner()
+    close_calls = 0
+
+    class Lease:
+        def close(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    hold = await owner.acquire_lease_hold(
+        (reference,),
+        lambda: SimpleNamespace(acquire_installed_root=lambda _ref: Lease()),
+    )
+    event = STTSSettingsSaveEvent(
+        {},
+        publication_lease=owner.transfer_lease_hold_to_publication(hold),
+    )
+    handler = STTSEventHandler(RecordingApp())
+    if cleanup_phase == "already_started":
+        handler._cleanup_task = asyncio.create_task(asyncio.sleep(0))
+        await handler._cleanup_task
+        await handler.handle_settings_save(event)
+    else:
+        await handler._settings_save_lock.acquire()
+        save = asyncio.create_task(handler.handle_settings_save(event))
+        await asyncio.sleep(0)
+        handler._cleanup_task = asyncio.create_task(asyncio.sleep(0))
+        await handler._cleanup_task
+        handler._settings_save_lock.release()
+        await save
+    await owner.wait_until_idle()
+
+    assert close_calls == 1
+    assert not owner.cleanup_pending
+
+
+@pytest.mark.asyncio
+async def test_begin_publication_failure_abandons_and_retries_exact_cleanup() -> None:
+    """An ordinary begin failure cannot strand or drop the transferred hold."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+        AudioCppModelInstallOwner,
+    )
+
+    owner = AudioCppModelInstallOwner()
+    fail_close = True
+    close_calls = 0
+
+    class Lease:
+        def close(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+            if fail_close:
+                raise RuntimeError("PRIVATE_BEGIN_CLEANUP_CANARY")
+
+    class FailingService:
+        def begin_preferences_publication(self, *_args: object, **_kwargs: object):
+            raise RuntimeError("PRIVATE_BEGIN_CANARY")
+
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    hold = await owner.acquire_lease_hold(
+        (reference,),
+        lambda: SimpleNamespace(acquire_installed_root=lambda _ref: Lease()),
+    )
+    event = STTSSettingsSaveEvent(
+        {},
+        preferences=_audio_cpp_preferences(),
+        publication_lease=owner.transfer_lease_hold_to_publication(hold),
+    )
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = FailingService()
+
+    await handler.handle_settings_save(event)
+    await owner.wait_until_idle()
+
+    assert close_calls == 1
+    assert owner.cleanup_pending
+    assert all("PRIVATE" not in message for message, _severity in app.notifications)
+
+    fail_close = False
+    owner.retry_cleanup()
+    await owner.wait_until_idle()
+    assert close_calls == 2
+    assert not owner.cleanup_pending
+
+
+@pytest.mark.asyncio
+async def test_begin_publication_control_flow_abandons_before_exact_reraise() -> None:
+    """Begin control flow remains exact after synchronously abandoning the hold."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+        AudioCppModelInstallOwner,
+    )
+
+    owner = AudioCppModelInstallOwner()
+    close_calls = 0
+    signal = GeneratorExit("PRIVATE_BEGIN_CONTROL_CANARY")
+
+    class Lease:
+        def close(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+
+    class FailingService:
+        def begin_preferences_publication(self, *_args: object, **_kwargs: object):
+            raise signal
+
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    hold = await owner.acquire_lease_hold(
+        (reference,),
+        lambda: SimpleNamespace(acquire_installed_root=lambda _ref: Lease()),
+    )
+    event = STTSSettingsSaveEvent(
+        {},
+        preferences=_audio_cpp_preferences(),
+        publication_lease=owner.transfer_lease_hold_to_publication(hold),
+    )
+    handler = STTSEventHandler(RecordingApp())
+    handler._stts_service = FailingService()
+
+    with pytest.raises(GeneratorExit) as caught:
+        await handler.handle_settings_save(event)
+    await owner.wait_until_idle()
+
+    assert caught.value is signal
+    assert close_calls == 1
+    assert not owner.cleanup_pending
+
+
+@pytest.mark.asyncio
+async def test_begin_task_failure_keeps_adopted_transfer_service_owned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Handler finalization cannot release a transfer adopted before task failure."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.TTS import TTS_Generation as generation_module
+    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+        AudioCppModelInstallOwner,
+    )
+
+    owner = AudioCppModelInstallOwner()
+    close_calls = 0
+
+    class Lease:
+        def close(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    hold = await owner.acquire_lease_hold(
+        (reference,),
+        lambda: SimpleNamespace(acquire_installed_root=lambda _ref: Lease()),
+    )
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                RecordingFactory("audio_cpp"),
+                AudioCppConfig().to_mapping(),
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+    event = STTSSettingsSaveEvent(
+        {},
+        preferences=_audio_cpp_preferences(),
+        publication_lease=owner.transfer_lease_hold_to_publication(hold),
+    )
+    handler = STTSEventHandler(RecordingApp())
+    handler._stts_service = service
+    real_create_task = generation_module.asyncio.create_task
+
+    def fail_publication_task(coroutine: object, *, name: str | None = None):
+        if name is not None and name.startswith("tts_settings_publication_"):
+            coroutine.close()  # type: ignore[attr-defined]
+            raise RuntimeError("PRIVATE_HANDLER_TASK_CANARY")
+        return real_create_task(coroutine, name=name)  # type: ignore[arg-type]
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(generation_module.asyncio, "create_task", fail_publication_task)
+        await handler.handle_settings_save(event)
+
+    assert event.publication_lease is None
+    assert close_calls == 0
+    assert owner.cleanup_pending
+
+    await service.close()
+    await service.wait_closed()
+    assert close_calls == 1
+    assert not owner.cleanup_pending
 
 
 @pytest.mark.asyncio
@@ -2461,6 +2674,268 @@ async def test_settings_handler_merges_preferences_before_retained_publication(
     ]
     await service.close()
     await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_publication_lease_survives_app_owner_shutdown_until_persistence_settles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An adopted Save hold outlives panel/app-owner teardown and releases last."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+        AudioCppModelInstallOwner,
+    )
+
+    owner = AudioCppModelInstallOwner()
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    persist_started = threading.Event()
+    allow_persist = threading.Event()
+    close_calls = 0
+
+    class Lease:
+        def close(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+
+    hold = await owner.acquire_lease_hold(
+        (reference,),
+        lambda: SimpleNamespace(acquire_installed_root=lambda _ref: Lease()),
+    )
+    publication_lease = owner.transfer_lease_hold_to_publication(hold)
+    factory = RecordingFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                factory,
+                AudioCppConfig().to_mapping(),
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+
+    def persist() -> TTSSettingsPersistenceOutcome:
+        persist_started.set()
+        assert allow_persist.wait(2)
+        return _mutation_outcome()
+
+    ticket = service.begin_preferences_publication(
+        _audio_cpp_preferences(),
+        {"audio_cpp": AudioCppConfig().to_mapping()},
+        persist,
+        publication_lease=publication_lease,
+    )
+    assert await asyncio.to_thread(persist_started.wait, 2)
+
+    await owner.shutdown()
+    assert close_calls == 0
+
+    close_task = asyncio.create_task(service.close())
+    shutdown_join = asyncio.create_task(service.wait_closed())
+    await asyncio.sleep(0)
+    assert not shutdown_join.done()
+    assert close_calls == 0
+
+    allow_persist.set()
+    await ticket.completion
+    await close_task
+    await shutdown_join
+
+    assert close_calls == 1
+    assert not owner.cleanup_pending
+
+
+@pytest.mark.asyncio
+async def test_publication_lease_cleanup_failure_is_retried_by_service_shutdown() -> (
+    None
+):
+    """Failed publication cleanup stays exact until service shutdown retry."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+        AudioCppModelInstallOwner,
+    )
+
+    owner = AudioCppModelInstallOwner()
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    fail_close = True
+    close_calls = 0
+
+    class Lease:
+        def close(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+            if fail_close:
+                raise RuntimeError("PRIVATE_PUBLICATION_CLEANUP_CANARY")
+
+    hold = await owner.acquire_lease_hold(
+        (reference,),
+        lambda: SimpleNamespace(acquire_installed_root=lambda _ref: Lease()),
+    )
+    publication_lease = owner.transfer_lease_hold_to_publication(hold)
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                RecordingFactory("audio_cpp"),
+                AudioCppConfig().to_mapping(),
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+    ticket = service.begin_preferences_publication(
+        _audio_cpp_preferences(),
+        {"audio_cpp": AudioCppConfig().to_mapping()},
+        _mutation_outcome,
+        publication_lease=publication_lease,
+    )
+
+    publication = await ticket.completion
+    assert publication.persistence.file_replaced is True
+    assert close_calls == 1
+    assert owner.cleanup_pending
+
+    fail_close = False
+    await service.close()
+    await service.wait_closed()
+
+    assert close_calls == 2
+    assert not owner.cleanup_pending
+
+
+@pytest.mark.asyncio
+async def test_persistent_publication_cleanup_failure_surfaces_and_retains_owner() -> (
+    None
+):
+    """Service shutdown reports a stable failure without dropping the hold."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+        AudioCppModelInstallOwner,
+    )
+
+    owner = AudioCppModelInstallOwner()
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    fail_close = True
+    persist_started = threading.Event()
+    allow_persist = threading.Event()
+
+    class Lease:
+        def close(self) -> None:
+            if fail_close:
+                raise RuntimeError("PRIVATE_PERSISTENT_PUBLICATION_CLEANUP")
+
+    hold = await owner.acquire_lease_hold(
+        (reference,),
+        lambda: SimpleNamespace(acquire_installed_root=lambda _ref: Lease()),
+    )
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                RecordingFactory("audio_cpp"),
+                AudioCppConfig().to_mapping(),
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+
+    def persist() -> TTSSettingsPersistenceOutcome:
+        persist_started.set()
+        assert allow_persist.wait(2)
+        return _mutation_outcome()
+
+    ticket = service.begin_preferences_publication(
+        _audio_cpp_preferences(),
+        {"audio_cpp": AudioCppConfig().to_mapping()},
+        persist,
+        publication_lease=owner.transfer_lease_hold_to_publication(hold),
+    )
+    assert await asyncio.to_thread(persist_started.wait, 2)
+
+    await owner.shutdown()
+    allow_persist.set()
+    await ticket.completion
+
+    await service.close()
+    with pytest.raises(RuntimeError) as caught:
+        await service.wait_closed()
+    assert "PRIVATE" not in str(caught.value)
+    assert owner.cleanup_pending
+
+    fail_close = False
+    await owner.shutdown()
+    assert not owner.cleanup_pending
+
+
+@pytest.mark.asyncio
+async def test_publication_task_creation_failure_remains_service_owned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A task-construction failure cannot return an adopted hold to the panel."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.TTS import TTS_Generation as generation_module
+    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+        AudioCppModelInstallOwner,
+    )
+
+    owner = AudioCppModelInstallOwner()
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    close_calls = 0
+
+    class Lease:
+        def close(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+
+    hold = await owner.acquire_lease_hold(
+        (reference,),
+        lambda: SimpleNamespace(acquire_installed_root=lambda _ref: Lease()),
+    )
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                RecordingFactory("audio_cpp"),
+                AudioCppConfig().to_mapping(),
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+    real_create_task = generation_module.asyncio.create_task
+
+    def fail_publication_task(coroutine: object, *, name: str | None = None):
+        if name is not None and name.startswith("tts_settings_publication_"):
+            coroutine.close()  # type: ignore[attr-defined]
+            raise RuntimeError("PRIVATE_PUBLICATION_TASK_CANARY")
+        return real_create_task(coroutine, name=name)  # type: ignore[arg-type]
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(generation_module.asyncio, "create_task", fail_publication_task)
+        with pytest.raises(RuntimeError, match="PRIVATE_PUBLICATION_TASK_CANARY"):
+            service.begin_preferences_publication(
+                _audio_cpp_preferences(),
+                {"audio_cpp": AudioCppConfig().to_mapping()},
+                _mutation_outcome,
+                publication_lease=owner.transfer_lease_hold_to_publication(hold),
+            )
+
+    assert owner.cleanup_pending
+    assert close_calls == 0
+    await service.close()
+    await service.wait_closed()
+    assert close_calls == 1
+    assert not owner.cleanup_pending
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ import builtins
 import gc
 import threading
 from collections.abc import AsyncIterator, Iterator, Mapping
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -611,14 +612,19 @@ async def test_profile_service_concurrent_first_use_joins_one_open_and_construct
     repository = BlockingRepository()
     tts_service = object()
     profile_service = object()
-    constructions: list[tuple[object, object]] = []
+    coordinator = object()
+    constructions: list[tuple[object, object, object]] = []
 
     def build_profile_service(
         repository_dependency: object,
         tts_dependency: object,
+        *,
+        artifact_lease_coordinator: object,
     ) -> object:
         assert repository.state is ProfileRepositoryState.OPEN
-        constructions.append((repository_dependency, tts_dependency))
+        constructions.append(
+            (repository_dependency, tts_dependency, artifact_lease_coordinator)
+        )
         return profile_service
 
     monkeypatch.setattr(
@@ -639,6 +645,7 @@ async def test_profile_service_concurrent_first_use_joins_one_open_and_construct
         return await TldwCli._ensure_tts_profile_repository(owner)
 
     owner._ensure_tts_profile_repository = ensure_repository
+    owner._ensure_audio_cpp_artifact_lease_coordinator = lambda: coordinator
 
     first = asyncio.create_task(TldwCli._ensure_tts_profile_service(owner))
     second = asyncio.create_task(TldwCli._ensure_tts_profile_service(owner))
@@ -658,8 +665,263 @@ async def test_profile_service_concurrent_first_use_joins_one_open_and_construct
     assert await second is profile_service
     assert await TldwCli._ensure_tts_profile_service(owner) is profile_service
     assert repository.open_calls == 1
-    assert constructions == [(repository, tts_service)]
+    assert constructions == [(repository, tts_service, coordinator)]
     assert owner._tts_profile_service is profile_service
+
+
+@pytest.mark.asyncio
+async def test_removal_evidence_uses_bounded_profile_snapshot_and_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+
+    class Profiles:
+        async def bounded_profile_assignment_snapshot(self):
+            raise ProfileRepositoryError("unavailable")
+
+        def __getattr__(self, name: str):
+            if name in {"list_profiles", "get_profile", "assignment_count"}:
+                raise AssertionError("app must use the service-owned bounded snapshot")
+            raise AttributeError(name)
+
+    class Registry:
+        async def provider_configuration_snapshot(self, _provider_id: str):
+            return SimpleNamespace(
+                staged_config=None,
+                applied_config={},
+                staged_generation=0,
+            )
+
+    profile_service = Profiles()
+    owner = SimpleNamespace(
+        app_config={},
+        screen=SimpleNamespace(),
+        tts_service=SimpleNamespace(registry=Registry()),
+    )
+
+    async def ensure_profiles() -> Profiles:
+        return profile_service
+
+    owner._ensure_tts_profile_service = ensure_profiles
+    owner._audio_cpp_removal_settings_inputs = lambda: (
+        app_module.AudioCppSettingsConfig(),
+        None,
+        TTSPreferencesSnapshot(
+            provider_id="openai",
+            model_mode="exact",
+            model_id="tts-1",
+            voice_mode="exact",
+            voice_id="alloy",
+            response_format="mp3",
+            speed=1.0,
+        ),
+        None,
+    )
+    monkeypatch.setattr(
+        app_module,
+        "project_audio_cpp_artifact_removal_evidence",
+        lambda *_args, **_kwargs: object(),
+    )
+
+    with pytest.raises(ProfileRepositoryError, match="unavailable"):
+        await TldwCli._audio_cpp_artifact_removal_evidence(
+            owner,
+            ArtifactRef("audio-cpp-model", "a" * 40, "q8_0"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_model_library_bulk_observation_collects_shared_evidence_once() -> None:
+    """Many exact refs share one Settings/profile/runtime collection generation."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    calls = {"settings": 0, "profiles": 0, "runtime": 0}
+
+    class Profiles:
+        async def bounded_profile_assignment_snapshot(self):
+            calls["profiles"] += 1
+            return ()
+
+    class Registry:
+        async def provider_configuration_snapshot(self, provider_id: str):
+            calls["runtime"] += 1
+            assert provider_id == "audio_cpp"
+            return SimpleNamespace(
+                staged_config=None,
+                applied_config={},
+                staged_generation=0,
+            )
+
+    def settings_inputs():
+        calls["settings"] += 1
+        return (
+            app_module.AudioCppSettingsConfig(),
+            None,
+            TTSPreferencesSnapshot(
+                provider_id="openai",
+                model_mode="exact",
+                model_id="tts-1",
+                voice_mode="exact",
+                voice_id="alloy",
+                response_format="mp3",
+                speed=1.0,
+            ),
+            None,
+        )
+
+    profiles = Profiles()
+
+    async def ensure_profiles():
+        return profiles
+
+    owner = SimpleNamespace(
+        _audio_cpp_removal_settings_inputs=settings_inputs,
+        _ensure_tts_profile_service=ensure_profiles,
+        tts_service=SimpleNamespace(
+            registry=Registry(),
+            _audio_cpp_supervisor=None,
+        ),
+    )
+    references = tuple(
+        ArtifactRef(f"audio-cpp-model-{index}", chr(97 + index) * 40, "q8_0")
+        for index in range(3)
+    )
+    collect = getattr(TldwCli, "_audio_cpp_model_library_observation_snapshot", None)
+    assert callable(collect)
+
+    snapshot = await collect(owner, references)
+
+    assert type(snapshot).__name__ == "AudioCppModelLibraryObservationSnapshot"
+    assert tuple(item.reference for item in snapshot.observations) == references
+    assert calls == {"settings": 1, "profiles": 1, "runtime": 1}
+    with pytest.raises((AttributeError, TypeError)):
+        snapshot.observations = ()
+
+
+def test_removal_settings_inputs_prefer_exact_detached_typed_draft() -> None:
+    """Detached Settings state wins over a stale mounted fallback snapshot."""
+
+    from dataclasses import replace
+
+    from Tests.UI.test_settings_speech_tts_panel import _audio_cpp_state
+    from tldw_chatbook.UI.Navigation.screen_state_store import (
+        RuntimeIdentity,
+        ScreenStateStore,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSPanelDraftSnapshot,
+        _RealtimeSettingsDraft,
+    )
+
+    realtime = _RealtimeSettingsDraft(
+        False,
+        "openai",
+        "gpt-realtime",
+        "",
+        "30",
+        "auto",
+        "semantic_vad",
+        "0.5",
+        "500",
+    )
+
+    def snapshot(model_id: str) -> SpeechTTSPanelDraftSnapshot:
+        state = _audio_cpp_state(model_mode="exact", model_id=model_id)
+        original = _audio_cpp_state()
+        return SpeechTTSPanelDraftSnapshot(
+            state=state,
+            original_state=original,
+            realtime_draft=realtime,
+            realtime_original=replace(realtime),
+            configure_provider="audio_cpp",
+            draft_revision=1,
+        )
+
+    identity = RuntimeIdentity("local")
+    store = ScreenStateStore()
+    store.save(
+        "settings",
+        {"speech_tts_panel_draft": snapshot("stored-exact-model")},
+        identity,
+    )
+    owner = SimpleNamespace(
+        app_config={},
+        screen_state_store=store,
+        screen=SimpleNamespace(
+            _speech_tts_draft_snapshot=snapshot("mounted-stale-model")
+        ),
+        _current_runtime_identity=lambda: identity,
+    )
+
+    _saved, draft, _saved_preferences, draft_preferences = (
+        TldwCli._audio_cpp_removal_settings_inputs(owner)
+    )
+
+    assert draft is not None
+    assert draft_preferences is not None
+    assert draft_preferences.provider_id == "audio_cpp"
+    assert draft_preferences.model_mode == "exact"
+    assert draft_preferences.model_id == "stored-exact-model"
+
+
+def test_removal_settings_inputs_treat_missing_stored_draft_as_no_draft() -> None:
+    """An authoritative Settings snapshot without Speech/TTS has no draft."""
+
+    from Tests.UI.test_settings_speech_tts_panel import _audio_cpp_state
+    from tldw_chatbook.UI.Navigation.screen_state_store import (
+        RuntimeIdentity,
+        ScreenStateStore,
+    )
+
+    identity = RuntimeIdentity("local")
+    store = ScreenStateStore()
+    store.save("settings", {"active_category": "theme"}, identity)
+    owner = SimpleNamespace(
+        app_config={},
+        screen_state_store=store,
+        screen=SimpleNamespace(
+            _speech_tts_draft_snapshot=SimpleNamespace(state=_audio_cpp_state())
+        ),
+        _current_runtime_identity=lambda: identity,
+    )
+
+    _saved, draft, _saved_preferences, draft_preferences = (
+        TldwCli._audio_cpp_removal_settings_inputs(owner)
+    )
+
+    assert draft is None
+    assert draft_preferences is None
+
+
+@pytest.mark.asyncio
+async def test_app_lifecycle_shutdown_drains_artifact_coordinator_first() -> None:
+    calls: list[str] = []
+
+    class Coordinator:
+        async def shutdown(self) -> None:
+            calls.append("coordinator")
+
+    class InstallOwner:
+        async def shutdown(self) -> None:
+            calls.append("install")
+
+    async def image_shutdown() -> None:
+        calls.append("image")
+
+    async def notes_shutdown() -> None:
+        calls.append("notes")
+
+    owner = SimpleNamespace(
+        _audio_cpp_artifact_lease_coordinator=Coordinator(),
+        audio_cpp_model_install_owner=InstallOwner(),
+        _shutdown_console_image_edits=image_shutdown,
+        _shutdown_file_notes_session_owner=notes_shutdown,
+    )
+
+    await TldwCli._shutdown_app_owned_lifecycles(owner)
+
+    assert calls == ["coordinator", "install", "image", "notes"]
 
 
 @pytest.mark.asyncio
@@ -802,9 +1064,17 @@ def test_profile_service_owns_only_existing_app_dependencies() -> None:
 
     profile_service = tts_package.TTSProfileService(repository, tts_service)
 
-    assert vars(profile_service) == {
-        "_repository": repository,
-        "_tts_service": tts_service,
+    assert profile_service._repository is repository
+    assert profile_service._tts_service is tts_service
+    assert isinstance(profile_service._consumer_mutation_lock, asyncio.Lock)
+    assert set(vars(profile_service)) == {
+        "_repository",
+        "_tts_service",
+        "_consumer_mutation_lock",
+        "_sample_evidence",
+        "_sample_evidence_lock",
+        "_sample_evidence_lifecycle",
+        "_sample_evidence_epoch",
     }
     for resource_name in (
         "_close_task",
@@ -1002,10 +1272,26 @@ async def test_voice_bundle_service_is_lazy_singleton_and_closes_before_reposito
 
     portability = PortabilityOwner()
     repository = object()
-    profile_service = object()
+
+    @asynccontextmanager
+    async def mutation_fence():
+        yield
+
+    profile_service = SimpleNamespace(consumer_mutation_fence=mutation_fence)
     tts_service = object()
 
-    def build(root: Path, repo: object, dependency: object) -> object:
+    coordinator = object()
+
+    def build(
+        root: Path,
+        repo: object,
+        dependency: object,
+        *,
+        profile_mutation_fence: object,
+        artifact_lease_coordinator: object,
+    ) -> object:
+        assert artifact_lease_coordinator is coordinator
+        assert profile_mutation_fence is mutation_fence
         constructed.append((root, repo, dependency))
         return portability
 
@@ -1022,6 +1308,7 @@ async def test_voice_bundle_service_is_lazy_singleton_and_closes_before_reposito
         return profile_service
 
     owner._ensure_tts_profile_service = ensure_profile_service
+    owner._ensure_audio_cpp_artifact_lease_coordinator = lambda: coordinator
 
     first = await TldwCli._ensure_tts_voice_bundle_service(owner)
     second = await TldwCli._ensure_tts_voice_bundle_service(owner)

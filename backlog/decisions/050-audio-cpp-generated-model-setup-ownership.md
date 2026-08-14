@@ -128,6 +128,42 @@ Settings and Speech Lab.
 
 ## Consequences
 
+### TASK-13207 amendment: pinned Model Library packages
+
+Reviewed audio.cpp packages offered by Model Library are described by a static
+Chatbook catalog pinned to commit
+`597048d9a920592808d7d4e2acd7b9c4596a143a` of the official
+`audio-cpp/audio.cpp-gguf` Hugging Face repository. Hugging Face hosts the
+bytes; the built-in recipe registry remains the compatibility authority. Recipe
+support and official-artifact availability are independent: an approved recipe
+may remain local-only, while an explicitly unsupported recipe cannot become
+downloadable merely because a similarly named file exists. Every visible
+package needs exact file sizes and SHA-256 values, artifact-specific license
+evidence, a complete companion-file closure, and an exact recipe mapping.
+Runtime does not browse or reinterpret moving repository state.
+
+An explicit Model Library install provisions one self-contained managed package
+root without activating it, saving Settings, selecting a TTS/Studio default, or
+launching audio.cpp. Guided Settings persists an optional exact managed
+artifact identity alongside its existing package evidence. At a deliberate
+Start/Test/apply boundary, the runtime activates and acquires that exact
+artifact and retains its shared lease for the whole staged/live generation.
+
+Removal is owned by the shared artifact service and begins with a versioned
+dependency preview covering Guided Settings and drafts, profiles and clone
+references, character assignments, runtime generations, and artifact leases.
+Live/staged leases block removal. Durable consumers may remain only after the
+user explicitly acknowledges that they will become unavailable; Chatbook never
+retargets or deletes them as a removal side effect. The final removal
+uses one service-owned authority that acquires the existing lifecycle then
+artifact locks exactly once, revalidates the preview under that authority, and
+commits without calling the public lock-acquiring delete path recursively.
+
+Package companions live in the same managed root as the selected variant. The
+scanner and generated configuration both require one canonical package root;
+Chatbook does not synthesize a linked multi-root view merely to deduplicate
+companion files.
+
 ### Benefits
 
 - A new user can configure supported audio.cpp model packages without writing

@@ -834,6 +834,38 @@ async def test_generated_artifact_is_revalidated_and_cleaned_after_exact_stop(
 
 
 @pytest.mark.asyncio
+async def test_generated_artifact_runtime_handle_outlives_owned_child(
+    tmp_path: Path,
+) -> None:
+    """Runtime leases must remain held until the owned child has exited."""
+    process = _FakeProcess()
+
+    class _OrderingArtifact(_GeneratedArtifactSpy):
+        cleanup_attempts = 0
+
+        def cleanup(self) -> None:
+            self.cleanup_attempts += 1
+            assert process.returncode is not None
+            super().cleanup()
+
+    artifact = _OrderingArtifact()
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher([process]),
+        port_preflight=_available_preflight,
+    )
+    launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
+
+    await supervisor.ensure_running(
+        launch,
+        generation_hooks_factory=_HooksFactory(),
+    )
+    await supervisor.stop()
+
+    assert artifact.cleanup_attempts == artifact.cleanup_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_generated_artifact_is_cleaned_after_pre_spawn_failure(
     tmp_path: Path,
 ) -> None:
@@ -867,12 +899,14 @@ async def test_pre_spawn_cleanup_failure_blocks_later_launch_with_safe_phase(
     private_detail = "SYNTHETIC_PRIVATE_PRESPAWN_CLEANUP_DETAIL"
     artifact = _GeneratedArtifactSpy(cleanup_failure=RuntimeError(private_detail))
 
+    port_available = False
+
     async def unavailable_port(_port: int, _timeout: float) -> str:
-        return "occupied"
+        return "available" if port_available else "occupied"
 
     supervisor = AudioCppSupervisor(
         source_environment={},
-        process_launcher=_FakeLauncher(),
+        process_launcher=_FakeLauncher([_FakeProcess()]),
         port_preflight=unavailable_port,
     )
     launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
@@ -901,6 +935,70 @@ async def test_pre_spawn_cleanup_failure_blocks_later_launch_with_safe_phase(
             )
         assert retried.value.code == "cleanup_failed"
         assert _exception_graph(retried.value) == [retried.value]
+
+        artifact.cleanup_failure = None
+        await supervisor.stop()
+        assert artifact.cleanup_calls == 2
+        assert supervisor.admission_snapshot().stage_application_eligible is True
+
+        port_available = True
+        replacement = replace(_make_launch(tmp_path), generated_artifact=None)
+        endpoint = await supervisor.ensure_running(
+            replacement,
+            generation_hooks_factory=_HooksFactory(),
+        )
+        assert endpoint.process_generation == 1
+        await supervisor.stop()
+    finally:
+        await asyncio.gather(supervisor.close(), return_exceptions=True)
+        await asyncio.gather(supervisor.wait_closed(), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_pre_spawn_cleanup_failure_is_retained_for_second_stop(
+    tmp_path: Path,
+) -> None:
+    """Cancelled startup leaves one retryable pre-spawn artifact authority."""
+
+    artifact = _GeneratedArtifactSpy(
+        cleanup_failure=RuntimeError("PRIVATE_CANCELLED_PRESPAWN_CLEANUP")
+    )
+    spawn_started = asyncio.Event()
+
+    async def blocked_launcher(
+        _launch: AudioCppManagedLaunchConfig,
+        _environment: dict[str, str],
+    ) -> _OwnedAudioCppProcess:
+        spawn_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=blocked_launcher,
+        port_preflight=_available_preflight,
+    )
+    launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
+    start = asyncio.create_task(
+        supervisor.ensure_running(
+            launch,
+            generation_hooks_factory=_HooksFactory(),
+        )
+    )
+    await spawn_started.wait()
+
+    try:
+        with pytest.raises(TTSOperationError) as first_stop:
+            await supervisor.stop()
+        assert first_stop.value.code == "cleanup_failed"
+        with pytest.raises(asyncio.CancelledError):
+            await start
+        assert supervisor.admission_snapshot().stage_application_eligible is False
+
+        artifact.cleanup_failure = None
+        await supervisor.stop()
+        assert supervisor.admission_snapshot().stage_application_eligible is True
+        assert artifact.cleanup_calls >= 2
     finally:
         await asyncio.gather(supervisor.close(), return_exceptions=True)
         await asyncio.gather(supervisor.wait_closed(), return_exceptions=True)
@@ -965,9 +1063,10 @@ async def test_generated_artifact_cleanup_failure_is_safe_and_blocks_relaunch(
         port_preflight=_available_preflight,
     )
     launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
+    hooks = _HooksFactory()
     await supervisor.ensure_running(
         launch,
-        generation_hooks_factory=_HooksFactory(),
+        generation_hooks_factory=hooks,
     )
 
     try:
@@ -989,6 +1088,8 @@ async def test_generated_artifact_cleanup_failure_is_safe_and_blocks_relaunch(
         assert supervisor.admission_snapshot().stage_application_eligible is False
         assert artifact.cleanup_calls == 1
         assert process.wait_calls == 1
+        retained = supervisor._generation
+        assert retained is not None
 
         with pytest.raises(TTSOperationError) as retried:
             await supervisor.ensure_running(
@@ -997,6 +1098,13 @@ async def test_generated_artifact_cleanup_failure_is_safe_and_blocks_relaunch(
             )
         assert retried.value.code == "cleanup_failed"
         assert _exception_graph(retried.value) == [retried.value]
+
+        artifact.cleanup_failure = None
+        await supervisor.stop()
+        assert artifact.cleanup_calls == 2
+        assert hooks.cleanup_calls == 1
+        assert supervisor._generation is None
+        assert process.wait_calls == 1
     finally:
         await asyncio.gather(supervisor.close(), return_exceptions=True)
         await asyncio.gather(supervisor.wait_closed(), return_exceptions=True)

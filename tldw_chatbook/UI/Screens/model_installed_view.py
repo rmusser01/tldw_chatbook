@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 from collections.abc import Callable
@@ -13,9 +14,10 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.events import DescendantFocus
 from textual.screen import Screen
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import Button, Collapsible, Static
 
 from tldw_chatbook.Model_Artifacts.gguf_admission import (
     GGUFBoundsError,
@@ -28,6 +30,7 @@ from tldw_chatbook.Model_Artifacts.service import (
     ArtifactDiskUsage,
     ArtifactInUseError,
     ArtifactNotReadyError,
+    ArtifactRemovalAvailability,
     ArtifactRef,
     ArtifactIntegrityError,
     ArtifactStateError,
@@ -36,12 +39,28 @@ from tldw_chatbook.Model_Artifacts.service import (
     ModelArtifactService,
     ReconcileReport,
 )
+from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+    AudioCppArtifactRemovalPreview,
+    AudioCppModelLibraryObservationSnapshot,
+    build_audio_cpp_artifact_removal_preview,
+    is_curated_audio_cpp_artifact_reference,
+)
 from tldw_chatbook.Model_Artifacts.store import managed_service
 from tldw_chatbook.UI.Screens.model_browser_state import (
     InventoryRow,
     UnmanagedRow,
     format_mib,
     inventory_rows,
+)
+from tldw_chatbook.UI.Screens.model_curated_view import (
+    AudioCppObservationProvider,
+    AudioCppPackageProjection,
+    ModelLibraryFocusLocator,
+    audio_cpp_package_projection,
+    clear_audio_cpp_observation,
+    model_library_focus_locator,
+    project_audio_cpp_observation,
+    restore_model_library_focus,
 )
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
@@ -209,6 +228,7 @@ class InstalledView(Widget):
         recycle_idle: Callable[[ArtifactRef], bool] | None = None,
         can_start_import: Callable[[], bool] | None = None,
         on_import_lane_changed: Callable[[bool], None] | None = None,
+        observation_provider: AudioCppObservationProvider | None = None,
         id: str | None = None,
     ) -> None:
         """Create an idle view; no filesystem work occurs here.
@@ -232,6 +252,7 @@ class InstalledView(Widget):
         )
         self._can_start_import = can_start_import or (lambda: True)
         self._on_import_lane_changed = on_import_lane_changed or (lambda _active: None)
+        self._observation_provider = observation_provider
         self._import_lane_owned = False
         self._service: ModelArtifactService | None = None
         self._rows: tuple[InventoryRow, ...] = ()
@@ -240,11 +261,14 @@ class InstalledView(Widget):
         self._loading = False
         self._reload_after_load = False
         self._load_error: str | None = None
+        self._audio_cpp_projections: dict[ArtifactRef, AudioCppPackageProjection] = {}
+        self._lifecycle_status: str | None = None
         self._install_active = False
         self._install_progress: AcquisitionProgress | None = None
         self._operation_reference: ArtifactRef | None = None
         self._operation_name: str | None = None
         self._pending_delete_reference: ArtifactRef | None = None
+        self._pending_removal_preview: AudioCppArtifactRemovalPreview | None = None
         self._import_generation = 0
         self._import_selecting = False
         self._import_active = False
@@ -256,6 +280,9 @@ class InstalledView(Widget):
         self._pending_import_path: Path | None = None
         self._import_status: str | None = None
         self._import_retry_available = False
+        self._restore_header_focus_id: str | None = None
+        self._observation_generation = 0
+        self._observation_focus_locator: ModelLibraryFocusLocator | None = None
         super().__init__(id=id)
 
     def _non_import_lifecycle_pending(self) -> bool:
@@ -323,6 +350,13 @@ class InstalledView(Widget):
                 id="installed-gguf-import-status",
                 markup=False,
             )
+        if self._lifecycle_status is not None:
+            yield Static(
+                self._lifecycle_status,
+                id="installed-lifecycle-status",
+                classes="installed-recovery-status",
+                markup=False,
+            )
         if self._import_active:
             with Horizontal(classes="installed-import-actions"):
                 yield Button(
@@ -342,11 +376,13 @@ class InstalledView(Widget):
         elif self._load_error:
             yield Static(self._load_error, markup=False)
         elif not self._loaded:
-            yield Static("Open Installed to load the local model inventory.", markup=False)
+            yield Static(
+                "Open Installed to load the local model inventory.", markup=False
+            )
         else:
             yield self._summary()
 
-        with VerticalScroll(classes="installed-list"):
+        with VerticalScroll(classes="installed-list", can_focus=False):
             if self._loaded and not self._rows:
                 yield Static(
                     "No managed or legacy models found. Use Import GGUF… for a "
@@ -404,10 +440,18 @@ class InstalledView(Widget):
 
     def _row_widget(self, row: InventoryRow) -> Vertical:
         """Build one inventory row from pure render state."""
+        audio_cpp = (
+            self._audio_cpp_projections.get(row.reference)
+            if row.reference is not None
+            else None
+        )
         children: list[Widget] = [
             Static(row.model_label, classes="installed-model-title", markup=False),
-            Static(row.provenance, classes="installed-model-muted", markup=False),
         ]
+        if audio_cpp is None:
+            children.append(
+                Static(row.provenance, classes="installed-model-muted", markup=False)
+            )
         if row.reference is not None:
             children.append(
                 Static(
@@ -428,7 +472,10 @@ class InstalledView(Widget):
                 )
         if row.size_bytes is not None:
             children.append(Static(f"Size: {format_mib(row.size_bytes)}"))
-        children.append(Static(row.action_hint, markup=False))
+        if audio_cpp is None:
+            children.append(Static(row.action_hint, markup=False))
+        else:
+            children.extend(self._audio_cpp_facts(row, audio_cpp))
         if row.reference == self._operation_reference:
             recovery_text = _DELETE_RECOVERY_TEXT.get(self._operation_name or "")
             if recovery_text is not None:
@@ -440,15 +487,23 @@ class InstalledView(Widget):
                     )
                 )
         if row.reference is not None and not row.is_broken:
-            children.append(
-                ModelActivationControls(
-                    row.reference,
-                    active=row.active,
-                    ready=row.ready,
-                    allow_activation=row.activation_allowed,
-                    pending=self._lifecycle_pending(),
-                )
+            controls = ModelActivationControls(
+                row.reference,
+                active=row.active,
+                ready=row.ready,
+                allow_activation=(
+                    False if audio_cpp is not None else row.activation_allowed
+                ),
+                pending=self._lifecycle_pending(),
+                disabled_reason=(
+                    "Delete unavailable — another model package operation is in progress."
+                    if audio_cpp is not None and self._lifecycle_pending()
+                    else None
+                ),
             )
+            if audio_cpp is not None:
+                controls.add_class("audio-cpp-actions")
+            children.append(controls)
         elif row.is_unmanaged and row.path.suffix.casefold() == ".gguf":
             children.append(
                 LocalGGUFImportControls(
@@ -456,7 +511,65 @@ class InstalledView(Widget):
                     pending=self._lifecycle_pending(),
                 )
             )
-        return Vertical(*children, classes="installed-model-row")
+        classes = (
+            "installed-model-row audio-cpp-model-row"
+            if audio_cpp is not None
+            else "installed-model-row"
+        )
+        widget = Vertical(*children, classes=classes)
+        widget.reference = row.reference
+        return widget
+
+    @staticmethod
+    def _audio_cpp_facts(
+        row: InventoryRow,
+        projection: AudioCppPackageProjection,
+    ) -> tuple[Widget, ...]:
+        """Render package truth without inferring configuration or runtime use."""
+
+        companions = Collapsible(
+            Static("\n".join(projection.companion_paths) or "None", markup=False),
+            title=f"Companion files ({len(projection.companion_paths)})",
+            classes="audio-cpp-companions",
+            collapsed=True,
+        )
+        return (
+            Static(f"Available: {projection.availability}", markup=False),
+            Static("Installed package: Local record found", markup=False),
+            Static(
+                "Integrity: Unknown — package record needs Repair"
+                if row.error is not None
+                else "Integrity: Not checked this session",
+                markup=False,
+            ),
+            Static(f"Recipe: {projection.recipe}", markup=False),
+            Static(f"Compatibility: {projection.compatibility}", markup=False),
+            Static(
+                f"Configured: {projection.configured}",
+                classes="audio-cpp-configured",
+                markup=False,
+            ),
+            Static(
+                f"Running: {projection.running}",
+                classes="audio-cpp-running",
+                markup=False,
+            ),
+            Static(f"Speech tasks: {projection.speech_tasks}", markup=False),
+            Static(
+                f"Required package files: {projection.required_files}", markup=False
+            ),
+            Static(f"Pinned source: {projection.pinned_source}", markup=False),
+            Static(
+                f"Manifest authority: {projection.manifest_authority}", markup=False
+            ),
+            Static(f"Package size: {projection.package_size}", markup=False),
+            companions,
+            Static(
+                "Model package only — audiocpp_server is not included",
+                classes="installed-model-muted audio-cpp-package-copy",
+                markup=False,
+            ),
+        )
 
     @staticmethod
     def scan_unmanaged(
@@ -527,6 +640,7 @@ class InstalledView(Widget):
             return
         if self._loaded and not force:
             return
+        self._observation_generation += 1
         self._loading = True
         self._load_error = None
         self.refresh(recompose=True)
@@ -538,7 +652,9 @@ class InstalledView(Widget):
             self._service = self._service_factory()
         return self._service
 
-    @work(thread=True, group="installed_models_load", exclusive=True, exit_on_error=False)
+    @work(
+        thread=True, group="installed_models_load", exclusive=True, exit_on_error=False
+    )
     def _load_inventory(self) -> None:
         """Read managed inventory, disk totals, and legacy files off-loop."""
         try:
@@ -550,6 +666,13 @@ class InstalledView(Widget):
                 excluded_root=getattr(service, "artifacts_path", None),
             )
             rows = inventory_rows(installed, usage, unmanaged)
+            audio_cpp = {
+                item.descriptor.reference: projection
+                for item in installed
+                if item.descriptor is not None
+                and (projection := audio_cpp_package_projection(item.descriptor))
+                is not None
+            }
         except Exception:
             logger.opt(exception=True).error(
                 "Managed model inventory load failed; legacy_scan_configured={}",
@@ -562,13 +685,14 @@ class InstalledView(Widget):
                 "The local model inventory could not be loaded.",
             )
             return
-        self.app.call_from_thread(self._apply_inventory, rows, usage, None)
+        self.app.call_from_thread(self._apply_inventory, rows, usage, None, audio_cpp)
 
     def _apply_inventory(
         self,
         rows: tuple[InventoryRow, ...],
         usage: ArtifactDiskUsage | None,
         error: str | None,
+        audio_cpp: dict[ArtifactRef, AudioCppPackageProjection] | None = None,
     ) -> None:
         """Apply a completed inventory read on the Textual event loop."""
         self._rows = rows
@@ -576,14 +700,136 @@ class InstalledView(Widget):
         self._loading = False
         self._loaded = error is None
         self._load_error = error
+        if audio_cpp is not None:
+            self._audio_cpp_projections = audio_cpp
         reload_after_load = self._reload_after_load
         self._reload_after_load = False
         if reload_after_load:
             self.ensure_loaded(force=True)
         else:
             self.refresh(recompose=True)
+            if error is None and self._observation_provider is not None:
+                self.refresh_observations()
             if self._import_status is not None:
                 self.call_after_refresh(self._focus_import_recovery)
+            elif self._restore_header_focus_id is not None:
+                focus_id = self._restore_header_focus_id
+                self._restore_header_focus_id = None
+                self.call_after_refresh(self.restore_focus, focus_id)
+
+    def refresh_observations(self) -> None:
+        """Refresh current exact refs without re-reading managed inventory."""
+
+        if self._observation_provider is None:
+            return
+        references = tuple(self._audio_cpp_projections)
+        if not references:
+            return
+        self._observation_generation += 1
+        focused = self.app.focused
+        locator = (
+            self.focus_locator(focused)
+            if focused is not None and self in focused.ancestors_with_self
+            else None
+        )
+        if locator is not None:
+            self._observation_focus_locator = locator
+        else:
+            locator = self._observation_focus_locator
+        projections = {
+            reference: clear_audio_cpp_observation(projection)
+            for reference, projection in self._audio_cpp_projections.items()
+        }
+        if projections != self._audio_cpp_projections:
+            self._audio_cpp_projections = projections
+            self._update_audio_cpp_observation_facts()
+        self.refresh()
+        self.call_after_refresh(
+            self._start_audio_cpp_observation,
+            self._observation_generation,
+            references,
+            locator,
+        )
+
+    def _start_audio_cpp_observation(
+        self,
+        generation: int,
+        references: tuple[ArtifactRef, ...],
+        locator: ModelLibraryFocusLocator | None,
+    ) -> None:
+        """Start only the still-current deferred observation generation."""
+
+        if (
+            generation != self._observation_generation
+            or tuple(self._audio_cpp_projections) != references
+        ):
+            return
+        self._observation_focus_locator = None
+        self._observe_audio_cpp_rows(generation, references, locator)
+
+    @work(group="installed_audio_cpp_observation", exclusive=True, exit_on_error=False)
+    async def _observe_audio_cpp_rows(
+        self,
+        generation: int,
+        references: tuple[ArtifactRef, ...],
+        locator: ModelLibraryFocusLocator | None,
+    ) -> None:
+        """Apply one generation-gated bulk Settings/runtime observation."""
+
+        provider = self._observation_provider
+        if provider is None:
+            return
+        try:
+            snapshot = await provider(references)
+        except Exception:
+            return
+        if (
+            type(snapshot) is not AudioCppModelLibraryObservationSnapshot
+            or generation != self._observation_generation
+            or not self.is_attached
+            or tuple(self._audio_cpp_projections) != references
+        ):
+            return
+        evidence_by_ref = {item.reference: item for item in snapshot.observations}
+        projections = {
+            reference: project_audio_cpp_observation(
+                projection,
+                reference,
+                evidence_by_ref[reference],
+            )
+            if reference in evidence_by_ref
+            else projection
+            for reference, projection in self._audio_cpp_projections.items()
+        }
+        if projections == self._audio_cpp_projections:
+            return
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors_with_self:
+            locator = self.focus_locator(focused) or locator
+        self._audio_cpp_projections = projections
+        self._update_audio_cpp_observation_facts()
+        self.refresh()
+        if locator is not None:
+            self.restore_focus(locator)
+
+    def _update_audio_cpp_observation_facts(self) -> None:
+        """Update the two observed facts without replacing row actions."""
+
+        for widget in self.query(".audio-cpp-model-row"):
+            projection = self._audio_cpp_projections.get(
+                getattr(widget, "reference", None)
+            )
+            if projection is None:
+                continue
+            try:
+                widget.query_one(".audio-cpp-configured", Static).update(
+                    f"Configured: {projection.configured}"
+                )
+                widget.query_one(".audio-cpp-running", Static).update(
+                    f"Running: {projection.running}"
+                )
+            except NoMatches:
+                continue
 
     def _focus_import_recovery(self) -> None:
         """Restore focus to one stable import control after recomposition."""
@@ -598,6 +844,33 @@ class InstalledView(Widget):
             if not control.disabled:
                 control.focus()
                 return
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Keep keyboard-selected disclosures and actions inside the viewport."""
+
+        event.widget.scroll_visible(animate=False, immediate=True, force=True)
+
+    def focus_locator(self, widget: Widget) -> ModelLibraryFocusLocator | None:
+        """Return a stable exact-row locator for focus across pane changes."""
+
+        return model_library_focus_locator(
+            self,
+            widget,
+            row_selector=".installed-model-row",
+            action_class="model-delete",
+            action_role="delete",
+        )
+
+    def restore_focus(self, locator: ModelLibraryFocusLocator) -> None:
+        """Restore an id-based header or exact-ref row control."""
+
+        restore_model_library_focus(
+            self,
+            locator,
+            row_selector=".installed-model-row",
+            action_role="delete",
+            action_selector=".model-delete",
+        )
 
     @on(Button.Pressed, "#installed-models-import-gguf")
     def _header_import_pressed(self) -> None:
@@ -999,12 +1272,14 @@ class InstalledView(Widget):
     def _refresh_pressed(self) -> None:
         if self._lifecycle_pending():
             return
+        self._restore_header_focus_id = "installed-models-refresh"
         self.ensure_loaded(force=True)
 
     @on(Button.Pressed, "#installed-models-repair")
     def _repair_pressed(self) -> None:
         if self._lifecycle_pending():
             return
+        self._restore_header_focus_id = "installed-models-repair"
         self._operation_name = "repair"
         self.refresh(recompose=True)
         self._repair_store()
@@ -1028,32 +1303,145 @@ class InstalledView(Widget):
         event.stop()
         if self._lifecycle_pending():
             return
+        self._lifecycle_status = None
         blocked = self._may_delete(event.reference)
         if blocked is not None:
             self.notify(blocked, severity="warning")
             return
         self._pending_delete_reference = event.reference
         self.refresh(recompose=True)
+        if is_curated_audio_cpp_artifact_reference(event.reference):
+            self._operation_reference = event.reference
+            self._operation_name = "review-removal"
+            self._review_audio_cpp_deletion(event.reference)
+            return
+        self._show_delete_confirmation(event.reference)
+
+    def _show_delete_confirmation(
+        self,
+        reference: ArtifactRef,
+        preview: AudioCppArtifactRemovalPreview | None = None,
+    ) -> None:
+        warning = "The managed model files will be removed from this device."
+        if preview is not None:
+            impacts = (
+                len(preview.settings_labels)
+                + len(preview.profile_labels)
+                + preview.assignment_count
+                + preview.clone_reference_count
+            )
+            if impacts:
+                warning = (
+                    f"{len(preview.settings_labels)} Settings consumer(s), "
+                    f"{len(preview.profile_labels)} profile(s), "
+                    f"{preview.assignment_count} assignment(s), and "
+                    f"{preview.clone_reference_count} private clone reference(s) "
+                    "will remain unchanged and become unavailable."
+                )
+        dialog = DeleteConfirmationDialog(
+            item_type="Model",
+            item_name=f"{reference.artifact_id} ({reference.variant})",
+            additional_warning=warning,
+            permanent=True,
+        )
+        if preview is not None and (
+            preview.settings_labels
+            or preview.profile_labels
+            or preview.assignment_count
+            or preview.clone_reference_count
+        ):
+            dialog.confirm_label = "Remove package; keep consumers unavailable"
         self.app.push_screen(
-            DeleteConfirmationDialog(
-                item_type="Model",
-                item_name=(
-                    f"{event.reference.artifact_id} "
-                    f"({event.reference.variant})"
-                ),
-                additional_warning=(
-                    "The managed model files will be removed from this device."
-                ),
-                permanent=True,
-            ),
+            dialog,
             self._confirm_deletion,
         )
+
+    async def _collect_audio_cpp_removal_preview(
+        self,
+        reference: ArtifactRef,
+        *,
+        include_probe: bool,
+    ) -> AudioCppArtifactRemovalPreview:
+        collector = getattr(self.app, "_audio_cpp_artifact_removal_evidence", None)
+        if not callable(collector):
+            raise ArtifactStateError("audio.cpp dependency review is unavailable")
+        evidence = await collector(reference)
+        generic_blocked = False
+        if include_probe:
+            coordinator = self.app._ensure_audio_cpp_artifact_lease_coordinator()
+            availability = await coordinator.probe_removal_availability(reference)
+            generic_blocked = availability is ArtifactRemovalAvailability.BUSY
+        return build_audio_cpp_artifact_removal_preview(
+            evidence,
+            generic_lease_blocked=generic_blocked,
+        )
+
+    @work(group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
+    async def _review_audio_cpp_deletion(self, reference: ArtifactRef) -> None:
+        """Build the pre-confirmation dependency review without blocking paint."""
+
+        try:
+            preview = await self._collect_audio_cpp_removal_preview(
+                reference,
+                include_probe=True,
+            )
+        except Exception:
+            self._operation_reference = None
+            self._operation_name = None
+            self._pending_delete_reference = None
+            self.notify(
+                "Package dependencies could not be reviewed. Retry removal.",
+                severity="error",
+            )
+            self._lifecycle_status = (
+                "Dependency review failed — removal was not attempted. Retry removal."
+            )
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._focus_delete, reference)
+            return
+        if preview.staged_or_live or preview.generic_lease_blocked:
+            self._operation_reference = None
+            self._operation_name = None
+            self._pending_delete_reference = None
+            self.notify(
+                (
+                    "Another operation is using this package. "
+                    "Stop or discard active work, then review removal again."
+                ),
+                severity="warning",
+            )
+            self._lifecycle_status = (
+                "Package in use — removal blocked. Shut down or discard active work, "
+                "then review removal again."
+            )
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._focus_delete, reference)
+            return
+        self._operation_reference = None
+        self._operation_name = None
+        self._pending_removal_preview = preview
+        self._show_delete_confirmation(reference, preview)
+
+    def _focus_delete(self, reference: ArtifactRef) -> None:
+        """Restore focus to the exact package action after recovery paint."""
+
+        for controls in self.query(ModelActivationControls):
+            if controls.reference != reference:
+                continue
+            try:
+                button = controls.query_one(".model-delete", Button)
+            except NoMatches:
+                return
+            button.focus()
+            button.scroll_visible(animate=False, immediate=True, force=True)
+            return
 
     def _confirm_deletion(self, confirmed: bool) -> None:
         """Start deletion only after the confirmation dialog accepts it."""
         reference = self._pending_delete_reference
         self._pending_delete_reference = None
         if not confirmed or reference is None:
+            self._pending_removal_preview = None
             self.refresh(recompose=True)
             return
         blocked = self._may_delete(reference)
@@ -1071,9 +1459,54 @@ class InstalledView(Widget):
         self._operation_reference = reference
         self._operation_name = "delete"
         self.refresh(recompose=True)
-        self._delete_model(reference)
+        preview = self._pending_removal_preview
+        self._pending_removal_preview = None
+        if preview is None:
+            self._delete_model(reference)
+        else:
+            self._delete_audio_cpp_model(reference, preview.fingerprint)
 
-    @work(thread=True, group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
+    @work(group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
+    async def _delete_audio_cpp_model(
+        self,
+        reference: ArtifactRef,
+        fingerprint: str,
+    ) -> None:
+        """Own authority, drift revalidation, commit, and cleanup in one worker."""
+
+        try:
+            coordinator = self.app._ensure_audio_cpp_artifact_lease_coordinator()
+
+            async def collect_fingerprint() -> str:
+                current = await self._collect_audio_cpp_removal_preview(
+                    reference,
+                    include_probe=False,
+                )
+                return current.fingerprint
+
+            outcome = await coordinator.remove_if_unchanged(
+                reference,
+                fingerprint,
+                collect_fingerprint,
+            )
+            if outcome == "changed":
+                self._apply_lifecycle_result(
+                    "delete",
+                    "Review changed dependencies. Open removal preview again.",
+                )
+                return
+            self._apply_lifecycle_result("delete", None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._finish_delete_failure_on_loop(reference, exc)
+
+    @work(
+        thread=True,
+        group="installed_models_lifecycle",
+        exclusive=True,
+        exit_on_error=False,
+    )
     def _activate_model(self, reference: ArtifactRef) -> None:
         """Activate one exact verified model off the event loop."""
         try:
@@ -1094,7 +1527,12 @@ class InstalledView(Widget):
             return
         self.app.call_from_thread(self._apply_lifecycle_result, "activate", None)
 
-    @work(thread=True, group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
+    @work(
+        thread=True,
+        group="installed_models_lifecycle",
+        exclusive=True,
+        exit_on_error=False,
+    )
     def _delete_model(self, reference: ArtifactRef) -> None:
         """Delete one exact model, retrying once after proven idle recycle."""
         try:
@@ -1140,21 +1578,44 @@ class InstalledView(Widget):
         reference: ArtifactRef,
         exc: BaseException,
     ) -> None:
-        """Report one final delete failure without exposing lease details."""
-        if isinstance(exc, ArtifactInUseError):
-            logger.warning("Managed model deletion blocked by a lease")
-        else:
-            logger.opt(exception=True).error(
-                "Managed model deletion failed for {}@{}/{}",
-                reference.artifact_id,
-                reference.revision,
-                reference.variant,
-            )
+        """Report one thread-worker delete failure through the UI-loop seam."""
+
+        message = self._bounded_delete_failure(reference, exc)
         self.app.call_from_thread(
             self._apply_lifecycle_result,
             "delete",
-            lifecycle_failure_message(exc, operation="deletion"),
+            message,
         )
+
+    def _finish_delete_failure_on_loop(
+        self,
+        reference: ArtifactRef,
+        exc: BaseException,
+    ) -> None:
+        """Report one async-worker delete failure already on the app loop."""
+
+        message = self._bounded_delete_failure(reference, exc)
+        self._apply_lifecycle_result("delete", message)
+
+    @staticmethod
+    def _bounded_delete_failure(
+        reference: ArtifactRef,
+        exc: BaseException,
+    ) -> str:
+        """Log bounded fields only and return the bounded recovery copy."""
+
+        if isinstance(exc, ArtifactInUseError):
+            logger.warning("Managed model deletion blocked by a lease")
+        else:
+            logger.error(
+                "Managed model deletion failed for {}@{}/{}; error_type={} code={}",
+                reference.artifact_id,
+                reference.revision,
+                reference.variant,
+                type(exc).__name__,
+                "operation_failed",
+            )
+        return lifecycle_failure_message(exc, operation="deletion")
 
     def _set_delete_phase(
         self,
@@ -1188,7 +1649,12 @@ class InstalledView(Widget):
             return False
         return self._set_delete_phase(reference, "recycle-retry")
 
-    @work(thread=True, group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
+    @work(
+        thread=True,
+        group="installed_models_lifecycle",
+        exclusive=True,
+        exit_on_error=False,
+    )
     def _repair_store(self) -> None:
         """Run explicit reconciliation off the event loop."""
         try:
@@ -1220,6 +1686,7 @@ class InstalledView(Widget):
         """Complete a lifecycle operation and refresh inventory."""
         self._operation_reference = None
         self._operation_name = None
+        self._lifecycle_status = None
         if error is not None:
             self.notify(error, severity="error")
         else:

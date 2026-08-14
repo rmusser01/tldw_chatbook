@@ -111,6 +111,18 @@ class _ProgressApp(ConsolidatedCSSApp):
         yield ModelInstallProgress(self.initial)
 
 
+def test_progress_widget_idle_bar_is_hidden_before_mount() -> None:
+    """The idle bar must be safe before Textual finishes mounting its children."""
+    from textual.widgets import ProgressBar
+
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+
+    widget = ModelInstallProgress()
+    bar = next(item for item in widget.compose() if isinstance(item, ProgressBar))
+
+    assert bar.display is False
+
+
 @pytest.mark.asyncio
 async def test_plan_panel_renders_every_consent_field(tmp_path: Path) -> None:
     """Closure, source, license, bytes, staging, and disk result are visible."""
@@ -169,9 +181,7 @@ async def test_plan_panel_renders_selected_file_details_as_plain_bounded_text(
     )
     app = _PanelApp(
         _report(tmp_path / "managed"),
-        selected_file_details=(
-            ("nested/model [q4].gguf", 1_234_567, digest, source),
-        ),
+        selected_file_details=(("nested/model [q4].gguf", 1_234_567, digest, source),),
     )
 
     async with app.run_test() as pilot:
@@ -432,7 +442,9 @@ async def test_progress_callback_marshals_across_threads_not_direct_mutation() -
             self.query_one(ModelInstallProgress).update_progress(event.progress)
 
     reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
-    event = AcquisitionProgress("fetch", reference, "encoder.onnx", 1_048_576, 2_097_152)
+    event = AcquisitionProgress(
+        "fetch", reference, "encoder.onnx", 1_048_576, 2_097_152
+    )
 
     app = _HostApp()
     async with app.run_test() as pilot:
@@ -448,7 +460,9 @@ async def test_progress_callback_marshals_across_threads_not_direct_mutation() -
         def _invoke_off_thread() -> None:
             try:
                 callback(event)
-            except BaseException as exc:  # pragma: no cover - fails the assertions below
+            except (
+                BaseException
+            ) as exc:  # pragma: no cover - fails the assertions below
                 errors.append(exc)
 
         thread = threading.Thread(target=_invoke_off_thread)

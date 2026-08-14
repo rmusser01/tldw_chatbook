@@ -18,6 +18,10 @@ from ...Chat.console_chat_models import ConsoleFleetCompletionTarget
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
 from ...Chat.provider_readiness import provider_config_key
 from ...Prompt_Management.prompt_variables import PromptVariableApplication
+from .audio_cpp_model_handoff import (
+    AudioCppModelLibraryRequest,
+    AudioCppModelLibraryResult,
+)
 from ..Screens.study_scope_models import (
     STUDY_INITIAL_SECTIONS,
     STUDY_ORIGINS,
@@ -102,6 +106,8 @@ class HandoffChannel(StrEnum):
     STUDY_ORIGIN = "study_origin"
     ARTIFACT_CHATBOOK_TARGET = "artifact_chatbook_target"
     ACP_SESSION_TARGET = "acp_session_target"
+    AUDIO_CPP_MODEL_LIBRARY_REQUEST = "audio_cpp_model_library_request"
+    AUDIO_CPP_MODEL_LIBRARY_RESULT = "audio_cpp_model_library_result"
 
 
 class HandoffValueError(ValueError):
@@ -200,6 +206,24 @@ class PendingHandoffStore:
             slot.revision += 1
             slot.pending = None
             return slot.revision
+
+    def discard_pending_exact(
+        self,
+        channel: HandoffChannel,
+        revision: int,
+        value: Any,
+    ) -> bool:
+        """Discard only one exact pending slot, even while another claim is active."""
+
+        self._assert_owner_thread()
+        if type(revision) is not int or revision < 1:
+            raise ValueError("handoff revision must be a positive exact integer")
+        slot = self._slot_for(channel)
+        normalized = self._detached_value(channel, value)
+        if slot.pending != (revision, normalized):
+            return False
+        slot.pending = None
+        return True
 
     def claim(self, channel: HandoffChannel) -> HandoffClaim[Any] | None:
         """Claim the pending value when no other consumer is in flight."""
@@ -339,10 +363,7 @@ class PendingHandoffStore:
             slot.in_flight = None
             should_requeue = slot.revision == claim.revision
             prompt_status: HandoffClaimStatus | None = None
-            if (
-                should_requeue
-                and claim.channel is HandoffChannel.CONSOLE_PROMPT_INSERT
-            ):
+            if should_requeue and claim.channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
                 should_requeue = claim.status == "ready" and self._prompt_is_unexpired(
                     current.retained_value
                 )
@@ -474,6 +495,24 @@ class PendingHandoffStore:
             return PendingHandoffStore._canonical_target(
                 value,
                 prefix=ACP_SESSION_RECORD_PREFIX,
+            )
+        if channel is HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST:
+            if type(value) is not AudioCppModelLibraryRequest:
+                raise TypeError("audio.cpp Model Library request must be exact")
+            return AudioCppModelLibraryRequest(
+                token=value.token,
+                draft_revision=value.draft_revision,
+            )
+        if channel is HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT:
+            if type(value) is not AudioCppModelLibraryResult:
+                raise TypeError("audio.cpp Model Library result must be exact")
+            return AudioCppModelLibraryResult(
+                token=value.token,
+                draft_revision=value.draft_revision,
+                artifact_id=value.artifact_id,
+                revision=value.revision,
+                variant=value.variant,
+                canonical_root=value.canonical_root,
             )
         raise ValueError("unsupported handoff channel")
 

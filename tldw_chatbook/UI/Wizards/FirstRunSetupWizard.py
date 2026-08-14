@@ -58,6 +58,7 @@ from textual.worker import Worker, get_current_worker
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.config import get_runtime_config_snapshot
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+    PARAKEET_PRECISIONS,
     active_managed_parakeet_dir,
     parakeet_descriptor,
     parakeet_v2_managed_service,
@@ -2225,9 +2226,12 @@ class ProviderStep(SetupStep):
         tested = self._last_tested_provider_identity
         if type(tested) is not ProviderDraftIdentity:
             return None
-        source_matches = discovery_key.credential_source == tested.credential_source or (
-            discovery_key.credential_source == "none"
-            and tested.credential_source == "stored"
+        source_matches = (
+            discovery_key.credential_source == tested.credential_source
+            or (
+                discovery_key.credential_source == "none"
+                and tested.credential_source == "stored"
+            )
         )
         if not (
             discovery_key.provider_key == tested.provider_key
@@ -3182,9 +3186,9 @@ class ModelStep(SetupStep):
                     models = []
                 elif evidence.endpoint == "unreachable":
                     discovery_state = "connection_failed"
-                    failure_category = (evidence.category or "connection_error").replace(
-                        "_", " "
-                    )
+                    failure_category = (
+                        evidence.category or "connection_error"
+                    ).replace("_", " ")
                     models = []
                 elif evidence.endpoint == "reachable" and not models:
                     models = list(evidence.model_ids)
@@ -3497,9 +3501,7 @@ class ModelStep(SetupStep):
                 self._current_discovery_key() if self.selected_model_id else None
             )
             self._selection_config_precondition = (
-                self._config_precondition_for_discovery(
-                    self._selection_discovery_key
-                )
+                self._config_precondition_for_discovery(self._selection_discovery_key)
                 if self.selected_model_id
                 else None
             )
@@ -3520,7 +3522,9 @@ class ModelStep(SetupStep):
         self._selection_discovery_key = (
             discovery_key
             if model_id and discovery_key == current_key
-            else current_key if model_id else None
+            else current_key
+            if model_id
+            else None
         )
         self._selection_config_precondition = (
             self._config_precondition_for_discovery(self._selection_discovery_key)
@@ -3648,9 +3652,7 @@ class ModelStep(SetupStep):
             None,
         )
         if (
-            callable(
-                getattr(self.wizard, "capture_provider_config_precondition", None)
-            )
+            callable(getattr(self.wizard, "capture_provider_config_precondition", None))
             and self._selection_config_precondition is None
             and not (
                 callable(can_validate)
@@ -3673,9 +3675,7 @@ class ModelStep(SetupStep):
             "model_provenance": provenance,
         }
         if self._selection_config_precondition is not None:
-            commit_kwargs["config_precondition"] = (
-                self._selection_config_precondition
-            )
+            commit_kwargs["config_precondition"] = self._selection_config_precondition
         ok = await commit_staged(model_id, **commit_kwargs)
         if ok:
             self.selected_model_id = model_id
@@ -3816,7 +3816,11 @@ class VoiceSetupStep(SetupStep):
 
     def _selected_authentication(self) -> str:
         pressed = self.query_one("#setup-voice-auth", RadioSet).pressed_button
-        return "api_key" if pressed is not None and pressed.id == "setup-voice-auth-key" else "none"
+        return (
+            "api_key"
+            if pressed is not None and pressed.id == "setup-voice-auth-key"
+            else "none"
+        )
 
     def _draft_from_controls(self) -> voice_state.VoiceSetupDraft:
         try:
@@ -3828,7 +3832,9 @@ class VoiceSetupStep(SetupStep):
             authentication_mode=self._selected_authentication(),
             model_id=self.query_one("#setup-voice-model", Input).value,
             voice_id=self.query_one("#setup-voice-voice", Input).value,
-            response_format=self.query_one("#setup-voice-format", Input).value.strip().lower(),
+            response_format=self.query_one("#setup-voice-format", Input)
+            .value.strip()
+            .lower(),
             speed=speed,
             sample_text=self.query_one("#setup-voice-sample", Input).value,
             use_as_default=self.query_one("#setup-voice-default", Checkbox).value,
@@ -3890,7 +3896,12 @@ class VoiceSetupStep(SetupStep):
         if self._preset == voice_state.VOICE_PRESET_CUSTOM:
             self._custom_draft = current
         self._preset = preset
-        base = self._custom_draft if preset == voice_state.VOICE_PRESET_CUSTOM and self._custom_draft is not None else current
+        base = (
+            self._custom_draft
+            if preset == voice_state.VOICE_PRESET_CUSTOM
+            and self._custom_draft is not None
+            else current
+        )
         self._apply_draft_to_controls(voice_state.apply_voice_preset(base, preset))
 
     @on(Input.Changed, "#setup-voice-sample")
@@ -4193,7 +4204,9 @@ class VoiceSetupStep(SetupStep):
             return False, str(error) or "Review the Voice setup fields."
         validation = voice_state.validate_voice_setup_draft(draft)
         if not validation.configuration_valid:
-            return False, validation.errors[0] if validation.errors else "Review the Voice setup fields."
+            return False, validation.errors[
+                0
+            ] if validation.errors else "Review the Voice setup fields."
         if (
             draft.authentication_mode == "api_key"
             and self._existing_openai_credential() is None
@@ -4280,13 +4293,11 @@ class VoiceSetupStep(SetupStep):
             "authentication_mode": self._selected_authentication(),
             "model_id": self.query_one("#setup-voice-model", Input).value,
             "voice_id": self.query_one("#setup-voice-voice", Input).value,
-            "response_format": self.query_one(
-                "#setup-voice-format", Input
-            ).value.strip().lower(),
+            "response_format": self.query_one("#setup-voice-format", Input)
+            .value.strip()
+            .lower(),
             "sample_text": self.query_one("#setup-voice-sample", Input).value,
-            "use_as_default": self.query_one(
-                "#setup-voice-default", Checkbox
-            ).value,
+            "use_as_default": self.query_one("#setup-voice-default", Checkbox).value,
         }
         try:
             speed = float(self.query_one("#setup-voice-speed", Input).value)
@@ -4395,8 +4406,8 @@ class SpeechSetupStep(SetupStep):
     own Parakeet install surface already uses -- no duplicate artifact or
     network logic (AC#4). Language/precision options are enumerated from the
     canonical STT policy/catalog (first_run_speech_step_state, backed by
-    tldw_chatbook.STT.routing) and gated to what a curated descriptor can
-    download for the exact selected model and precision (AC#2).
+    tldw_chatbook.STT.routing) and gated to the exact managed Parakeet model
+    and precision combinations (AC#2).
 
     Runtime gate (review Important 4): the `onnx-asr` extra is optional --
     missing it means a downloaded Parakeet artifact could never actually run.
@@ -4498,10 +4509,8 @@ class SpeechSetupStep(SetupStep):
         and precision catalogs.
 
         Entirely pure/I/O-free: it builds from ``self`` bookkeeping already
-        in memory and the two catalog helpers in ``first_run_speech_step_state``
-        (backed by ``curated_registry()``, which itself only builds
-        descriptors in memory -- no network or filesystem access happens
-        here). Any I/O (checking installed state) is deferred to ``on_show``.
+        in memory and the canonical Parakeet routing policy/precision values.
+        Any I/O (checking installed state) is deferred to ``on_show``.
 
         Returns:
             The composed widgets: title, optional prefill line, status line
@@ -4650,26 +4659,18 @@ class SpeechSetupStep(SetupStep):
                         disabled=not option.selectable or self._lifecycle_pending,
                     )
 
-    # -- pure, I/O-free helpers (curated_registry() only builds descriptors
-    # in memory -- see its own module docstring) -------------------------
+    # -- pure, I/O-free helpers ------------------------------------------
     @staticmethod
     def _curated_model_ids() -> frozenset[str]:
-        from tldw_chatbook.Model_Artifacts.curated_registry import curated_registry
-
-        return frozenset(
-            descriptor.model_id for descriptor in curated_registry().list()
-        )
+        policy = speech_state.routing_policy()
+        return frozenset({policy.parakeet_v2_model_id, policy.parakeet_v3_model_id})
 
     @staticmethod
     def _curated_selections() -> frozenset[tuple[str, str]]:
-        from tldw_chatbook.Model_Artifacts.curated_registry import curated_registry
-
-        policy = speech_state.routing_policy()
         return frozenset(
-            (descriptor.model_id, descriptor.precision)
-            for descriptor in curated_registry().list()
-            if descriptor.model_id
-            in {policy.parakeet_v2_model_id, policy.parakeet_v3_model_id}
+            (model_id, precision)
+            for model_id in SpeechSetupStep._curated_model_ids()
+            for precision in PARAKEET_PRECISIONS
         )
 
     def _selection(self) -> speech_state.SpeechSelection:
@@ -6819,13 +6820,16 @@ class SetupWizardContainer(WizardContainer):
         self._provider_commit_generation = 0
         self._provider_commit_lock = asyncio.Lock()
         self._provider_commit_task: asyncio.Task[bool] | None = None
-        self._provider_commit_identity: tuple[
-            int,
-            str,
-            wizard_state.FirstRunModelDiscoveryKey,
-            Literal["discovered", "manual"],
-            object,
-        ] | None = None
+        self._provider_commit_identity: (
+            tuple[
+                int,
+                str,
+                wizard_state.FirstRunModelDiscoveryKey,
+                Literal["discovered", "manual"],
+                object,
+            ]
+            | None
+        ) = None
         from tldw_chatbook.Chat.provider_setup_persistence import (
             ProviderSetupWriteGuard,
         )
@@ -7375,9 +7379,7 @@ class SetupWizardContainer(WizardContainer):
                         if not self.stage_provider_setup(current_draft):
                             return False
                         changed_draft = current_draft
-                    elif not self._provider_drafts_match(
-                        provider_draft, current_draft
-                    ):
+                    elif not self._provider_drafts_match(provider_draft, current_draft):
                         logger.debug(
                             "First-run provider save lease rejected (draft=changed)"
                         )
@@ -7394,13 +7396,15 @@ class SetupWizardContainer(WizardContainer):
                             model_id,
                             config_snapshot.values,
                         )
-                        committed_expected_state = self._bind_provider_write_expectation(
-                            mutation,
-                            config_snapshot=config_snapshot,
-                            discovery_key=discovery_key,
-                            model_id=model_id,
-                            model_provenance=model_provenance,
-                            config_precondition=config_precondition,
+                        committed_expected_state = (
+                            self._bind_provider_write_expectation(
+                                mutation,
+                                config_snapshot=config_snapshot,
+                                discovery_key=discovery_key,
+                                model_id=model_id,
+                                model_provenance=model_provenance,
+                                config_precondition=config_precondition,
+                            )
                         )
                     except (TypeError, ValueError):
                         logger.warning(
@@ -7667,9 +7671,7 @@ class SetupWizardContainer(WizardContainer):
                 model_step.query_one("#setup-model-custom", Input).value = model_id
 
             voice_values = draft.values.get(wizard_state.STEP_VOICE, {})
-            voice_step = self.steps[
-                self._step_index_for_id(wizard_state.STEP_VOICE)
-            ]
+            voice_step = self.steps[self._step_index_for_id(wizard_state.STEP_VOICE)]
             if isinstance(voice_step, VoiceSetupStep) and voice_values:
                 initial = voice_step._initial_draft()
                 restored_voice = voice_state.VoiceSetupDraft(
