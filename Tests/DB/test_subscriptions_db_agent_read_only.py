@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import sqlite3
+import stat
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,23 @@ def _database_snapshot(path: Path) -> tuple[str, tuple[str, ...], tuple[int, int
             conn.execute("SELECT COUNT(*) FROM watchlists").fetchone()[0],
         )
     return digest, schema, counts
+
+
+def _sqlite_artifact_snapshot(
+    path: Path,
+) -> dict[str, tuple[int, int, int, str]]:
+    snapshot: dict[str, tuple[int, int, int, str]] = {}
+    for candidate in sorted(path.parent.iterdir()):
+        if candidate.name != path.name and not candidate.name.startswith(f"{path.name}-"):
+            continue
+        metadata = candidate.stat()
+        snapshot[candidate.name] = (
+            stat.S_IMODE(metadata.st_mode),
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            hashlib.sha256(candidate.read_bytes()).hexdigest(),
+        )
+    return snapshot
 
 
 def test_read_only_is_keyword_only_and_rejects_memory_and_missing_files(
@@ -157,6 +175,71 @@ def test_read_only_view_cannot_mutate_file_schema_or_rows(tmp_path: Path) -> Non
     db.close()
 
     assert _database_snapshot(path) == before
+
+
+def test_read_only_view_preserves_live_wal_data_and_logical_database(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "subscriptions.db"
+    writer = SubscriptionsDB(path, client_id="writer")
+    writer.conn.execute("PRAGMA wal_autocheckpoint = 0")
+    writer.add_subscription(
+        name="Uncheckpointed source",
+        type="rss",
+        source="https://example.test/live-wal",
+    )
+    assert writer.conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert Path(f"{path}-wal").exists()
+    assert Path(f"{path}-shm").exists()
+    before_artifacts = _sqlite_artifact_snapshot(path)
+    before_schema = tuple(
+        row[0]
+        for row in writer.conn.execute(
+            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY name"
+        )
+    )
+    before_rows = tuple(
+        writer.conn.execute("SELECT id, name, source FROM subscriptions ORDER BY id")
+    )
+
+    reader = SubscriptionsDB(path, client_id="agent", read_only=True)
+    reader.assert_agent_read_ready()
+    assert reader.conn.execute(
+        "SELECT name FROM subscriptions WHERE source = ?",
+        ("https://example.test/live-wal",),
+    ).fetchone()[0] == "Uncheckpointed source"
+    reader.close()
+
+    after_artifacts = _sqlite_artifact_snapshot(path)
+    after_schema = tuple(
+        row[0]
+        for row in writer.conn.execute(
+            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY name"
+        )
+    )
+    after_rows = tuple(
+        writer.conn.execute("SELECT id, name, source FROM subscriptions ORDER BY id")
+    )
+    writer.close()
+
+    assert after_schema == before_schema
+    assert after_rows == before_rows
+    assert after_artifacts.keys() == before_artifacts.keys()
+    changed_artifacts = {
+        name
+        for name in before_artifacts
+        if before_artifacts[name] != after_artifacts[name]
+    }
+    # A normal mode=ro connection participates in live WAL coordination. On
+    # SQLite builds that update a read mark, the existing -shm bytes may
+    # change even though no logical database write occurs. Requiring immutable
+    # sidecars would force immutable=1 (which can ignore committed WAL frames)
+    # or a separate snapshot architecture. Neither is this live read contract.
+    assert changed_artifacts <= {f"{path.name}-shm"}
+    assert after_artifacts[path.name] == before_artifacts[path.name]
+    assert after_artifacts[f"{path.name}-wal"] == before_artifacts[
+        f"{path.name}-wal"
+    ]
 
 
 def test_readiness_requires_only_agent_tool_core_schema_and_failure_is_closeable(

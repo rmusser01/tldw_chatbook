@@ -37,7 +37,7 @@ Let users ask the Console agent and approved external MCP clients evidence-backe
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Add the registered read-only SubscriptionsDB construction path and prove it cannot initialize, migrate, create, or write storage.
+1. Add the registered read-only SubscriptionsDB construction path and prove it cannot initialize, migrate, create the database, or write the main database file, schema, or rows. A live SQLite WAL reader may update SQLite-managed shared-memory coordination state; byte-stable `-shm` sidecars are not part of this logical read-only contract.
 2. Extend existing Watchlists DB search/detail/resolution seams for literal FTS with complete LIKE fallback, keyset continuation, batched memberships, and bounded scope resolution.
 3. Build the shared synchronous WatchlistsToolService with authoritative validation, runtime-source handling, canonical IDs, output allowlisting, cursor encoding, URL sanitization, untrusted-evidence labels, and strict byte-bounded JSON.
 4. Register both read-only specs through LocalToolProvider and prove normal agent discovery plus existing permission gates.
