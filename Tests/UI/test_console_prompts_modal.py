@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Checkbox, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
@@ -226,6 +226,7 @@ class _Harness(App):
     ) -> None:
         super().__init__()
         self.backend = backend
+        self.results: list[object] = []
         self.improve_unavailable_reason = improve_unavailable_reason
         self.configure_provider = configure_provider
         self.improvement_kwargs = dict(improvement_kwargs or {})
@@ -248,7 +249,8 @@ class _Harness(App):
                 improve_unavailable_reason=self.improve_unavailable_reason,
                 **self.improvement_kwargs,
                 **kwargs,
-            )
+            ),
+            callback=self.results.append,
         )
 
 
@@ -1098,6 +1100,282 @@ async def test_root_escape_dismisses_and_restores_composer_focus() -> None:
         await pilot.pause()
 
         assert getattr(app.focused, "id", None) == "console-native-composer"
+
+
+async def _dismissal_gesture(pilot: Any, gesture: str) -> None:
+    if gesture == "escape":
+        await pilot.press("escape")
+    else:
+        await pilot.click(offset=(0, 0))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gesture", ["escape", "backdrop"])
+async def test_prompts_clean_root_dismissal_returns_exact_result_once(
+    gesture: str,
+) -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await _dismissal_gesture(pilot, gesture)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen is not modal
+        assert app.results == [None]
+        assert getattr(app.focused, "id", None) == "console-native-composer"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gesture", ["escape", "backdrop"])
+async def test_prompts_clean_nested_dismissal_closes_whole_workbench(
+    gesture: str,
+) -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        back = modal.query_one("#console-prompts-back", Button)
+        assert back.display is True
+        assert str(back.label) == "Back"
+
+        await _dismissal_gesture(pilot, gesture)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen is not modal
+        assert app.results == [None]
+        assert getattr(app.focused, "id", None) == "console-native-composer"
+
+
+async def _open_dirty_prompt_mode(
+    modal: ConsolePromptsModal, pilot: Any, mode: str
+) -> TextArea:
+    if mode == "edit":
+        await modal.open_artifact("prompt-1")
+    else:
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
+    await pilot.pause()
+    editor = modal.query_one("#prompt-block-content-role", TextArea)
+    editor.focus()
+    await pilot.pause()
+    modal._remember_current_focus()
+    modal.mark_dirty()
+    return editor
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["edit", "recipe"])
+@pytest.mark.parametrize("gesture", ["escape", "backdrop"])
+async def test_prompts_dirty_dismissal_reveals_guard(
+    mode: str,
+    gesture: str,
+) -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await _open_dirty_prompt_mode(modal, pilot, mode)
+
+        await _dismissal_gesture(pilot, gesture)
+        await pilot.pause()
+
+        guard = modal.query_one("#console-prompts-dirty-guard")
+        assert app.screen is modal
+        assert guard.display is True
+        assert modal.state.mode == mode
+        assert app.results == []
+        assert getattr(app.focused, "id", None) == "console-prompts-keep-editing"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gesture", ["escape", "backdrop"])
+async def test_prompts_guard_visible_cannot_be_bypassed(
+    gesture: str,
+) -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        editor = await _open_dirty_prompt_mode(modal, pilot, "edit")
+        await pilot.press("escape")
+        await pilot.pause()
+        guard = modal.query_one("#console-prompts-dirty-guard")
+        assert guard.display is True
+
+        await _dismissal_gesture(pilot, gesture)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert app.results == []
+        if gesture == "escape":
+            assert guard.display is False
+            assert app.focused is editor
+        else:
+            assert guard.display is True
+            assert getattr(app.focused, "id", None) == "console-prompts-keep-editing"
+
+
+@pytest.mark.asyncio
+async def test_prompts_expanded_select_descendant_owns_primary_click() -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        source = modal.query_one("#console-prompts-source", Select)
+        await pilot.click("#console-prompts-source")
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert source.expanded is True
+        overlay = modal.query_one("SelectOverlay")
+        assert overlay.display is True
+        await pilot.click(overlay, offset=(1, 1))
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert app.results == []
+        assert app.focused is overlay
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gesture", ["escape", "backdrop"])
+async def test_prompts_active_improvement_dismissal_cancels_once(
+    gesture: str,
+) -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    improve_calls = 0
+
+    async def improve(snapshot: Any) -> PromptImprovementOutcome:
+        nonlocal improve_calls
+        improve_calls += 1
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
+        return PromptImprovementOutcome(
+            request_id=snapshot.request_id, kind="no_change"
+        )
+
+    kwargs = driver.kwargs()
+    kwargs["improve"] = improve
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        auto = modal.query_one("#console-prompts-auto-improve", Button)
+        auto.focus()
+        auto.press()
+        await wait_for_signal(started, what="the prompt improvement starting")
+        await pilot.pause()
+        focused_before = app.focused
+
+        await _dismissal_gesture(pilot, gesture)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert modal.state.mode == "improve"
+        assert modal._active_request_id is None
+        assert modal._improvement_worker is not None
+        assert modal._improvement_worker.is_cancelled
+        assert improve_calls == 1
+        assert app.results == []
+        assert app.focused is focused_before
+        assert (
+            str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            )
+            == "Cancelling..."
+        )
+
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+        assert driver.applies == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gesture", ["escape", "backdrop"])
+async def test_prompts_cancelling_improvement_dismissal_stays_in_transaction(
+    gesture: str,
+) -> None:
+    backend = _PromptBackend()
+    driver = _ImprovementDriver()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def improve(snapshot: Any) -> PromptImprovementOutcome:
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
+        return PromptImprovementOutcome(
+            request_id=snapshot.request_id, kind="no_change"
+        )
+
+    kwargs = driver.kwargs()
+    kwargs["improve"] = improve
+    app = _Harness(backend, improvement_kwargs=kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        modal.query_one("#console-prompts-auto-improve", Button).press()
+        await wait_for_signal(started, what="the prompt improvement starting")
+        cancel = modal.query_one("#console-prompts-improvement-cancel", Button)
+        cancel.focus()
+        await pilot.pause()
+        cancel.press()
+        await pilot.pause()
+        assert modal._improvement_worker is not None
+        assert modal._improvement_worker.is_cancelled
+        focused_before = app.focused
+
+        await _dismissal_gesture(pilot, gesture)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert modal.state.mode == "improve"
+        assert app.results == []
+        assert app.focused is focused_before
+        assert (
+            str(
+                modal.query_one(
+                    "#console-prompts-improvement-status", Static
+                ).renderable
+            )
+            == "Cancelling..."
+        )
+
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+        assert driver.applies == []
 
 
 @pytest.mark.asyncio

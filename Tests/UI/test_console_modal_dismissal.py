@@ -86,6 +86,7 @@ from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
 from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
     ConsolePromptQueueModal,
 )
+from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     ScopeListPage,
@@ -148,6 +149,16 @@ class _Task4ModalContract:
     opener: str
     pre_cancel_hook: str | None
     guard: str
+    focus_postcondition: str
+
+
+@dataclass(frozen=True)
+class _Task5TransitionContract:
+    state: str
+    gesture: str
+    visible_state: str
+    result: object
+    callback_count: int
     focus_postcondition: str
 
 
@@ -595,6 +606,74 @@ TASK4_MODAL_CONTRACTS = (
 )
 
 
+TASK5_PROMPTS_TRANSITIONS = (
+    tuple(
+        _Task5TransitionContract(
+            "clean-root", gesture, "closed", None, 1, "Console composer"
+        )
+        for gesture in ("escape", "backdrop")
+    )
+    + tuple(
+        _Task5TransitionContract(
+            "clean-nested", gesture, "closed", None, 1, "Console composer"
+        )
+        for gesture in ("escape", "backdrop")
+    )
+    + tuple(
+        _Task5TransitionContract(
+            state,
+            gesture,
+            "dirty guard",
+            None,
+            0,
+            "Keep editing",
+        )
+        for state in ("dirty-edit", "dirty-recipe")
+        for gesture in ("escape", "backdrop")
+    )
+    + (
+        _Task5TransitionContract(
+            "guard-visible",
+            "escape",
+            "editor",
+            None,
+            0,
+            "remembered editor control",
+        ),
+        _Task5TransitionContract(
+            "guard-visible", "backdrop", "dirty guard", None, 0, "Keep editing"
+        ),
+    )
+    + tuple(
+        _Task5TransitionContract(
+            "active-improvement", gesture, "cancelling", None, 0, "active control"
+        )
+        for gesture in ("escape", "backdrop")
+    )
+    + tuple(
+        _Task5TransitionContract(
+            "cancelling-improvement",
+            gesture,
+            "cancelling",
+            None,
+            0,
+            "active control",
+        )
+        for gesture in ("escape", "backdrop")
+    )
+    + (
+        _Task5TransitionContract(
+            "expanded-descendant",
+            "primary click",
+            "select overlay",
+            None,
+            0,
+            "Select overlay",
+        ),
+    )
+)
+
+
 def _binding_key_action(binding: object) -> tuple[str, str]:
     if isinstance(binding, Binding):
         return binding.key, binding.action
@@ -715,6 +794,37 @@ def test_task4_transitive_modal_contract_table_is_complete_and_adopted() -> None
     launch_source = inspect.getsource(ChangeReviewScreen._confirm_and_revert)
     launch_source += inspect.getsource(ChangeReviewScreen.action_undo_all)
     assert "ChangeRevertConfirmModal(" in launch_source
+
+
+def test_task5_prompt_workbench_transition_table_is_complete_and_adopted() -> None:
+    assert len(TASK5_PROMPTS_TRANSITIONS) == 15
+    assert {
+        (contract.state, contract.gesture) for contract in TASK5_PROMPTS_TRANSITIONS
+    } == {
+        ("clean-root", "escape"),
+        ("clean-root", "backdrop"),
+        ("clean-nested", "escape"),
+        ("clean-nested", "backdrop"),
+        ("dirty-edit", "escape"),
+        ("dirty-edit", "backdrop"),
+        ("dirty-recipe", "escape"),
+        ("dirty-recipe", "backdrop"),
+        ("guard-visible", "escape"),
+        ("guard-visible", "backdrop"),
+        ("active-improvement", "escape"),
+        ("active-improvement", "backdrop"),
+        ("cancelling-improvement", "escape"),
+        ("cancelling-improvement", "backdrop"),
+        ("expanded-descendant", "primary click"),
+    }
+    assert issubclass(ConsolePromptsModal, SafeModalDismissMixin)
+    assert ConsolePromptsModal.SAFE_MODAL_CONTENT == "#console-prompts-modal"
+    assert [
+        action
+        for binding in ConsolePromptsModal.BINDINGS
+        for key, action in [_binding_key_action(binding)]
+        if key == "escape"
+    ] == ["request_safe_cancel"]
 
 
 class _Task2Harness(App[None]):

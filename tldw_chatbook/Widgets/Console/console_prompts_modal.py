@@ -38,6 +38,7 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
     set_artifact_type,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 from .console_prompts_browse import ConsolePromptsBrowse
 from .console_prompt_improve_view import (
@@ -173,7 +174,9 @@ def _saved_record_identifier(record: Mapping[str, Any]) -> str:
     return str(value)
 
 
-class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
+class ConsolePromptsModal(
+    SafeModalDismissMixin, ModalScreen[ConsolePromptsResult | None]
+):
     """One responsive modal shell with internal prompt-workbench modes."""
 
     MODES = ("browse", "edit", "improve", "recipe")
@@ -199,7 +202,8 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
     #console-prompts-dirty-guard.visible { display: block; }
     """
 
-    BINDINGS = [("escape", "back", "Back")]
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
+    SAFE_MODAL_CONTENT = "#console-prompts-modal"
 
     def __init__(
         self,
@@ -304,6 +308,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         )
 
     def on_mount(self) -> None:
+        super().on_mount()
         self._set_responsive(self.app.size.width, self.app.size.height)
         self.run_worker(
             self.reload_browse(),
@@ -325,6 +330,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             if worker is not None:
                 worker.cancel()
         self.call_after_refresh(self._restore_composer_focus)
+        super().on_unmount()
 
     def _set_responsive(self, width: int, height: int) -> None:
         narrow = width < 96 or height < 30
@@ -1401,6 +1407,38 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         guard.remove_class("visible")
         guard.display = False
 
+    def _keep_editing(self) -> None:
+        self._hide_dirty_guard()
+        self.call_after_refresh(
+            self._focus_widget,
+            self.state.focus_for(self.state.mode),
+        )
+
+    def _improvement_is_cancelling(self) -> bool:
+        worker = self._improvement_worker
+        return bool(worker is not None and worker.is_cancelled and worker.is_running)
+
+    def _request_close(self) -> None:
+        self._recipe_selecting = False
+        self._cancel_improvement_activation()
+        if self._active_request_id is not None:
+            self._cancel_improvement()
+            return
+        if self._improvement_is_cancelling():
+            return
+        if self.state.mode in {"edit", "recipe"} and self.state.dirty:
+            self._show_dirty_guard()
+            return
+        self.dismiss_safe_once(None)
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        guard = self.query_one("#console-prompts-dirty-guard", Vertical)
+        if guard.display:
+            if source == "escape":
+                self._keep_editing()
+            return
+        self._request_close()
+
     @on(ConsolePromptsBrowse.ImproveRequested)
     def _improve_requested(self, event: ConsolePromptsBrowse.ImproveRequested) -> None:
         event.stop()
@@ -1730,22 +1768,10 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             await self._back_internal()
         elif button_id == "console-prompts-close":
             event.stop()
-            self._recipe_selecting = False
-            self._cancel_improvement_activation()
-            if self._active_request_id is not None:
-                self._cancel_improvement()
-                return
-            if self.state.mode in {"edit", "recipe"} and self.state.dirty:
-                self._show_dirty_guard()
-            else:
-                self.dismiss(None)
+            self._request_close()
         elif button_id == "console-prompts-keep-editing":
             event.stop()
-            self._hide_dirty_guard()
-            self.call_after_refresh(
-                self._focus_widget,
-                self.state.focus_for(self.state.mode),
-            )
+            self._keep_editing()
         elif button_id == "console-prompts-discard":
             event.stop()
             self._hide_dirty_guard()
@@ -1814,7 +1840,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
 
     def action_back(self) -> None:
         if self.query_one("#console-prompts-dirty-guard", Vertical).display:
-            self._hide_dirty_guard()
+            self._keep_editing()
             return
         self.run_worker(
             self._back_internal(),
