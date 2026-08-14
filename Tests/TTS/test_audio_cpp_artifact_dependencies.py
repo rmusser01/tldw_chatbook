@@ -1094,6 +1094,39 @@ async def test_removal_success_is_not_published_until_authority_close_settles() 
 
 
 @pytest.mark.asyncio
+async def test_removal_rechecks_fingerprint_before_commit() -> None:
+    """A changed dependency preview invalidates the prior acknowledgement."""
+    events: list[str] = []
+
+    class Authority:
+        def commit(self) -> None:
+            events.append("commit")
+
+        def close(self) -> None:
+            events.append("close")
+
+    class RemovalService(_Service):
+        def acquire_removal_authority(self, _reference: ArtifactRef) -> Authority:
+            events.append("authority")
+            return Authority()
+
+    coordinator = AudioCppArtifactLeaseCoordinator(
+        RemovalService(),
+        saved_settings_snapshot=lambda: (),
+        catalog_entries=_catalog,
+    )
+
+    outcome = await coordinator.remove_if_unchanged(
+        REFERENCE,
+        "acknowledged-fingerprint",
+        lambda: asyncio.sleep(0, result="changed-fingerprint"),
+    )
+
+    assert outcome == "changed"
+    assert events == ["authority", "close"]
+
+
+@pytest.mark.asyncio
 async def test_removal_close_failure_blocks_success_and_retries_before_reentry() -> (
     None
 ):

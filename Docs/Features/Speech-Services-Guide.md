@@ -317,6 +317,13 @@ Guided setup is the shortest supported first-time path:
    A standalone PocketTTS GGUF is registered but marked **voice setup
    required** because it does not include a usable voice embedding. Choose a
    text-ready Supertonic package as the default for the one-click first sample.
+   Alternatively, choose **Open Model Library** to review and install a curated
+   package into Chatbook's shared artifact store. Installation verifies the
+   exact pinned package but remains inactive: it neither installs
+   `audiocpp_server` nor starts audio.cpp. Return to Settings, review the added
+   package in the still-unsaved draft, then choose Save. The catalog also names
+   local-only variants; those must be supplied through **Add local package…**
+   and are never presented as downloadable.
 4. Choose the default Guided model and backend. **Auto** selects only the
    reviewed portable CPU baseline; it does not infer an accelerated backend
    from the host. An unavailable or unevidenced model/backend combination is
@@ -343,6 +350,13 @@ All accepted models are registered in the same lazy child. Selecting another
 accepted model reuses that child rather than launching a second server. A model
 loaded by audio.cpp may remain resident in memory until **Shut down server**;
 the interface does not promise per-model unloading.
+
+Model Library removal first previews every Settings, profile, character,
+runtime, and shared-store owner. Busy or referenced packages remain installed
+until every blocker has an explicit resolution. If interruption or a changed
+package prevents commit, reopen the preview after the active operation ends;
+Chatbook rechecks the exact fingerprint and never silently retargets a model or
+deletes a private clone reference as a side effect.
 
 #### Managed local server with your server.json
 

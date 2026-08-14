@@ -639,6 +639,25 @@ remains mandatory on every platform.
 
 ### Guided Managed audio.cpp launch (POSIX)
 
+Curated Model Library packages are joined to recipes at the exact reviewed
+audio.cpp inventory commit
+`597048d9a920592808d7d4e2acd7b9c4596a143a`. The join keeps three states
+distinct: downloadable, local-only, and unsupported. Provisioning always uses
+the shared artifact service with `activate=False`; installing bytes does not
+select a model, publish Settings, install the server binary, or launch a child.
+The Settings handoff leases the exact inactive root while it rescans and merges
+one non-stale result into the detached draft.
+
+Lease ownership follows the artifact, not the screen: the shared service owns
+installed roots, the unsaved Settings draft holds exact roots while reviewing
+and saving, a staged generation holds them until cancellation/transfer, and an
+owned child retains its immutable runtime handle until the child has stopped.
+Removal goes through the public artifact-service deletion boundary only after
+an ordered dependency preview and a final fingerprint recheck. Contention,
+interruption, or changed source state leaves the registry and package
+recoverable for a fresh preview; private clone-reference assets are separate
+owners and are never deleted implicitly.
+
 Guided setup is a structured Managed source alongside the existing advanced
 user-provided `server.json` source. The current reviewed package subset is
 audio.cpp release 0.5.1 Supertonic 3 and PocketTTS: four Supertonic package

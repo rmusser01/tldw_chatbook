@@ -834,6 +834,38 @@ async def test_generated_artifact_is_revalidated_and_cleaned_after_exact_stop(
 
 
 @pytest.mark.asyncio
+async def test_generated_artifact_runtime_handle_outlives_owned_child(
+    tmp_path: Path,
+) -> None:
+    """Runtime leases must remain held until the owned child has exited."""
+    process = _FakeProcess()
+
+    class _OrderingArtifact(_GeneratedArtifactSpy):
+        cleanup_attempts = 0
+
+        def cleanup(self) -> None:
+            self.cleanup_attempts += 1
+            assert process.returncode is not None
+            super().cleanup()
+
+    artifact = _OrderingArtifact()
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher([process]),
+        port_preflight=_available_preflight,
+    )
+    launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
+
+    await supervisor.ensure_running(
+        launch,
+        generation_hooks_factory=_HooksFactory(),
+    )
+    await supervisor.stop()
+
+    assert artifact.cleanup_attempts == artifact.cleanup_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_generated_artifact_is_cleaned_after_pre_spawn_failure(
     tmp_path: Path,
 ) -> None:

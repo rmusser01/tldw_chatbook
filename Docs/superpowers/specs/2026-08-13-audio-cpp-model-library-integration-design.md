@@ -1,10 +1,10 @@
 # Guided audio.cpp packages in Model Library
 
-**Task:** TASK-13207  
-**Status:** Approved design, pending implementation plan  
-**Existing decisions:** ADR-050, ADR-051  
-**Upstream artifact host:** `audio-cpp/audio.cpp-gguf` on Hugging Face
-**Pinned artifact commit:** `597048d9a920592808d7d4e2acd7b9c4596a143a`
+- **Task:** TASK-13207
+- **Status:** Approved design, pending implementation plan
+- **Existing decisions:** ADR-050, ADR-051
+- **Upstream artifact host:** `audio-cpp/audio.cpp-gguf` on Hugging Face
+- **Pinned artifact commit:** `597048d9a920592808d7d4e2acd7b9c4596a143a`
 
 ## Summary
 
@@ -419,13 +419,13 @@ audio checksums.
 
 ## ADR assessment
 
-**ADR required:** yes, amendment only  
-**ADR path:** `backlog/decisions/050-audio-cpp-generated-model-setup-ownership.md`  
-**Reason:** ADR-050 already chooses static recipes, shared Model Library
-ownership, exact package identity, and separation from server-binary ownership.
-TASK-13207 specifies the previously deferred pinned-source, managed-identity,
-lease-lifetime, and dependency-aware removal details. A second ADR would split
-one ownership decision across two authorities.
+- **ADR required:** yes, amendment only
+- **ADR path:** `backlog/decisions/050-audio-cpp-generated-model-setup-ownership.md`
+- **Reason:** ADR-050 already chooses static recipes, shared Model Library
+  ownership, exact package identity, and separation from server-binary ownership.
+  TASK-13207 specifies the previously deferred pinned-source, managed-identity,
+  lease-lifetime, and dependency-aware removal details. A second ADR would split
+  one ownership decision across two authorities.
 
 ## Alternatives rejected
 

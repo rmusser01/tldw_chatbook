@@ -117,18 +117,18 @@ class ModelInstallProgress(Widget):
         """Compose the stable progress display."""
         yield Static("Waiting to install", id="model-install-progress-phase")
         yield Static("", id="model-install-progress-detail", markup=False)
-        yield ProgressBar(
+        bar = ProgressBar(
             total=None,
             show_eta=False,
             id="model-install-progress-bar",
         )
+        bar.display = False
+        yield bar
 
     def on_mount(self) -> None:
         """Restore retained progress or hide the idle determinate bar."""
         if self._initial is not None:
             self.update_progress(self._initial)
-            return
-        self.query_one("#model-install-progress-bar", ProgressBar).display = False
 
     def update_progress(
         self,

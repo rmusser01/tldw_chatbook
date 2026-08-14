@@ -60,3 +60,27 @@ Reason: the approved ADR-050 amendment and ADR-051 already govern artifact/runti
 
 Executable TDD plan: Docs/superpowers/plans/2026-08-13-audio-cpp-model-library-integration.md
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Implemented the reviewed 21-family/67-package inventory join, curated
+  inactive provisioning, exact detached Settings handoff, shared inactive-root
+  leases, staged/live runtime ownership, ordered dependency preview and
+  acknowledged removal through the public artifact service.
+- ADR check: no new ADR. The implementation follows and links
+  [ADR-050](../decisions/050-audio-cpp-generated-model-setup-ownership.md) and
+  [ADR-051](../decisions/051-private-tts-clone-reference-assets.md).
+- Added hermetic registry, acquisition, Settings/Model Library, runtime,
+  dependency, removal, interruption, and concurrency coverage. Five required
+  mutation checks each failed their named test and passed after restoration.
+- Live evidence is recorded in
+  `Docs/superpowers/qa/audio-cpp-model-library-2026-08-13/live-uat.md`. Exact
+  official install, inactive return, health/catalog, lease ownership, and
+  blocked/acknowledged removal passed. Guided Save remained fenced after the
+  return and the host audio.cpp 0.5.1 server returned structured HTTP 500 for
+  the pinned Inflect package on CPU and Metal, so sample generation and audible
+  playback are not claimed.
+- Status remains **In Progress** and acceptance criteria remain unchecked until
+  the clean-profile Save plus audible generation release gate is satisfied.
+<!-- SECTION:NOTES:END -->

@@ -16248,7 +16248,6 @@ class SettingsScreen(BaseAppScreen):
                     "audio.cpp result cleanup ownership is unavailable"
                 )
             cleanup.merged = self._speech_tts_draft_snapshot
-            panel._announce_draft_state()  # noqa: SLF001 - same owned Settings boundary
             if acknowledge:
                 if hasattr(
                     self.app_instance,
@@ -16374,6 +16373,8 @@ class SettingsScreen(BaseAppScreen):
                 raise
             return False
         self._finish_audio_cpp_result_cleanup(claim)
+        current_panel._announce_draft_state()  # noqa: SLF001 - owned Settings boundary
+        current_panel.refresh_audio_cpp_result_cleanup_state()
         return True
 
     def _acknowledge_foreign_audio_cpp_model_library_result(

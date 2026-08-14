@@ -2294,6 +2294,145 @@ async def test_real_settings_navigation_preserves_detached_tts_draft_for_removal
 
 
 @pytest.mark.asyncio
+async def test_real_settings_return_acknowledges_before_draft_remount(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A production DraftModified recompose cannot strand result cleanup."""
+
+    import struct
+    import time
+    from types import SimpleNamespace
+
+    from textual.widgets import Button, Select
+
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        AUDIO_CPP_ARTIFACT_COMMIT,
+    )
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Screens import llm_screen as llm_screen_module
+    from tldw_chatbook.UI.Screens import settings_screen as settings_module
+    from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    root = (tmp_path / "managed-supertonic").resolve()
+    root.mkdir()
+    (root / "supertonic-3-orig.gguf").write_bytes(b"GGUF" + struct.pack("<I", 3))
+    reference = ArtifactRef(
+        "audio-cpp-supertonic-3-orig",
+        AUDIO_CPP_ARTIFACT_COMMIT,
+        "orig",
+    )
+
+    class Lease:
+        handle = SimpleNamespace(
+            root=reference,
+            closure=(reference,),
+            paths=((reference, root),),
+        )
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            time.sleep(1.0)
+
+    monkeypatch.setattr(
+        settings_module,
+        "managed_service",
+        lambda: SimpleNamespace(acquire_installed_root=lambda _reference: Lease()),
+    )
+    monkeypatch.setattr(
+        llm_screen_module,
+        "_probe_local_server",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result=False),
+    )
+
+    app = _build_test_app(configured_default="settings")
+    async with app.run_test(size=(120, 44)) as pilot:
+        assert await _wait_for(lambda: isinstance(app.screen, SettingsScreen), pilot)
+        settings = app.screen
+        settings.query_one("#settings-category-speech-tts", Button).press()
+        await _wait_for_selector(
+            settings,
+            pilot,
+            "#settings-speech-tts-panel",
+            timeout=8.0,
+        )
+        settings.query_one(
+            "#settings-speech-configure-provider", Select
+        ).value = "audio_cpp"
+        await _wait_for_selector(
+            settings,
+            pilot,
+            "#settings-speech-audio-cpp-open-model-library",
+            timeout=8.0,
+        )
+        settings.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        settings.query_one(
+            "#settings-speech-audio_cpp-managed-setup-source", Select
+        ).value = "guided"
+        await pilot.pause()
+        settings.query_one(
+            "#settings-speech-audio-cpp-open-model-library", Button
+        ).press()
+        assert await _wait_for(lambda: isinstance(app.screen, LLMScreen), pilot)
+        library = app.screen
+        assert await _wait_for(
+            lambda: library._audio_cpp_model_request_claim is not None, pilot
+        )
+        request_claim = library._audio_cpp_model_request_claim
+        assert request_claim is not None
+        request = request_claim.value
+        app.pending_handoffs.stage(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT,
+            AudioCppModelLibraryResult(
+                token=request.token,
+                draft_revision=request.draft_revision,
+                artifact_id=reference.artifact_id,
+                revision=reference.revision,
+                variant=reference.variant,
+                canonical_root=str(root),
+            ),
+        )
+        assert app.pending_handoffs.acknowledge(request_claim)
+        library._audio_cpp_model_request_claim = None
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        assert await _wait_for(lambda: isinstance(app.screen, SettingsScreen), pilot)
+        returned = app.screen
+        await _wait_for_selector(
+            returned,
+            pilot,
+            "#settings-speech-tts-panel",
+            timeout=8.0,
+        )
+
+        assert await _wait_for(
+            lambda: (
+                len(
+                    returned.query_one(SpeechTTSSettingsPanel).state.providers[
+                        "audio_cpp"
+                    ]["guided_packages"]
+                )
+                == 1
+            ),
+            pilot,
+        )
+        assert await _wait_for(
+            lambda: not returned.audio_cpp_result_cleanup_pending(), pilot
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failure",
     ("stage_raise", "stage_interrupt", "post_false", "post_raise", "post_interrupt"),
