@@ -25,6 +25,7 @@
 - Modify `Tests/UI/test_console_inspector_compact_access.py`: keep the real 90-column Context open/persistence path but require `Context->`.
 - Modify `Tests/UI/test_console_right_rail.py`: require `<-Inspect`, then prove the open Inspector's title side belongs to the full-width collapse Button.
 - Modify `Tests/UI/test_console_left_rail.py`: prove the open Context header is one full-width Button and its title side collapses the rail.
+- Modify `Tests/UI/test_console_rail_title.py`: replace the obsolete requirement for a `#console-context-rail-title` Static with the single-Button header contract.
 - Modify `Tests/UI/test_console_shell_regions.py`: update only horizontal collapsed copy while preserving widths, stacked mode, and both toggle paths.
 - Modify `Tests/UI/test_settings_console_rail_labels.py`: update the failed-save horizontal copy while preserving the active-style contract.
 - Modify `Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py`: pin both real collapsed Button labels and tooltips.
@@ -42,6 +43,7 @@
 - Modify: `Tests/UI/test_console_inspector_compact_access.py:161-210`
 - Modify: `Tests/UI/test_console_right_rail.py:85-130`
 - Modify: `Tests/UI/test_console_left_rail.py`
+- Modify: `Tests/UI/test_console_rail_title.py`
 - Modify: `Tests/UI/test_console_shell_regions.py:112-165`
 - Modify: `Tests/UI/test_settings_console_rail_labels.py:190-205`
 - Modify: `Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py:232-245`
@@ -139,6 +141,8 @@ async def test_clicking_context_header_title_end_collapses_the_rail() -> None:
 
 The existing ID keeps the same production handler and persisted preference path; do not add direct handler calls.
 
+Replace `test_console_rail_title_reads_console_context` in `test_console_rail_title.py` with `test_console_context_rail_header_uses_the_full_collapse_button`. Require the obsolete title selector to be absent and the existing collapse Button to carry `<---------|Context`; this prevents the old structure contract from contradicting the new header after implementation.
+
 - [ ] **Step 4: Add open Inspector full-header presentation and non-arrow click coverage**
 
 In `test_console_right_rail.py`, add `test_inspector_header_is_one_full_width_collapse_button`: open the Inspector through its collapsed handle, re-query after recompose, and require the header has one child Button with exact label `Inspect|--------->`, tooltip, full content-region width, height one, and left text/content alignment. Add `test_clicking_inspector_header_title_start_collapses_the_rail` using a title-side coordinate:
@@ -153,14 +157,12 @@ Retain the existing post-collapse visibility/focus assertions. The click must ta
 
 - [ ] **Step 5: Replace the superseded visual sweep with all four states**
 
-Rename the TASK-16001 visual test to `test_task_16001_console_directional_rail_buttons_visual_sweep` and parameterize `(140, 42)` and `(160, 45)`. In each real `TldwCli` run:
+Rename the TASK-16001 visual test to `test_task_16001_console_directional_rail_buttons_visual_sweep` and parameterize `(140, 42)` and `(160, 45)` plus the four applicable rail states. Each parameter independently drives the real `TldwCli` to its target state using the currently mounted controls, so RED exercises every state instead of stopping at the first expected mismatch. In each run:
 
-1. Open Console and force the initial state to Context open / Inspector collapsed.
-2. Require one painted Context header row containing exactly `<---------|Context`, one collapsed Inspector row `<-Inspect`, positive transcript width, and both controls contained in their owning regions.
-3. Open Inspector through `<-Inspect`, re-query, and require both full-width header Buttons paint exactly their approved one-row labels.
-4. Collapse Context by clicking its title end; re-query and require `Context->` plus the open Inspector header.
-5. Collapse Inspector by clicking its title start; re-query and require both collapsed inward labels.
-6. Export a healthy SVG after each distinct state (or one final SVG plus compositor evidence for prior states) and require rendered `<text>` evidence that cannot be satisfied by screenshot titles.
+1. Open Console and force one of: Context open / Inspector collapsed; both open; Context collapsed / Inspector open; both collapsed.
+2. Before any intended copy/structure assertion, require the target rail visibility, handle/header containment, expected unchanged widths, full one-row geometry, and positive transcript width; export a healthy SVG and extract rendered `<text>` independently of its title.
+3. Only after those setup/precondition checks, compare the applicable controls to the exact expected label, unfiltered compositor row, title-selector absence, one-child header structure, full-width Button, tooltip, and rendered SVG text.
+4. Keep the dedicated left/right rail tests as the authority for non-arrow title clicks; the visual cases use ordinary mounted controls only to reach each independent target state during RED.
 
 At every state assert the transcript remains positive-width and the applicable button/handle stays contained. In TASK-15783, change only the two collapsed Inspector copy assertions from `Inspect->` to `<-Inspect`; preserve its name, six viewport/badge parameters, geometry, frame, badge, containment, transcript, and SVG contracts unchanged.
 
@@ -178,6 +180,7 @@ Run only the changed/related nodes:
   Tests/UI/test_console_inspector_compact_access.py::test_left_handle_opens_left_rail_at_90_cols \
   Tests/UI/test_console_left_rail.py::test_context_header_is_one_full_width_collapse_button \
   Tests/UI/test_console_left_rail.py::test_clicking_context_header_title_end_collapses_the_rail \
+  Tests/UI/test_console_rail_title.py::test_console_context_rail_header_uses_the_full_collapse_button \
   Tests/UI/test_console_right_rail.py::test_clicking_open_then_collapse_toggles_visibility_and_persists \
   Tests/UI/test_console_right_rail.py::test_inspector_header_is_one_full_width_collapse_button \
   Tests/UI/test_console_right_rail.py::test_clicking_inspector_header_title_start_collapses_the_rail \
@@ -199,6 +202,7 @@ git add -- \
   Tests/UI/test_console_inspector_compact_access.py \
   Tests/UI/test_console_right_rail.py \
   Tests/UI/test_console_left_rail.py \
+  Tests/UI/test_console_rail_title.py \
   Tests/UI/test_console_shell_regions.py \
   Tests/UI/test_settings_console_rail_labels.py \
   Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py \
@@ -333,7 +337,7 @@ Expected: all selected tests pass. Per user instruction, do not run the full rep
 
 - [ ] **Step 2: Run focused static, format, design, and integrity checks**
 
-Run Ruff only over the three production and nine modified test files, then `git diff --check`. Run the Impeccable detector over the three production UI files and require no new finding relative to the pre-edit baseline. Run the exact duplicate-task-ID guard from `.github/workflows/backlog-guard.yml`. No CSS source changes are planned, so `test_css_build_integrity.py` is the bundle guard and no bundle regeneration should occur.
+Run Ruff only over the three production and ten modified test files, then `git diff --check`. Run the Impeccable detector over the three production UI files and require no new finding relative to the pre-edit baseline. Run the exact duplicate-task-ID guard from `.github/workflows/backlog-guard.yml`. No CSS source changes are planned, so `test_css_build_integrity.py` is the bundle guard and no bundle regeneration should occur.
 
 - [ ] **Step 3: Self-review the complete diff**
 
@@ -349,6 +353,7 @@ git diff origin/dev...HEAD -- \
   Tests/UI/test_destination_rail.py \
   Tests/UI/test_console_inspector_compact_access.py \
   Tests/UI/test_console_left_rail.py \
+  Tests/UI/test_console_rail_title.py \
   Tests/UI/test_console_right_rail.py \
   Tests/UI/test_console_shell_regions.py \
   Tests/UI/test_settings_console_rail_labels.py \
