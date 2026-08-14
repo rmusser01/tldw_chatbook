@@ -238,6 +238,8 @@ class ImportBounds:
     max_depth: int
     max_reason_length: int = 240
     max_entries: int = 10_000
+    max_notes_per_file: int = 1_000
+    max_keywords_per_note: int = 100
 
     def __post_init__(self) -> None:
         positive_fields = (
@@ -246,6 +248,8 @@ class ImportBounds:
             "max_total_bytes",
             "max_reason_length",
             "max_entries",
+            "max_notes_per_file",
+            "max_keywords_per_note",
         )
         for field_name in positive_fields:
             value = getattr(self, field_name)

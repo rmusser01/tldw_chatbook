@@ -9,7 +9,11 @@ from typing import Self
 
 import pytest
 
-from tldw_chatbook.Notes import note_import_plan_models, note_import_planner
+from tldw_chatbook.Notes import (
+    note_import_discovery,
+    note_import_plan_models,
+    note_import_planner,
+)
 from tldw_chatbook.Notes.note_import_plan_models import (
     ImportAction,
     ImportBounds,
@@ -1441,7 +1445,7 @@ def test_root_descriptor_errors_are_normalized_without_raw_os_text(
 
     if operation == "fstat":
         monkeypatch.setattr(
-            note_import_planner.os,
+            note_import_discovery.os,
             "fstat",
             lambda _descriptor: (_ for _ in ()).throw(OSError(private_error)),
         )
@@ -1452,7 +1456,7 @@ def test_root_descriptor_errors_are_normalized_without_raw_os_text(
             real_close(descriptor)
             raise OSError(private_error)
 
-        monkeypatch.setattr(note_import_planner.os, "close", close_then_fail)
+        monkeypatch.setattr(note_import_discovery.os, "close", close_then_fail)
 
     with pytest.raises(ImportSelectionError) as raised:
         discover_import_sources([root], _discovery_bounds())
@@ -1470,7 +1474,7 @@ def test_unsupported_descriptor_api_fails_closed_with_a_stable_error(
     note = tmp_path / "note.md"
     note.write_text("note", encoding="utf-8")
     monkeypatch.setattr(
-        note_import_planner.os,
+        note_import_discovery.os,
         "open",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             NotImplementedError("PRIVATE UNSUPPORTED API")
@@ -1499,7 +1503,7 @@ def test_close_failure_does_not_mask_a_stable_selected_symlink_error(
         real_close(descriptor)
         raise OSError("PRIVATE CLOSE ERROR")
 
-    monkeypatch.setattr(note_import_planner.os, "close", close_then_fail)
+    monkeypatch.setattr(note_import_discovery.os, "close", close_then_fail)
 
     with pytest.raises(ImportSelectionError) as raised:
         discover_import_sources([alias / "missing.md"], _discovery_bounds())
@@ -1557,10 +1561,10 @@ def test_child_descriptor_errors_become_one_safe_nested_failure(
             raise OSError(private_error)
         return real_scandir(descriptor)
 
-    monkeypatch.setattr(note_import_planner.os, "open", tracked_open)
-    monkeypatch.setattr(note_import_planner.os, "fstat", injected_fstat)
-    monkeypatch.setattr(note_import_planner.os, "close", injected_close)
-    monkeypatch.setattr(note_import_planner.os, "scandir", injected_scandir)
+    monkeypatch.setattr(note_import_discovery.os, "open", tracked_open)
+    monkeypatch.setattr(note_import_discovery.os, "fstat", injected_fstat)
+    monkeypatch.setattr(note_import_discovery.os, "close", injected_close)
+    monkeypatch.setattr(note_import_discovery.os, "scandir", injected_scandir)
 
     discovery = discover_import_sources([root], _discovery_bounds())
 
@@ -1678,10 +1682,10 @@ def test_unexpected_discovery_errors_close_every_owned_descriptor(
             raise error_type("unexpected discovery failure")
         return real_scandir(descriptor)
 
-    monkeypatch.setattr(note_import_planner.os, "open", tracked_open)
-    monkeypatch.setattr(note_import_planner.os, "fstat", injected_fstat)
-    monkeypatch.setattr(note_import_planner.os, "close", tracked_close)
-    monkeypatch.setattr(note_import_planner.os, "scandir", injected_scandir)
+    monkeypatch.setattr(note_import_discovery.os, "open", tracked_open)
+    monkeypatch.setattr(note_import_discovery.os, "fstat", injected_fstat)
+    monkeypatch.setattr(note_import_discovery.os, "close", tracked_close)
+    monkeypatch.setattr(note_import_discovery.os, "scandir", injected_scandir)
 
     with pytest.raises(error_type):
         discover_import_sources([root], _discovery_bounds())
@@ -1831,8 +1835,8 @@ def test_directory_identity_replacement_races_fail_safely_and_close_descriptors(
         real_close(descriptor)
         closed.append(descriptor)
 
-    monkeypatch.setattr(note_import_planner.os, "open", racing_open)
-    monkeypatch.setattr(note_import_planner.os, "close", tracked_close)
+    monkeypatch.setattr(note_import_discovery.os, "open", racing_open)
+    monkeypatch.setattr(note_import_discovery.os, "close", tracked_close)
 
     if race_target == "selected_parent":
         with pytest.raises(ImportSelectionError) as raised:
@@ -1854,7 +1858,7 @@ def test_missing_secure_discovery_capability_has_a_distinct_stable_reason(
     """Capability absence is distinguishable from an unreadable selected path."""
     note = tmp_path / "note.md"
     note.write_text("note", encoding="utf-8")
-    monkeypatch.delattr(note_import_planner.os, "O_NOFOLLOW")
+    monkeypatch.delattr(note_import_discovery.os, "O_NOFOLLOW")
 
     with pytest.raises(ImportSelectionError) as raised:
         discover_import_sources([note], _discovery_bounds())
@@ -1919,7 +1923,7 @@ def test_failed_entry_stat_is_not_retried_into_an_ambiguous_sibling_directory(
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
     monkeypatch.setattr(os, "scandir", lambda _descriptor: RacingScandir())
-    monkeypatch.setattr(note_import_planner.os, "open", guarded_open)
+    monkeypatch.setattr(note_import_discovery.os, "open", guarded_open)
 
     discovery = discover_import_sources([root], _discovery_bounds())
 
@@ -1930,3 +1934,489 @@ def test_failed_entry_stat_is_not_retried_into_an_ambiguous_sibling_directory(
         "nested_unavailable",
         "nested_unavailable",
     ]
+
+
+def _parse_selection(
+    paths: list[Path],
+    *,
+    bounds: ImportBounds | None = None,
+    destination: tuple[str, ...] | None = None,
+) -> object:
+    active_bounds = bounds or _discovery_bounds()
+    discovery = discover_import_sources(paths, active_bounds)
+    return note_import_planner.parse_import_sources(
+        discovery,
+        active_bounds,
+        destination_folder_segments=destination,
+    )
+
+
+def test_text_and_markdown_parsing_retains_content_and_uses_safe_titles(
+    tmp_path: Path,
+) -> None:
+    """Text uses the stem while Markdown may use an early level-one heading."""
+    root = tmp_path / "Project"
+    root.mkdir()
+    text = root / "plain.txt"
+    markdown = root / "guide.md"
+    text.write_text("Full plain content", encoding="utf-8")
+    markdown_content = "intro\n# Guide title\nbody\n"
+    markdown.write_text(markdown_content, encoding="utf-8")
+
+    batch = _parse_selection([root])
+
+    assert [source.payloads[0].title for source in batch.parsed] == [
+        "Guide title",
+        "plain",
+    ]
+    assert batch.parsed[0].payloads[0].content == markdown_content
+    assert batch.parsed[1].payloads[0].content == "Full plain content"
+
+
+@pytest.mark.parametrize("extension", [".json", ".yaml", ".yml"])
+def test_structured_sources_expand_atomically_with_bounded_metadata(
+    tmp_path: Path,
+    extension: str,
+) -> None:
+    """JSON and YAML mappings expand into immutable note payload tuples."""
+    root = tmp_path / "Project"
+    child = root / "child"
+    child.mkdir(parents=True)
+    source = child / f"notes{extension}"
+    if extension == ".json":
+        source.write_text(
+            '[{"title":"One","content":"First","tags":["a","b"],'
+            '"template":"Meeting"},{"name":"Two","body":"Second"}]',
+            encoding="utf-8",
+        )
+    else:
+        source.write_text(
+            "- title: One\n  content: First\n  tags: [a, b]\n"
+            "  template: Meeting\n- name: Two\n  body: Second\n",
+            encoding="utf-8",
+        )
+
+    batch = _parse_selection([root])
+
+    assert batch.issues == ()
+    parsed = batch.parsed[0]
+    assert tuple(payload.title for payload in parsed.payloads) == ("One", "Two")
+    assert parsed.payloads[0].keywords == ("a", "b")
+    assert parsed.payloads[0].template_name == "Meeting"
+    assert tuple(membership.payload_index for membership in parsed.memberships) == (
+        0,
+        1,
+    )
+    assert all(
+        membership.folder_segments == ("Project", "child")
+        for membership in parsed.memberships
+    )
+    assert isinstance(parsed.payloads, tuple)
+    assert isinstance(parsed.memberships, tuple)
+
+
+def test_csv_uses_recognized_columns_and_rejects_invalid_rows_atomically(
+    tmp_path: Path,
+) -> None:
+    """CSV recognizes semantic headers and never returns a partial row import."""
+    valid = tmp_path / "valid.csv"
+    invalid = tmp_path / "invalid.csv"
+    valid.write_text(
+        "BODY,NAME,TAGS\nFirst,One,alpha\nSecond,Two,beta\n",
+        encoding="utf-8",
+    )
+    invalid.write_text("title,content\nGood,Body\nBad,\n", encoding="utf-8")
+
+    batch = _parse_selection(
+        [valid, invalid],
+        destination=("Imported",),
+    )
+
+    assert len(batch.parsed) == 1
+    assert tuple(payload.title for payload in batch.parsed[0].payloads) == (
+        "One",
+        "Two",
+    )
+    assert batch.parsed[0].payloads[0].keywords == ("alpha",)
+    assert len(batch.issues) == 1
+    assert batch.issues[0].classification is ImportClassification.FAILED
+    assert batch.issues[0].reason_code == "invalid_content"
+
+
+def test_csv_falls_back_to_first_two_distinct_columns(tmp_path: Path) -> None:
+    source = tmp_path / "notes.csv"
+    source.write_text("subject,text\nOne,Body\n", encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed[0].payloads[0] == ParsedNotePayload(
+        title="One",
+        content="Body",
+    )
+
+
+@pytest.mark.parametrize(
+    ("content", "reason_code"),
+    [
+        ('{"title":"One","title":"Two","content":"Body"}', "invalid_content"),
+        ("title: One\ntitle: Two\ncontent: Body\n", "invalid_content"),
+        ("base: &base {content: Body}\nnote: *base\n", "invalid_content"),
+        ("[]", "empty_structured_source"),
+    ],
+)
+def test_structured_sources_reject_duplicates_aliases_and_empty_results(
+    tmp_path: Path,
+    content: str,
+    reason_code: str,
+) -> None:
+    suffix = ".json" if content.startswith("{") or content == "[]" else ".yaml"
+    source = tmp_path / f"notes{suffix}"
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code == reason_code
+
+
+def test_duplicate_normalized_csv_headers_fail_atomically(tmp_path: Path) -> None:
+    source = tmp_path / "notes.csv"
+    source.write_text("Title, title ,content\nOne,Other,Body\n", encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code == "invalid_content"
+
+
+def test_unsupported_candidates_are_not_opened_and_have_safe_issues(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "private.bin"
+    source.write_bytes(b"secret")
+    bounds = _discovery_bounds()
+    discovery = discover_import_sources([source], bounds)
+
+    monkeypatch.setattr(
+        note_import_discovery.os,
+        "open",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("unsupported source was opened")
+        ),
+    )
+    batch = note_import_planner.parse_import_sources(
+        discovery,
+        bounds,
+        destination_folder_segments=("Imported",),
+    )
+
+    assert batch.parsed == ()
+    assert batch.proposed_folder_paths == ()
+    assert batch.issues[0].classification is ImportClassification.UNSUPPORTED
+    assert batch.issues[0].reason_code == "unsupported_extension"
+    assert str(tmp_path) not in repr(batch)
+    assert "secret" not in repr(batch)
+
+
+@pytest.mark.parametrize(
+    ("raw_content", "reason_code"),
+    [
+        (b"\xff\xfe", "invalid_utf8"),
+        (b"{malformed", "invalid_content"),
+    ],
+)
+def test_invalid_utf8_and_malformed_content_become_safe_failures(
+    tmp_path: Path,
+    raw_content: bytes,
+    reason_code: str,
+) -> None:
+    suffix = ".txt" if reason_code == "invalid_utf8" else ".json"
+    source = tmp_path / f"private{suffix}"
+    source.write_bytes(raw_content)
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    issue = batch.issues[0]
+    assert issue.classification is ImportClassification.FAILED
+    assert issue.reason_code == reason_code
+    assert len(issue.user_message) <= _discovery_bounds().max_reason_length
+    assert str(tmp_path) not in repr(issue)
+    assert repr(raw_content) not in repr(issue)
+
+
+def test_utf8_bom_is_accepted_without_entering_note_content(tmp_path: Path) -> None:
+    source = tmp_path / "note.txt"
+    source.write_bytes(b"\xef\xbb\xbfBody")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed[0].payloads[0].content == "Body"
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "error_type"),
+    [
+        ("max_notes_per_file", 0, ValueError),
+        ("max_notes_per_file", True, TypeError),
+        ("max_keywords_per_note", 0, ValueError),
+        ("max_keywords_per_note", False, TypeError),
+    ],
+)
+def test_parser_bounds_are_strict_positive_integers(
+    field_name: str,
+    value: object,
+    error_type: type[Exception],
+) -> None:
+    values: dict[str, object] = {
+        "max_files": 20,
+        "max_file_bytes": 1_000,
+        "max_total_bytes": 5_000,
+        "max_depth": 4,
+        field_name: value,
+    }
+
+    with pytest.raises(error_type):
+        ImportBounds(**values)  # type: ignore[arg-type]
+
+
+def test_structured_note_and_keyword_expansion_respects_independent_bounds(
+    tmp_path: Path,
+) -> None:
+    too_many_notes = tmp_path / "many.json"
+    too_many_keywords = tmp_path / "keywords.json"
+    too_many_notes.write_text(
+        '[{"content":"One"},{"content":"Two"}]',
+        encoding="utf-8",
+    )
+    too_many_keywords.write_text(
+        '{"content":"Body","tags":["one","two"]}',
+        encoding="utf-8",
+    )
+    bounds = _discovery_bounds(max_notes_per_file=1, max_keywords_per_note=1)
+
+    batch = _parse_selection(
+        [too_many_notes, too_many_keywords],
+        bounds=bounds,
+        destination=("Imported",),
+    )
+
+    assert batch.parsed == ()
+    assert {issue.reason_code for issue in batch.issues} == {
+        "too_many_keywords",
+        "too_many_notes",
+    }
+
+
+def test_replaced_source_and_parent_directory_are_rejected_as_races(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "Project"
+    root.mkdir()
+    source = root / "note.md"
+    source.write_text("original", encoding="utf-8")
+    bounds = _discovery_bounds()
+    discovery = discover_import_sources([root], bounds)
+    old_root = tmp_path / "old-project"
+    root.rename(old_root)
+    root.mkdir()
+    (root / "note.md").write_text("replacement", encoding="utf-8")
+
+    batch = note_import_planner.parse_import_sources(discovery, bounds)
+
+    assert batch.parsed == ()
+    assert batch.proposed_folder_paths == ()
+    assert batch.issues[0].reason_code == "source_changed"
+
+
+def test_changed_leaf_identity_is_rejected_before_content_is_parsed(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "note.txt"
+    source.write_text("original", encoding="utf-8")
+    bounds = _discovery_bounds()
+    discovery = discover_import_sources([source], bounds)
+    source.unlink()
+    source.write_text("replacement", encoding="utf-8")
+
+    batch = note_import_planner.parse_import_sources(
+        discovery,
+        bounds,
+        destination_folder_segments=("Imported",),
+    )
+
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code == "source_changed"
+
+
+def test_leaf_change_during_bounded_read_is_rejected_after_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "note.txt"
+    source.write_text("original", encoding="utf-8")
+    bounds = _discovery_bounds()
+    discovery = discover_import_sources([source], bounds)
+    real_read = os.read
+    changed = False
+
+    def racing_read(descriptor: int, count: int) -> bytes:
+        nonlocal changed
+        chunk = real_read(descriptor, count)
+        if chunk and not changed:
+            changed = True
+            source.write_text("modified", encoding="utf-8")
+        return chunk
+
+    monkeypatch.setattr(note_import_discovery.os, "read", racing_read)
+
+    batch = note_import_planner.parse_import_sources(
+        discovery,
+        bounds,
+        destination_folder_segments=("Imported",),
+    )
+
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code == "source_changed"
+
+
+def test_bounded_read_does_not_trust_discovered_stat_size(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "note.txt"
+    source.write_bytes(b"12345")
+    bounds = _discovery_bounds(max_file_bytes=5)
+    discovery = discover_import_sources([source], bounds)
+    real_read = os.read
+    injected = False
+
+    def oversized_read(descriptor: int, count: int) -> bytes:
+        nonlocal injected
+        chunk = real_read(descriptor, count)
+        if chunk and not injected:
+            injected = True
+            return chunk + b"x"
+        return chunk
+
+    monkeypatch.setattr(note_import_discovery.os, "read", oversized_read)
+
+    batch = note_import_planner.parse_import_sources(
+        discovery,
+        bounds,
+        destination_folder_segments=("Imported",),
+    )
+
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code == "max_file_bytes_exceeded"
+
+
+def test_directory_hierarchy_proposes_only_successful_ancestor_paths(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "Project"
+    child = root / "child"
+    empty = root / "empty"
+    unsupported = root / "unsupported"
+    child.mkdir(parents=True)
+    empty.mkdir()
+    unsupported.mkdir()
+    (child / "note.md").write_text("Body", encoding="utf-8")
+    (unsupported / "asset.bin").write_bytes(b"private")
+
+    batch = _parse_selection([root])
+
+    assert batch.proposed_folder_paths == (
+        ("Project",),
+        ("Project", "child"),
+    )
+    assert batch.parsed[0].memberships[0].folder_segments == (
+        "Project",
+        "child",
+    )
+
+
+def test_empty_directory_and_unsupported_only_branch_propose_no_folders(
+    tmp_path: Path,
+) -> None:
+    empty = tmp_path / "Empty"
+    empty.mkdir()
+    unsupported = tmp_path / "Unsupported"
+    unsupported.mkdir()
+    (unsupported / "asset.bin").write_bytes(b"private")
+
+    empty_batch = _parse_selection([empty])
+    unsupported_batch = _parse_selection([unsupported])
+
+    assert empty_batch.parsed == empty_batch.issues == ()
+    assert empty_batch.proposed_folder_paths == ()
+    assert unsupported_batch.parsed == ()
+    assert unsupported_batch.proposed_folder_paths == ()
+
+
+def test_selected_files_require_a_canonical_manual_destination(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.md"
+    second = tmp_path / "second.md"
+    first.write_text("First", encoding="utf-8")
+    second.write_text("Second", encoding="utf-8")
+    bounds = _discovery_bounds()
+    discovery = discover_import_sources([first, second], bounds)
+
+    with pytest.raises(ImportSelectionError) as missing:
+        note_import_planner.parse_import_sources(discovery, bounds)
+    assert missing.value.reason_code == "destination_required"
+
+    with pytest.raises(ImportSelectionError) as invalid:
+        note_import_planner.parse_import_sources(
+            discovery,
+            bounds,
+            destination_folder_segments=(" Imported ",),
+        )
+    assert invalid.value.reason_code == "invalid_destination"
+
+    batch = note_import_planner.parse_import_sources(
+        discovery,
+        bounds,
+        destination_folder_segments=("Inbox", "Imported"),
+    )
+    assert batch.proposed_folder_paths == (("Inbox",), ("Inbox", "Imported"))
+    assert all(
+        source.memberships[0].folder_segments == ("Inbox", "Imported")
+        for source in batch.parsed
+    )
+
+
+def test_directory_import_rejects_a_separate_destination(tmp_path: Path) -> None:
+    root = tmp_path / "Project"
+    root.mkdir()
+    (root / "note.md").write_text("Body", encoding="utf-8")
+    bounds = _discovery_bounds()
+    discovery = discover_import_sources([root], bounds)
+
+    with pytest.raises(ImportSelectionError) as raised:
+        note_import_planner.parse_import_sources(
+            discovery,
+            bounds,
+            destination_folder_segments=("Imported",),
+        )
+
+    assert raised.value.reason_code == "destination_not_allowed"
+
+
+def test_discovery_failures_are_carried_forward_without_retry(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "Project"
+    root.mkdir()
+    target = tmp_path / "outside.md"
+    target.write_text("private", encoding="utf-8")
+    (root / "linked.md").symlink_to(target)
+
+    batch = _parse_selection([root])
+
+    assert batch.parsed == ()
+    assert batch.issues[0].classification is ImportClassification.FAILED
+    assert batch.issues[0].reason_code == "nested_symlink"
+    assert batch.proposed_folder_paths == ()
