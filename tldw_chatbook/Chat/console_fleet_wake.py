@@ -97,7 +97,7 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from loguru import logger
 
-from tldw_chatbook.Agents.agent_models import RunBudget
+from tldw_chatbook.Agents.agent_models import RunBudget, TERMINAL_RUN_STATUSES
 from tldw_chatbook.Agents.agent_service import (
     AUTOWAKE_ENABLED_KEY,
     DEFAULT_AUTOWAKE_ENABLED,
@@ -681,6 +681,33 @@ class ConsoleFleetWakeCoordinator:
                     row = runs_db.get_run(run_id)
                 except Exception:  # noqa: BLE001
                     row = None
+            if row is not None and (
+                str(row.get("status")) not in TERMINAL_RUN_STATUSES
+            ):
+                # task-15863: a pending run is terminal BY CONSTRUCTION --
+                # it entered the registry from the settle hook (which
+                # fires strictly after the terminal DB write; `run_child`'s
+                # finally ordering) or from the durable ledger (terminal
+                # statuses only). A non-terminal read here is therefore a
+                # stale snapshot pinned on this thread's reused held
+                # connection (observed live: a minute-old 'done' child
+                # announced as 'running'). Re-read through a fresh
+                # connection, which cannot inherit the pin.
+                fresh_read = getattr(runs_db, "get_run_fresh", None)
+                if callable(fresh_read):
+                    try:
+                        fresh_row = fresh_read(run_id)
+                    except Exception:  # noqa: BLE001
+                        fresh_row = None
+                    if fresh_row is not None:
+                        row = fresh_row
+                if str(row.get("status")) not in TERMINAL_RUN_STATUSES:
+                    # Last honest resort (a double without the fresh-read
+                    # seam, or a genuinely unreadable file): the settle/
+                    # ledger-recorded terminal word is the child's known
+                    # state at delivery -- never announce 'running' for a
+                    # settled child.
+                    row = {**row, "status": status}
             if row is not None and row.get("wake_delivered_at"):
                 stale.append(run_id)
                 continue

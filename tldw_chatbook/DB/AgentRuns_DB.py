@@ -828,6 +828,43 @@ class AgentRunsDB(BaseDB):
             ).fetchone()
         return self._row_to_dict(row) if row else None
 
+    def get_run_fresh(self, run_id: str) -> dict | None:
+        """Fetch one run through a dedicated, immediately-closed connection.
+
+        task-15863: the per-thread held connection (``_held_connection``)
+        is a WAL reader, and in Python's ``sqlite3`` ANY unfinalized
+        statement on a connection holds its implicit read transaction
+        open -- pinning that connection's snapshot. Every later read on
+        the same thread then reports the world as of the pin: live
+        verification caught the auto-wake notice labelling a child
+        ``running`` a full minute after its terminal ``done`` committed.
+        This escape hatch reads through a brand-new connection that
+        cannot inherit any pinned snapshot; callers use it when a held
+        read returns a state the caller can PROVE stale (the wake path's
+        rule: a settled child's row can never legitimately read
+        non-terminal).
+
+        In-memory databases fall back to the held read: a second
+        connection to ``:memory:`` opens a different, empty database.
+
+        Args:
+            run_id: The run to fetch.
+
+        Returns:
+            The run as a dict (``steps``/``budget`` JSON-decoded), or
+            ``None`` if ``run_id`` does not exist.
+        """
+        if self.is_memory_db:
+            return self.get_run(run_id)
+        conn = self._get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM agent_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            return self._row_to_dict(row) if row else None
+        finally:
+            conn.close()
+
     def latest_primary_run(self, conversation_id: str) -> dict | None:
         """Fetch the newest non-superseded PRIMARY run for a conversation.
 
