@@ -5814,14 +5814,26 @@ async def test_library_conversation_initial_failure_keeps_filter_for_retry():
         async def list_conversations(self, **kwargs):
             raise RuntimeError("offline")
 
-    app.chat_conversation_scope_service = FailingConversationService()
     screen = LibraryScreen(app)
-    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
     host = LibraryHarness(app, screen=screen)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         active = _active_library_screen(host)
+        await _wait_for_library_shell(active, pilot)
+        app.chat_conversation_scope_service = FailingConversationService()
+        active.query_one("#library-row-browse-conversations").press()
         await _wait_for_selector(active, pilot, "#library-conversations-filter")
+        field = active.query_one("#library-conversations-filter", Input)
+        field.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: "load"
+            in str(
+                active.query_one("#library-conversations-status").renderable
+            ).lower(),
+            message="Conversation load failure never reached the retry canvas.",
+        )
 
         assert active.query_one("#library-conversations-canvas")
         assert active.query_one("#library-conversations-previous", Button).disabled
@@ -5834,7 +5846,6 @@ async def test_library_conversation_initial_failure_keeps_filter_for_retry():
         app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
             _conversation_records(2)
         )
-        field = active.query_one("#library-conversations-filter", Input)
         field.focus()
         await pilot.press("enter")
         await _wait_for_selector(active, pilot, "#library-conversation-row-1")

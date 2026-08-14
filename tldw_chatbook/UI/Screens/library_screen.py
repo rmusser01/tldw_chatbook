@@ -10043,7 +10043,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_conversation_query = normalized_query
         self._library_conversation_loading = False
         self._library_conversation_error = ""
-        self._selected_conversation_id = ""
+        self._adopt_library_conversation_state_selection("")
         _sync_library_canvas(self, "conversations")
         if refocus_filter:
             self._refocus_library_conversations_filter_after_sync()
@@ -10093,11 +10093,12 @@ class LibraryScreen(BaseAppScreen):
                 operation.status_line
                 if operation is not None
                 else (
-                    getattr(self, "_library_notes_tree_error", "")
+                    self._library_notes_notice
+                    or getattr(self, "_library_notes_tree_error", "")
                     or (
                         "Loading folders…"
                         if getattr(self, "_library_notes_tree_loading", False)
-                        else self._library_notes_notice
+                        else ""
                     )
                 )
             ),
@@ -10131,9 +10132,10 @@ class LibraryScreen(BaseAppScreen):
             if filter_text.strip() and search_page is not None
             else getattr(self, "_library_notes_tree_root_page", None)
         )
-        if root_page is None and getattr(self, "_library_notes_tree_error", ""):
-            # Degraded hosts used by older/local-only integrations keep the
-            # pre-folder flat browser available with an explicit warning.
+        if root_page is None:
+            # Until the first bounded tree page arrives, keep the existing
+            # flat browser available; degraded integrations remain useful
+            # and an in-flight load must not temporarily erase valid rows.
             return None
         return build_library_notes_tree(
             root_page=root_page or empty_note_folder_page(),
@@ -16360,6 +16362,17 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-notes-filter", Input).focus()
         except (NoMatches, QueryError):
             pass
+
+    async def _reconcile_library_notes_list_canvas(self) -> None:
+        """Publish a completed editor-to-list transition before returning."""
+        self._request_library_notes_tree_refresh(refresh_root=True)
+        shell = build_library_shell_state(
+            self._build_library_shell_input(),
+            selected_row_id=self._library_selected_row_id,
+        )
+        if not await self._replace_library_browse_canvas(shell):
+            await self.recompose()
+        self._focus_library_notes_filter_input()
 
     @on(Button.Pressed, "#library-prompts-sort")
     def handle_library_prompts_sort(self, event: Button.Pressed) -> None:
@@ -23361,6 +23374,7 @@ class LibraryScreen(BaseAppScreen):
         self._supersede_library_notes_navigation()
         self._ensure_library_notes_sync_config_loaded()
         self._library_notes_view = "sync"
+        self._apply_library_notes_footer_context()
         _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-sync-back")
@@ -27912,7 +27926,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_notes_filter_records = None
                 self._library_notes_tree_search_page = None
             if self.is_mounted:
-                self.refresh(recompose=True)
+                await self._reconcile_library_notes_list_canvas()
             return LibraryNoteCreateOutcome("created_not_opened", created_id)
 
         self._library_notes_notice = ""
@@ -28031,7 +28045,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_tree_search_page = None
         self._remove_library_note_source_record(admission.note_id)
         if self.is_mounted:
-            self.refresh(recompose=True)
+            await self._reconcile_library_notes_list_canvas()
 
     def _notify_library_note_create_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed Library note create.
