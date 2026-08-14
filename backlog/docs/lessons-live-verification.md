@@ -857,3 +857,24 @@ unavailable.
 one was in the server repo's own `Config_Files/.env` all along. Before
 recording a live check as blocked on credentials, look in the server repo -- the
 running process was started from it.
+
+---
+
+## Trace the whole stream sequence, not only the first failing event (TASK-16074, 2026-08-13)
+
+**Incident.** Moonshot's paid Kimi K3 native-tool UAT failed behind Console's
+safe synthetic 502. A keys-only trace of the first rejected SSE event isolated
+`system_fingerprint`; the parser fix passed every deterministic and joined
+fixture, but the paid UAT still failed. The next structural trace found terminal
+`choices[0].usage`; supporting that also passed the suite, but the paid UAT still
+failed because Moonshot repeated the identical usage mapping in the following
+top-level empty-choice event. The first probe was correct but incomplete: three
+valid shapes appeared at different points in one live stream.
+
+**What to do.** When a strict streaming parser rejects a real provider, trace
+the complete event sequence using only key names, container types/counts,
+bounded enums, and parser state transitions. Do not stop after the first
+unexpected field, and do not log raw values or bodies. Turn every newly observed
+sequence rule into RED/GREEN coverage, including negative controls for repeated,
+conflicting, misplaced, and JSON-type-distinct data. A first-event trace proves
+one incompatibility; only consuming the whole live stream proves the contract.

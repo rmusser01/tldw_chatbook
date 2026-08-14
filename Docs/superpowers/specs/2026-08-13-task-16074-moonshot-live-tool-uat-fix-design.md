@@ -1,7 +1,7 @@
 # Moonshot Live Native-Tool UAT Fix Design
 
 Date: 2026-08-13
-Status: User-approved; root-cause evidence incorporated
+Status: Implemented and verified
 Backlog task: [TASK-16074](../../../backlog/tasks/task-16074%20-%20Make-Moonshot-live-native-tool-continuation-pass.md)
 Foundation task: [TASK-15676](../../../backlog/tasks/task-15676%20-%20Harden-Moonshot-Kimi-and-Z.ai-GLM-as-first-class-hosted-providers.md)
 Architecture decision: [ADR-063](../../../backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md)
@@ -165,6 +165,11 @@ The implementation must use strict RED-to-GREEN evidence:
 Per the user's test-scope instruction, verification is limited to touched files
 and directly related Moonshot/hosted/AgentService/Console continuation paths;
 no full-suite or broad-directory sweep is required.
+
+Final paid evidence: reviewed and rebased code SHA `da2816853` passed
+`test_live_hosted_text_and_native_tool[moonshot]` (`1 passed` in 16.82s),
+proving one calculator call, exact result continuation, and the required final
+marker through the real Console-to-AgentService-to-Moonshot path.
 
 ## ADR Check
 

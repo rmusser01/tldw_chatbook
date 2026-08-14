@@ -470,6 +470,17 @@ Expected: `git grep` exits 1 with no filenames, the committed range is clean,
 and the worktree is empty. Inspect the final `origin/dev...HEAD` diff so the
 Implementation Notes and task evidence are included in the privacy/scope audit.
 
+## Execution Evidence
+
+- RED/GREEN covered all three live stream mismatches plus strict malformed,
+  conflicting, repeated, misplaced, and JSON-type-distinct controls.
+- Final focused gates: 109 touched-file tests, 77 provider/Console tests, and 60
+  AgentService/privacy tests passed; Ruff, formatting, focused mypy, compileall,
+  and diff checks passed.
+- Two independent final reviews approved code and spec.
+- Paid Moonshot UAT passed on reviewed/rebased code SHA `da2816853` (`1 passed`
+  in 16.82s).
+
 ### Task 6: Open, Review, Merge, And Clean Up The Follow-Up PR
 
 **Files:**
