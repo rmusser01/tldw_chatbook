@@ -13164,9 +13164,15 @@ class ChatScreen(BaseAppScreen):
                 ConsoleDisplayRow("Conversation source", "none"),
             )
 
-        try:
-            active_session = store.switch_session(store.active_session_id)
-        except KeyError:
+        active_session = next(
+            (
+                session
+                for session in store.sessions()
+                if session.id == store.active_session_id
+            ),
+            None,
+        )
+        if active_session is None:
             return (
                 ConsoleDisplayRow("Selected conversation", "No active conversation"),
                 ConsoleDisplayRow("Conversation source", "none"),

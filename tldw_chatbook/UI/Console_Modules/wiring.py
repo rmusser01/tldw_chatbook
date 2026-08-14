@@ -568,7 +568,7 @@ def build_console_controllers(
             )
         ),
         open_consent=(
-            lambda modal, callback: screen.push_screen(modal, callback=callback)
+            lambda modal, callback: screen.app.push_screen(modal, callback=callback)
         ),
         hands_free_active=(
             lambda: (

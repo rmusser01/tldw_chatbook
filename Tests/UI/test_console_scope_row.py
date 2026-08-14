@@ -367,6 +367,24 @@ async def test_conversation_inspector_projects_raw_title_and_workspace_to_one_li
 
 
 @pytest.mark.asyncio
+async def test_conversation_inspector_projection_does_not_reactivate_session():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)):
+        console = host.screen_stack[-1]
+        store = console._console_chat_store
+        active_session_id = store.active_session_id
+        active_session_epoch = store.active_session_epoch()
+
+        console._selected_console_conversation_inspector_rows()
+        console._selected_console_conversation_inspector_rows()
+
+        assert store.active_session_id == active_session_id
+        assert store.active_session_epoch() == active_session_epoch
+
+
+@pytest.mark.asyncio
 async def test_edit_button_seeds_modal_from_held_scope():
     app = _build_test_app()
     app.media_reading_scope_service = _SpyMediaReadingScopeService()

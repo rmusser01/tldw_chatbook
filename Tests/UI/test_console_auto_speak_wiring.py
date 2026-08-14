@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSMessageSpeechRequestEvent,
 )
+from tldw_chatbook.UI.Console_Modules.wiring import build_console_controllers
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     AutoSpeakConsentModal,
     ConsoleAutoSpeakCoordinator,
@@ -151,6 +152,28 @@ def test_destination_display_removes_credentials_path_query_and_controls() -> No
     assert "secret" not in repr(modal)
     assert "key=abc" not in repr(modal)
     assert modal.provider_label == "Pocket Chat?"
+
+
+def test_console_wiring_opens_auto_speak_consent_on_owning_app() -> None:
+    screen = MagicMock()
+    screen.app = MagicMock()
+    screen.app_instance = MagicMock()
+    del screen.push_screen
+    build_console_controllers(
+        screen,
+        rag_source_types_accessor=lambda: (),
+        rag_top_k_accessor=lambda: 10,
+    )
+    modal = AutoSpeakConsentModal(
+        "PocketChat TTS",
+        "http://127.0.0.1:8765/v1/audio/speech",
+        charges_may_apply=False,
+    )
+    callback = MagicMock()
+
+    screen._console_auto_speak._open_consent_fn(modal, callback)
+
+    screen.app.push_screen.assert_called_once_with(modal, callback=callback)
 
 
 @pytest.mark.asyncio
