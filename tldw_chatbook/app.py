@@ -5092,7 +5092,7 @@ def _build_generated_video_store():
         store.enforce_retention()
     except Exception as exc:
         logger.warning(
-            "Generated-video startup retention failed (error_type=%s).",
+            "Generated-video startup retention failed (error_type={}).",
             type(exc).__name__,
         )
     return store

@@ -3380,7 +3380,7 @@
     },
     {
       "call_count": 307,
-      "diagnostic_digest": "a2c250bf5abb99df472b",
+      "diagnostic_digest": "a483e0cb2bee41913190",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
