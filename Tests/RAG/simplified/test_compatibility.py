@@ -36,6 +36,7 @@ class TestBackwardCompatibility:
         """Test that old config format still works."""
         # Old format might have had service_level instead of profile
         config = RAGConfig()
+        config.embedding.model = "mock"
         config.vector_store.persist_directory = temp_dir
 
         # Should work without specifying profile
@@ -199,6 +200,7 @@ class TestConfigCompatibility:
 
         # Create service with memory config
         memory_config = RAGConfig()
+        memory_config.embedding.model = "mock"
         memory_config.vector_store.type = "memory"
         service = create_rag_service(profile_name=profile, config=memory_config)
         assert isinstance(service, EnhancedRAGServiceV2)
@@ -219,6 +221,7 @@ class TestConfigCompatibility:
         ):
             # Config should pick up env vars
             config = RAGConfig()
+            config.embedding.model = "mock"
             config.vector_store.type = (
                 "memory"  # Use in-memory to avoid persist_directory
             )
