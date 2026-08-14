@@ -128,8 +128,8 @@ XDG_CONFIG_HOME=<scratch>/xdg-config
 TLDW_CONFIG_PATH=<scratch>/config.toml
 HF_HUB_OFFLINE=1
 TRANSFORMERS_OFFLINE=1
-HF_HOME=<scratch>/hf-home
-HF_HUB_CACHE=<scratch>/hf-home/hub
+HF_HOME=<resolved-scratch-data>/default_user/models
+HF_HUB_CACHE=<resolved-scratch-data>/default_user/models/embeddings
 NO_PROXY=127.0.0.1,localhost
 PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
 PYTHONPATH=<this-worktree>
@@ -139,44 +139,64 @@ LANG=en_US.UTF-8
 
 Do not add `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, any `*_API_KEY`, or any
 provider-specific environment variable. The real cache is an un-escalated copy
-source only. Preflight that
-`models--sentence-transformers--all-MiniLM-L6-v2/snapshots` exists beneath it;
-resolve and assert the source model directory stays beneath the real cache.
+source only. Parse `[paths].data_dir` without importing the application and
+define the production-resolved offline embedding cache as
+`<resolved-scratch-data>/default_user/models/embeddings`; assert that path is
+beneath the scratch root. Preflight that
+`models--sentence-transformers--all-MiniLM-L6-v2/snapshots` exists beneath the
+real cache; resolve and assert the source model directory stays beneath the
+real cache.
 Enumerate every source symlink and assert its resolved target stays beneath that
 model directory. Copy that one model directory (refs, blobs, snapshots) into
-`<scratch>/hf-home/hub` without dereferencing symlinks; resolve and assert the
-clone stays beneath the scratch root. Before changing permissions, enumerate
-every clone symlink and assert its resolved target stays beneath the clone.
+the production-resolved offline embedding cache without dereferencing symlinks;
+resolve and assert the clone stays beneath the scratch root. This exact location
+is required because production passes `get_model_cache_dir()` as the embedding
+loader's explicit cache directory, which takes precedence over Hugging Face
+environment defaults. Before changing permissions, enumerate every clone
+symlink and assert its resolved target stays beneath the clone.
 Compare source and clone manifests containing each relative path, entry type,
 symlink target, and regular-file SHA-256. Only after the manifests match,
 recursively remove write permission from the clone and verify a normal write
-attempt fails. The canonical clean environment above points only at this
-verified scratch clone.
+attempt fails. Explicitly assert the final cloned model directory is
+`<embedding-cache>/models--sentence-transformers--all-MiniLM-L6-v2`, remains
+beneath the embedding cache, and contains its `snapshots` directory. The
+canonical clean environment above points only at this verified scratch clone.
 
-First attempt the stub, health probe, and TUI without escalation. If macOS
-sandboxing rejects the loopback bind or separates the listener from the TUI's
-network namespace, record that failure and request escalation for exactly the
-discard-only stub, body-free health probe, and clean-environment TUI launch so
-those three processes share one loopback namespace. No seed, DB maintenance,
-model-cache preparation, config write, profiler report, or other command may be
-escalated. The escalated commands retain `/usr/bin/env -i`, the scratch
-read-only cache, offline flags, disabled model catalog, fixed
-`127.0.0.1:19090` endpoint, no credentials/proxies, effective-TOML checks,
-running-PID `lsof`, and real-profile fingerprints. `curl -sf
-http://127.0.0.1:19090/health` must succeed in the same namespace before the
-TUI starts; no other network destination is configured. Use one-shot exact
-escalation commands without a reusable prefix approval. Capture the stub PID,
-assert it is the sole listener on strict `127.0.0.1:19090`, and reuse that exact
-validated listener across the profiling and acceptance runs. In final cleanup,
-terminate the stub PID cleanly, verify with `lsof` that the port has no listener,
-and verify the loopback health connection fails.
+If any seed attempt inserts notes but does not complete exact indexing, abandon
+that scratch root and create a new one from the fixture before retrying. If a
+listener was started during an earlier attempt, first terminate its captured,
+validated PID and prove with `lsof` and a failed health connection that port
+19090 is clear. Never repair or reuse a partially seeded/indexed profile.
+
+Create the stub script during this step, but do not launch it until Step 4's
+exact seed assertions succeed. Then first attempt the stub, health probe, and
+TUI without escalation. If macOS sandboxing rejects the loopback bind or
+separates the listener from the TUI's network namespace, record that failure
+and request escalation for exactly the discard-only stub, body-free health
+probe, and clean-environment TUI launch so those three processes share one
+loopback namespace. No seed, DB maintenance, model-cache preparation, config
+write, profiler report, or other command may be escalated. The escalated
+commands retain `/usr/bin/env -i`, the scratch read-only cache, offline flags,
+disabled model catalog, fixed `127.0.0.1:19090` endpoint, no
+credentials/proxies, effective-TOML checks, running-PID `lsof`, and real-profile
+fingerprints. `curl -sf http://127.0.0.1:19090/health` must succeed in the same
+namespace before the TUI starts; no other network destination is configured.
+Use one-shot exact escalation commands without a reusable prefix approval.
+Capture the stub PID, assert it is the sole listener on strict
+`127.0.0.1:19090`, and reuse that exact validated listener across the profiling
+and acceptance runs. In final cleanup, terminate the stub PID cleanly, verify
+with `lsof` that the port has no listener, and verify the loopback health
+connection fails.
 
 Parse the TOML with `tomllib` before launch and after every boot. Resolve
 `[paths].data_dir`; assert it is beneath the scratch root and differs from the
 real profile path. In the same clean environment, import
-`library_rag_answer_provider_gate()` and assert provider
-`custom-openai-api`, no credential recovery, and an enabled Library Run gate.
-Hash the real config and data inventory before launch.
+`get_model_cache_dir()` and assert its resolved return value is exactly
+`<resolved-scratch-data>/default_user/models/embeddings`, stays beneath the
+scratch root, and differs from the real cache. Import
+`library_rag_answer_provider_gate()` and assert provider `custom-openai-api`, no
+credential recovery, and an enabled Library Run gate. Hash the real config and
+data inventory before launch.
 
 Expected: all assertions pass before any app import or DB open.
 
