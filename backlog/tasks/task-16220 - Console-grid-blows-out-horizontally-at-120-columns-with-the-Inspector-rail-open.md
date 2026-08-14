@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: ''
-updated_date: '2026-08-14 23:11'
+updated_date: '2026-08-14 23:38'
 labels:
   - bug
   - console
@@ -59,3 +59,19 @@ the exact-minimum arithmetic and probe transcripts are in the task-15791 notes.
 - [ ] #3 The size2 rows of test_console_shell_regions.py and both size rows of test_console_rail_width_budget.py pass
 - [ ] #4 Degradation at 100-149 columns with both rails open is a stated design rule (which rail yields), not an accident of the solver
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Refine ADR-043 for Inspector-first compact priority and responsive focus handoff.
+2. Add pure rail-priority, reveal-update, and width-band contracts with RED-to-GREEN tests.
+3. Thread one width authority through existing Console compose/current/resize paths and preserve keyboard focus.
+4. Prove production-hierarchy containment at 120 columns and refresh the stale label-width oracle.
+5. Run focused verification, self-review, update docs/task evidence, and close through Backlog CLI.
+
+Detailed plan: [2026-08-14 Console grid horizontal blowout implementation plan](../../Docs/superpowers/plans/2026-08-14-console-grid-horizontal-blowout.md)
+
+- ADR required: yes
+- ADR path: [ADR-043: Console rail compact-collapse yields to explicit toggles](../decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md)
+- Reason: TASK-16220 refines the durable conflict policy between two persisted rail preferences in the 100-149-column compact band.
+<!-- SECTION:PLAN:END -->

@@ -57,6 +57,14 @@ This is a rendering decision. Responsive collapse does not rewrite the saved
 Context preference. Collapsing Inspector, or growing the terminal to 150
 columns, restores Context automatically when its saved preference is open.
 
+Responsive rail replacement must also preserve a usable keyboard position.
+When a resize hides the rail that currently owns focus, focus moves to that
+rail's now-visible reveal handle after the visibility update. This applies to
+the 117-to-118 Context-to-Inspector transition and the 128-to-129
+Inspector-to-Context transition. It does not change the established manual
+collapse contract, and it does not run in single-pane mode where reveal
+handles are intentionally hidden.
+
 The collapsed Context handle remains functional. If the user explicitly asks
 to open Context while Inspector owns the compact band, the action switches the
 visible rail by closing Inspector through the existing preference update and
@@ -84,12 +92,20 @@ open has been applied. In the 100-149 band it will:
   waiver applies; and
 - leave the established below-100 and 150-plus rules untouched.
 
-The same finalizer must be used by compose-time and mounted/resize-time rail
-state construction so the first frame and later resize frames cannot diverge.
+The same pure finalizer in `Chat/console_rail_state.py` must be used by
+compose-time and mounted/resize-time rail state construction so the first frame
+and later resize frames cannot diverge. The priority decision does not add a
+new `ChatScreen` method: the screen is already governed by the one-way size and
+method-count ratchet, so existing handlers and resize seams call the pure rail
+state helper instead.
+
 Every Context-reveal entry point (the collapsed handle and the visible
-`attach-context` Workbench action) will call one shared intent that switches
-away from Inspector in this band rather than requesting an impossible two-open
-state.
+Workbench action whose event id is exactly `attach-context`) will use the same
+pure reveal decision and the existing preference setter. In the compact band
+that decision switches away from Inspector rather than requesting an
+impossible two-open state. The similarly named `#console-attach-context` and
+`#console-staged-context-attach` buttons remain file-picker actions and are not
+part of this rail-switch contract.
 
 The resize bands must include every boundary that changes effective rail
 geometry. The current `console_rail_width_band()` treats every width at or above
@@ -113,6 +129,9 @@ Focused tests will cover:
   rather than doing nothing;
 - live resize transitions at 117/118, 128/129, and 149/150 using the resize
   event width as the single authority;
+- responsive 117-to-118 and 128-to-129 replacement moving focus from the
+  hidden rail to its visible reveal handle, while manual collapse retains its
+  existing focus behavior;
 - every displayed workspace-grid child staying inside the 120-column viewport
   under the production hierarchy and shipped stylesheet;
 - the four existing `test_console_shell_regions.py` `size2` regressions;
@@ -121,9 +140,15 @@ Focused tests will cover:
   contract; and
 - mutation evidence that removing the entire effective-state finalizer restores
   the 120-column blowout; separate state assertions pin Context collapse and
-  compact-override authority; and a 100-column containment row proves the
-  compact override remains load-bearing when the collapsed handle, Transcript,
-  and Inspector exceed the viewport budget without it.
+  compact-override authority. Existing below-threshold explicit-toggle tests
+  continue to pin the main-column waiver where it is geometrically
+  load-bearing.
+
+Because `chat_screen.py` already exceeds the repository's historical screen
+ratchet on the current development baseline, the focused architecture evidence
+will record before/after line and method counts and require that this task adds
+no `ChatScreen` method. The ratchet ceiling will not be raised or rewritten by
+this bug fix.
 
 Only Console rail/layout tests and static checks for touched files will run.
 The unrelated pre-existing recovery-copy failure in
