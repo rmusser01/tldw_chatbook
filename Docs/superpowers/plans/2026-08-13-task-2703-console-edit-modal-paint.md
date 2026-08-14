@@ -403,11 +403,11 @@ any session. Confirm no `/tmp/task2703-live.*` runtime directory remains.
 - Modify: `Docs/User_Guide/console/branching-and-rewind.md:160-164`
 - Modify: `backlog/tasks/task-2703 - Console-Edit-Message-modal-action-buttons-invisible-in-real-terminals.md`
 
-- [ ] **Step 1: Remove the obsolete workaround**
+- [x] **Step 1: Remove the obsolete workaround**
 
 Delete only the bullet claiming the Edit Message actions may be invisible and advising blind Tab/Enter operation. Do not rewrite unrelated Console guidance.
 
-- [ ] **Step 2: Run the final bounded behavior matrix**
+- [x] **Step 2: Run the final bounded behavior matrix**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -427,7 +427,7 @@ Run the exact native Console nodes rather than the whole monolithic file:
   Tests/UI/test_console_native_chat_flow.py::test_console_selected_message_edit_action_blank_save_stays_open_with_error
 ```
 
-- [ ] **Step 3: Run static and generated-artifact checks**
+- [x] **Step 3: Run static and generated-artifact checks**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -444,7 +444,7 @@ git diff --check origin/dev...HEAD
 
 If a whole-file formatter failure is inherited, prove it against `origin/dev` and range-check every changed hunk; do not accept unrelated formatter churn.
 
-- [ ] **Step 4: Run UI hardening and bounded code review**
+- [x] **Step 4: Run UI hardening and bounded code review**
 
 Use the Impeccable hardening detector/review on the exact changed production
 and test files, then request a bounded correctness/accessibility review. Resolve
@@ -455,7 +455,7 @@ containment/hit/paint oracles, the Task 3 ordinary-contrast/focus/Enter
 selection, both Task 4 live drivers plus isolation manifests, and the Task 5
 bounded behavior/native/static gates before proceeding.
 
-- [ ] **Step 5: Self-review cumulative scope and make the lessons decision**
+- [x] **Step 5: Self-review cumulative scope and make the lessons decision**
 
 Review `git diff --stat`, `git diff --check origin/dev...HEAD`, and the complete
 `origin/dev...HEAD` diff. Confirm no outer-modal, copy, DOM, handler, global
@@ -465,30 +465,28 @@ whether the USER-overflow diagnosis or live-driver technique generalizes into
 `backlog/docs/lessons-live-verification.md`; add a concise incident-based lesson
 only if it adds knowledge not already recorded.
 
-- [ ] **Step 6: Freeze the reviewed candidate and run the full suite**
+- [x] **Step 6: Freeze the reviewed candidate and apply the user-directed scoped gate**
 
-After all review-driven code/test changes and their affected/live/static reruns
-are complete, freeze the candidate and run:
+The reviewed candidate was frozen at `8c450c8b4`. The user explicitly limited
+this PR's verification to the touched modal and its behavior/wiring surfaces,
+superseding the originally planned full-suite gate. The full suite had reached
+28% when that direction arrived; it was terminated, is non-authoritative for
+TASK-2703, and its unrelated failures belong in a separate follow-up PR from
+the latest `dev`.
 
-```bash
-../../.venv/bin/python -m pytest -q
-```
+The scoped matrix in Step 2 produced 68 passes and one inherited integration
+failure. The exact failing node,
+`Tests/integration/test_console_edit_resend_e2e.py::test_console_edit_and_resend_full_lifecycle_persist_resume_swipe`,
+failed identically at the pre-TASK-2703 base `0d718e7fb`; the user explicitly
+approved closing TASK-2703 with that exception. The exact native nodes passed
+4/4. The owned 61-test modal file, mutation evidence, Task 4 live matrix,
+static gates, and independent reviews complete the approved scoped gate.
 
-Do not edit source while it runs. Any failure must be reproduced against the
-exact pre-TASK-2703 base before it may be classified as inherited; TASK-2703
-failures are fixed and the affected/full gates rerun. Record the exact command,
-counts, duration, and any approved inherited exclusions in Implementation
-Notes. Obtain explicit user approval before marking Done with any remaining
-inherited exceptions. Any later production, CSS, or test edit invalidates this
-full-suite result and requires rerunning affected/live/static gates and the
-complete suite. The task is not marked Done before this decision and evidence
-exist.
-
-- [ ] **Step 7: Complete task hygiene only after DoD evidence is green**
+- [x] **Step 7: Complete task hygiene only after approved scoped evidence is green**
 
 Use Backlog CLI to check all four ACs, add concise Implementation Notes
-containing RED/GREEN, mouse and Enter behavior, live-driver, isolation,
-full-suite, static, review, lessons, and ADR evidence, then set TASK-2703 Done.
+containing RED/GREEN, mouse and Enter behavior, live-driver, isolation, scoped
+verification, static, review, lessons, and ADR evidence, then set TASK-2703 Done.
 Re-read with:
 
 ```bash
@@ -497,7 +495,7 @@ backlog task 2703 --plain
 
 Confirm all ACs render checked and the plan/notes survived the CLI update.
 
-- [ ] **Step 8: Commit docs and closeout**
+- [x] **Step 8: Commit docs and closeout**
 
 If Step 5 added a lessons entry, first stage that exact lessons file with
 `git add backlog/docs/lessons-testing-evidence.md` or
@@ -511,9 +509,9 @@ git add Docs/User_Guide/console/branching-and-rewind.md \
 git commit -m "docs(console): complete TASK-2703"
 ```
 
-- [ ] **Step 9: Final branch verification**
+- [x] **Step 9: Final branch verification**
 
 Re-run `git diff --check origin/dev...HEAD`, verify `git status --short` is
 clean, and audit the cumulative diff for scope. Do not push/create a PR until
-the required full suite and review evidence above are complete; PR/rebase/Qodo
-handling remains a later user-authorized integration step.
+the approved scoped verification and review evidence above are complete;
+PR/rebase/Qodo handling remains a later user-authorized integration step.
