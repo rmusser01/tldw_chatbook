@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-13
 
-**Status:** Approved direction; pending document review
+**Status:** Approved direction; document-review corrections incorporated
 
 **Task:** TASK-15810 — Library RAG Answer's first query on a fresh profile never returns
 
@@ -63,6 +63,39 @@ Library retrieval path has not yet passed live verification.
 The focused baseline on the isolated TASK-15810 branch is green: 143 Library
 RAG service and product-maturity tests pass before any task changes.
 
+## Reference acceptance fixture
+
+The 30-second comparison uses one exact cold-query fixture:
+
+- Corpus: every `*.md` file under `Docs/User_Guide`, sorted by repository path.
+  The current fixture contains exactly 36 files. The seed record stores the
+  path and SHA-256 manifest so a later content change is visible rather than
+  silently changing the benchmark.
+- Ingestion: a separate scratch-only seed process writes all 36 files through
+  `add_note` and indexes them through `index_entries`, then exits. Every write
+  and index result must succeed.
+- Index preflight: the production stats API must report a non-empty vector
+  collection, the recorded chunk count must equal the post-seed count, and the
+  indexed metadata must cover all 36 seeded note IDs. The Library rail must
+  visibly report `Notes (36)` before the query.
+- Process state: the timed run starts a newly launched TUI process after the
+  seed process exits. It has no pre-existing in-process shared RAG runtime and
+  no earlier query in that process.
+- Configuration: builtin active profile `hybrid_basic`, whose retrieval mode is
+  `hybrid`; RAG Answer UI mode; Notes as the only selected source; `top_k=15`;
+  citations enabled; the `all-MiniLM-L6-v2` model already present in a
+  read-only cache; `HF_HUB_OFFLINE=1`; and no network model download path.
+- Query: `how do I schedule a watchlist brief`, the predecessor query that
+  returned `watchlists.md` through the same seeded corpus when the engine was
+  driven directly.
+
+The profiler run may add profiler overhead and is reported separately. The
+final under-30-second acceptance measurement is an unprofiled run of this exact
+fixture, from activating **Run** to the first visible Evidence row. A second
+newly launched cold TUI process uses the same persisted scratch index for the
+live responsiveness/cancellation check, so the timed run remains uninterrupted
+and neither process has a previously constructed in-process RAG runtime.
+
 ## Investigation design
 
 ### 1. Reproduce the real path before changing it
@@ -79,8 +112,14 @@ Use a fully isolated scratch profile and follow the production path:
 
 The scratch environment isolates `TLDW_TEST_MODE`, `HOME`, `XDG_DATA_HOME`,
 `XDG_CONFIG_HOME`, `TLDW_CONFIG_PATH`, and the configured application data
-directory. The real profile and data directories are fingerprinted before and
-after the run.
+directory. Before launch and after every boot, the harness parses the effective
+scratch TOML with `tomllib` and asserts that `[paths].data_dir` resolves beneath
+the scratch root. It then checks the running PID with `lsof`: zero open handles
+may resolve beneath the real profile/data roots, every database/config/vector
+handle found must resolve beneath the scratch root, and at least one live data
+handle must prove that the process is using that scratch root. The real profile
+and data directories are also fingerprinted before and after the run as a
+separate proof that no mutation occurred.
 
 ### 2. Profile the stuck process
 
@@ -125,6 +164,13 @@ The fix must preserve these boundaries:
 - Runtime construction and CPU-heavy retrieval remain off the Textual event
   loop. `asyncio.to_thread()` or the existing engine's worker boundary is used
   only where the measured owner requires it.
+- UI cancellation and stale-result fencing are distinct from termination of
+  underlying CPU work. A cancelled or superseded retrieval must either stop
+  cooperatively, or remain serialized so another retrieval cannot run beside
+  it and amplify the spin. If cooperative termination is impossible at the
+  measured seam, any residual background work must stay bounded by the same
+  corrected first-query operation and the next request must wait rather than
+  create parallel CPU work.
 - The current service request and normalized outcome contracts remain intact
   unless the profile proves that the contract itself is the faulty owner.
 - A new status phase is introduced only for measured initialization work that
@@ -141,7 +187,7 @@ an ADR decision instead of silently expanding this task.
 - Cancellation of the Textual search worker must prevent a late result or late
   initialization status from replacing a newer query.
 - Starting a new query while the first is running keeps the existing generation
-  and stale-result protections.
+  and stale-result protections, and cannot create overlapping CPU retrievals.
 - The UI stays responsive while profiling, initialization, and retrieval run.
 - Diagnostic logging may include phase names, elapsed time, source types,
   aggregate counts, and exception classes. It may not include user query text,
@@ -156,9 +202,17 @@ an ADR decision instead of silently expanding this task.
 2. Add the smallest RED regression for the measured mechanism.
 3. Apply the minimal production fix and make that regression GREEN.
 4. Mutation-check the regression against the faulty behavior where practical.
-5. Run focused tests for the changed engine/service seam, Library RAG state and
-   cancellation, and the product-maturity Pilot path.
-6. Run Ruff on every changed Python file and `git diff --check`.
+5. If the profiled owner is in or below the engine boundary, exercise the
+   concrete runtime returned by the production resolver (currently
+   `EnhancedRAGServiceV2`) in at least one focused regression; a fake or base
+   `RAGService` alone is insufficient.
+6. Add a deterministic heartbeat/Pilot assertion around the changed retrieval
+   seam. While a gated CPU retrieval is pending, a scheduled Textual heartbeat
+   must advance and cancel/navigation input must be processed. The spin
+   regression itself remains mechanism-based rather than timeout-only.
+7. Run focused tests for the changed engine/service seam, Library RAG state and
+   cancellation/serialization, and the product-maturity Pilot path.
+8. Run Ruff on every changed Python file and `git diff --check`.
 
 Tests must verify behavior deterministically. The 30-second wall-clock bound is
 reserved for the isolated live acceptance run rather than used as the sole unit
@@ -166,9 +220,8 @@ test oracle.
 
 ### Live acceptance run
 
-Create a fresh isolated profile with 36 real notes written and indexed through
-the production data APIs. Start the actual TUI and drive Library RAG Answer from
-**Run** to a visible Evidence row.
+Create the exact reference acceptance fixture above. Start the actual TUI and
+drive Library RAG Answer from **Run** to a visible Evidence row.
 
 Record:
 
@@ -178,9 +231,12 @@ Record:
 - any named initialization status that appeared;
 - the visible Evidence result and final non-searching status;
 - responsive cancellation/stale-query behavior if the changed seam touches it;
-  and
-- before/after fingerprints proving the real configuration and data were not
-  modified.
+- live navigation or cancel input acknowledged within one second while the cold
+  query is still pending, proving the event loop remains responsive;
+- effective scratch TOML validation and running-PID `lsof` evidence proving the
+  process opened no real-profile handles; and
+- before/after fingerprints separately proving the real configuration and data
+  were not modified.
 
 ## ADR check
 
@@ -202,5 +258,8 @@ revisited before implementation.
   minimal fix.
 - The first real Library RAG Answer query on the isolated 36-note profile
   renders Evidence in under 30 seconds.
+- A deterministic heartbeat assertion and live input check prove the Textual
+  event loop remains responsive, while cancellation or supersession cannot
+  create overlapping CPU retrievals.
 - The Textual event loop, cancellation, stale-query fencing, error recovery,
   privacy constraints, source behavior, and answer flow remain intact.
