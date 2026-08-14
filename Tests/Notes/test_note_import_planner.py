@@ -1,6 +1,7 @@
 """Contract tests for one-time Database Notes import planning."""
 
 import os
+from collections import Counter
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,7 +9,7 @@ from typing import Self
 
 import pytest
 
-from tldw_chatbook.Notes import note_import_planner
+from tldw_chatbook.Notes import note_import_plan_models, note_import_planner
 from tldw_chatbook.Notes.note_import_plan_models import (
     ImportAction,
     ImportBounds,
@@ -1479,7 +1480,7 @@ def test_unsupported_descriptor_api_fails_closed_with_a_stable_error(
     with pytest.raises(ImportSelectionError) as raised:
         discover_import_sources([note], _discovery_bounds())
 
-    assert raised.value.reason_code == "selection_unreadable"
+    assert raised.value.reason_code == "secure_discovery_unavailable"
     assert "PRIVATE" not in str(raised.value)
 
 
@@ -1604,3 +1605,259 @@ def test_selected_file_names_reject_canonical_unicode_ambiguity(
 
     assert raised.value.reason_code == "ambiguous_display_path"
     assert str(tmp_path) not in str(raised.value)
+
+
+class _DiscoveryInterruption(BaseException):
+    """Synthetic non-Exception interruption for descriptor cleanup coverage."""
+
+
+@pytest.mark.parametrize(
+    ("boundary", "error_type"),
+    [
+        ("inspect", RuntimeError),
+        ("verified_open", RuntimeError),
+        ("root_scan", RuntimeError),
+        ("child_scan", RuntimeError),
+        ("root_scan", _DiscoveryInterruption),
+    ],
+)
+def test_unexpected_discovery_errors_close_every_owned_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+    error_type: type[BaseException],
+) -> None:
+    """Every lexical descriptor owner cleans up before unexpected propagation."""
+    root = tmp_path / "Project"
+    (root / "child").mkdir(parents=True)
+    real_open = os.open
+    real_fstat = os.fstat
+    real_close = os.close
+    real_scandir = os.scandir
+    opened: list[int] = []
+    closed: list[int] = []
+    project_fds: set[int] = set()
+    child_fds: set[int] = set()
+    inspect_injected = False
+
+    def tracked_open(
+        path: object,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+        opened.append(descriptor)
+        if os.fspath(path) == "Project" and dir_fd is not None:
+            project_fds.add(descriptor)
+        if os.fspath(path) == "child" and dir_fd is not None:
+            child_fds.add(descriptor)
+        return descriptor
+
+    def injected_fstat(descriptor: int) -> os.stat_result:
+        nonlocal inspect_injected
+        should_raise = False
+        if boundary == "inspect" and not inspect_injected:
+            inspect_injected = True
+            should_raise = True
+        elif (boundary == "verified_open" and descriptor in project_fds) or (
+            boundary == "child_scan" and descriptor in child_fds
+        ):
+            should_raise = True
+        if should_raise:
+            raise error_type("unexpected discovery failure")
+        return real_fstat(descriptor)
+
+    def tracked_close(descriptor: int) -> None:
+        real_close(descriptor)
+        closed.append(descriptor)
+
+    def injected_scandir(descriptor: int) -> os.ScandirIterator[str]:
+        if boundary == "root_scan" and descriptor in project_fds:
+            raise error_type("unexpected discovery failure")
+        return real_scandir(descriptor)
+
+    monkeypatch.setattr(note_import_planner.os, "open", tracked_open)
+    monkeypatch.setattr(note_import_planner.os, "fstat", injected_fstat)
+    monkeypatch.setattr(note_import_planner.os, "close", tracked_close)
+    monkeypatch.setattr(note_import_planner.os, "scandir", injected_scandir)
+
+    with pytest.raises(error_type):
+        discover_import_sources([root], _discovery_bounds())
+
+    assert Counter(closed) == Counter(opened)
+
+
+@pytest.mark.parametrize(
+    "folder_name",
+    [
+        "Project\N{FULLWIDTH SOLIDUS}Archive",
+        "Project\N{FULLWIDTH REVERSE SOLIDUS}Archive",
+    ],
+)
+def test_selected_root_uses_canonical_folder_name_validation(
+    tmp_path: Path,
+    folder_name: str,
+) -> None:
+    """A root whose NFKC key becomes a path segment is rejected fatally."""
+    root = tmp_path / folder_name
+    root.mkdir()
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([root], _discovery_bounds())
+
+    assert raised.value.reason_code == "unsafe_display_path"
+    assert str(root) not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "folder_name",
+    ["nested\N{FULLWIDTH SOLIDUS}name", "nested\N{FULLWIDTH REVERSE SOLIDUS}name"],
+)
+def test_invalid_canonical_nested_folder_is_one_untraversed_failure(
+    tmp_path: Path,
+    folder_name: str,
+) -> None:
+    """Invalid nested folder segments are visible once and never traversed."""
+    root = tmp_path / "Project"
+    nested = root / folder_name
+    nested.mkdir(parents=True)
+    (nested / "secret.md").write_text("secret", encoding="utf-8")
+
+    discovery = discover_import_sources([root], _discovery_bounds())
+
+    assert discovery.candidates == ()
+    assert len(discovery.failures) == 1
+    assert discovery.failures[0].reason_code == "nested_unsafe_name"
+    assert "secret.md" not in repr(discovery)
+
+
+def test_canonically_equivalent_sibling_folders_reject_the_whole_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sibling folders cannot silently merge through normalized folder keys."""
+    root = tmp_path / "Project"
+    root.mkdir()
+    directory_metadata = root.stat()
+
+    class FolderEntry:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def stat(self, *, follow_symlinks: bool) -> os.stat_result:
+            assert follow_symlinks is False
+            return directory_metadata
+
+    class FolderScandir:
+        def __init__(self) -> None:
+            self.entries = iter(
+                [
+                    FolderEntry("Caf\N{LATIN SMALL LETTER E WITH ACUTE}"),
+                    FolderEntry("Cafe\N{COMBINING ACUTE ACCENT}"),
+                ]
+            )
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def __iter__(self) -> Self:
+            return self
+
+        def __next__(self) -> FolderEntry:
+            return next(self.entries)
+
+    monkeypatch.setattr(os, "scandir", lambda _descriptor: FolderScandir())
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([root], _discovery_bounds())
+
+    assert raised.value.reason_code == "ambiguous_folder_path"
+    assert str(root) not in str(raised.value)
+
+
+def test_import_bounds_reject_depth_above_absolute_runtime_ceiling() -> None:
+    """Configured depth cannot exceed the recursion-safe absolute ceiling."""
+    assert note_import_plan_models.MAX_IMPORT_DEPTH == 64
+    with pytest.raises(ValueError, match="max_depth"):
+        _discovery_bounds(max_depth=65)
+
+
+@pytest.mark.parametrize("race_target", ["selected_parent", "nested_child"])
+def test_directory_identity_replacement_races_fail_safely_and_close_descriptors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    race_target: str,
+) -> None:
+    """Stat/open directory replacement races never admit the replacement tree."""
+    root = tmp_path / "Project"
+    watched_parent = tmp_path / "watched-parent"
+    replacement = tmp_path / "replacement"
+    replacement.mkdir()
+    if race_target == "selected_parent":
+        root = watched_parent / "Project"
+        root.mkdir(parents=True)
+        selected = root
+        replaced_name = "watched-parent"
+    else:
+        (root / "child").mkdir(parents=True)
+        selected = root
+        replaced_name = "child"
+
+    real_open = os.open
+    real_close = os.close
+    opened: list[int] = []
+    closed: list[int] = []
+
+    def racing_open(
+        path: object,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if os.fspath(path) == replaced_name and dir_fd is not None:
+            descriptor = real_open(replacement, flags)
+        else:
+            descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+        opened.append(descriptor)
+        return descriptor
+
+    def tracked_close(descriptor: int) -> None:
+        real_close(descriptor)
+        closed.append(descriptor)
+
+    monkeypatch.setattr(note_import_planner.os, "open", racing_open)
+    monkeypatch.setattr(note_import_planner.os, "close", tracked_close)
+
+    if race_target == "selected_parent":
+        with pytest.raises(ImportSelectionError) as raised:
+            discover_import_sources([selected], _discovery_bounds())
+        assert raised.value.reason_code == "selection_changed"
+    else:
+        discovery = discover_import_sources([selected], _discovery_bounds())
+        assert discovery.candidates == ()
+        assert len(discovery.failures) == 1
+        assert discovery.failures[0].reason_code == "nested_unavailable"
+
+    assert Counter(closed) == Counter(opened)
+
+
+def test_missing_secure_discovery_capability_has_a_distinct_stable_reason(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Capability absence is distinguishable from an unreadable selected path."""
+    note = tmp_path / "note.md"
+    note.write_text("note", encoding="utf-8")
+    monkeypatch.delattr(note_import_planner.os, "O_NOFOLLOW")
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([note], _discovery_bounds())
+
+    assert raised.value.reason_code == "secure_discovery_unavailable"
+    assert str(note) not in str(raised.value)

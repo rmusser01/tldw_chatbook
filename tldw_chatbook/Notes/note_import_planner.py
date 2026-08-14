@@ -10,6 +10,10 @@ from pathlib import Path, PurePosixPath
 from unicodedata import normalize
 from urllib.parse import quote_from_bytes
 
+from tldw_chatbook.Notes.note_folder_models import (
+    FolderValidationError,
+    normalize_folder_name,
+)
 from tldw_chatbook.Notes.note_import_plan_models import (
     ImportBounds,
     ImportSource,
@@ -24,6 +28,10 @@ class ImportSelectionError(ValueError):
         self.reason_code = reason_code
         self.user_message = user_message
         super().__init__(user_message)
+
+
+class _SecureDiscoveryUnavailable(RuntimeError):
+    """Secure descriptor-relative filesystem operations are unavailable."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,11 +120,13 @@ _MESSAGES = {
     "invalid_selection": "The selected source is not valid.",
     "selection_missing": "A selected source is no longer available.",
     "selection_unreadable": "A selected source cannot be inspected safely.",
+    "secure_discovery_unavailable": "Secure source discovery is unavailable.",
     "selected_symlink": "Linked files and folders cannot be selected.",
     "selection_not_regular": "Select regular files or one folder.",
     "mixed_selection": "Choose files or one folder, not both.",
     "multiple_directories": "Choose only one folder at a time.",
     "ambiguous_display_path": "Selected files must have distinct names.",
+    "ambiguous_folder_path": "The selected folder has ambiguous subfolder names.",
     "unsafe_display_path": "A selected source has an unsafe display name.",
     "selection_changed": "A selected source changed during inspection.",
     "max_depth_exceeded": "The selected folder is nested too deeply.",
@@ -162,6 +172,10 @@ def discover_import_sources(
         selected_root = selected[0]
         root_label = selected_root.path.name
         if not _is_safe_display_segment(root_label):
+            _reject(bounds, "unsafe_display_path")
+        try:
+            normalize_folder_name(root_label)
+        except FolderValidationError:
             _reject(bounds, "unsafe_display_path")
         _scan_selected_directory(selected_root, root_label, state)
     else:
@@ -216,6 +230,7 @@ def _inspect_selected_path(path: Path, bounds: ImportBounds) -> _SelectedPath:
     descriptors: list[int] = []
     result: _SelectedPath | None = None
     primary_error: ImportSelectionError | None = None
+    close_failed = False
     try:
         absolute_path = _absolute_path(path)
         flags = _directory_open_flags()
@@ -269,10 +284,13 @@ def _inspect_selected_path(path: Path, bounds: ImportBounds) -> _SelectedPath:
         primary_error = _selection_error(bounds, "selection_missing")
     except ValueError:
         primary_error = _selection_error(bounds, "invalid_selection")
-    except (OSError, NotImplementedError, TypeError):
+    except (_SecureDiscoveryUnavailable, NotImplementedError):
+        primary_error = _selection_error(bounds, "secure_discovery_unavailable")
+    except (OSError, TypeError):
         primary_error = _selection_error(bounds, "selection_unreadable")
+    finally:
+        close_failed = _close_descriptors(descriptors)
 
-    close_failed = _close_descriptors(descriptors)
     if primary_error is not None:
         raise primary_error
     if close_failed:
@@ -325,9 +343,11 @@ def _scan_selected_directory(
     root_label: str,
     state: _DiscoveryState,
 ) -> None:
-    root_fd = _open_verified_directory(selected_root, state.bounds)
+    root_fd: int | None = None
     primary_error: ImportSelectionError | None = None
+    close_failed = False
     try:
+        root_fd = _open_verified_directory(selected_root, state.bounds)
         scan_succeeded = _scan_directory_fd(
             directory_fd=root_fd,
             directory_path=selected_root.path,
@@ -344,10 +364,16 @@ def _scan_selected_directory(
             primary_error = _selection_error(state.bounds, "selection_unreadable")
     except ImportSelectionError as error:
         primary_error = error
-    except (OSError, NotImplementedError, TypeError, ValueError):
+    except (_SecureDiscoveryUnavailable, NotImplementedError):
+        primary_error = _selection_error(
+            state.bounds,
+            "secure_discovery_unavailable",
+        )
+    except (OSError, TypeError, ValueError):
         primary_error = _selection_error(state.bounds, "selection_unreadable")
+    finally:
+        close_failed = _close_descriptors([root_fd]) if root_fd is not None else False
 
-    close_failed = _close_descriptors([root_fd])
     if primary_error is not None:
         raise primary_error
     if close_failed:
@@ -373,6 +399,7 @@ def _scan_directory_fd(
                     _reject(state.bounds, "max_entries_exceeded")
                 entries.append(entry)
             entries.sort(key=lambda entry: _display_sort_key(entry.name))
+            _validate_sibling_folder_namespace(entries, state.bounds)
             for entry in entries:
                 _scan_entry(
                     entry=entry,
@@ -386,9 +413,37 @@ def _scan_directory_fd(
                 )
     except ImportSelectionError:
         raise
-    except (OSError, NotImplementedError, TypeError, ValueError):
+    except (_SecureDiscoveryUnavailable, NotImplementedError):
+        raise
+    except (OSError, TypeError, ValueError):
         return False
     return True
+
+
+def _validate_sibling_folder_namespace(
+    entries: Iterable[os.DirEntry[str]],
+    bounds: ImportBounds,
+) -> None:
+    """Reject canonically ambiguous directory siblings before traversal."""
+    folder_keys: set[str] = set()
+    for entry in entries:
+        if not _is_safe_display_segment(entry.name):
+            continue
+        try:
+            metadata = entry.stat(follow_symlinks=False)
+        except NotImplementedError as error:
+            raise _SecureDiscoveryUnavailable from error
+        except (OSError, TypeError, ValueError):
+            continue
+        if _is_link_or_reparse(metadata) or not stat.S_ISDIR(metadata.st_mode):
+            continue
+        try:
+            normalized = normalize_folder_name(entry.name)
+        except FolderValidationError:
+            continue
+        if normalized.key in folder_keys:
+            _reject(bounds, "ambiguous_folder_path")
+        folder_keys.add(normalized.key)
 
 
 def _scan_entry(
@@ -411,7 +466,9 @@ def _scan_entry(
         return
     try:
         metadata = entry.stat(follow_symlinks=False)
-    except (OSError, NotImplementedError, TypeError, ValueError):
+    except NotImplementedError as error:
+        raise _SecureDiscoveryUnavailable from error
+    except (OSError, TypeError, ValueError):
         _add_failure(state, entry_path, display_path, "nested_unavailable")
         return
 
@@ -430,6 +487,17 @@ def _scan_entry(
             state,
         )
     else:
+        try:
+            normalize_folder_name(entry.name)
+        except FolderValidationError:
+            safe_display_path = _unsafe_failure_display_path(root_label, entry_parts)
+            _add_failure(
+                state,
+                entry_path,
+                safe_display_path,
+                "nested_unsafe_name",
+            )
+            return
         child_depth = parent_depth + 1
         if child_depth > state.bounds.max_depth:
             _reject(state.bounds, "max_depth_exceeded")
@@ -466,6 +534,7 @@ def _scan_child_directory(
     child_fd: int | None = None
     primary_error: ImportSelectionError | None = None
     scan_succeeded = False
+    close_failed = False
     try:
         child_fd = os.open(
             entry.name,
@@ -488,10 +557,15 @@ def _scan_child_directory(
             )
     except ImportSelectionError as error:
         primary_error = error
-    except (OSError, NotImplementedError, TypeError, ValueError):
+    except (_SecureDiscoveryUnavailable, NotImplementedError):
+        primary_error = _selection_error(
+            state.bounds,
+            "secure_discovery_unavailable",
+        )
+    except (OSError, TypeError, ValueError):
         scan_succeeded = False
-
-    close_failed = _close_descriptors([child_fd]) if child_fd is not None else False
+    finally:
+        close_failed = _close_descriptors([child_fd]) if child_fd is not None else False
     if primary_error is not None:
         raise primary_error
     if close_failed:
@@ -558,8 +632,9 @@ def _open_verified_directory(
 ) -> int:
     """Reopen a selected directory through its verified component identities."""
     descriptors: list[int] = []
-    leaf_fd: int | None = None
+    returned_leaf_fd: int | None = None
     primary_error: ImportSelectionError | None = None
+    close_failed = False
     try:
         flags = _directory_open_flags()
         current_fd = os.open(selected.path.anchor, flags)
@@ -590,25 +665,26 @@ def _open_verified_directory(
             if not _identity_matches(expected_identity, opened_metadata):
                 _reject(bounds, "selection_changed")
             current_fd = next_fd
-        leaf_fd = current_fd
+        returned_leaf_fd = descriptors.pop()
     except ImportSelectionError as error:
         primary_error = error
     except FileNotFoundError:
         primary_error = _selection_error(bounds, "selection_missing")
-    except (OSError, NotImplementedError, TypeError, ValueError):
+    except (_SecureDiscoveryUnavailable, NotImplementedError):
+        primary_error = _selection_error(bounds, "secure_discovery_unavailable")
+    except (OSError, TypeError, ValueError):
         primary_error = _selection_error(bounds, "selection_unreadable")
+    finally:
+        close_failed = _close_descriptors(descriptors)
 
     if primary_error is not None:
-        _close_descriptors(descriptors)
         raise primary_error
-    if leaf_fd is None:
-        _close_descriptors(descriptors)
+    if returned_leaf_fd is None:
         _reject(bounds, "selection_unreadable")
-    parent_close_failed = _close_descriptors(descriptors[:-1])
-    if parent_close_failed:
-        _close_descriptors([leaf_fd])
+    if close_failed:
+        _close_descriptors([returned_leaf_fd])
         _reject(bounds, "selection_unreadable")
-    return leaf_fd
+    return returned_leaf_fd
 
 
 def _directory_open_flags() -> int:
@@ -620,7 +696,7 @@ def _directory_open_flags() -> int:
         or not isinstance(no_follow_flag, int)
         or no_follow_flag <= 0
     ):
-        raise NotImplementedError("Secure directory descriptors are unavailable.")
+        raise _SecureDiscoveryUnavailable
     return os.O_RDONLY | directory_flag | no_follow_flag
 
 
@@ -630,7 +706,7 @@ def _close_descriptors(descriptors: Iterable[int]) -> bool:
     for descriptor in reversed(tuple(descriptors)):
         try:
             os.close(descriptor)
-        except (OSError, NotImplementedError, TypeError, ValueError):
+        except BaseException:  # noqa: BLE001 - never mask an active interruption.
             failed = True
     return failed
 

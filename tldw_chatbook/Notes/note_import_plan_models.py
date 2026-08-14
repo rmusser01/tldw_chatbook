@@ -59,6 +59,9 @@ class RootCollisionChoice(str, Enum):
 MAX_IMPORT_REASON_LENGTH = 1_024
 """Absolute safety ceiling for a public import-preview reason."""
 
+MAX_IMPORT_DEPTH = 64
+"""Absolute recursion-safe ceiling for one import discovery walk."""
+
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
@@ -254,6 +257,8 @@ class ImportBounds:
             raise TypeError("max_depth must be an integer.")
         if self.max_depth < 0:
             raise ValueError("max_depth must be a non-negative integer.")
+        if self.max_depth > MAX_IMPORT_DEPTH:
+            raise ValueError("max_depth exceeds the absolute safety ceiling.")
         if self.max_file_bytes > self.max_total_bytes:
             raise ValueError("max_file_bytes cannot exceed max_total_bytes.")
         if self.max_reason_length > MAX_IMPORT_REASON_LENGTH:
