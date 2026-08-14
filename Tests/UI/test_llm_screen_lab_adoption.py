@@ -1432,8 +1432,8 @@ async def test_curated_install_click_reaches_the_shared_consent_modal(monkeypatc
 
 
 @pytest.mark.parametrize("operation", ("preflight", "installation"))
-def test_curated_install_failures_log_exact_artifact_context(operation, monkeypatch):
-    """Worker diagnostics identify the safe immutable artifact reference.
+def test_curated_install_failures_log_bounded_error_type(operation, monkeypatch):
+    """Worker diagnostics identify the failure type without collaborator data.
 
     TASK-1803: this used to run directly against ``CuratedView``'s own
     ``_preflight_model``/``_provision_model`` (formerly in
@@ -1494,9 +1494,11 @@ def test_curated_install_failures_log_exact_artifact_context(operation, monkeypa
         module.LLMScreen._run_curated_provision.__wrapped__(screen)
 
     logged = " ".join(str(value) for value in fake_logger.error.call_args.args)
-    assert reference.artifact_id in logged
-    assert reference.revision in logged
-    assert reference.variant in logged
+    assert "RuntimeError" in logged
+    assert "PRIVATE-WORKER-DETAIL" not in logged
+    assert reference.artifact_id not in logged
+    assert reference.revision not in logged
+    assert reference.variant not in logged
     if operation == "installation":
         fake_app._ensure_parakeet_source_service.assert_not_called()
 
@@ -2036,10 +2038,8 @@ def test_run_curated_preflight_except_clause_survives_a_malformed_reference(
     ``ArtifactRef``) ``self._model_install_reference`` already in place --
     exactly the state a bug elsewhere could otherwise leave behind -- and
     asserts the exception handler still schedules
-    ``_apply_curated_preflight_result(None, ...)`` exactly once, using
-    ``getattr(..., "unknown")`` formatting instead of raising its own
-    ``AttributeError`` reaching for ``.artifact_id``/``.revision``/
-    ``.variant`` on an object that has none of them.
+    ``_apply_curated_preflight_result(None, ...)`` exactly once without
+    inspecting malformed artifact fields or logging collaborator details.
 
     Args:
         monkeypatch: pytest's monkeypatch fixture; patches ``LLMScreen.
@@ -2069,7 +2069,7 @@ def test_run_curated_preflight_except_clause_survives_a_malformed_reference(
 
     fake_logger.error.assert_called_once()
     logged = " ".join(str(value) for value in fake_logger.error.call_args.args)
-    assert "unknown" in logged
+    assert "RuntimeError" in logged
     assert "PRIVATE-WORKER-DETAIL" not in logged
 
     fake_app.call_from_thread.assert_called_once_with(
@@ -2901,8 +2901,8 @@ def test_apply_remote_preflight_result_requires_acknowledgment_only_for_unknown_
 @pytest.mark.parametrize("operation", ("preflight", "installation"))
 def test_remote_install_failures_log_exact_context(operation, monkeypatch, tmp_path):
     """Worker diagnostics classify remote failures without logging exception
-    details, mirroring ``test_curated_install_failures_log_exact_artifact_
-    context``'s shape but pinning the remote-specific ``error_type=``/
+    details, mirroring ``test_curated_install_failures_log_bounded_error_type``'s
+    shape but pinning the remote-specific ``error_type=``/
     ``retryable=`` format (unchanged from ``RemoteView``'s own pre-TASK-1914
     worker methods).
     """

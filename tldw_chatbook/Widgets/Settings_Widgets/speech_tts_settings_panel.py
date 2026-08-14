@@ -15,7 +15,7 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
 from loguru import logger
 from rich.text import Text
@@ -802,6 +802,7 @@ class _GlobalSpeechTTSLeaveModal(ModalScreen[LeaveChoice]):
     def handle_save(self, event: Button.Pressed) -> None:
         event.stop()
         self.dismiss("save")
+
 
 class _SpeechSettingsCard(Vertical):
     """One Speech settings focus card, recomposable on its own (task-15475).

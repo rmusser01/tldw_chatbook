@@ -5143,8 +5143,7 @@ def setup_owns_startup_networking(
     )
 
     return (
-        setup_recovery_action(app_config, environ)
-        in _SETUP_STARTUP_NETWORKING_ACTIONS
+        setup_recovery_action(app_config, environ) in _SETUP_STARTUP_NETWORKING_ACTIONS
     )
 
 
@@ -10279,9 +10278,7 @@ class TldwCli(
         if exit_route is None:
             if completed is not True or exit_context is not None:
                 return
-            self._schedule_startup_model_catalog_refresh(
-                after_setup_completion=True
-            )
+            self._schedule_startup_model_catalog_refresh(after_setup_completion=True)
             return
         if type(exit_route) is not str:
             return
@@ -10299,9 +10296,7 @@ class TldwCli(
                 REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES,
             )
 
-            if category not in set(
-                REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES.values()
-            ):
+            if category not in set(REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES.values()):
                 return
             screen_context = {"category": category}
         elif exit_route in {TAB_CHAT, TAB_HOME}:
@@ -10315,9 +10310,7 @@ class TldwCli(
             return
 
         if completed is True:
-            self._schedule_startup_model_catalog_refresh(
-                after_setup_completion=True
-            )
+            self._schedule_startup_model_catalog_refresh(after_setup_completion=True)
 
         # Dismissing a rerun over Console already uncovers that same mounted
         # Console. Replacing it here would interrupt first-chat rollback and
@@ -12055,9 +12048,7 @@ class TldwCli(
         try:
             persisted = persist_cli_config_for_shutdown()
         except Exception:
-            loguru_logger.warning(
-                "Configuration shutdown persistence raised an error"
-            )
+            loguru_logger.warning("Configuration shutdown persistence raised an error")
         else:
             if not persisted:
                 loguru_logger.warning("Configuration shutdown persistence failed")

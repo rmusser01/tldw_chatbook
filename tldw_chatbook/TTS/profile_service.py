@@ -1392,9 +1392,7 @@ class TTSProfileService:
         self._tts_service = tts_service
         self._sample_evidence: dict[UUID, TTSProfileVerificationEvidence] = {}
         self._sample_evidence_lock = RLock()
-        self._sample_evidence_lifecycle: dict[
-            UUID, _ProfileEvidenceLifecycle
-        ] = {}
+        self._sample_evidence_lifecycle: dict[UUID, _ProfileEvidenceLifecycle] = {}
         self._sample_evidence_epoch = 0
         self._consumer_mutation_lock = asyncio.Lock()
         if artifact_lease_coordinator is not None:

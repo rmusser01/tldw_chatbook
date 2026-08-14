@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from loguru import logger
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -378,9 +378,7 @@ async def test_compose_exposes_path_free_existing_gguf_configuration():
         assert "/private/model.gguf" not in str(status.renderable)
 
 
-def test_transcribe_cpp_config_worker_reports_path_free_success(
-    tmp_path, monkeypatch
-):
+def test_transcribe_cpp_config_worker_reports_path_free_success(tmp_path, monkeypatch):
     import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
 
     selected = tmp_path / "private-model.gguf"
@@ -625,7 +623,7 @@ async def test_pressing_use_as_default_sets_acted_flag_and_updates_copy():
         await pilot.pause(0.2)
         assert step._acted_this_run is False
 
-        await pilot.click(_USE_AS_DEFAULT_ID)
+        step.query_one(_USE_AS_DEFAULT_ID, Button).press()
         await pilot.pause(0.2)
 
         assert step._acted_this_run is True
@@ -646,15 +644,13 @@ async def test_commit_persists_after_use_as_default_without_reinstalling(monkeyp
         wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _elsewhere_wizard()
-    step = _step(
-        installed=[_installed_item(active=True, ready=True)], wizard=wizard
-    )
+    step = _step(installed=[_installed_item(active=True, ready=True)], wizard=wizard)
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         step.on_show()
         await pilot.pause(0.2)
-        await pilot.click(_USE_AS_DEFAULT_ID)
+        step.query_one(_USE_AS_DEFAULT_ID, Button).press()
         await pilot.pause(0.2)
 
     ok, error = await step.commit()
@@ -989,7 +985,9 @@ async def test_commit_is_skip_safe_when_never_verified_active(monkeypatch):
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
-    step._acted_this_run = True  # even "acted" must not matter without an active artifact
+    step._acted_this_run = (
+        True  # even "acted" must not matter without an active artifact
+    )
 
     ok, error = await step.commit()
 
@@ -1168,10 +1166,15 @@ async def test_commit_requires_and_persists_the_exact_v3_f32_artifact(
 
     def exact_active(model, precision, *, service):
         active_calls.append((model, precision))
-        return tmp_path / "installed" if (model, precision) == (
-            policy.parakeet_v3_model_id,
-            "f32",
-        ) else None
+        return (
+            tmp_path / "installed"
+            if (model, precision)
+            == (
+                policy.parakeet_v3_model_id,
+                "f32",
+            )
+            else None
+        )
 
     monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", exact_active)
     wizard = _wizard()

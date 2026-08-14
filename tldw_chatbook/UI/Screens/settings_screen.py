@@ -581,6 +581,7 @@ class _SettingsProviderPickerOption(Option):
         self.provider_id = provider_id
         self.action = action
 
+
 MODEL_DISCOVERY_IDLE_COPY = "Discover models from configured endpoint"
 MODEL_DISCOVERY_EMPTY_COPY = (
     "No discovered models yet. Use Discover models after endpoint is configured."
@@ -2483,7 +2484,9 @@ class SettingsScreen(BaseAppScreen):
         self._pending_category_focus_value: str | None = None
         #: task-15475: per-instance queue for `_after_category_panes` (the
         #: class attribute is None precisely so this is never shared).
-        self._pending_pane_swap_callbacks: list[tuple[Callable[..., object], tuple]] = []
+        self._pending_pane_swap_callbacks: list[
+            tuple[Callable[..., object], tuple]
+        ] = []
         #: Serializes category-pane swaps so a superseded one never interrupts
         #: a teardown -- it loses the revision check and returns untouched.
         self._category_swap_lock = asyncio.Lock()
@@ -4184,9 +4187,7 @@ class SettingsScreen(BaseAppScreen):
         """Build the staged closed-enum Select for a model-profile field."""
         supported = self._model_profile_field_supported(provider, draft_key)
         allowed = (
-            self._model_profile_reasoning_effort_options(
-                provider, values.get("model")
-            )
+            self._model_profile_reasoning_effort_options(provider, values.get("model"))
             if draft_key == "model_profile_reasoning_effort"
             else CLOSED_ENUM_SELECT_OPTIONS[
                 PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
@@ -8593,8 +8594,7 @@ class SettingsScreen(BaseAppScreen):
     @staticmethod
     def _provider_supports_reasoning_effort(provider: object) -> bool:
         return (
-            provider_config_key(str(provider or ""))
-            in REASONING_EFFORT_PROVIDER_KEYS
+            provider_config_key(str(provider or "")) in REASONING_EFFORT_PROVIDER_KEYS
         )
 
     @staticmethod
@@ -8875,9 +8875,11 @@ class SettingsScreen(BaseAppScreen):
         credential_fields_dirty = bool(
             {"api_key", "credential_env_var"}.intersection(dirty)
         )
-        if not credential_fields_dirty and configured_provider_credential_source(
-            self._provider_config(provider)
-        ) == "none":
+        if (
+            not credential_fields_dirty
+            and configured_provider_credential_source(self._provider_config(provider))
+            == "none"
+        ):
             return "none"
         if api_key_dirty:
             try:
@@ -9152,9 +9154,7 @@ class SettingsScreen(BaseAppScreen):
     def _provider_picker_groups(
         self, query: str = ""
     ) -> tuple[ProviderPickerGroup, ...]:
-        provider = str(
-            self._provider_display_setting_values().get("provider") or ""
-        )
+        provider = str(self._provider_display_setting_values().get("provider") or "")
         return build_provider_picker_groups(
             self._provider_catalog_entries(), provider, query
         )
@@ -10775,13 +10775,9 @@ class SettingsScreen(BaseAppScreen):
                 provider
             ) and not bool(api_key_input.value.strip())
             hosted_guidance = self._hosted_provider_guidance(provider, model)
-            guidance = self.query_one(
-                "#settings-hosted-provider-guidance", Static
-            )
+            guidance = self.query_one("#settings-hosted-provider-guidance", Static)
             guidance.update(hosted_guidance)
-            guidance.set_class(
-                not hosted_guidance, "settings-gated-profile-hidden"
-            )
+            guidance.set_class(not hosted_guidance, "settings-gated-profile-hidden")
         except QueryError:
             pass
         self._refresh_generation_support_summary(provider)
@@ -19244,9 +19240,7 @@ class SettingsScreen(BaseAppScreen):
         self._refresh_provider_picker(event.value)
 
     @on(OptionList.OptionSelected, "#settings-provider-picker")
-    def handle_provider_picker_selected(
-        self, event: OptionList.OptionSelected
-    ) -> None:
+    def handle_provider_picker_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
         option = event.option
         action = getattr(option, "action", None)
@@ -19413,8 +19407,10 @@ class SettingsScreen(BaseAppScreen):
             queue.pop(0)
             self._update_provider_dynamic_widgets()
             return
-        if self._navigation_provider and event.value.strip() == self._provider_endpoint_value(
+        if (
             self._navigation_provider
+            and event.value.strip()
+            == self._provider_endpoint_value(self._navigation_provider)
         ):
             self._update_provider_dynamic_widgets()
             return
@@ -20230,26 +20226,24 @@ class SettingsScreen(BaseAppScreen):
                     if qwencloud_mode_requires_canonical_save
                     else provider_section
                 )
-                section_values.setdefault(mode_section, {})[
-                    "api_mode"
-                ] = normalized_api_mode
+                section_values.setdefault(mode_section, {})["api_mode"] = (
+                    normalized_api_mode
+                )
                 if qwencloud_mode_requires_canonical_save:
                     for alias_section in alias_mode_sections:
                         delete_keys.setdefault(
                             f"api_settings.{alias_section}", []
                         ).append("api_mode")
             if next_model_defaults is not None:
-                section_values.setdefault(provider_section, {})[
-                    "model_defaults"
-                ] = next_model_defaults
-            if next_model_capabilities is not None:
-                section_values.setdefault("model_capabilities.models", {})[
-                    model
-                ] = next_model_capabilities
-            elif delete_model_capabilities_entry:
-                delete_keys.setdefault("model_capabilities.models", []).append(
-                    model
+                section_values.setdefault(provider_section, {})["model_defaults"] = (
+                    next_model_defaults
                 )
+            if next_model_capabilities is not None:
+                section_values.setdefault("model_capabilities.models", {})[model] = (
+                    next_model_capabilities
+                )
+            elif delete_model_capabilities_entry:
+                delete_keys.setdefault("model_capabilities.models", []).append(model)
 
             normalized_delete_keys = {
                 section: tuple(dict.fromkeys(keys))
@@ -20330,9 +20324,7 @@ class SettingsScreen(BaseAppScreen):
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
-                self.app.notify(
-                    self._provider_save_result, severity="error"
-                )
+                self.app.notify(self._provider_save_result, severity="error")
             return
 
         if category is SettingsCategoryId.STORAGE:

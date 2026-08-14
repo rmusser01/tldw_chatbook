@@ -363,10 +363,7 @@ class PendingHandoffStore:
             slot.in_flight = None
             should_requeue = slot.revision == claim.revision
             prompt_status: HandoffClaimStatus | None = None
-            if (
-                should_requeue
-                and claim.channel is HandoffChannel.CONSOLE_PROMPT_INSERT
-            ):
+            if should_requeue and claim.channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
                 should_requeue = claim.status == "ready" and self._prompt_is_unexpired(
                     current.retained_value
                 )

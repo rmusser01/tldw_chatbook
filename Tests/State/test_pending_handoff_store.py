@@ -194,8 +194,7 @@ def test_acknowledging_old_claim_preserves_newer_replacement() -> None:
     assert _claim_title(store, HandoffChannel.CHAT) == "second"
 
 
-def test_acknowledge_current_rejects_replaced_claim_and_preserves_replacement(
-) -> None:
+def test_acknowledge_current_rejects_replaced_claim_and_preserves_replacement() -> None:
     store = PendingHandoffStore()
     store.stage(HandoffChannel.CHAT, _chat_payload("first"))
     claim = store.claim(HandoffChannel.CHAT)

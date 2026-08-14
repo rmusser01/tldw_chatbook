@@ -315,6 +315,7 @@ def test_save_post_failure_abandons_transferred_publication_hold() -> None:
     publication = Publication()
     panel = SimpleNamespace(
         _latest_request_id=7,
+        _pending_commit_defaults_after_handoff=False,
         is_mounted=True,
         _set_result=lambda *_args, **_kwargs: None,
         _transfer_managed_refs_to_publication=lambda: publication,

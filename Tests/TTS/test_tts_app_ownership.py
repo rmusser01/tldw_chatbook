@@ -1071,6 +1071,10 @@ def test_profile_service_owns_only_existing_app_dependencies() -> None:
         "_repository",
         "_tts_service",
         "_consumer_mutation_lock",
+        "_sample_evidence",
+        "_sample_evidence_lock",
+        "_sample_evidence_lifecycle",
+        "_sample_evidence_epoch",
     }
     for resource_name in (
         "_close_task",
