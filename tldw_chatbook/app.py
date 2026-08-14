@@ -8315,6 +8315,131 @@ class TldwCli(
                 self._notify_navigation_failure(message.screen_name)
                 raise
 
+    #: Bound on the dismiss-the-overlays loop below. Each pass removes one
+    #: pushed screen, and dismissing one can legitimately reveal another
+    #: (a picker opened from a dialog); nothing real stacks this deep, so a
+    #: stack that will not reduce inside the bound is a stuck stack, not a
+    #: busy one.
+    _MAX_NAVIGATION_OVERLAY_DISMISSALS: int = 16
+
+    def _navigation_outgoing_screen(self) -> Any:
+        """Return the CONTENT screen a navigation is leaving.
+
+        The screen stack is ``[Textual's default screen, the content screen,
+        *pushed screens]``: startup pushes exactly one routed screen
+        (``_push_initial_screen``) and every navigation replaces it, so
+        index 1 is the tab the user is on and anything above it is an
+        overlay. ``self.screen`` is the TOP of that stack, which is the
+        overlay whenever one is open -- see ``_dismiss_navigation_overlays``
+        for why that distinction is load-bearing.
+
+        Returns:
+            The content screen at the base of the stack, or ``self.screen``
+            when the stack is too short for that position to exist (before
+            the initial push, and in tests that drive the handler with no
+            mounted stack at all).
+        """
+        try:
+            stack = self._screen_stack
+        except Exception:  # pragma: no cover - defensive; no mode, no stack
+            return self.screen
+        if len(stack) >= 2:
+            return stack[1]
+        return self.screen
+
+    @staticmethod
+    def _navigation_overlay_awaiter_pending(screen: Any) -> bool:
+        """Report whether ``screen`` still owes a ``push_screen_wait`` result."""
+        callbacks = getattr(screen, "_result_callbacks", None)
+        if not callbacks:
+            return False
+        future = getattr(callbacks[-1], "future", None)
+        return future is not None and not future.done()
+
+    async def _dismiss_navigation_overlays(self, screen_name: str) -> bool:
+        """Reduce the screen stack to its content screen before switching.
+
+        TASK-16300. Textual's ``App.switch_screen``
+        (``textual/app.py:3001-3032``) pops only ``self._screen_stack[-1]``
+        and appends the new screen; ``_replace_screen`` then unmounts only
+        that popped screen. So switching while ANY pushed screen sits above
+        the content screen replaces THE OVERLAY and leaves the content
+        screen resident in the stack -- mounted, message pump running,
+        ``on_unmount`` never fired, its timers and controllers alive behind
+        whatever the user is now looking at, and a second live instance of
+        it created the moment they navigate back. That directly violates
+        the invariant ``_create_navigation_screen`` documents (screens die
+        on navigation; ``ScreenStateStore`` carries continuity instead),
+        and it is the state the wake-integrity arc traced two live Console
+        failures to (tasks 15970/15971).
+
+        Overlays are dismissed rather than popped because ``switch_screen``
+        and ``pop_screen`` both call ``_pop_result_callback()`` WITHOUT
+        invoking it (``textual/app.py:3020``): a modal opened through
+        ``push_screen_wait`` holds a future in that callback, so discarding
+        it uncalled leaves the awaiting worker suspended forever -- it has
+        no timeout and nothing else ever resolves it.
+        ``Screen.dismiss(None)`` calls the callback first
+        (``textual/screen.py:2048-2070``), so the awaiter resumes with the
+        same ``None`` every user-driven close already delivers (``Escape``,
+        ``action_dismiss``, a bare ``dismiss()``) -- the value existing
+        callers, including the ones that map it to a decline, are already
+        written against. Refusing to navigate while a modal is awaited was
+        the alternative and is worse: awaited modals are the common kind,
+        and a nav shortcut that silently no-ops is indistinguishable from a
+        wedged app.
+
+        Args:
+            screen_name: Route being navigated to, for log context.
+
+        Returns:
+            ``True`` when the stack is reduced to its content screen and the
+            switch may proceed; ``False`` when an overlay would not leave,
+            in which case the caller must abort rather than switch and
+            recreate the very leak this exists to prevent.
+        """
+        for _ in range(self._MAX_NAVIGATION_OVERLAY_DISMISSALS):
+            stack = self._screen_stack
+            if len(stack) <= 2:
+                return True
+            overlay = stack[-1]
+            logger.info(
+                "Dismissing pushed screen before navigating "
+                "(route=%s, screen=%s, awaited=%s).",
+                screen_name,
+                type(overlay).__name__,
+                self._navigation_overlay_awaiter_pending(overlay),
+            )
+            try:
+                dismissed = overlay.dismiss(None)
+                if inspect.isawaitable(dismissed):
+                    await dismissed
+            except Exception as exc:
+                logger.warning(
+                    "Pushed screen refused to dismiss before navigation "
+                    "(route=%s, screen=%s, exception_category=%s).",
+                    screen_name,
+                    type(overlay).__name__,
+                    type(exc).__name__,
+                )
+                return False
+            stack = self._screen_stack
+            if stack and stack[-1] is overlay:
+                logger.warning(
+                    "Pushed screen stayed on the stack after dismissal "
+                    "(route=%s, screen=%s).",
+                    screen_name,
+                    type(overlay).__name__,
+                )
+                return False
+        logger.warning(
+            "Screen stack did not reduce to its content screen within %s "
+            "dismissals (route=%s).",
+            self._MAX_NAVIGATION_OVERLAY_DISMISSALS,
+            screen_name,
+        )
+        return False
+
     async def _handle_screen_navigation_locked(self, message: NavigateToScreen) -> None:
         """Body of `handle_screen_navigation`, run under its FIFO lock."""
         requested_screen = message.screen_name
@@ -8334,7 +8459,14 @@ class TldwCli(
         )
         logger.info(f"Navigating to screen: {requested_screen}")
 
-        current_screen = self.screen
+        # NOT ``self.screen`` (TASK-16300): with a pushed screen on top --
+        # the nav overflow menu, the command palette, a picker, a confirm
+        # dialog -- ``self.screen`` IS that overlay, and every hook below
+        # (flush, confirm, transition admission, and ``save_state`` inside
+        # ``_complete_screen_navigation``) was asked of it. Overlays answer
+        # none of them, so Console's busy-fleet confirmation never ran and
+        # the tab being left was never snapshotted.
+        current_screen = self._navigation_outgoing_screen()
 
         # Screens are never reused across navigations, so anything the
         # outgoing screen has not persisted is destroyed with its instance.
@@ -8694,6 +8826,22 @@ class TldwCli(
                         current_tab_value,
                         type(exc).__name__,
                     )
+
+            # TASK-16300: `switch_screen` replaces the TOP of the stack, so
+            # the content screen has to BE the top before it runs -- see
+            # `_dismiss_navigation_overlays`. Done here, after the veto
+            # hooks and the construction of the incoming screen, so a
+            # navigation that never happens never costs the user the dialog
+            # they had open. Failing to reduce aborts: switching anyway is
+            # exactly how the outgoing screen is left resident.
+            if not await self._dismiss_navigation_overlays(screen_name):
+                logger.warning(
+                    "Aborting navigation: a pushed screen would not leave "
+                    "the stack (route=%s).",
+                    screen_name,
+                )
+                self._notify_navigation_failure(screen_name)
+                return
 
             # Use switch_screen to replace the current screen
             try:

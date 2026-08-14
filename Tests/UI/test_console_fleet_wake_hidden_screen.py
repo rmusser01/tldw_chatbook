@@ -16,6 +16,19 @@ controller un-shut-down, wake coordinator armed. That resident hidden
 screen is what the residue arc's ``mounted=True`` instrumentation saw.
 Both live failures follow:
 
+**Correction, 2026-08-14 (task-16300).** That navigation leak is FIXED:
+`_handle_screen_navigation_locked` now reduces the stack to its content
+screen before switching, so the outgoing Console screen is the thing
+``switch_screen`` replaces and unmounts, and its controller shuts down
+(pinned by ``Tests/UI/test_screen_residency.py``). The behaviours below
+are unchanged and still required -- Console is mounted-but-not-DISPLAYED
+whenever any pushed screen covers it, which is the state the 15971 live
+pass actually verified -- but their setups no longer come from the leak:
+the covered-Console cases push a real modal over Console, and the
+two-Console case (a hidden Console while a DIFFERENT Console is
+displayed, which only the leak used to produce) is built directly and
+kept as defence in depth for the probe's cross-screen resolution.
+
 - **task-15970**: the hidden screen's user-wins-ties probe read ITS OWN
   (empty) composer while the user typed into the DISPLAYED screen's --
   the "blindness" was a stale screen, not segment plumbing (the suspected
@@ -45,7 +58,6 @@ from tldw_chatbook.Chat.console_fleet_attention import (
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
-from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.nav_overflow_menu import NavOverflowMenu
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -67,29 +79,58 @@ async def _mount_chat(app, pilot) -> ChatScreen:
     return chat
 
 
-async def _leak_resident_chat(app, pilot) -> ChatScreen:
-    """Drive the real navigation path that leaves Chat resident-but-hidden.
+async def _hide_chat_under_a_modal(app, pilot) -> ChatScreen:
+    """Mount Console and cover it with a real pushed screen.
 
-    The nav overflow menu (a real pushed screen, reachable via its "More"
-    affordance) is above Chat when the navigation runs; ``switch_screen``
-    pops the MENU, and the Chat screen stays alive in the stack below the
-    incoming Library screen.
+    Correction 2026-08-14 (task-16300): this used to be
+    ``_leak_resident_chat``, which built the hidden state by NAVIGATING
+    with the nav overflow menu on top and asserting -- as a harness
+    precondition -- that Chat stayed resident in the stack afterwards.
+    That leak is fixed: navigation now reduces the stack to its content
+    screen first, so the outgoing Console screen is the thing
+    ``switch_screen`` replaces and unmounts
+    (``Tests/UI/test_screen_residency.py``).
+
+    Mounted-but-not-DISPLAYED Console is still an ordinary state, and it
+    is the one the 15971 live pass actually verified: any pushed screen
+    (the command palette, the nav overflow menu, a picker) covers Console
+    while Console keeps running underneath. That is what this builds now
+    -- no navigation, no leak.
     """
     chat = await _mount_chat(app, pilot)
     app.push_screen(NavOverflowMenu())
     await pilot.pause()
-    await app.handle_screen_navigation(NavigateToScreen("library"))
-    await pilot.pause()
-    assert type(app.screen).__name__ == "LibraryScreen"
-    assert chat in app.screen_stack, (
-        "harness precondition: the nav-under-a-pushed-screen path must "
-        "leave the Chat screen resident in the stack (the residue arc's "
-        "live mounted=True state); if this stops holding, the hidden-"
-        "screen scenario below needs a new construction"
-    )
+    assert app.screen is not chat, "the modal must be the displayed screen"
+    assert chat in app.screen_stack
     assert chat.is_running and chat._console_chat_controller is not None
     assert not chat._console_chat_controller._shutdown_requested.is_set()
     return chat
+
+
+async def _second_console_over_chat(app, pilot) -> tuple[ChatScreen, ChatScreen]:
+    """Build the two-Console geometry the 15970 probe fix guards against.
+
+    Honest note (task-16300, 2026-08-14): this state used to arise from
+    production navigation -- navigating away under a pushed screen left
+    the old ChatScreen resident, and navigating back built a SECOND live
+    one on top of it. That is exactly the live 15970 failure, and it is
+    now unreachable through navigation. The probe's cross-screen
+    resolution (``ChatScreen._console_wake_probe_composer``) survives as
+    defence in depth for any Console screen that is mounted while a
+    DIFFERENT Console screen is displayed, so the geometry is constructed
+    here directly through ``push_screen`` rather than through a bug.
+
+    Returns:
+        ``(hidden, displayed)`` -- both live Console screens.
+    """
+    hidden = await _mount_chat(app, pilot)
+    displayed = ChatScreen(app)
+    await app.push_screen(displayed)
+    await pilot.pause()
+    await _wait_for_composer(displayed, pilot)
+    assert app.screen is displayed and displayed is not hidden
+    assert hidden in app.screen_stack and hidden.is_running
+    return hidden, displayed
 
 
 def _build_app(tmp_path):
@@ -123,21 +164,18 @@ async def test_probe_sees_a_draft_typed_with_real_keys(tmp_path):
 async def test_hidden_screens_probe_sees_the_displayed_screens_typed_draft(
     tmp_path,
 ):
-    """task-15970, the live shape: the resident hidden Chat screen's
-    coordinator consults the probe while the user types into the
-    DISPLAYED Chat screen's composer. RED before the fix: the hidden
-    probe read its own (empty) composer -- ``probe: composer=True
-    draft=''`` while the pane visibly held the text -- and the wake fired
-    through the held draft."""
+    """task-15970, the live shape: a mounted Chat screen's coordinator
+    consults the probe while the user types into the DISPLAYED Chat
+    screen's composer. RED when written: the probe read its own (empty)
+    composer -- ``probe: composer=True draft=''`` while the pane visibly
+    held the text -- and the wake fired through the held draft.
+
+    task-16300 note: the two-Console geometry is now built directly
+    (see ``_second_console_over_chat``) instead of through the navigation
+    leak that used to produce it live."""
     app = _build_app(tmp_path)
     async with app.run_test(size=(160, 48)) as pilot:
-        hidden = await _leak_resident_chat(app, pilot)
-        await app.handle_screen_navigation(NavigateToScreen("chat"))
-        await pilot.pause()
-        displayed = app.screen
-        assert isinstance(displayed, ChatScreen) and displayed is not hidden
-        await _wait_for_composer(displayed, pilot)
-        assert hidden in app.screen_stack, "the leak must survive the return nav"
+        hidden, displayed = await _second_console_over_chat(app, pilot)
 
         await pilot.press(*"drafting")
         await pilot.pause()
@@ -162,21 +200,16 @@ async def test_hidden_screens_probe_sees_the_displayed_screens_typed_draft(
 
 @pytest.mark.asyncio
 async def test_typed_draft_defers_the_hidden_coordinators_due_wake(tmp_path):
-    """task-15970 AC#1, outcome level: a due wake on the hidden resident
+    """task-15970 AC#1, outcome level: a due wake on a hidden Console
     screen's coordinator DEFERS (no delivery scheduled, pending intact)
     while a real-keys draft is held in the displayed composer."""
     app = _build_app(tmp_path)
     async with app.run_test(size=(160, 48)) as pilot:
-        hidden = await _leak_resident_chat(app, pilot)
+        hidden, displayed = await _second_console_over_chat(app, pilot)
         hidden_controller = hidden._console_chat_controller
         wake = hidden_controller.fleet_wake
         hidden_session = hidden._ensure_console_chat_store().ensure_session()
 
-        await app.handle_screen_navigation(NavigateToScreen("chat"))
-        await pilot.pause()
-        displayed = app.screen
-        assert isinstance(displayed, ChatScreen) and displayed is not hidden
-        await _wait_for_composer(displayed, pilot)
         await pilot.press(*"drafting my next thought".replace(" ", "_"))
         await pilot.pause()
 
@@ -196,15 +229,15 @@ async def test_typed_draft_defers_the_hidden_coordinators_due_wake(tmp_path):
 
 @pytest.mark.asyncio
 async def test_hidden_screen_sync_never_view_clears_the_unseen_mark(tmp_path):
-    """task-15971 AC#2: 'viewing IS the clear' requires VIEWING. The
-    resident hidden screen's own sync tick kept running during Library
-    display (the dbg log's continuous sync-run beats) and consumed the
-    FLEET_UNSEEN mark -- which is why the live off-screen delivery left
-    the user nothing. A mounted-but-undisplayed Console must not count as
-    'in Console'."""
+    """task-15971 AC#2: 'viewing IS the clear' requires VIEWING. A
+    Console screen covered by a pushed screen keeps its 1s sync tick
+    running (the dbg log's continuous sync-run beats) and used to consume
+    the FLEET_UNSEEN mark -- which is why the live off-screen delivery
+    left the user nothing. A mounted-but-undisplayed Console must not
+    count as 'in Console'."""
     app = _build_app(tmp_path)
     async with app.run_test(size=(160, 48)) as pilot:
-        hidden = await _leak_resident_chat(app, pilot)
+        hidden = await _hide_chat_under_a_modal(app, pilot)
         marks = app.conversation_local_marks_service
         session = hidden._ensure_console_chat_store().ensure_session()
         marks.set_mark(session.id, ConversationLocalMarksService.FLEET_UNSEEN)
@@ -261,12 +294,10 @@ async def test_screen_wires_the_conversation_in_view_probe(tmp_path):
         assert probe(session.id, session.id) is True
         assert probe(session.id, "some-other-session") is False
 
-        # Hide the screen through the real leak path: not displayed any more.
+        # Cover Console with a real pushed screen: mounted, not displayed.
         app.push_screen(NavOverflowMenu())
         await pilot.pause()
-        await app.handle_screen_navigation(NavigateToScreen("library"))
-        await pilot.pause()
-        assert chat in app.screen_stack
+        assert chat in app.screen_stack and app.screen is not chat
         assert probe(session.id, session.id) is False, (
             "a mounted-but-undisplayed screen's conversation is not in view"
         )
