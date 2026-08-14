@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from textual.containers import Horizontal
 from textual.widgets import Button, OptionList, Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -177,6 +178,42 @@ def _painted_region_rows(screen, region) -> list[str]:
     ]
 
 
+def _painted_center_row(screen, region) -> str:
+    """Return the direct compositor row through the center of a control."""
+    strip = list(screen._compositor.render_strips())[
+        region.y + (region.height - 1) // 2
+    ]
+    return strip.crop(region.x, region.right).text.strip()
+
+
+def _rendered_svg_text(svg: str) -> str:
+    """Rejoin adjacent rendered text nodes without crossing rows or gaps."""
+    rows: dict[float, list[tuple[float, float, str]]] = {}
+    for attributes, raw_text in re.findall(
+        r"<text\b([^>]*)>([^<]*)</text>", svg, flags=re.DOTALL
+    ):
+        parsed_attributes = dict(re.findall(r'(\w+)="([^"]*)"', attributes))
+        if "clip-path" not in attributes:
+            continue
+        x = float(parsed_attributes["x"])
+        y = float(parsed_attributes["y"])
+        text_length = float(parsed_attributes["textLength"])
+        text = unescape(raw_text).replace("\xa0", " ")
+        rows.setdefault(y, []).append((x, text_length, text))
+
+    rendered_rows = []
+    for y in sorted(rows):
+        rendered_row = ""
+        previous_right: float | None = None
+        for x, text_length, text in sorted(rows[y]):
+            if previous_right is not None and x > previous_right + 0.01:
+                rendered_row += " "
+            rendered_row += text
+            previous_right = max(previous_right or x, x + text_length)
+        rendered_rows.append(rendered_row)
+    return "\n".join(rendered_rows)
+
+
 @pytest.mark.parametrize("density", ("normal", "compact"))
 @pytest.mark.asyncio
 async def test_console_workbench_normal_and_compact_snapshots(density: str) -> None:
@@ -235,9 +272,9 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
 
             assert inspector_handle.display is True
             assert _painted_region_rows(screen, inspector_button.region) == [
-                "Inspect->"
+                "<-Inspect"
             ]
-            assert inspector_button.label == "Inspect->"
+            assert inspector_button.label == "<-Inspect"
             assert inspector_button.tooltip == "Open Inspector rail"
             assert workspace.content_region.contains_region(inspector_handle.region), (
                 f"Inspector handle escapes workspace at {size}: "
@@ -302,6 +339,206 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
                 simplify=True,
             )
             _assert_svg_healthy(svg)
+
+
+@pytest.mark.parametrize(
+    (
+        "size",
+        "target_state",
+        "context_open",
+        "inspector_open",
+        "expected_rail_widths",
+    ),
+    (
+        ((140, 42), "context-open-inspector-collapsed", True, False, (30, 0)),
+        ((140, 42), "both-open", True, True, (30, 34)),
+        ((140, 42), "context-collapsed-inspector-open", False, True, (0, 34)),
+        ((140, 42), "both-collapsed", False, False, (0, 0)),
+        ((160, 45), "context-open-inspector-collapsed", True, False, (30, 0)),
+        ((160, 45), "both-open", True, True, (30, 34)),
+        ((160, 45), "context-collapsed-inspector-open", False, True, (0, 34)),
+        ((160, 45), "both-collapsed", False, False, (0, 0)),
+    ),
+)
+@pytest.mark.asyncio
+async def test_task_16001_console_directional_rail_buttons_visual_sweep(
+    size: tuple[int, int],
+    target_state: str,
+    context_open: bool,
+    inspector_open: bool,
+    expected_rail_widths: tuple[int, int],
+) -> None:
+    """Verify directional rail controls across viewport and visibility states.
+
+    Args:
+        size: Terminal viewport dimensions.
+        target_state: Human-readable rail-state identifier.
+        context_open: Whether the Context rail should be open.
+        inspector_open: Whether the Inspector rail should be open.
+        expected_rail_widths: Expected Context and Inspector rail widths.
+    """
+    app = _build_test_app(configured_default="home")
+    _mark_console_onboarding_complete(app)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=size) as pilot:
+            _configure_native_ready_console(app)
+            await _open_console(app, pilot)
+
+            async def drive_rail(
+                *,
+                rail_selector: str,
+                open_selector: str,
+                collapse_selector: str,
+                target_open: bool,
+            ) -> None:
+                if bool(app.screen.query_one(rail_selector).display) == target_open:
+                    return
+                selector = open_selector if target_open else collapse_selector
+                button = app.screen.query_one(selector, Button)
+                assert button.display is True
+                assert await pilot.click(button)
+                await _wait_until(
+                    pilot,
+                    lambda: (
+                        bool(app.screen.query_one(rail_selector).display) == target_open
+                    ),
+                    context=f"{rail_selector} target state {target_open}",
+                )
+                await pilot.pause(0.2)
+
+            def assert_control_preconditions(
+                *,
+                rail_selector: str,
+                handle_selector: str,
+                button_selector: str,
+                open_state: bool,
+                handle_width: int,
+                content_width: int,
+            ) -> tuple[Button, Horizontal | None]:
+                screen = app.screen
+                workspace = screen.query_one("#console-workspace-grid")
+                rail = screen.query_one(rail_selector)
+                handle = screen.query_one(handle_selector)
+                button = screen.query_one(button_selector, Button)
+
+                assert rail.display is open_state
+                assert handle.display is (not open_state)
+                owner = rail if open_state else handle
+                assert workspace.content_region.contains_region(owner.region)
+                assert owner.region.width > 0
+                assert button.region.width > 0
+
+                header = button.parent if open_state else None
+                if open_state:
+                    assert isinstance(header, Horizontal)
+                    assert rail.content_region.contains_region(header.region)
+                    assert header.region.height == 1
+                    assert header.content_region.contains_region(button.region)
+                    assert button.region.height == 1
+                else:
+                    assert handle.region.width == handle_width
+                    assert handle.content_region.width == content_width
+                    assert handle.content_region.contains_region(button.region)
+                assert len(_painted_region_rows(screen, button.region)) == 1
+                return button, header
+
+            await drive_rail(
+                rail_selector="#console-left-rail",
+                open_selector="#console-context-rail-open",
+                collapse_selector="#console-context-rail-collapse",
+                target_open=context_open,
+            )
+            await drive_rail(
+                rail_selector="#console-right-rail",
+                open_selector="#console-inspector-rail-open",
+                collapse_selector="#console-inspector-rail-collapse",
+                target_open=inspector_open,
+            )
+            await pilot.pause(0.5)
+
+            assert (
+                app.screen.query_one("#console-left-rail").region.width,
+                app.screen.query_one("#console-right-rail").region.width,
+            ) == expected_rail_widths
+
+            context_selector = (
+                "#console-context-rail-collapse"
+                if context_open
+                else "#console-context-rail-open"
+            )
+            inspector_selector = (
+                "#console-inspector-rail-collapse"
+                if inspector_open
+                else "#console-inspector-rail-open"
+            )
+            context_button, context_header = assert_control_preconditions(
+                rail_selector="#console-left-rail",
+                handle_selector="#console-context-rail-handle",
+                button_selector=context_selector,
+                open_state=context_open,
+                handle_width=13,
+                content_width=11,
+            )
+            inspector_button, inspector_header = assert_control_preconditions(
+                rail_selector="#console-right-rail",
+                handle_selector="#console-inspector-rail-handle",
+                button_selector=inspector_selector,
+                open_state=inspector_open,
+                handle_width=11,
+                content_width=9,
+            )
+            transcript = app.screen.query_one("#console-transcript-region")
+            assert transcript.region.width > 0
+
+            svg = app.export_screenshot(
+                title=(
+                    f"TASK-16001 Directional Rails {target_state} {size[0]}x{size[1]}"
+                ),
+                simplify=True,
+            )
+            _assert_svg_healthy(svg)
+            rendered_text = _rendered_svg_text(svg)
+            assert rendered_text.strip()
+            assert "Console" in rendered_text
+
+            context_label = "<---------|Context" if context_open else "Context->"
+            inspector_label = "Inspect|--------->" if inspector_open else "<-Inspect"
+            context_tooltip = (
+                "Collapse Console context rail" if context_open else "Open Context rail"
+            )
+            inspector_tooltip = (
+                "Collapse Inspector rail" if inspector_open else "Open Inspector rail"
+            )
+
+            assert (
+                str(context_button.label),
+                str(inspector_button.label),
+            ) == (context_label, inspector_label)
+            assert (
+                _painted_center_row(app.screen, context_button.region),
+                _painted_center_row(app.screen, inspector_button.region),
+            ) == (context_label, inspector_label)
+            assert context_button.tooltip == context_tooltip
+            assert inspector_button.tooltip == inspector_tooltip
+
+            if context_open:
+                assert context_header is not None
+                assert not app.screen.query("#console-context-rail-title")
+                assert list(context_header.children) == [context_button]
+                assert (
+                    context_button.region.width == context_header.content_region.width
+                )
+            if inspector_open:
+                assert inspector_header is not None
+                assert not app.screen.query("#console-inspector-rail-title")
+                assert list(inspector_header.children) == [inspector_button]
+                assert (
+                    inspector_button.region.width
+                    == inspector_header.content_region.width
+                )
+            assert context_label in rendered_text
+            assert inspector_label in rendered_text
 
 
 @pytest.mark.asyncio

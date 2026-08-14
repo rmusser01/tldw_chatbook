@@ -228,18 +228,27 @@ async def test_console_focus_tour_reaches_transcript_chips_inspector_under_ten_s
         await tour("f6")
         assert stops[-1][1] == "console-native-transcript", f"tour: {stops}"
 
-        # Tab within the transcript region reaches the status chips (the
-        # hidden jump pill is out of the chain while no run is in play).
-        await tour("tab")
-        focused = app.focused
-        ancestor_ids = []
-        node = focused
-        while node is not None:
-            ancestor_ids.append(getattr(node, "id", None))
-            node = getattr(node, "parent", None)
-        assert "console-status-chips" in ancestor_ids, (
-            f"expected a status chip, tour: {stops}"
-        )
+        # Optional transcript actions may precede the status chips. Traverse
+        # only this region, leaving one of the ten stops for the final F6.
+        transcript_region = ("console-transcript-region", "console-status-chips")
+        for _ in range(7):
+            await tour("tab")
+            focused = app.focused
+            focused_id = getattr(focused, "id", None) or "<none>"
+            assert not focused_id.startswith("nav-"), f"tour: {stops}"
+            assert _focused_region_roots(focused) == transcript_region, (
+                f"Tab left the transcript/status-chips region: {stops}"
+            )
+
+            node = focused
+            while node is not None:
+                if getattr(node, "id", None) == "console-status-chips":
+                    break
+                node = getattr(node, "parent", None)
+            if node is not None:
+                break
+        else:
+            pytest.fail(f"expected a status chip within the stop budget: {stops}")
 
         # F6 again: Inspector pane (rail open -> its collapse button).
         await tour("f6")

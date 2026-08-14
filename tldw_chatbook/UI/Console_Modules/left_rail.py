@@ -51,7 +51,6 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from ...Chat.console_glyphs import GLYPH_COLLAPSE_LEFT
 from ...Chat.console_rail_state import CONSOLE_RAIL_SECTION_IDS, ConsoleRailState
 from ...Chat.console_session_settings import (
     ConsoleSettingsSummaryState,
@@ -68,7 +67,6 @@ from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
 )
-from ...Widgets.glyph_fallback import resolve_glyph
 from ...Workspaces.display_state import ConsoleWorkspaceContextState
 from .agent import CONSOLE_AGENT_FLEET_SECTION_ID
 from .frame import frame_console_region
@@ -248,26 +246,18 @@ class ConsoleLeftRail(Vertical):
         left_rail_header.styles.min_height = 1
         left_rail_header.styles.max_height = 1
         with left_rail_header:
-            # The "Context" (staged sources) section moved into the
-            # Inspector rail (task-400); this title now only names the
-            # rail itself.
-            rail_label = Static(
-                "Console context",
-                id="console-context-rail-title",
-                classes="console-rail-title",
-            )
-            rail_label.styles.width = "1fr"
-            yield rail_label
             collapse_button = Button(
-                resolve_glyph(GLYPH_COLLAPSE_LEFT),
+                "<---------|Context",
                 id="console-context-rail-collapse",
                 classes="console-rail-collapse-button",
                 compact=True,
             )
             collapse_button.tooltip = "Collapse Console context rail"
-            collapse_button.styles.width = 3
-            collapse_button.styles.min_width = 3
-            collapse_button.styles.max_width = 3
+            collapse_button.styles.width = "100%"
+            collapse_button.styles.min_width = 0
+            collapse_button.styles.max_width = "100%"
+            collapse_button.styles.text_align = "right"
+            collapse_button.styles.content_align = ("right", "middle")
             yield collapse_button
 
         # TASK-1140 (UAT F1, fix round 1): the fleet summary -- "N other
@@ -564,9 +554,7 @@ class ConsoleLeftRail(Vertical):
                 full_log_button = Button(
                     "View full log",
                     id="console-agent-view-full-log",
-                    classes=(
-                        "console-workspace-action console-agent-view-full-log"
-                    ),
+                    classes=("console-workspace-action console-agent-view-full-log"),
                     compact=True,
                 )
                 full_log_button.tooltip = (

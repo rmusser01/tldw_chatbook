@@ -9,7 +9,10 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
 import tldw_chatbook
-from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_INSPECTOR_LABEL
+from tldw_chatbook.Chat.console_rail_state import (
+    CONSOLE_RAIL_CONTEXT_LABEL,
+    CONSOLE_RAIL_INSPECTOR_LABEL,
+)
 from tldw_chatbook.UI.Console_Modules.frame import frame_console_region
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 from tldw_chatbook.Widgets.destination_rail import (
@@ -348,15 +351,34 @@ async def test_console_handle_abbreviates_right_side_badges(badge, expected):
 
 
 @pytest.mark.asyncio
-async def test_console_handle_abbreviates_the_inspector_label_on_the_right():
-    app = _HandleHarness(
-        _console_handle(side="right", label=CONSOLE_RAIL_INSPECTOR_LABEL)
-    )
-    async with app.run_test(size=(40, 12)) as pilot:
+async def test_console_handle_uses_inward_inspector_label_on_the_right() -> None:
+    handle = _console_handle(side="right", label=CONSOLE_RAIL_INSPECTOR_LABEL)
+    app = _StyledHandleHarness(frame_console_region(handle))
+    async with app.run_test(size=(40, 20)) as pilot:
         await pilot.pause()
         button = app.query_one("#console-rail-open", Button)
-        assert str(button.label) == "Inspect->"
+
+        assert str(button.label) == "<-Inspect"
         assert button.tooltip == "Open Inspector rail"
+        assert handle.region.width == 11
+        assert handle.content_region.width == 9
+        assert handle.content_region.contains_region(button.region)
+
+
+@pytest.mark.asyncio
+async def test_console_handle_uses_inward_context_label_on_the_left() -> None:
+    handle = _console_handle(side="left", label=CONSOLE_RAIL_CONTEXT_LABEL)
+    app = _StyledHandleHarness(frame_console_region(handle))
+
+    async with app.run_test(size=(40, 20)) as pilot:
+        await pilot.pause()
+        button = app.query_one("#console-rail-open", Button)
+
+        assert str(button.label) == "Context->"
+        assert button.tooltip == "Open Context rail"
+        assert handle.region.width == 13
+        assert handle.content_region.width == 11
+        assert handle.content_region.contains_region(button.region)
 
 
 @pytest.mark.asyncio

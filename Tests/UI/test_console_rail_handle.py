@@ -189,12 +189,24 @@ def test_vertical_inspector_label_stacks_without_direction_glyph() -> None:
     assert "◂" not in handle._display_label()
 
 
-def test_horizontal_defaults_preserve_context_and_abbreviate_inspector_label() -> None:
+def test_horizontal_canonical_labels_use_inward_console_button_copy() -> None:
     context = _handle(label=CONSOLE_RAIL_CONTEXT_LABEL)
     inspector = _handle(label=CONSOLE_RAIL_INSPECTOR_LABEL, side="right")
 
-    assert context._display_label() == CONSOLE_RAIL_CONTEXT_LABEL
-    assert inspector._display_label() == "Inspect->"
+    assert context._display_label() == "Context->"
+    assert inspector._display_label() == "<-Inspect"
+
+
+def test_horizontal_noncanonical_left_label_is_unchanged() -> None:
+    handle = _handle(label="Sources")
+
+    assert handle._display_label() == "Sources"
+
+
+def test_horizontal_noncanonical_right_label_is_unchanged() -> None:
+    handle = _handle(label="Review", side="right")
+
+    assert handle._display_label() == "Review"
 
 
 def test_vertical_generic_label_normalizes_whitespace_before_stacking() -> None:

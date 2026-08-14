@@ -26,6 +26,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 import pytest
+from textual.containers import Horizontal
 from textual.widgets import Button
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -100,12 +101,12 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
             pilot.app.screen, pilot, "#console-inspector-rail-open"
         )
         open_button = pilot.app.screen.query_one("#console-inspector-rail-open", Button)
-        assert str(open_button.label) == "Inspect->"
-        arrow_end = (
+        assert str(open_button.label) == "<-Inspect"
+        far_end = (
             open_button.region.width - 1,
             open_button.region.height // 2,
         )
-        assert await pilot.click(open_button, offset=arrow_end)
+        assert await pilot.click(open_button, offset=far_end)
         await pilot.pause(0.2)
         assert _right_rail_open(pilot) is True
         assert _handle_visible(pilot) is False
@@ -123,6 +124,55 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
         await pilot.pause(0.2)
         assert _right_rail_open(pilot) is False
         assert _handle_visible(pilot) is True
+
+
+@pytest.mark.asyncio
+async def test_inspector_header_is_one_full_width_collapse_button() -> None:
+    async with make_console_pilot() as pilot:
+        await _wait_for_selector(
+            pilot.app.screen, pilot, "#console-inspector-rail-open"
+        )
+        open_button = pilot.app.screen.query_one("#console-inspector-rail-open", Button)
+        assert await pilot.click(open_button)
+        await pilot.pause(0.2)
+
+        screen = pilot.app.screen
+        button = screen.query_one("#console-inspector-rail-collapse", Button)
+        header = button.parent
+
+        assert _right_rail_open(pilot) is True
+        assert _handle_visible(pilot) is False
+        assert isinstance(header, Horizontal)
+        assert list(header.children) == [button]
+        assert not screen.query("#console-inspector-rail-title")
+        assert str(button.label) == "Inspect|--------->"
+        assert button.tooltip == "Collapse Inspector rail"
+        assert header.content_region.contains_region(button.region)
+        assert button.region.width == header.content_region.width
+        assert header.region.height == 1
+        assert button.region.height == 1
+        assert button.styles.text_align == "left"
+        assert button.styles.content_align_horizontal == "left"
+
+
+@pytest.mark.asyncio
+async def test_clicking_inspector_header_title_start_collapses_the_rail() -> None:
+    async with make_console_pilot() as pilot:
+        await _wait_for_selector(
+            pilot.app.screen, pilot, "#console-inspector-rail-open"
+        )
+        assert await pilot.click("#console-inspector-rail-open")
+        await pilot.pause(0.2)
+
+        button = pilot.app.screen.query_one("#console-inspector-rail-collapse", Button)
+        assert str(button.label) == "Inspect|--------->"
+        title_start = (1, 0)
+        assert await pilot.click(button, offset=title_start)
+        await pilot.pause(0.2)
+
+        assert _right_rail_open(pilot) is False
+        assert _handle_visible(pilot) is True
+        assert pilot.app.focused is None
 
 
 @pytest.mark.asyncio
