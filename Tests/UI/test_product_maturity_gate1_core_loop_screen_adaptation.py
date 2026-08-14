@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 
 import pytest
-from textual.app import App
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
@@ -237,7 +236,7 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
             or CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL in text
         )
         inspector_button = console.query_one("#console-inspector-rail-open", Button)
-        assert inspector_button.label == "Inspect"
+        assert inspector_button.label == "Inspect->"
         assert inspector_button.tooltip == "Open Inspector rail"
 
 

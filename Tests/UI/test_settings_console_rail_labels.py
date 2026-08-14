@@ -138,22 +138,20 @@ async def test_console_rail_label_setting_saves_exact_payload_and_runtime_value(
         console = console_host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
 
-        left = console.query_one(
-            "#console-context-rail-handle", ConsoleRailHandle
-        )
-        right = console.query_one(
-            "#console-inspector-rail-handle", ConsoleRailHandle
-        )
+        left = console.query_one("#console-context-rail-handle", ConsoleRailHandle)
+        right = console.query_one("#console-inspector-rail-handle", ConsoleRailHandle)
         assert left.styles.width.value == ConsoleRailHandle.VERTICAL_WIDTH
         assert right.styles.width.value == ConsoleRailHandle.VERTICAL_WIDTH
         assert left._display_label() == "C\no\nn\nt\ne\nx\nt"
         assert right._display_label() == "I\nn\ns\np\ne\nc\nt\no\nr"
-        assert console.query_one(
-            "#console-context-rail-open", Button
-        ).tooltip == "Open Context rail"
-        assert console.query_one(
-            "#console-inspector-rail-open", Button
-        ).tooltip == "Open Inspector rail"
+        assert (
+            console.query_one("#console-context-rail-open", Button).tooltip
+            == "Open Context rail"
+        )
+        assert (
+            console.query_one("#console-inspector-rail-open", Button).tooltip
+            == "Open Inspector rail"
+        )
 
 
 @pytest.mark.asyncio
@@ -194,16 +192,12 @@ async def test_console_rail_label_failed_save_keeps_draft_and_active_style(
         console = console_host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
 
-        left = console.query_one(
-            "#console-context-rail-handle", ConsoleRailHandle
-        )
-        right = console.query_one(
-            "#console-inspector-rail-handle", ConsoleRailHandle
-        )
+        left = console.query_one("#console-context-rail-handle", ConsoleRailHandle)
+        right = console.query_one("#console-inspector-rail-handle", ConsoleRailHandle)
         assert left.styles.width.value == 13
         assert right.styles.width.value == 11
         assert left._display_label() == "Context ▸"
-        assert right._display_label() == "Inspect"
+        assert right._display_label() == "Inspect->"
 
 
 @pytest.mark.asyncio

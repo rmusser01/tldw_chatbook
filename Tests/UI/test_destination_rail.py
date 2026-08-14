@@ -181,9 +181,7 @@ async def test_clicking_the_section_title_posts_the_same_pressed_message_as_the_
     app = _SectionHeaderHarness()
     async with app.run_test(size=(40, 12)) as pilot:
         await pilot.pause()
-        title = app.query_one(
-            "#console-rail-section-title-lab-details", Static
-        )
+        title = app.query_one("#console-rail-section-title-lab-details", Static)
         await pilot.click(title)
         await pilot.pause()
 
@@ -200,9 +198,7 @@ async def test_clicking_the_toggle_chip_itself_does_not_double_fire():
     app = _SectionHeaderHarness()
     async with app.run_test(size=(40, 12)) as pilot:
         await pilot.pause()
-        toggle = app.query_one(
-            f"#{RAIL_SECTION_TOGGLE_PREFIX}lab-details", Button
-        )
+        toggle = app.query_one(f"#{RAIL_SECTION_TOGGLE_PREFIX}lab-details", Button)
         await pilot.click(toggle)
         await pilot.pause()
 
@@ -319,10 +315,13 @@ async def test_console_handle_is_a_destination_rail_handle():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("side", "expected"), [
-    ("left", "Open Context rail"),
-    ("right", "Open Inspector rail"),
-])
+@pytest.mark.parametrize(
+    ("side", "expected"),
+    [
+        ("left", "Open Context rail"),
+        ("right", "Open Inspector rail"),
+    ],
+)
 async def test_console_handle_keeps_its_fixed_tooltips(side, expected):
     """Console's tooltips are fixed strings, not derived from the label."""
     app = _HandleHarness(_console_handle(side=side, label="Anything"))
@@ -332,12 +331,15 @@ async def test_console_handle_keeps_its_fixed_tooltips(side, expected):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("badge", "expected"), [
-    ("1 approval", "1 appr"),
-    ("3 approvals", "3 appr"),
-    ("artifact", "art"),
-    ("something else", "something else"),
-])
+@pytest.mark.parametrize(
+    ("badge", "expected"),
+    [
+        ("1 approval", "1 appr"),
+        ("3 approvals", "3 appr"),
+        ("artifact", "art"),
+        ("something else", "something else"),
+    ],
+)
 async def test_console_handle_abbreviates_right_side_badges(badge, expected):
     app = _HandleHarness(_console_handle(side="right", badge=badge))
     async with app.run_test(size=(40, 12)) as pilot:
@@ -352,7 +354,9 @@ async def test_console_handle_abbreviates_the_inspector_label_on_the_right():
     )
     async with app.run_test(size=(40, 12)) as pilot:
         await pilot.pause()
-        assert str(app.query_one("#console-rail-open", Button).label) == "Inspect"
+        button = app.query_one("#console-rail-open", Button)
+        assert str(button.label) == "Inspect->"
+        assert button.tooltip == "Open Inspector rail"
 
 
 @pytest.mark.asyncio
@@ -360,7 +364,9 @@ async def test_console_handle_leaves_left_side_text_alone():
     app = _HandleHarness(_console_handle(side="left", badge="1 approval"))
     async with app.run_test(size=(40, 12)) as pilot:
         await pilot.pause()
-        assert str(app.query_one("#console-rail-badge", Static).renderable) == "1 approval"
+        assert (
+            str(app.query_one("#console-rail-badge", Static).renderable) == "1 approval"
+        )
 
 
 @pytest.mark.asyncio
