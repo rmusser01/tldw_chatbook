@@ -209,7 +209,6 @@ async def test_apply_library_export_counts_patches_tooltip_alongside_disabled():
             _library_export_counts=None,
             _library_export_counts_request_id=1,
             _library_snapshot_state_generation=0,
-            _library_export_quality_choices_visible=False,
             _library_export_form={
                 "name": "x",
                 "description": "",
@@ -273,7 +272,6 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
             _library_selected_row_id=LIBRARY_ROW_INGEST_EXPORT,
             _library_export_scope=scope,
             _library_export_counts={"media": 1, "conversations": 0, "notes": 0},
-            _library_export_quality_choices_visible=False,
             _library_export_form={
                 "name": "x",
                 "description": "",

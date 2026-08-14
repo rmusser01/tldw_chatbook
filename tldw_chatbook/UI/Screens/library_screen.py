@@ -6364,13 +6364,14 @@ class LibraryScreen(BaseAppScreen):
             if (
                 source_type == raw_source_type
                 and source_id == raw_source_id
-                and source_type in {"media", "notes", "conversations"}
+                and source_type in {"media", "notes", "conversations", "prompt"}
                 and source_id
             ):
                 target_row_id = {
                     "media": LIBRARY_ROW_BROWSE_MEDIA,
                     "notes": LIBRARY_ROW_BROWSE_NOTES,
                     "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
+                    "prompt": LIBRARY_ROW_BROWSE_PROMPTS,
                 }[source_type]
         return target_row_id
 
@@ -7688,8 +7689,11 @@ class LibraryScreen(BaseAppScreen):
         conversation_records = tuple(normalized_records.get("conversations", ()))
         if (
             lookup_error is None
-            and not self._library_conversation_page_loaded
             and not self._library_conversation_query
+            and (
+                not self._library_conversation_page_loaded
+                or self._library_conversation_page == 1
+            )
         ):
             self._library_conversation_page_records = conversation_records
             self._library_conversation_page = 1
@@ -30463,6 +30467,16 @@ class LibraryScreen(BaseAppScreen):
             self._library_conversation_page_records = (
                 target_record,
                 *self._conversation_records(),
+            )[:LIBRARY_CONVERSATION_PAGE_SIZE]
+            self._local_source_records["conversations"] = (
+                target_record,
+                *(
+                    record
+                    for index, record in enumerate(
+                        self._local_source_records.get("conversations", ())
+                    )
+                    if self._conversation_record_id(record, index) != record_id
+                ),
             )[:LIBRARY_CONVERSATION_PAGE_SIZE]
             self._library_conversation_page_loaded = True
             self._library_conversation_page = 1
