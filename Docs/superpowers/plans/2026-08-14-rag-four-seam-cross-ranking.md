@@ -34,6 +34,18 @@
 **Files:** Modify `tldw_chatbook/Library/library_local_rag_search_service.py` (the merge site + the written rule); Create `Tests/Library/test_library_keyword_cross_seam.py`.
 
 - [ ] **Step 1:** Venv (pinned recipe); provenance pasted. Backlog: `backlog task edit 16071 -s "In Progress"` + `--plan`; ALSO file the agentic-document-expansion roadmap task (the owner's capability question, 2026-08-14: chunk→document expansion tool + agent policy + P3-style evaluation — description cites RAGSearchTool, the doc_id linkage, sibling/parent-inclusion's P3 deferral; ID safety recipe; To Do; label rag,agents).
+  > **AMENDED 2026-08-14 (Task 1 review).** Two errors in the line above, both
+  > carried faithfully into the filing and both now fixed in TASK-16174. (1)
+  > Sibling/parent inclusion is **P2 Retrieval intelligence**, not P3
+  > (`Docs/superpowers/specs/2026-08-07-rag-port-p0-foundations-design.md:37`);
+  > only the answer-level EVALUATION question is P3-grader territory, and this
+  > line used "P3" for both. (2) It is not "deferred" — it is an **inert,
+  > user-reachable surface**: `SearchConfig.include_parent_docs` /
+  > `parent_size_threshold` / `parent_inclusion_strategy`
+  > (`RAG_Search/simplified/config.py:559-561`) are switched on by three
+  > shipped profiles (`config_profiles.py:310-312`, `:347-349`, `:524-526`) and
+  > read by nothing in `tldw_chatbook/` (grep-verified). Filed as TASK-16174
+  > AC#7: wire it or retire it, never leave it as a third overlapping surface.
 - [ ] **Step 2:** MEASURE FIRST (gated): which two plain-keyword queries miss, and their mechanism (seam-burial vs genuine — run the four-seam pass per query, read where the targets sit). Record in the report; set the recall prediction for Task 2.
 - [ ] **Step 3:** Display-order verification: how the panel consumes row order (grep the evidence-list rendering); state the Search-mode visual consequence; if visible, enumerate as a disclosed change.
 - [ ] **Step 4:** RED-first (`test_library_keyword_cross_seam.py`, real DBs per the service's existing test patterns): (a) displacement pin — a media-seam rank-1 row precedes notes-seam rank-5 rows in the merged output (RED on today's concatenation); (b) rank-fairness (equal seams alternate); (c) single-seam byte-identity; (d) no-truncation contract (4×top_k rows in → all out); (e) prompts-seam participation (the buried fourth seam interleaves — the 16071 filing's point).

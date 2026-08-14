@@ -494,7 +494,14 @@ class LibraryLocalRagSearchService:
         # Dedup across seams is structurally vacuous -- the seams are
         # disjoint by source type -- but the primitive needs a key, and
         # `(provenance.source_type, source_id)` is the row identity every
-        # builder already stamps (`_note_row` and friends).
+        # builder already stamps (`_note_row` and friends). Note that
+        # `interleave_rankings`' `seen` set also collapses duplicates WITHIN
+        # one seam (it is one set across the whole merge, not one per
+        # ranking); no seam can emit the same document twice today, so that
+        # arm is unreachable, but it is the reason the key must be the full
+        # document identity rather than the source id alone -- two seams'
+        # ids are independent numbering spaces and a bare id would let a
+        # note and a media row collide.
         #
         # NO TRUNCATION is added: a four-seam query has always been able to
         # return up to `4 * top_k` rows and the cut belongs to the consumers.

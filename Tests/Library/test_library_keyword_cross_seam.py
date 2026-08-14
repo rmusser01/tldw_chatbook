@@ -219,6 +219,34 @@ async def _search(app, query: str, sources=ALL_SOURCES, *, top_k: int = 5):
     return list(result["results"])
 
 
+async def _seam_ranking(app, source: str, query: str, *, top_k: int = 5):
+    """One seam's OWN ranking, read from the seam method, not from a search.
+
+    The reference order has to come from upstream of the merge. Reading it
+    back with a single-source `search()` call looks equivalent and is not:
+    that path runs the merge too, so a merge defect that permutes a seam's
+    own rows permutes the reference identically and the comparison passes
+    against itself. Caught exactly that way -- a mutation reversing each
+    seam's ranking before the interleave went undetected until this helper
+    stopped going through `search()`.
+    """
+    service = LibraryLocalRagSearchService(app)
+    if source == "notes":
+        available, rows = await service._search_notes(
+            query, top_k, getattr(app, "notes_user_id", "default_user")
+        )
+    elif source == "media":
+        available, rows = await service._search_media(query, top_k)
+    elif source == "conversations":
+        available, rows = await service._search_conversations(query, top_k)
+    elif source == "prompts":
+        available, rows = await service._search_prompts(query, top_k)
+    else:  # pragma: no cover - the four seams are the whole vocabulary
+        raise AssertionError(f"unknown seam {source!r}")
+    assert available, f"the {source} seam reported itself unavailable"
+    return rows
+
+
 def _keys(rows) -> list[tuple[str, str]]:
     """The `(source_type, source_id)` identity of each row, in list order."""
     return [(row["provenance"]["source_type"], row["source_id"]) for row in rows]
@@ -243,8 +271,8 @@ async def test_a_media_rank_one_row_precedes_the_notes_seams_fifth_row(four_seam
 
     rows = await _search(fixture.app, TERM)
     keys = _keys(rows)
-    notes_rows = _keys(await _search(fixture.app, TERM, ("notes",)))
-    media_rows = _keys(await _search(fixture.app, TERM, ("media",)))
+    notes_rows = _keys(await _seam_ranking(fixture.app, "notes", TERM))
+    media_rows = _keys(await _seam_ranking(fixture.app, "media", TERM))
     assert len(notes_rows) == 5, notes_rows
     assert len(media_rows) == 1, media_rows
 
@@ -272,6 +300,12 @@ async def test_b_equal_seams_alternate_by_position_in_fixed_seam_order(four_seam
     convention rather than a claim about relevance: within one position,
     notes still precede media, which precede conversations, which precede
     prompts.
+
+    Two properties, because the seam-type cycle alone does not pin the
+    merge: a round-robin that shuffled each seam's own rows would still
+    produce the right sequence of TYPES. The second assertion is the one
+    that fails then -- each seam's rows must appear in the merged list in
+    exactly the relative order that seam returned them.
     """
     fixture = four_seams(notes=2, media=2, conversations=2, prompts=2)
 
@@ -287,6 +321,16 @@ async def test_b_equal_seams_alternate_by_position_in_fixed_seam_order(four_seam
         CONVERSATION,
         PROMPT,
     ], f"seams did not alternate by position: {_types(rows)}"
+
+    merged = _keys(rows)
+    for source, source_type in zip(ALL_SOURCES, (NOTE, MEDIA, CONVERSATION, PROMPT)):
+        own = _keys(await _seam_ranking(fixture.app, source, TERM))
+        assert len(own) == 2, (source, own)
+        in_merged = [key for key in merged if key[0] == source_type]
+        assert in_merged == own, (
+            f"the {source} seam's rows were reordered by the merge: seam order "
+            f"{own}, merged order {in_merged}"
+        )
 
 
 @pytest.mark.asyncio
@@ -328,7 +372,7 @@ async def test_d_the_merge_truncates_nothing(four_seams):
     per_seam = {}
     for source in ALL_SOURCES:
         per_seam[source] = _keys(
-            await _search(fixture.app, TERM, (source,), top_k=top_k)
+            await _seam_ranking(fixture.app, source, TERM, top_k=top_k)
         )
         assert len(per_seam[source]) == top_k, (source, per_seam[source])
 
@@ -358,8 +402,8 @@ async def test_e_the_prompts_seam_participates_instead_of_being_appended_last(
 
     rows = await _search(fixture.app, TERM)
     keys = _keys(rows)
-    notes_rows = _keys(await _search(fixture.app, TERM, ("notes",)))
-    prompt_rows = _keys(await _search(fixture.app, TERM, ("prompts",)))
+    notes_rows = _keys(await _seam_ranking(fixture.app, "notes", TERM))
+    prompt_rows = _keys(await _seam_ranking(fixture.app, "prompts", TERM))
     assert len(prompt_rows) == 1, prompt_rows
 
     prompt_position = keys.index(prompt_rows[0])
