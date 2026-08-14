@@ -266,6 +266,28 @@ def widget_defaults_sources(
     return sources
 
 
+def screen_css_paths(css_dir: Path) -> tuple[Path, Path]:
+    """The two screen/modal stylesheets, in cascade order.
+
+    Order is the whole point, so it lives here rather than at each call site.
+    The scope-prefixed sheet goes first (it must *lose* the specificity ties
+    that writing its scope selector out created) and the self sheet last (where
+    Textual appended a screen's class-level ``CSS`` on first open). The app
+    slots the bundle between them; a test harness that has no bundle just uses
+    the pair.
+
+    Args:
+        css_dir: The package's ``css`` directory.
+
+    Returns:
+        ``(scoped_first, self_last)``.
+    """
+    return (
+        css_dir / SCREEN_CSS_SCOPED_FILENAME,
+        css_dir / SCREEN_CSS_SELF_FILENAME,
+    )
+
+
 def build_screen_css(css_dir: Path, self_file: Path, scoped_file: Path) -> None:
     """Write the two consolidated screen/modal stylesheets.
 

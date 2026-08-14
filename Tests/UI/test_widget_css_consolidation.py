@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 from textual.app import App
 from textual.css.parse import parse
-from textual.css.stylesheet import Stylesheet
+from textual.css.stylesheet import Stylesheet, StylesheetParseError
 from textual.css.tokenize import tokenize_values
 
 from tldw_chatbook.css import build_css, widget_css
@@ -320,3 +320,98 @@ async def test_full_destination_tour_stays_under_the_parse_cache_cliff():
             f"{sources} live stylesheet sources after the tour -- Textual's parse "
             f"cache holds {_PARSE_CACHE_CAPACITY}, past which every parse is cold"
         )
+
+
+def test_every_class_level_css_block_parses_as_a_stylesheet():
+    """Every class-level CSS block must survive ``Stylesheet.parse()``.
+
+    An invalid property does not fail its own declaration -- it fails the
+    **whole stylesheet**, and Textual then cannot reparse for the rest of the
+    session (``reparse()`` builds a fresh ``Stylesheet`` that re-adds the bad
+    source and raises again). On dev, ``font-size: 10`` in the Note and
+    Conversation selection dialogs meant opening either one raised
+    ``StylesheetParseError`` out of ``_load_screen_css``; ``VoiceProfileDialog``
+    carried the same latent bug in its ``DEFAULT_CSS``.
+
+    This pins the *class* of defect rather than its three instances, and it
+    covers blocks that were never consolidated -- including every screen that
+    still declares a plain ``CSS``. Note that
+    ``test_scope_rewrite_matches_textuals_own_scoping`` would not catch this:
+    it calls ``textual.css.parse.parse`` directly, which collects errors onto
+    ``rule.errors`` instead of raising. Only ``Stylesheet.parse`` raises.
+    """
+    variables = App().get_css_variables()
+    failures = []
+    for module, class_name, css in _class_css_blocks():
+        stylesheet = Stylesheet(variables=variables)
+        stylesheet.add_source(
+            css, read_from=(module, class_name), is_default_css=True, scope=class_name
+        )
+        try:
+            stylesheet.parse()
+        except Exception as exc:  # noqa: BLE001 - report every offender at once
+            failures.append(f"{module}::{class_name}: {type(exc).__name__}")
+    assert not failures, (
+        "class-level CSS that Textual cannot parse -- this fails the whole "
+        "stylesheet at runtime, not just the offending rule:\n" + "\n".join(failures)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "module_path, class_name",
+    [
+        (
+            "tldw_chatbook.Widgets.Note_Widgets.note_selection_dialog",
+            "NoteSelectionDialog",
+        ),
+        (
+            "tldw_chatbook.Widgets.conversation_selection_dialog",
+            "ConversationSelectionDialog",
+        ),
+    ],
+)
+async def test_selection_dialog_opens_without_a_stylesheet_error(
+    module_path: str, class_name: str
+):
+    """Pushing either selection dialog must not raise out of the CSS machinery.
+
+    The static guard above pins the declarations; this pins the behaviour that
+    was actually broken -- on dev, ``app.push_screen(NoteSelectionDialog([]))``
+    raises ``StylesheetParseError`` from ``_load_screen_css``, and the app then
+    cannot reparse for the rest of the session, so every later screen with CSS
+    raises too. Mounted, not static: it is the push that used to blow up.
+
+    Both dialogs also carry an *unrelated* pre-existing bug -- their ``on_mount``
+    calls ``Vertical.clear()``, which does not exist -- so the push still ends in
+    an ``AttributeError`` from the dialog's own code. That is out of scope here
+    and is deliberately not papered over: the assertions below name the CSS
+    failure mode specifically, and check the stylesheet is still usable
+    afterwards, which is the symptom that actually poisoned the session.
+    """
+    from importlib import import_module
+
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
+    dialog_class = getattr(import_module(module_path), class_name)
+
+    app = ConsolidatedCSSApp()
+    raised: Exception | None = None
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.push_screen(dialog_class([]))
+            await pilot.pause()
+            # The stylesheet must still parse: on dev it is poisoned by now, and
+            # `reparse()` re-adds the bad source and raises on every later screen.
+            app.stylesheet.parse()
+    except Exception as exc:  # noqa: BLE001 - classified immediately below
+        raised = exc
+
+    assert not isinstance(raised, StylesheetParseError), (
+        f"pushing {class_name} raised StylesheetParseError -- its class-level CSS "
+        "is invalid again, which fails the whole stylesheet and stops the app "
+        "reparsing for the rest of the session"
+    )
+    if raised is not None and "clear" not in str(raised):
+        raise raised

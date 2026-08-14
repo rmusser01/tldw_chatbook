@@ -55,9 +55,25 @@ every tie it now finds itself in, which is arranged per tier:
   on source order while the self rules keep winning them as they did when
   Textual appended a screen's ``CSS`` at first open.
 
+**That compensation is one-directional, and the limit is worth stating.**  It
+handles LOSE -> TIE.  It cannot handle TIE -> WIN: a rule shifted from ``S`` to
+``S+1`` now *strictly* outranks anything that used to sit level with it at ``S``,
+and no tie-breaker can undo a strict specificity win -- ``tie_breaker`` is the
+last element of the comparison key (``textual/css/styles.py`` ``extract_rules``),
+so it only ever resolves exact ties.  The mitigating facts, measured rather than
+assumed: the app bundle sits in a strictly higher origin tier than every one of
+these rules, so it owns any property it declares regardless; and a dev-vs-branch
+computed-style comparison found **0** differences over 2,528 nodes on 14 screens
+in the resting state, plus **0** over 3,135 node-states with ``:hover``,
+``:focus`` and ``:disabled`` each forced on every node of the Console, Personas
+and MCP screens (117 of those were nav buttons -- the family whose shifted
+``:hover`` / ``:focus`` rules are the most exposed).  No TIE -> WIN flip has been
+demonstrated; none is claimed to be impossible.
+
 ``Tests/UI/test_widget_css_consolidation.py`` pins the whole scheme by parsing
-both forms with Textual's own parser and asserting the rules match, and the
-empirical check is a full computed-style diff of every node on every screen.
+both forms with Textual's own parser and asserting the rules match.  The
+computed-style comparisons above are one-off dev-parity measurements, not tests:
+they need a dev checkout to diff against, which CI does not have.
 
 Stdlib-only, so the CSS guard can run without the app's dependencies.
 """
