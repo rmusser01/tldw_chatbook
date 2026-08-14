@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Generic, Literal, Self, TypeVar
+from typing import Generic, Literal, NoReturn, Self, TypeVar
 from urllib.parse import urlsplit
 
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
@@ -393,6 +393,17 @@ def _sanitize_removal_exception(error: BaseException) -> BaseException:
     if hasattr(error, "__notes__"):
         error.__notes__ = []
     return error
+
+
+def _sanitize_and_absorb_removal_cleanup_owner(
+    owner: ArtifactRemovalAuthority,
+    error: BaseException,
+) -> BaseException:
+    """Bound one losing error and retain every cleanup authority it carries."""
+
+    bounded_error = _sanitize_removal_exception(error)
+    _absorb_removal_cleanup_owner(owner, bounded_error)
+    return bounded_error
 
 
 def _raise_removal_control(
@@ -1340,7 +1351,7 @@ class ArtifactRemovalAuthority:
                     if ordinary_error is None:
                         ordinary_error = error
                     else:
-                        _sanitize_removal_exception(error)
+                        _sanitize_and_absorb_removal_cleanup_owner(self, error)
                     continue
                 if control is None:
                     control = error
@@ -1364,7 +1375,7 @@ class ArtifactRemovalAuthority:
                 elif ordinary_error is None:
                     ordinary_error = error
                 else:
-                    _sanitize_removal_exception(error)
+                    _sanitize_and_absorb_removal_cleanup_owner(self, error)
             else:
                 if owner._has_cleanup():
                     retained_owners.append(owner)
@@ -1404,28 +1415,28 @@ class ArtifactRemovalAuthority:
             cleanup_error = error
         if cleanup_error is None:
             return
-        cleanup_error = _sanitize_removal_exception(cleanup_error)
+        cleanup_error = _sanitize_and_absorb_removal_cleanup_owner(
+            self,
+            cleanup_error,
+        )
         if exc is not None and _is_removal_control(exc):
-            _absorb_removal_cleanup_owner(self, cleanup_error)
             _raise_removal_control(
                 exc,
                 cleanup_owner=self,
                 ordinary_failure=not _is_removal_control(cleanup_error),
             )
+        if exc is not None:
+            _sanitize_and_absorb_removal_cleanup_owner(self, exc)
         if _is_removal_control(cleanup_error):
-            if exc is not None:
-                _sanitize_removal_exception(exc)
             _raise_removal_control(
                 cleanup_error,
                 cleanup_owner=self,
                 ordinary_failure=exc is not None,
             )
-        if exc is not None:
-            _sanitize_removal_exception(exc)
-        failure = ArtifactRemovalCleanupError(self)
-        if exc is not None:
-            failure.add_note("artifact removal commit also failed")
-        raise failure from None
+        _raise_removal_cleanup_failure(
+            self,
+            note="artifact removal commit also failed" if exc is not None else None,
+        )
 
 
 class ArtifactRemovalCleanupError(ArtifactStateError):
@@ -1444,6 +1455,24 @@ class ArtifactRemovalCleanupError(ArtifactStateError):
         owner = self._cleanup_owner
         self._cleanup_owner = None
         return owner
+
+
+def _raise_removal_cleanup_failure(
+    cleanup_owner: ArtifactRemovalAuthority,
+    *,
+    note: str | None = None,
+) -> NoReturn:
+    """Raise one bounded cleanup carrier without exposing superseded context."""
+
+    failure = ArtifactRemovalCleanupError(cleanup_owner)
+    if note is not None:
+        failure.add_note(note)
+    try:
+        raise failure from None
+    except ArtifactRemovalCleanupError as raised:
+        raised.__context__ = None
+        raised.__cause__ = None
+        raise
 
 
 def take_artifact_removal_cleanup_owner(
@@ -1634,13 +1663,12 @@ class ModelArtifactService:
             cleanup_owner.close()
         except BaseException as error:
             cleanup_error = error
+        if cleanup_error is not None:
+            cleanup_error = _sanitize_and_absorb_removal_cleanup_owner(
+                cleanup_owner,
+                cleanup_error,
+            )
         if primary_error is not None and _is_removal_control(primary_error):
-            if cleanup_error is not None:
-                cleanup_error = _sanitize_removal_exception(cleanup_error)
-                _absorb_removal_cleanup_owner(
-                    cleanup_owner,
-                    cleanup_error,
-                )
             _raise_removal_control(
                 primary_error,
                 cleanup_owner=cleanup_owner if cleanup_owner._has_cleanup() else None,
@@ -1650,7 +1678,10 @@ class ModelArtifactService:
             )
         if cleanup_error is not None and _is_removal_control(cleanup_error):
             if primary_error is not None:
-                _sanitize_removal_exception(primary_error)
+                _sanitize_and_absorb_removal_cleanup_owner(
+                    cleanup_owner,
+                    primary_error,
+                )
             _raise_removal_control(
                 cleanup_error,
                 cleanup_owner=cleanup_owner if cleanup_owner._has_cleanup() else None,
@@ -1658,14 +1689,25 @@ class ModelArtifactService:
             )
         if cleanup_error is not None:
             if primary_error is not None:
-                _sanitize_removal_exception(primary_error)
-            _sanitize_removal_exception(cleanup_error)
-            failure = ArtifactRemovalCleanupError(cleanup_owner)
-            if primary_error is not None or timed_out:
-                failure.add_note("artifact removal probe also failed")
-            raise failure from None
+                _sanitize_and_absorb_removal_cleanup_owner(
+                    cleanup_owner,
+                    primary_error,
+                )
+            _raise_removal_cleanup_failure(
+                cleanup_owner,
+                note=(
+                    "artifact removal probe also failed"
+                    if primary_error is not None or timed_out
+                    else None
+                ),
+            )
         if primary_error is not None:
-            _sanitize_removal_exception(primary_error)
+            _sanitize_and_absorb_removal_cleanup_owner(
+                cleanup_owner,
+                primary_error,
+            )
+            if cleanup_owner._has_cleanup():
+                _raise_removal_cleanup_failure(cleanup_owner)
             raise ArtifactStateError("artifact removal probe failed") from None
         return (
             ArtifactRemovalAvailability.BUSY
@@ -1715,13 +1757,12 @@ class ModelArtifactService:
                 cleanup_owner.close()
             except BaseException as error:
                 cleanup_error = error
+            if cleanup_error is not None:
+                cleanup_error = _sanitize_and_absorb_removal_cleanup_owner(
+                    cleanup_owner,
+                    cleanup_error,
+                )
             if _is_removal_control(primary_error):
-                if cleanup_error is not None:
-                    cleanup_error = _sanitize_removal_exception(cleanup_error)
-                    _absorb_removal_cleanup_owner(
-                        cleanup_owner,
-                        cleanup_error,
-                    )
                 _raise_removal_control(
                     primary_error,
                     cleanup_owner=(
@@ -1733,7 +1774,10 @@ class ModelArtifactService:
                     ),
                 )
             if cleanup_error is not None and _is_removal_control(cleanup_error):
-                _sanitize_removal_exception(primary_error)
+                _sanitize_and_absorb_removal_cleanup_owner(
+                    cleanup_owner,
+                    primary_error,
+                )
                 _raise_removal_control(
                     cleanup_error,
                     cleanup_owner=(
@@ -1742,23 +1786,29 @@ class ModelArtifactService:
                     ordinary_failure=True,
                 )
             if cleanup_error is not None:
-                _sanitize_removal_exception(primary_error)
-                _sanitize_removal_exception(cleanup_error)
-                failure = ArtifactRemovalCleanupError(cleanup_owner)
-                failure.add_note("artifact removal authority setup also failed")
-                raise failure from None
+                _sanitize_and_absorb_removal_cleanup_owner(
+                    cleanup_owner,
+                    primary_error,
+                )
+                _raise_removal_cleanup_failure(
+                    cleanup_owner,
+                    note="artifact removal authority setup also failed",
+                )
+            _sanitize_and_absorb_removal_cleanup_owner(
+                cleanup_owner,
+                primary_error,
+            )
+            if cleanup_owner._has_cleanup():
+                _raise_removal_cleanup_failure(cleanup_owner)
             if isinstance(primary_error, ArtifactLeaseTimeoutError):
-                _sanitize_removal_exception(primary_error)
                 raise ArtifactInUseError(
                     "artifact is in use and cannot be deleted"
                 ) from None
             if isinstance(primary_error, ArtifactLeaseError):
-                _sanitize_removal_exception(primary_error)
                 lease_failure = ArtifactStateError(
                     "failed to acquire or release artifact deletion leases"
                 )
                 raise lease_failure from None
-            _sanitize_removal_exception(primary_error)
             raise ArtifactStateError("artifact removal authority failed") from None
 
         assert lifecycle_lease is not None
@@ -1785,16 +1835,15 @@ class ModelArtifactService:
             authority.close()
         except BaseException as error:
             target_cleanup_error = error
+        if target_cleanup_error is not None:
+            target_cleanup_error = _sanitize_and_absorb_removal_cleanup_owner(
+                authority,
+                target_cleanup_error,
+            )
         if _is_removal_control(target_error):
-            if target_cleanup_error is not None:
-                target_cleanup_error = _sanitize_removal_exception(target_cleanup_error)
-                _absorb_removal_cleanup_owner(
-                    authority,
-                    target_cleanup_error,
-                )
             _raise_removal_control(
                 target_error,
-                cleanup_owner=authority if target_cleanup_error is not None else None,
+                cleanup_owner=authority if authority._has_cleanup() else None,
                 ordinary_failure=(
                     target_cleanup_error is not None
                     and not _is_removal_control(target_cleanup_error)
@@ -1803,24 +1852,35 @@ class ModelArtifactService:
         if target_cleanup_error is not None and _is_removal_control(
             target_cleanup_error
         ):
-            _sanitize_removal_exception(target_error)
+            _sanitize_and_absorb_removal_cleanup_owner(
+                authority,
+                target_error,
+            )
             _raise_removal_control(
                 target_cleanup_error,
                 cleanup_owner=authority,
                 ordinary_failure=True,
             )
         if target_cleanup_error is not None:
-            _sanitize_removal_exception(target_error)
-            _sanitize_removal_exception(target_cleanup_error)
-            failure = ArtifactRemovalCleanupError(authority)
-            failure.add_note("artifact removal target setup also failed")
-            raise failure from None
-        if type(target_error) is ArtifactStateError and target_error.args == (
-            "installed artifact does not exist",
-        ):
-            _sanitize_removal_exception(target_error)
+            _sanitize_and_absorb_removal_cleanup_owner(
+                authority,
+                target_error,
+            )
+            _raise_removal_cleanup_failure(
+                authority,
+                note="artifact removal target setup also failed",
+            )
+        target_is_missing = type(target_error) is ArtifactStateError and (
+            target_error.args == ("installed artifact does not exist",)
+        )
+        _sanitize_and_absorb_removal_cleanup_owner(
+            authority,
+            target_error,
+        )
+        if authority._has_cleanup():
+            _raise_removal_cleanup_failure(authority)
+        if target_is_missing:
             raise ArtifactStateError("installed artifact does not exist") from None
-        _sanitize_removal_exception(target_error)
         raise ArtifactStateError("artifact removal authority failed") from None
 
     def reconcile(self) -> ReconcileReport:
