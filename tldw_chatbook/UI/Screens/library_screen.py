@@ -23364,7 +23364,7 @@ class LibraryScreen(BaseAppScreen):
         self._supersede_library_notes_navigation()
         self._library_notes_view = "list"
         self._reset_library_notes_sync_transient_state()
-        _sync_library_canvas(self, "notes")
+        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
 
     @on(Input.Changed, "#library-notes-sync-folder")
     def handle_library_notes_sync_folder_changed(self, event: Input.Changed) -> None:

@@ -22637,7 +22637,14 @@ async def test_library_note_sync_routes_cancel_pending_navigator_focus() -> None
         screen.query_one("#library-notes-sync-back").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
         screen._release_library_notes_focus_after_snapshot()
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == "library-notes-filter",
+            message=lambda: (
+                "Notes sync Back never restored Filter focus; focused="
+                f"{getattr(screen.focused, 'id', None)!r}."
+            ),
+        )
 
         assert screen._library_notes_pending_focus_identity is None
         assert screen._library_notes_view == "list"
