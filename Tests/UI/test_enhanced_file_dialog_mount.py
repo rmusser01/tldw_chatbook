@@ -157,6 +157,12 @@ async def test_filter_hidden_count(tmp_path):
     """
     for name in ("a.json", "b.json", "c.txt", "d.txt", "e.txt"):
         (tmp_path / name).write_text("x")
+    # task-15471 fix round: a dotfile that ALSO fails the filter. With
+    # show_hidden off it is dotfile-hidden, so the filter-hidden count must
+    # NOT include it -- this pins the merged pass's "not already
+    # dotfile-hidden" guard, which the all-visible fixture above never
+    # exercised (review minor 7).
+    (tmp_path / ".hidden.txt").write_text("x")
 
     dialog = EnhancedFileOpen(
         location=str(tmp_path),
@@ -1389,7 +1395,6 @@ async def test_search_keystrokes_debounce_into_one_filtered_repopulation(tmp_pat
             await pilot.pause(0.05)
             if repopulates["count"]:
                 break
-        dir_nav._repopulate_display = real_repopulate
         assert repopulates["count"] == 1
 
         visible = {
@@ -1399,3 +1404,17 @@ async def test_search_keystrokes_debounce_into_one_filtered_repopulation(tmp_pat
         assert "beta.txt" in visible
         assert "alpha.txt" not in visible
         assert "gamma.txt" not in visible
+
+        # Clearing is a RESTORE, not a keystroke (task-15471 fix round,
+        # review minor 4): Esc / the Clear button empty the filter and the
+        # unfiltered list must be back IMMEDIATELY -- the watcher runs
+        # synchronously on assignment, so the rebuild has already happened
+        # by the next line, with no debounce interval in between.
+        dir_nav.search_filter = ""
+        assert repopulates["count"] == 2
+        dir_nav._repopulate_display = real_repopulate
+        restored = {
+            dir_nav.get_option_at_index(index).location.name
+            for index in range(dir_nav.option_count)
+        }
+        assert {"alpha.txt", "beta.txt", "gamma.txt"} <= restored

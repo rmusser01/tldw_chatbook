@@ -604,6 +604,14 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
         """
         if self._search_debounce_timer is not None:
             self._search_debounce_timer.stop()
+            self._search_debounce_timer = None
+        if not self.search_filter:
+            # Fix round (review minor 4): an emptied filter is a RESTORE --
+            # Esc / the Clear button / a programmatic reset -- and must
+            # repopulate immediately, not 200 ms later. Only live typing
+            # debounces.
+            self._repopulate_display()
+            return
         self._search_debounce_timer = self.set_timer(
             self.SEARCH_DEBOUNCE_SECONDS, self._apply_search_filter_after_debounce
         )

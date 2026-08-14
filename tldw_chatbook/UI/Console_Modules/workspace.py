@@ -2084,6 +2084,21 @@ class ConsoleWorkspaceController:
                     star_action = _resolve_and_toggle()
                 else:
                     star_action = await asyncio.to_thread(_resolve_and_toggle)
+            except asyncio.CancelledError:
+                # Fix round (review minor 3): cancellation cannot stop the
+                # pool thread, so the durable write may still land -- and
+                # `CancelledError` is a `BaseException` that would sail past
+                # the `except Exception` below, recreating exactly the
+                # TASK-357 silent-toggle shape (write landed, no repaint).
+                # Best-effort re-sync so the rail repaints from truth, then
+                # let the cancellation propagate.
+                try:
+                    self._sync_console_workspace_context()
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        "Star-toggle cancellation re-sync failed"
+                    )
+                raise
             except Exception:
                 logger.exception(
                     "Unable to update local conversation star "

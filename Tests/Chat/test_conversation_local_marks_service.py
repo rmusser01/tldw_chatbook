@@ -328,9 +328,7 @@ def test_list_marked_ids_cache_never_serves_stale_results_across_writes(tmp_path
     ) == ("conv-c",)
     service.clear_mark("conv-c", ConversationLocalMarksService.FLEET_UNSEEN)
     assert (
-        service.list_marked_conversation_ids(
-            ConversationLocalMarksService.FLEET_UNSEEN
-        )
+        service.list_marked_conversation_ids(ConversationLocalMarksService.FLEET_UNSEEN)
         == ()
     )
 
@@ -338,3 +336,81 @@ def test_list_marked_ids_cache_never_serves_stale_results_across_writes(tmp_path
     assert service.list_marked_conversation_ids(limit=1) == ("conv-b",)
     service.star_conversation("conv-d")
     assert service.list_marked_conversation_ids(limit=1) == ("conv-d",)
+
+
+def test_list_cache_is_not_repopulated_with_a_pre_write_snapshot(tmp_path):
+    """A cache-missing reader must not store rows a concurrent write outdated.
+
+    task-15471 fix round (review M1): the reader holds its fetched rows
+    across the transaction COMMIT — a GIL-releasing sqlite call — before
+    storing them. A writer that commits AND invalidates inside that window
+    must win: without a generation check the reader re-populates the cache
+    with its pre-write snapshot, and the just-starred conversation shows
+    unstarred (or a FLEET_UNSEEN badge never appears) until the NEXT mark
+    write. Both halves are genuinely cross-thread in production: the star
+    toggle writes from a pool thread (workspace.py), the fleet drain from a
+    child thread (console_fleet_attention.py), while repaint reads run on
+    the loop.
+
+    Deterministic interleave (adapted from the review's probe): the reader
+    thread is paused exactly at its transaction exit — after fetch, before
+    store — while the writer stars a conversation and invalidates.
+    """
+    import threading
+
+    db = _db(tmp_path)
+    read_committed = threading.Event()
+    write_invalidated = threading.Event()
+    state: dict = {"reader_ident": None}
+
+    class _HookedTx:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __enter__(self):
+            return self._inner.__enter__()
+
+        def __exit__(self, *exc):
+            result = self._inner.__exit__(*exc)
+            # Pause ONLY the reader, and only right after its COMMIT — the
+            # real scheduler-switch point between fetchall() and the store.
+            if threading.get_ident() == state["reader_ident"]:
+                read_committed.set()
+                write_invalidated.wait(5)
+            return result
+
+    class _DbProxy:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def transaction(self):
+            return _HookedTx(self._inner.transaction())
+
+    service = ConversationLocalMarksService(_DbProxy(db))
+    reader_seen: dict = {}
+
+    def _reader():
+        state["reader_ident"] = threading.get_ident()
+        reader_seen["value"] = service.list_marked_conversation_ids()
+
+    def _writer():
+        assert read_committed.wait(5), "reader never reached its commit"
+        service.star_conversation("conv-a")  # commits, then invalidates
+        write_invalidated.set()
+
+    reader = threading.Thread(target=_reader)
+    writer = threading.Thread(target=_writer)
+    reader.start()
+    writer.start()
+    reader.join(10)
+    writer.join(10)
+    assert not reader.is_alive() and not writer.is_alive()
+
+    # The reader legitimately saw the pre-write world...
+    assert reader_seen["value"] == ()
+    # ...but the SERVICE must now answer with post-write truth, not the
+    # reader's stale snapshot resurrected into the cache.
+    assert service.list_marked_conversation_ids() == ("conv-a",)

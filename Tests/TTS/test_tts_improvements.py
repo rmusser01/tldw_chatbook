@@ -614,6 +614,68 @@ class TestTTSEventHandler:
         assert not hasattr(handler, "_last_played_audio_files")
         assert handler._last_played == ("msg-4", last_audio)
 
+    @pytest.mark.asyncio
+    async def test_export_claim_keeps_cleanup_from_destroying_the_source_mid_copy(
+        self, handler, tmp_path, monkeypatch
+    ):
+        """A cleanup firing mid-export must wait, not zero the source.
+
+        task-15471 fix round (review M2): the export's `shutil.copy2` moved
+        to `asyncio.to_thread`, so it now yields -- and the 5s
+        `_cleanup_audio_file` task could resume mid-copy and secure-delete
+        the source, which OVERWRITES IT IN PLACE with zeros before the
+        unlink (`Utils/secure_temp_files.py`). The overlapping copy then
+        reads zeros for the uncopied tail while the handler still toasts
+        success. The export must claim the file first; a cleanup landing
+        inside the copy window waits for the claim to clear, then deletes.
+        """
+        import shutil as shutil_module
+        import threading
+
+        payload = b"real audio payload"
+        test_audio = tmp_path / "claimed.mp3"
+        test_audio.write_bytes(payload)
+        handler._audio_files["msg-claim"] = test_audio
+
+        copy_started = threading.Event()
+        release_copy = threading.Event()
+        real_copy2 = shutil_module.copy2
+
+        def gated_copy2(src, dst, **kwargs):
+            copy_started.set()
+            assert release_copy.wait(5), "test never released the gated copy"
+            return real_copy2(src, dst, **kwargs)
+
+        monkeypatch.setattr(shutil_module, "copy2", gated_copy2)
+
+        export_path = tmp_path / "exports" / "out.mp3"
+        export_task = asyncio.create_task(
+            handler.handle_tts_export(
+                TTSExportEvent("msg-claim", export_path, include_metadata=False)
+            )
+        )
+        # Wait (off-loop) until the pool thread is inside the gated copy.
+        assert await asyncio.to_thread(copy_started.wait, 5)
+
+        # Fire the deferred cleanup exactly mid-copy.
+        cleanup_task = asyncio.create_task(
+            handler._cleanup_audio_file("msg-claim", delay=0)
+        )
+        await asyncio.sleep(0.1)
+        # The claim holds the destroyer off: source present and NOT zeroed.
+        assert test_audio.exists(), "cleanup destroyed the source mid-copy"
+        assert test_audio.read_bytes() == payload
+        assert not cleanup_task.done()
+
+        release_copy.set()
+        await asyncio.wait_for(export_task, timeout=10)
+        assert export_path.read_bytes() == payload
+
+        # Once the export releases its claim, the pending cleanup completes.
+        await asyncio.wait_for(cleanup_task, timeout=10)
+        assert not test_audio.exists()
+        assert "msg-claim" not in handler._audio_files
+
 
 class TestAudioPlayer:
     """Test audio player improvements"""

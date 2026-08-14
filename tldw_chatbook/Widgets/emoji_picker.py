@@ -1040,6 +1040,13 @@ class EmojiPickerScreen(ModalScreen[str]):
         press handler. The worker is app-owned deliberately -- the picker
         dismisses immediately after, and a screen-owned worker would be
         cancelled before the write ran.
+
+        Ordering is deliberately unserialised last-write-wins (review
+        minor 5): two saves in flight can lose one entry, and a picker
+        reopened inside the write window can read pre-write recents. Both
+        need a human to race a microsecond-scale JSON write, and the file
+        is a cosmetic recents list whose writer already swallows every
+        error -- not worth a lock.
         """
         self.app.run_worker(
             partial(save_recent_emoji, emoji_char),

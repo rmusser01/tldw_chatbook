@@ -517,14 +517,16 @@ class ChatbookExportManagementWindow(ModalScreen):
 
     async def refresh_chatbook_list(self) -> None:
         """Refresh the list of chatbooks."""
-        self.chatbook_files.clear()
-
         try:
-            # Find all chatbook files, off the loop. `clear()` + `extend`
-            # (not reassignment) keeps the list identity other readers hold.
-            self.chatbook_files.extend(
-                await asyncio.to_thread(self._scan_chatbook_files)
-            )
+            # Find all chatbook files, off the loop. The clear happens
+            # AFTER the scan returns (review minor 6): clearing before the
+            # await left `chatbook_files` empty-but-listed if the scan
+            # raised, and a later selection would IndexError. `clear()` +
+            # `extend` (not reassignment) keeps the list identity other
+            # readers hold.
+            scanned = await asyncio.to_thread(self._scan_chatbook_files)
+            self.chatbook_files.clear()
+            self.chatbook_files.extend(scanned)
 
             # Update the list widget
             option_list = self.query_one("#chatbook-list", OptionList)

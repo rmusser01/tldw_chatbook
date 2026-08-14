@@ -159,8 +159,10 @@ smallest per-site diff; every claim below names its measurement or command.
    main loop: `is_file` now runs at most once per entry, and not at all
    when no `file_filter` is set (it previously ran unconditionally, first
    in the `and` chain). Predicates are the vendored `hide()` unrolled;
-   the visible set and both posted counts are unchanged (pinned by the
-   pre-existing `test_filter_hidden_count` plus the new debounce test).
+   the visible set and both posted counts are unchanged (pinned by
+   `test_filter_hidden_count` — whose fixture the review fix round extended
+   with a dotfile, because without one the `not dot_hidden` guard was
+   unpinned (review minor 7) — plus the new debounce test).
 8. **CodeRepoCopyPaste — THREADED.** The per-click local-file preview read
    (`:716`) and the compile-selected read loop (`:901`) both moved into
    `asyncio.to_thread` closures; per-file error handling preserved.
@@ -207,13 +209,16 @@ service 10 passed + new
 (mutation-verified: removing `clear_mark`'s invalidation fails it); new
 `Tests/Event_Handlers/test_collections_tag_events.py` 2 passed (both red
 under a `run_in_thread` restoration AND the delete test red under a
-duplicated-lookup mutation); Console button routing 22 passed and full
-workspace-context-rail 96 passed — the three star tests now wait on
-`workers.wait_for_complete()` (the write moved to a worker; assertions were
-racing the pool thread), stable across 3 repeat runs; code-repo window +
-integration, chatbook management (9), TTS improvements + study
-product-maturity suites (45), chat-message widget + artifact actions +
-state ownership (155 with full rail), focus-contract + speak-autoplay (115).
+duplicated-lookup mutation); Console button routing **16 passed** and full
+workspace-context-rail **69 passed** (corrected in the review fix round —
+the earlier notes mis-tallied these from batch outputs as 22/96; the
+per-file counts above are re-run and read directly) — the three star tests
+now wait on `workers.wait_for_complete()` (the write moved to a worker;
+assertions were racing the pool thread), stable across 3 repeat runs;
+code-repo window + integration, chatbook management (9), TTS improvements
++ study product-maturity suites (45), chat-message widget + artifact
+actions + state ownership (155 with full rail), focus-contract +
+speak-autoplay (115).
 
 **Failures attributed to dev, not this change** (each reproduced byte-for-
 byte on a pristine `c3ed2854a` throwaway worktree, then the worktree
@@ -238,7 +243,91 @@ task-15766's list yet — candidates for that batch.
 `Tests/UI/test_console_button_routing.py`,
 `Tests/UI/test_console_workspace_context_rail.py`,
 `Tests/Event_Handlers/test_collections_tag_events.py` (new).
-Ruff: `check` clean on every touched file except 4 pre-existing findings in
-untouched regions (verified present at base); `format --check` clean on all
-files that were clean at base (workspace.py and enhanced_file_picker.py were
-format-dirty at base outside my hunks and were not reformatted).
+Ruff (corrected in the review fix round): `check` on the touched files
+reports exactly **1 production finding** — the pre-existing F811 duplicate
+`DEFAULT_WORKSPACE_ID` import in `workspace.py` (present at base
+`c3ed2854a`) — plus **3 F401s in `Tests/UI/test_console_workspace_context_
+rail.py`**, all three also present at base (verified by running
+`ruff check --isolated --select F401` on the base blob: they report at base
+lines 2610/2747/2768, shifted only by this branch's appended tests). The
+earlier "4 pre-existing findings" lumped these without the
+production-vs-test split. `format --check` clean on all files that were
+clean at base; base-format-dirty files were not reformatted, and the one
+new hunk the formatter flagged inside this branch's own additions (the
+marks cache test's wrapped assert) was conformed by hand.
+
+## Review fix round (independent concurrency review, verdict FIX-FIRST)
+
+Review report: session scratchpad `review15471/review.md` (all its findings
+reproduced by the reviewer; all reproduced again here before fixing).
+
+- **M1 (blocking) — populate-after-invalidate cache race, FIXED.**
+  `conversation_local_marks_service.py`: a cache-missing reader held its
+  fetched rows across the transaction COMMIT and stored them without
+  re-checking for a concurrent invalidation — a writer committing +
+  invalidating in that window (star toggle pool thread, fleet drain child
+  thread) left a pre-write snapshot cached until the NEXT mark write
+  (just-starred shows unstarred; a FLEET_UNSEEN badge never appears). Fix
+  is the reviewer's suggested shape: `_invalidate_list_cache` bumps a
+  generation counter under the lock; the reader captures it in the same
+  lock hold as its cache miss and stores only if unchanged — a lost race
+  costs one skipped store, never a stale cache. Kept the cache (vs
+  dropping it) because the guard is small and obviously correct: a global
+  counter, capture-before-SELECT, compare-before-store.
+  Evidence: new test `test_list_cache_is_not_repopulated_with_a_pre_write_
+  snapshot` (the reviewer's deterministic interleave adapted — reader
+  paused exactly at its commit-exit) was **born red against the committed
+  code** (`assert () == ('conv-a',)`, the exact staleness) and is green
+  after the fix; the reviewer's own probes re-run against the fix:
+  `probe_cache_race.py` → "no staleness observed",
+  `probe_cache_race_natural.py` → **stale rounds 0/300** (was 103/300).
+- **M2 — TTS export zeroed-file window, FIXED.** The threaded `copy2`
+  yields, so the 5 s `_cleanup_audio_file` task could secure-delete the
+  source mid-copy — and that delete overwrites the file IN PLACE with
+  zeros before unlinking (`Utils/secure_temp_files.py`), so the export
+  silently wrote zeros under a success toast. Boring durable option
+  chosen: the export **claims** the message id (refcounted dict guarded by
+  the existing `_audio_files_lock`, claimed in the same lock hold that
+  reads the source path, released in a `finally`), and
+  `_cleanup_audio_file` polls the claim (0.25 s interval, loop not
+  recursion) before deleting — copy and destroy are now mutually
+  exclusive, cleanup is deferred (never skipped, so no leak), and
+  refcounting keeps overlapping exports of one message safe. Evidence: new
+  test `test_export_claim_keeps_cleanup_from_destroying_the_source_mid_
+  copy` (gated `shutil.copy2`, cleanup fired mid-copy) — **born red
+  against the committed code** ("cleanup destroyed the source mid-copy"),
+  green after; it also pins that the deferred cleanup still deletes the
+  source once the export finishes.
+- **Minor 3 — star worker cancellation, FIXED.** `CancelledError` is a
+  `BaseException` and sailed past the `except Exception`, recreating the
+  TASK-357 silent-toggle shape (pool-thread write lands, no repaint). The
+  wrapper now catches `asyncio.CancelledError`, best-effort re-syncs the
+  workspace context, and re-raises.
+- **Minor 4 — debounce deferred clears, FIXED.** An emptied
+  `search_filter` (Esc / Clear button / programmatic reset) now
+  repopulates immediately; only non-empty typing debounces. Pinned by an
+  extension to the debounce test: after the debounced filter, `search_
+  filter = ""` must repopulate synchronously (count increments on the
+  assignment line) and restore the full listing.
+- **Minor 5 — emoji recents ordering, DOCUMENTED.** The unserialised
+  last-write-wins semantics (and why a lock is not worth it for a
+  cosmetic, error-swallowing recents file) are now stated in
+  `_save_recent_emoji_off_loop`'s docstring.
+- **Minor 6 — chatbook list cleared before the await, FIXED.**
+  `refresh_chatbook_list` now scans first and does clear+extend after the
+  await returns, so a failed scan leaves the previous state instead of an
+  empty list under a stale OptionList (the IndexError setup the review
+  described).
+- **Minor 7 — evidence honesty, CORRECTED IN PLACE.** The test-count and
+  ruff numbers above now carry the re-run values (routing 16, rail 69;
+  ruff 1 production + 3 test-file findings, all verified at base), and the
+  previously-unpinned `not dot_hidden` guard is now genuinely pinned: the
+  `test_filter_hidden_count` fixture gained a dotfile that also fails the
+  filter (count must stay 3), verified born-red by a drop-the-guard
+  mutation (count becomes 4) and restored.
+
+Fix-round test evidence: marks suite 18 passed (+ the known dev-red
+migration test, baselined on pristine base last round); TTS improvements
+25 passed; picker sweep + collections + arch guard + chatbook management
+64 passed; button routing 16 passed; workspace-context-rail 69 passed —
+all after the fixes, `PYTHONPATH` pinned to this worktree.
