@@ -39,6 +39,9 @@ from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
+from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
+    AutoSpeakConsentModal,
+)
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ConsoleComposerMenuModal,
 )
@@ -280,6 +283,16 @@ def _prompt_variables_factory() -> PromptVariablesDialog:
 
 
 TASK2_MODAL_CONTRACTS = (
+    _Task2ModalContract(
+        AutoSpeakConsentModal,
+        lambda: AutoSpeakConsentModal("TTS provider", "https://tts.example", False),
+        "#console-auto-speak-consent-modal",
+        False,
+        "Console auto-speak toggle",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
     _Task2ModalContract(
         ConsoleCharacterPickerModal,
         lambda: ConsoleCharacterPickerModal(options=[]),
@@ -743,6 +756,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CONSOLE_ROOT = "Console"
 _CONSOLE_ROOT_SOURCE_PATHS = (
     "tldw_chatbook/UI/Screens/chat_screen.py",
+    "tldw_chatbook/Widgets/Console/console_auto_speak_consent.py",
     *tuple(
         str(path.relative_to(_REPO_ROOT))
         for path in sorted(
@@ -999,7 +1013,7 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     }
     discovered_console_types = _discover_console_modal_types()
 
-    assert len(discovered_console_types) == 27
+    assert len(discovered_console_types) == 28
     assert discovered_console_types == console_contract_types
 
     reachable = _walk_modal_launch_graph(_CONSOLE_ROOT, CONSOLE_MODAL_LAUNCH_EDGES)
@@ -1009,7 +1023,7 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    assert len(reachable_modal_types) == 36
+    assert len(reachable_modal_types) == 37
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     }
@@ -1120,8 +1134,9 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 12
+    assert len(TASK2_MODAL_CONTRACTS) == 13
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
+        "AutoSpeakConsentModal",
         "ConsoleCharacterPickerModal",
         "ConsoleCitationSourcesModal",
         "ConsoleContextModal",
@@ -1150,7 +1165,7 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
             if key == "escape"
         ]
         assert escape_actions == ["request_safe_cancel"]
-        assert contract.cancel_result is None
+        assert contract.cancel_result is None or contract.cancel_result is False
         assert contract.opener
         assert contract.pre_cancel_hook == expected_hooks.get(
             contract.modal_type.__name__
@@ -1692,6 +1707,27 @@ async def test_task2_contract_selector_exists_and_escape_returns_cancel_result(
         await pilot.pause()
 
     assert app.results == [contract.cancel_result]
+
+
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_auto_speak_consent_cancel_sources_return_false(source: str) -> None:
+    app = _Task2Harness()
+    modal = AutoSpeakConsentModal("TTS provider", "https://tts.example", False)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+
+        if source == "visible":
+            await pilot.click("#console-auto-speak-consent-cancel")
+        elif source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+    assert app.results == [False]
 
 
 @pytest.mark.parametrize(

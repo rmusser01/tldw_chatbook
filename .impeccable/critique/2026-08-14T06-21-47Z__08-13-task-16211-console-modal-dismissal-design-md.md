@@ -2,7 +2,7 @@
 target: TASK-16211 Console modal dismissal design
 total_score: 30
 max_score: 40
-na_heuristics: 
+na_heuristics:
 p0_count: 0
 p1_count: 3
 timestamp: 2026-08-14T06-21-47Z

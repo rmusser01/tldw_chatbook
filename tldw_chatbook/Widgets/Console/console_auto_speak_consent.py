@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_auto_speak import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import ConsoleTTSDestination
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 _FALLBACK_DESTINATION_COPY = "Configured TTS destination"
 
@@ -63,12 +64,34 @@ def _safe_label(value: object, *, fallback: str) -> str:
     return normalized or fallback
 
 
-class AutoSpeakConsentModal(ModalScreen[bool]):
+class AutoSpeakConsentModal(SafeModalDismissMixin, ModalScreen[bool]):
     """Confirm automatic speech for one sanitized effective destination."""
 
+    DEFAULT_CSS = """
+    AutoSpeakConsentModal {
+        align: center middle;
+    }
+
+    #console-auto-speak-consent-modal {
+        width: 68;
+        max-width: 95%;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    #console-auto-speak-consent-actions {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+    """
+
     BINDINGS: ClassVar[list[Binding]] = [
-        Binding("escape", "cancel", "Cancel", show=False)
+        Binding("escape", "request_safe_cancel", "Cancel", show=False)
     ]
+    SAFE_MODAL_CONTENT = "#console-auto-speak-consent-modal"
 
     def __init__(
         self,
@@ -122,13 +145,14 @@ class AutoSpeakConsentModal(ModalScreen[bool]):
                     variant="primary",
                 )
 
-    def action_cancel(self) -> None:
-        self.dismiss(False)
-
     @on(Button.Pressed, "#console-auto-speak-consent-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(False)
+        await self.request_safe_cancel(source="visible")
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+        self.dismiss_safe_once(False)
 
     @on(Button.Pressed, "#console-auto-speak-consent-confirm")
     def _confirm(self, event: Button.Pressed) -> None:

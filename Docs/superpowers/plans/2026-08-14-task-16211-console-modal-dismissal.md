@@ -618,7 +618,7 @@ git commit -m "fix(console): confirm generated video discard"
 
 - [x] **Step 1: Make the inventory assertion exhaustive**
 
-Use Python runtime/AST inspection, not an anchored regex, to discover all 27 `ModalScreen` types under `Widgets/Console`. Compare them with the explicit contract rows. Walk the explicit direct and nested launch edges to a fixed point and require both enhanced file dialog variants, `CancelConfirmationDialog`, and `ChangeRevertConfirmModal`. Assert `ConsoleSetupModal` is excluded because it is an embedded `Vertical`, not a screen.
+Use Python runtime/AST inspection, not an anchored regex, to discover every `ModalScreen` type under `Widgets/Console`. Compare them with the explicit contract rows. Walk the explicit direct and nested launch edges to a fixed point and require both enhanced file dialog variants, `CancelConfirmationDialog`, and `ChangeRevertConfirmModal`. Assert `ConsoleSetupModal` is excluded because it is an embedded `Vertical`, not a screen.
 
 - [x] **Step 2: Add final click-through and focus integration tests**
 
@@ -719,8 +719,9 @@ Check all acceptance criteria, add concise Implementation Notes with the exact r
 
 **Task 8 closeout evidence (2026-08-14):**
 
-- Runtime plus AST discovery found exactly 27 `Widgets/Console` `ModalScreen`
-  classes and walked the direct/nested launch graph to exactly 36 contracted
+- Runtime plus AST discovery found exactly 28 `Widgets/Console` `ModalScreen`
+  classes on the rebased `dev`, including `AutoSpeakConsentModal`, and walked
+  the direct/nested launch graph to exactly 37 contracted
   modal types. Final review hardened this to resolve the actual constructed
   runtime classes from AST imports, aliases, attributes, and same-module
   definitions, with exact equality per fixed-point edge. A synthetic extra
@@ -762,6 +763,13 @@ Check all acceptance criteria, add concise Implementation Notes with the exact r
   synthetic owner with a valid declared helper edge and an undeclared aliased
   modal in its own class body produced RED before the union and GREEN after it;
   set union prevents duplicate constructors from changing the result.
+- Rebase onto `origin/dev` added `AutoSpeakConsentModal`. The inventory caught
+  the missing contract at RED (637 passed, one inventory failure). After the
+  modal adopted the shared bounded-content contract, visible Cancel, Escape,
+  and backdrop returned exact `False`; the final 16-file related matrix passed
+  684 tests. Ruff lint, targeted MyPy, compileall, and diff checks passed. The
+  upstream auto-speak module's pre-existing whole-file Ruff-format debt was
+  left unchanged outside the new conforming hunks.
 - Cumulative-review verification stayed bounded to the owned high-risk files:
   the final correction set passed 18 tests and the complete two-file matrix of
   217 tests
