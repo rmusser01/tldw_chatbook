@@ -284,6 +284,13 @@ class ArtifactNotInstalledError(ArtifactStateError):
     """Raised when an exact managed artifact root is not installed."""
 
 
+class ArtifactRemovalAvailability(str, Enum):
+    """Bounded advisory result for an exact artifact removal probe."""
+
+    AVAILABLE = "available"
+    BUSY = "busy"
+
+
 class ArtifactRole(str, Enum):
     """An artifact's position in a dependency closure."""
 
@@ -1120,6 +1127,75 @@ class LeasedArtifactDependencyHandle(_LeasedArtifactHandle[ArtifactDependencyHan
     """Own shared operation leases for verified exact dependencies."""
 
 
+class ArtifactRemovalAuthority:
+    """Own ordered exclusive leases for one exact installed artifact target."""
+
+    def __init__(
+        self,
+        service: ModelArtifactService,
+        reference: ArtifactRef,
+        target_identity: _NodeIdentity,
+        lifecycle_lease: ArtifactOperationLease,
+        target_lease: ArtifactOperationLease,
+    ) -> None:
+        self._service = service
+        self._reference = reference
+        self._target_identity = target_identity
+        self._lifecycle_lease: ArtifactOperationLease | None = lifecycle_lease
+        self._target_lease: ArtifactOperationLease | None = target_lease
+        self._committed = False
+
+    def commit(self) -> None:
+        """Remove the pinned target once without reacquiring either lease."""
+
+        if self._target_lease is None or self._lifecycle_lease is None:
+            raise ArtifactStateError("removal authority is closed")
+        if self._committed:
+            raise ArtifactStateError("removal authority already committed")
+        self._service._revalidate_removal_target(
+            self._reference,
+            self._target_identity,
+        )
+        self._service._delete_under_leases(self._reference)
+        self._committed = True
+
+    def close(self) -> None:
+        """Release target then lifecycle authority, retaining failures for retry."""
+
+        target_lease = self._target_lease
+        if target_lease is not None:
+            target_lease.release()
+            self._target_lease = None
+        lifecycle_lease = self._lifecycle_lease
+        if lifecycle_lease is not None:
+            lifecycle_lease.release()
+            self._lifecycle_lease = None
+
+    def __enter__(self) -> Self:
+        """Return this already acquired authority."""
+
+        if self._target_lease is None or self._lifecycle_lease is None:
+            raise ArtifactStateError("removal authority is closed")
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> None:
+        """Close while preserving body control flow over cleanup failure."""
+
+        try:
+            self.close()
+        except BaseException as cleanup_error:
+            if exc is None:
+                raise
+            exc.add_note(f"removal authority lease cleanup failed: {cleanup_error!r}")
+            for note in getattr(cleanup_error, "__notes__", ()):
+                exc.add_note(note)
+
+
 class ModelArtifactService:
     """Own verified immutable artifacts beneath one resolved local root."""
 
@@ -1244,46 +1320,9 @@ class ModelArtifactService:
     def delete(self, reference: ArtifactRef) -> None:
         """Delete one exact artifact after invalidating affected derived state."""
 
-        if type(reference) is not ArtifactRef:
-            raise TypeError("reference must be an ArtifactRef")
         try:
-            self._assert_managed_path(self._locks_path)
-            with ArtifactOperationLease(
-                self._locks_path,
-                _LIFECYCLE_LEASE_KEY,
-                LeaseMode.EXCLUSIVE,
-                timeout_seconds=self._lease_timeout_seconds,
-            ):
-                self._assert_managed_path(self._locks_path)
-                try:
-                    target_lease = ArtifactOperationLease(
-                        self._locks_path,
-                        reference.lease_key(),
-                        LeaseMode.EXCLUSIVE,
-                        timeout_seconds=self._lease_timeout_seconds,
-                    )
-                    target_lease.acquire()
-                except ArtifactLeaseTimeoutError as error:
-                    raise ArtifactInUseError(
-                        "artifact is in use and cannot be deleted"
-                    ) from error
-                primary_error: BaseException | None = None
-                try:
-                    self._delete_under_leases(reference)
-                except BaseException as error:
-                    primary_error = error
-                    raise
-                finally:
-                    try:
-                        target_lease.release()
-                    except BaseException as cleanup_error:
-                        if primary_error is None:
-                            raise
-                        primary_error.add_note(
-                            f"target lease cleanup failed: {cleanup_error!r}"
-                        )
-                        for note in getattr(cleanup_error, "__notes__", ()):
-                            primary_error.add_note(note)
+            with self.acquire_removal_authority(reference) as authority:
+                authority.commit()
         except ArtifactError:
             raise
         except ArtifactLeaseError as error:
@@ -1292,6 +1331,130 @@ class ModelArtifactService:
             ) from error
         except OSError as error:
             raise ArtifactStateError("artifact deletion I/O failed") from error
+
+    def probe_removal_availability(
+        self,
+        reference: ArtifactRef,
+    ) -> ArtifactRemovalAvailability:
+        """Return advisory available/busy truth without mutating store state."""
+
+        if type(reference) is not ArtifactRef:
+            raise TypeError("reference must be an ArtifactRef")
+        lifecycle_lease: ArtifactOperationLease | None = None
+        target_lease: ArtifactOperationLease | None = None
+        result = ArtifactRemovalAvailability.AVAILABLE
+        primary_error: BaseException | None = None
+        try:
+            self._assert_managed_path(self._locks_path)
+            lifecycle_lease = ArtifactOperationLease(
+                self._locks_path,
+                _LIFECYCLE_LEASE_KEY,
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=NONBLOCKING_LEASE_TIMEOUT_SECONDS,
+            )
+            lifecycle_lease.acquire()
+            self._assert_managed_path(self._locks_path)
+            target_lease = ArtifactOperationLease(
+                self._locks_path,
+                reference.lease_key(),
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=NONBLOCKING_LEASE_TIMEOUT_SECONDS,
+            )
+            target_lease.acquire()
+        except ArtifactLeaseTimeoutError:
+            result = ArtifactRemovalAvailability.BUSY
+        except BaseException as error:
+            primary_error = error
+        finally:
+            cleanup_error: BaseException | None = None
+            for lease in (target_lease, lifecycle_lease):
+                if lease is None:
+                    continue
+                try:
+                    lease.release()
+                except BaseException as error:
+                    if cleanup_error is None:
+                        cleanup_error = error
+                    else:
+                        cleanup_error.add_note(
+                            f"additional removal probe cleanup failure: {error!r}"
+                        )
+            if cleanup_error is not None:
+                if primary_error is None:
+                    raise ArtifactStateError(
+                        "artifact removal probe cleanup failed"
+                    ) from cleanup_error
+                primary_error.add_note(
+                    f"artifact removal probe cleanup failed: {cleanup_error!r}"
+                )
+        if primary_error is not None:
+            if isinstance(primary_error, ArtifactLeaseError):
+                raise ArtifactStateError("artifact removal probe failed") from (
+                    primary_error
+                )
+            if isinstance(primary_error, OSError):
+                raise ArtifactStateError("artifact removal probe failed") from (
+                    primary_error
+                )
+            raise primary_error
+        return result
+
+    def acquire_removal_authority(
+        self,
+        reference: ArtifactRef,
+    ) -> ArtifactRemovalAuthority:
+        """Acquire ordered exclusive authority over one exact installed target."""
+
+        if type(reference) is not ArtifactRef:
+            raise TypeError("reference must be an ArtifactRef")
+        lifecycle_lease: ArtifactOperationLease | None = None
+        target_lease: ArtifactOperationLease | None = None
+        try:
+            self._assert_managed_path(self._locks_path)
+            lifecycle_lease = ArtifactOperationLease(
+                self._locks_path,
+                _LIFECYCLE_LEASE_KEY,
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            )
+            lifecycle_lease.acquire()
+            self._assert_managed_path(self._locks_path)
+            target_lease = ArtifactOperationLease(
+                self._locks_path,
+                reference.lease_key(),
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            )
+            target_lease.acquire()
+            target_identity = self._removal_target_identity(reference)
+            return ArtifactRemovalAuthority(
+                self,
+                reference,
+                target_identity,
+                lifecycle_lease,
+                target_lease,
+            )
+        except BaseException as error:
+            try:
+                if target_lease is not None:
+                    target_lease.release()
+                if lifecycle_lease is not None:
+                    lifecycle_lease.release()
+            except BaseException as cleanup_error:
+                error.add_note(
+                    f"removal authority acquisition cleanup failed: {cleanup_error!r}"
+                )
+            if isinstance(error, ArtifactLeaseTimeoutError):
+                raise ArtifactInUseError(
+                    "artifact is in use and cannot be deleted"
+                ) from error
+            if isinstance(error, ArtifactLeaseError):
+                raise ArtifactStateError(
+                    "failed to acquire or release artifact deletion leases"
+                ) from error
+            if isinstance(error, OSError):
+                raise ArtifactStateError("artifact removal authority failed") from error
+            raise
 
     def reconcile(self) -> ReconcileReport:
         """Verify installed roots and reconcile derived state explicitly."""
@@ -1543,6 +1706,32 @@ class ModelArtifactService:
                 parent.rmdir()
             except OSError:
                 break
+
+    def _removal_target_identity(self, reference: ArtifactRef) -> _NodeIdentity:
+        target = self.artifact_path(reference)
+        if not self._managed_path_exists(target):
+            raise ArtifactStateError("installed artifact does not exist")
+        self._assert_managed_path(target)
+        try:
+            return _node_identity(target.stat(follow_symlinks=False))
+        except OSError as error:
+            raise ArtifactStateError("failed to pin artifact removal target") from error
+
+    def _revalidate_removal_target(
+        self,
+        reference: ArtifactRef,
+        expected_identity: _NodeIdentity,
+    ) -> None:
+        target = self.artifact_path(reference)
+        if not self._managed_path_exists(target):
+            raise ArtifactStateError("artifact removal target changed")
+        self._assert_managed_path(target)
+        try:
+            current_identity = _node_identity(target.stat(follow_symlinks=False))
+        except OSError as error:
+            raise ArtifactStateError("failed to revalidate removal target") from error
+        if current_identity != expected_identity:
+            raise ArtifactStateError("artifact removal target changed")
 
     def _state_files(self, root: Path, record_depth: int) -> tuple[Path, ...]:
         self._assert_managed_path(root)

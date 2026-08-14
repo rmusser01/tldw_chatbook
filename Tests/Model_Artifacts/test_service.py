@@ -83,6 +83,8 @@ def test_package_exports_the_complete_public_artifact_api() -> None:
         "ArtifactPathError",
         "ArtifactPreflightEntry",
         "ArtifactRef",
+        "ArtifactRemovalAuthority",
+        "ArtifactRemovalAvailability",
         "ArtifactRole",
         "ArtifactSourceMap",
         "ArtifactStateError",
@@ -273,6 +275,322 @@ def test_delete_and_reconcile_expose_stable_frozen_contracts() -> None:
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         report.state_removed = 1  # type: ignore[misc]
+
+
+def test_removal_authority_acquires_lifecycle_then_exact_target_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _final = installed_artifact(tmp_path)
+    events: list[tuple[str, ArtifactLeaseKey]] = []
+    real_lease = service_module.ArtifactOperationLease
+
+    class RecordingLease:
+        def __init__(
+            self,
+            lock_root: Path,
+            key: ArtifactLeaseKey,
+            mode: object,
+            **kwargs: object,
+        ) -> None:
+            assert mode is service_module.LeaseMode.EXCLUSIVE
+            self._lease = real_lease(lock_root, key, mode, **kwargs)
+            self.key = key
+
+        def acquire(self) -> RecordingLease:
+            events.append(("acquire", self.key))
+            self._lease.acquire()
+            return self
+
+        def release(self) -> None:
+            events.append(("release", self.key))
+            self._lease.release()
+
+    monkeypatch.setattr(service_module, "ArtifactOperationLease", RecordingLease)
+
+    authority = service.acquire_removal_authority(item.reference)
+    assert events == [
+        ("acquire", ArtifactLeaseKey("!lifecycle", "1", "writer")),
+        ("acquire", item.reference.lease_key()),
+    ]
+
+    authority.close()
+    authority.close()
+    assert events[2:] == [
+        ("release", item.reference.lease_key()),
+        ("release", ArtifactLeaseKey("!lifecycle", "1", "writer")),
+    ]
+
+
+def test_removal_authority_pins_target_and_revalidates_before_commit(
+    tmp_path: Path,
+) -> None:
+    service, item, _source, target = installed_artifact(tmp_path)
+    authority = service.acquire_removal_authority(item.reference)
+    moved = target.with_name(f"{target.name}-moved")
+    target.rename(moved)
+    shutil.copytree(moved, target)
+    try:
+        with pytest.raises(service_module.ArtifactStateError, match="target changed"):
+            authority.commit()
+        assert target.is_dir()
+        assert moved.is_dir()
+    finally:
+        authority.close()
+
+
+def test_removal_authority_commits_once_without_calling_public_delete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    calls: list[ArtifactRef] = []
+    real_delete_under_leases = service._delete_under_leases
+
+    def delete_under_leases(reference: ArtifactRef) -> None:
+        calls.append(reference)
+        real_delete_under_leases(reference)
+
+    monkeypatch.setattr(service, "_delete_under_leases", delete_under_leases)
+    monkeypatch.setattr(
+        service,
+        "delete",
+        lambda _reference: (_ for _ in ()).throw(
+            AssertionError("authority must not call public delete")
+        ),
+    )
+
+    authority = service.acquire_removal_authority(item.reference)
+    try:
+        authority.commit()
+        with pytest.raises(
+            service_module.ArtifactStateError, match="already committed"
+        ):
+            authority.commit()
+    finally:
+        authority.close()
+
+    assert calls == [item.reference]
+
+
+def test_public_delete_delegates_to_authority_without_reacquiring(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    reference = ref("delegated", "revision", "v1")
+    events: list[str] = []
+
+    class FakeAuthority:
+        def __enter__(self) -> FakeAuthority:
+            events.append("enter")
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            events.append("close")
+
+        def commit(self) -> None:
+            events.append("commit")
+
+    monkeypatch.setattr(
+        service,
+        "acquire_removal_authority",
+        lambda exact: FakeAuthority() if exact == reference else None,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "ArtifactOperationLease",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("delete must not acquire leases itself")
+        ),
+    )
+
+    service.delete(reference)
+
+    assert events == ["enter", "commit", "close"]
+
+
+def test_removal_authority_close_retains_failed_cleanup_for_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    events: list[tuple[str, ArtifactLeaseKey]] = []
+    target_release_attempts = 0
+
+    class RetryLease:
+        def __init__(
+            self,
+            _lock_root: Path,
+            key: ArtifactLeaseKey,
+            _mode: object,
+            **_kwargs: object,
+        ) -> None:
+            self.key = key
+
+        def acquire(self) -> RetryLease:
+            events.append(("acquire", self.key))
+            return self
+
+        def release(self) -> None:
+            nonlocal target_release_attempts
+            events.append(("release", self.key))
+            if self.key == item.reference.lease_key():
+                target_release_attempts += 1
+                if target_release_attempts == 1:
+                    raise service_module.ArtifactLeaseError("retry cleanup")
+
+    monkeypatch.setattr(service_module, "ArtifactOperationLease", RetryLease)
+    authority = service.acquire_removal_authority(item.reference)
+
+    with pytest.raises(service_module.ArtifactLeaseError, match="retry cleanup"):
+        authority.close()
+    assert events[-1] == ("release", item.reference.lease_key())
+    assert ("release", ArtifactLeaseKey("!lifecycle", "1", "writer")) not in events
+
+    authority.close()
+    authority.close()
+    assert events[-2:] == [
+        ("release", item.reference.lease_key()),
+        ("release", ArtifactLeaseKey("!lifecycle", "1", "writer")),
+    ]
+
+
+def test_removal_authority_retains_exclusion_and_retries_failed_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, target = installed_artifact(tmp_path)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    real_rmtree = shutil.rmtree
+    attempts = 0
+
+    def fail_once(path: Path, *args: object, **kwargs: object) -> None:
+        nonlocal attempts
+        if Path(path) == target:
+            attempts += 1
+            if attempts == 1:
+                raise OSError("retry removal")
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", fail_once)
+    authority = service.acquire_removal_authority(item.reference)
+    try:
+        with pytest.raises(service_module.ArtifactStateError):
+            authority.commit()
+        assert (
+            contender.probe_removal_availability(item.reference)
+            is service_module.ArtifactRemovalAvailability.BUSY
+        )
+        authority.commit()
+    finally:
+        authority.close()
+
+    assert attempts == 2
+    assert target.exists() is False
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+@pytest.mark.parametrize("control", (KeyboardInterrupt(), SystemExit(23)))
+def test_removal_authority_propagates_commit_control_flow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    control: BaseException,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    authority = service.acquire_removal_authority(item.reference)
+    monkeypatch.setattr(
+        service,
+        "_delete_under_leases",
+        lambda _reference: (_ for _ in ()).throw(control),
+    )
+    try:
+        with pytest.raises(type(control)) as caught:
+            authority.commit()
+        assert caught.value is control
+    finally:
+        authority.close()
+
+
+def test_probe_removal_availability_is_bounded_ordered_and_non_mutating(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, _source, target = installed_artifact(tmp_path)
+    before = tuple(
+        (path.relative_to(service._root), path.read_bytes())
+        for path in sorted(service._root.rglob("*"))
+        if path.is_file() and service._locks_path not in path.parents
+    )
+    events: list[tuple[str, ArtifactLeaseKey]] = []
+    real_lease = service_module.ArtifactOperationLease
+
+    class RecordingLease:
+        def __init__(
+            self,
+            lock_root: Path,
+            key: ArtifactLeaseKey,
+            mode: object,
+            **kwargs: object,
+        ) -> None:
+            assert mode is service_module.LeaseMode.EXCLUSIVE
+            self._lease = real_lease(lock_root, key, mode, **kwargs)
+            self.key = key
+
+        def acquire(self) -> RecordingLease:
+            events.append(("acquire", self.key))
+            self._lease.acquire()
+            return self
+
+        def release(self) -> None:
+            events.append(("release", self.key))
+            self._lease.release()
+
+    monkeypatch.setattr(service_module, "ArtifactOperationLease", RecordingLease)
+
+    available = service.probe_removal_availability(item.reference)
+
+    assert available is service_module.ArtifactRemovalAvailability.AVAILABLE
+    assert {member.value for member in service_module.ArtifactRemovalAvailability} == {
+        "available",
+        "busy",
+    }
+    assert events == [
+        ("acquire", ArtifactLeaseKey("!lifecycle", "1", "writer")),
+        ("acquire", item.reference.lease_key()),
+        ("release", item.reference.lease_key()),
+        ("release", ArtifactLeaseKey("!lifecycle", "1", "writer")),
+    ]
+    assert target.is_dir()
+    after = tuple(
+        (path.relative_to(service._root), path.read_bytes())
+        for path in sorted(service._root.rglob("*"))
+        if path.is_file() and service._locks_path not in path.parents
+    )
+    assert after == before
+
+
+def test_probe_reports_only_busy_while_exact_artifact_is_shared(tmp_path: Path) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    service.activate(item.reference)
+    handle = service.acquire(item.reference)
+    try:
+        result = service.probe_removal_availability(item.reference)
+    finally:
+        handle.close()
+
+    assert result is service_module.ArtifactRemovalAvailability.BUSY
+    assert repr(result) == "<ArtifactRemovalAvailability.BUSY: 'busy'>"
+    assert not any(
+        token in repr(result).casefold()
+        for token in (str(tmp_path).casefold(), "pid", "owner", "lock")
+    )
 
 
 def test_loaded_root_blocks_delete_without_mutation_then_closes_cleanly(
