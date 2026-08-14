@@ -1210,6 +1210,8 @@ class PersonasScreen(BaseAppScreen):
             setup_loading = getattr(loading_manager, "setup", None)
             if callable(setup_loading):
                 await setup_loading()
+            if self._closed or self._parent is None or self.app.screen is not self:
+                return
             if self.state.runtime_source == "server":
                 await self._reload_character_page()
             else:
@@ -8132,7 +8134,9 @@ class PersonasScreen(BaseAppScreen):
     def _character_import_presentation_is_current(self) -> bool:
         return (
             self._local_character_actions_allowed()
-            and self.is_mounted
+            and not self._closed
+            and self._parent is not None
+            and self.is_attached
             and self.app.screen is self
             and self.state.active_mode == "characters"
         )
