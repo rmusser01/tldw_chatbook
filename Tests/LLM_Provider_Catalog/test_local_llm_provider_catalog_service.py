@@ -932,6 +932,7 @@ async def test_non_qwen_structural_rejection_stops_before_discovery_client(endpo
         "https://[fe80::1%25eth0]:8000/api/v2",
         f"https://workspace.example/{'a' * 2000}",
     ],
+    ids=lambda endpoint: "api-key-query" if "api_key=" in endpoint else None,
 )
 async def test_qwencloud_structural_rejection_stops_before_discovery_client(endpoint):
     discovery_client = AsyncMock()

@@ -782,6 +782,7 @@ def test_endpoint_parser_rejects_scoped_ipv6_hosts(endpoint: str) -> None:
         "https://example.com/team/\x85notes.git",
         "https://\ud800.example/team/notes.git",
     ],
+    ids=lambda endpoint: "token-query" if "?token=" in endpoint else None,
 )
 def test_endpoint_parser_rejects_credentials_ambiguity_and_unsafe_transports(
     endpoint: str,
