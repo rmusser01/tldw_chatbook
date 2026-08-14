@@ -497,6 +497,60 @@ def test_source_resolution_prefers_exact_name_before_exact_url(
     assert [row["id"] for row in candidates] == [exact_name_id]
 
 
+def test_source_and_collection_resolution_casefolds_unicode_exact_and_partial_names(
+    db: SubscriptionsDB,
+) -> None:
+    exact_source = _source(db, "Équipe CERT")
+    partial_source = _source(db, "Nord Équipe Signal")
+    exact_collection = _collection(db, "Équipe Watch")
+    partial_collection = _collection(db, "Veille Équipe Nord")
+    with db.transaction() as conn:
+        # SQLite's dynamic typing permits malformed non-text values despite
+        # the declared TEXT affinity. The connection-local UDF must not let
+        # either row crash an otherwise valid resolution query.
+        conn.execute(
+            "INSERT INTO subscriptions (name, type, source) VALUES (?, 'rss', ?)",
+            (sqlite3.Binary(b"\x80"), "https://malformed.test/feed"),
+        )
+        conn.execute(
+            "INSERT INTO watchlists (name) VALUES (?)", (sqlite3.Binary(b"\x80"),)
+        )
+
+    assert [row["id"] for row in db.resolve_source_candidates("éQUIPE cert")] == [
+        exact_source
+    ]
+    assert [row["id"] for row in db.resolve_source_candidates("équipe sig")] == [
+        partial_source
+    ]
+    assert [row["id"] for row in db.resolve_collection_candidates("éQUIPE watch")] == [
+        exact_collection
+    ]
+    assert [row["id"] for row in db.resolve_collection_candidates("équipe nord")] == [
+        partial_collection
+    ]
+
+
+def test_unicode_scope_casefold_is_registered_on_read_only_connections(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "read-only-unicode.db"
+    mutable = SubscriptionsDB(path)
+    source_id = _source(mutable, "Équipe CERT")
+    collection_id = _collection(mutable, "Équipe Watch")
+    mutable.close()
+
+    reader = SubscriptionsDB(path, read_only=True)
+    try:
+        assert [row["id"] for row in reader.resolve_source_candidates("équipe cert")] == [
+            source_id
+        ]
+        assert [
+            row["id"] for row in reader.resolve_collection_candidates("équipe watch")
+        ] == [collection_id]
+    finally:
+        reader.close()
+
+
 def test_authoritative_joined_detail_distinguishes_missing_from_null_content(
     db: SubscriptionsDB,
 ) -> None:

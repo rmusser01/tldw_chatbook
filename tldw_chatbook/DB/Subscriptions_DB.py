@@ -50,6 +50,11 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 _DEFAULT_AUTO_PAUSE_THRESHOLD = 10
 
 
+def _sqlite_unicode_casefold(value: Any) -> str:
+    """Casefold SQLite text without raising on NULL or malformed values."""
+    return value.casefold() if isinstance(value, str) else ""
+
+
 def _default_auto_pause_threshold() -> int:
     """The `auto_pause_threshold` column default for a NEW subscription.
 
@@ -275,6 +280,12 @@ class SubscriptionsDB(BaseDB):
             )
             conn.row_factory = sqlite3.Row
             try:
+                conn.create_function(
+                    "unicode_casefold",
+                    1,
+                    _sqlite_unicode_casefold,
+                    deterministic=True,
+                )
                 conn.execute("PRAGMA foreign_keys = ON;")
                 conn.execute("PRAGMA query_only = ON;")
             except Exception:
@@ -283,6 +294,12 @@ class SubscriptionsDB(BaseDB):
             return conn
 
         conn = super()._get_connection()
+        conn.create_function(
+            "unicode_casefold",
+            1,
+            _sqlite_unicode_casefold,
+            deterministic=True,
+        )
         conn.execute("PRAGMA foreign_keys = ON;")
         if not self.is_memory_db:
             conn.execute("PRAGMA journal_mode = WAL;")
@@ -2492,8 +2509,8 @@ class SubscriptionsDB(BaseDB):
                 f"""
                 SELECT {source_columns}
                 FROM subscriptions
-                WHERE lower(name) = lower(?)
-                ORDER BY lower(name), name, id
+                WHERE unicode_casefold(name) = unicode_casefold(?)
+                ORDER BY unicode_casefold(name), name, id
                 LIMIT ?
                 """,
                 (query, bounded_limit),
@@ -2504,7 +2521,7 @@ class SubscriptionsDB(BaseDB):
                     SELECT {source_columns}
                     FROM subscriptions
                     WHERE source = ?
-                    ORDER BY lower(name), name, id
+                    ORDER BY unicode_casefold(name), name, id
                     LIMIT ?
                     """,
                     (query, bounded_limit),
@@ -2514,8 +2531,8 @@ class SubscriptionsDB(BaseDB):
                     f"""
                     SELECT {source_columns}
                     FROM subscriptions
-                    WHERE instr(lower(name), lower(?)) > 0
-                    ORDER BY lower(name), name, id
+                    WHERE instr(unicode_casefold(name), unicode_casefold(?)) > 0
+                    ORDER BY unicode_casefold(name), name, id
                     LIMIT ?
                     """,
                     (query, bounded_limit),
@@ -2548,8 +2565,8 @@ class SubscriptionsDB(BaseDB):
                 """
                 SELECT id, name
                 FROM watchlists
-                WHERE lower(name) = lower(?)
-                ORDER BY lower(name), name, id
+                WHERE unicode_casefold(name) = unicode_casefold(?)
+                ORDER BY unicode_casefold(name), name, id
                 LIMIT ?
                 """,
                 (query, bounded_limit),
@@ -2559,8 +2576,8 @@ class SubscriptionsDB(BaseDB):
                     """
                     SELECT id, name
                     FROM watchlists
-                    WHERE instr(lower(name), lower(?)) > 0
-                    ORDER BY lower(name), name, id
+                    WHERE instr(unicode_casefold(name), unicode_casefold(?)) > 0
+                    ORDER BY unicode_casefold(name), name, id
                     LIMIT ?
                     """,
                     (query, bounded_limit),
