@@ -7,9 +7,11 @@ Environment isolation is set BEFORE any tldw_chatbook import (lessons-live-
 verification: "A bare interpreter call is not an isolated test").
 """
 
+import asyncio
 import os
 import pathlib
 import sys
+from datetime import datetime, timezone
 
 SCRATCH = pathlib.Path(sys.argv[1]).resolve()
 REPO = pathlib.Path(sys.argv[2]).resolve()
@@ -28,9 +30,13 @@ os.environ.setdefault("HF_HOME", os.path.join(_REAL_HOME, ".cache/huggingface"))
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
-import asyncio  # noqa: E402
-from datetime import datetime, timezone  # noqa: E402
-
+# DELIBERATE E402: every import below must happen AFTER the os.environ block
+# above. `tldw_chatbook.config` resolves the data/config directories at
+# import time, so hoisting these would bind the REAL profile and silently
+# invalidate the isolation this script exists to provide (the assert on
+# `data_dir` a few lines down is what catches that mistake). This is a flat
+# script with module-level state; wrapping it in a function to satisfy the
+# import-order rule would restructure a working reproduction for style.
 from tldw_chatbook.config import get_user_data_dir  # noqa: E402
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB  # noqa: E402
 from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB  # noqa: E402

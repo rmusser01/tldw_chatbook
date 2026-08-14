@@ -4,6 +4,8 @@ embedding factory has never initialized. Times the first query.
 """
 
 import os
+import asyncio
+import time
 import pathlib
 import sys
 
@@ -21,18 +23,30 @@ os.environ.setdefault("HF_HOME", os.path.join(_REAL_HOME, ".cache/huggingface"))
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
-import asyncio  # noqa: E402
-import time  # noqa: E402
 
-from tldw_chatbook.config import get_user_data_dir  # noqa: E402
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB  # noqa: E402
-from tldw_chatbook.Library.library_local_rag_search_service import (  # noqa: E402
-    LibraryLocalRagSearchService,
-)
-from tldw_chatbook.Library.library_rag_service import (  # noqa: E402
-    LibraryRagSearchRequest,
-    run_library_rag_search,
-)
+def _load_app_modules():
+    """Import the project's modules AFTER the scratch environment is set.
+
+    Deliberate, and the reason this file has no module-scope project import:
+    `tldw_chatbook.config` resolves data/config paths at import time, so
+    importing it before the `os.environ` block above would bind the REAL
+    profile and silently invalidate the whole probe.
+    """
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Library.library_local_rag_search_service import (
+        LibraryLocalRagSearchService,
+    )
+    from tldw_chatbook.Library.library_rag_service import (
+        LibraryRagSearchRequest,
+        run_library_rag_search,
+    )
+
+    return (
+        CharactersRAGDB,
+        LibraryLocalRagSearchService,
+        LibraryRagSearchRequest,
+        run_library_rag_search,
+    )
 
 
 class FakeApp:
@@ -49,6 +63,17 @@ class FakeApp:
 
 
 async def main():
+    (
+        CharactersRAGDB,
+        LibraryLocalRagSearchService,
+        LibraryRagSearchRequest,
+        run_library_rag_search,
+    ) = _load_app_modules()
+    # Project-local imports live HERE, not at module scope: the scratch
+    # environment above must be set BEFORE tldw_chatbook is first
+    # imported, or config/data paths resolve to the real profile.
+    from tldw_chatbook.config import get_user_data_dir
+
     data_dir = get_user_data_dir()
     assert str(data_dir).startswith(str(SCRATCH)), f"NOT ISOLATED: {data_dir}"
     app = FakeApp(data_dir)

@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import os
-import pwd
 import shutil
 import subprocess
 import sys
@@ -203,6 +202,11 @@ def first_query_seconds(scratch: Path, repo: Path) -> dict:
     # to a temp directory -- it would look for the model inside the very scratch
     # tree this function is creating and skip every time. The passwd database is
     # the only reading of "the real user's home" the fixture cannot move.
+    # POSIX-only: imported here, not at module scope, so collection cannot
+    # fail on a platform without `pwd` (markers do not prevent import-time
+    # errors).
+    import pwd
+
     real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
     model_cache = real_home / ".local/share/tldw_cli/default_user/models/embeddings"
     if not model_cache.is_dir():

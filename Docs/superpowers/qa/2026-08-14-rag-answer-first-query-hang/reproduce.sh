@@ -28,7 +28,9 @@ MODEL_CACHE="${MODEL_CACHE:-$HOME/.local/share/tldw_cli/default_user/models/embe
 # A run-gate blocks RAG Answer mode outright without a provider credential, so
 # retrieval never starts. This key is deliberately NOT live: it opens the gate so
 # the RETRIEVAL path runs; the answer step afterwards is expected to fail.
-FAKE_KEY="${OPENAI_API_KEY:-sk-task15810-not-a-real-key}"
+# NOTE: deliberately NOT an `sk-`-shaped literal -- committing one trips secret
+# scanners and invites accidental reuse. The gate only needs a non-empty value.
+FAKE_KEY="${OPENAI_API_KEY:-task15810-placeholder-not-a-credential}"
 
 echo "== repo:    $REPO"
 echo "== scratch: $SCRATCH"
