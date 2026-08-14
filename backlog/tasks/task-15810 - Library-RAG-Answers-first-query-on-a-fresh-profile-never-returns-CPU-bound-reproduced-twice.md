@@ -3,8 +3,9 @@ id: TASK-15810
 title: >-
   Library RAG Answer's first query on a fresh profile never returns — CPU-bound,
   reproduced twice
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-13 20:28'
 labels:
   - rag
