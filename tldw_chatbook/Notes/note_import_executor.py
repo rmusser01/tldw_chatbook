@@ -21,7 +21,10 @@ from tldw_chatbook.Notes.note_folder_models import (
     FolderValidationError,
     NoteFolder,
 )
-from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.note_folder_repository import (
+    LocalNoteFolderRepository,
+    validate_deterministic_folder_id,
+)
 from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_DEPTH,
     MAX_IMPORT_KEYWORD_LENGTH,
@@ -60,6 +63,18 @@ class ImportTargetPermanentError(ImportTargetError):
     """A validation or capability failure that retry cannot resolve."""
 
     message = "The import target cannot apply this operation."
+
+
+class ImportTargetInternalError(RuntimeError):
+    """A privacy-safe fatal target failure caused by an unexpected internal fault."""
+
+    message = "The import target encountered an internal failure."
+
+    def __init__(self) -> None:
+        super().__init__(self.message)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}()"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -125,7 +140,7 @@ class LocalNoteImportTarget:
     ) -> LocalTargetFolder:
         """Ensure one exact folder path has an approved identity or reuse policy."""
         try:
-            _validate_opaque_id(folder_id)
+            validate_deterministic_folder_id(folder_id)
             if not isinstance(allow_existing, bool):
                 raise TypeError("allow_existing must be a boolean.")
             copied_segments = _copy_segments(segments)
@@ -174,7 +189,7 @@ class LocalNoteImportTarget:
                 ):
                     raise ImportTargetConflictError from None
                 raise
-        except ImportTargetError:
+        except (ImportTargetError, ImportTargetInternalError):
             raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
             _raise_translated(exc)
@@ -185,7 +200,7 @@ class LocalNoteImportTarget:
             _validate_opaque_id(note_id)
             with self._db.transaction() as cursor:
                 return self._read_note(cursor, note_id)
-        except ImportTargetError:
+        except (ImportTargetError, ImportTargetInternalError):
             raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
             _raise_translated(exc)
@@ -210,7 +225,7 @@ class LocalNoteImportTarget:
                 if created is None or not _note_matches(created, payload):
                     raise ImportTargetPermanentError from None
                 return created
-        except ImportTargetError:
+        except (ImportTargetError, ImportTargetInternalError):
             raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
             _raise_translated(exc)
@@ -254,7 +269,7 @@ class LocalNoteImportTarget:
                 ):
                     raise ImportTargetConflictError from None
                 return result
-        except ImportTargetError:
+        except (ImportTargetError, ImportTargetInternalError):
             raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
             _raise_translated(exc)
@@ -269,7 +284,7 @@ class LocalNoteImportTarget:
                     raise ImportTargetPermanentError from None
                 current = self._keyword_rows(cursor, note_id)
                 return _keyword_keys_from_rows(current) == set(desired)
-        except ImportTargetError:
+        except (ImportTargetError, ImportTargetInternalError):
             raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
             _raise_translated(exc)
@@ -283,7 +298,7 @@ class LocalNoteImportTarget:
                 if not self._active_note_exists(cursor, note_id):
                     raise ImportTargetPermanentError from None
                 self._sync_normalized_keywords(cursor, note_id, desired)
-        except ImportTargetError:
+        except (ImportTargetError, ImportTargetInternalError):
             raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
             _raise_translated(exc)
@@ -294,7 +309,7 @@ class LocalNoteImportTarget:
             _validate_opaque_id(folder_id)
             _validate_opaque_id(note_id)
             self._folders.attach_manual(folder_id=folder_id, note_id=note_id)
-        except ImportTargetError:
+        except (ImportTargetError, ImportTargetInternalError):
             raise
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
             _raise_translated(exc)
@@ -741,6 +756,20 @@ def _contains_sqlite_contention(exc: Exception) -> bool:
 
 
 def _raise_translated(exc: Exception) -> NoReturn:
+    if not isinstance(
+        exc,
+        (
+            CharactersRAGDBError,
+            FolderCapabilityError,
+            FolderCollisionError,
+            FolderConflictError,
+            FolderValidationError,
+            sqlite3.Error,
+            TypeError,
+            ValueError,
+        ),
+    ):
+        raise ImportTargetInternalError from None
     if _contains_sqlite_contention(exc):
         raise ImportTargetRetryableError from None
     if isinstance(
@@ -764,12 +793,13 @@ def _raise_translated(exc: Exception) -> NoReturn:
         ),
     ):
         raise ImportTargetPermanentError from None
-    raise ImportTargetPermanentError from None
+    raise ImportTargetInternalError from None
 
 
 __all__ = [
     "ImportTargetConflictError",
     "ImportTargetError",
+    "ImportTargetInternalError",
     "ImportTargetPermanentError",
     "ImportTargetRetryableError",
     "LocalNoteImportTarget",

@@ -83,8 +83,7 @@ class LocalNoteFolderRepository:
         if folder_id is None:
             selected_folder_id = str(uuid.uuid4())
         else:
-            _validate_caller_folder_id(folder_id)
-            selected_folder_id = folder_id
+            selected_folder_id = validate_deterministic_folder_id(folder_id)
         normalized = normalize_folder_name(name)
         now = _utc_timestamp()
         normalized_path: str | None = None
@@ -1883,7 +1882,8 @@ def _validate_folder_id(folder_id: object, *, field: str) -> None:
         raise FolderValidationError(f"{field} must be a non-empty string.")
 
 
-def _validate_caller_folder_id(folder_id: object) -> None:
+def validate_deterministic_folder_id(folder_id: object) -> str:
+    """Validate and return one caller-owned deterministic folder identifier."""
     if (
         type(folder_id) is not str
         or not 1 <= len(folder_id) <= _CALLER_FOLDER_ID_MAX_LENGTH
@@ -1891,6 +1891,7 @@ def _validate_caller_folder_id(folder_id: object) -> None:
         or any(character not in _CALLER_FOLDER_ID_CHARACTERS for character in folder_id)
     ):
         raise FolderValidationError("folder_id is invalid.")
+    return folder_id
 
 
 def _validate_expected_version(expected_version: object) -> None:

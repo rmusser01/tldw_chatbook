@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
+import traceback
 from collections.abc import Iterator
 from dataclasses import FrozenInstanceError
 from datetime import UTC
@@ -15,13 +17,17 @@ from loguru import logger as loguru_logger
 import tldw_chatbook.Notes.note_import_executor as note_import_executor_module
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
+    FolderCapabilityError,
     FolderCollisionError,
+    FolderConflictError,
     FolderValidationError,
     NoteFolder,
 )
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.note_import_executor import (
     ImportTargetConflictError,
+    ImportTargetError,
+    ImportTargetInternalError,
     ImportTargetPermanentError,
     ImportTargetRetryableError,
     LocalNoteImportTarget,
@@ -755,6 +761,37 @@ def test_target_keyword_sync_handles_hidden_deleted_links_exactly(
         ("HIDDEN-KEEP", 0, 3),
         ("hidden-stale", 1, 2),
     ]
+    undelete_sync = connection.execute(
+        "SELECT operation, client_id, version, payload FROM sync_log "
+        "WHERE entity = 'keywords' AND entity_id = ? ORDER BY change_id DESC LIMIT 1",
+        (str(keyword_ids["hidden-keep"]),),
+    ).fetchone()
+    assert undelete_sync is not None
+    assert tuple(undelete_sync[:3]) == ("update", "target-user", 3)
+    undelete_payload = json.loads(undelete_sync["payload"])
+    assert set(undelete_payload) == {
+        "id",
+        "keyword",
+        "created_at",
+        "last_modified",
+        "deleted",
+        "client_id",
+        "version",
+    }
+    assert undelete_payload["id"] == keyword_ids["hidden-keep"]
+    assert undelete_payload["keyword"] == "HIDDEN-KEEP"
+    assert undelete_payload["deleted"] == 0
+    assert undelete_payload["client_id"] == "target-user"
+    assert undelete_payload["version"] == 3
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM keywords_fts "
+            "JOIN keywords ON keywords.id = keywords_fts.rowid "
+            "WHERE keywords.id = ? AND keywords_fts MATCH ?",
+            (keyword_ids["hidden-keep"], '"HIDDEN-KEEP"'),
+        ).fetchone()[0]
+        == 1
+    )
 
 
 def test_target_membership_attach_is_idempotent_and_requires_active_targets(
@@ -839,6 +876,168 @@ def test_target_validation_translation_is_permanent_and_baseexceptions_escape(
     monkeypatch.setattr(target, "_read_note", interrupted_read)
     with pytest.raises(KeyboardInterrupt):
         target.read_note(note_id=_NOTE_ID)
+
+
+@pytest.mark.parametrize(
+    ("fault", "expected_type"),
+    [
+        (ValueError("private validation detail"), ImportTargetPermanentError),
+        (TypeError("private type detail"), ImportTargetPermanentError),
+        (
+            FolderValidationError("private folder validation detail"),
+            ImportTargetPermanentError,
+        ),
+        (
+            FolderCapabilityError(
+                reason_code="private-reason",
+                user_message="private folder capability detail",
+            ),
+            ImportTargetPermanentError,
+        ),
+        (
+            CharactersRAGDBError("private database detail"),
+            ImportTargetPermanentError,
+        ),
+        (sqlite3.OperationalError("private SQL detail"), ImportTargetPermanentError),
+        (sqlite3.IntegrityError("private integrity detail"), ImportTargetConflictError),
+        (FolderCollisionError("private collision detail"), ImportTargetConflictError),
+        (FolderConflictError("private conflict detail"), ImportTargetConflictError),
+    ],
+)
+def test_target_expected_faults_keep_their_item_level_translation(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+    fault: Exception,
+    expected_type: type[ImportTargetError],
+) -> None:
+    target, _service, _folders, _db = target_harness
+
+    def expected_failure(*_args, **_kwargs):
+        raise fault
+
+    monkeypatch.setattr(target, "_read_note", expected_failure)
+
+    with pytest.raises(expected_type) as caught:
+        target.read_note(note_id=_NOTE_ID)
+
+    assert caught.value.__cause__ is None
+    assert "private" not in str(caught.value)
+    assert "private" not in repr(caught.value)
+
+
+class _UnexpectedRuntimeFault(RuntimeError):
+    pass
+
+
+@pytest.mark.parametrize(
+    "fault_type",
+    [AssertionError, MemoryError, _UnexpectedRuntimeFault],
+)
+def test_target_unexpected_faults_abort_as_safe_internal_errors(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    fault_type: type[Exception],
+) -> None:
+    target, _service, _folders, _db = target_harness
+    private_detail = "PRIVATE-INTERNAL-DETAIL /private/source note-secret"
+
+    def unexpected_failure(*_args, **_kwargs):
+        raise fault_type(private_detail)
+
+    monkeypatch.setattr(target, "_read_note", unexpected_failure)
+    loguru_messages: list[str] = []
+    sink_id = loguru_logger.add(lambda message: loguru_messages.append(str(message)))
+    try:
+        with pytest.raises(Exception) as caught:
+            target.read_note(note_id=_NOTE_ID)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert type(caught.value) is ImportTargetInternalError
+    assert not isinstance(caught.value, ImportTargetError)
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__ is True
+    rendered_traceback = "".join(
+        traceback.format_exception(
+            type(caught.value), caught.value, caught.value.__traceback__
+        )
+    )
+    rendered = (
+        str(caught.value)
+        + repr(caught.value)
+        + rendered_traceback
+        + "".join(loguru_messages)
+        + caplog.text
+    )
+    assert private_detail not in rendered
+
+
+def test_unexpected_fault_cannot_borrow_item_level_sqlite_classification(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, _service, _folders, _db = target_harness
+    private_detail = "PRIVATE-WRAPPED-INTERNAL /private/source note-secret"
+
+    def unexpected_failure(*_args, **_kwargs):
+        try:
+            raise sqlite3.OperationalError(f"database is locked {private_detail}")
+        except sqlite3.OperationalError as exc:
+            raise _UnexpectedRuntimeFault(private_detail) from exc
+
+    monkeypatch.setattr(target, "_read_note", unexpected_failure)
+
+    with pytest.raises(ImportTargetInternalError) as caught:
+        target.read_note(note_id=_NOTE_ID)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__ is True
+    rendered_traceback = "".join(
+        traceback.format_exception(
+            type(caught.value), caught.value, caught.value.__traceback__
+        )
+    )
+    assert private_detail not in rendered_traceback
+
+
+@pytest.mark.parametrize(
+    "folder_id",
+    ["invalid/path", ".leading", "éclair"],
+)
+def test_target_reuses_strict_folder_id_validation_before_repository_access(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+    folder_id: str,
+) -> None:
+    target, _service, folders, _db = target_harness
+    repository_accesses: list[str] = []
+
+    def record_path_access(*_args, **_kwargs):
+        repository_accesses.append("get_folder_by_path")
+
+    def record_id_access(*_args, **_kwargs):
+        repository_accesses.append("get_folder")
+
+    original_create_folder = folders.create_folder
+
+    def record_create(*args, **kwargs):
+        repository_accesses.append("create_folder")
+        return original_create_folder(*args, **kwargs)
+
+    monkeypatch.setattr(folders, "get_folder_by_path", record_path_access)
+    monkeypatch.setattr(folders, "get_folder", record_id_access)
+    monkeypatch.setattr(folders, "create_folder", record_create)
+
+    with pytest.raises(ImportTargetPermanentError) as caught:
+        target.ensure_folder(
+            segments=("Private Folder",),
+            folder_id=folder_id,
+            allow_existing=False,
+        )
+
+    assert repository_accesses == []
+    assert folder_id not in repr(caught.value)
 
 
 def test_target_construction_and_mutations_do_not_log_private_values(
@@ -1006,7 +1205,7 @@ def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
         expected_version=1,
         payload=_payload(
             title="Updated title",
-            content="Updated searchable body",
+            content="Updated current body",
             keywords=("Current",),
         ),
     )
@@ -1016,18 +1215,96 @@ def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
     ).fetchone()
     assert tuple(updated) == ("target-user", 2)
     note_sync = connection.execute(
-        "SELECT operation, version FROM sync_log "
+        "SELECT operation, timestamp, client_id, version, payload FROM sync_log "
         "WHERE entity = 'notes' AND entity_id = ? ORDER BY change_id",
         (_NOTE_ID,),
     ).fetchall()
-    assert [tuple(row) for row in note_sync] == [("create", 1), ("update", 2)]
+    assert [(row["operation"], row["version"]) for row in note_sync] == [
+        ("create", 1),
+        ("update", 2),
+    ]
+    for row in note_sync:
+        payload = json.loads(row["payload"])
+        assert set(payload) == {
+            "id",
+            "title",
+            "content",
+            "created_at",
+            "last_modified",
+            "deleted",
+            "client_id",
+            "version",
+        }
+        assert payload["id"] == _NOTE_ID
+        assert payload["deleted"] == 0
+        assert payload["client_id"] == row["client_id"] == "target-user"
+        assert payload["version"] == row["version"]
+        assert payload["last_modified"] == row["timestamp"].isoformat(
+            timespec="milliseconds"
+        ).replace("+00:00", "Z")
     link_sync = connection.execute(
-        "SELECT operation FROM sync_log "
+        "SELECT entity_id, operation, client_id, version, payload FROM sync_log "
         "WHERE entity = 'note_keywords' AND entity_id LIKE ? ORDER BY change_id",
         (f"{_NOTE_ID}_%",),
     ).fetchall()
-    assert [row[0] for row in link_sync] == ["create", "delete", "create"]
+    assert [row["operation"] for row in link_sync] == ["create", "delete", "create"]
+    for row in link_sync:
+        payload = json.loads(row["payload"])
+        assert row["client_id"] == "target-user"
+        assert row["version"] == 1
+        assert row["entity_id"] == f"{payload['note_id']}_{payload['keyword_id']}"
+        assert payload["note_id"] == _NOTE_ID
+        expected_keys = {"note_id", "keyword_id"}
+        if row["operation"] == "create":
+            expected_keys.add("created_at")
+        assert set(payload) == expected_keys
     legacy = connection.execute(
         "SELECT deleted FROM keywords WHERE keyword = 'Legacy'"
     ).fetchone()
     assert legacy[0] == 0
+    assert (
+        connection.execute(
+            """
+        SELECT COUNT(*) FROM notes_fts
+        JOIN notes ON notes.rowid = notes_fts.rowid
+        WHERE notes.id = ? AND notes_fts MATCH ?
+        """,
+            (_NOTE_ID, "Target OR searchable"),
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            """
+        SELECT COUNT(*) FROM notes_fts
+        JOIN notes ON notes.rowid = notes_fts.rowid
+        WHERE notes.id = ? AND notes_fts MATCH ?
+        """,
+            (_NOTE_ID, "Updated AND current"),
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        connection.execute(
+            """
+        SELECT COUNT(*) FROM keywords_fts
+        JOIN keywords ON keywords.id = keywords_fts.rowid
+        JOIN note_keywords ON note_keywords.keyword_id = keywords.id
+        WHERE note_keywords.note_id = ? AND keywords_fts MATCH ?
+        """,
+            (_NOTE_ID, "Legacy"),
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            """
+        SELECT COUNT(*) FROM keywords_fts
+        JOIN keywords ON keywords.id = keywords_fts.rowid
+        JOIN note_keywords ON note_keywords.keyword_id = keywords.id
+        WHERE note_keywords.note_id = ? AND keywords_fts MATCH ?
+        """,
+            (_NOTE_ID, "Current"),
+        ).fetchone()[0]
+        == 1
+    )
