@@ -5,6 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-14 14:18'
+updated_date: '2026-08-14 15:44'
 labels: []
 dependencies: []
 references:
@@ -32,3 +33,21 @@ Let users ask the Console agent and approved external MCP clients evidence-backe
 - [ ] #9 Standalone external MCP opens only an existing subscriptions database through a registered read-only SQLite path and never creates the database file, writes rows/schema, or runs migrations; failed lazy candidates close before retry.
 - [ ] #10 Tool output is field-allowlisted, emits only absolute HTTP(S) URLs after stripping userinfo/query/fragment, labels URL transformation, and never exposes raw exception payloads, auth/header fields, or extracted raw records; preserved URL paths remain permission-gated Watchlists metadata rather than being claimed credential-free.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add the registered read-only SubscriptionsDB construction path and prove it cannot initialize, migrate, create, or write storage.
+2. Extend existing Watchlists DB search/detail/resolution seams for literal FTS with complete LIKE fallback, keyset continuation, batched memberships, and bounded scope resolution.
+3. Build the shared synchronous WatchlistsToolService with authoritative validation, runtime-source handling, canonical IDs, output allowlisting, cursor encoding, URL sanitization, untrusted-evidence labels, and strict byte-bounded JSON.
+4. Register both read-only specs through LocalToolProvider and prove normal agent discovery plus existing permission gates.
+5. Inject the app-owned database in Console and a lock-protected lazy read-only view in external MCP, including exposure-gate and gateway pass-through tests.
+6. Correct settings/UI/operator documentation for the expanded workspace, web, and Watchlists permission boundary.
+7. Run focused, regression, isolated subprocess live, static/format, full-suite, privacy, and self-review checks before completing TASK-16222.
+
+ADR required: yes
+ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md
+Reason: ADR-032 owns the amended private Watchlists-data permission and external MCP boundary; ADR-030 supplies the local domain-tool precedent.
+
+Detailed plan: Docs/superpowers/plans/2026-08-14-watchlists-agent-search-tools.md
+<!-- SECTION:PLAN:END -->
