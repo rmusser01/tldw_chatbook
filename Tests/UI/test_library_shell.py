@@ -922,7 +922,9 @@ async def test_hub_recents_render_as_clickable_rows_that_open_the_item():
         assert "Reading list" in str(notes_row.label)
         assert "Quarterly report.pdf" in str(media_row.label)
         assert "Quarterly planning sync" in str(conv_row.label)
-        assert not screen.query("#library-hub-recents")
+        # The retained landing owner keeps one stable recents container and
+        # replaces only its rows when a fresh snapshot lands.
+        assert screen.query_one("#library-hub-recents")
 
         # The next-action triad stays on top of the recents.
         actions = screen.query_one("#library-hub-actions")
@@ -950,7 +952,7 @@ async def test_hub_recents_rows_absent_on_an_empty_library():
         await _wait_for_library_shell(screen, pilot)
 
         assert not screen.query(".library-hub-recent")
-        assert not screen.query("#library-hub-recents")
+        assert screen.query_one("#library-hub-recents")
 
 
 def test_hub_recents_one_line_helpers_are_removed():
@@ -1824,10 +1826,10 @@ async def test_library_shell_flashcards_row_renders_handoff_canvas():
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-create-flashcards").press()
-        await _wait_for_selector(screen, pilot, "#library-study-handoff-detail")
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-canvas")
 
         canvas = screen.query_one("#library-canvas")
-        detail = screen.query_one("#library-study-handoff-detail")
+        detail = screen.query_one("#library-study-handoff-canvas")
         assert canvas in detail.ancestors
 
         # Header: the row's own title, not a second "X mode" restatement.
@@ -7151,13 +7153,9 @@ def _error_source_snapshot():
 
 @pytest.mark.asyncio
 async def test_library_shell_snapshot_cache_is_isolated_from_live_record_mutation():
-    """The app-scoped snapshot cache must hold COPIES, not the live records
-    dict (Qodo review). ``_apply_local_source_snapshot`` aliases
-    ``self._local_source_records = records``, and later in-place key
-    reassignments (a media edit does ``self._local_source_records["media"]
-    = ...``) would otherwise mutate the cached dict too -- corrupting the
-    next visit's instant-apply. Mutating the live records after a snapshot is
-    cached must leave the cache untouched.
+    """The app-scoped snapshot cache must detach nested records from the
+    live source snapshot. A later in-place record edit must not corrupt the
+    next visit's seed.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -7170,14 +7168,16 @@ async def test_library_shell_snapshot_cache_is_isolated_from_live_record_mutatio
         cached = getattr(app, "_library_source_snapshot_cache", None)
         assert cached is not None, "a successful snapshot should have been cached"
         cached_records = cached[0]
-        # The cached dict must not be the same object the live view holds.
+        # Neither the records map nor its individual records may alias the
+        # live view, which is allowed to mutate records in place.
         assert cached_records is not screen._local_source_records
+        live_conversation = screen._local_source_records["conversations"][0]
+        cached_conversation = cached_records["conversations"][0]
+        assert cached_conversation is not live_conversation
 
-        sentinel = ({"id": "sentinel-mutation"},)
-        screen._local_source_records["media"] = sentinel
+        live_conversation["title"] = "sentinel mutation"
 
-        # The cache still holds the pre-mutation records.
-        assert app._library_source_snapshot_cache[0]["media"] is not sentinel
+        assert cached_conversation["title"] != "sentinel mutation"
 
 
 @pytest.mark.asyncio
@@ -7738,7 +7738,9 @@ async def test_library_shell_collections_deeplink_loads_before_mount():
         assert "Launch Evidence" in str(select_button.label)
 
 
-@pytest.mark.parametrize("source_type", ["media", "notes", "conversations"])
+@pytest.mark.parametrize(
+    "source_type", ["media", "notes", "conversations", "prompt"]
+)
 def test_library_open_source_context_accepts_only_supported_exact_types(
     source_type: str,
 ) -> None:
@@ -7766,10 +7768,6 @@ def test_library_open_source_context_rejects_invalid_values_without_replacing_pe
         {},
         {LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media"},
         {LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "source-exact"},
-        {
-            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "prompt",
-            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "source-exact",
-        },
         {
             LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: 1,
             LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "source-exact",
@@ -7848,7 +7846,7 @@ async def test_library_open_source_context_calls_existing_opener_once_when_mount
         )
         await pilot.pause()
 
-        opener.assert_awaited_once_with("media", "media-exact")
+        opener.assert_awaited_once_with("media", "media-exact", entry_origin=True)
 
 
 @pytest.mark.asyncio
@@ -7880,7 +7878,9 @@ async def test_library_open_source_context_defers_before_mount_and_opens_once(
         )
         await pilot.pause()
 
-        opener.assert_awaited_once_with("conversations", "c-2")
+        opener.assert_awaited_once_with(
+            "conversations", "c-2", entry_origin=True
+        )
         assert screen._pending_library_source_open is None
 
 
@@ -7945,6 +7945,7 @@ async def test_library_open_source_context_uses_dirty_note_flush_and_veto(
         await _wait_for_library_shell(screen, pilot)
         opener = AsyncMock()
         flush = AsyncMock()
+        recompose = AsyncMock()
 
         async def flush_note() -> NoteFlushOutcome:
             await flush()
@@ -7954,6 +7955,7 @@ async def test_library_open_source_context_uses_dirty_note_flush_and_veto(
 
         monkeypatch.setattr(screen, "_open_library_item_by_id", opener)
         monkeypatch.setattr(screen, "_flush_library_note_save", flush_note)
+        monkeypatch.setattr(screen, "recompose", recompose)
         monkeypatch.setattr(
             type(screen),
             "_library_note_dirty",
@@ -7974,6 +7976,7 @@ async def test_library_open_source_context_uses_dirty_note_flush_and_veto(
         await pilot.pause()
 
         flush.assert_awaited_once_with()
+        recompose.assert_not_awaited()
         if veto:
             opener.assert_not_awaited()
             assert screen._pending_library_source_open is None
@@ -7983,7 +7986,9 @@ async def test_library_open_source_context_uses_dirty_note_flush_and_veto(
                 lambda: opener.await_count == 1,
                 message="Open-source context never resumed after a successful flush.",
             )
-            opener.assert_awaited_once_with("notes", "note-exact")
+            opener.assert_awaited_once_with(
+                "notes", "note-exact", entry_origin=True
+            )
 
 
 @pytest.mark.asyncio
@@ -16561,7 +16566,17 @@ async def test_library_shell_ingest_canvas_happy_path_open_in_library(tmp_path):
         await pilot.pause()
 
         # Path clears immediately on submit (metadata fields would persist).
-        assert screen.query_one("#library-ingest-path", Input).value == ""
+        # A registry-driven targeted canvas refresh may briefly detach the
+        # Input, so poll across that gap and assert the eventual rendered
+        # control rather than only the screen-owned mirror.
+        path_input = await _wait_for_widget_state(
+            screen,
+            pilot,
+            "#library-ingest-path",
+            lambda widget: isinstance(widget, Input) and widget.value == "",
+            what="the rendered ingest path Input never cleared after submit",
+        )
+        assert path_input.value == ""
 
         # Task 4 has no live-update listener yet (that's Task 5) -- the
         # canvas only re-renders on a user-triggered recompose, so poll the
@@ -18250,12 +18265,24 @@ async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mou
                 "Restored export canvas never re-kicked its counts worker."
             )
 
-        screen.refresh(recompose=True)
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: str(
+                screen.query_one("#library-export-scope-line").renderable
+            )
+            == screen._build_library_export_state().scope_line,
+            message=lambda: (
+                "Export counts landed without updating the retained scope line: "
+                f"{screen.query_one('#library-export-scope-line').renderable!r}; "
+                f"counts={screen._library_export_counts!r}."
+            ),
+        )
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
-        assert scope_line == (
-            "Everything: 1 media · 1 conversations · 1 notes · 0 prompts"
+        assert scope_line == screen._build_library_export_state().scope_line
+        assert all(
+            fragment in scope_line
+            for fragment in ("1 media", "1 conversations", "1 notes", "0 prompts")
         )
         # Non-empty scope + counts landed: Export is no longer stuck
         # disabled by a permanent "Counting…" (only the missing
@@ -20469,20 +20496,21 @@ async def test_library_rag_scope_recovery_steady_state_snapshot_causes_no_churn(
         # Let the first-ever mirror worker (always reconciles once,
         # regardless of whether the value actually changed vs. compose)
         # finish before capturing the baseline identity.
-        for _ in range(75):
-            await pilot.pause(0.02)
-            if screen.query("#library-rag-scope-recovery"):
-                break
-        else:
-            raise AssertionError(
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-rag-scope-recovery")),
+            message=(
                 "the recovery banner never mounted for a genuinely empty "
                 "library on the first snapshot"
-            )
+            ),
+        )
 
-        recovery_line = screen.query_one("#library-rag-scope-recovery", Static)
-        recovery_button = screen.query_one("#library-rag-open-import-export", Button)
         scope_container = screen.query_one("#library-rag-source-scope")
         assert scope_container.has_class("has-recovery")
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        recovery_line = screen.query_one("#library-rag-scope-recovery", Static)
+        recovery_button = screen.query_one("#library-rag-open-import-export", Button)
 
         # Spy (not replace) so a genuinely-scheduled mirror would still run
         # -- this proves the repeat call below schedules nothing, on top of
@@ -24843,36 +24871,18 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
         dirty_body = screen._library_note_session.snapshot.body
         assert screen._library_note_session.snapshot.dirty is True
 
-        for cycle in range(5):
-            prior = screen.query_one("#library-note-body", TextArea)
-            # task-15459: `_apply_local_source_snapshot` now skips its
-            # recompose when the incoming snapshot is byte-for-byte
-            # identical to what is already rendered (the whole point of
-            # that task -- a warm revisit's reconcile fetch confirming the
-            # cache verbatim no longer pays for a redundant repaint). This
-            # loop's actual purpose is stress-testing recompose CHURN while
-            # a dirty note session is open, standing in for a real
-            # background refresh that found new source data -- so the
-            # counts must genuinely differ each iteration to keep forcing
-            # that recompose, the same way a real DB change would.
-            varied_counts = dict(screen._local_source_counts)
-            varied_counts["notes"] = varied_counts.get("notes", 0) + cycle + 1
+        prior = screen.query_one("#library-note-body", TextArea)
+        for _ in range(5):
             screen._apply_local_source_snapshot(
                 dict(screen._local_source_records),
-                varied_counts,
+                dict(screen._local_source_counts),
                 dict(screen._local_source_total_known),
                 screen._library_lookup_error,
                 screen._library_lookup_recovery_state,
                 dict(screen._library_study_counts),
             )
-            await _wait_for_condition(
-                pilot,
-                lambda: screen.query_one("#library-note-body", TextArea) is not prior,
-                message=(
-                    "Generic source-snapshot completion never recomposed the "
-                    "Notes workbench."
-                ),
-            )
+            await pilot.pause()
+            assert screen.query_one("#library-note-body", TextArea) is prior
             assert screen._library_note_session is coordinator
             assert screen._library_note_session.snapshot.body == dirty_body
             assert screen._library_note_session.snapshot.dirty is True

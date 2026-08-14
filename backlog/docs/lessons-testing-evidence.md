@@ -288,6 +288,28 @@ after the fact** over raising inside code that catches broadly.
 
 ---
 
+## Mount dispatch can be attached before it is mounted
+
+**TASK-15459, 2026-08-13.** A deterministic `asyncio.Event` barrier released
+the Library source worker while `LibraryScreen.on_mount()` was still awaiting.
+The fresh snapshot reached the screen and advanced its state generation, but
+the rendered generation stayed behind and the targeted-sync recorder remained
+empty. Instrumentation at the snapshot boundary showed the exact lifecycle
+state: `is_attached` was true while `is_mounted` was false. The reconciliation
+scheduler used `is_mounted`, so it silently discarded completion during the
+Mount dispatch window. Changing only that scheduler boundary to attachment
+authority made the RED race pass, while the detached-completion regression
+continued to return `SUPERSEDED` with zero DOM calls.
+
+**What to do.** When work may complete during a Textual Mount handler, do not
+infer that attachment and mounting flags change together. Gate message-pump
+scheduling on the lifecycle property the operation actually needs (attachment
+for queuing to the screen), then keep a second current/attached guard at DOM
+execution time. Prove both halves with Event barriers: completion during Mount
+must render, and completion after detach must do nothing.
+
+---
+
 ## Trigger cancellation from the state the test claims to cancel
 
 **TASK-3771, 2026-08-11.** A QwenCloud native-tool regression claimed to prove
