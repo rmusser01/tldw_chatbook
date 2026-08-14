@@ -10414,6 +10414,34 @@ class ChatScreen(BaseAppScreen):
             rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
 
+    def _console_browser_unseen_marker(self, conversation_id: str | None) -> str:
+        """Resolved ◈ glyph for a marked conversation's sessionless row.
+
+        task-15864 AC#1: the unseen-badge derivation lived only on the
+        open-session (native) row path
+        (``_console_run_marker_with_unseen``), so after a restart --
+        session tabs do not restore, making no-open-session the NORMAL
+        restart shape -- the marked conversation's sidebar row rendered no
+        ◈ at all. Membership and persisted rows thread this through the
+        same durable-mark backing; when a native row also exists for the
+        conversation it wins the merge's identity slot with its full
+        precedence chain, so this cannot mask a live turn glyph.
+
+        Args:
+            conversation_id: The row's persisted conversation id.
+
+        Returns:
+            The resolved unseen glyph, or ``""`` when unmarked.
+        """
+        conversation_key = str(conversation_id or "").strip()
+        if not conversation_key:
+            return ""
+        if conversation_key not in self._console_fleet_unseen_ids():
+            return ""
+        return resolve_glyph(
+            CONSOLE_RUN_MARKER_GLYPHS.get(ConsoleRunMarker.SUBAGENT_UNSEEN, "")
+        )
+
     def _membership_console_browser_rows(
         self,
         current_conversation_id: str | None = None,
@@ -10474,6 +10502,11 @@ class ChatScreen(BaseAppScreen):
                     ),
                     source_kind="membership",
                     updated_sort=str(getattr(membership, "created_at", "") or ""),
+                    # task-15864 AC#1: sessionless rows still surface the
+                    # durable unseen mark (the restart shape).
+                    run_marker=self._console_browser_unseen_marker(
+                        conversation_id
+                    ),
                     openable=conversation_id
                     not in getattr(self, "_console_broken_conversation_ids", set()),
                 )
@@ -10636,6 +10669,11 @@ class ChatScreen(BaseAppScreen):
                         # from last_modified (normalize_conversation_row exposes
                         # no updated_at) or the rail degrades to creation order.
                         updated_sort=console_persisted_row_updated_sort(item),
+                        # task-15864 AC#1: sessionless rows still surface
+                        # the durable unseen mark (the restart shape).
+                        run_marker=self._console_browser_unseen_marker(
+                            conversation_id
+                        ),
                     )
                     rows.append(
                         self._apply_console_browser_star_state(row, starred_ids)
@@ -10834,6 +10872,11 @@ class ChatScreen(BaseAppScreen):
                         # from last_modified (normalize_conversation_row exposes
                         # no updated_at) or the rail degrades to creation order.
                         updated_sort=console_persisted_row_updated_sort(item),
+                        # task-15864 AC#1: sessionless rows still surface
+                        # the durable unseen mark (the restart shape).
+                        run_marker=self._console_browser_unseen_marker(
+                            conversation_id
+                        ),
                     )
                     rows.append(
                         self._apply_console_browser_star_state(row, starred_ids)
@@ -14735,6 +14778,22 @@ class ChatScreen(BaseAppScreen):
             return False
         return bool(composer.draft_text().strip())
 
+    def _poke_console_wake_retry(self) -> None:
+        """Retry a staged auto-wake (task-15864 AC#2: session-open trigger).
+
+        Called after a persisted conversation is resumed into a native
+        session -- the moment a mount-claimed pending wake finally has an
+        open session to deliver into. Session tabs do not restore across
+        restart, so before this trigger a restart-staged wake sat pending
+        until an unrelated composer keystroke. getattr-guarded like every
+        wake seam here (UI tests swap controller doubles).
+        """
+        controller = getattr(self, "_console_chat_controller", None)
+        wake = getattr(controller, "fleet_wake", None)
+        retry = getattr(wake, "retry_soon", None)
+        if callable(retry):
+            retry()
+
     def _on_console_wake_delivery_started(self, session_id: str) -> None:
         """Arm the transcript poll for a machine-injected wake turn.
 
@@ -16190,8 +16249,28 @@ class ChatScreen(BaseAppScreen):
                 active_conversation_id = (
                     active.persisted_conversation_id or active.id
                 )
-                if active_conversation_id in unseen_ids and (
-                    clear_fleet_unseen_completion(
+                # task-15864 AC#3: the view-clear YIELDS while the wake
+                # coordinator still owes this conversation. The mark is
+                # both the unseen INDICATOR (viewing satisfies that) and
+                # the restart STAGING bit the marks-indexed mount-claim
+                # depends on -- clearing it mid-deferral (a draft holding
+                # a due wake, or the kill switch OFF) left an owed,
+                # unmarked run across restart that `seed_from_marks`
+                # could never seed. Delivery's own commit clears through
+                # the same named seam once nothing undelivered remains.
+                wake = (
+                    getattr(controller, "fleet_wake", None)
+                    if controller is not None
+                    else None
+                )
+                has_pending = getattr(wake, "has_pending", None)
+                wake_owed = callable(has_pending) and bool(
+                    has_pending(active_conversation_id)
+                )
+                if (
+                    active_conversation_id in unseen_ids
+                    and not wake_owed
+                    and clear_fleet_unseen_completion(
                         self.app_instance, active_conversation_id
                     )
                 ):

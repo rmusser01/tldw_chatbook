@@ -210,6 +210,9 @@ def build_console_controllers(
         focus_conversation_search=(
             lambda: screen._focus_console_workspace_conversation_search()
         ),
+        # task-15864 AC#2: session-open (the resume flow) is a wake retry
+        # trigger -- late-binding like every sibling above.
+        wake_retry_poke=lambda: screen._poke_console_wake_retry(),
         sync_workspace_context=lambda: screen._sync_console_workspace_context(),
     )
     #: Native session lifecycle -- start/activate/swap/promote/rename,
