@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed for implementation after review.
+Approved for implementation, including the final-evidence placement amendment.
 
 ## Context
 
@@ -213,6 +213,24 @@ requires zero failures or errors and an unchanged skip/xfail/deselect/not-collec
 No baseline failure/error may transition to a non-executed outcome without an explicit
 user-approved spec/AC amendment.
 
+### Final evidence placement and closeout causality
+
+Measured counts, hashes, and duration for an exact Git commit cannot be inserted into
+that same commit after the measurement without creating a different commit. The
+reviewed/rebased executable source-and-test tree therefore receives a complete green
+candidate generation before the documentation-only closeout commit. Implementation
+Notes commit the candidate generation, its executable-input tree hash, and the stable
+name `ready-pr-final` for the post-closeout confirmation. The closeout commit must not
+change any executable, test, collection, configuration, dependency, harness, or pytest
+input covered by that hash.
+
+The complete pipeline then runs on the exact post-closeout PR HEAD. Its actual counts,
+hashes, duration, command/environment fingerprint, and HEAD SHA live in the immutable
+`ready-pr-final` manifest and are posted to the PR. This is the authoritative exact-head
+merge evidence. If executable-input identity differs or this run is not green, the task
+returns to In Progress and the repair/closeout cycle repeats. This placement exception
+does not relax the exact-head pipeline or any outcome accounting requirement.
+
 After final suite success, run cumulative diff review, Ruff/formatter/type/compile
 checks for touched files, applicable CSS/generated checks, and independent correctness,
 security, test-quality, and YAGNI review. Any review-driven source or test change
@@ -235,6 +253,9 @@ invalidates affected and final-suite evidence and requires rerunning it.
   affected checks plus the complete pipeline on the new head.
 - Rebase onto the latest `dev` again after review fixes, rerun affected checks and the
   final complete suite, then merge only when all required checks and threads are clear.
+- Committed Implementation Notes identify the reviewed executable-input generation and
+  `ready-pr-final`; post-commit exact-head metrics are recorded in its immutable external
+  manifest and PR evidence under the causality rule above.
 
 ## Privacy and evidence retention
 
@@ -244,7 +265,10 @@ evidence root through PR merge and worktree cleanup. Baseline, repair, and final
 use distinct immutable directories; no command overwrites earlier evidence. Artifacts
 may contain synthetic fixture content and repository-relative node paths but must not
 contain credentials, real user bodies, real profile/config contents, or private home
-paths. The committed sanitized inventory and task notes record hashes, counts,
+paths. The sole exception is the resolved evidence-root value required in each
+generation's permission-restricted `provenance/evidence_root.json`; privacy scanning
+allowlists that exact field/value only and rejects the path everywhere else, including
+logs, JUnit, outcome ledgers, manifests, and committed files. The committed sanitized inventory and task notes record hashes, counts,
 commands, classifications, and durations rather than raw traces.
 
 ## ADR decision
