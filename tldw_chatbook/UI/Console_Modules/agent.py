@@ -389,11 +389,13 @@ class ConsoleAgentController:
         )
 
         # -- Moved state (was `ChatScreen.__init__`) ------------------------
-        #: The lazily-built `ConsoleAgentBridge`, or `None` once resolved to
-        #: "no agent runtime". Read-write through the screen's proxy of the
-        #: same name (`Tests/UI/test_console_agent_rail.py` replaces it on
-        #: the screen 10 times).
-        self._console_agent_bridge: Any | None = None
+        #: The lazily-built `ConsoleAgentBridge` is a PROPERTY over the
+        #: app-owned `ConsoleRuntime` (task-15860 lifetime landing) -- it has
+        #: no `__init__` slot, because a fresh screen's `None` would shadow
+        #: the surviving runtime's live bridge. Still read-write through the
+        #: screen's proxy of the same name
+        #: (`Tests/UI/test_console_agent_rail.py` replaces it on the screen
+        #: 10 times); the write now lands on the runtime.
         #: The sub-agent run currently drilled into, and the conversation
         #: that drill-in is scoped to. Both proxied read-write on the screen.
         self._console_agent_drilldown_run_id: str | None = None
@@ -481,6 +483,30 @@ class ConsoleAgentController:
 
     # -- Moved methods -------------------------------------------------------
 
+    def _console_runtime(self) -> Any:
+        """Return the app-owned `ConsoleRuntime` (task-15860).
+
+        Resolved through the SCREEN's own memoised accessor whenever it has
+        one, so this controller and its screen can never end up holding two
+        different runtimes.
+        """
+        screen = self._screen
+        resolver = getattr(screen, "_console_runtime", None)
+        if callable(resolver):
+            return resolver()
+        from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
+
+        return ensure_console_runtime(self.app_instance, view=screen)
+
+    @property
+    def _console_agent_bridge(self) -> Any:
+        """The runtime's Console agent bridge, or `None`."""
+        return self._console_runtime().agent_bridge
+
+    @_console_agent_bridge.setter
+    def _console_agent_bridge(self, value: Any) -> None:
+        self._console_runtime().set_agent_bridge(value)
+
     def _ensure_console_agent_bridge(self) -> Any:
         """Return the native Console agent bridge, creating it lazily.
 
@@ -501,11 +527,7 @@ class ConsoleAgentController:
         """
         if self._console_agent_bridge is not None:
             return self._console_agent_bridge
-        from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
-
-        self._console_agent_bridge = ensure_console_runtime(
-            self.app_instance, view=self._screen
-        ).ensure_agent_bridge(
+        self._console_runtime().ensure_agent_bridge(
             store_factory=self._ensure_console_chat_store,
             provider_gateway_factory=self._ensure_console_provider_gateway,
             skills_service=getattr(self.app_instance, "skills_scope_service", None),
