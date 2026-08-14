@@ -88,6 +88,18 @@ class _ImportTargetValidationError(Exception):
         return f"{type(self).__name__}()"
 
 
+class _ImportTargetContractError(Exception):
+    """Private marker for malformed component or database target state."""
+
+    message = "The import target contract is invalid."
+
+    def __init__(self) -> None:
+        super().__init__(self.message)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}()"
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class LocalTargetFolder:
     """Private-safe immutable folder state used by import execution."""
@@ -240,7 +252,7 @@ class LocalNoteImportTarget:
                 self._sync_keywords(cursor, note_id, payload.keywords)
                 created = self._read_note(cursor, note_id)
                 if created is None or not _note_matches(created, payload):
-                    raise ImportTargetPermanentError from None
+                    raise _ImportTargetContractError from None
                 return created
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
             translated_error = _translate_exception(exc)
@@ -355,8 +367,8 @@ class LocalNoteImportTarget:
             content = row["content"]
             version = row["version"]
             keyword_values = tuple(keyword["keyword"] for keyword in keywords)
-        except KeyError:
-            raise ImportTargetPermanentError from None
+        except (IndexError, KeyError, TypeError):
+            raise _ImportTargetContractError from None
         if (
             not isinstance(row_note_id, str)
             or row_note_id != note_id
@@ -367,7 +379,7 @@ class LocalNoteImportTarget:
             or version < 1
             or not all(isinstance(keyword, str) for keyword in keyword_values)
         ):
-            raise ImportTargetPermanentError from None
+            raise _ImportTargetContractError from None
         return LocalTargetNote(
             note_id=row_note_id,
             title=title,
@@ -483,14 +495,14 @@ class LocalNoteImportTarget:
                 keyword_id = row["id"]
                 keyword_text = row["keyword"]
                 deleted = row["deleted"]
-            except KeyError:
-                raise ImportTargetPermanentError from None
+            except (IndexError, KeyError, TypeError):
+                raise _ImportTargetContractError from None
             if isinstance(keyword_id, bool) or not isinstance(keyword_id, int):
-                raise ImportTargetPermanentError from None
+                raise _ImportTargetContractError from None
             if not isinstance(keyword_text, str):
-                raise ImportTargetPermanentError from None
+                raise _ImportTargetContractError from None
             if deleted not in (0, 1):
-                raise ImportTargetPermanentError from None
+                raise _ImportTargetContractError from None
             current_by_key[_sqlite_nocase_key(keyword_text)] = (
                 keyword_id,
                 deleted == 0,
@@ -528,12 +540,15 @@ class LocalNoteImportTarget:
             )
             keyword_id = result.lastrowid
             if isinstance(keyword_id, bool) or not isinstance(keyword_id, int):
-                raise ImportTargetPermanentError from None
+                raise _ImportTargetContractError from None
             return keyword_id
 
-        keyword_id = row["id"]
-        version = row["version"]
-        deleted = row["deleted"]
+        try:
+            keyword_id = row["id"]
+            version = row["version"]
+            deleted = row["deleted"]
+        except (IndexError, KeyError, TypeError):
+            raise _ImportTargetContractError from None
         if (
             isinstance(keyword_id, bool)
             or not isinstance(keyword_id, int)
@@ -542,7 +557,7 @@ class LocalNoteImportTarget:
             or version < 1
             or deleted not in (0, 1)
         ):
-            raise ImportTargetPermanentError from None
+            raise _ImportTargetContractError from None
         if deleted == 0:
             return keyword_id
 
@@ -644,7 +659,7 @@ def _project_folder(folder: NoteFolder) -> LocalTargetFolder:
         folder.normalized_path,
     )
     if any(type(value) is not str for value in values):
-        raise ImportTargetPermanentError from None
+        raise _ImportTargetContractError from None
     return LocalTargetFolder(
         folder_id=folder.folder_id,
         name=folder.name,
@@ -733,15 +748,15 @@ def _utc_timestamp() -> str:
 
 def _keyword_keys_from_rows(rows: object) -> set[str]:
     if not isinstance(rows, list):
-        raise ImportTargetPermanentError from None
+        raise _ImportTargetContractError from None
     keys: set[str] = set()
     for row in rows:
         try:
             value = row["keyword"]
-        except KeyError:
-            raise ImportTargetPermanentError from None
+        except (IndexError, KeyError, TypeError):
+            raise _ImportTargetContractError from None
         if not isinstance(value, str):
-            raise ImportTargetPermanentError from None
+            raise _ImportTargetContractError from None
         keys.add(_sqlite_nocase_key(value))
     return keys
 
@@ -791,6 +806,8 @@ def _translate_exception(
     if isinstance(exc, ImportTargetError):
         return ImportTargetError()
     if isinstance(exc, ImportTargetInternalError):
+        return ImportTargetInternalError()
+    if isinstance(exc, _ImportTargetContractError):
         return ImportTargetInternalError()
     if isinstance(exc, _ImportTargetValidationError):
         return ImportTargetPermanentError()

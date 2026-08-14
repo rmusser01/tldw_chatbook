@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import traceback
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
 from datetime import UTC
 from queue import Queue
@@ -197,7 +198,7 @@ def test_target_folder_projection_rejects_non_exact_text_fields(
     hostile_folder = NoteFolder(**values)  # type: ignore[arg-type]
     monkeypatch.setattr(folders, "get_folder_by_path", lambda _segments: hostile_folder)
 
-    with pytest.raises(ImportTargetPermanentError) as caught:
+    with pytest.raises(ImportTargetInternalError) as caught:
         target.ensure_folder(
             segments=("Private Imported",),
             folder_id=_FOLDER_ID,
@@ -205,6 +206,7 @@ def test_target_folder_projection_rejects_non_exact_text_fields(
         )
 
     assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
     assert "Private Imported" not in repr(caught.value)
 
 
@@ -1155,6 +1157,174 @@ def test_internal_db_row_type_errors_are_safe_fatal_errors(
 
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"id": _NOTE_ID, "title": "Title", "version": 1},
+        {"id": _NOTE_ID, "title": object(), "content": "Body", "version": 1},
+        {"id": _NOTE_ID, "title": "Title", "content": "Body", "version": True},
+    ],
+)
+def test_selected_note_row_contract_faults_are_safe_fatal_errors(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+    row: dict[str, object],
+) -> None:
+    target, _service, _folders, db = target_harness
+
+    class FakeCursor:
+        def execute(self, *_args, **_kwargs):
+            return self
+
+        def fetchone(self):
+            return row
+
+    @contextmanager
+    def fake_transaction():
+        yield FakeCursor()
+
+    monkeypatch.setattr(db, "transaction", fake_transaction)
+    monkeypatch.setattr(target, "_keyword_rows", lambda *_args: [])
+
+    with pytest.raises(ImportTargetInternalError) as caught:
+        target.read_note(note_id=_NOTE_ID)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_selected_keyword_row_missing_column_is_a_safe_fatal_error(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, _service, _folders, _db = target_harness
+    target.create_note(note_id=_NOTE_ID, payload=_payload())
+    monkeypatch.setattr(target, "_keyword_rows", lambda *_args: [{}])
+
+    with pytest.raises(ImportTargetInternalError) as caught:
+        target.read_note(note_id=_NOTE_ID)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {},
+        {"id": "not-an-integer", "keyword": "Project", "deleted": 0},
+        {"id": 1, "keyword": object(), "deleted": 0},
+        {"id": 1, "keyword": "Project", "deleted": 2},
+    ],
+)
+def test_linked_keyword_row_contract_faults_are_safe_fatal_errors(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+    row: dict[str, object],
+) -> None:
+    target, _service, _folders, _db = target_harness
+    target.create_note(note_id=_NOTE_ID, payload=_payload())
+    monkeypatch.setattr(target, "_linked_keyword_rows", lambda *_args: [row])
+
+    with pytest.raises(ImportTargetInternalError) as caught:
+        target.sync_keywords(note_id=_NOTE_ID, keywords=("replacement",))
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        (),
+        [{}],
+        [{"keyword": object()}],
+    ],
+)
+def test_keyword_match_row_contract_faults_are_safe_fatal_errors(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+    rows: object,
+) -> None:
+    target, _service, _folders, _db = target_harness
+    target.create_note(note_id=_NOTE_ID, payload=_payload())
+    monkeypatch.setattr(target, "_keyword_rows", lambda *_args: rows)
+
+    with pytest.raises(ImportTargetInternalError) as caught:
+        target.keywords_match(note_id=_NOTE_ID, keywords=("Project", "draft"))
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    ("selected_row", "lastrowid"),
+    [
+        (None, "not-an-integer"),
+        ({"id": "not-an-integer", "version": 1, "deleted": 0}, None),
+        ({"id": 1, "version": True, "deleted": 0}, None),
+    ],
+)
+def test_keyword_ensure_contract_faults_are_safe_fatal_errors(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+    selected_row: dict[str, object] | None,
+    lastrowid: object,
+) -> None:
+    target, _service, _folders, db = target_harness
+
+    class FakeResult:
+        def __init__(self, *, row=None, inserted_id=None) -> None:
+            self._row = row
+            self.lastrowid = inserted_id
+
+        def fetchone(self):
+            return self._row
+
+    class FakeCursor:
+        def execute(self, query, *_args, **_kwargs):
+            if "SELECT id, version, deleted FROM keywords" in query:
+                return FakeResult(row=selected_row)
+            if "INSERT INTO keywords" in query:
+                return FakeResult(inserted_id=lastrowid)
+            raise AssertionError("unexpected query")
+
+    @contextmanager
+    def fake_transaction():
+        yield FakeCursor()
+
+    monkeypatch.setattr(db, "transaction", fake_transaction)
+    monkeypatch.setattr(target, "_active_note_exists", lambda *_args: True)
+    monkeypatch.setattr(target, "_linked_keyword_rows", lambda *_args: [])
+
+    with pytest.raises(ImportTargetInternalError) as caught:
+        target.sync_keywords(note_id=_NOTE_ID, keywords=("replacement",))
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_create_note_postcondition_fault_is_safe_fatal_and_rolls_back(
+    target_harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, _service, _folders, db = target_harness
+    reads = iter((None, None))
+    monkeypatch.setattr(target, "_read_note", lambda *_args: next(reads))
+
+    with pytest.raises(ImportTargetInternalError) as caught:
+        target.create_note(note_id=_NOTE_ID, payload=_payload())
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert (
+        db.get_connection()
+        .execute("SELECT 1 FROM notes WHERE id = ?", (_NOTE_ID,))
+        .fetchone()
+        is None
+    )
 
 
 @pytest.mark.parametrize(
