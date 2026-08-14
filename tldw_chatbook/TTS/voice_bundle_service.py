@@ -7,6 +7,7 @@ import errno
 import os
 import stat
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -22,6 +23,9 @@ except ImportError:  # pragma: no cover - Windows is intentionally unsupported.
     fcntl = None  # type: ignore[assignment]
 
 from tldw_chatbook.TTS.TTS_Generation import AudioCppGuidedDependencySnapshot
+from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+    AudioCppArtifactConsumerRequirement,
+)
 from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
 from tldw_chatbook.TTS.profile_migration_namespace import rename_noreplace_at
 from tldw_chatbook.TTS.profile_reference_types import (
@@ -102,6 +106,13 @@ class _DependencyService(Protocol):
     async def audio_cpp_guided_dependency_snapshot(
         self, requirement: TTSCloneRecipeRequirement
     ) -> AudioCppGuidedDependencySnapshot: ...
+
+
+class _ArtifactLeaseCoordinator(Protocol):
+    def lease_consumers(
+        self,
+        consumers: tuple[AudioCppArtifactConsumerRequirement, ...],
+    ) -> AbstractContextManager[None]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -1099,12 +1110,14 @@ class TTSVoiceBundlePortabilityService:
         repository: _Repository,
         dependency_service: _DependencyService,
         *,
+        artifact_lease_coordinator: _ArtifactLeaseCoordinator | None = None,
         clock: Callable[[], float] = monotonic,
         uuid_factory: Callable[[], UUID] = uuid4,
     ) -> None:
         self._root = Path(operation_root)
         self._repository = repository
         self._dependency_service = dependency_service
+        self._artifact_lease_coordinator = artifact_lease_coordinator
         self._clock = clock
         self._uuid_factory = uuid_factory
         self._identity = object()
@@ -1118,6 +1131,23 @@ class TTSVoiceBundlePortabilityService:
         self._inspection_reservations = 0
         self._closed = False
         self._close_task: asyncio.Task[None] | None = None
+
+    def _lease_import_dependency(
+        self,
+        command: TTSBundleImportCommand,
+    ) -> AbstractContextManager[None]:
+        coordinator = self._artifact_lease_coordinator
+        if coordinator is None:
+            return nullcontext()
+        return coordinator.lease_consumers(
+            (
+                AudioCppArtifactConsumerRequirement(
+                    provider_id=command.source_draft.provider_id,
+                    model_id=command.source_draft.model_id,
+                    recipe_requirement=command.recipe_requirement,
+                ),
+            )
+        )
 
     async def _ensure_root(self) -> None:
         async with self._root_lock:
@@ -1538,9 +1568,10 @@ class TTSVoiceBundlePortabilityService:
             )
             _test_boundary("commit_pre_repository")
             await self._verify_source(session)
-            control, result = await self._run_owned_call(
-                self._repository.commit_bundle_import(command)
-            )
+            with self._lease_import_dependency(command):
+                control, result = await self._run_owned_call(
+                    self._repository.commit_bundle_import(command)
+                )
             if control is not None:
                 raise asyncio.CancelledError from None
             if type(result) is not ProfileStoreResult:

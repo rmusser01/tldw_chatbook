@@ -297,6 +297,16 @@ from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Utils.text_selection_crash_guard import TextSelectionCrashGuard
 from tldw_chatbook.TTS import TTSProfileService
+from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+    AudioCppArtifactLeaseCoordinator,
+    AudioCppArtifactRemovalEvidence,
+    AudioCppManagedConsumerIdentity,
+    project_audio_cpp_artifact_removal_evidence,
+)
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    AudioCppSettingsConfig,
+    project_audio_cpp_settings_config,
+)
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
@@ -305,6 +315,7 @@ from tldw_chatbook.TTS.voice_bundle_service import (
     TTSVoiceBundlePortabilityService,
 )
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
+from tldw_chatbook.Model_Artifacts.store import managed_service
 from tldw_chatbook.TTS.TTS_Generation import (
     bind_tts_service,
     close_tts_resources,
@@ -2114,9 +2125,9 @@ class LibraryIngestQueueMixin:
         # RLock, not Lock: dev's STT dispatch work re-enters this guard.
         self._local_stt_executor_lock = threading.RLock()
         self._local_stt_executor: Optional[LocalSTTExecutor] = None
-        self._local_stt_dispatch_coordinator: Optional[
-            LocalSTTDispatchCoordinator
-        ] = None
+        self._local_stt_dispatch_coordinator: Optional[LocalSTTDispatchCoordinator] = (
+            None
+        )
         self._parakeet_source_service: Any | None = None
         self._parakeet_source_registry_listener: Callable[[], None] | None = None
         self._parakeet_submitting_scope_ids: set[str] = set()
@@ -2587,9 +2598,7 @@ class LibraryIngestQueueMixin:
         def _construct_resources() -> _IngestParsePoolResources:
             progress_queue = None
             try:
-                progress_queue = ctx.Queue(
-                    maxsize=INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE
-                )
+                progress_queue = ctx.Queue(maxsize=INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE)
                 pool = ctx.Pool(
                     processes=processes,
                     initializer=initialize_ingest_parse_worker,
@@ -2948,9 +2957,7 @@ class LibraryIngestQueueMixin:
             # ``flat_opts`` already merged generic (analyze/chunk/encoding)
             # under these, so document files keep task-3301's chunking and
             # analysis while gaining ``process_document``'s own knobs.
-            options["processing_method"] = (
-                flat_opts.get("processing_method") or "auto"
-            )
+            options["processing_method"] = flat_opts.get("processing_method") or "auto"
             options["enable_ocr"] = flat_opts.get(
                 "ocr", flat_opts.get("enable_ocr", False)
             )
@@ -3038,9 +3045,7 @@ class LibraryIngestQueueMixin:
             # an unusable path used to degrade into a silent "Invalid
             # cookie format" debug line inside the downloader.
             cookies_file = str(flat_opts.get("cookies_file") or "").strip()
-            cookies_path, cookies_problem = _resolve_ingest_cookies_file(
-                cookies_file
-            )
+            cookies_path, cookies_problem = _resolve_ingest_cookies_file(cookies_file)
             options["use_cookies"] = bool(cookies_path)
             options["cookies"] = cookies_path
             if cookies_problem:
@@ -3781,15 +3786,11 @@ class LibraryIngestQueueMixin:
         provisional_local_jobs = []
         for provisional_job_id in self._ingest_local_stt_jobs:
             provisional = self.library_ingest_jobs.get_job(provisional_job_id)
-            if (
-                provisional is not None
-                and provisional.state is IngestJobState.QUEUED
-            ):
+            if provisional is not None and provisional.state is IngestJobState.QUEUED:
                 provisional_local_jobs.append(provisional)
         parsing_count += len(provisional_local_jobs)
         heavy_parsing_count += sum(
-            job.detected_type in _INGEST_HEAVY_TYPES
-            for job in provisional_local_jobs
+            job.detected_type in _INGEST_HEAVY_TYPES for job in provisional_local_jobs
         )
         while parsing_count < worker_count:
             # LocalSTTExecutor intentionally accepts one request at a time.
@@ -3801,9 +3802,7 @@ class LibraryIngestQueueMixin:
                 coordinator is not None and coordinator.dictation_reserved
             )
             heavy_full = (
-                heavy_parsing_count >= heavy_cap
-                or local_stt_busy
-                or dictation_reserved
+                heavy_parsing_count >= heavy_cap or local_stt_busy or dictation_reserved
             )
             job = self.library_ingest_jobs.next_queued(
                 skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
@@ -4151,8 +4150,7 @@ class LibraryIngestQueueMixin:
         self._ingest_parse_progress_queue = None
         self._ingest_parse_progress_thread = None
         if any(
-            resource is not None
-            for resource in (pool, progress_queue, progress_thread)
+            resource is not None for resource in (pool, progress_queue, progress_thread)
         ):
             self._terminate_ingest_parse_pool_off_thread(
                 pool,
@@ -5069,9 +5067,7 @@ class LibraryIngestQueueMixin:
                             # earns the optimistic retry advisory, the
                             # blanket DEFAULT smuggled that advisory back
                             # in for every unclassified cause.
-                            "category": _library_ingest_write_failure_category(
-                                exc
-                            ),
+                            "category": _library_ingest_write_failure_category(exc),
                             "message": str(exc),
                             "exception_type": exc.__class__.__name__,
                         },
@@ -5447,6 +5443,9 @@ class TldwCli(
         self._tts_profile_repository_open_task: asyncio.Task[bool] | None = None
         self._tts_profile_repository_close_task: asyncio.Task[None] | None = None
         self._tts_profile_service: TTSProfileService | None = None
+        self._audio_cpp_artifact_lease_coordinator: (
+            AudioCppArtifactLeaseCoordinator | None
+        ) = None
         self._tts_voice_bundle_service: TTSVoiceBundlePortabilityService | None = None
         self._tts_voice_bundle_service_close_task: asyncio.Task[None] | None = None
         self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(
@@ -9372,9 +9371,138 @@ class TldwCli(
 
         profile_service = getattr(self, "_tts_profile_service", None)
         if profile_service is None:
-            profile_service = TTSProfileService(repository, self.tts_service)
+            profile_service = TTSProfileService(
+                repository,
+                self.tts_service,
+                artifact_lease_coordinator=(
+                    self._ensure_audio_cpp_artifact_lease_coordinator()
+                ),
+            )
             self._tts_profile_service = profile_service
         return profile_service
+
+    def _saved_audio_cpp_managed_consumers(
+        self,
+    ) -> tuple[AudioCppManagedConsumerIdentity, ...]:
+        """Project only exact managed identities from immutable saved Settings."""
+
+        try:
+            config = project_audio_cpp_settings_config(self.app_config)
+        except (TypeError, ValueError):
+            config = AudioCppSettingsConfig()
+        return tuple(
+            AudioCppManagedConsumerIdentity(
+                recipe_id=package.recipe_id,
+                recipe_revision=package.recipe_revision,
+                model_id=package.public_model_id,
+                managed_artifact=package.managed_artifact,
+            )
+            for package in config.guided_packages
+            if package.managed_artifact is not None
+        )
+
+    def _ensure_audio_cpp_artifact_lease_coordinator(
+        self,
+    ) -> AudioCppArtifactLeaseCoordinator:
+        """Return the one app-owned coordinator over the shared artifact owner."""
+
+        coordinator = self._audio_cpp_artifact_lease_coordinator
+        if coordinator is None:
+            coordinator = AudioCppArtifactLeaseCoordinator(
+                managed_service(),
+                saved_settings_snapshot=self._saved_audio_cpp_managed_consumers,
+            )
+            self._audio_cpp_artifact_lease_coordinator = coordinator
+        return coordinator
+
+    async def _audio_cpp_artifact_removal_evidence(
+        self,
+        reference: "ArtifactRef",
+    ) -> AudioCppArtifactRemovalEvidence:
+        """Collect bounded saved, draft, profile, assignment, and runtime facts."""
+
+        saved = project_audio_cpp_settings_config(self.app_config)
+        draft: AudioCppSettingsConfig | None = None
+        current_screen = getattr(self, "screen", None)
+        draft_snapshot = getattr(current_screen, "_speech_tts_draft_snapshot", None)
+        draft_state = getattr(draft_snapshot, "state", None)
+        providers = getattr(draft_state, "providers", None)
+        if isinstance(providers, dict) and isinstance(providers.get("audio_cpp"), dict):
+            draft = AudioCppSettingsConfig.from_mapping(providers["audio_cpp"])
+
+        profile_service = await self._ensure_tts_profile_service()
+        if profile_service is None:
+            raise ProfileRepositoryError("unavailable")
+        profiles_with_counts: list[tuple[Any, int]] = []
+        offset = 0
+        while len(profiles_with_counts) < 200:
+            page = await profile_service.list_profiles(search=None, offset=offset)
+            if not page.profiles:
+                break
+            for profile in page.profiles:
+                loaded = await profile_service.get_profile(profile.profile_id)
+                count = await profile_service.assignment_count(loaded)
+                profiles_with_counts.append((loaded.profile, count))
+                if len(profiles_with_counts) >= 200:
+                    break
+            offset += len(page.profiles)
+            if offset >= page.total:
+                break
+
+        staged_ids: tuple[str, ...] = ()
+        live_ids: tuple[str, ...] = ()
+        try:
+            configuration = (
+                await self.tts_service.registry.provider_configuration_snapshot(
+                    "audio_cpp"
+                )
+            )
+            staged_config = (
+                None
+                if configuration.staged_config is None
+                else AudioCppSettingsConfig.from_mapping(configuration.staged_config)
+            )
+            applied_config = AudioCppSettingsConfig.from_mapping(
+                configuration.applied_config
+            )
+            supervisor = getattr(self.tts_service, "_audio_cpp_supervisor", None)
+            admission = None if supervisor is None else supervisor.admission_snapshot()
+
+            def contains(config: AudioCppSettingsConfig | None) -> bool:
+                if config is None:
+                    return False
+                return any(
+                    package.managed_artifact is not None
+                    and (
+                        package.managed_artifact.artifact_id,
+                        package.managed_artifact.revision,
+                        package.managed_artifact.variant,
+                    )
+                    == (reference.artifact_id, reference.revision, reference.variant)
+                    for package in config.guided_packages
+                )
+
+            if contains(staged_config):
+                staged_ids = (f"settings-generation-{configuration.staged_generation}",)
+            if (
+                contains(applied_config)
+                and admission is not None
+                and admission.state in {"starting", "running", "draining", "stopping"}
+            ):
+                live_ids = (f"process-generation-{admission.process_generation}",)
+        except Exception:
+            # Runtime evidence is safety-relevant; fail closed without exposing
+            # collaborator details through the removal review.
+            raise ProfileRepositoryError("unavailable") from None
+
+        return project_audio_cpp_artifact_removal_evidence(
+            reference,
+            saved_settings=saved,
+            draft_settings=draft,
+            profiles=tuple(profiles_with_counts),
+            staged_runtime_ids=staged_ids,
+            live_runtime_ids=live_ids,
+        )
 
     async def _ensure_tts_voice_bundle_service(
         self,
@@ -9391,6 +9519,9 @@ class TldwCli(
                 get_user_data_dir() / "tts_voice_bundle_portability",
                 self._tts_profile_repository,
                 self.tts_service,
+                artifact_lease_coordinator=(
+                    self._ensure_audio_cpp_artifact_lease_coordinator()
+                ),
             )
             self._tts_voice_bundle_service = service
         return service
@@ -10686,7 +10817,9 @@ class TldwCli(
         boot -- a route no click can ever reach should not be attempted.
         """
         shadowed_route_ids = set(registered_screen_aliases())
-        routes_by_id = {route.screen_name: route for route in registered_screen_routes()}
+        routes_by_id = {
+            route.screen_name: route for route in registered_screen_routes()
+        }
         ordered: list[ScreenRoute] = []
         seen_modules: set[str] = set()
 

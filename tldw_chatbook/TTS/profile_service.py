@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from itertools import islice
 from threading import RLock
@@ -19,6 +20,9 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSNativeCapabilitySnapshot,
     TTSProviderCatalog,
     TTSVoiceDiscoveryResult,
+)
+from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+    AudioCppArtifactConsumerRequirement,
 )
 from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
@@ -265,6 +269,14 @@ class _ProfileTTSServiceProtocol(Protocol):
         self,
         requirement: TTSCloneRecipeRequirement,
     ) -> AudioCppGuidedDependencySnapshot: ...
+
+
+@runtime_checkable
+class _ArtifactLeaseCoordinatorProtocol(Protocol):
+    def lease_consumers(
+        self,
+        consumers: Iterable[AudioCppArtifactConsumerRequirement],
+    ) -> AbstractContextManager[None]: ...
 
 
 def _validate_nonnegative_integer(value: object, code: str) -> int:
@@ -1345,6 +1357,7 @@ class TTSProfileService:
         repository: _ProfileRepositoryProtocol,
         tts_service: _ProfileTTSServiceProtocol,
         *,
+        artifact_lease_coordinator: _ArtifactLeaseCoordinatorProtocol | None = None,
         _uuid_factory: Callable[[], UUID] | None = None,
     ) -> None:
         validation_failed = False
@@ -1352,6 +1365,13 @@ class TTSProfileService:
             if (
                 not isinstance(repository, _ProfileRepositoryProtocol)
                 or not isinstance(tts_service, _ProfileTTSServiceProtocol)
+                or (
+                    artifact_lease_coordinator is not None
+                    and not isinstance(
+                        artifact_lease_coordinator,
+                        _ArtifactLeaseCoordinatorProtocol,
+                    )
+                )
                 or (_uuid_factory is not None and not callable(_uuid_factory))
             ):
                 validation_failed = True
@@ -1367,6 +1387,8 @@ class TTSProfileService:
             UUID, _ProfileEvidenceLifecycle
         ] = {}
         self._sample_evidence_epoch = 0
+        if artifact_lease_coordinator is not None:
+            self._artifact_lease_coordinator = artifact_lease_coordinator
         if _uuid_factory is not None:
             self._uuid_factory = _uuid_factory
 
@@ -1385,6 +1407,27 @@ class TTSProfileService:
         if validation_failed:
             raise ProfileServiceError("operation_failed")
         return cast(_PortableProfileRepositoryProtocol, self._repository)
+
+    @staticmethod
+    def _artifact_consumer(
+        provider_id: str,
+        model_id: str,
+        requirement: TTSCloneRecipeRequirement | None = None,
+    ) -> AudioCppArtifactConsumerRequirement:
+        return AudioCppArtifactConsumerRequirement(
+            provider_id=provider_id,
+            model_id=model_id,
+            recipe_requirement=requirement,
+        )
+
+    def _lease_artifact_consumers(
+        self,
+        *consumers: AudioCppArtifactConsumerRequirement,
+    ) -> AbstractContextManager[None]:
+        coordinator = getattr(self, "_artifact_lease_coordinator", None)
+        if coordinator is None:
+            return nullcontext()
+        return coordinator.lease_consumers(consumers)
 
     async def list_profiles(
         self,
@@ -2092,7 +2135,10 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.create_profile(draft)
+            with self._lease_artifact_consumers(
+                self._artifact_consumer(draft.provider_id, draft.model_id)
+            ):
+                result = await self._repository.create_profile(draft)
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -2280,13 +2326,20 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.create_profile_with_reference(
-                draft,
-                profile_id,
-                evidence.canonical_reference,
-                recipe_requirement,
-                expected_generation=repository_generation,
-            )
+            with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    draft.provider_id,
+                    draft.model_id,
+                    recipe_requirement,
+                )
+            ):
+                result = await self._repository.create_profile_with_reference(
+                    draft,
+                    profile_id,
+                    evidence.canonical_reference,
+                    recipe_requirement,
+                    expected_generation=repository_generation,
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -2342,12 +2395,24 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.update_profile(
-                loaded_profile.profile_id,
-                loaded_profile.revision,
-                draft,
-                expected_generation=loaded.repository_generation,
-            )
+            with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    loaded_profile.provider_id,
+                    loaded_profile.model_id,
+                    (
+                        None
+                        if loaded_profile.reference is None
+                        else loaded_profile.reference.recipe_requirement
+                    ),
+                ),
+                self._artifact_consumer(draft.provider_id, draft.model_id),
+            ):
+                result = await self._repository.update_profile(
+                    loaded_profile.profile_id,
+                    loaded_profile.revision,
+                    draft,
+                    expected_generation=loaded.repository_generation,
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -2401,10 +2466,21 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.create_profile(
-                draft,
-                expected_generation=loaded.repository_generation,
-            )
+            with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    source.provider_id,
+                    source.model_id,
+                    (
+                        None
+                        if source.reference is None
+                        else source.reference.recipe_requirement
+                    ),
+                )
+            ):
+                result = await self._repository.create_profile(
+                    draft,
+                    expected_generation=loaded.repository_generation,
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -2509,18 +2585,29 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.set_assignment(
-                canonical_ref,
-                profile.profile_id,
-                expected_generation=repository_generation,
-                expected_profile_revision=profile.revision,
-                expected_current_profile_id=(
-                    None
-                    if expected_assignment is None
-                    else expected_assignment.profile_id
-                ),
-                expected_profile=profile,
-            )
+            with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    profile.provider_id,
+                    profile.model_id,
+                    (
+                        None
+                        if profile.reference is None
+                        else profile.reference.recipe_requirement
+                    ),
+                )
+            ):
+                result = await self._repository.set_assignment(
+                    canonical_ref,
+                    profile.profile_id,
+                    expected_generation=repository_generation,
+                    expected_profile_revision=profile.revision,
+                    expected_current_profile_id=(
+                        None
+                        if expected_assignment is None
+                        else expected_assignment.profile_id
+                    ),
+                    expected_profile=profile,
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -2567,14 +2654,45 @@ class TTSProfileService:
         )
         self._require_repository_generation(expected_generation)
 
+        loaded_profile: TTSGenerationProfile | None = None
+        failed = False
+        try:
+            loaded_result = await self._repository.get_profile(
+                canonical_assignment.profile_id
+            )
+            loaded_value = self._require_admitted_store_result(
+                loaded_result,
+                expected_generation,
+            )
+            loaded_profile = _canonicalize_exact_profile(loaded_value)
+            if loaded_profile.profile_id != canonical_assignment.profile_id:
+                raise ProfileValidationError("assignment")
+        except (ProfileRepositoryError, ProfileValidationError):
+            raise
+        except Exception:  # noqa: BLE001 - hide unexpected repository detail
+            failed = True
+        if failed or loaded_profile is None:
+            raise ProfileServiceError("operation_failed")
+
         failed = False
         result = None
         try:
-            result = await self._repository.remove_assignment(
-                canonical_assignment.character_ref,
-                expected_generation=expected_generation,
-                expected_profile_id=canonical_assignment.profile_id,
-            )
+            with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    loaded_profile.provider_id,
+                    loaded_profile.model_id,
+                    (
+                        None
+                        if loaded_profile.reference is None
+                        else loaded_profile.reference.recipe_requirement
+                    ),
+                )
+            ):
+                result = await self._repository.remove_assignment(
+                    canonical_assignment.character_ref,
+                    expected_generation=expected_generation,
+                    expected_profile_id=canonical_assignment.profile_id,
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -2597,10 +2715,21 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.delete_profile(
-                profile.profile_id,
-                expected_generation=loaded.repository_generation,
-            )
+            with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    profile.provider_id,
+                    profile.model_id,
+                    (
+                        None
+                        if profile.reference is None
+                        else profile.reference.recipe_requirement
+                    ),
+                )
+            ):
+                result = await self._repository.delete_profile(
+                    profile.profile_id,
+                    expected_generation=loaded.repository_generation,
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -2751,11 +2880,17 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.create_profile(
-                portable.draft,
-                portable.profile_id,
-                expected_generation=expected_generation,
-            )
+            with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    portable.draft.provider_id,
+                    portable.draft.model_id,
+                )
+            ):
+                result = await self._repository.create_profile(
+                    portable.draft,
+                    portable.profile_id,
+                    expected_generation=expected_generation,
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -2783,15 +2918,23 @@ class TTSProfileService:
         result = None
         repository = self._require_portable_repository()
         try:
-            result = await repository.create_profile_with_assignment(
-                portable.draft,
-                portable.profile_id,
-                character_ref,
-                expected_generation=expected_generation,
-                expected_current_profile_id=(
-                    None if expected_current is None else expected_current.profile_id
-                ),
-            )
+            with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    portable.draft.provider_id,
+                    portable.draft.model_id,
+                )
+            ):
+                result = await repository.create_profile_with_assignment(
+                    portable.draft,
+                    portable.profile_id,
+                    character_ref,
+                    expected_generation=expected_generation,
+                    expected_current_profile_id=(
+                        None
+                        if expected_current is None
+                        else expected_current.profile_id
+                    ),
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -2827,16 +2970,29 @@ class TTSProfileService:
         failed = False
         result = None
         try:
-            result = await self._repository.set_assignment(
-                character_ref,
-                profile.profile_id,
-                expected_generation=expected_generation,
-                expected_profile_revision=profile.revision,
-                expected_current_profile_id=(
-                    None if expected_current is None else expected_current.profile_id
-                ),
-                expected_profile=profile,
-            )
+            with self._lease_artifact_consumers(
+                self._artifact_consumer(
+                    profile.provider_id,
+                    profile.model_id,
+                    (
+                        None
+                        if profile.reference is None
+                        else profile.reference.recipe_requirement
+                    ),
+                )
+            ):
+                result = await self._repository.set_assignment(
+                    character_ref,
+                    profile.profile_id,
+                    expected_generation=expected_generation,
+                    expected_profile_revision=profile.revision,
+                    expected_current_profile_id=(
+                        None
+                        if expected_current is None
+                        else expected_current.profile_id
+                    ),
+                    expected_profile=profile,
+                )
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail

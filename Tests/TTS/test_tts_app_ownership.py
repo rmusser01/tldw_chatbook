@@ -611,14 +611,19 @@ async def test_profile_service_concurrent_first_use_joins_one_open_and_construct
     repository = BlockingRepository()
     tts_service = object()
     profile_service = object()
-    constructions: list[tuple[object, object]] = []
+    coordinator = object()
+    constructions: list[tuple[object, object, object]] = []
 
     def build_profile_service(
         repository_dependency: object,
         tts_dependency: object,
+        *,
+        artifact_lease_coordinator: object,
     ) -> object:
         assert repository.state is ProfileRepositoryState.OPEN
-        constructions.append((repository_dependency, tts_dependency))
+        constructions.append(
+            (repository_dependency, tts_dependency, artifact_lease_coordinator)
+        )
         return profile_service
 
     monkeypatch.setattr(
@@ -639,6 +644,7 @@ async def test_profile_service_concurrent_first_use_joins_one_open_and_construct
         return await TldwCli._ensure_tts_profile_repository(owner)
 
     owner._ensure_tts_profile_repository = ensure_repository
+    owner._ensure_audio_cpp_artifact_lease_coordinator = lambda: coordinator
 
     first = asyncio.create_task(TldwCli._ensure_tts_profile_service(owner))
     second = asyncio.create_task(TldwCli._ensure_tts_profile_service(owner))
@@ -658,7 +664,7 @@ async def test_profile_service_concurrent_first_use_joins_one_open_and_construct
     assert await second is profile_service
     assert await TldwCli._ensure_tts_profile_service(owner) is profile_service
     assert repository.open_calls == 1
-    assert constructions == [(repository, tts_service)]
+    assert constructions == [(repository, tts_service, coordinator)]
     assert owner._tts_profile_service is profile_service
 
 
@@ -1005,7 +1011,16 @@ async def test_voice_bundle_service_is_lazy_singleton_and_closes_before_reposito
     profile_service = object()
     tts_service = object()
 
-    def build(root: Path, repo: object, dependency: object) -> object:
+    coordinator = object()
+
+    def build(
+        root: Path,
+        repo: object,
+        dependency: object,
+        *,
+        artifact_lease_coordinator: object,
+    ) -> object:
+        assert artifact_lease_coordinator is coordinator
         constructed.append((root, repo, dependency))
         return portability
 
@@ -1022,6 +1037,7 @@ async def test_voice_bundle_service_is_lazy_singleton_and_closes_before_reposito
         return profile_service
 
     owner._ensure_tts_profile_service = ensure_profile_service
+    owner._ensure_audio_cpp_artifact_lease_coordinator = lambda: coordinator
 
     first = await TldwCli._ensure_tts_voice_bundle_service(owner)
     second = await TldwCli._ensure_tts_voice_bundle_service(owner)

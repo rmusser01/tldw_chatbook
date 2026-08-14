@@ -1,5 +1,6 @@
 """Focused tests for the managed-model Installed view."""
 
+import asyncio
 import inspect
 import threading
 from collections.abc import Callable
@@ -1066,7 +1067,9 @@ def test_installed_worker_failures_are_logged_and_sanitized(
 
     fake_logger.opt.assert_called_once_with(exception=True)
     fake_logger.error.assert_called_once()
-    logged = " ".join(str(value) for value in fake_logger.error.call_args.args).casefold()
+    logged = " ".join(
+        str(value) for value in fake_logger.error.call_args.args
+    ).casefold()
     assert all(value in logged for value in log_context)
     assert marker not in str(fake_app.call_from_thread.call_args)
 
@@ -1095,6 +1098,179 @@ def test_deletion_requires_confirmation_before_starting_worker(monkeypatch) -> N
     assert isinstance(dialog, DeleteConfirmationDialog)
     callback(True)
     view._delete_model.assert_called_once_with(reference)
+
+
+def test_audio_cpp_dependency_confirmation_names_keep_consumers_acknowledgement(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalPreview,
+    )
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "q8_0")
+    preview = AudioCppArtifactRemovalPreview(
+        reference=reference,
+        fingerprint="b" * 64,
+        settings_labels=("Guided Settings",),
+        profile_labels=("Narrator",),
+        assignment_count=2,
+        clone_reference_count=1,
+        staged_or_live=False,
+        generic_lease_blocked=False,
+    )
+    fake_app = MagicMock()
+    monkeypatch.setattr(InstalledView, "app", property(lambda self: fake_app))
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=Path("/tmp/models"))
+
+    view._show_delete_confirmation(reference, preview)
+
+    dialog, _callback = fake_app.push_screen.call_args.args
+    assert dialog.confirm_label == "Remove package; keep consumers unavailable"
+    assert "remain unchanged and become unavailable" in dialog.additional_warning
+    assert "/" not in dialog.additional_warning
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_removal_worker_revalidates_without_self_probe_then_commits(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        build_audio_cpp_artifact_removal_preview,
+    )
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "q8_0")
+    evidence = AudioCppArtifactRemovalEvidence(
+        reference,
+        settings_consumers=(("saved", "Guided Settings", "package-1"),),
+    )
+    fingerprint = build_audio_cpp_artifact_removal_preview(evidence).fingerprint
+    events: list[str] = []
+
+    class Authority:
+        def commit(self) -> None:
+            events.append("commit")
+
+        def close(self) -> None:
+            events.append("close")
+
+    class Service:
+        def acquire_removal_authority(self, exact: ArtifactRef) -> Authority:
+            assert exact == reference
+            events.append("authority")
+            return Authority()
+
+        def probe_removal_availability(self, _exact: ArtifactRef):
+            raise AssertionError("authority revalidation must not self-probe")
+
+    async def collect(exact: ArtifactRef):
+        assert exact == reference
+        events.append("evidence")
+        return evidence
+
+    fake_app = MagicMock()
+    fake_app._audio_cpp_artifact_removal_evidence = collect
+    monkeypatch.setattr(InstalledView, "app", property(lambda self: fake_app))
+    view = InstalledView(
+        service_factory=lambda: Service(), legacy_dir=Path("/tmp/models")
+    )
+    view._apply_lifecycle_result = MagicMock()
+
+    await InstalledView._delete_audio_cpp_model.__wrapped__(
+        view,
+        reference,
+        fingerprint,
+    )
+
+    assert events == ["authority", "evidence", "commit", "close"]
+    view._apply_lifecycle_result.assert_called_once_with("delete", None)
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_removal_cancellation_waits_for_commit_before_cleanup(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        build_audio_cpp_artifact_removal_preview,
+    )
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "q8_0")
+    evidence = AudioCppArtifactRemovalEvidence(reference)
+    fingerprint = build_audio_cpp_artifact_removal_preview(evidence).fingerprint
+    commit_entered = threading.Event()
+    release_commit = threading.Event()
+    events: list[str] = []
+
+    class Authority:
+        def commit(self) -> None:
+            events.append("commit-start")
+            commit_entered.set()
+            assert release_commit.wait(timeout=3.0)
+            events.append("commit-end")
+
+        def close(self) -> None:
+            events.append("close")
+
+    class Service:
+        def acquire_removal_authority(self, _exact: ArtifactRef) -> Authority:
+            return Authority()
+
+    async def collect(_exact: ArtifactRef):
+        return evidence
+
+    fake_app = MagicMock()
+    fake_app._audio_cpp_artifact_removal_evidence = collect
+    monkeypatch.setattr(InstalledView, "app", property(lambda self: fake_app))
+    view = InstalledView(
+        service_factory=lambda: Service(), legacy_dir=Path("/tmp/models")
+    )
+    view._apply_lifecycle_result = MagicMock()
+
+    task = asyncio.create_task(
+        InstalledView._delete_audio_cpp_model.__wrapped__(
+            view,
+            reference,
+            fingerprint,
+        )
+    )
+    assert await asyncio.to_thread(commit_entered.wait, 1.0)
+    task.cancel()
+    await asyncio.sleep(0.05)
+    assert events == ["commit-start"]
+    release_commit.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert events == ["commit-start", "commit-end", "close"]
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_removal_retries_retained_cleanup_authority() -> None:
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    events: list[str] = []
+
+    class Authority:
+        attempts = 0
+
+        def close(self) -> None:
+            self.attempts += 1
+            events.append(f"close-{self.attempts}")
+            if self.attempts == 1:
+                raise RuntimeError("still busy")
+
+    authority = Authority()
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=Path("/tmp/models"))
+    view._removal_cleanup_authorities.append(authority)
+
+    assert await view._retry_audio_cpp_removal_cleanup() is False
+    assert view._removal_cleanup_authorities == [authority]
+    assert await view._retry_audio_cpp_removal_cleanup() is True
+    assert view._removal_cleanup_authorities == []
+    assert events == ["close-1", "close-2"]
 
 
 def test_deletion_guard_blocks_before_and_after_confirmation(monkeypatch) -> None:
@@ -1579,7 +1755,9 @@ async def test_tldwcli_css_finish_slice_restores_terminal_import_focus(
     try:
         async with app.run_test(size=(80, 24)) as pilot:
             assert app.CSS_PATH == TldwCli.CSS_PATH
-            await app.push_screen(LocalGGUFImportConsentModal(source, source.stat().st_size))
+            await app.push_screen(
+                LocalGGUFImportConsentModal(source, source.stat().st_size)
+            )
             await pilot.pause()
             cancel = app.screen.query_one("#local-gguf-import-cancel", Button)
             confirm = app.screen.query_one("#local-gguf-import-confirm", Button)
@@ -1604,9 +1782,9 @@ async def test_tldwcli_css_finish_slice_restores_terminal_import_focus(
             await _wait_until(pilot, lambda: service.inventory_reads >= 1)
             await _wait_until(
                 pilot,
-                lambda: view.query_one(
-                    "#installed-models-import-gguf", Button
-                ).has_focus,
+                lambda: (
+                    view.query_one("#installed-models-import-gguf", Button).has_focus
+                ),
             )
 
             assert "Imported and ready" in _rendered_static_text(view)

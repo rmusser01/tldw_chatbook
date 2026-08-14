@@ -9,6 +9,7 @@ import pickle
 import stat
 import struct
 import threading
+from contextlib import contextmanager
 from dataclasses import fields, is_dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -252,6 +253,55 @@ def _service(tmp_path: Path, **kwargs):
         **kwargs,
     )
     return service, repository, dependency
+
+
+class _ArtifactLeaseCoordinator:
+    def __init__(self) -> None:
+        self.active = False
+        self.calls: list[tuple[object, ...]] = []
+
+    @contextmanager
+    def lease_consumers(self, consumers):
+        self.calls.append(tuple(consumers))
+        self.active = True
+        try:
+            yield
+        finally:
+            self.active = False
+
+
+@pytest.mark.asyncio
+async def test_bundle_import_holds_artifact_lease_through_repository_commit(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "selected.tldw-voice.zip"
+    _write_source(source)
+    coordinator = _ArtifactLeaseCoordinator()
+    service, repository, _dependency = _service(
+        tmp_path,
+        artifact_lease_coordinator=coordinator,
+    )
+    repository_commit = repository.commit_bundle_import
+
+    async def guarded_commit(command):
+        assert coordinator.active is True
+        return await repository_commit(command)
+
+    repository.commit_bundle_import = guarded_commit
+    review = await service.inspect(source)
+
+    await service.commit(
+        review.handle,
+        TTSVoiceBundleImportChoice("create", False),
+    )
+
+    assert coordinator.active is False
+    assert len(coordinator.calls) == 1
+    requirement = coordinator.calls[0][0]
+    assert requirement.provider_id == "audio_cpp"
+    assert requirement.model_id == "model-a"
+    assert requirement.recipe_requirement == _requirement()
+    await service.close()
 
 
 def _write_source(path: Path, bundle: TTSCloneVoiceBundle | None = None) -> None:

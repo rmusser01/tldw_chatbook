@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 from collections.abc import Callable
@@ -28,6 +29,7 @@ from tldw_chatbook.Model_Artifacts.service import (
     ArtifactDiskUsage,
     ArtifactInUseError,
     ArtifactNotReadyError,
+    ArtifactRemovalAvailability,
     ArtifactRef,
     ArtifactIntegrityError,
     ArtifactStateError,
@@ -35,6 +37,11 @@ from tldw_chatbook.Model_Artifacts.service import (
     LocalGGUFImportResult,
     ModelArtifactService,
     ReconcileReport,
+)
+from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+    AudioCppArtifactRemovalPreview,
+    build_audio_cpp_artifact_removal_preview,
+    is_curated_audio_cpp_artifact_reference,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_service
 from tldw_chatbook.UI.Screens.model_browser_state import (
@@ -245,6 +252,8 @@ class InstalledView(Widget):
         self._operation_reference: ArtifactRef | None = None
         self._operation_name: str | None = None
         self._pending_delete_reference: ArtifactRef | None = None
+        self._pending_removal_preview: AudioCppArtifactRemovalPreview | None = None
+        self._removal_cleanup_authorities: list[object] = []
         self._import_generation = 0
         self._import_selecting = False
         self._import_active = False
@@ -342,7 +351,9 @@ class InstalledView(Widget):
         elif self._load_error:
             yield Static(self._load_error, markup=False)
         elif not self._loaded:
-            yield Static("Open Installed to load the local model inventory.", markup=False)
+            yield Static(
+                "Open Installed to load the local model inventory.", markup=False
+            )
         else:
             yield self._summary()
 
@@ -538,7 +549,9 @@ class InstalledView(Widget):
             self._service = self._service_factory()
         return self._service
 
-    @work(thread=True, group="installed_models_load", exclusive=True, exit_on_error=False)
+    @work(
+        thread=True, group="installed_models_load", exclusive=True, exit_on_error=False
+    )
     def _load_inventory(self) -> None:
         """Read managed inventory, disk totals, and legacy files off-loop."""
         try:
@@ -1034,26 +1047,127 @@ class InstalledView(Widget):
             return
         self._pending_delete_reference = event.reference
         self.refresh(recompose=True)
+        if is_curated_audio_cpp_artifact_reference(event.reference):
+            self._operation_reference = event.reference
+            self._operation_name = "review-removal"
+            self._review_audio_cpp_deletion(event.reference)
+            return
+        self._show_delete_confirmation(event.reference)
+
+    def _show_delete_confirmation(
+        self,
+        reference: ArtifactRef,
+        preview: AudioCppArtifactRemovalPreview | None = None,
+    ) -> None:
+        warning = "The managed model files will be removed from this device."
+        if preview is not None:
+            impacts = (
+                len(preview.settings_labels)
+                + len(preview.profile_labels)
+                + preview.assignment_count
+                + preview.clone_reference_count
+            )
+            if impacts:
+                warning = (
+                    f"{len(preview.settings_labels)} Settings consumer(s), "
+                    f"{len(preview.profile_labels)} profile(s), "
+                    f"{preview.assignment_count} assignment(s), and "
+                    f"{preview.clone_reference_count} private clone reference(s) "
+                    "will remain unchanged and become unavailable."
+                )
+        dialog = DeleteConfirmationDialog(
+            item_type="Model",
+            item_name=f"{reference.artifact_id} ({reference.variant})",
+            additional_warning=warning,
+            permanent=True,
+        )
+        if preview is not None and (
+            preview.settings_labels
+            or preview.profile_labels
+            or preview.assignment_count
+            or preview.clone_reference_count
+        ):
+            dialog.confirm_label = "Remove package; keep consumers unavailable"
         self.app.push_screen(
-            DeleteConfirmationDialog(
-                item_type="Model",
-                item_name=(
-                    f"{event.reference.artifact_id} "
-                    f"({event.reference.variant})"
-                ),
-                additional_warning=(
-                    "The managed model files will be removed from this device."
-                ),
-                permanent=True,
-            ),
+            dialog,
             self._confirm_deletion,
         )
+
+    async def _collect_audio_cpp_removal_preview(
+        self,
+        reference: ArtifactRef,
+        *,
+        include_probe: bool,
+    ) -> AudioCppArtifactRemovalPreview:
+        collector = getattr(self.app, "_audio_cpp_artifact_removal_evidence", None)
+        if not callable(collector):
+            raise ArtifactStateError("audio.cpp dependency review is unavailable")
+        evidence = await collector(reference)
+        generic_blocked = False
+        if include_probe:
+            availability = await asyncio.to_thread(
+                self._service_for_worker().probe_removal_availability,
+                reference,
+            )
+            generic_blocked = availability is ArtifactRemovalAvailability.BUSY
+        return build_audio_cpp_artifact_removal_preview(
+            evidence,
+            generic_lease_blocked=generic_blocked,
+        )
+
+    @work(group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
+    async def _review_audio_cpp_deletion(self, reference: ArtifactRef) -> None:
+        """Build the pre-confirmation dependency review without blocking paint."""
+
+        if not await self._retry_audio_cpp_removal_cleanup():
+            self._operation_reference = None
+            self._operation_name = None
+            self._pending_delete_reference = None
+            self.notify(
+                "Removal cleanup is incomplete. Retry after cleanup settles.",
+                severity="error",
+            )
+            self.refresh(recompose=True)
+            return
+        try:
+            preview = await self._collect_audio_cpp_removal_preview(
+                reference,
+                include_probe=True,
+            )
+        except Exception:
+            self._operation_reference = None
+            self._operation_name = None
+            self._pending_delete_reference = None
+            self.notify(
+                "Package dependencies could not be reviewed. Retry removal.",
+                severity="error",
+            )
+            self.refresh(recompose=True)
+            return
+        if preview.staged_or_live or preview.generic_lease_blocked:
+            self._operation_reference = None
+            self._operation_name = None
+            self._pending_delete_reference = None
+            self.notify(
+                (
+                    "Another operation is using this package. "
+                    "Stop or discard active work, then review removal again."
+                ),
+                severity="warning",
+            )
+            self.refresh(recompose=True)
+            return
+        self._operation_reference = None
+        self._operation_name = None
+        self._pending_removal_preview = preview
+        self._show_delete_confirmation(reference, preview)
 
     def _confirm_deletion(self, confirmed: bool) -> None:
         """Start deletion only after the confirmation dialog accepts it."""
         reference = self._pending_delete_reference
         self._pending_delete_reference = None
         if not confirmed or reference is None:
+            self._pending_removal_preview = None
             self.refresh(recompose=True)
             return
         blocked = self._may_delete(reference)
@@ -1071,9 +1185,77 @@ class InstalledView(Widget):
         self._operation_reference = reference
         self._operation_name = "delete"
         self.refresh(recompose=True)
-        self._delete_model(reference)
+        preview = self._pending_removal_preview
+        self._pending_removal_preview = None
+        if preview is None:
+            self._delete_model(reference)
+        else:
+            self._delete_audio_cpp_model(reference, preview.fingerprint)
 
-    @work(thread=True, group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
+    @work(group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
+    async def _delete_audio_cpp_model(
+        self,
+        reference: ArtifactRef,
+        fingerprint: str,
+    ) -> None:
+        """Own authority, drift revalidation, commit, and cleanup in one worker."""
+
+        authority = None
+        try:
+            service = self._service_for_worker()
+            authority = await asyncio.to_thread(
+                service.acquire_removal_authority,
+                reference,
+            )
+            current = await self._collect_audio_cpp_removal_preview(
+                reference,
+                include_probe=False,
+            )
+            if current.fingerprint != fingerprint:
+                self._apply_lifecycle_result(
+                    "delete",
+                    "Review changed dependencies. Open removal preview again.",
+                )
+                return
+            commit_task = asyncio.create_task(asyncio.to_thread(authority.commit))
+            try:
+                await asyncio.shield(commit_task)
+            except asyncio.CancelledError:
+                # ``to_thread`` cannot be cancelled. Keep the authority until
+                # its destructive commit has definitely settled.
+                await asyncio.shield(commit_task)
+                raise
+            self._apply_lifecycle_result("delete", None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._finish_delete_failure(reference, exc)
+        finally:
+            if authority is not None:
+                try:
+                    await asyncio.shield(asyncio.to_thread(authority.close))
+                except BaseException:
+                    self._removal_cleanup_authorities.append(authority)
+
+    async def _retry_audio_cpp_removal_cleanup(self) -> bool:
+        """Retry retained authority cleanup without starting a background loop."""
+
+        retained = self._removal_cleanup_authorities
+        self._removal_cleanup_authorities = []
+        for authority in retained:
+            try:
+                close = getattr(authority, "close")
+                await asyncio.shield(asyncio.to_thread(close))
+            except BaseException:
+                self._removal_cleanup_authorities.append(authority)
+        return not self._removal_cleanup_authorities
+
+    @work(
+        thread=True,
+        group="installed_models_lifecycle",
+        exclusive=True,
+        exit_on_error=False,
+    )
     def _activate_model(self, reference: ArtifactRef) -> None:
         """Activate one exact verified model off the event loop."""
         try:
@@ -1094,7 +1276,12 @@ class InstalledView(Widget):
             return
         self.app.call_from_thread(self._apply_lifecycle_result, "activate", None)
 
-    @work(thread=True, group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
+    @work(
+        thread=True,
+        group="installed_models_lifecycle",
+        exclusive=True,
+        exit_on_error=False,
+    )
     def _delete_model(self, reference: ArtifactRef) -> None:
         """Delete one exact model, retrying once after proven idle recycle."""
         try:
@@ -1188,7 +1375,12 @@ class InstalledView(Widget):
             return False
         return self._set_delete_phase(reference, "recycle-retry")
 
-    @work(thread=True, group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
+    @work(
+        thread=True,
+        group="installed_models_lifecycle",
+        exclusive=True,
+        exit_on_error=False,
+    )
     def _repair_store(self) -> None:
         """Run explicit reconciliation off the event loop."""
         try:
