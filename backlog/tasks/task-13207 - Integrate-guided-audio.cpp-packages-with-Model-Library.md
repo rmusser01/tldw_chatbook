@@ -1,10 +1,10 @@
 ---
 id: TASK-13207
 title: Integrate guided audio.cpp packages with Model Library
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-09 17:39'
-updated_date: '2026-08-14 10:48'
+updated_date: '2026-08-14 19:37'
 labels:
   - tts
   - audio-cpp
@@ -32,13 +32,13 @@ Connect reviewed audio.cpp model artifacts to the existing Model Library and pro
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Model Library exposes only reviewed audio.cpp artifacts mapped to an exact recipe/package identity and displays family, variant, speech tasks, size/checksum/license/source, required companion files, and exact evidenced compatibility without implying it installs audiocpp_server.
+- [x] #1 Model Library exposes only reviewed audio.cpp artifacts mapped to an exact recipe/package identity and displays family, variant, speech tasks, size/checksum/license/source, required companion files, and exact evidenced compatibility without implying it installs audiocpp_server.
 - [x] #2 Installation occurs only after explicit user action through the existing shared artifact-store owner, verifies the declared artifact, and returns the exact installed package root/identity to the preserved Guided Settings draft without launching audio.cpp or changing global/Studio defaults.
 - [x] #3 Returning from Model Library preserves all unrelated Settings draft fields and shows the installed package in the same exact review/validation flow as a scanned local package before Save.
 - [x] #4 A removal preview accounts for global guided configurations, TTS profiles and clone references, character assignments, active/staged runtime generations, and shared artifact owners before any bytes are removed.
 - [x] #5 Removal requires an explicit resolution for every blocking dependency, never silently retargets a configuration/profile/character, never deletes a reference asset as a side effect, and does not disrupt an immutable live child snapshot.
 - [x] #6 Interrupted install/remove, checksum failure, missing files, shared ownership, and source disappearance produce truthful recoverable state with no partial authority transfer or orphaned registry entry.
-- [ ] #7 Hermetic store/UI/dependency tests and a clean-profile UAT cover install → exact-root return → guided Save → sample generation plus blocked and approved removal, with no network or large artifact requirement in normal CI.
+- [x] #7 Hermetic store/UI/dependency tests and a clean-profile UAT cover install → exact-root return → guided Save → sample generation plus blocked and approved removal, with no network or large artifact requirement in normal CI.
 - [x] #8 The pinned 21-family, 67-package inventory has no open recipe gap and keeps recipe support separate from artifact availability: every variant is reviewed as downloadable, local-only, or explicitly unsupported, with no family-specific installer path or silent accounting gap.
 <!-- AC:END -->
 
@@ -64,46 +64,42 @@ Executable TDD plan: Docs/superpowers/plans/2026-08-13-audio-cpp-model-library-i
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-- Implemented the reviewed 21-family/67-package inventory join, curated
-  inactive provisioning, exact detached Settings handoff, shared inactive-root
-  leases, staged/live runtime ownership, ordered dependency preview and
-  acknowledged removal through the public artifact service.
-- ADR check: no new ADR. The implementation follows and links
-  [ADR-050](../decisions/050-audio-cpp-generated-model-setup-ownership.md) and
-  [ADR-051](../decisions/051-private-tts-clone-reference-assets.md).
+- Implemented the reviewed 21-family/67-package inventory join, curated inactive
+  provisioning, exact detached Settings handoff, shared inactive-root leases,
+  staged/live runtime ownership, dependency preview, and acknowledged removal
+  through the public artifact service.
+- ADR check: no new ADR. The implementation follows ADR-050 for artifact/runtime
+  ownership and ADR-051 for private clone-reference assets.
 - Added hermetic registry, acquisition, Settings/Model Library, runtime,
-  dependency, removal, interruption, and concurrency coverage. Five required
-  mutation checks each failed their named test and passed after restoration.
-- Live evidence is recorded in
-  `Docs/superpowers/qa/audio-cpp-model-library-2026-08-13/live-uat.md`. Exact
-  official install, inactive return, health/catalog, lease ownership, and
-  blocked/acknowledged removal passed. A mounted slow-lease regression now
-  proves the current remounted Save is enabled only after exact acknowledgement;
-  a fresh isolated full-app UAT persisted the managed identity and three
-  unrelated dirty draft families through the actual Save action without
-  autosaving. The host audio.cpp 0.5.1 server still returned structured HTTP 500
-  for the pinned Inflect package on CPU and Metal. Although eSpeak-ng artifacts
-  were installed, basename loading failed and the server had neither a direct
-  eSpeak link nor an embedded loader search path, so the prerequisite was not
-  validated. The retained safe output did not identify the server diagnostic
-  cause; loader failure remains a possibility, not a compatibility conclusion.
-  This was not a prerequisite-complete compatibility test, and audible playback
-  is not claimed. A later user-owned advanced run with explicit eSpeak
-  library/data options may diagnose Inflect and provide criterion #1
-  compatibility evidence, but it cannot close criterion #7 because it bypasses
-  the returned Guided package/configuration path. Criterion #7 requires a truly
-  path-free Guided package to complete install → exact-root return → Save →
-  sample generation, unless explicit-path support is deliberately admitted to
-  Guided scope in a separate change.
-- Corrected the asynchronous UI tests to wait for the exact mounted/composed
-  controls they exercise. Deterministic CSS verification now rebuilds to a
-  temporary file and ignores only the generated timestamp rather than invoking
-  the mutating builder with an unsupported `--check` argument.
-- Final exact sandbox matrix: 1,270 passed and 18 expected loopback-bind
-  denials. The final unrestricted matrix request was rejected before process
-  start by the runner approval-usage limit, so no fresh host all-green total is
-  claimed.
-- Criteria #2–#6 and #8 have fresh automated and live evidence. Status remains
-  **In Progress**; criteria #1 and #7 remain unchecked under the distinct
-  compatibility and Guided generation gates above.
+  dependency, removal, interruption, privacy, accessibility, and concurrency
+  coverage. All five required mutation checks failed their named test and passed
+  after restoration.
+- Final exact unrestricted 17-file matrix: 1,288 passed with only 5 existing
+  dependency/deprecation warnings. Changed-file Ruff and format checks, scoped
+  mypy, deterministic CSS sync, privacy scan, backlog parse, and diff checks are
+  clean.
+- Live UAT is recorded in
+  `Docs/superpowers/qa/audio-cpp-model-library-2026-08-13/live-uat.md`. The
+  isolated path-free Supertonic flow provisioned the exact pinned artifact
+  inactive, returned and saved the exact managed identity/root through the real
+  Settings flow, reloaded it in a fresh app, exposed only
+  `supertonic-3-f16`, and generated a valid 319,904-byte PCM16 mono 44.1 kHz
+  WAV. Human playback confirmed intelligible speech.
+- The earlier Inflect HTTP 500 remains a prerequisite-specific diagnostic
+  result, not a compatibility claim or release blocker; the path-free
+  Supertonic flow supplies the required Guided end-to-end evidence.
+- No new general lesson was added: the recompose/mount synchronization incident
+  is already covered by the repository testing lessons.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed the reviewed audio.cpp Model Library integration with exact inactive
+provisioning, Settings handoff, runtime/shared lease ownership, dependency-aware
+acknowledged removal, and evidence-backed lifecycle UI. Final verification:
+1,288 release-matrix tests passed; Ruff, formatting, scoped mypy, CSS sync,
+privacy, backlog, and diff gates passed. Clean isolated Supertonic UAT completed
+install, exact-root return, real Save, fresh-app reload, catalog, and intelligible
+WAV generation.
+<!-- SECTION:FINAL_SUMMARY:END -->

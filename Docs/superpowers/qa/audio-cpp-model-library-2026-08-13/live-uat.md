@@ -22,6 +22,11 @@ Date: 2026-08-14
   session paths are absent. The prerequisite was therefore **not validated**.
   No private paths, submitted text, audio bytes, credentials, or generated
   configuration contents are recorded here.
+- Path-free retry package: `audio-cpp-supertonic-3-f16`, artifact variant
+  `f16`, package variant `supertonic_3_f16`, at the same pinned inventory
+  commit. Declared and downloaded size: 312,784,196 bytes. Verified SHA-256:
+  `b312b57797d40ac5c09d915893dbdbaf6405b7dc043f544776c5c95712dff88c`.
+  This recipe has no external runtime-library prerequisite.
 
 ## Results
 
@@ -42,14 +47,24 @@ Date: 2026-08-14
   launched one owned child. Health and catalog checks passed and exposed exactly
   one `inflect_v2` TTS model. The runtime lease was busy while the child ran and
   available after stop.
-- **PARTIAL — sample generation:** the real server returned structured HTTP 500
-  for the pinned Inflect recipe on both automatic Metal selection and explicit
-  CPU. Chatbook reported bounded `generation_failed`; no playable WAV existed.
+- **PARTIAL — Inflect sample generation:** the real server returned structured
+  HTTP 500 for the pinned Inflect recipe on both automatic Metal selection and
+  explicit CPU. Chatbook reported bounded `generation_failed`; no playable WAV
+  existed.
   The retained privacy-safe server output did not identify a diagnostic cause.
   Because basename loading failed independently, the HTTP 500 may reflect an
   eSpeak loader failure, but that inference is not a demonstrated server cause.
   This run was not a prerequisite-complete compatibility test and does not
   establish audible success.
+- **PASS — path-free Guided sample generation:** in a new isolated root, the
+  production acquisition service preflighted and provisioned the exact
+  Supertonic artifact with activation disabled. Settings returned and merged
+  that exact managed identity, the real Save action persisted its recipe,
+  variant, public model ID, and canonical installed root, and a fresh app
+  process reloaded those saved values. Deliberate Test/Start then exposed only
+  `supertonic-3-f16` and generated a 319,904-byte PCM16 mono 44.1 kHz WAV through
+  the production TTS service. Human playback confirmed the speech was
+  intelligible.
 - **PASS — removal authority:** removal was blocked while referenced, remained
   blocked without acknowledgement, and completed only after explicit resolution
   and acknowledgement. Runtime handles were released only after child stop and
@@ -70,12 +85,15 @@ Date: 2026-08-14
   mounting. The production transaction now brackets merge with the current
   Save action's mount signal before and after recompose. The complete ordered
   handoff file then passed 122 tests.
-- Final exact sandbox matrix: 1,270 passed and 18 failed. Every failure was the
+- Earlier exact sandbox matrix: 1,270 passed and 18 failed. Every failure was the
   expected sandbox `PermissionError` while binding an ephemeral loopback
   fixture; no product/test-synchronization failure remained. A final
   unrestricted invocation was requested but rejected before process start by
-  the runner's approval-usage limit, so a fresh 1,288-test host all-green total
-  is not claimed.
+  the runner's approval-usage limit. That host gate was retried successfully
+  below.
+- Fresh unrestricted retry: **1,288 passed**, 5 existing dependency/deprecation
+  warnings, in 712.79 seconds. This is the exact 17-file release matrix with
+  loopback fixtures enabled; no test was deselected and no failure remained.
 - All five required mutations produced the named red test: provisioning without
   `activate=False`; stale-draft acceptance; runtime-handle release before child
   stop; bypassing public deletion; and skipping the removal fingerprint recheck.
@@ -83,14 +101,7 @@ Date: 2026-08-14
 
 ## Release gate
 
-UAT is **PARTIAL**. The clean isolated Guided return and Save now pass. Do not
-mark TASK-13207 Done. A later user-owned advanced `server.json` run with explicit
-eSpeak library and data locations may diagnose Inflect and provide compatibility
-evidence for criterion #1, but it does not exercise the returned Guided
-package/configuration path and cannot close criterion #7. Criterion #7 requires
-a truly path-free Guided package to complete install → exact-root return → Save
-→ sample generation, unless explicit-path support is deliberately admitted to
-Guided scope in a separate change. The 17-file matrix also requires a fresh
-unrestricted all-green run. The current evidence must not be read as a
-prerequisite-complete compatibility test, audible generation success, or a
-host-matrix pass.
+UAT is **PASS**. The path-free Supertonic run covers install → exact-root return
+→ Save → structurally and audibly valid sample generation, and the fresh
+unrestricted matrix is green. The earlier advanced `server.json` guidance
+remains diagnostic for Inflect only and is not needed to close the Guided path.
