@@ -660,6 +660,65 @@ def test_hosted_chat_stream_accepts_usage_only_after_terminal_choice() -> None:
     assert stream.terminal_turn.usage == {"total_tokens": 3}
 
 
+def test_hosted_chat_stream_accepts_terminal_choice_usage() -> None:
+    event = {
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": "done"},
+                "finish_reason": "stop",
+                "usage": {"total_tokens": 3},
+            }
+        ]
+    }
+    stream = HostedChatStream(
+        iter(
+            [
+                SSERecord(event=None, data=json.dumps(event)),
+                SSERecord(event=None, data="[DONE]"),
+            ]
+        ),
+        finish_policy=_POLICY,
+    )
+
+    assert list(stream) == [event]
+    assert stream.terminal_turn.usage == {"total_tokens": 3}
+
+
+@pytest.mark.parametrize(
+    "choice_usage,top_level_usage,finish_reason",
+    [
+        (True, None, "stop"),
+        ({"total_tokens": 3}, {"total_tokens": 3}, "stop"),
+        ({"total_tokens": 3}, None, None),
+    ],
+)
+def test_hosted_chat_stream_rejects_malformed_or_misplaced_choice_usage(
+    choice_usage: object,
+    top_level_usage: object,
+    finish_reason: str | None,
+) -> None:
+    event = {
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": "done"},
+                "finish_reason": finish_reason,
+                "usage": choice_usage,
+            }
+        ]
+    }
+    if top_level_usage is not None:
+        event["usage"] = top_level_usage
+    stream = HostedChatStream(
+        iter([SSERecord(event=None, data=json.dumps(event))]),
+        finish_policy=_POLICY,
+    )
+
+    with pytest.raises(HostedChatProtocolError):
+        list(stream)
+
+
 @pytest.mark.parametrize("fingerprint", ["fp_kimi_live", None])
 def test_hosted_chat_stream_accepts_system_fingerprint(
     fingerprint: str | None,

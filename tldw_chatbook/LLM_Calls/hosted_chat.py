@@ -221,8 +221,14 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             "index",
             "delta",
             "finish_reason",
+            "usage",
         }:
             raise HostedChatProtocolError("Hosted Chat stream choice is malformed.")
+        if "usage" in choice:
+            choice_usage = choice.get("usage")
+            if "usage" in event or not isinstance(choice_usage, Mapping):
+                raise HostedChatProtocolError("Hosted Chat stream usage is malformed.")
+            usage = choice_usage
         if type(choice.get("index")) is not int or choice.get("index") != 0:
             raise HostedChatProtocolError(
                 "Hosted Chat stream choice index is malformed."

@@ -59,7 +59,17 @@ def _sse(events: Sequence[dict[str, Any]], *, done: bool = True) -> bytes:
     return wire + (b"data: [DONE]\n\n" if done else b"")
 
 
+def _stream_usage(provider: str, usage: dict[str, int]) -> tuple[dict, list[dict]]:
+    if provider == "moonshot":
+        return {"usage": usage}, []
+    return {}, [{"choices": [], "usage": usage}]
+
+
 def _tool_turn(provider: str) -> bytes:
+    choice_usage, trailing_usage = _stream_usage(
+        provider,
+        {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30},
+    )
     return _sse(
         [
             {
@@ -100,15 +110,17 @@ def _tool_turn(provider: str) -> bytes:
                     else {}
                 ),
             },
-            {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
             {
-                "choices": [],
-                "usage": {
-                    "prompt_tokens": 20,
-                    "completion_tokens": 10,
-                    "total_tokens": 30,
-                },
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "tool_calls",
+                        **choice_usage,
+                    }
+                ]
             },
+            *trailing_usage,
         ]
     )
 
@@ -215,6 +227,10 @@ def _final_turn(
     reasoning: str | None = None,
 ) -> bytes:
     reasoning = reasoning or f"PRIVATE-{provider}-FINAL-REASONING"
+    choice_usage, trailing_usage = _stream_usage(
+        provider,
+        {"prompt_tokens": 30, "completion_tokens": 5, "total_tokens": 35},
+    )
     return _sse(
         [
             {
@@ -227,17 +243,11 @@ def _final_turn(
                             "reasoning_content": reasoning,
                         },
                         "finish_reason": "stop",
+                        **choice_usage,
                     }
                 ]
             },
-            {
-                "choices": [],
-                "usage": {
-                    "prompt_tokens": 30,
-                    "completion_tokens": 5,
-                    "total_tokens": 35,
-                },
-            },
+            *trailing_usage,
         ]
     )
 
