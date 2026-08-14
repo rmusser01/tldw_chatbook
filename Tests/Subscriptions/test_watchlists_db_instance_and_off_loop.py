@@ -30,6 +30,7 @@ the_calling_thread` pins.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import threading
 import time
@@ -601,6 +602,144 @@ async def test_below_threshold_cpu_work_stops_before_significant_change_details(
         (source_id,),
     ).fetchall()
     assert [row["extracted_content"] for row in snapshots] == [previous_text]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_change_worker_does_not_resume_check_or_mutate_state(
+    tmp_path, monkeypatch
+):
+    """Cancelling the await abandons a late worker result without failure."""
+    before_html = """<html><body>
+<p>Alpha sentence.</p>
+<p>Shared context.</p>
+</body></html>"""
+    after_html = """<html><body>
+<p>Beta sentence.</p>
+<p>Shared context.</p>
+</body></html>"""
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    source_id = db.add_subscription(
+        name="Cancelled page",
+        type="url",
+        source="https://example.com/page",
+        change_threshold=0.0,
+    )
+    subscription = db.get_subscription(source_id)
+    _serve_in_order(monkeypatch, [before_html, after_html])
+    monitor = URLMonitor(db)
+
+    first_item, first_disposition = await monitor.check_url(subscription)
+    assert first_item is None
+    assert first_disposition["kind"] == "baseline_stored"
+
+    breaker = monitor.circuit_breakers[source_id]
+    success_calls: list[int] = []
+    real_record_success = breaker.record_success
+
+    def recording_success() -> None:
+        success_calls.append(threading.get_ident())
+        real_record_success()
+
+    monkeypatch.setattr(breaker, "record_success", recording_success)
+    real_details = monitoring_engine._build_significant_change_details
+    worker_entered = threading.Event()
+    release_worker = threading.Event()
+    worker_finished = threading.Event()
+    worker_threads: list[int] = []
+
+    def blocked_details(previous_text, current_text):
+        worker_threads.append(threading.get_ident())
+        worker_entered.set()
+        try:
+            release_worker.wait()
+            return real_details(previous_text, current_text)
+        finally:
+            worker_finished.set()
+
+    monkeypatch.setattr(
+        monitoring_engine, "_build_significant_change_details", blocked_details
+    )
+    loop_thread = threading.get_ident()
+    check_task = asyncio.create_task(monitor.check_url(subscription))
+
+    try:
+        assert await asyncio.to_thread(worker_entered.wait, 5.0)
+        check_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await check_task
+    finally:
+        release_worker.set()
+        assert await asyncio.to_thread(worker_finished.wait, 5.0)
+
+    snapshots = db.conn.execute(
+        "SELECT extracted_content FROM url_snapshots "
+        "WHERE subscription_id = ? ORDER BY id",
+        (source_id,),
+    ).fetchall()
+    assert len(snapshots) == 1
+    assert snapshots[0]["extracted_content"] == "Alpha sentence. Shared context."
+    assert breaker.failure_count == 0
+    assert success_calls == []
+    assert check_task.cancelled()
+    assert len(worker_threads) == 1
+    assert worker_threads[0] != loop_thread
+
+
+@pytest.mark.asyncio
+async def test_failing_change_worker_propagates_and_records_breaker_failure(
+    tmp_path, monkeypatch
+):
+    """A grouped-worker exception propagates through the existing failure path."""
+    before_html = """<html><body>
+<p>Alpha sentence.</p>
+<p>Shared context.</p>
+</body></html>"""
+    after_html = """<html><body>
+<p>Beta sentence.</p>
+<p>Shared context.</p>
+</body></html>"""
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    source_id = db.add_subscription(
+        name="Failing page",
+        type="url",
+        source="https://example.com/page",
+        change_threshold=0.0,
+    )
+    subscription = db.get_subscription(source_id)
+    _serve_in_order(monkeypatch, [before_html, after_html])
+    monitor = URLMonitor(db)
+
+    first_item, first_disposition = await monitor.check_url(subscription)
+    assert first_item is None
+    assert first_disposition["kind"] == "baseline_stored"
+
+    class SignificantDetailsError(RuntimeError):
+        pass
+
+    worker_threads: list[int] = []
+
+    def failing_details(_previous_text, _current_text):
+        worker_threads.append(threading.get_ident())
+        raise SignificantDetailsError("significant details failed")
+
+    monkeypatch.setattr(
+        monitoring_engine, "_build_significant_change_details", failing_details
+    )
+    loop_thread = threading.get_ident()
+
+    with pytest.raises(SignificantDetailsError, match="significant details failed"):
+        await monitor.check_url(subscription)
+
+    snapshots = db.conn.execute(
+        "SELECT extracted_content FROM url_snapshots "
+        "WHERE subscription_id = ? ORDER BY id",
+        (source_id,),
+    ).fetchall()
+    assert len(snapshots) == 1
+    assert snapshots[0]["extracted_content"] == "Alpha sentence. Shared context."
+    assert monitor.circuit_breakers[source_id].failure_count == 1
+    assert len(worker_threads) == 1
+    assert worker_threads[0] != loop_thread
 
 
 @pytest.mark.asyncio
