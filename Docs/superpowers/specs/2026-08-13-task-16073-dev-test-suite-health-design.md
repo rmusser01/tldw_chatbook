@@ -93,7 +93,7 @@ The complete suite is not one pytest process. A task-owned standard-library harn
 9. Resumes by skipping only chunks whose command, source/environment generation,
    expected-node hash, outcome hash, exit status, and complete marker all verify.
 
-Process ownership follows [ADR-065](../../../backlog/decisions/065-checkpoint-harness-process-ownership.md).
+Process ownership follows [ADR-066](../../../backlog/decisions/066-checkpoint-harness-process-ownership.md).
 The unprivileged harness owns subprocesses that retain at least one of live ancestry,
 the task environment tag, the harness process group, or its private inheritable
 sentinel descriptor. Deliberately removing every ownership signal while leaving work
@@ -289,8 +289,8 @@ commands, classifications, and durations rather than raw traces.
 
 ADR required: yes.
 
-ADR path: `backlog/decisions/065-checkpoint-harness-process-ownership.md`.
+ADR path: `backlog/decisions/066-checkpoint-harness-process-ownership.md`.
 
 Reason: negative harness testing exposed an unprivileged Darwin process-ownership and
-cleanup boundary. ADR-065 records the user-approved cooperative-subprocess limitation,
+cleanup boundary. ADR-066 records the user-approved cooperative-subprocess limitation,
 the private-ABI capability gate, and PID-version-safe signaling before implementation.

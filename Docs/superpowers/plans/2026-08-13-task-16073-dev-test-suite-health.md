@@ -54,9 +54,9 @@ repository file.
 
 ADR required: yes.
 
-ADR path: `backlog/decisions/065-checkpoint-harness-process-ownership.md`.
+ADR path: `backlog/decisions/066-checkpoint-harness-process-ownership.md`.
 
-Reason: Task 2 negative testing exposed a Darwin process-ownership boundary. ADR-065 records the approved cooperative-subprocess limitation, fail-closed capability gate, and PID-version-safe cleanup; application runtime boundaries remain unchanged.
+Reason: Task 2 negative testing exposed a Darwin process-ownership boundary. ADR-066 records the approved cooperative-subprocess limitation, fail-closed capability gate, and PID-version-safe cleanup; application runtime boundaries remain unchanged.
 
 ### Task 1: Pin the newest `dev` and prepare an isolated generation
 
@@ -193,7 +193,7 @@ The harness must also:
 
 For each chunk, record exactly one process outcome keyed by chunk ID. Pytest exit 0 or 1 may be structurally complete only when every expected node reduced exactly once, no unexpected node/collector exists, and session/process records agree. Exit 2 (interrupted), 3 (internal error), 4 (usage error), 5 (no tests for a nonempty slice), signal termination, deadline termination, missing session record, post-summary hang, extra/missing node, corrupt JSONL, or conflicting duplicate phase is an owned red process outcome. Exit 0 with red node reports is corrupt; exit 1 without at least one red node/collector report is corrupt.
 
-Implement ADR-065's process-ownership boundary. Supported test subprocesses retain at
+Implement ADR-066's process-ownership boundary. Supported test subprocesses retain at
 least one observable ownership signal; deliberate removal of all signals is out of
 scope. On Darwin create one private attempt-scoped regular-file sentinel, pass its
 descriptor only to the pytest root, census surviving holders with hard-gated `libproc`,

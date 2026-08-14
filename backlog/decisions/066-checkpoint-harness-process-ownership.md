@@ -1,4 +1,4 @@
-# ADR-065: Bound checkpoint-harness process ownership to retained signals
+# ADR-066: Bound checkpoint-harness process ownership to retained signals
 
 Status: Accepted
 Date: 2026-08-14
