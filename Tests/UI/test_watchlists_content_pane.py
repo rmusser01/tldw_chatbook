@@ -1099,14 +1099,13 @@ async def test_j_and_k_move_forward_and_back_under_a_status_filter():
 
 
 @pytest.mark.asyncio
-async def test_the_open_item_survives_a_rebuild_of_the_filtered_table():
-    """The other half of the CRITICAL fix: the pin in `_filtered_items`.
+async def test_the_open_item_survives_a_same_page_rebuild():
+    """A same-page rebuild pins the open item in `_filtered_items`.
 
-    A recompose (changing the search box, reloading items) re-derives the
-    rows from scratch. Without pinning the selection, the item the user is
-    reading is dropped out of the table under them the moment its status no
-    longer matches the active filter -- the reader shows an article that has
-    no row.
+    Reapplying the committed page re-derives its rows from copied item dicts.
+    The selected id must remain pinned when its status no longer matches the
+    active filter. Query-context changes intentionally invalidate this pin and
+    are covered by the pagination provenance tests.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
@@ -1129,9 +1128,8 @@ async def test_the_open_item_survives_a_rebuild_of_the_filtered_table():
             "opening the item must have marked it read -- the precondition"
         )
 
-        # Force a genuine rebuild of the rows while it is still open.
-        pane.search_query = "Nav item"
-        await pilot.pause(0.4)
+        copied_page = [dict(item) for item in pane.items]
+        await pane.apply_page_items(copied_page)
 
         assert open_item["id"] in {item["id"] for item in pane.displayed_items()}, (
             "the item the reader is showing must still have a row"
