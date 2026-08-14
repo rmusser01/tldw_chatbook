@@ -13,11 +13,15 @@ Date: 2026-08-14
   `d4af1cb6a92cdd8be550e8e7c25805ece222ec0f8e75daf26fc00b4e04ef4b03`.
 - Host server: official audio.cpp 0.5.1 at pinned runtime commit
   `238ab6a9e321c17de8e120559f57efeedaeb1345`. Its pinned Inflect guide requires
-  eSpeak-ng and documents explicit library/data options only when the install
-  is outside the loader search path. The host had eSpeak-ng 1.52.0, its dynamic
-  library, and English data in the standard package-manager locations, so no
-  private absolute option was added. No private paths, submitted text, audio
-  bytes, credentials, or generated configuration contents are recorded here.
+  eSpeak-ng and documents explicit library/data options when the default names
+  are not loader- and data-search discoverable. The host had eSpeak-ng 1.52.0,
+  a dynamic library, and English data installed, but installation did not prove
+  discoverability: a basename-only dynamic-load probe failed, and the server
+  binary exposed neither an eSpeak direct link nor an embedded loader search
+  path. The pinned Inflect defaults use the library basename when explicit
+  session paths are absent. The prerequisite was therefore **not validated**.
+  No private paths, submitted text, audio bytes, credentials, or generated
+  configuration contents are recorded here.
 
 ## Results
 
@@ -41,10 +45,11 @@ Date: 2026-08-14
 - **PARTIAL — sample generation:** the real server returned structured HTTP 500
   for the pinned Inflect recipe on both automatic Metal selection and explicit
   CPU. Chatbook reported bounded `generation_failed`; no playable WAV existed.
-  The host server emitted bounded structural diagnostics and no dropped lines.
-  Health/catalog success plus identical CPU/Metal failure does not establish a
-  compatibility cause. This remains an unresolved server-side generation
-  failure, not audible success.
+  The retained privacy-safe server output did not identify a diagnostic cause.
+  Because basename loading failed independently, the HTTP 500 may reflect an
+  eSpeak loader failure, but that inference is not a demonstrated server cause.
+  This run was not a prerequisite-complete compatibility test and does not
+  establish audible success.
 - **PASS — removal authority:** removal was blocked while referenced, remained
   blocked without acknowledgement, and completed only after explicit resolution
   and acknowledgement. Runtime handles were released only after child stop and
@@ -79,7 +84,9 @@ Date: 2026-08-14
 ## Release gate
 
 UAT is **PARTIAL**. The clean isolated Guided return and Save now pass. Do not
-mark TASK-13207 Done until the exact reviewed server/package pair produces a
-human-audible sample and the 17-file matrix receives a fresh unrestricted
-all-green run. The current evidence must not be read as audible generation
-success or as a host-matrix pass.
+mark TASK-13207 Done until a later user-owned run either supplies advanced
+`server.json` options with explicit eSpeak library and data locations or uses a
+truly path-free Guided package, produces a human-audible sample, and the
+17-file matrix receives a fresh unrestricted all-green run. The current evidence
+must not be read as a prerequisite-complete compatibility test, audible
+generation success, or a host-matrix pass.

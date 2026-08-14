@@ -4,7 +4,7 @@ title: Integrate guided audio.cpp packages with Model Library
 status: In Progress
 assignee: []
 created_date: '2026-08-09 17:39'
-updated_date: '2026-08-14 10:29'
+updated_date: '2026-08-14 10:48'
 labels:
   - tts
   - audio-cpp
@@ -82,8 +82,14 @@ Executable TDD plan: Docs/superpowers/plans/2026-08-13-audio-cpp-model-library-i
   a fresh isolated full-app UAT persisted the managed identity and three
   unrelated dirty draft families through the actual Save action without
   autosaving. The host audio.cpp 0.5.1 server still returned structured HTTP 500
-  for the pinned Inflect package on CPU and Metal, so the server-side generation
-  cause remains unresolved and audible playback is not claimed.
+  for the pinned Inflect package on CPU and Metal. Although eSpeak-ng artifacts
+  were installed, basename loading failed and the server had neither a direct
+  eSpeak link nor an embedded loader search path, so the prerequisite was not
+  validated. The retained safe output did not identify the server diagnostic
+  cause; loader failure remains a possibility, not a compatibility conclusion.
+  This was not a prerequisite-complete compatibility test, and audible playback
+  is not claimed. The release gate remains a later user-owned run with explicit
+  advanced eSpeak library/data options or a truly path-free Guided package.
 - Corrected the asynchronous UI tests to wait for the exact mounted/composed
   controls they exercise. Deterministic CSS verification now rebuilds to a
   temporary file and ignores only the generated timestamp rather than invoking

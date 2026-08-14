@@ -682,10 +682,12 @@ promising **Hear a Sample**.
 Inflect Micro v2 also depends on eSpeak-ng and its English data. The pinned
 upstream 0.5.1 guide documents explicit `inflect_v2.espeak_library_path` and
 `inflect_v2.espeak_data_path` session options only when eSpeak-ng is outside
-the dynamic-loader/data search locations. Guided configuration intentionally
-does not discover or persist private host paths; standard system/package-manager
-installs are auto-discovered, while nonstandard paths belong in the advanced
-user-owned `server.json` flow.
+the dynamic-loader/data search locations. An installed library or data package
+is not sufficient evidence that the server process can resolve its default
+names. Guided configuration intentionally does not discover or persist private
+host paths. Verify loader/data discoverability before testing Inflect; when the
+defaults are not discoverable, provide the explicit options through the
+advanced user-owned `server.json` flow.
 
 Saving Guided Settings remains passive. The first deliberate Test, Start,
 Restart & Apply, catalog refresh, voice refresh, or synthesis revalidates the

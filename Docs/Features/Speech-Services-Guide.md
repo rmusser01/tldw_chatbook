@@ -341,11 +341,12 @@ Guided setup is the shortest supported first-time path:
    Connection** and does not promise generation. The handoff focuses Speech
    Lab's one current primary action, which may be **Start & Generate Sample**,
    **Restart & Apply Settings**, **Retry Sample**, or **Test Connection**.
-   Inflect Micro v2 additionally requires eSpeak-ng with English data. Install
-   it in a standard system or package-manager location before testing; Guided
-   setup does not discover or persist private library/data paths. If your
-   installation requires nonstandard paths, use an advanced `server.json` you
-   control and follow the pinned upstream Inflect session-option guidance.
+   Inflect Micro v2 additionally requires eSpeak-ng with English data. Before
+   testing, verify that the server process can resolve both by their default
+   names; installation alone does not prove loader/data discoverability. Guided
+   setup does not discover or persist private library/data paths. If explicit
+   paths are required, use an advanced `server.json` you control and follow the
+   pinned upstream Inflect session-option guidance.
 7. Run **Start & Generate Sample**. Chatbook lazily creates one private,
    generation-local configuration, starts one child, verifies the selected
    catalog entry, and generates one complete validated WAV.

@@ -2597,9 +2597,14 @@ async def test_real_settings_return_acknowledges_before_draft_remount(
         assert audio_cpp["mode"] == "managed"
         assert audio_cpp["managed_setup_source"] == "guided"
         assert audio_cpp["guided_backend_preference"] == "cpu"
-        assert audio_cpp["guided_packages"][0]["public_model_id"] == (
-            "supertonic-3-orig"
-        )
+        saved_package = audio_cpp["guided_packages"][0]
+        assert saved_package["public_model_id"] == "supertonic-3-orig"
+        assert saved_package["canonical_root"] == str(root)
+        assert saved_package["managed_artifact"] == {
+            "artifact_id": reference.artifact_id,
+            "revision": reference.revision,
+            "variant": reference.variant,
+        }
         assert provider_sections["app_tts"]["default_speed"] == 1.33
         realtime_sections, _realtime_deletes = persisted_realtime[0]
         assert realtime_sections["realtime"]["enabled"] is True
