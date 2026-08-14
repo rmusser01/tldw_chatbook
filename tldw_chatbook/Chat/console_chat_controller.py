@@ -2348,9 +2348,10 @@ class ConsoleChatController:
             try:
                 if checker(self._agent_conversation_id(session.id)):
                     return True
-            except Exception:  # noqa: BLE001 -- a UI timer must never crash on a read
-                logger.opt(exception=True).debug(
-                    "fleet unsettled check failed for a session; treated as idle"
+            except Exception as exc:  # noqa: BLE001 -- a UI timer must never crash on a read
+                logger.debug(
+                    "fleet unsettled check failed for a session; treated as idle (exception_type={})",
+                    type(exc).__name__,
                 )
         return False
 
@@ -9296,9 +9297,10 @@ class ConsoleChatController:
             try:
                 if not checker(self._agent_conversation_id(session_id)):
                     return
-            except Exception:  # noqa: BLE001 -- money over memory: keep the source
-                logger.opt(exception=True).debug(
-                    "has_unsettled_children raised; recording re-attach source anyway"
+            except Exception as exc:  # noqa: BLE001 -- money over memory: keep the source
+                logger.debug(
+                    "has_unsettled_children raised; recording re-attach source anyway (exception_type={})",
+                    type(exc).__name__,
                 )
         self._fleet_usage_reattach_sources[assistant_message_id] = (
             stream_signals,
@@ -9387,10 +9389,10 @@ class ConsoleChatController:
         neither may happen for a best-effort cost figure."""
         try:
             self._reattach_fleet_usage(event)
-        except Exception:  # noqa: BLE001 -- a dropped fold is a missing figure, not a broken run
-            logger.opt(exception=True).warning(
-                "fleet usage re-attach failed for conversation {conversation_id}",
-                conversation_id=getattr(event, "conversation_id", "?"),
+        except Exception as exc:  # noqa: BLE001 -- a dropped fold is a missing figure, not a broken run
+            logger.warning(
+                "fleet usage re-attach failed (exception_type={})",
+                type(exc).__name__,
             )
 
     def _reattach_fleet_usage(self, event: Any) -> None:

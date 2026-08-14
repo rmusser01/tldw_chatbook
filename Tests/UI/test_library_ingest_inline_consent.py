@@ -126,6 +126,7 @@ def _minimal_library_screen() -> LibraryScreen:
     )
     screen._clear_library_external_vad_progress = MagicMock()
     screen._set_library_external_status = MagicMock()
+    screen._save_library_ingest_options = MagicMock()
     return screen
 
 

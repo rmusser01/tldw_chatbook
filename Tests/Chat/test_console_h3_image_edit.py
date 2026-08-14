@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_image_edit_operations import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Image_Generation.exceptions import ImageGenerationCancelled
+from tldw_chatbook.UI.Console_Modules import image as image_module
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 
 from Tests.Chat.test_console_generation_actions import (
@@ -121,13 +122,16 @@ async def test_operation_registry_is_app_owned_generation_checked_and_byte_free(
     assert first is not None
     assert first.cancel_event is first_event
     assert registry.active("session-a") == first
-    assert registry.start(
-        session_id="session-a",
-        attachment_id="duplicate",
-        captured_draft="duplicate",
-        cancel_event=threading.Event(),
-        runner=first_runner,
-    ) is None
+    assert (
+        registry.start(
+            session_id="session-a",
+            attachment_id="duplicate",
+            captured_draft="duplicate",
+            cancel_event=threading.Event(),
+            runner=first_runner,
+        )
+        is None
+    )
     assert registry.request_cancel("session-a") == first
     assert first_event.is_set()
 
@@ -247,13 +251,16 @@ async def test_unacknowledged_completion_blocks_duplicate_after_active_task_sett
     await operation.task
     assert registry.active("session-a") is None
     assert registry.completion("session-a") is not None
-    assert registry.start(
-        session_id="session-a",
-        attachment_id="attachment-b",
-        captured_draft="draft-b",
-        cancel_event=threading.Event(),
-        runner=runner,
-    ) is None
+    assert (
+        registry.start(
+            session_id="session-a",
+            attachment_id="attachment-b",
+            captured_draft="draft-b",
+            cancel_event=threading.Event(),
+            runner=runner,
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -273,10 +280,12 @@ async def test_h3_command_uses_raw_instruction_one_memory_image_and_count_one(
         generic_calls.append((args, kwargs))
         raise AssertionError("generic image preparation must not run for H3")
 
-    monkeypatch.setattr(chat_screen_module, "prepare_generation_request", _generic_must_not_run)
-    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _cfg)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module, "prepare_generation_request", _generic_must_not_run
+    )
+    monkeypatch.setattr(image_module, "get_image_generation_config", _cfg)
+    monkeypatch.setattr(
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
@@ -300,16 +309,33 @@ async def test_h3_command_uses_raw_instruction_one_memory_image_and_count_one(
         )
         return BatchResult(successes=[(_png_bytes(), "image/png", meta)], errors=[])
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", _batch)
 
+    persistence_order: list[str] = []
     original_append = store.append_generation_message
 
     def _durable_append(session_id: str, **kwargs):
         message = original_append(session_id, **kwargs)
         message.persisted_message_id = "persisted-h3-message"
+        persistence_order.append("persisted")
         return message
 
     monkeypatch.setattr(store, "append_generation_message", _durable_append)
+    registry = screen.app_instance.console_image_edit_operations
+    original_publish = registry.publish_completion
+
+    def _ordered_publish(completion):
+        persistence_order.append("completion")
+        return original_publish(completion)
+
+    monkeypatch.setattr(registry, "publish_completion", _ordered_publish)
+    original_consume = store.consume_pending_attachment
+
+    def _ordered_consume(*args, **kwargs):
+        persistence_order.append("consume")
+        return original_consume(*args, **kwargs)
+
+    monkeypatch.setattr(store, "consume_pending_attachment", _ordered_consume)
     screen._ensure_console_video_store = lambda: (_ for _ in ()).throw(
         AssertionError("H3 image edit must not access the Video store")
     )
@@ -368,6 +394,7 @@ async def test_h3_command_uses_raw_instruction_one_memory_image_and_count_one(
     messages = store.messages_for_session(session.id)
     assert len(messages) == 1
     assert messages[0].persisted_message_id == "persisted-h3-message"
+    assert persistence_order == ["persisted", "completion", "consume"]
 
 
 @pytest.mark.asyncio
@@ -396,19 +423,19 @@ async def test_h3_refusals_happen_before_generic_preparation_or_generation(
         system_copy.append(copy)
 
     screen._append_native_console_system_message = _append
-    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _cfg)
+    monkeypatch.setattr(image_module, "get_image_generation_config", _cfg)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "prepare_generation_request",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("generic prep called")),
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "run_generation_batch",
         lambda **_k: (_ for _ in ()).throw(AssertionError("generation called")),
     )
@@ -431,15 +458,15 @@ async def test_h3_source_header_read_runs_off_loop_while_pump_remains_responsive
     screen, _composer = _screen_with_h3_store(store)
     session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
     store.add_pending_attachment(session.id, _pending())
-    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _cfg)
+    monkeypatch.setattr(image_module, "get_image_generation_config", _cfg)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
     header_started = threading.Event()
     release_header = threading.Event()
-    original_header_read = screen._h3_reference_from_snapshot
+    original_header_read = screen._image._h3_reference_from_snapshot
 
     def _barrier_header_read(snapshot):
         header_started.set()
@@ -448,10 +475,10 @@ async def test_h3_source_header_read_runs_off_loop_while_pump_remains_responsive
         return original_header_read(snapshot)
 
     monkeypatch.setattr(
-        screen, "_h3_reference_from_snapshot", _barrier_header_read
+        screen._image, "_h3_reference_from_snapshot", _barrier_header_read
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "run_generation_batch",
         lambda **_kwargs: (_ for _ in ()).throw(ImageGenerationCancelled()),
     )
@@ -487,19 +514,19 @@ async def test_h3_oversize_source_is_rejected_before_decode_or_dispatch(monkeypa
         session.id,
         _pending(data=b"x" * (IMAGE_GEN_REFERENCE_MAX_BYTES + 1)),
     )
-    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _cfg)
+    monkeypatch.setattr(image_module, "get_image_generation_config", _cfg)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
     monkeypatch.setattr(
-        screen,
+        screen._image,
         "_h3_reference_from_snapshot",
         lambda *_args: (_ for _ in ()).throw(AssertionError("decode called")),
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "run_generation_batch",
         lambda **_kwargs: (_ for _ in ()).throw(AssertionError("dispatch called")),
     )
@@ -533,9 +560,9 @@ async def test_h3_canonical_validation_performs_the_only_full_source_decode(
     session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
     store.add_pending_attachment(session.id, _pending())
     config = _cfg(max_width=1024, max_height=1024, max_pixels=1024 * 1024)
-    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", lambda: config)
+    monkeypatch.setattr(image_module, "get_image_generation_config", lambda: config)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
@@ -568,7 +595,7 @@ async def test_h3_canonical_validation_performs_the_only_full_source_decode(
         assert issues == []
         return BatchResult(successes=[], errors=["canonical-only"])
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _canonical_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", _canonical_batch)
     await screen._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
@@ -598,9 +625,9 @@ async def test_h3_warning_band_is_rejected_by_canonical_ceiling_before_full_deco
         max_height=side + 1,
         max_pixels=(side + 1) * (side + 1),
     )
-    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", lambda: config)
+    monkeypatch.setattr(image_module, "get_image_generation_config", lambda: config)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
@@ -648,7 +675,7 @@ async def test_h3_warning_band_is_rejected_by_canonical_ceiling_before_full_deco
         )
         return BatchResult(successes=[], errors=["canonical-refusal"])
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _canonical_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", _canonical_batch)
     await screen._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
@@ -668,9 +695,9 @@ async def test_stop_before_adapter_success_is_expected_and_retains_source(monkey
     session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
     pending = _pending()
     store.add_pending_attachment(session.id, pending)
-    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _cfg)
+    monkeypatch.setattr(image_module, "get_image_generation_config", _cfg)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
@@ -684,7 +711,7 @@ async def test_stop_before_adapter_success_is_expected_and_retains_source(monkey
         assert event.wait(2)
         raise ImageGenerationCancelled()
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _cancelled_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", _cancelled_batch)
     task = asyncio.create_task(
         screen._console_command_generate_image(
             CommandParse(
@@ -715,9 +742,9 @@ async def test_app_owned_task_cancellation_drains_linearized_runner_before_rerai
     session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
     pending = _pending()
     store.add_pending_attachment(session.id, pending)
-    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _cfg)
+    monkeypatch.setattr(image_module, "get_image_generation_config", _cfg)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
@@ -756,7 +783,7 @@ async def test_app_owned_task_cancellation_drains_linearized_runner_before_rerai
         finally:
             thread_settled.set()
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _linearized_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", _linearized_batch)
     append_count = 0
     original_append = store.append_generation_message
 
@@ -769,9 +796,7 @@ async def test_app_owned_task_cancellation_drains_linearized_runner_before_rerai
 
     monkeypatch.setattr(store, "append_generation_message", _durable_append)
     await screen._console_command_generate_image(
-        CommandParse(
-            kind="command", name="generate-image", args=":comfyui change it"
-        )
+        CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
     operation = screen.app_instance.console_image_edit_operations.active(session.id)
     assert operation is not None
@@ -810,9 +835,9 @@ async def test_terminal_generation_never_syncs_stale_origin_screen(monkeypatch):
     session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
     store.add_pending_attachment(session.id, _pending())
     screen.app_instance._console_h3_image_edit_screen = screen
-    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _cfg)
+    monkeypatch.setattr(image_module, "get_image_generation_config", _cfg)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
@@ -841,7 +866,7 @@ async def test_terminal_generation_never_syncs_stale_origin_screen(monkeypatch):
             errors=[],
         )
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _success_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", _success_batch)
     original_append = store.append_generation_message
 
     def _durable_append(session_id: str, **kwargs):
@@ -876,9 +901,9 @@ async def test_persistence_failure_retains_source_and_emits_sanitized_copy(monke
     session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
     pending = _pending()
     store.add_pending_attachment(session.id, pending)
-    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _cfg)
+    monkeypatch.setattr(image_module, "get_image_generation_config", _cfg)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
@@ -903,7 +928,7 @@ async def test_persistence_failure_retains_source_and_emits_sanitized_copy(monke
             errors=[],
         )
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _success_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", _success_batch)
     monkeypatch.setattr(
         store,
         "append_generation_message",
@@ -912,7 +937,7 @@ async def test_persistence_failure_retains_source_and_emits_sanitized_copy(monke
         ),
     )
     privacy_logger = _PrivacyLogger()
-    monkeypatch.setattr(chat_screen_module, "logger", privacy_logger)
+    monkeypatch.setattr(image_module, "logger", privacy_logger)
     system_copy: list[str] = []
 
     async def _append(copy: str, *, session_id: str | None = None) -> None:
@@ -943,7 +968,9 @@ async def test_persistence_failure_retains_source_and_emits_sanitized_copy(monke
             "error_type": "RuntimeError",
         }
     ]
-    assert "sentinel" not in repr((system_copy, privacy_logger.bindings, privacy_logger.messages))
+    assert "sentinel" not in repr(
+        (system_copy, privacy_logger.bindings, privacy_logger.messages)
+    )
 
 
 @pytest.mark.asyncio
@@ -961,21 +988,21 @@ async def test_failure_guidance_persistence_error_falls_back_without_masking_pri
     session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
     pending = _pending()
     store.add_pending_attachment(session.id, pending)
-    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _cfg)
+    monkeypatch.setattr(image_module, "get_image_generation_config", _cfg)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "run_generation_batch",
         lambda **_kwargs: (_ for _ in ()).throw(
             RuntimeError("primary sentinel response /private/source.png")
         ),
     )
     privacy_logger = _PrivacyLogger()
-    monkeypatch.setattr(chat_screen_module, "logger", privacy_logger)
+    monkeypatch.setattr(image_module, "logger", privacy_logger)
     real_append = store.append_message
     persist_attempts: list[bool] = []
 
@@ -1005,9 +1032,10 @@ async def test_failure_guidance_persistence_error_falls_back_without_masking_pri
     )
     assert store.pending_attachments(session.id) == [pending]
     assert composer.draft_text().endswith("preserve  internal   spacing")
-    assert screen.app_instance.console_image_edit_operations.failure_notice(
-        session.id
-    ) is None
+    assert (
+        screen.app_instance.console_image_edit_operations.failure_notice(session.id)
+        is None
+    )
     assert privacy_logger.bindings == [
         {
             "component": "image_edit",
@@ -1026,15 +1054,17 @@ async def test_failure_guidance_persistence_error_falls_back_without_masking_pri
 
 
 @pytest.mark.asyncio
-async def test_postcommit_consume_exception_keeps_success_and_logs_only_type(monkeypatch):
+async def test_postcommit_consume_exception_keeps_success_and_logs_only_type(
+    monkeypatch,
+):
     store = ConsoleChatStore()
     screen, composer = _screen_with_h3_store(store)
     session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
     pending = _pending()
     store.add_pending_attachment(session.id, pending)
-    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _cfg)
+    monkeypatch.setattr(image_module, "get_image_generation_config", _cfg)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
@@ -1059,7 +1089,7 @@ async def test_postcommit_consume_exception_keeps_success_and_logs_only_type(mon
             errors=[],
         )
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _success_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", _success_batch)
     original_append = store.append_generation_message
 
     def _durable_append(session_id: str, **kwargs):
@@ -1076,7 +1106,7 @@ async def test_postcommit_consume_exception_keeps_success_and_logs_only_type(mon
         ),
     )
     privacy_logger = _PrivacyLogger()
-    monkeypatch.setattr(chat_screen_module, "logger", privacy_logger)
+    monkeypatch.setattr(image_module, "logger", privacy_logger)
     system_copy: list[str] = []
 
     async def _append(copy: str, *, session_id: str | None = None) -> None:
@@ -1108,4 +1138,6 @@ async def test_postcommit_consume_exception_keeps_success_and_logs_only_type(mon
             "error_type": "RuntimeError",
         }
     ]
-    assert "sentinel" not in repr((system_copy, privacy_logger.bindings, privacy_logger.messages))
+    assert "sentinel" not in repr(
+        (system_copy, privacy_logger.bindings, privacy_logger.messages)
+    )

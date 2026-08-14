@@ -63,12 +63,15 @@ class _Gateway:
         self.child_calls = 0
 
     async def resolve_for_send(self, selection):
-        class _R:
-            ready = True
-            provider = "llama_cpp"
-            visible_copy = ""
-
-        return _R()
+        return ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="",
+            model="test-model",
+            ready=True,
+            readiness_key="llama_cpp",
+            execution_key="llama_cpp",
+            max_tokens=128,
+        )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         system = str(messages[0].get("content", "")) if messages else ""
@@ -634,7 +637,13 @@ class _ParkingGateway:
         self.release = threading.Event()
 
     async def resolve_for_send(self, _selection):
-        return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
+        return ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="",
+            model="test-model",
+            ready=True,
+            execution_key="llama_cpp",
+        )
 
     async def stream_chat(self, _resolution, _messages, **kwargs):
         self.started.set()

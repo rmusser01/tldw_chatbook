@@ -70,8 +70,22 @@ import ast
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+
+@pytest.fixture()
+def offline_mcp_rag_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep FTS-only MCPTools tests off the optional embedding path."""
+    import tldw_chatbook.MCP.tools as tools_module
+
+    monkeypatch.setattr(
+        tools_module,
+        "SimplifiedRAGSearchService",
+        lambda _media_db: object(),
+    )
 
 
 def _real_dbs(tmp_path: Path) -> tuple[CharactersRAGDB, MediaDatabase]:
@@ -418,7 +432,9 @@ def test_gateway_runtime_maps_all_five_real_prompt_handlers(tmp_path, monkeypatc
     assert search_calls == [("gateway", 2, None)]
 
 
-def test_search_conversations_uses_a_real_content_search_accessor(tmp_path):
+def test_search_conversations_uses_a_real_content_search_accessor(
+    tmp_path, offline_mcp_rag_service
+):
     """TASK-985: `search_all_content` never existed on `CharactersRAGDB`.
     The real accessor, `search_conversations_by_content`, returns
     conversation rows with no content column, so `preview` must be sourced
@@ -448,7 +464,9 @@ def test_search_conversations_uses_a_real_content_search_accessor(tmp_path):
     assert results[0]["message_count"] == 1
 
 
-def test_search_conversations_filters_by_character_id(tmp_path):
+def test_search_conversations_filters_by_character_id(
+    tmp_path, offline_mcp_rag_service
+):
     """The character_id filter reads `result.get("character_id")` off the
     conversation row returned by `search_conversations_by_content` -- a
     real `conversations.character_id` column -- so a non-matching filter

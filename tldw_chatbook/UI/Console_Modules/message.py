@@ -54,9 +54,9 @@ order between controllers never matters.
 **`handle_console_message_action` is the wave's risk centre** (294 lines,
 the largest constructor in this cluster as a direct consequence): it has NO
 DOM access of its own, so nothing blocks the move, but it dispatches across
-several clusters that stay screen-owned this wave (change-review, image-
-generation, citation) -- each of those reaches becomes exactly one more
-named callable here, never a back-door through `self.screen`.
+several clusters outside this controller (change-review, image-generation,
+citation) -- each of those reaches becomes exactly one more named callable
+here, never a back-door through `self.screen`.
 
 **Dead bodies / delegation table**: this cluster's pre-move test suite
 reaches an unusually large number of these methods directly by their
@@ -85,10 +85,9 @@ call-site edit / stays, with reasons) is in the task-1 extraction report.
   document the whole realtime engine as staying screen-owned this
   programme.
 - `_console_imagegen_inflight_message_ids` -- image-generation in-flight
-  bookkeeping keyed by message id, the message-id-keyed sibling of
-  `_console_imagegen_inflight_sessions`, which `session.py`'s own docstring
-  already calls out as a name-pattern false positive staying screen-owned
-  for the identical reason.
+  bookkeeping keyed by message id, now owned with its session-keyed sibling
+  by `ConsoleImageController`; it remains outside this message controller
+  despite the name match.
 - `_selected_console_message_inspector_rows` / `_clear_native_console_
   message_selection` -- real `query_one` DOM access.
 - `handle_console_send_message` / `_send_console_message_from_visible_
@@ -133,7 +132,10 @@ from ...Chat.console_command_grammar import (
 from ...Chat.console_roleplay_identity import ConsoleMessagePresentation
 from ...Chat.console_ephemeral import blocked_reason
 from ...Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
-from ...Chat.console_message_actions import ConsoleActionResult, ConsoleMessageActionService
+from ...Chat.console_message_actions import (
+    ConsoleActionResult,
+    ConsoleMessageActionService,
+)
 from ...Chat.console_save_targets import (
     console_chatbook_artifact_payload,
     derive_console_save_title,
@@ -144,7 +146,11 @@ from ...Chat.provider_usage import ProviderUsage
 from ...Video_Generation.video_metadata import VideoGenerationMetadata
 from ...config import get_cli_setting
 from ...Notes.notes_scope_service import ScopeType
-from ...Widgets.Console import ConsoleEditMessageModal, ConsoleEditResult, ConsoleSaveAsModal
+from ...Widgets.Console import (
+    ConsoleEditMessageModal,
+    ConsoleEditResult,
+    ConsoleSaveAsModal,
+)
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
@@ -763,7 +769,8 @@ class ConsoleMessageController:
             # is preferred here so the round trip cannot strand it either.
             "metadata_json": (
                 video_metadata.to_json()
-                if (video_metadata := getattr(message, "video_metadata", None)) is not None
+                if (video_metadata := getattr(message, "video_metadata", None))
+                is not None
                 else (
                     metadata.to_json()
                     if (metadata := getattr(message, "metadata", None)) is not None

@@ -127,15 +127,30 @@ async def test_no_global_outline_suppression_in_css():
         assert "outline: heavy" not in global_focus
 
 
-def test_generated_input_focus_uses_thin_border_and_bottom_emphasis():
-    """Test generated input focus styles use the non-obscuring input pattern."""
+def test_generated_text_entry_focus_uses_thin_border_and_bottom_emphasis():
+    """Input and TextArea use the shared non-obscuring focus pattern."""
     css_content = CSS_PATH.read_text(encoding="utf-8")
 
-    for selector in ("Input:focus", "TextArea:focus", "Select:focus"):
+    for selector in ("Input:focus", "TextArea:focus"):
         block = css_block(css_content, selector)
         assert "outline: heavy" not in block
         assert "border: solid $ds-input-focus-border;" in block
         assert "border-bottom: solid $ds-input-focus-accent;" in block
+
+
+def test_generated_select_focus_preserves_shape_specific_geometry():
+    """Select focus cues do not impose a global parent-border geometry."""
+    css_content = CSS_PATH.read_text(encoding="utf-8")
+
+    parent_block = css_block(css_content, "Select:focus")
+    assert "border:" not in parent_block
+    assert "background: $ds-input-focus-bg;" in parent_block
+    assert "color: $ds-text-primary;" in parent_block
+
+    compact_current = css_block(
+        css_content, "Select.-textual-compact:focus > SelectCurrent"
+    )
+    assert "background: $ds-input-focus-bg;" in compact_current
 
 
 def test_console_settings_input_focus_does_not_outline_single_row_value():

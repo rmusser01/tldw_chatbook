@@ -288,8 +288,16 @@ class TestImprovedChunkingProcessWithTemplates:
         first_chunk = results[0]
         assert "chunk_method" in first_chunk["metadata"]
 
-    def test_template_with_domain_specific(self):
+    def test_template_with_domain_specific(self, monkeypatch):
         """Test using a domain-specific template."""
+        import tldw_chatbook.Chunking.Chunk_Lib as chunk_lib
+
+        monkeypatch.setattr(chunk_lib, "NLTK_AVAILABLE", False)
+        monkeypatch.setattr(chunk_lib, "nltk", None)
+        monkeypatch.setattr(
+            chunk_lib, "sent_tokenize", chunk_lib._sent_tokenize_fallback
+        )
+
         # Create some academic-style text
         text = """
         Abstract: This paper presents a novel approach to text chunking.

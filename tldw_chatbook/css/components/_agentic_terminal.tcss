@@ -7157,6 +7157,8 @@ ListItem.personas-library-row.is-active.-highlight {
 #mcp-hub-inspector {
     width: 3fr;
     min-width: 28;
+    height: 100%;
+    min-height: 0;
 }
 
 /* F-057: below ~120 cols (`.mcp-compact` on #mcp-hub-grid, toggled by

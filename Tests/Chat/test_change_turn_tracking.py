@@ -21,6 +21,7 @@ from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
@@ -262,7 +263,13 @@ def _run(bridge, session, assistant_id, root, **over):
     kwargs = dict(
         conversation_id="conv-1",
         session_id=session.id,
-        resolution=object(),
+        resolution=ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="",
+            model="test-model",
+            ready=True,
+            execution_key="llama_cpp",
+        ),
         assistant_message_id=assistant_id,
         model="test-model",
         session_system_prompt="",
@@ -664,8 +671,6 @@ async def test_the_opener_pushes_the_screen_and_selects_the_turn(
     on the real screen object, not a reading.
     """
     from Tests.UI.app_factory import _build_test_app
-    from textual.app import App
-
     from tldw_chatbook.UI.Screens.change_review_screen import ChangeReviewScreen
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -752,8 +757,6 @@ async def test_the_summary_rows_own_review_action_opens_the_screen(
     handler -> pushed screen.
     """
     from Tests.UI.app_factory import _build_test_app
-    from textual.app import App
-
     from tldw_chatbook.UI.Screens.change_review_screen import ChangeReviewScreen
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.Widgets.Console.console_transcript import (

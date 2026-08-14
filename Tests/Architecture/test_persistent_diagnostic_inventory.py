@@ -26,8 +26,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/Agents/agent_service.py": {
+        "autowake_enabled is not boolean; using default": (),
         "child_max_wall_seconds is not numeric": (),
         "child_max_wall_seconds is not finite": (),
+        "on_child_settled consumer raised": ("type(exc).__name__",),
         "subagents_outlive_turn is not boolean": (),
         "sub-agents are outliving their turn": ("len(survivors)",),
     },
@@ -45,6 +47,13 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     },
     "tldw_chatbook/Chat/console_chat_controller.py": {
         "Console global user display-name accessor failed": ("type(exc).__name__",),
+        "fleet unsettled check failed for a session; treated as idle": (
+            "type(exc).__name__",
+        ),
+        "has_unsettled_children raised; recording re-attach source anyway": (
+            "type(exc).__name__",
+        ),
+        "fleet usage re-attach failed": ("type(exc).__name__",),
         "fleet survivor count failed for a session": (),
     },
     "tldw_chatbook/Chat/console_chat_store.py": {
@@ -69,9 +78,32 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Failed to flush Console roleplay context on first persist": (),
     },
     "tldw_chatbook/Chat/console_agent_bridge.py": {
+        "fleet drain consumer raised": ("type(exc).__name__",),
         "model-call loop did not stop": (),
         "could not open the post-turn window": (),
         "post-turn window failed": (),
+    },
+    "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": {
+        "Skipping malformed usage_json on message export": (),
+    },
+    "tldw_chatbook/Chat/console_fleet_attention.py": {
+        "fleet unseen revision bump failed": ("type(exc).__name__",),
+        "fleet unseen mark listing failed": ("type(exc).__name__",),
+        "fleet unseen mark clear failed": ("type(exc).__name__",),
+        "fleet unseen mark write failed": ("type(exc).__name__",),
+        "fleet completion announce failed": ("type(exc).__name__",),
+        "fleet toast title lookup failed": ("type(exc).__name__",),
+        "fleet toast session-title fallback failed": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/Chat/console_fleet_wake.py": {
+        "fleet wake drain intake failed": ("type(exc).__name__",),
+        "wake send gate raised; deferring": ("type(exc).__name__",),
+        "wake user-priority probe raised; deferring": ("type(exc).__name__",),
+        "wake delivery failed": ("type(exc).__name__",),
+        "wake delivery ledger stamp failed": ("type(exc).__name__",),
+        "wake mark listing failed": ("type(exc).__name__",),
+        "wake ledger read failed": ("type(exc).__name__",),
+        "wake session resolution failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/DB/ChaChaNotes_DB.py": {
         "Database error restoring a note": ("type(e).__name__",),
@@ -92,6 +124,10 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Saved metric baseline": ("len(metrics)",),
     },
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": {
+        "ran a fallback expression but names": (
+            "self._resolved_fts_match_construction()",
+            "FTS_MATCH_OR",
+        ),
         "has no FTS5-searchable": (),
         "Keyword search found": ("len(results)", "len(rankings)"),
         "Media keyword sub-leg found": ("len(results)",),
@@ -112,6 +148,12 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         # whose first argument is shared across ~14 call sites, so they cannot
         # be pinned individually by this registry's unique-label contract; the
         # inventory manifest owns them.
+        "Console fleet completion handoff will retry": (
+            "claim.revision",
+            "type(exc).__name__",
+        ),
+        "console fleet wake mount-claim failed": ("type(exc).__name__",),
+        "fleet survivor check failed": ("type(exc).__name__",),
         "stream resolution failed": ("type(exc).__name__",),
         "Pending sidebar-state write failed": ("type(error).__name__",),
     },
@@ -133,6 +175,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "operation",
             "type(exc).__name__",
         ),
+        "Failed to load Library conversations page.": (),
         "in bulk delete": (),
         "Failed to restore a Library media item in bulk-delete undo": (
             "type(exc).__name__",
@@ -142,6 +185,27 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Failed to persist Library ingest options": (),
         "Failed to restore a Library note": (),
         "Failed to restore a Library Collection": (),
+    },
+    "tldw_chatbook/UI/Console_Modules/image.py": {
+        "Console image edit cleanup failed": (
+            "'image_edit'",
+            "'persistence'",
+            "type(exc).__name__",
+        ),
+        "Console image edit failed": ("'image_edit'", "phase", "error_type"),
+        "Console image edit failure guidance persistence failed": (
+            "'image_edit'",
+            "'failure_guidance_persistence'",
+            "type(exc).__name__",
+        ),
+        "remote transcript image fetch failed": ("type(exc).__name__",),
+        "generate-image provider resolution for LLM context failed": (
+            "type(exc).__name__",
+        ),
+        "Image generation batch raised": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/UI/LLM_Management_Window.py": {
+        "Managed GGUF inventory load failed": (),
     },
     "tldw_chatbook/UI/Screens/llm_screen.py": {
         "External Parakeet source removal failed": ("type(exc).__name__",),
@@ -259,6 +323,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "could not open agent runs database": ("type(exc).__name__",),
     },
     "tldw_chatbook/app.py": {
+        "Consolidated widget CSS incomplete": ("len(sources)",),
         "Config load failure warning failed": ("type(e).__name__",),
         "Instance lock acquisition failed unexpectedly": (
             "type(_instance_lock_exc).__name__",
@@ -274,10 +339,95 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "route.screen_name",
             "type(exc).__name__",
         ),
+        "Generated CSS is stale during module entry; rebuilding": (),
+        "Generated CSS is stale during CLI entry; rebuilding": (),
+    },
+    "tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events.py": {
+        "GGUF launch lease close failed": ("provider",),
+        "GGUF source preparation failed": ("provider",),
+    },
+    "tldw_chatbook/Event_Handlers/LLM_Management_Events/server_lifecycle.py": {
+        "server claim resource close failed": ("provider",),
     },
     "tldw_chatbook/config.py": {
         "Invalid chat display name in [chat_defaults]": (),
         "Refusing to write CLI config": ("type(exc).__name__",),
+    },
+}
+
+
+TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
+    "tldw_chatbook/Chat/console_runtime.py": {
+        "Console runtime: could not write the app's": (
+            1,
+            ("CONSOLE_RUNTIME_ATTR",),
+        ),
+    },
+    "tldw_chatbook/Chat/console_agent_bridge.py": {
+        "usage accounting failed after a successful provider turn": (
+            1,
+            ("type(exc).__name__",),
+        ),
+    },
+    "tldw_chatbook/Chat/console_chat_store.py": {
+        "Failed to restore Console reply-speech preferences": (
+            1,
+            ("type(exc).__name__",),
+        ),
+        "Failed to persist Console reply-speech preferences": (
+            1,
+            ("type(exc).__name__",),
+        ),
+    },
+    "tldw_chatbook/Chat/console_fleet_attention.py": {
+        "fleet unseen mark set failed": (1, ("type(exc).__name__",)),
+    },
+    "tldw_chatbook/Chat/console_fleet_wake.py": {
+        "wake delivery UI hook raised": (1, ("type(exc).__name__",)),
+        "wake view probe raised; keeping the unseen mark": (
+            1,
+            ("type(exc).__name__",),
+        ),
+    },
+    "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": {
+        "No audio file found to export": (2, ()),
+    },
+    "tldw_chatbook/DB/Subscriptions_DB.py": {
+        "subscription_items_fts unavailable; falling back to LIKE search": (
+            1,
+            (),
+        ),
+    },
+    "tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py": {
+        "Displayed character card": (2, ()),
+    },
+    "tldw_chatbook/UI/STTS_Window.py": {
+        "Could not return to the originating Speech view": (
+            1,
+            ("type(exc).__name__",),
+        ),
+    },
+    "tldw_chatbook/UI/Screens/model_installed_view.py": {
+        "Managed model deletion failed": (1, ("type(exc).__name__",)),
+    },
+    "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": {
+        "Failed to load watchlist items": (2, ("type(exc).__name__",)),
+    },
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
+        "Wizard delete rejected non-owned sections": (1, ()),
+    },
+    "tldw_chatbook/Tools/watchlists_tool_service.py": {
+        "Watchlists tool execution failed": (
+            1,
+            ("category or 'Exception'",),
+        ),
+    },
+    "tldw_chatbook/config.py": {
+        "phase=precondition, error_type": (1, ("type(error).__name__",)),
+        "phase=locked_precondition, error_type": (
+            1,
+            ("type(error).__name__",),
+        ),
     },
 }
 
@@ -361,6 +511,336 @@ def test_reviewed_diagnostic_changes_are_metadata_only() -> None:
                 failures.append(
                     f"{relative}: {label!r} captures exception or stack details"
                 )
+
+    assert failures == []
+
+
+def test_task_15743_final_rebase_diagnostics_are_metadata_only() -> None:
+    """TASK-15743: final-base imports keep exactly the reviewed safe shapes."""
+    failures: list[str] = []
+    for relative, expected_by_label in TASK_15743_FINAL_REBASE_DIAGNOSTICS.items():
+        source = (REPO_ROOT / relative).read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=relative)
+        logger_symbols = diagnostic_inventory._logger_symbols(tree)
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and diagnostic_inventory._is_diagnostic_call(node, logger_symbols)
+            and node.args
+        ]
+        for label, (expected_count, expected_fields) in expected_by_label.items():
+            matches = [call for call in calls if label in ast.unparse(call.args[0])]
+            if len(matches) != expected_count:
+                failures.append(
+                    f"{relative}: expected {expected_count} diagnostics containing "
+                    f"{label!r}, found {len(matches)}"
+                )
+                continue
+            for call in matches:
+                fields = [
+                    ast.unparse(node.value)
+                    for node in ast.walk(call.args[0])
+                    if isinstance(node, ast.FormattedValue)
+                ]
+                fields.extend(ast.unparse(argument) for argument in call.args[1:])
+                fields.extend(
+                    ast.unparse(keyword.value)
+                    for keyword in call.keywords
+                    if keyword.arg not in {"exc_info", "stack_info", "stacklevel"}
+                )
+                captures_exception = (
+                    isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "exception"
+                ) or any(
+                    isinstance(node, ast.keyword)
+                    and node.arg == "exception"
+                    and not (
+                        isinstance(node.value, ast.Constant)
+                        and node.value.value is False
+                    )
+                    for node in ast.walk(call.func)
+                )
+                if sorted(fields) != sorted(expected_fields):
+                    failures.append(
+                        f"{relative}: {label!r} fields {fields!r}, "
+                        f"expected {list(expected_fields)!r}"
+                    )
+                if captures_exception:
+                    failures.append(
+                        f"{relative}: {label!r} captures exception details"
+                    )
+
+    assert failures == []
+
+
+def _task_15743_semantic_delta(
+    before: str, after: str
+) -> tuple[
+    Counter[tuple[str, str]],
+    dict[tuple[str, str], DiagnosticCall],
+    Counter[tuple[str, str]],
+    dict[tuple[str, str], DiagnosticCall],
+]:
+    changed = subprocess.run(
+        ["git", "diff", "--name-only", before, after, "--", "tldw_chatbook"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout.splitlines()
+    introduced: Counter[tuple[str, str]] = Counter()
+    introduced_details: dict[tuple[str, str], DiagnosticCall] = {}
+    removed: Counter[tuple[str, str]] = Counter()
+    removed_details: dict[tuple[str, str], DiagnosticCall] = {}
+    for relative in changed:
+        if not relative.endswith(".py"):
+            continue
+        before_population, before_details = _task_15103_population_and_details_at(
+            before, relative
+        )
+        after_population, after_details = _task_15103_population_and_details_at(
+            after, relative
+        )
+        for digest, count in (after_population - before_population).items():
+            key = (relative, digest)
+            introduced[key] += count
+            introduced_details[key] = after_details[digest]
+        for digest, count in (before_population - after_population).items():
+            key = (relative, digest)
+            removed[key] += count
+            removed_details[key] = before_details[digest]
+    return introduced, introduced_details, removed, removed_details
+
+
+def _task_15743_rows_for_delta(
+    population: Counter[tuple[str, str]],
+    details: dict[tuple[str, str], DiagnosticCall],
+    expected: set[tuple[str, str]],
+) -> Counter[tuple[str, str]]:
+    rows: Counter[tuple[str, str]] = Counter()
+    for key, count in population.items():
+        owner = key[0]
+        matches = [
+            row for row in expected if row[0] == owner and row[1] in details[key].event
+        ]
+        assert len(matches) == 1, (
+            f"{owner}: {details[key].event!r} matched reviewed rows {matches!r}"
+        )
+        rows[matches[0]] += count
+    return rows
+
+
+def test_task_15743_reviewed_delta_is_complete() -> None:
+    """TASK-15743: the reviewed stacked delta has exactly 31 repairs and 9 safe rows."""
+    repairs = {
+        "tldw_chatbook/Agents/agent_service.py": {
+            "autowake_enabled is not boolean; using default",
+            "on_child_settled consumer raised",
+        },
+        "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": {
+            "Skipping malformed usage_json on message export",
+        },
+        "tldw_chatbook/Chat/console_agent_bridge.py": {"fleet drain consumer raised"},
+        "tldw_chatbook/Chat/console_chat_controller.py": {
+            "fleet unsettled check failed for a session; treated as idle",
+            "has_unsettled_children raised; recording re-attach source anyway",
+            "fleet usage re-attach failed",
+        },
+        "tldw_chatbook/Chat/console_fleet_attention.py": {
+            "fleet unseen revision bump failed",
+            "fleet unseen mark listing failed",
+            "fleet unseen mark clear failed",
+            "fleet unseen mark write failed",
+            "fleet completion announce failed",
+            "fleet toast title lookup failed",
+            "fleet toast session-title fallback failed",
+        },
+        "tldw_chatbook/Chat/console_fleet_wake.py": {
+            "fleet wake drain intake failed",
+            "wake send gate raised; deferring",
+            "wake user-priority probe raised; deferring",
+            "wake delivery failed",
+            "wake delivery ledger stamp failed",
+            "wake mark listing failed",
+            "wake ledger read failed",
+            "wake session resolution failed",
+        },
+        "tldw_chatbook/UI/Screens/chat_screen.py": {
+            "console fleet wake mount-claim failed",
+            "fleet survivor check failed",
+        },
+        "tldw_chatbook/UI/Console_Modules/image.py": {
+            "remote transcript image fetch failed",
+            "generate-image provider resolution for LLM context failed",
+            "Image generation batch raised",
+        },
+        "tldw_chatbook/UI/Screens/library_screen.py": {
+            "Failed to load Library conversations page.",
+        },
+        "tldw_chatbook/app.py": {
+            "Consolidated widget CSS incomplete",
+            "Generated CSS is stale during module entry; rebuilding",
+            "Generated CSS is stale during CLI entry; rebuilding",
+        },
+    }
+    safe_rows = {
+        "tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events.py": {
+            "GGUF launch lease close failed": ("provider",),
+            "GGUF source preparation failed": ("provider",),
+        },
+        "tldw_chatbook/Event_Handlers/LLM_Management_Events/server_lifecycle.py": {
+            "server claim resource close failed": ("provider",),
+        },
+        "tldw_chatbook/RAG_Search/simplified/rag_service.py": {
+            "ran a fallback expression but names": (
+                "self._resolved_fts_match_construction()",
+                "FTS_MATCH_OR",
+            ),
+        },
+        "tldw_chatbook/UI/LLM_Management_Window.py": {
+            "Managed GGUF inventory load failed": (),
+        },
+        "tldw_chatbook/UI/Screens/chat_screen.py": {
+            "Console fleet completion handoff will retry": (
+                "claim.revision",
+                "type(exc).__name__",
+            ),
+        },
+        "tldw_chatbook/UI/Console_Modules/image.py": {
+            "Console image edit cleanup failed": (
+                "'image_edit'",
+                "'persistence'",
+                "type(exc).__name__",
+            ),
+            "Console image edit failed": ("'image_edit'", "phase", "error_type"),
+            "Console image edit failure guidance persistence failed": (
+                "'image_edit'",
+                "'failure_guidance_persistence'",
+                "type(exc).__name__",
+            ),
+        },
+    }
+    no_field_repairs = {
+        "autowake_enabled is not boolean; using default",
+        "Skipping malformed usage_json on message export",
+        "Failed to load Library conversations page.",
+        "Generated CSS is stale during module entry; rebuilding",
+        "Generated CSS is stale during CLI entry; rebuilding",
+    }
+    repair_rows = {
+        (owner, label) for owner, labels in repairs.items() for label in labels
+    }
+    reviewed_safe_rows = {
+        (owner, label) for owner, labels in safe_rows.items() for label in labels
+    }
+
+    assert len(repair_rows) == 31
+    assert len(reviewed_safe_rows) == 9
+    assert repair_rows.isdisjoint(reviewed_safe_rows)
+
+    base = "ec8903c67c557334a5a7bdd9838a6dc137747928"
+    stacked = "fdee8a31f"
+    repaired = "afee9672a"
+    introduced, introduced_details, removed, _ = _task_15743_semantic_delta(
+        base, stacked
+    )
+    repair_added, repair_details, repair_removed, _ = _task_15743_semantic_delta(
+        stacked, repaired
+    )
+    assert sum(introduced.values()) == 40
+    assert sum(removed.values()) == 42
+    assert (
+        sum(
+            count
+            for (owner, _digest), count in removed.items()
+            if owner == "tldw_chatbook/LLM_Calls/LLM_API_Calls.py"
+        )
+        == 32
+    )
+    assert sum(repair_added.values()) == 31
+    assert sum(repair_removed.values()) == 31
+    assert not (repair_removed - introduced), (
+        "every repaired unsafe call must originate in the audited stacked delta"
+    )
+    safe_added = introduced - repair_removed
+    assert _task_15743_rows_for_delta(
+        safe_added, introduced_details, reviewed_safe_rows
+    ) == Counter(reviewed_safe_rows)
+    assert _task_15743_rows_for_delta(
+        repair_added, repair_details, repair_rows
+    ) == Counter(repair_rows)
+
+    for owner, label in repair_rows:
+        expected_fields = (
+            ()
+            if label in no_field_repairs
+            else ("len(sources)",)
+            if label == "Consolidated widget CSS incomplete"
+            else ("type(exc).__name__",)
+        )
+        assert (
+            REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(owner, {}).get(label)
+            == expected_fields
+        )
+    for owner, labels in safe_rows.items():
+        for label, expected_fields in labels.items():
+            assert (
+                REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(owner, {}).get(label)
+                == expected_fields
+            )
+
+
+def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
+    """Exception classes must be rendered before Loguru extras are discarded."""
+    before = "fdee8a31f"
+    repaired = "afee9672a"
+    changed = subprocess.run(
+        ["git", "diff", "--name-only", before, repaired, "--", "tldw_chatbook"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout.splitlines()
+    expected: set[tuple[str, str]] = set()
+    for relative in changed:
+        before_population, _ = _task_15103_population_and_details_at(before, relative)
+        after_population, after_details = _task_15103_population_and_details_at(
+            repaired, relative
+        )
+        for digest, count in (after_population - before_population).items():
+            call = after_details[digest]
+            if "type(exc).__name__" in call.expressions:
+                assert count == 1
+                expected.add((relative, call.event))
+
+    assert len(expected) == 25
+    failures: list[str] = []
+    for relative, label in sorted(expected):
+        source = (REPO_ROOT / relative).read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=relative)
+        logger_symbols = diagnostic_inventory._logger_symbols(tree)
+        matches = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and diagnostic_inventory._is_diagnostic_call(node, logger_symbols)
+            and node.args
+            and label in ast.unparse(node.args[0])
+        ]
+        if len(matches) != 1:
+            failures.append(f"{relative}: expected one {label!r}, found {len(matches)}")
+            continue
+        call = matches[0]
+        message = ast.literal_eval(call.args[0])
+        if "exception_type={}" not in message:
+            failures.append(f"{relative}: {label!r} does not render exception_type")
+        if [ast.unparse(argument) for argument in call.args[1:]] != [
+            "type(exc).__name__"
+        ]:
+            failures.append(f"{relative}: {label!r} is not positional metadata")
+        if any(keyword.arg == "exception_type" for keyword in call.keywords):
+            failures.append(f"{relative}: {label!r} leaves exception_type in extra")
 
     assert failures == []
 
@@ -1052,21 +1532,26 @@ def _task_15103_preload_git_sources(revision_paths: list[tuple[str, str]]) -> No
     pending = [pair for pair in pending if pair not in _TASK_15103_SPEC_BLOBS]
     if not pending:
         return
-    specs = [f"{revision}:{path}" for revision, path in pending]
-    resolved = subprocess.run(
-        ["git", "cat-file", "--batch-check"],
-        cwd=REPO_ROOT,
-        input="\n".join(specs) + "\n",
-        capture_output=True,
-        check=True,
-        text=True,
-    ).stdout.splitlines()
-    assert len(resolved) == len(pending), "Git batch-check result count mismatch"
-    for pair, line in zip(pending, resolved, strict=True):
-        fields = line.split()
-        _TASK_15103_SPEC_BLOBS[pair] = (
-            fields[0] if len(fields) == 3 and fields[1] == "blob" else None
-        )
+    # Keep both request and response below macOS's small pipe buffers; larger
+    # batches can deadlock while parent and `git cat-file` each wait to write.
+    batch_size = 16
+    for start in range(0, len(pending), batch_size):
+        batch = pending[start : start + batch_size]
+        specs = [f"{revision}:{path}" for revision, path in batch]
+        resolved = subprocess.run(
+            ["git", "cat-file", "--batch-check"],
+            cwd=REPO_ROOT,
+            input="\n".join(specs) + "\n",
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout.splitlines()
+        assert len(resolved) == len(batch), "Git batch-check result count mismatch"
+        for pair, line in zip(batch, resolved, strict=True):
+            fields = line.split()
+            _TASK_15103_SPEC_BLOBS[pair] = (
+                fields[0] if len(fields) == 3 and fields[1] == "blob" else None
+            )
 
     missing_blobs = list(
         dict.fromkeys(
@@ -1078,25 +1563,31 @@ def _task_15103_preload_git_sources(revision_paths: list[tuple[str, str]]) -> No
     )
     if not missing_blobs:
         return
-    output = subprocess.run(
-        ["git", "cat-file", "--batch"],
-        cwd=REPO_ROOT,
-        input=("\n".join(missing_blobs) + "\n").encode(),
-        capture_output=True,
-        check=True,
-    ).stdout
-    offset = 0
-    for expected_blob in missing_blobs:
-        newline = output.index(b"\n", offset)
-        header = output[offset:newline].decode().split()
-        assert len(header) == 3 and header[0] == expected_blob and header[1] == "blob"
-        size = int(header[2])
-        start = newline + 1
-        end = start + size
-        assert output[end : end + 1] == b"\n"
-        _TASK_15103_BLOB_SOURCES[expected_blob] = output[start:end].decode("utf-8")
-        offset = end + 1
-    assert offset == len(output), "Git batch output contains trailing data"
+    for start in range(0, len(missing_blobs), batch_size):
+        batch = missing_blobs[start : start + batch_size]
+        output = subprocess.run(
+            ["git", "cat-file", "--batch"],
+            cwd=REPO_ROOT,
+            input=("\n".join(batch) + "\n").encode(),
+            capture_output=True,
+            check=True,
+        ).stdout
+        offset = 0
+        for expected_blob in batch:
+            newline = output.index(b"\n", offset)
+            header = output[offset:newline].decode().split()
+            assert (
+                len(header) == 3 and header[0] == expected_blob and header[1] == "blob"
+            )
+            size = int(header[2])
+            content_start = newline + 1
+            end = content_start + size
+            assert output[end : end + 1] == b"\n"
+            _TASK_15103_BLOB_SOURCES[expected_blob] = output[content_start:end].decode(
+                "utf-8"
+            )
+            offset = end + 1
+        assert offset == len(output), "Git batch output contains trailing data"
 
 
 def _task_15103_blob_at(revision: str, path: str) -> str | None:
@@ -2213,16 +2704,20 @@ def test_task_15103_review_ledger_canonical_provenance_revisions_exist() -> None
             ancestry_groups[pair].add(group["id"])
 
     revisions = sorted(revision_groups)
-    existence = subprocess.run(
-        ["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        check=False,
-        input="".join(f"{revision}^{{commit}}\n" for revision in revisions),
-        text=True,
-    )
-    assert existence.returncode == 0, existence.stderr
-    for revision, output in zip(revisions, existence.stdout.splitlines(), strict=True):
+    existence_output: list[str] = []
+    for start in range(0, len(revisions), 16):
+        batch = revisions[start : start + 16]
+        existence = subprocess.run(
+            ["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=False,
+            input="".join(f"{revision}^{{commit}}\n" for revision in batch),
+            text=True,
+        )
+        assert existence.returncode == 0, existence.stderr
+        existence_output.extend(existence.stdout.splitlines())
+    for revision, output in zip(revisions, existence_output, strict=True):
         if output.endswith(" missing") or not output.endswith(" commit"):
             for group_id in sorted(revision_groups[revision]):
                 failures.append(f"{group_id}: missing commit {revision}")

@@ -32,7 +32,7 @@ def test_active_source_key_normalizes_relative_dot_segments_and_case(
     )
 
     relative = normalize_active_ingest_source(
-        ".\\Folder\\..\\Folder\\NOTE.txt", origin="local"
+        "./Folder/../Folder/NOTE.txt", origin="local"
     )
     absolute = normalize_active_ingest_source(
         str(tmp_path / "folder" / "note.TXT"), origin="local"
@@ -1085,7 +1085,9 @@ def test_progress_listener_removal_stops_future_progress_notifications() -> None
     assert calls == ["Extracting"]
 
 
-def test_progress_listener_exception_is_isolated_from_other_progress_listeners() -> None:
+def test_progress_listener_exception_is_isolated_from_other_progress_listeners() -> (
+    None
+):
     """A broken observer must not prevent another observer seeing the tick."""
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/report.txt")
@@ -1170,9 +1172,7 @@ def test_progress_snapshots_and_return_value_do_not_share_registry_payload() -> 
     job = registry.submit(source_path="/tmp/report.txt")
     registry.mark_parsing(job.job_id)
     listener_after = []
-    registry.add_progress_listener(
-        lambda before, after: listener_after.append(after)
-    )
+    registry.add_progress_listener(lambda before, after: listener_after.append(after))
     payload = {"phase": "extracting", "message": "Extracting", "detail": {"page": 1}}
 
     updated = registry.update_progress(job.job_id, progress=payload)

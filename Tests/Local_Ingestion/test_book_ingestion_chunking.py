@@ -39,6 +39,14 @@ from tldw_chatbook.Local_Ingestion.Book_Ingestion_Lib import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _offline_tokenizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep real ebook chunking on the optional tokenizer fallback."""
+    from tldw_chatbook.Chunking import token_chunker
+
+    monkeypatch.setattr(token_chunker, "get_safe_import", lambda _name: None)
+
+
 # ---------------------------------------------------------------------------
 # FB2: fully real -- extraction (stdlib XML) AND chunking.
 # ---------------------------------------------------------------------------
@@ -150,9 +158,7 @@ class TestEpubChunkingExecutes:
         source = tmp_path / "book.epub"
         source.write_bytes(b"PK\x03\x04 fake epub bytes")
 
-        result = process_epub(
-            str(source), perform_chunking=True, chunk_options=None
-        )
+        result = process_epub(str(source), perform_chunking=True, chunk_options=None)
 
         _assert_no_chunking_failure(result)
         chunks = result["chunks"]

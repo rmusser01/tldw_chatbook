@@ -3020,17 +3020,19 @@ async def test_console_left_rail_sections_use_available_space():
         left_rail = console.query_one("#console-left-rail")
         body = console.query_one("#console-left-rail-body")
         header = console.query_one(".console-rail-header")
-        session_body = console.query_one("#console-rail-section-body-session")
+        conversations_body = console.query_one(
+            "#console-rail-section-body-conversations"
+        )
         workspace_context = console.query_one("#console-workspace-context")
 
         assert body.parent is left_rail
         assert header.region.height == 1
         assert body.region.y >= header.region.y + header.region.height
         assert body.region.height <= left_rail.region.height - header.region.height
-        # The workspace tray lives inside its collapsible Session section
-        # body. (Task-400: the staged-context tray moved to the Inspector
-        # rail, so the left rail no longer hosts a Context section.)
-        assert workspace_context.parent is session_body
+        # TASK-14810 split the former mixed Session tray into peer Session,
+        # Workspace, and Conversation sections. The legacy selector now names
+        # the conversation tray; staged context remains in the Inspector.
+        assert workspace_context.parent is conversations_body
         assert not list(left_rail.query("#console-staged-context-tray"))
         assert not list(console.query("#console-rail-section-body-context"))
 

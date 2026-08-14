@@ -7,7 +7,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -1559,15 +1559,11 @@ async def test_file_notes_create_route_returns_to_database_notes(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_file_notes_collections_source_transition_blocks_mutation_through_recompose(
+async def test_file_notes_collections_source_transition_blocks_mutation_through_targeted_reconcile(
     monkeypatch,
     tmp_path,
 ):
-    """Files-to-Collections keeps source admission through actual recompose."""
-    from tldw_chatbook.Library.library_notes_session import (
-        NoteFlushOutcome,
-        NoteFlushOutcomeKind,
-    )
+    """Files-to-Collections keeps source admission through targeted reconcile."""
     from tldw_chatbook.Library.library_shell_state import (
         LIBRARY_ROW_BROWSE_COLLECTIONS,
         LIBRARY_ROW_BROWSE_NOTES,
@@ -1576,14 +1572,17 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
         NoteFlushOutcome,
         NoteFlushOutcomeKind,
     )
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LibraryEntryReconcileResult,
+        LibraryScreen,
+    )
 
     app = _build_test_app()
     owner = app.file_notes_session_owner
     binding = owner.select_root(tmp_path / "notes")
     sync_returned = asyncio.Event()
-    recompose_started = asyncio.Event()
-    finish_recompose = asyncio.Event()
+    reconcile_started = asyncio.Event()
+    finish_reconcile = asyncio.Event()
 
     class WorkspaceProbe:
         async def flush_pending_work(self):
@@ -1600,9 +1599,17 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     screen._library_collections_loaded = False
 
-    async def refresh_collections_snapshot():
+    async def sync_collections_panel(*, refresh_snapshot, wait_for_recompose):
+        assert refresh_snapshot is True
+        assert wait_for_recompose is True
         screen._library_collections_loaded = True
         sync_returned.set()
+        reconcile_started.set()
+        admission = owner.admit_mutation(binding)
+        assert admission.lease is None
+        assert admission.reason == "transition_active"
+        await finish_reconcile.wait()
+        return LibraryEntryReconcileResult.APPLIED
 
     async def flush_note():
         # task-3316: this stub MUST honour ``_flush_library_note_save``'s
@@ -1615,23 +1622,15 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
     async def flush_editor():
         return True
 
-    async def recompose():
-        recompose_started.set()
-        admission = owner.admit_mutation(binding)
-        assert admission.lease is None
-        assert admission.reason == "transition_active"
-        await finish_recompose.wait()
-
     monkeypatch.setattr(
         screen,
-        "_refresh_library_collections_snapshot",
-        refresh_collections_snapshot,
+        "_sync_collections_panel",
+        sync_collections_panel,
     )
     monkeypatch.setattr(screen, "refresh", lambda *, recompose: None)
     monkeypatch.setattr(screen, "_flush_library_note_save", flush_note)
     monkeypatch.setattr(screen, "_flush_library_prompt_save", flush_editor)
     monkeypatch.setattr(screen, "_flush_library_skill_save", flush_editor)
-    monkeypatch.setattr(screen, "recompose", recompose)
 
     source_switch = asyncio.create_task(
         screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
@@ -1639,15 +1638,17 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
     await _wait_for_background_signal(
         sync_returned, source_switch, what="the Collections snapshot refresh"
     )
-    await asyncio.sleep(0)
+    await _wait_for_background_signal(
+        reconcile_started, source_switch, what="the Collections targeted reconcile"
+    )
 
-    assert recompose_started.is_set()
+    assert reconcile_started.is_set()
     assert not source_switch.done()
     admission = owner.admit_mutation(binding)
     assert admission.lease is None
     assert admission.reason == "transition_active"
 
-    finish_recompose.set()
+    finish_reconcile.set()
     await _await_background_task(source_switch, what="the Collections source switch")
     after_recompose = owner.try_acquire_mutation(binding)
     assert after_recompose is not None
@@ -1769,6 +1770,9 @@ async def test_action_library_notes_files_back_returns_to_database(
         def acquire_transition(self, kind):
             lease = owner.try_acquire_transition(binding, kind)
             return False if lease is None else lease.release
+
+        def cancel_reload_confirmation(self):
+            return False
 
     workspace = WorkspaceProbe()
     screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)

@@ -1547,6 +1547,7 @@ async def test_managed_start_and_test_runs_async_and_preserves_current_result(
         )
 
         assert pane.current_audio_file == existing
+        assert app.query_one("#tts-refresh-catalog-btn", Button).disabled is False
         assert service.synthesize_calls == 0
 
 
@@ -2703,7 +2704,10 @@ async def test_clone_setup_controls_and_status_remain_scroll_reachable(
         ):
             control = screen.query_one(selector)
             pane.scroll_to_widget(control, animate=False, force=True)
-            await pilot.pause()
+            await _wait_until(
+                pilot,
+                lambda: screen.region.overlaps(control.region),
+            )
             assert control.region.width > 0, (terminal_size, selector)
             assert control.region.height > 0, (terminal_size, selector)
             assert screen.region.overlaps(control.region), (terminal_size, selector)

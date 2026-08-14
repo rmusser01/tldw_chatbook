@@ -7,6 +7,8 @@ from pathlib import Path
 import shutil
 import tempfile
 
+import pytest
+
 
 _PRIVATE_TEST_ROOT = Path(tempfile.mkdtemp(prefix="tldw_production_app_")).resolve()
 _PRIVATE_HOME = _PRIVATE_TEST_ROOT / "home"
@@ -27,6 +29,19 @@ os.environ.update(
         "TMPDIR": str(_PRIVATE_TEMP),
     }
 )
+
+
+@pytest.fixture(autouse=True)
+def _disable_model_catalog_refresh(isolate_test_environment, monkeypatch) -> None:
+    """Keep unrelated production-app tests off the catalog network seam."""
+
+    async def _offline_refresh(_app) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "tldw_chatbook.app.TldwCli._refresh_model_catalogs",
+        _offline_refresh,
+    )
 
 
 def pytest_sessionfinish() -> None:

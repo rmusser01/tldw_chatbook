@@ -5,7 +5,7 @@ CharactersRAGDB seeded through WorldBookManager (mirrors
 test_personas_dictionaries.py's PersonasTestApp harness)."""
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -54,6 +54,13 @@ class _DetailHost(ConsolidatedCSSApp):
 
     def on_lore_detach_requested(self, message) -> None:
         self.detach_posts.append(message.conversation_id)
+
+
+def test_detached_lore_detail_mount_is_a_noop() -> None:
+    """A deferred view may be detached before its mount callback runs."""
+    widget = PersonasLoreDetailWidget(id="personas-lore-detail")
+
+    widget.on_mount()
 
 
 @pytest.mark.asyncio

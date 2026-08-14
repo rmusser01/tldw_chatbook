@@ -63,12 +63,22 @@ def _reset_llm_context_executor_state():
         (":swarmui", "swarmui", None, ""),
         ("", None, None, ""),
         ("   ", None, None, ""),
-        (": lonely colon", None, None, ": lonely colon"),  # bare ':' is not a backend token
+        (
+            ": lonely colon",
+            None,
+            None,
+            ": lonely colon",
+        ),  # bare ':' is not a backend token
         ("@anime dragon", None, "anime", "dragon"),
         (":swarmui @anime dragon", "swarmui", "anime", "dragon"),
         ("@anime :swarmui dragon", "swarmui", "anime", "dragon"),
         ("@ lonely at", None, None, "@ lonely at"),  # bare '@' is not a style token
-        ("@unknown x", None, "unknown", "x"),  # unresolved style token passes through raw
+        (
+            "@unknown x",
+            None,
+            "unknown",
+            "x",
+        ),  # unresolved style token passes through raw
     ],
 )
 def test_parse_table(args, backend, style, prompt):
@@ -284,9 +294,7 @@ def test_batch_reraises_typed_cancellation_instead_of_collecting_it():
             seed=None,
             count=1,
             build=lambda **kwargs: kwargs,
-            generate=lambda _request: (_ for _ in ()).throw(
-                ImageGenerationCancelled()
-            ),
+            generate=lambda _request: (_ for _ in ()).throw(ImageGenerationCancelled()),
         )
 
 
@@ -362,8 +370,12 @@ def test_batch_all_succeed():
         return _Res(b"img")
 
     out = run_generation_batch(
-        backend="swarmui", prompt="p", negative_prompt=None,
-        seed=None, count=2, generate=gen,
+        backend="swarmui",
+        prompt="p",
+        negative_prompt=None,
+        seed=None,
+        count=2,
+        generate=gen,
     )
     assert len(out.successes) == 2 and out.errors == []
 
@@ -379,8 +391,12 @@ def test_batch_partial_failure_keeps_successes():
         return _Res(b"img")
 
     out = run_generation_batch(
-        backend="swarmui", prompt="p", negative_prompt=None,
-        seed=None, count=3, generate=gen,
+        backend="swarmui",
+        prompt="p",
+        negative_prompt=None,
+        seed=None,
+        count=3,
+        generate=gen,
     )
     assert len(out.successes) == 2 and len(out.errors) == 1
 
@@ -394,8 +410,12 @@ def test_batch_explicit_seed_only_first_variant():
         return _Res(b"img")
 
     run_generation_batch(
-        backend="swarmui", prompt="p", negative_prompt=None,
-        seed=1234, count=3, generate=gen,
+        backend="swarmui",
+        prompt="p",
+        negative_prompt=None,
+        seed=1234,
+        count=3,
+        generate=gen,
     )
     assert seeds == [1234, -1, -1]  # identical-image guard
 
@@ -414,8 +434,13 @@ def test_batch_build_exception_collected():
         return _Res(b"img")
 
     out = run_generation_batch(
-        backend="swarmui", prompt="p", negative_prompt=None,
-        seed=None, count=3, generate=gen, build=build_fn,
+        backend="swarmui",
+        prompt="p",
+        negative_prompt=None,
+        seed=None,
+        count=3,
+        generate=gen,
+        build=build_fn,
     )
     # First and third variants succeed (build calls 1 and 3).
     # Second fails during build (call 2).
@@ -436,13 +461,18 @@ def test_batch_threads_style_and_template_params():
 
     template = get_template("style_anime")
     out = run_generation_batch(
-        backend="swarmui", prompt="p", negative_prompt=None,
-        seed=None, count=1, style_name=template.name,
+        backend="swarmui",
+        prompt="p",
+        negative_prompt=None,
+        seed=None,
+        count=1,
+        style_name=template.name,
         width=template.default_params["width"],
         height=template.default_params["height"],
         steps=template.default_params["steps"],
         cfg_scale=template.default_params["cfg_scale"],
-        generate=gen, build=build_fn,
+        generate=gen,
+        build=build_fn,
     )
     assert captured[0]["width"] == template.default_params["width"]
     assert captured[0]["height"] == template.default_params["height"]
@@ -465,8 +495,13 @@ def test_batch_default_style_and_dims_are_none():
         return _Res(b"img")
 
     out = run_generation_batch(
-        backend="swarmui", prompt="p", negative_prompt=None,
-        seed=None, count=1, generate=gen, build=build_fn,
+        backend="swarmui",
+        prompt="p",
+        negative_prompt=None,
+        seed=None,
+        count=1,
+        generate=gen,
+        build=build_fn,
     )
     assert captured[0]["width"] is None
     assert captured[0]["height"] is None
@@ -495,8 +530,12 @@ def test_batch_uses_resolved_seed_and_model_when_reported():
         return _ResWithResolved(b"img", resolved_seed=999, resolved_model="sdxl")
 
     out = run_generation_batch(
-        backend="swarmui", prompt="p", negative_prompt=None,
-        seed=-1, count=1, generate=gen,
+        backend="swarmui",
+        prompt="p",
+        negative_prompt=None,
+        seed=-1,
+        count=1,
+        generate=gen,
     )
     assert len(out.successes) == 1
     meta = out.successes[0][2]
@@ -515,8 +554,12 @@ def test_batch_falls_back_to_variant_seed_when_result_has_no_resolved_fields():
         return _Res(b"img")
 
     out = run_generation_batch(
-        backend="swarmui", prompt="p", negative_prompt=None,
-        seed=42, count=1, generate=gen,
+        backend="swarmui",
+        prompt="p",
+        negative_prompt=None,
+        seed=42,
+        count=1,
+        generate=gen,
     )
     meta = out.successes[0][2]
     assert meta.seed == 42
@@ -532,8 +575,12 @@ def test_batch_resolved_seed_none_falls_back_to_variant_seed():
         return _ResWithResolved(b"img", resolved_seed=None, resolved_model=None)
 
     out = run_generation_batch(
-        backend="swarmui", prompt="p", negative_prompt=None,
-        seed=7, count=1, generate=gen,
+        backend="swarmui",
+        prompt="p",
+        negative_prompt=None,
+        seed=7,
+        count=1,
+        generate=gen,
     )
     meta = out.successes[0][2]
     assert meta.seed == 7
@@ -716,7 +763,11 @@ def test_prepare_empty_prompt_with_content_and_style_uses_that_style():
     [
         # Draft already starts with the command word: insert @style right
         # after the command word, in front of the prompt remainder.
-        ("/generate-image a dragon", "style_anime", "/generate-image @style_anime a dragon"),
+        (
+            "/generate-image a dragon",
+            "style_anime",
+            "/generate-image @style_anime a dragon",
+        ),
         # A leading :backend token stays exactly where it was; the new
         # style token is inserted right after it.
         (
@@ -866,9 +917,7 @@ def test_compose_llm_context_prompt_not_ready_returns_none():
 
 
 def test_compose_llm_context_prompt_no_api_endpoint_returns_none():
-    options = _llm_options(
-        api_endpoint=None, chat_call=lambda **_: _chat_response("x")
-    )
+    options = _llm_options(api_endpoint=None, chat_call=lambda **_: _chat_response("x"))
     assert compose_llm_context_prompt([("user", "hi")], options) is None
 
 
@@ -1160,7 +1209,9 @@ def test_build_context_prompt_with_llm_none_options_matches_keyword_path():
 
 def test_build_context_prompt_with_llm_empty_pairs_returns_none_regardless():
     template = get_template("chat_scene_visual")
-    options = _llm_options(chat_call=lambda **_: _chat_response("should not be reached"))
+    options = _llm_options(
+        chat_call=lambda **_: _chat_response("should not be reached")
+    )
     assert build_context_prompt_with_llm([], template, options) is None
     assert build_context_prompt_with_llm([("user", "   ")], template, options) is None
 
@@ -1227,7 +1278,9 @@ def test_prepare_empty_prompt_llm_context_success_used_over_keyword_extractor():
 def test_prepare_empty_prompt_llm_context_failure_falls_back_to_keyword_result():
     args = GenerateImageArgs(backend=None, prompt="", style=None)
     pairs = [("user", "a quiet lakeside cabin at dawn")]
-    options = _llm_options(chat_call=lambda **_: (_ for _ in ()).throw(RuntimeError("x")))
+    options = _llm_options(
+        chat_call=lambda **_: (_ for _ in ()).throw(RuntimeError("x"))
+    )
     with_llm = prepare_generation_request(args, pairs, options)
     without_llm = prepare_generation_request(args, pairs, None)
     assert with_llm == without_llm
@@ -1248,7 +1301,11 @@ def test_prepare_empty_prompt_llm_context_default_none_matches_pre_ac1_behavior(
 def test_prepare_nonempty_prompt_ignores_llm_context():
     """llm_context is only ever consulted on the no-prompt path."""
     args = GenerateImageArgs(backend=None, prompt="a red dragon", style=None)
-    options = _llm_options(chat_call=lambda **_: (_ for _ in ()).throw(AssertionError("must not be called")))
+    options = _llm_options(
+        chat_call=lambda **_: (_ for _ in ()).throw(
+            AssertionError("must not be called")
+        )
+    )
     result = prepare_generation_request(args, [], options)
     assert result == PreparedGeneration(
         prompt="a red dragon",

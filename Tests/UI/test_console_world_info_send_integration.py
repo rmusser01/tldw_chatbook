@@ -43,6 +43,7 @@ def _active_native_session(console):
 @pytest.mark.asyncio
 async def test_native_send_applies_conversation_world_info_provider_branch(wb_db):
     app = _build_test_app()
+    app.app_config.setdefault("console", {})["agent_runtime"] = False
     app.chachanotes_db = wb_db
 
     conv_id = wb_db.add_conversation({"title": "World send"})
@@ -61,7 +62,6 @@ async def test_native_send_applies_conversation_world_info_provider_branch(wb_db
         controller = screen._ensure_console_chat_controller()
         gateway = _CapturingGateway()
         controller.provider_gateway = gateway
-        controller._agent_runtime_enabled = False  # force the provider branch
 
         result = await controller.submit_draft("a dragon appears")
         assert result.accepted
@@ -84,6 +84,7 @@ async def test_native_send_applies_conversation_world_info_provider_branch(wb_db
 @pytest.mark.asyncio
 async def test_native_send_world_info_disabled_by_config_not_injected(wb_db, monkeypatch):
     app = _build_test_app()
+    app.app_config.setdefault("console", {})["agent_runtime"] = False
     app.chachanotes_db = wb_db
 
     conv_id = wb_db.add_conversation({"title": "World send disabled"})
@@ -113,7 +114,6 @@ async def test_native_send_world_info_disabled_by_config_not_injected(wb_db, mon
         controller = screen._ensure_console_chat_controller()
         gateway = _CapturingGateway()
         controller.provider_gateway = gateway
-        controller._agent_runtime_enabled = False  # force the provider branch
 
         result = await controller.submit_draft("a dragon appears")
         assert result.accepted

@@ -1361,8 +1361,14 @@ async def test_the_list_the_button_and_the_body_are_all_on_screen(size, monkeypa
         # `max-width` on the pane, would show up as a difference.
         artifacts_width = pane.region.width  # before the section switch
         screen.active_section = "sources"
-        await pilot.pause(0.2)
-        sources_width = screen.query_one("#watchlists-sources-pane").region.width
+        deadline = time.monotonic() + 10.0
+        sources_width = 0
+        while time.monotonic() < deadline:
+            sources_panes = list(screen.query("#watchlists-sources-pane"))
+            if sources_panes and sources_panes[0].region.width > 0:
+                sources_width = sources_panes[0].region.width
+                break
+            await pilot.pause(0.05)
         assert artifacts_width == sources_width > size[0] // 2, (
             f"Artifacts is {artifacts_width} columns wide where Sources gets "
             f"{sources_width} on the same {size[0]}x{size[1]} terminal"
@@ -5602,6 +5608,7 @@ async def test_pressing_serve_then_stop_round_trips_through_a_real_server(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_network
 async def test_screen_teardown_stops_a_still_running_feed_server(monkeypatch, tmp_path):
     """A user who navigates away (or closes the app) without pressing Stop
     must not leave a listening socket behind -- `on_unmount` closes it.

@@ -235,6 +235,8 @@ class TestDBInitialization:
         # citation migration deliberately rejects pre-existing/partial tables.
         # Remove the current provenance schema before replaying from v17.
         for table in (
+            "note_folder_memberships",
+            "note_folders",
             "rag_artifact_owner_operations",
             "rag_artifact_owner_leases",
             "rag_source_observations",

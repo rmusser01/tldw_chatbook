@@ -62,6 +62,7 @@ class TestRAGServiceBasics:
         """Test service with default configuration."""
         # Create a minimal config with required persist_directory
         config = RAGConfig()
+        config.embedding.model = "mock"
         config.vector_store.persist_directory = temp_dir
 
         with create_rag_service_from_config(config=config) as service:

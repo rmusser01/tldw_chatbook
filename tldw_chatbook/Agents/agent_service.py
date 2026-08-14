@@ -361,10 +361,7 @@ def _coerce_autowake_enabled(value) -> bool:
         return True
     if text in {"0", "false", "no", "off"}:
         return False
-    logger.warning(
-        f"[agents] {AUTOWAKE_ENABLED_KEY}={value!r} is not a boolean; "
-        f"using {DEFAULT_AUTOWAKE_ENABLED}"
-    )
+    logger.warning("autowake_enabled is not boolean; using default")
     return DEFAULT_AUTOWAKE_ENABLED
 
 
@@ -2057,10 +2054,10 @@ class AgentService:
                     if self._on_child_settled is not None:
                         try:
                             self._on_child_settled(child_run_id, status)
-                        except Exception:  # noqa: BLE001
-                            logger.opt(exception=True).warning(
-                                "on_child_settled consumer raised for "
-                                f"sub-agent run {child_run_id}"
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                "on_child_settled consumer raised (exception_type={})",
+                                type(exc).__name__,
                             )
 
             thread = threading.Thread(

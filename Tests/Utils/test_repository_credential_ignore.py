@@ -30,9 +30,10 @@ def test_exact_root_credential_filenames_are_ignored():
     assert _is_ignored("moonshot-api-key.txt")
 
 
-def test_same_filenames_in_subdirectories_are_not_covered_by_root_guard():
-    assert not _is_ignored("nested/openai-api-key.txt")
-    assert not _is_ignored("nested/moonshot-api-key.txt")
+def test_api_key_scratch_filenames_are_ignored_at_any_depth():
+    assert _is_ignored("nested/openai-api-key.txt")
+    assert _is_ignored("nested/moonshot-api-key.txt")
+    assert not _is_ignored("nested/readme.txt")
 
 
 def test_check_ignore_fatal_error_cannot_satisfy_not_ignored(monkeypatch):

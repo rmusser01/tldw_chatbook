@@ -5702,7 +5702,8 @@ class LibraryScreen(BaseAppScreen):
         conversations query are view/selection state. The Prompt browse scope
         is request state instead: its query, collection, sort, and page values
         define the exact local Prompt service request issued after restore.
-        Only that immutable scope is saved; its result rows are fetched fresh.
+        Its immutable fields are saved as a primitive mapping; result rows are
+        fetched fresh.
         ``_library_notes_filter_records`` is likewise never persisted because
         it is a derived/bulk snapshot recomputed from the saved notes filter.
         """
@@ -5733,7 +5734,9 @@ class LibraryScreen(BaseAppScreen):
         state["library_media_type_filter"] = self._library_media_type_filter
         state["library_notes_sort"] = self._library_notes_sort
         state["library_notes_filter"] = self._library_notes_filter
-        state["library_prompts_scope"] = self._library_prompt_browse_controller.scope
+        state["library_prompts_scope"] = dataclasses.asdict(
+            self._library_prompt_browse_controller.scope
+        )
         state["selected_prompt_id"] = self._selected_prompt_id
         state["library_conversation_query"] = getattr(
             self, "_library_conversation_query", ""
@@ -5874,7 +5877,13 @@ class LibraryScreen(BaseAppScreen):
         )
         prompts_scope = state.get("library_prompts_scope")
         if isinstance(prompts_scope, PromptBrowseScope):
+            # In-memory compatibility with snapshots made before TASK-16227.
             restored_prompts_scope = prompts_scope
+        elif type(prompts_scope) is dict:
+            try:
+                restored_prompts_scope = PromptBrowseScope(**prompts_scope)
+            except (TypeError, ValueError):
+                restored_prompts_scope = PromptBrowseScope()
         else:
             # In-memory compatibility with pre-TASK-198 saved screen state.
             legacy_sort = state.get("library_prompts_sort")
@@ -9985,9 +9994,7 @@ class LibraryScreen(BaseAppScreen):
         except Exception:
             if generation != self._library_conversation_request_generation:
                 return
-            logger.opt(exception=True).warning(
-                "Failed to load Library conversations page."
-            )
+            logger.warning("Failed to load Library conversations page.")
             self._library_conversation_loading = False
             self._library_conversation_error = (
                 "Couldn't load conversations. Try Previous, Next, or submit "
@@ -10036,7 +10043,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_conversation_query = normalized_query
         self._library_conversation_loading = False
         self._library_conversation_error = ""
-        self._selected_conversation_id = ""
+        self._adopt_library_conversation_state_selection("")
         _sync_library_canvas(self, "conversations")
         if refocus_filter:
             self._refocus_library_conversations_filter_after_sync()
@@ -10086,11 +10093,12 @@ class LibraryScreen(BaseAppScreen):
                 operation.status_line
                 if operation is not None
                 else (
-                    getattr(self, "_library_notes_tree_error", "")
+                    self._library_notes_notice
+                    or getattr(self, "_library_notes_tree_error", "")
                     or (
                         "Loading folders…"
                         if getattr(self, "_library_notes_tree_loading", False)
-                        else self._library_notes_notice
+                        else ""
                     )
                 )
             ),
@@ -10124,9 +10132,10 @@ class LibraryScreen(BaseAppScreen):
             if filter_text.strip() and search_page is not None
             else getattr(self, "_library_notes_tree_root_page", None)
         )
-        if root_page is None and getattr(self, "_library_notes_tree_error", ""):
-            # Degraded hosts used by older/local-only integrations keep the
-            # pre-folder flat browser available with an explicit warning.
+        if root_page is None:
+            # Until the first bounded tree page arrives, keep the existing
+            # flat browser available; degraded integrations remain useful
+            # and an in-flight load must not temporarily erase valid rows.
             return None
         return build_library_notes_tree(
             root_page=root_page or empty_note_folder_page(),
@@ -16354,6 +16363,17 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
 
+    async def _reconcile_library_notes_list_canvas(self) -> None:
+        """Publish a completed editor-to-list transition before returning."""
+        self._request_library_notes_tree_refresh(refresh_root=True)
+        shell = build_library_shell_state(
+            self._build_library_shell_input(),
+            selected_row_id=self._library_selected_row_id,
+        )
+        if not await self._replace_library_browse_canvas(shell):
+            await self.recompose()
+        self._focus_library_notes_filter_input()
+
     @on(Button.Pressed, "#library-prompts-sort")
     def handle_library_prompts_sort(self, event: Button.Pressed) -> None:
         """Open (or close) the prompts sort chooser's direct-pick strip.
@@ -21429,10 +21449,16 @@ class LibraryScreen(BaseAppScreen):
             or not self._library_prompt_dirty
         ):
             return
+        prompt_id = self._selected_prompt_id
+        focus_identity = (
+            f"library-prompt-row-{prompt_id}"
+            if type(prompt_id) is int and prompt_id > 0
+            else None
+        )
         self._reset_library_prompt_editor_state()
         self._request_library_prompts_browse(
             self._library_prompt_browse_controller.scope,
-            focus_identity=None,
+            focus_identity=focus_identity,
         )
         self._refresh_local_source_snapshot()
         self._arm_library_list_entry_focus()
@@ -23348,6 +23374,7 @@ class LibraryScreen(BaseAppScreen):
         self._supersede_library_notes_navigation()
         self._ensure_library_notes_sync_config_loaded()
         self._library_notes_view = "sync"
+        self._apply_library_notes_footer_context()
         _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-sync-back")
@@ -23366,7 +23393,7 @@ class LibraryScreen(BaseAppScreen):
         self._supersede_library_notes_navigation()
         self._library_notes_view = "list"
         self._reset_library_notes_sync_transient_state()
-        _sync_library_canvas(self, "notes")
+        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
 
     @on(Input.Changed, "#library-notes-sync-folder")
     def handle_library_notes_sync_folder_changed(self, event: Input.Changed) -> None:
@@ -27899,7 +27926,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_notes_filter_records = None
                 self._library_notes_tree_search_page = None
             if self.is_mounted:
-                self.refresh(recompose=True)
+                await self._reconcile_library_notes_list_canvas()
             return LibraryNoteCreateOutcome("created_not_opened", created_id)
 
         self._library_notes_notice = ""
@@ -28018,7 +28045,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_tree_search_page = None
         self._remove_library_note_source_record(admission.note_id)
         if self.is_mounted:
-            self.refresh(recompose=True)
+            await self._reconcile_library_notes_list_canvas()
 
     def _notify_library_note_create_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed Library note create.
@@ -28670,6 +28697,7 @@ class LibraryScreen(BaseAppScreen):
                 classes="destination-purpose",
                 markup=False,
             )
+        self._library_media_composed_detail = self._library_media_detail
         arrival_note = self._pop_library_media_arrival_note()
         viewer = LibraryMediaViewer(
             build_library_media_viewer_state(

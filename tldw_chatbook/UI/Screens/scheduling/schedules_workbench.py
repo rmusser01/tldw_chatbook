@@ -199,10 +199,6 @@ class SchedulesWorkbench(BaseAppScreen):
         table.add_columns("Title", "Type", "Status", "Next Run")
         self.run_worker(self.load_tasks, exclusive=True)  # type: ignore[arg-type]
 
-    def on_resize(self, event: Any) -> None:
-        """Compact the three-pane layout when its normal minima cannot fit."""
-        self._sync_responsive_workbench()
-
     def _sync_responsive_workbench(self) -> None:
         """Keep the primary queue and detail action visible at narrow widths."""
         self.set_class(
@@ -678,6 +674,7 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def on_resize(self) -> None:
         """Hide side panes (with a notice) instead of clipping them."""
+        self._sync_responsive_workbench()
         try:
             width = self.size.width
             inspector = self.query_one("#scheduling-inspector-pane")

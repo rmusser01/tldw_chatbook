@@ -748,7 +748,10 @@ async def test_popover_apply_returns_replaced_settings():
         await pilot.click("#model-search-picker-input")
         await pilot.press(*"model-b", "enter")
         await pilot.pause()
-        await pilot.click("#console-popover-streaming")
+        streaming = app.screen.query_one("#console-popover-streaming", Button)
+        streaming.scroll_visible(animate=False, force=True)
+        await pilot.pause()
+        assert await pilot.click("#console-popover-streaming") is True
         await pilot.pause()
         await pilot.click("#console-popover-apply")
         await pilot.pause()

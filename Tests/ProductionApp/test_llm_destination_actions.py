@@ -12,7 +12,7 @@ import sys
 import textwrap
 import threading
 import time
-from types import SimpleNamespace
+from types import ModuleType
 
 import pytest
 from textual.widgets import Button, Input, RichLog, TextArea
@@ -163,6 +163,7 @@ EXPECTED_BROWSE_TOOLTIPS = {
         "Choose the Modelfile used to create an Ollama model."
     ),
 }
+OLLAMA_SERVICE_REQUIRED_TOOLTIP = "Requires a running Ollama service — start it above."
 
 
 class _DeterministicOllamaProcess:
@@ -1325,10 +1326,12 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
             self.title = title
 
     monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    picker_module = ModuleType("textual_fspicker")
+    picker_module.FileOpen = Picker
     monkeypatch.setitem(
         sys.modules,
         "textual_fspicker",
-        SimpleNamespace(FileOpen=Picker),
+        picker_module,
     )
     app = TldwCli()
     app.app_config["_first_run"] = False
@@ -1355,10 +1358,11 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
 
             cache_root = tmp_path / "provider-cache" / "hub"
             cache_root.mkdir(parents=True)
+            assert transformers_events.hf_constants is not None
             monkeypatch.setattr(
-                transformers_events,
-                "hf_constants",
-                SimpleNamespace(HF_HUB_CACHE=str(cache_root)),
+                transformers_events.hf_constants,
+                "HF_HUB_CACHE",
+                str(cache_root),
             )
             await window.on_button_pressed(Button.Pressed(browse_button))
             assert pushed[-1][0].location == str(cache_root)
@@ -1367,18 +1371,18 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
             cache_parent.mkdir()
             missing_cache = cache_parent / "missing-hub"
             monkeypatch.setattr(
-                transformers_events,
-                "hf_constants",
-                SimpleNamespace(HF_HUB_CACHE=str(missing_cache)),
+                transformers_events.hf_constants,
+                "HF_HUB_CACHE",
+                str(missing_cache),
             )
             await window.on_button_pressed(Button.Pressed(browse_button))
             assert pushed[-1][0].location == str(cache_parent)
 
             missing_cache = tmp_path / "missing-cache-parent" / "hub"
             monkeypatch.setattr(
-                transformers_events,
-                "hf_constants",
-                SimpleNamespace(HF_HUB_CACHE=str(missing_cache)),
+                transformers_events.hf_constants,
+                "HF_HUB_CACHE",
+                str(missing_cache),
             )
             await window.on_button_pressed(Button.Pressed(browse_button))
             picker, callback = pushed[-1]
@@ -1573,7 +1577,12 @@ async def test_production_llm_destination_owns_navigation_actions_and_recovery(
 
             for button_id, expected_tooltip in EXPECTED_BROWSE_TOOLTIPS.items():
                 button = window.query_one(f"#{button_id}", Button)
-                assert str(button.tooltip) == expected_tooltip
+                if button_id == "ollama-browse-modelfile-button":
+                    assert button.disabled is True
+                    assert str(button.tooltip) == OLLAMA_SERVICE_REQUIRED_TOOLTIP
+                    assert str(button._pre_gate_tooltip) == expected_tooltip
+                else:
+                    assert str(button.tooltip) == expected_tooltip
 
             await pilot.click("#lab-models-row-ollama")
             await pilot.pause()
@@ -1590,6 +1599,13 @@ async def test_production_llm_destination_owns_navigation_actions_and_recovery(
                 worker_launches.append((work, kwargs))
                 return None
 
+            def ollama_service_launches():
+                return [
+                    launch
+                    for launch in worker_launches
+                    if launch[1].get("group") == "ollama_serve"
+                ]
+
             monkeypatch.setattr(app, "run_worker", record_worker_launch)
             ollama_start_event = Button.Pressed(
                 window.query_one("#ollama-start-service-button", Button)
@@ -1599,10 +1615,9 @@ async def test_production_llm_destination_owns_navigation_actions_and_recovery(
                 window.query_one("#ollama-start-service-button", Button)
             )
             await window.on_button_pressed(duplicate_start_event)
-            assert len(worker_launches) == 1
-            assert callable(worker_launches[0][0])
-            assert worker_launches[0][1]["thread"] is True
-            assert worker_launches[0][1]["group"] == "ollama_serve"
+            assert len(ollama_service_launches()) == 1
+            assert callable(ollama_service_launches()[0][0])
+            assert ollama_service_launches()[0][1]["thread"] is True
             assert ollama_start_event._stop_propagation is True
             assert duplicate_start_event._stop_propagation is True
             ollama_start_button = window.query_one(
@@ -1632,7 +1647,7 @@ async def test_production_llm_destination_owns_navigation_actions_and_recovery(
             completed_ollama_process = _CompletedOllamaProcess()
             ollama_scenario = _SubprocessScenario([completed_ollama_process])
             monkeypatch.setattr(ollama_events, "subprocess", ollama_scenario)
-            worker_result = await asyncio.to_thread(worker_launches[0][0])
+            worker_result = await asyncio.to_thread(ollama_service_launches()[0][0])
             await pilot.pause()
             monkeypatch.setattr(ollama_events, "subprocess", subprocess)
             assert worker_result == "ollama server exited (code=0)"
@@ -1703,8 +1718,8 @@ async def test_production_llm_destination_owns_navigation_actions_and_recovery(
             monkeypatch.setattr(ollama_events, "subprocess", launch_failure)
             failure_event = Button.Pressed(ollama_start_button)
             await window.on_button_pressed(failure_event)
-            assert len(worker_launches) == 2
-            failure_result = await asyncio.to_thread(worker_launches[1][0])
+            assert len(ollama_service_launches()) == 2
+            failure_result = await asyncio.to_thread(ollama_service_launches()[1][0])
             await pilot.pause()
             assert failure_result == "ollama server failed (category=OSError)"
             assert current_server_claim(app, "ollama") is None
@@ -1723,8 +1738,8 @@ async def test_production_llm_destination_owns_navigation_actions_and_recovery(
             )
             nonzero_event = Button.Pressed(ollama_start_button)
             await window.on_button_pressed(nonzero_event)
-            assert len(worker_launches) == 3
-            nonzero_result = await asyncio.to_thread(worker_launches[2][0])
+            assert len(ollama_service_launches()) == 3
+            nonzero_result = await asyncio.to_thread(ollama_service_launches()[2][0])
             await pilot.pause()
             monkeypatch.setattr(ollama_events, "subprocess", subprocess)
             assert nonzero_result == "ollama server exited (code=7)"

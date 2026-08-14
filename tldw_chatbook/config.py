@@ -5372,8 +5372,7 @@ def apply_settings_mutation_to_cli_config(
             except Exception as error:
                 logger.error(
                     "Configuration mutation failed "
-                    "(phase=precondition, config_path={}, error_type={}).",
-                    config_path,
+                    "(phase=precondition, error_type={}).",
                     type(error).__name__,
                 )
                 return ConfigMutationResult(False, False, "before_replace")
@@ -5396,8 +5395,7 @@ def apply_settings_mutation_to_cli_config(
             except Exception as error:
                 logger.error(
                     "Configuration mutation failed "
-                    "(phase=locked_precondition, config_path={}, error_type={}).",
-                    config_path,
+                    "(phase=locked_precondition, error_type={}).",
                     type(error).__name__,
                 )
                 return ConfigMutationResult(False, False, "before_replace")

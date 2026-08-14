@@ -1086,7 +1086,7 @@ def test_local_import_failure_message_uses_stable_path_free_taxonomy(
             "_delete_model",
             "delete",
             (ArtifactRef("parakeet-v2", "rev", "int8"),),
-            ("parakeet-v2", "rev", "int8"),
+            (),
         ),
         ("_repair_store", "reconcile", (), ("store", "shared")),
     ),

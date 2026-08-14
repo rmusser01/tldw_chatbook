@@ -349,10 +349,24 @@ class TestKokoroValidation:
 @pytest.mark.asyncio
 async def test_integration_with_real_kokoro():
     """Integration test with real Kokoro model (if available)"""
+    from pathlib import Path
+
+    pytest.importorskip(
+        "kokoro_onnx",
+        reason="Kokoro ONNX dependency is not installed",
+    )
     try:
         # Test ONNX backend
         config = {"KOKORO_USE_ONNX": True}
         backend = KokoroTTSBackend(config)
+        model_path = Path(str(backend.model_path)).expanduser()
+        voices_path = Path(str(backend.voices_json)).expanduser()
+        if not voices_path.is_absolute():
+            voices_path = (
+                Path.home() / ".config" / "tldw_cli" / "models" / "kokoro" / voices_path
+            )
+        if not model_path.is_file() or not voices_path.is_file():
+            pytest.skip("Local Kokoro ONNX model artifacts are unavailable")
         await backend.initialize()
 
         if not backend.kokoro_instance:

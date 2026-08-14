@@ -2166,12 +2166,12 @@ logger.error("ordinary failure", exc_info=False, stack_info=None)
             _guard().assert_review_outcome(calls[0], calls[0], outcome=outcome)
 
 
-def test_manifest_boundary_tracks_checked_and_generated_baselines_separately() -> None:
+def test_manifest_boundary_tracks_reconciled_checked_and_generated_baselines() -> None:
     boundary = _review_fixture()["manifest_boundary"]
     checked_sha256 = boundary["checked_normalized_inventory_sha256"]
     generated_sha256 = boundary["origin_dev_generated_normalized_inventory_sha256"]
 
-    assert checked_sha256 != generated_sha256
+    assert checked_sha256 == generated_sha256
     for digest in (checked_sha256, generated_sha256):
         assert isinstance(digest, str)
         assert len(digest) == 64

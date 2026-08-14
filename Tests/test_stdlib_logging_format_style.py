@@ -21,21 +21,21 @@ from __future__ import annotations
 
 import ast
 import pathlib
-
-import pytest
+import re
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1] / "tldw_chatbook"
-_LOG_METHODS = frozenset(
-    {"debug", "info", "warning", "error", "exception", "critical"}
+_LOG_METHODS = frozenset({"debug", "info", "warning", "error", "exception", "critical"})
+_STDLIB_LOGGER_ASSIGNMENT = re.compile(
+    r"(?m)^[ \t]*logger[ \t]*=[ \t]*logging\.getLogger\("
 )
 
 
+def _uses_stdlib_logger(path: pathlib.Path) -> bool:
+    return bool(_STDLIB_LOGGER_ASSIGNMENT.search(path.read_text(errors="replace")))
+
+
 def _modules_using_stdlib_logger() -> list[pathlib.Path]:
-    return [
-        path
-        for path in sorted(_ROOT.rglob("*.py"))
-        if "logger = logging.getLogger" in path.read_text(errors="replace")
-    ]
+    return [path for path in sorted(_ROOT.rglob("*.py")) if _uses_stdlib_logger(path)]
 
 
 def _brace_style_calls(path: pathlib.Path) -> list[tuple[int, str]]:
@@ -90,9 +90,26 @@ def test_percent_style_is_not_flagged(tmp_path):
     assert _brace_style_calls(ok) == []
 
 
+def test_stdlib_logger_module_detection_requires_exact_target(tmp_path):
+    stdlib = tmp_path / "stdlib.py"
+    stdlib.write_text("import logging\nlogger = logging.getLogger(__name__)\n")
+    loguru = tmp_path / "loguru.py"
+    loguru.write_text(
+        "import logging\n"
+        "from loguru import logger\n"
+        "root_logger = logging.getLogger()\n"
+        'logger.error("valid loguru value={}", 1)\n'
+    )
+
+    assert _uses_stdlib_logger(stdlib) is True
+    assert _uses_stdlib_logger(loguru) is False
+
+
 def test_no_stdlib_logger_uses_loguru_brace_style():
     modules = _modules_using_stdlib_logger()
-    assert modules, "found no stdlib-logging modules; the scan is looking in the wrong place"
+    assert modules, (
+        "found no stdlib-logging modules; the scan is looking in the wrong place"
+    )
 
     offenders = []
     for path in modules:
@@ -102,6 +119,5 @@ def test_no_stdlib_logger_uses_loguru_brace_style():
     assert not offenders, (
         "these stdlib-logging calls use loguru's {} style and will raise "
         "TypeError when formatted -- losing the message in production and "
-        "failing the test that triggers them. Use %s:\n  "
-        + "\n  ".join(offenders)
+        "failing the test that triggers them. Use %s:\n  " + "\n  ".join(offenders)
     )

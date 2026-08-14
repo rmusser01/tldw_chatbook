@@ -179,3 +179,29 @@ def test_forward_loguru_to_standard_drops_the_metadata_marker():
     # about the security property.
     assert captured, "the forwarder produced no stdlib record"
     assert all(not hasattr(r, "_tldw_metadata_only_record") for r in captured)
+
+
+def test_forward_loguru_to_standard_keeps_rendered_exception_type(caplog):
+    """Safe positional metadata survives while arbitrary extras remain dropped."""
+    from loguru import logger as loguru_logger
+
+    from tldw_chatbook.Logging_Config import _forward_loguru_to_standard
+
+    sink_id = loguru_logger.add(_forward_loguru_to_standard, level="WARNING")
+    try:
+        with caplog.at_level(logging.WARNING, logger=__name__):
+            loguru_logger.warning(
+                "reviewed failure (exception_type={})",
+                "ValueError",
+                private_value="must-not-forward",
+            )
+    finally:
+        loguru_logger.remove(sink_id)
+
+    records = [record for record in caplog.records if record.name == __name__]
+    assert records
+    assert all(
+        record.getMessage() == "reviewed failure (exception_type=ValueError)"
+        for record in records
+    )
+    assert all(not hasattr(record, "private_value") for record in records)

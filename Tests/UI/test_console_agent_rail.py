@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     SubAgentSummary,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
@@ -394,7 +395,13 @@ def test_spawn_subagent_summary_does_not_escape_markup_brackets(tmp_path):
     bridge.run_reply(
         conversation_id="conv-1",
         session_id=session.id,
-        resolution=object(),
+        resolution=ConsoleProviderResolution(
+            provider="Groq",
+            base_url="",
+            model="test-model",
+            ready=True,
+            execution_key="groq",
+        ),
         assistant_message_id=assistant.id,
         model="test-model",
         session_system_prompt="",

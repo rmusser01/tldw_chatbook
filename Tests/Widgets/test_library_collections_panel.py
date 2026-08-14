@@ -326,19 +326,14 @@ async def test_library_collections_panel_moves_sync_detail_behind_details_disclo
 async def test_library_collections_panel_empty_state_renders_message_once(
     widget_pilot,
 ):
-    """TASK-2855 AC3: the empty-state "no stored collection items" sentence
-    renders once, not twice."""
+    """The current empty-state guidance renders once, not twice."""
     state = LibraryCollectionsPanelState.from_values(collections=(), status="empty")
 
     async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
         await pilot.pause()
-        occurrences = sum(
-            1
-            for widget in pilot.app.query(Static)
-            if "No stored collection items are available locally yet."
-            in str(widget.renderable)
-        )
-        assert occurrences == 1
+        empty_copy = pilot.app.query("#library-collections-empty")
+        assert len(empty_copy) == 1
+        assert str(empty_copy[0].renderable) == state.empty_copy
         assert not pilot.app.query("#library-collection-empty-reader")
         assert not pilot.app.query("#library-collection-empty-reader-title")
 

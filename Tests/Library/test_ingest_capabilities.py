@@ -245,9 +245,7 @@ def test_ebook_chunk_method_field() -> None:
 def test_audio_video_translation_and_vad_fields() -> None:
     """(task-3303 AC4) Translate-to-English and VAD are real fields."""
     caps = get_capabilities("audio_video")
-    translate_field = next(
-        f for f in caps.fields if f.name == "translate_to_english"
-    )
+    translate_field = next(f for f in caps.fields if f.name == "translate_to_english")
     assert translate_field.type == "checkbox"
     assert translate_field.default is False
     # Only faster-whisper translates (``resolve_batch_stt_route``); the
@@ -367,9 +365,7 @@ def test_audio_video_trim_cookies_recursive_summary_fields() -> None:
     )
     assert cookies_field.placeholder
 
-    recursive_field = next(
-        f for f in caps.fields if f.name == "summarize_recursively"
-    )
+    recursive_field = next(f for f in caps.fields if f.name == "summarize_recursively")
     assert recursive_field.type == "checkbox"
     assert recursive_field.default is False
     # The gate lives in the GENERIC group (Analyze after import), which
@@ -429,7 +425,18 @@ def test_get_capabilities_generic() -> None:
     assert caps.group == "generic"
     assert caps.required_features == ()
     assert caps.optional_features == ()
-    assert caps.field_names == ("analyze", "chunk", "chunk_size", "chunk_overlap", "encoding")
+    assert caps.field_names == (
+        "analyze",
+        "overwrite_existing",
+        "custom_prompt",
+        "system_prompt",
+        "generate_embeddings",
+        "keep_original_file",
+        "chunk",
+        "chunk_size",
+        "chunk_overlap",
+        "encoding",
+    )
 
 
 def test_get_tooling_warnings_returns_missing_features() -> None:
@@ -481,7 +488,7 @@ def test_get_tooling_warnings_generic_never_warns() -> None:
 
 def test_install_hint_audio_processing_uses_audio_extra() -> None:
     hint = _install_hint("audio_processing")
-    assert '[audio]' in hint["command"]
+    assert "[audio]" in hint["command"]
     assert "pip install" in hint["command"]
 
 
@@ -931,9 +938,7 @@ def test_select_option_label_resolves_labels_and_falls_back() -> None:
     persisted values)."""
     from tldw_chatbook.Library.ingest_capabilities import select_option_label
 
-    engine = next(
-        f for f in get_capabilities("pdf").fields if f.name == "pdf_engine"
-    )
+    engine = next(f for f in get_capabilities("pdf").fields if f.name == "pdf_engine")
     label = select_option_label(engine, "pymupdf4llm")
     assert label != "pymupdf4llm"
     assert "PyMuPDF4LLM" in label

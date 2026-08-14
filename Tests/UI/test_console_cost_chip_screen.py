@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -660,12 +661,12 @@ async def test_fingerprint_recompute_is_skipped_while_streaming():
 
         before_memo = console._console_cost_fp_revisions.get(session_id)
 
-        user_message = next(
-            message
-            for message in store.messages_for_session(session_id)
-            if message.role is ConsoleMessageRole.USER
+        settings = store.session_settings(session_id)
+        assert settings is not None
+        store.replace_session_settings(
+            session_id,
+            replace(settings, system_prompt="bumped-while-streaming"),
         )
-        store.update_message_content(user_message.id, "bumped-while-streaming")
         bumped_revision = store.payload_revision(session_id)
 
         console._build_console_cost_state()

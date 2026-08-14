@@ -3456,7 +3456,7 @@ class LibraryIngestQueueMixin:
                     type(callback).__name__,
                 )
                 logger.error(
-                    "Library local STT callback could not be marshaled (callback=%s).",
+                    "Library local STT callback could not be marshaled (callback={}).",
                     callback_name,
                 )
 
@@ -5092,7 +5092,7 @@ def _build_generated_video_store():
         store.enforce_retention()
     except Exception as exc:
         logger.warning(
-            "Generated-video startup retention failed (error_type=%s).",
+            "Generated-video startup retention failed (error_type={}).",
             type(exc).__name__,
         )
     return store
@@ -5231,8 +5231,8 @@ class TldwCli(
             # CSS was consolidated. Loud, because that is a build/packaging bug,
             # not a user-facing condition.
             loguru_logger.error(
-                f"Consolidated widget CSS missing from {css_dir}: read "
-                f"{len(sources)} of 2 sheets. Run css/build_css.py."
+                "Consolidated widget CSS incomplete: generated sheet count {}",
+                len(sources),
             )
         return sources + super()._get_default_css()
 
@@ -7612,7 +7612,7 @@ class TldwCli(
             )
         except Exception as exc:
             logger.warning(
-                "Runtime source change was not committed (exception_category=%s).",
+                "Runtime source change was not committed (exception_category={}).",
                 type(exc).__name__,
             )
             self.notify(
@@ -7648,7 +7648,7 @@ class TldwCli(
             except Exception as exc:
                 logger.warning(
                     "Runtime screen callback failed after runtime commit "
-                    "(exception_category=%s).",
+                    "(exception_category={}).",
                     type(exc).__name__,
                 )
         return True
@@ -12249,7 +12249,7 @@ if __name__ == "__main__":
             # carrying BUNDLED_CSS -- has moved on since the last build.
             should_rebuild, reason = _generated_css_is_stale(package_root)
             if should_rebuild:
-                logging.info(f"Rebuilding CSS: {reason}")
+                logging.info("Generated CSS is stale during module entry; rebuilding")
 
             if should_rebuild and build_script_path.exists():
                 logging.info("Building modular CSS...")
@@ -12551,7 +12551,7 @@ def main_cli_runner():
             # carrying BUNDLED_CSS -- has moved on since the last build.
             should_rebuild, reason = _generated_css_is_stale(package_root)
             if should_rebuild:
-                logging.info(f"Rebuilding CSS: {reason}")
+                logging.info("Generated CSS is stale during CLI entry; rebuilding")
 
             if should_rebuild and build_script_path.exists():
                 logging.info("Building modular CSS...")

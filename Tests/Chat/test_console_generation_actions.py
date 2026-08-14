@@ -1,10 +1,9 @@
-"""Screen-level tests for the P2a generation-variant actions (Task 8).
+"""Controller-level tests for the P2a generation-variant actions (Task 8).
 
-Covers the three new ``ChatScreen`` helpers browse/keep/regenerate-append
-wire into (`_select_console_generation_variant`, `_keep_console_generation_
-variant`, `_regenerate_console_generation_variant`) plus the button-id
-dispatch routing in `handle_console_message_action` that picks the
-generation-message branch over the text-sibling one.
+Covers the three ``ConsoleImageController`` browse/keep/regenerate-append
+actions plus the button-id dispatch routing in
+``handle_console_message_action`` that picks the generation-message branch
+over the text-sibling one.
 
 Follows ``Tests/UI/test_console_native_chat_flow.py``'s ``_bare_console_
 screen`` pattern (``ChatScreen.__new__(ChatScreen)``, bypassing ``__init__``)
@@ -45,6 +44,8 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSPlaybackEvent,
     TTSPlaybackLifecycle,
 )
+from tldw_chatbook.UI.Console_Modules import image as image_module
+from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
@@ -138,6 +139,44 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
     # on a detached screen (no `_nodes`) that query dies with AttributeError,
     # not the guarded QueryError — same class of seam as the sync stub above.
     screen._sync_console_command_popup = lambda: None
+    screen._image = ConsoleImageController(
+        screen,
+        app_instance=screen.app_instance,
+        ensure_console_image_view=lambda: screen._ensure_console_image_view(),
+        recent_console_image_messages=(
+            lambda messages: screen._recent_console_image_messages(messages)
+        ),
+        console_image_default_mode=lambda: screen._console_image_default_mode,
+        console_generation_browse=lambda: screen._console_generation_browse(),
+        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        ensure_console_chat_store=lambda: screen._ensure_console_chat_store(),
+        build_console_provider_selection=(
+            lambda: screen._build_console_provider_selection()
+        ),
+        ensure_console_provider_gateway=(
+            lambda: screen._ensure_console_provider_gateway()
+        ),
+        console_image_preparing=(
+            lambda: getattr(screen, "_console_image_preparing", None)
+        ),
+        current_console_chat_store=lambda: screen._console_chat_store,
+        console_composer_or_none=lambda: screen._console_composer_or_none(),
+        console_visible_draft_session_id=(
+            lambda: screen._console_visible_draft_session_id
+        ),
+        append_native_console_system_message=(
+            lambda *args, **kwargs: screen._append_native_console_system_message(
+                *args, **kwargs
+            )
+        ),
+        request_console_control_bar_sync=(
+            lambda: screen._request_console_control_bar_sync()
+        ),
+        default_console_session_settings=(
+            lambda: screen._session._default_console_session_settings()
+        ),
+        clear_console_composer_draft=(lambda: screen._clear_console_composer_draft()),
+    )
 
     def _unreached(*_args, **_kwargs):
         raise AssertionError(
@@ -165,17 +204,17 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
         start_console_transcript_sync_timer=_unreached,
         clear_native_console_message_selection=_unreached,
         regenerate_console_generation_variant=(
-            lambda message_id: screen._regenerate_console_generation_variant(
+            lambda message_id: screen._image._regenerate_console_generation_variant(
                 message_id
             )
         ),
         select_console_generation_variant=(
-            lambda message, direction: screen._select_console_generation_variant(
+            lambda message, direction: screen._image._select_console_generation_variant(
                 message, direction=direction
             )
         ),
         keep_console_generation_variant=(
-            lambda message: screen._keep_console_generation_variant(message)
+            lambda message: screen._image._keep_console_generation_variant(message)
         ),
         handle_console_toggle_image_view=_unreached,
         invalidate_console_persisted_rows_cache=_unreached,
@@ -191,7 +230,9 @@ def _fake_batch(*, calls: list, data: bytes = b"newimg") -> callable:
     in lands on the returned variant's ``GenerationVariantMeta.style``.
     """
 
-    def _run(*, backend, prompt, negative_prompt, seed, count, style_name=None, **_ignored):
+    def _run(
+        *, backend, prompt, negative_prompt, seed, count, style_name=None, **_ignored
+    ):
         calls.append(
             {
                 "backend": backend,
@@ -231,14 +272,18 @@ def test_browse_next_then_previous_mutates_screen_state_only():
     store = ConsoleChatStore()
     _session, message = _seed_generation_message(store, variant_count=3)
     screen = _bare_generation_screen(store)
-    before_attachment_bytes = [a.data for a in store.get_message(message.id).attachments]
+    before_attachment_bytes = [
+        a.data for a in store.get_message(message.id).attachments
+    ]
 
-    screen._select_console_generation_variant(message, direction="variant-next")
+    screen._image._select_console_generation_variant(message, direction="variant-next")
     assert screen._generation_browse[message.id] == 1
-    screen._select_console_generation_variant(message, direction="variant-next")
+    screen._image._select_console_generation_variant(message, direction="variant-next")
     assert screen._generation_browse[message.id] == 2
 
-    screen._select_console_generation_variant(message, direction="variant-previous")
+    screen._image._select_console_generation_variant(
+        message, direction="variant-previous"
+    )
     assert screen._generation_browse[message.id] == 1
 
     # Ephemeral: attachments (and their byte order) are untouched by browsing.
@@ -252,13 +297,15 @@ def test_browse_clamps_at_boundaries():
     screen = _bare_generation_screen(store)
 
     # Already at 0 -- "previous" is a no-op.
-    screen._select_console_generation_variant(message, direction="variant-previous")
+    screen._image._select_console_generation_variant(
+        message, direction="variant-previous"
+    )
     assert screen._generation_browse.get(message.id, 0) == 0
 
-    screen._select_console_generation_variant(message, direction="variant-next")
+    screen._image._select_console_generation_variant(message, direction="variant-next")
     assert screen._generation_browse[message.id] == 1
     # Already at the last index -- "next" is a no-op.
-    screen._select_console_generation_variant(message, direction="variant-next")
+    screen._image._select_console_generation_variant(message, direction="variant-next")
     assert screen._generation_browse[message.id] == 1
 
 
@@ -267,7 +314,7 @@ def test_browse_noop_for_single_variant_message():
     _session, message = _seed_generation_message(store, variant_count=1)
     screen = _bare_generation_screen(store)
 
-    screen._select_console_generation_variant(message, direction="variant-next")
+    screen._image._select_console_generation_variant(message, direction="variant-next")
 
     assert screen._console_generation_browse().get(message.id, 0) == 0
 
@@ -281,7 +328,7 @@ def test_keep_reorders_store_and_resets_browse():
     screen = _bare_generation_screen(store)
     screen._console_generation_browse()[message.id] = 2
 
-    screen._keep_console_generation_variant(message)
+    screen._image._keep_console_generation_variant(message)
 
     kept = store.get_message(message.id)
     assert kept.attachments[0].data == b"img2"
@@ -294,7 +341,7 @@ def test_keep_noop_when_browsed_index_is_zero():
     screen = _bare_generation_screen(store)
     # Nothing set self._generation_browse[message.id] -- defaults to 0.
 
-    screen._keep_console_generation_variant(message)
+    screen._image._keep_console_generation_variant(message)
 
     untouched = store.get_message(message.id)
     assert untouched.attachments[0].data == b"img0"
@@ -330,7 +377,7 @@ def test_keep_evicts_stale_render_cache_entries_so_rebuild_shows_kept_variant():
     cache.prepare(f"{message.id}:1", green)
     screen._console_generation_browse()[message.id] = 1
 
-    screen._keep_console_generation_variant(message)
+    screen._image._keep_console_generation_variant(message)
 
     # Store-level swap: position 0 is now the (formerly variant-1) green bytes.
     kept = store.get_message(message.id)
@@ -347,17 +394,17 @@ def test_keep_evicts_stale_render_cache_entries_so_rebuild_shows_kept_variant():
     # The rebuilt card spec must not carry the stale pre-keep image: either
     # it's undecoded pending re-prep, or (once re-prepped below) it shows
     # the KEPT variant -- never the old red canonical.
-    card_specs = screen._build_generation_card_specs([kept])
+    card_specs = screen._image._build_generation_card_specs([kept])
     spec = card_specs[message.id]
     assert spec.browsed_index == 0
     assert spec.pixels is None and spec.pil is None  # decoded=False, re-prep queued
 
-    pending = screen._pending_console_generation_card_images([kept], card_specs)
+    pending = screen._image._pending_console_generation_card_images([kept], card_specs)
     assert pending == [(f"{message.id}:0", green)]
     for cache_key, data in pending:
         cache.prepare(cache_key, data)
 
-    rebuilt_specs = screen._build_generation_card_specs([kept])
+    rebuilt_specs = screen._image._build_generation_card_specs([kept])
     rebuilt = rebuilt_specs[message.id]
     assert rebuilt.pixels is not None or rebuilt.pil is not None  # decoded=True now
     # Pull the actual decoded PIL back out of the cache to inspect its color
@@ -375,20 +422,18 @@ def test_regenerate_refused_at_cap(monkeypatch):
     _session, message = _seed_generation_message(store, variant_count=2)
     screen = _bare_generation_screen(store)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "get_image_generation_config",
         lambda: SimpleNamespace(max_variants_per_message=2),
     )
     calls: list = []
-    monkeypatch.setattr(
-        chat_screen_module, "run_generation_batch", _fake_batch(calls=calls)
-    )
+    monkeypatch.setattr(image_module, "run_generation_batch", _fake_batch(calls=calls))
     notifications: list = []
     screen.app_instance.notify = lambda text, **kw: notifications.append((text, kw))
 
     import asyncio
 
-    asyncio.run(screen._regenerate_console_generation_variant(message.id))
+    asyncio.run(screen._image._regenerate_console_generation_variant(message.id))
 
     assert calls == []  # generation never ran
     assert len(store.get_message(message.id).generation_metadata) == 2
@@ -401,21 +446,19 @@ def test_regenerate_refused_while_inflight(monkeypatch):
     _session, message = _seed_generation_message(store, variant_count=1)
     screen = _bare_generation_screen(store)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "get_image_generation_config",
         lambda: SimpleNamespace(max_variants_per_message=8),
     )
     calls: list = []
-    monkeypatch.setattr(
-        chat_screen_module, "run_generation_batch", _fake_batch(calls=calls)
-    )
+    monkeypatch.setattr(image_module, "run_generation_batch", _fake_batch(calls=calls))
     notifications: list = []
     screen.app_instance.notify = lambda text, **kw: notifications.append((text, kw))
-    screen._console_imagegen_inflight_message_ids().add(message.id)
+    screen._image._console_imagegen_inflight_message_ids().add(message.id)
 
     import asyncio
 
-    asyncio.run(screen._regenerate_console_generation_variant(message.id))
+    asyncio.run(screen._image._regenerate_console_generation_variant(message.id))
 
     assert calls == []
     assert len(store.get_message(message.id).generation_metadata) == 1
@@ -450,25 +493,25 @@ def test_h3_edit_regenerate_refuses_before_capacity_or_inflight_checks(monkeypat
     screen.app_instance.notify = lambda text, severity=None: notices.append(
         (text, severity)
     )
-    screen._console_imagegen_inflight_message_ids = lambda: (_ for _ in ()).throw(
-        AssertionError("edit refusal must precede the in-flight gate")
-    )
+    screen._image._console_imagegen_inflight_message_ids = lambda: (
+        _ for _ in ()
+    ).throw(AssertionError("edit refusal must precede the in-flight gate"))
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "get_image_generation_config",
         lambda: (_ for _ in ()).throw(
             AssertionError("edit refusal must precede the capacity gate")
         ),
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "run_generation_batch",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("edit Regenerate must not dispatch")
         ),
     )
 
-    asyncio.run(screen._regenerate_console_generation_variant(message.id))
+    asyncio.run(screen._image._regenerate_console_generation_variant(message.id))
 
     assert notices == [
         (
@@ -485,27 +528,27 @@ def test_regenerate_failure_leaves_message_untouched_and_reports_error(monkeypat
     _session, message = _seed_generation_message(store, variant_count=1)
     screen = _bare_generation_screen(store)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "get_image_generation_config",
         lambda: SimpleNamespace(max_variants_per_message=8),
     )
     calls: list = []
     monkeypatch.setattr(
-        chat_screen_module, "run_generation_batch", _failing_batch(calls=calls)
+        image_module, "run_generation_batch", _failing_batch(calls=calls)
     )
     notifications: list = []
     screen.app_instance.notify = lambda text, **kw: notifications.append((text, kw))
 
     import asyncio
 
-    asyncio.run(screen._regenerate_console_generation_variant(message.id))
+    asyncio.run(screen._image._regenerate_console_generation_variant(message.id))
 
     assert len(calls) == 1
     untouched = store.get_message(message.id)
     assert len(untouched.generation_metadata) == 1
     assert untouched.attachments[0].data == b"img0"
     assert notifications and notifications[0][1].get("severity") == "error"
-    assert message.id not in screen._console_imagegen_inflight_message_ids()
+    assert message.id not in screen._image._console_imagegen_inflight_message_ids()
 
 
 def test_regenerate_success_appends_variant_and_browses_to_new_index(monkeypatch):
@@ -513,26 +556,26 @@ def test_regenerate_success_appends_variant_and_browses_to_new_index(monkeypatch
     _session, message = _seed_generation_message(store, variant_count=1)
     screen = _bare_generation_screen(store)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "get_image_generation_config",
         lambda: SimpleNamespace(max_variants_per_message=8),
     )
     calls: list = []
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "run_generation_batch",
         _fake_batch(calls=calls, data=b"appended"),
     )
 
     import asyncio
 
-    asyncio.run(screen._regenerate_console_generation_variant(message.id))
+    asyncio.run(screen._image._regenerate_console_generation_variant(message.id))
 
     appended = store.get_message(message.id)
     assert len(appended.generation_metadata) == 2
     assert appended.attachments[1].data == b"appended"
     assert screen._generation_browse[message.id] == 1
-    assert message.id not in screen._console_imagegen_inflight_message_ids()
+    assert message.id not in screen._image._console_imagegen_inflight_message_ids()
     screen._sync_native_console_chat_ui.assert_awaited()
     # Rebuilds the request from position 0's meta (same backend/prompt/
     # negative) but forces seed=-1 regardless of the canonical variant's
@@ -566,20 +609,20 @@ def test_regenerate_success_inherits_style_from_position_zero_meta(monkeypatch):
     )
     screen = _bare_generation_screen(store)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "get_image_generation_config",
         lambda: SimpleNamespace(max_variants_per_message=8),
     )
     calls: list = []
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "run_generation_batch",
         _fake_batch(calls=calls, data=b"appended"),
     )
 
     import asyncio
 
-    asyncio.run(screen._regenerate_console_generation_variant(message.id))
+    asyncio.run(screen._image._regenerate_console_generation_variant(message.id))
 
     assert len(calls) == 1
     assert calls[0]["style_name"] == "Anime Style"
@@ -630,13 +673,11 @@ async def test_handle_console_message_action_routes_regenerate_for_generation_me
     _session, message = _seed_generation_message(store, variant_count=1)
     screen = _bare_generation_screen(store)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "get_image_generation_config",
         lambda: SimpleNamespace(max_variants_per_message=8),
     )
-    monkeypatch.setattr(
-        chat_screen_module, "run_generation_batch", _fake_batch(calls=[])
-    )
+    monkeypatch.setattr(image_module, "run_generation_batch", _fake_batch(calls=[]))
     button = Button("regen", id=f"console-message-action-regenerate-{message.id}")
 
     handled = await screen.handle_console_message_action(Button.Pressed(button))
@@ -671,17 +712,15 @@ async def test_handle_console_message_action_blocks_generation_regenerate_when_e
     )
     screen = _bare_generation_screen(store)
     notified: list = []
-    screen.app_instance.notify = lambda text, **kwargs: notified.append(
-        (text, kwargs)
-    )
+    screen.app_instance.notify = lambda text, **kwargs: notified.append((text, kwargs))
     batch_calls: list = []
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "get_image_generation_config",
         lambda: SimpleNamespace(max_variants_per_message=8),
     )
     monkeypatch.setattr(
-        chat_screen_module, "run_generation_batch", _fake_batch(calls=batch_calls)
+        image_module, "run_generation_batch", _fake_batch(calls=batch_calls)
     )
     button = Button("regen", id=f"console-message-action-regenerate-{message.id}")
 
@@ -831,9 +870,7 @@ async def test_handle_console_message_action_routes_speak_stop_to_tts_playback_e
     screen.app_instance.post_message = posted.append
     notified: list = []
     screen.app_instance.notify = lambda *a, **k: notified.append((a, k))
-    button = Button(
-        "stop", id=f"console-message-action-speak-stop-{message.id}"
-    )
+    button = Button("stop", id=f"console-message-action-speak-stop-{message.id}")
 
     handled = await screen.handle_console_message_action(Button.Pressed(button))
 
@@ -872,9 +909,7 @@ async def test_handle_console_message_action_speak_stop_safe_when_nothing_speaki
     screen.app_instance.post_message = posted.append
     notified: list = []
     screen.app_instance.notify = lambda *a, **k: notified.append((a, k))
-    button = Button(
-        "stop", id=f"console-message-action-speak-stop-{message.id}"
-    )
+    button = Button("stop", id=f"console-message-action-speak-stop-{message.id}")
 
     handled = await screen.handle_console_message_action(Button.Pressed(button))
 
@@ -905,9 +940,7 @@ async def test_handle_console_message_action_speak_stop_does_not_clear_other_mes
     screen.app_instance.post_message = lambda *a, **k: None
     notified: list = []
     screen.app_instance.notify = lambda *a, **k: notified.append((a, k))
-    button = Button(
-        "stop", id=f"console-message-action-speak-stop-{message_a.id}"
-    )
+    button = Button("stop", id=f"console-message-action-speak-stop-{message_a.id}")
 
     handled = await screen.handle_console_message_action(Button.Pressed(button))
 
@@ -1132,7 +1165,7 @@ async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeyp
     def _mock_conversation_pairs(store, session_id):
         return [("user", "a red dragon by a lake")]
 
-    screen._console_generate_image_conversation_pairs = _mock_conversation_pairs
+    screen._image._console_generate_image_conversation_pairs = _mock_conversation_pairs
 
     # Stub status line and composer helpers
     def _mock_composer_or_none():
@@ -1148,7 +1181,7 @@ async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeyp
     def _mock_inflight_sessions():
         return set()
 
-    screen._console_imagegen_inflight_sessions = _mock_inflight_sessions
+    screen._image._console_imagegen_inflight_sessions = _mock_inflight_sessions
 
     # Capture the batch call and store appends
     captured_kwargs = []
@@ -1166,9 +1199,7 @@ async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeyp
             style=kwargs.get("style_name"),
             params={},
         )
-        return BatchResult(
-            successes=[(b"generated_img", "image/png", meta)], errors=[]
-        )
+        return BatchResult(successes=[(b"generated_img", "image/png", meta)], errors=[])
 
     original_append = store.append_generation_message
 
@@ -1179,11 +1210,9 @@ async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeyp
     store.append_generation_message = _capture_append
 
     # Monkeypatch run_generation_batch and config
+    monkeypatch.setattr(image_module, "run_generation_batch", _mock_batch)
     monkeypatch.setattr(
-        chat_screen_module, "run_generation_batch", _mock_batch
-    )
-    monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "get_image_generation_config",
         lambda: SimpleNamespace(
             default_backend="swarmui",
@@ -1192,7 +1221,7 @@ async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeyp
         ),
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [
             {"name": "swarmui", "is_configured": True},
@@ -1265,16 +1294,16 @@ def _chat_response(text: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_llm_context_options_disabled_by_kill_switch():
-    screen = ChatScreen.__new__(ChatScreen)
+    screen = _bare_generation_screen(ConsoleChatStore())
     cfg = _imagegen_cfg(context_llm_enabled=False)
-    options = await screen._console_generate_image_llm_context_options(cfg)
+    options = await screen._image._console_generate_image_llm_context_options(cfg)
     assert options.enabled is False
     assert options.provider_ready is False
 
 
 @pytest.mark.asyncio
 async def test_llm_context_options_resolves_ready_provider():
-    screen = ChatScreen.__new__(ChatScreen)
+    screen = _bare_generation_screen(ConsoleChatStore())
     screen._build_console_provider_selection = lambda: "selection-sentinel"
 
     class _FakeGateway:
@@ -1289,7 +1318,7 @@ async def test_llm_context_options_resolves_ready_provider():
 
     screen._ensure_console_provider_gateway = lambda: _FakeGateway()
     cfg = _imagegen_cfg(context_llm_turns=7, context_llm_timeout_seconds=9.5)
-    options = await screen._console_generate_image_llm_context_options(cfg)
+    options = await screen._image._console_generate_image_llm_context_options(cfg)
     assert options.enabled is True
     assert options.provider_ready is True
     assert options.api_endpoint == "openai"
@@ -1301,7 +1330,7 @@ async def test_llm_context_options_resolves_ready_provider():
 
 @pytest.mark.asyncio
 async def test_llm_context_options_provider_not_ready():
-    screen = ChatScreen.__new__(ChatScreen)
+    screen = _bare_generation_screen(ConsoleChatStore())
     screen._build_console_provider_selection = lambda: "selection-sentinel"
 
     class _FakeGateway:
@@ -1311,7 +1340,7 @@ async def test_llm_context_options_provider_not_ready():
             )
 
     screen._ensure_console_provider_gateway = lambda: _FakeGateway()
-    options = await screen._console_generate_image_llm_context_options(
+    options = await screen._image._console_generate_image_llm_context_options(
         _imagegen_cfg()
     )
     assert options.enabled is True
@@ -1320,13 +1349,13 @@ async def test_llm_context_options_provider_not_ready():
 
 @pytest.mark.asyncio
 async def test_llm_context_options_resolution_exception_degrades_gracefully():
-    screen = ChatScreen.__new__(ChatScreen)
+    screen = _bare_generation_screen(ConsoleChatStore())
 
     def _raise():
         raise RuntimeError("selection blew up")
 
     screen._build_console_provider_selection = _raise
-    options = await screen._console_generate_image_llm_context_options(
+    options = await screen._image._console_generate_image_llm_context_options(
         _imagegen_cfg()
     )
     assert options.enabled is True
@@ -1346,7 +1375,7 @@ def _wired_generate_image_screen(store, *, batch_calls, batch_data=b"generated_i
     )
     screen._console_composer_or_none = lambda: None
     screen._clear_console_composer_draft = lambda: None
-    screen._console_imagegen_inflight_sessions = lambda: set()
+    screen._image._console_imagegen_inflight_sessions = lambda: set()
 
     def _mock_batch(**kwargs):
         batch_calls.append(kwargs)
@@ -1374,10 +1403,12 @@ async def test_generate_image_handler_no_prompt_uses_llm_composed_context_end_to
     store = ConsoleChatStore()
     batch_calls: list = []
     screen, mock_batch = _wired_generate_image_screen(store, batch_calls=batch_calls)
-    screen._console_generate_image_conversation_pairs = lambda store, session_id: [
-        ("user", "A knight enters a glowing cave."),
-        ("assistant", "Crystals shimmer along the walls."),
-    ]
+    screen._image._console_generate_image_conversation_pairs = (
+        lambda store, session_id: [
+            ("user", "A knight enters a glowing cave."),
+            ("assistant", "Crystals shimmer along the walls."),
+        ]
+    )
 
     llm_text = "A knight in a glowing crystal cave, dramatic torchlight."
 
@@ -1394,14 +1425,16 @@ async def test_generate_image_handler_no_prompt_uses_llm_composed_context_end_to
             chat_call=lambda **_kwargs: _chat_response(llm_text),
         )
 
-    screen._console_generate_image_llm_context_options = _fake_llm_context_options
+    screen._image._console_generate_image_llm_context_options = (
+        _fake_llm_context_options
+    )
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", mock_batch)
     monkeypatch.setattr(
-        chat_screen_module, "get_image_generation_config", lambda: _imagegen_cfg()
+        image_module, "get_image_generation_config", lambda: _imagegen_cfg()
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "swarmui", "is_configured": True}],
     )
@@ -1434,7 +1467,9 @@ async def test_generate_image_handler_no_prompt_llm_call_raises_falls_back(
     batch_calls: list = []
     screen, mock_batch = _wired_generate_image_screen(store, batch_calls=batch_calls)
     conversation = [("user", "a quiet lakeside cabin at dawn")]
-    screen._console_generate_image_conversation_pairs = lambda store, session_id: conversation
+    screen._image._console_generate_image_conversation_pairs = (
+        lambda store, session_id: conversation
+    )
 
     async def _fake_llm_context_options(cfg):
         return LLMContextOptions(
@@ -1450,14 +1485,16 @@ async def test_generate_image_handler_no_prompt_llm_call_raises_falls_back(
             ),
         )
 
-    screen._console_generate_image_llm_context_options = _fake_llm_context_options
+    screen._image._console_generate_image_llm_context_options = (
+        _fake_llm_context_options
+    )
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", mock_batch)
     monkeypatch.setattr(
-        chat_screen_module, "get_image_generation_config", lambda: _imagegen_cfg()
+        image_module, "get_image_generation_config", lambda: _imagegen_cfg()
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "swarmui", "is_configured": True}],
     )
@@ -1479,7 +1516,9 @@ async def test_generate_image_handler_no_prompt_llm_timeout_falls_back(monkeypat
     batch_calls: list = []
     screen, mock_batch = _wired_generate_image_screen(store, batch_calls=batch_calls)
     conversation = [("user", "a quiet lakeside cabin at dawn")]
-    screen._console_generate_image_conversation_pairs = lambda store, session_id: conversation
+    screen._image._console_generate_image_conversation_pairs = (
+        lambda store, session_id: conversation
+    )
 
     def _slow_call(**_kwargs):
         time_module.sleep(0.3)
@@ -1497,14 +1536,16 @@ async def test_generate_image_handler_no_prompt_llm_timeout_falls_back(monkeypat
             chat_call=_slow_call,
         )
 
-    screen._console_generate_image_llm_context_options = _fake_llm_context_options
+    screen._image._console_generate_image_llm_context_options = (
+        _fake_llm_context_options
+    )
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", mock_batch)
     monkeypatch.setattr(
-        chat_screen_module, "get_image_generation_config", lambda: _imagegen_cfg()
+        image_module, "get_image_generation_config", lambda: _imagegen_cfg()
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "swarmui", "is_configured": True}],
     )
@@ -1525,7 +1566,9 @@ async def test_generate_image_handler_no_prompt_llm_empty_response_falls_back(
     batch_calls: list = []
     screen, mock_batch = _wired_generate_image_screen(store, batch_calls=batch_calls)
     conversation = [("user", "a quiet lakeside cabin at dawn")]
-    screen._console_generate_image_conversation_pairs = lambda store, session_id: conversation
+    screen._image._console_generate_image_conversation_pairs = (
+        lambda store, session_id: conversation
+    )
 
     async def _fake_llm_context_options(cfg):
         return LLMContextOptions(
@@ -1539,14 +1582,16 @@ async def test_generate_image_handler_no_prompt_llm_empty_response_falls_back(
             chat_call=lambda **_kwargs: _chat_response("   "),
         )
 
-    screen._console_generate_image_llm_context_options = _fake_llm_context_options
+    screen._image._console_generate_image_llm_context_options = (
+        _fake_llm_context_options
+    )
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", mock_batch)
     monkeypatch.setattr(
-        chat_screen_module, "get_image_generation_config", lambda: _imagegen_cfg()
+        image_module, "get_image_generation_config", lambda: _imagegen_cfg()
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "swarmui", "is_configured": True}],
     )
@@ -1569,21 +1614,23 @@ async def test_generate_image_handler_no_prompt_kill_switch_off_skips_llm_path(
     batch_calls: list = []
     screen, mock_batch = _wired_generate_image_screen(store, batch_calls=batch_calls)
     conversation = [("user", "a quiet lakeside cabin at dawn")]
-    screen._console_generate_image_conversation_pairs = lambda store, session_id: conversation
+    screen._image._console_generate_image_conversation_pairs = (
+        lambda store, session_id: conversation
+    )
     # Intentionally NOT stubbing _console_generate_image_llm_context_options --
     # the kill switch must short-circuit before any provider resolution is
     # attempted, so the real method (which would otherwise need
     # _build_console_provider_selection/_ensure_console_provider_gateway) is
     # safe to call as-is here.
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", mock_batch)
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "get_image_generation_config",
         lambda: _imagegen_cfg(context_llm_enabled=False),
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "swarmui", "is_configured": True}],
     )
@@ -1604,21 +1651,23 @@ async def test_generate_image_handler_prompt_present_never_resolves_llm_context(
     store = ConsoleChatStore()
     batch_calls: list = []
     screen, mock_batch = _wired_generate_image_screen(store, batch_calls=batch_calls)
-    screen._console_generate_image_conversation_pairs = lambda store, session_id: []
+    screen._image._console_generate_image_conversation_pairs = (
+        lambda store, session_id: []
+    )
 
     async def _must_not_be_called(cfg):
         raise AssertionError(
             "LLM context resolution must not run when a prompt was given"
         )
 
-    screen._console_generate_image_llm_context_options = _must_not_be_called
+    screen._image._console_generate_image_llm_context_options = _must_not_be_called
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", mock_batch)
     monkeypatch.setattr(
-        chat_screen_module, "get_image_generation_config", lambda: _imagegen_cfg()
+        image_module, "get_image_generation_config", lambda: _imagegen_cfg()
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "swarmui", "is_configured": True}],
     )
@@ -1664,7 +1713,9 @@ async def test_generate_image_handler_restores_draft_when_batch_raises(monkeypat
     screen._session._default_console_session_settings = lambda: ConsoleSessionSettings(
         provider="openai"
     )
-    screen._console_generate_image_conversation_pairs = lambda store, session_id: []
+    screen._image._console_generate_image_conversation_pairs = (
+        lambda store, session_id: []
+    )
 
     composer = _FakeComposer("a red dragon that got typed before the crash")
     screen._console_composer_or_none = lambda: composer
@@ -1681,14 +1732,14 @@ async def test_generate_image_handler_restores_draft_when_batch_raises(monkeypat
     screen._append_native_console_system_message = _fake_append_system
 
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "get_image_generation_config",
         lambda: SimpleNamespace(
             default_backend="swarmui", default_batch=1, max_variants_per_message=8
         ),
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        image_module,
         "list_image_models_for_catalog",
         lambda: [{"name": "swarmui", "is_configured": True}],
     )
@@ -1696,7 +1747,7 @@ async def test_generate_image_handler_restores_draft_when_batch_raises(monkeypat
     def _raising_batch(**kwargs):
         raise RuntimeError("adapter exploded unexpectedly")
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _raising_batch)
+    monkeypatch.setattr(image_module, "run_generation_batch", _raising_batch)
 
     from tldw_chatbook.Chat.console_command_grammar import CommandParse
 
@@ -1710,6 +1761,9 @@ async def test_generate_image_handler_restores_draft_when_batch_raises(monkeypat
     assert any("adapter exploded unexpectedly" in msg for msg in system_messages)
     # The in-flight guard must still be released -- a crashed batch must
     # never wedge the session against further /generate-image commands.
-    assert store.ensure_session().id not in screen._console_imagegen_inflight_sessions()
+    assert (
+        store.ensure_session().id
+        not in screen._image._console_imagegen_inflight_sessions()
+    )
     # No orphan generation message from a batch that never produced a result.
     assert store.messages_for_session(store.ensure_session().id) == []

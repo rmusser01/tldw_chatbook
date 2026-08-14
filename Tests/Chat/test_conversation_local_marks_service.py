@@ -85,6 +85,9 @@ def test_local_marks_migrate_from_v16_to_v17_with_expected_schema(tmp_path):
         "DROP COLUMN compaction_representation"
     )
     conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
+    # A V16 fixture predates the V35->V36 note-folder tables.
+    conn.execute("DROP TABLE IF EXISTS note_folder_memberships")
+    conn.execute("DROP TABLE IF EXISTS note_folders")
     # A V16 fixture must not retain citation tables introduced at V26->V27.
     for table in (
         "rag_artifact_owner_operations",

@@ -168,21 +168,17 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
                 ),
                 context="console setup route",
             )
-            # In a clean run no provider is selected, so the session settings
-            # action and setup card resolve the *provider* recovery family
-            # (TASK-2154.7: the action now matches the first incomplete step
-            # instead of always reading "Choose model").
+            # The clean-run fixture selects OpenAI/gpt-4o but provides no API
+            # key, so the setup card resolves the provider-credential recovery
+            # family rather than the provider/model pickers.
             await _wait_until(
                 pilot,
-                lambda: (
-                    "Choose provider" in _screen_text(app)
-                    or "Open Settings" in _screen_text(app)
-                ),
+                lambda: "Set up provider" in _screen_text(app),
                 context="console provider setup controls",
             )
             assert (
                 app.screen._console_provider_blocker_copy()
-                == "Provider setup needed: choose a provider"
+                == "Provider setup needed: OpenAI missing API key"
             )
             # The shared Workbench recovery banner stays hidden — the setup
             # card's action button is the recovery/control surface now
@@ -193,7 +189,7 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             assert recovery_action.display is False
             card_action = app.screen.query_one("#console-setup-modal-action", Button)
             assert card_action.display is True
-            assert str(card_action.label) == "Choose provider"
+            assert str(card_action.label) == "Set up provider"
             assert not list(app.screen.query("#console-open-provider-settings"))
             overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
             assert str(overflow_hint.label).strip() == "More ▾"
@@ -293,9 +289,7 @@ async def test_personas_default_state_disables_false_console_handoff(
     (stubbed deterministically; the harness otherwise reads the ambient
     character DB).
     """
-    monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: []
-    )
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
     patch_character_paging(monkeypatch, records=[])
     app = _build_test_app()
     host = DestinationHarness(app, "personas")
