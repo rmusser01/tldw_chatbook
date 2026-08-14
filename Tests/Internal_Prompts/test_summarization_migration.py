@@ -45,7 +45,17 @@ Adaptations from the brief's skeleton (see task-4-report.md for detail):
   untouched, as directed.
 """
 
+import pytest
+
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
+
+
+@pytest.fixture(autouse=True)
+def _offline_tokenizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep prompt-migration tests off the optional GPT-2 download path."""
+    from tldw_chatbook.Chunking import token_chunker
+
+    monkeypatch.setattr(token_chunker, "get_safe_import", lambda _name: None)
 
 
 def test_analyze_default_system_uses_registry(scratch_config, monkeypatch):
@@ -70,8 +80,13 @@ def test_analyze_default_system_uses_registry(scratch_config, monkeypatch):
     # depending on the (unrelated) chunking subsystem.
     monkeypatch.setattr(sgl, "CHUNKER_AVAILABLE", False)
     sgl.analyze(
-        input_data="text", custom_prompt_arg="p", api_name="openai",
-        api_key=None, temp=0.3, system_message=None, streaming=False,
+        input_data="text",
+        custom_prompt_arg="p",
+        api_name="openai",
+        api_key=None,
+        temp=0.3,
+        system_message=None,
+        streaming=False,
     )
     assert "CUSTOM ANALYZE SYSTEM" in str(captured)
 
@@ -91,8 +106,13 @@ def test_analyze_caller_system_message_wins(scratch_config, monkeypatch):
     monkeypatch.setattr(sgl, "_dispatch_to_api", fake_dispatch)
     monkeypatch.setattr(sgl, "CHUNKER_AVAILABLE", False)
     sgl.analyze(
-        input_data="text", custom_prompt_arg="p", api_name="openai",
-        api_key=None, temp=0.3, system_message="CALLER", streaming=False,
+        input_data="text",
+        custom_prompt_arg="p",
+        api_name="openai",
+        api_key=None,
+        temp=0.3,
+        system_message="CALLER",
+        streaming=False,
     )
     assert "CALLER" in str(captured) and "REGISTRY" not in str(captured)
 
