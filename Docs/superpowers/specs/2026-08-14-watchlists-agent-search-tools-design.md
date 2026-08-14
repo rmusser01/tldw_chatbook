@@ -150,6 +150,7 @@ The response is valid JSON and has this logical shape:
       "id": "local:watchlist_item:41",
       "title": "Example advisory",
       "url": "https://example.invalid/advisory",
+      "url_redacted": false,
       "author": "Example CERT",
       "status": "new",
       "effective_date": "2026-08-14T20:00:00Z",
@@ -160,7 +161,10 @@ The response is valid JSON and has this logical shape:
         "id": "local:subscription:3",
         "name": "Example CERT feed",
         "type": "rss",
-        "url": "https://example.invalid/feed.xml"
+        "url": "https://example.invalid/feed.xml",
+        "url_redacted": false,
+        "is_active": true,
+        "is_paused": false
       },
       "collections": [{"id": "local:watchlist:7", "name": "Threat Intel"}],
       "evidence": {
@@ -178,9 +182,16 @@ when the tool is only applying scope/date/status filters.
 
 When one source is selected, `scope.source` also reports that source's distinct
 `created_at`, `updated_at`, `last_checked`, and `last_successful_check` values.
+Source objects also report `is_active` and `is_paused`, so an agent does not
+misread an intentionally dormant source's stale dates as evidence of silence.
 The response never invents a single “last updated” field. Item
 `effective_date`, `published_date`, `created_at`, and `updated_at` remain
 separate because they answer different questions.
+
+The tool description tells callers that a request for “all” matching items
+requires following `next_cursor` until `has_more` is false, subject to the
+agent run's normal tool-call budget. One call never silently raises the page
+ceiling or returns an unbounded corpus.
 
 The snippet is centered on a matched title, author, or body passage when a
 query is present. A blank-query browse returns a bounded leading-body preview.
@@ -203,6 +214,11 @@ are rejected rather than guessed. The response includes the same source,
 collection, URL, author, status, and explicit date metadata as search, plus a
 bounded `evidence.content` field. It includes
 `evidence.content_is_untrusted: true` and `evidence.content_truncated`.
+Article bodies reuse the existing
+`Subscriptions.html_text.readable_body_text()` path, with explicit
+`content_normalized: true`, so HTML/control markup does not consume the model's
+evidence budget. The normalized text is readable evidence, not an archival
+byte copy; `content_format` and `content_kind` remain separate metadata.
 
 If the item has no article body but is a change item, its existing renderable
 change evidence (such as `diff_summary`) is returned under an explicitly named
@@ -260,6 +276,11 @@ The versioned cursor contains only:
 - SHA-256 fingerprint of the normalized query, resolved scope IDs, statuses,
   date floor, and ordering contract.
 
+Normalization collapses query whitespace without changing literal term text,
+sorts the unique status set, converts resolved scopes to numeric row IDs, and
+normalizes the date floor to UTC. Equivalent status ordering therefore does
+not invalidate a cursor, while any filter that can change results does.
+
 It contains no query text, names, URLs, article text, credentials, or database
 path. `as_of` is repeated in later response envelopes so every page identifies
 the same traversal start, but it is not an admission predicate. The caller
@@ -313,6 +334,27 @@ doing so would corrupt evidence. Tests can prove delimiting, labeling,
 escaping, and byte bounds; they cannot prove that every model will follow the
 warning.
 
+Response shaping uses an explicit field allowlist; it never serializes
+`auth_config`, `custom_headers`, `rate_limit_config`, `extracted_data`, raw
+processing errors, source `last_error`, database paths, or any other column not
+named by this contract. Every emitted source or item URL strips URL userinfo
+and removes the entire query and fragment. This deliberately does not try to
+maintain an exhaustive secret-key vocabulary: signatures, SAS values, OAuth
+codes, valueless keys, and future query credential shapes are all removed.
+`url_redacted` is true whenever userinfo, a query, or a fragment existed or the
+displayed value otherwise differs from storage, so the agent does not mistake a
+safety-redacted URL for an archival byte copy. The rule applies equally to
+item/source objects, scope metadata, and disambiguation candidates. Resolution
+may compare against the raw configured URL internally, but raw userinfo,
+queries, and fragments are never returned or logged. The remaining HTTP(S)
+path is intentionally preserved for source linkage and is covered by the
+operator's Watchlists-tool permission; the contract does not claim arbitrary
+stored paths are credential-free. If a stored URL cannot be parsed safely, the
+response uses `url: null` and `url_redacted: true` rather than failing the whole
+page or echoing the malformed value. Only absolute HTTP(S) URLs with a host are
+emitted; hostless or other schemes such as `file:` and `javascript:` also
+become null/redacted evidence.
+
 ## Architecture
 
 ### Shared read-only service
@@ -330,7 +372,11 @@ A small synchronous `WatchlistsToolService` in `tldw_chatbook/Tools/` owns:
 It receives the existing synchronous `SubscriptionsDB` read owner and a
 runtime-source loader. Tests inject an in-memory database and fake source
 loader. Production does not read UI widget state and does not create an event
-loop inside a synchronous tool handler.
+loop inside a synchronous tool handler. A narrow handler adapter catches
+unexpected storage/implementation exceptions, logs only a bounded exception
+category without payloads or paths, and raises one fixed public failure string;
+this is required because `LocalToolProvider.invoke()` otherwise exposes the
+first 300 characters of an exception message to Console callers.
 
 Console injects the app's existing long-lived `app.subscriptions_db` when it
 composes the per-run `LocalToolProvider`. This avoids both an `asyncio.run()`
@@ -341,19 +387,49 @@ thread-local SQLite connections.
 
 External MCP supplies a Watchlists-only lazy database resolver to its
 persistent local provider. The resolver constructs and caches one
-`SubscriptionsDB` only on the first **local-mode** Watchlists invocation, after
-the per-call runtime-source check, not during whole-provider composition and
-not once per tool call. A server-mode call therefore never resolves or
-constructs the local database. Construction failure becomes a
+`SubscriptionsDB` read-only view only on the first **local-mode** Watchlists
+invocation, after the per-call runtime-source check, not during whole-provider
+composition and not once per tool call. The read-only view skips
+`BaseDB`/`SubscriptionsDB` schema initialization and opens the existing file
+through `connect_private_sqlite(..., read_only=True, must_exist=True)` under a
+dedicated registered SQLite owner. It cannot create, migrate, or write the
+database file, schema, or rows; SQLite itself rejects writes. Resolving the
+configured path may still ensure the profile's private parent directory, an
+existing config behavior not represented as a Watchlists database mutation. A
+missing or pre-migration database therefore returns `feature_unavailable` and
+tells the operator to open the normal application once, rather than silently
+changing the database from a read-tagged MCP call. A server-mode call never
+resolves or constructs the local database. Construction or schema-probe
+failure closes the uncached candidate immediately and becomes a
 structured `feature_unavailable` Watchlists outcome and cannot prevent the
 filesystem, Git, web, or task tools from registering.
+
+The minimal storage change is a keyword-only read-only construction path on
+`SubscriptionsDB`, backed by a keyword-only “skip schema initialization” seam
+on `BaseDB` whose default remains initialization-on. Normal application and
+test callers are unchanged. The read-only connection branch does not issue
+write-oriented PRAGMAs such as `journal_mode=WAL`; it sets only safe
+connection-local read behavior and row factories. A small readiness probe
+checks the exact core tables and columns needed by these tools before the
+successful view is cached. FTS coverage is a separate search-time state: it is
+complete only when an item-ID anti-join finds no `subscription_items.id`
+missing from `subscription_items_fts_docsize`. Count equality is insufficient
+because equal-cardinality sets can contain different IDs. Missing or
+incompletely backfilled FTS does not fail the readiness probe: the search path
+uses the existing literal LIKE fallback and repeats the anti-join on later
+searches. It caches only the monotonic complete state, after which existing
+insert/update/delete triggers preserve coverage. This matters for standalone
+MCP, whose read-only connection cannot run the app's asynchronous FTS backfill;
+the mere presence of an FTS table must not cause permanent false negatives.
 
 Because external MCP dispatches local handlers concurrently through worker
 threads, lazy initialization is protected by a `threading.Lock` with a
 double-checked cached value. Exactly one successful `SubscriptionsDB` instance
 is retained. A failed construction is not cached: that call receives a bounded
 `feature_unavailable` outcome, while a later call may retry under the same
-lock. Concurrent callers never run schema initialization in parallel.
+lock. Every failed candidate is closed before the lock is released; concurrent
+callers never race object construction or readiness probes or accumulate
+uncached SQLite handles.
 
 Catalog-only/default `LocalToolProvider` composition may have no Watchlists
 database dependency. It still registers the two schemas, but its handlers
@@ -386,6 +462,9 @@ projection, and normalization behavior stays single-sourced. The tool must not
 reimplement the Watchlists corpus query in a parallel SQL module. These read
 seams may live on `SubscriptionsDB` or the existing synchronous
 `WatchlistBundleService` as appropriate; no second storage owner is introduced.
+The shared search seam chooses LIKE when FTS is absent or the item-ID anti-join
+shows incomplete docsize coverage, and returns to FTS when a later check on the
+same long-lived owner proves coverage complete.
 
 ### Provider registration
 
@@ -457,7 +536,9 @@ runtime-policy file follows the existing runtime-policy loader's local default.
 - FTS5 unavailable or query-time FTS operational failure: existing literal
   LIKE fallback.
 - Other database failure: concise tool error without SQL, paths, content, or
-  credentials.
+  credentials. The Watchlists handler adapter supplies a fixed public message;
+  raw exception text never reaches `LocalToolProvider`'s generic exception
+  formatter.
 - Permission deny/timeout/kill-switch/gate error: unchanged ADR-032 provider
   result, before the tool core runs.
 
@@ -479,6 +560,10 @@ boundary.
 - Full-text terms match title, author, and a deep-body occurrence.
 - FTS operators are literal; FTS5 failure takes the LIKE fallback with `%`,
   `_`, and backslash remaining literal.
+- A present but partially backfilled FTS table also takes the LIKE fallback and
+  returns a deep-body match missing from FTS. Equal counts with wrong member IDs
+  remain incomplete, and a partial-to-complete transition on the same
+  long-lived owner switches a later search back to FTS.
 - Search excerpts center on the matched field and remain bounded.
 - Collection, source, status, `since`, `snapshot_max_item_id`, and their
   intersections compose.
@@ -503,12 +588,22 @@ boundary.
 - Cursor round trip, version rejection, malformed encoding, filter fingerprint
   mismatch, and absence of raw filters/content from decoded cursor payload.
 - Distinct source and item timestamp fields remain distinct.
+- Source active/paused state accompanies freshness dates.
+- Stored raw URL userinfo, fragments, and queries never appear in any
+  source/item/scope/disambiguation output, and `url_redacted` reports that
+  transformation.
+- Non-HTTP(S), hostless, and malformed stored URLs become null/redacted rather
+  than executable or local-path-shaped evidence.
+- Only contract-allowlisted fields serialize; auth/header/raw-payload/error
+  canaries do not appear anywhere in output or logs.
 - Every search/detail response parses as JSON and remains below the provider
   ceiling, including Unicode and individually oversized fields.
 - A stored non-finite change percentage is normalized to `null` with its
   invalid marker; strict serialization with `allow_nan=False` never emits
   `NaN` or `Infinity`.
 - Detail returns bounded article or change evidence with accurate truncation.
+- Detail reuses `readable_body_text` and labels normalization while preserving
+  separate content-format/kind metadata.
 - Prompt-injection-shaped and terminal-control-shaped feed text remains
   delimited, labeled untrusted, and JSON-escaped.
 - Server mode returns the pinned message and a spy proves the database was not
@@ -525,6 +620,13 @@ boundary.
   only when local tools are enabled.
 - Catalog-only composition performs no database construction and returns
   `feature_unavailable` only if a Watchlists handler is actually invoked.
+- External MCP's first local-mode call opens an existing database through the
+  registered read-only SQLite seam; tests prove a missing database file is not
+  created, schema SQL cannot run, a write statement fails, and an old schema
+  is not migrated.
+- A failed external lazy-construction/readiness candidate is closed before a
+  later retry; a concurrency probe proves one successful cached owner and no
+  leaked failed-candidate handles.
 - One representative allow/ask/deny path proves these registrations use the
   existing provider boundary; the generic permission matrix remains owned by
   existing provider tests rather than being duplicated per tool.

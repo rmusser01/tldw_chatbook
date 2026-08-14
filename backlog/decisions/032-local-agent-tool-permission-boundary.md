@@ -137,8 +137,23 @@ local-only unsupported mode, feature unavailable) travel as bounded structured
 tool content rather than new gateway error pass-throughs. Permission failures
 retain the pinned fail-closed errors above. Article fields are labeled and
 delimited as untrusted evidence, but that label is not claimed to guarantee
-model obedience. No Watchlists mutation, server-data access, semantic index,
-or threat score is authorized by this addendum.
+model obedience. Output is field-allowlisted; URL userinfo, complete queries,
+and fragments are removed without guessing which key names are sensitive; only
+absolute HTTP(S) links with a host are emitted; unexpected exception messages
+are scrubbed before reaching the model. Preserved URL paths remain disclosed
+Watchlists metadata under the same explicit tool permission and are not claimed
+to be credential-free.
+
+The in-app Console reuses the application's already-initialized
+`SubscriptionsDB`. Standalone external MCP instead opens an existing database
+through the registered private-SQLite read-only URI path, with schema
+initialization and migration disabled. A read-tagged external call must never
+create the subscriptions database file, write its schema or rows, or run
+migrations as an incidental side effect; normal profile-path resolution may
+still ensure the private parent directory. A missing or old schema returns
+feature unavailable until the normal application owns initialization. No
+Watchlists domain mutation, server-data access, semantic index, or threat score
+is authorized by this addendum.
 
 All path-taking tools confine to a configurable `[console] workspace_root`
 (default: the app cwd at startup), coerced and templated following the
