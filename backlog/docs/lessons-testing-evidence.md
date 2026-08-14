@@ -31,7 +31,7 @@ multi-line control.
 
 ## A geometry harness must mount the production hierarchy and stylesheet
 
-**TASK-16200, 2026-08-14.** The first Watchlists Read geometry harness mounted
+**TASK-16221, 2026-08-14.** The first Watchlists Read geometry harness mounted
 `ArticleListPane` directly where production mounts a detail wrapper, title, and
 nested pane. With the inner table capped at 42 rows, the simplified harness
 reported a contained, painted pager. A production-shaped probe showed the real

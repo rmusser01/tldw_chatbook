@@ -13,7 +13,7 @@
 ## Planning Context
 
 - Approved design: `Docs/superpowers/specs/2026-08-13-watchlists-nested-scroll-pagination-design.md`
-- Backlog task: `TASK-16200`
+- Backlog task: `TASK-16221`
 - Existing decision: `backlog/decisions/042-watchlists-reader-first-ia.md`
 - Isolated worktree: `.worktrees/watchlists-nested-scroll-pagination`
 - Branch: `codex/watchlists-nested-scroll-pagination`
@@ -41,7 +41,7 @@ Reason: this is a contained layout and pagination refinement inside the existing
 - Create `Tests/Watchlists/test_watchlists_pagination.py`: focused screen-level pagination, reset, failure, stale-result, and pin-provenance tests.
 - Modify `Tests/Watchlists/test_watchlists_workbench.py`: outer-centre and region geometry/scroll assertions against production CSS.
 - Modify `Tests/UI/test_watchlists_content_pane.py`: Content-body wrapper, fixed chrome, and integrated state-preservation assertions.
-- Modify `backlog/tasks/task-16200 - Make-Watchlists-Read-list-and-Content-independently-scrollable-with-explicit-pagination.md`: implementation plan/notes, checked acceptance criteria, verification evidence, and final status.
+- Modify `backlog/tasks/task-16221 - Make-Watchlists-Read-list-and-Content-independently-scrollable-with-explicit-pagination.md`: implementation plan/notes, checked acceptance criteria, verification evidence, and final status.
 
 ## Guardrails
 
@@ -888,7 +888,7 @@ git commit -m "feat(watchlists): add bounded scrolling content reader"
 
 **Files:**
 - Modify only if verification finds a real scoped defect: files listed above
-- Modify: `backlog/tasks/task-16200 - Make-Watchlists-Read-list-and-Content-independently-scrollable-with-explicit-pagination.md`
+- Modify: `backlog/tasks/task-16221 - Make-Watchlists-Read-list-and-Content-independently-scrollable-with-explicit-pagination.md`
 - Optionally modify: `backlog/docs/lessons-testing-evidence.md` only if this implementation produces a new, evidence-backed reusable lesson
 
 - [ ] **Step 1: Run the focused feature suite from a clean process**
@@ -987,7 +987,7 @@ Check explicitly for: no 51st mounted row, no total-count query, no page-change 
 
 Use @superpowers:requesting-code-review with the approved spec and this plan. Re-run the narrowest relevant red/green tests for every accepted finding, then rerun Step 1.
 
-- [ ] **Step 8: Update TASK-16200 only after all evidence is green**
+- [ ] **Step 8: Update TASK-16221 only after all evidence is green**
 
 In the task file:
 
@@ -1000,7 +1000,7 @@ In the task file:
 - [ ] **Step 9: Commit verification and closeout documentation**
 
 ```bash
-git add backlog/tasks/'task-16200 - Make-Watchlists-Read-list-and-Content-independently-scrollable-with-explicit-pagination.md'
+git add backlog/tasks/'task-16221 - Make-Watchlists-Read-list-and-Content-independently-scrollable-with-explicit-pagination.md'
 git commit -m "docs(watchlists): close nested scroll pagination task"
 ```
 

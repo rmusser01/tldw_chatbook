@@ -1,5 +1,5 @@
 ---
-id: TASK-16200
+id: TASK-16221
 title: >-
   Make Watchlists Read list and Content independently scrollable with explicit
   pagination
@@ -43,7 +43,7 @@ Make long Watchlists reading sessions usable by giving the centre column, Read l
 3. Enforce context resets, stale-result guards, page/query provenance for the open-item pin, authoritative corpus-search results, and empty-page fallback.
 4. Convert only the workbench centre to VerticalScroll, add the Read-mode class, and bound the Read list to 10–50 rows with an internal ListView scroll.
 5. Wrap only the rendered Content body in VerticalScroll and bound the Read Content region to 20–50 rows while keeping actions/footer fixed.
-6. Regenerate CSS, run focused/broad/static/live verification, self-review, document evidence, and close TASK-16200 only when all DoD gates pass.
+6. Regenerate CSS, run focused/broad/static/live verification, self-review, document evidence, and close TASK-16221 only when all DoD gates pass.
 
 Detailed plan: Docs/superpowers/plans/2026-08-13-watchlists-nested-scroll-pagination.md
 ADR required: no
