@@ -296,7 +296,7 @@ backlog task edit 15865 \
   --check-ac 3 \
   --check-ac 4 \
   --check-ac 5 \
-  --notes "Implemented the full-width Inspect arrow as one existing button. Directly related rail, interaction, compact-access, CSS-integrity, visual, Ruff, duplicate-ID, and diff checks passed. Per user instruction, no full repository suite was run. ADR required: no." \
+  --notes "Implemented the full-width Inspect arrow through the existing ConsoleRailHandle display seam using one fixed literal; no CSS, width, or child-widget changes were added. Modified console_rail_handle.py plus test_console_rail_handle.py, test_destination_rail.py, test_console_right_rail.py, test_console_shell_regions.py, test_settings_console_rail_labels.py, test_product_maturity_gate1_core_loop_screen_adaptation.py, and test_workbench_visual_snapshots.py. Directly related rail, interaction, compact-access, CSS-integrity, visual, Ruff, duplicate-ID, and diff checks passed. Per user instruction, no full repository suite was run. ADR required: no." \
   --status Done \
   --plain
 ```
