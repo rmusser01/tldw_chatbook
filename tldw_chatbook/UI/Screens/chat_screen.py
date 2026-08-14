@@ -5236,6 +5236,17 @@ class ChatScreen(BaseAppScreen):
         self._console_chat_controller.wake_user_priority_probe = (
             self._console_wake_user_priority
         )
+        # task-15971: the delivery COMMIT's visibility probe -- a wake
+        # completing while this conversation is not displayed-and-active
+        # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
+        # learns an off-view delivery landed).
+        # task-15971: the delivery COMMIT's visibility probe -- a wake
+        # completing while this conversation is not displayed-and-active
+        # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
+        # learns an off-view delivery landed).
+        self._console_chat_controller.wake_conversation_in_view = (
+            self._console_wake_conversation_in_view
+        )
         self._sync_console_chat_core_state()
         return self._console_chat_controller
 
@@ -14778,6 +14789,48 @@ class ChatScreen(BaseAppScreen):
             return False
         return bool(composer.draft_text().strip())
 
+    def _console_screen_displayed(self) -> bool:
+        """Whether THIS screen is the one the user is looking at.
+
+        task-15971: this screen can be mounted-but-hidden (resident in
+        the stack below the displayed screen), and "viewing" semantics --
+        the sync tick's view-clear, the delivery commit's in-view probe
+        -- must mean DISPLAYED, not merely mounted. A screen whose App is
+        unreachable (hand-built test fixtures that never mounted) reports
+        True, preserving those harnesses' historical behaviour; the
+        hidden-resident case this exists for always has a reachable App.
+        """
+        try:
+            return self.app.screen is self
+        except Exception:  # noqa: BLE001 -- no reachable app: fixtures
+            return True
+
+    def _console_wake_conversation_in_view(
+        self, conversation_id: str, session_id: str
+    ) -> bool:
+        """Delivery-commit visibility probe (task-15971).
+
+        True only when this screen is the DISPLAYED one and the wake's
+        session is the ACTIVE session -- i.e. the user actually watched
+        the result land. Anything else (Library displayed, a resident
+        hidden Console, a non-active session tab) is off-view: the
+        coordinator leaves the FLEET_UNSEEN mark set so the ◈ badge
+        points at the delivered result until the user views it.
+
+        Args:
+            conversation_id: The delivered conversation (unused: the
+                active-session comparison already scopes the view).
+            session_id: The session the wake turn ran in.
+
+        Returns:
+            Whether the delivery landed in the user's view.
+        """
+        if not self._console_screen_displayed():
+            return False
+        store = getattr(self, "_console_chat_store", None)
+        active = getattr(store, "active_session_id", None)
+        return active is not None and active == session_id
+
     def _poke_console_wake_retry(self) -> None:
         """Retry a staged auto-wake (task-15864 AC#2: session-open trigger).
 
@@ -16278,9 +16331,16 @@ class ChatScreen(BaseAppScreen):
                 wake_owed = callable(has_pending) and bool(
                     has_pending(active_conversation_id)
                 )
+                # task-15971: viewing means DISPLAYED. This screen can be
+                # resident-but-hidden (the stack-leak nav state the
+                # residue arc live-instrumented), and its sync tick kept
+                # running during Library display -- "view"-clearing a
+                # mark the user never saw. A hidden screen's tick must
+                # leave the mark for the screen the user is actually on.
                 if (
                     active_conversation_id in unseen_ids
                     and not wake_owed
+                    and self._console_screen_displayed()
                     and clear_fleet_unseen_completion(
                         self.app_instance, active_conversation_id
                     )
