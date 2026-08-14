@@ -194,6 +194,22 @@ then reused. `test_leaving_console_does_not_close_the_provider_gateway` pins it.
 reference drop with nothing to settle; that reasoning expired the moment
 `dispose()` started running `controller.shutdown()` and `gateway.aclose()`.
 
+### The quit-time resurrection window (found by review, not by a test)
+
+Joining that hook created a defect this landing had to close. The hook runs
+**before** Textual closes screen state, so a Console screen — and its 0.2s
+timers — can still be live while `dispose()` runs, and there are ~75
+`_ensure_console_chat_*` call sites reachable from them. As first written,
+`dispose()` dropped every reference, so any one of those would have **built a
+fresh controller (and store, and `ChatPersistenceService`) mid-quit, which
+nothing would ever shut down.** Returning `None` instead would only have moved
+the failure into a tick that has never had to handle it.
+
+`dispose()` therefore **keeps its references** and latches `_disposed`; every
+`ensure_*` returns what it already holds and builds nothing new. What it hands
+back is genuinely torn down, so it refuses work through its permanently-set
+cancellation Event — the right answer at exit.
+
 ### The permanence trap
 
 `_shutdown_requested` was permanent, justified **solely** by `shutdown()`'s own
@@ -311,12 +327,23 @@ Every restore was **Edit-based**; the final tree is byte-identical to `HEAD`
 | 3 | drop `notify_run_outcome` from `CONSOLE_VIEW_HOOK_SLOTS` | the attach-set == detach-set test | `test_attach_and_detach_cover_exactly_the_same_slot_set` **and** `test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen` ✅ |
 | 4 | `detach_view` is a no-op | the dead-screen test | `test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen`, `test_second_console_visit_reuses_the_runtime` ✅ |
 | 5 | a poll site re-reads `self._shutdown_requested` instead of its captured Event | a resurrected-round test | `test_a_round_from_the_previous_visit_is_not_resurrected`, and **only** that one ✅ |
+| 6 | remove the `_disposed` latch from `ensure_*` | the quit-time rebuild test | see below — **survived at first**, then killed after the test was fixed ✅ |
 
 Mutation 2 is worth a note: the brief predicted it would kill "both AC#2 reds".
 It killed the parked-approval red but **not** the streaming-turn red — that one
 survives because cancelling a stream goes through `_signal_stop` +
 `task.cancel()`, which does not consult the Event at all. Recorded as measured,
 not as predicted.
+
+**Mutation 6 caught a test that passed for the wrong reason**, which is the
+whole reason for the discipline. `test_dispose_does_not_let_a_late_ensure_
+rebuild_the_runtime` did **not** die when the latch was removed: once
+`dispose()` keeps its references, `ensure_chat_controller` returns the existing
+object via the plain `is not None` check, latch or no latch. The latch's real
+job is the slot that was **never built** before quit and so has no reference to
+hand back. `test_dispose_does_not_let_a_late_ensure_build_an_unbuilt_slot` was
+added for exactly that case and does die under mutation 6 (verified both
+directions). Both tests are kept: they cover different halves.
 
 ### Incident: a checkpoint taken mid-mutation
 
@@ -373,6 +400,11 @@ loses only by `sys.meta_path` ordering.
    worth confirming it stays red for its original reason rather than a new one.
 3. **The hands-free tap** now has an uninstall path that did not exist before.
    It is conservative, but it is new code on a rarely-exercised surface.
+6. **`dispose()` now leaves torn-down objects reachable** (§4). That is the
+   safest of the three options at quit, but it does mean
+   `runtime.chat_controller` is non-`None` after dispose — a reader expecting
+   the Task-1 reference-drop semantics will be surprised. `generation` and
+   `_disposed` are the honest signals.
 4. **`prompt_history` rebinds per visit**, so two `PromptHistory` instances can
    briefly exist over the same JSONL path across a navigation. That was already
    true per-screen before this landing; it is not made worse, but it is not
