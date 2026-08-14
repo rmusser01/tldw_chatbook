@@ -1867,7 +1867,21 @@ class LibraryFileNotesWorkspace(Vertical):
     def _apply_responsive_layout(self, width: int) -> None:
         if not self._active or not self.is_mounted:
             return
+        was_narrow = self._narrow
         self._narrow = width < 80
+        if self._narrow and not was_narrow and (
+            self._opened is not None or self._selected_deleted_path
+        ):
+            # task-15790 (bisected to 4202930d6's era, born-green then
+            # regressed): `_narrow_view` was only ever set to "editor" when a
+            # document was opened WHILE ALREADY NARROW, so opening on a wide
+            # terminal and then shrinking routed the narrow shell to the
+            # NAVIGATOR -- hiding the pane out from under its own focused
+            # editor (the hide blurs it; focus fell to None). Entering narrow
+            # with an open document means the user's context is that
+            # document. Transition-only on purpose: while ALREADY narrow,
+            # Back's explicit navigator choice must keep winning.
+            self._narrow_view = "editor"
         navigator = self.query_one("#file-notes-navigator")
         editor = self.query_one("#file-notes-editor-pane")
         back = self.query_one("#file-notes-back", Button)
@@ -1969,7 +1983,15 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             self._update_controls()
             cancel = self.query_one("#file-notes-reload-cancel", Button)
-            self.call_after_refresh(cancel.focus)
+            # task-15790: `call_after_refresh` here NEVER FIRED -- it waits
+            # for THIS widget's own refresh, and `_update_controls` patches
+            # children in place, so no workspace-level refresh ever comes.
+            # The cancel-first safety focus therefore never happened: the
+            # feature's own test was born red at 1fbd46ec6 and nobody saw
+            # it until the full-suite sweep. `call_later` orders on the
+            # message queue instead, which needs no repaint to flush; focus
+            # placement does not need paint.
+            self.call_later(cancel.focus)
         if not was_active:
             self.post_message(self.ReloadConfirmationChanged(True))
 
