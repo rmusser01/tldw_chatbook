@@ -21,7 +21,10 @@ every golden query through the real seam across all three profile modes.
 > moved **none**, so it re-stamped nothing and said so. Two candidate
 > classes (`compositional`, `acronym`) proved **unfailable** on this corpus
 > and model and were not authored — that is recorded evidence against two
-> P2c feature premises, not an omission. Start at the **headroom table**
+> P2c feature premises, not an omission. A **fourth** premise died the same
+> way in TASK-15965 (2026-08-13): pseudo-relevance feedback was probed
+> before it was built and came back NULL — see "The fourth retired P2c
+> premise" under the admission protocol. Start at the **headroom table**
 > below: it names, per category, what is left to improve and what can only
 > be regressed.
 
@@ -44,6 +47,8 @@ Tests/RAG_Eval/
   test_harness_smoke.py            env-gated: harness can stand up a real indexed runtime at all
   test_harness_run.py              env-gated: the real three-mode run, and the baseline gate itself
   test_harness_scoped.py           env-gated: what a SCOPED query routes to today (the before-pin)
+  test_prf_probe.py                always-on: the PRF probe's pure functions (28 pins)
+  test_prf_probe_run.py            env-gated: the PRF probe RUN — census, oracle controls, grid, guards, verdict
   conftest.py                      un-sandboxes the model cache dir for env-gated tests only
   harness/
     environment.py                 the RAG_EVAL gate + HF-offline latch
@@ -52,6 +57,7 @@ Tests/RAG_Eval/
     canonicalize.py                seam rows -> fixture-slug document ids
     runner.py                      the three-mode run + per-category scoring
     baseline_io.py                 fingerprinted baselines + the fail-on-regression gate
+    prf_probe.py                   FEATURE-PROBE machinery: term derivation + expression composition (pure)
   fixtures/
     corpus.toml                    172 fixture documents (note/media/conversation/prompt)
     golden.toml                    60 golden queries (46 scored, 7 negative, 7 scoped)
@@ -224,6 +230,14 @@ cells with room to rise, and they are not the same kind of problem:
   Prompts have no vector leg to hide any of this, so prompts are where it
   shows. **Do not read this cell as evidence that B2 did not land** — B2's
   reachability is pinned separately.
+- **The `plain` 0.000s on `paraphrase` and `vocabulary_mismatch` are not free
+  headroom either.** Those 22 queries were the honest target of the first P2c
+  FEATURE candidate, and it was probed before it was built: PRF came back
+  **NULL** — 0 of 22 rescued, 10 of 21 currently-hitting queries lost — under
+  a pre-registered bar (TASK-15965). Read "The fourth retired P2c premise"
+  under the admission protocol before proposing a query-widening fix for these
+  cells; the probe machinery is reusable and the failure mechanisms are
+  measured, not guessed.
 
 **Hybrid's 0.152 of overall headroom is real but is mostly those two
 classes.** Do not expect a fusion knob to reach it: `negation` needs a
@@ -678,6 +692,142 @@ audited in place rather than by re-authoring the candidates.
   measures corpus sparseness, not the pipeline.** Every class needed anchor
   company before its ranks meant anything; 24 documents were added purely
   for that.
+
+### The fourth retired P2c premise: PRF, probed before built (TASK-15965, 2026-08-13)
+
+The three premises retired above died to things the instrument could already
+show: query expansion to a **cell** (`vocabulary_mismatch` reads 1.000 in both
+vector modes — there is no ceiling left to improve against), `acronym` and
+`compositional` to **fixture** probes (31 candidates authored, 12 of them in
+those two classes, 0 admitted because today's pipeline answers them all). The
+fourth is the first **feature** candidate to die the same way.
+**Pseudo-relevance feedback** was next in the approved P2c cost order; it was
+probed and priced on this corpus **before any production code was written**,
+against a bar pre-registered in
+`Docs/superpowers/specs/2026-08-13-rag-p2c-prf-fail-first-design.md`.
+**The verdict is NULL. No PRF code exists, and the arc ended there.**
+
+**The bar, its four clauses verbatim, against the measurement:**
+
+| # | pre-registered clause (spec, verbatim) | measured | result |
+|---|---|---|---|
+| 1 | "≥5 of the 22 plain-failing queries reach their target in the second pass's top-10" | **0 / 22 rescued** | **FAIL** |
+| 2 | "zero currently-hitting plain queries (any category) lose their target" | **10 of 21 hitters lost**, every one at rank 1 today | **FAIL** |
+| 3 | "zero new rows on negatives" | 0 new rows and 0 new documents on all 7 — but **structural**, see below | PASS, worth nothing |
+| 4 | "the negation guard: no negation query's row set grows with assertion-side junk (measured, reported; expected to bind)" | all 3 negation queries went **0 → 30 rows, +10 new documents** | BINDS, as pre-registered |
+
+Two gating clauses fail, one at the maximum possible margin. Clause 4 was
+never a gate; clause 3's pass is not evidence of safety (below).
+
+**Step 0 — fireability, which decided the regime in one command.** Before any
+grid point, the probe asked whether PRF can fire at all: does the shipped
+first pass return ANY rows for the 22 plain-failing queries? **0 / 22 on the
+shipped four-seam AND-strict pass** — the builder requires every query term in
+one document, and a paraphrase query shares no content word with its target by
+construction of the fixture class, so PRF's classic mechanism has literally
+nothing to feed on. That alone retires the un-varianted premise. The spec's
+ONE licensed variant then activated (an OR-of-content-terms pass used **for
+feedback selection only**, never shown to a user): **18 / 22 fire** under it.
+Every before-column in every table below remains the SHIPPED pass.
+
+**The base point (N=8 terms, M=5 fed documents; RM3 `tf/|D|`, the
+pre-registered derivation): 0 / 22 rescued, 10 of 21 hitters lost.** The grid
+stopped there **by pre-registration** — the {4,8,16}×{3,5,10} sweep is
+licensed only if the base point shows signal, and "a null at every base point
+is a null, not an invitation to search the grid until something moves". One
+point run, one point recorded.
+
+The 10 losses are diagnosed, not just counted: re-running the *same* expression
+at k=200 separates "the expansion never reached the document" from "it reached
+it and lost its slot". **0 of the 10 are unmatched** — 8 seam-displaced, 2
+merge-displaced. The loss channel is **pure dilution**: expansion-term rows
+evicting a rank-1 target from a 10-row per-seam budget. (This refuted the
+implementer's own prior, which was that the probe's expression — the engine's
+content-token form, without `build_fts_match_query`'s plural/singular widening
+— would strand documents outright.) On the *target* side the dominant mechanism
+is the opposite one: 10 of the 18 fired queries are UNMATCHED at k=200 — the
+derived terms never touch the target document. That is the "poison feed" the
+spec pre-registered as PRF's central risk, measured.
+
+**The axis control: a narrower selector rescues nothing either.** Outside the
+pre-registration (so it can never ADMIT), the same real feed was re-derived
+with a rarest-by-corpus-DF selector: **0 / 22 rescued at N=8 and 0 / 22 at
+N=4**, with collateral damage cut from 10 losses to 3 (and all 3
+merge-displaced rather than evicted from their own seam). We looked down the
+TF-vs-DF axis; it is still zero.
+
+**How many cells a rescue could have been seen in — the corrected framing.**
+The probe's rescue-channel control feeds PRF the target document *itself* (the
+best expansion any feedback set could produce). Read this before the floor:
+
+| selector (oracle feed, same path, same k) | N | reaches top-10 | note | media | conversation |
+|---|---|---|---|---|---|
+| TF `tf/\|D\|` — the pre-registered derivation | 8 | 8 / 22 | 7/7 | 1/9 | 0/6 |
+| rarest-by-corpus-DF — *ranking key only* | 8 | **15 / 22** | 7/7 | 6/9 | 2/6 |
+| rarest-1, query side dropped — *illustration, changes two things* | 1 | 22 / 22 | 7/7 | 9/9 | 6/6 |
+
+**22/22 of the oracle expressions match their target at k=200 in every row**,
+so every miss is displacement, not a control that failed to reach its document.
+The defensible reading: the plain four-seam path has **no cross-seam ranking**
+and a **per-seam `top_k`**, so any pass matching K or more notes buries every
+media and conversation target regardless of match quality — and **how hard that
+bites depends on expansion BREADTH, which is the selector's property, not the
+path's.** So the honest bound on this null is **≥15 of 22 cells observable,
+PRF rescued 0.**
+
+An earlier version of this probe printed the stronger claim — an 8/22 "ceiling
+imposed by the four-seam path", "14 of 22 never observable" — and its review
+refuted it by re-running the control with only the ranking key swapped. **Do
+not restate the ceiling form**: it is an artefact of one term selector, and the
+correction makes the null *stronger*, not weaker. The path property that
+survives is filed on its own as **TASK-16071** (it is not about PRF; it prices
+any query-widening technique on this path).
+
+**Two spec expectations the run corrected, recorded rather than smoothed:**
+
+- **The negatives guard never becomes live.** The spec expected clause 3 to
+  become "a REAL guard under the OR-feedback variant". It does not: a negative
+  query's content words are absent from the corpus, so the OR feed returns 0
+  rows too, no terms are derived and no second pass runs. All 7 read 0 → 0 in
+  both regimes. **A guard that cannot bind is a property of the fixture class,
+  not evidence of safety.** The live junk evidence is clause 4's negation row.
+- **The price is real and was paid.** 211 content fetches per grid point over
+  60 queries — one read per fed row, because four-seam media and conversation
+  rows carry no document text (`"Matched media · {type}"`, `"Matched
+  conversation · N messages"`). **39 of 211 fed rows (18%) were label-only**, so
+  without the fetch the feed would have skewed silently toward notes.
+
+**One more finding for any future term-derivation candidate on this corpus:**
+the engine's `_FTS5_STOPWORDS` (67 words) is too short for TF-based derivation
+here — `rather`, `once`, `each`, `taken`, `through`, `back`, `same`, `before`
+survive into the expansion lists and do the expanding.
+
+**Where the machinery is, for the next candidate.** The probe is reusable; the
+next candidate should start from it rather than re-invent it:
+
+- `harness/prf_probe.py` — pure, pinned functions: `derive_expansion_terms`
+  (RM3 `tf/|D|` as exact `Fraction`s — floats re-admit doc-order dependence
+  through the ranking key on a corpus whose documents run 39→889 words),
+  `compose_prf_expression`, `compose_feedback_expression`, `ProbeQueryResult`.
+  It **imports** the engine's `_FTS5_STOPWORDS` / `_quote_fts5_token` /
+  `_fts5_query_tokens` rather than re-implementing them.
+- `test_prf_probe.py` — 28 always-on pins (no gate, no model), including the
+  tokenizer-equivalence pin against `RAGService._fts5_term_key`.
+- `test_prf_probe_run.py` — the gated run and the idiom worth copying:
+  **fireability census FIRST**, then oracle/observability controls, then the
+  grid, then guards derived from a fresh baseline pass at probe time (never
+  hardcoded), then a verdict computed clause-by-clause with an assertion that
+  a non-pre-registered selector can never reach it. Re-run with
+  `RAG_EVAL=1 .venv/bin/python -m pytest Tests/RAG_Eval/test_prf_probe_run.py -s -q`.
+
+The committed record of the run is **TASK-15965**'s Implementation Notes (the
+verdict table, the corrected observability, both controls); the arc's full
+report with the probe's verbatim output is
+`.superpowers/sdd/2026-08-13-rag-p2c-prf-fail-first/task-2-report.md`, which is
+an untracked SDD working record — re-run the gated module above if you need
+the numbers and do not have that directory. The next candidate in the cost
+order (a clarification gate) is filed as **TASK-16072** with a pointer to this
+machinery.
 
 ## Fingerprint semantics: "environment changed" is not a regression
 
