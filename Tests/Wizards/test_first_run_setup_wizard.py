@@ -91,9 +91,10 @@ def _first_chat_store_snapshot(store: ConsoleChatStore) -> list[dict[str, object
         snapshot = {
             item.name: deepcopy(getattr(session, item.name))
             for item in fields(session)
-            if item.name != "rag_scope_holder"
+            if item.name not in {"rag_scope_holder", "todo_store"}
         }
         snapshot["rag_scope_holder"] = deepcopy(session.rag_scope_holder.scope)
+        snapshot["todo_store"] = deepcopy(session.todo_store.export_snapshot())
         snapshots.append(snapshot)
     return snapshots
 
@@ -217,7 +218,10 @@ def test_untouched_default_session_rejects_roleplay_tool_and_custom_state(
         settings=defaults,
         canonical_settings_baseline=defaults,
     )
-    setattr(session, field_name, value)
+    if field_name == "todos":
+        session.todo_store.create(content="private tool task")
+    else:
+        setattr(session, field_name, value)
 
     assert is_untouched_default_session(session, (), "", ()) is False
 
@@ -4836,7 +4840,7 @@ async def test_mounted_openai_builtin_endpoint_handoff_uses_one_exact_env_reques
         (
             "moonshot",
             "Moonshot",
-            {"api_region": "global"},
+            {"api_region": "international"},
             "https://api.moonshot.ai/v1/chat/completions",
             "https://api.moonshot.ai/v1/models",
             "https://api.moonshot.ai/v1/chat/completions",
@@ -4987,7 +4991,7 @@ async def test_mounted_settings_aware_builtin_discovery_uses_exact_runtime_host_
             "Moonshot",
             "api_region",
             "china",
-            "global",
+            "international",
             "api.moonshot.cn",
             "api.moonshot.ai",
         ),
@@ -5185,7 +5189,7 @@ async def test_mounted_model_save_rejects_settings_changed_discovery_identity(
                 "api_key": "selection-time-key-a",
             },
             {
-                "api_region": "global",
+                "api_region": "international",
                 "api_base_url": "https://api.moonshot.ai/v1",
             },
         ),
@@ -5817,7 +5821,7 @@ async def test_mounted_unchanged_manual_next_rejects_relevant_external_change(
         elif change_kind == "runtime":
             external_values = {
                 "api_settings.moonshot": {
-                    "api_region": "global",
+                    "api_region": "international",
                     "api_base_url": "https://api.moonshot.ai/v1",
                 }
             }
@@ -5857,7 +5861,7 @@ async def test_mounted_unchanged_manual_next_rejects_relevant_external_change(
             )
         elif change_kind == "runtime":
             assert authoritative["api_settings"]["moonshot"]["api_region"] == (
-                "global"
+                "international"
             )
         elif change_kind == "credential":
             assert authoritative["api_settings"]["custom"]["api_key"] == (
@@ -6165,7 +6169,7 @@ async def test_mounted_save_identity_change_fences_cancellation_resistant_old_re
         await asyncio.wait_for(retry_started.wait(), timeout=2)
         wizard.app_instance.app_config["api_settings"]["moonshot"][
             "api_region"
-        ] = "global"
+        ] = "international"
         await container._advance()
         release_retry.set()
         await pilot.pause(0.2)
@@ -6260,7 +6264,7 @@ async def test_mounted_save_lease_rechecks_identity_immediately_before_write(
             if calls == 1:
                 wizard.app_instance.app_config["api_settings"]["moonshot"][
                     "api_region"
-                ] = "global"
+                ] = "international"
             return draft
 
         monkeypatch.setattr(
@@ -6361,7 +6365,7 @@ async def test_mounted_builtin_settings_change_fences_prior_discovery_identity()
             container.show_step(welcome_index)
             wizard.app_instance.app_config["api_settings"]["moonshot"][
                 "api_region"
-            ] = "global"
+            ] = "international"
             container.show_step(provider_index)
             for _ in range(30):
                 if provider_step._selected_provider_models:
@@ -6491,7 +6495,7 @@ async def test_mounted_executor_entry_rejects_stale_provider_identity(
         assert await asyncio.to_thread(writer_entered.wait, 2)
         if identity_change == "moonshot_region":
             changed_values = {
-                "api_region": "global",
+                "api_region": "international",
                 "api_base_url": "https://api.moonshot.ai/v1",
             }
         elif identity_change == "huggingface_router":

@@ -192,9 +192,10 @@ def _live_first_chat_session_snapshot(
     snapshot = {
         item.name: deepcopy(getattr(session, item.name))
         for item in fields(ConsoleChatSession)
-        if item.name != "rag_scope_holder"
+        if item.name not in {"rag_scope_holder", "todo_store"}
     }
     snapshot["rag_scope_holder"] = deepcopy(session.rag_scope_holder.scope)
+    snapshot["todo_store"] = deepcopy(session.todo_store.export_snapshot())
     return snapshot
 
 

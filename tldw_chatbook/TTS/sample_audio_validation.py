@@ -12,6 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
+from tldw_chatbook.Utils.optional_deps import get_safe_import
+from tldw_chatbook.Utils.path_validation import validate_path
+
 MAX_PLAYABLE_AUDIO_BYTES = 8 * 1024 * 1024
 
 CONTENT_TYPES_BY_FORMAT = MappingProxyType(
@@ -65,9 +68,8 @@ def wav_has_complete_frames(body: bytes) -> bool:
 def compressed_audio_has_decodable_frame(body: bytes, response_format: str) -> bool:
     """Decode at most one bounded audio frame, failing closed without PyAV."""
 
-    try:
-        import av
-    except ImportError:
+    av = get_safe_import("av", "av")
+    if av is None:
         return False
 
     container_format, expected_codecs = {
@@ -170,6 +172,15 @@ def _read_bounded_regular_file(
     path: Path,
     max_bytes: int,
 ) -> tuple[bytes, os.stat_result] | None:
+    try:
+        validate_path(
+            path,
+            path.parent,
+            redact_paths=True,
+            allow_hidden=True,
+        )
+    except (AttributeError, TypeError, ValueError):
+        return None
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     descriptor = -1
@@ -216,7 +227,19 @@ def validate_playable_audio_file(
     *,
     max_bytes: int = MAX_PLAYABLE_AUDIO_BYTES,
 ) -> ValidatedPlayableAudio | None:
-    """Validate one exact artifact-owned file without following replacements."""
+    """Validate one exact artifact-owned file without following replacements.
+
+    Args:
+        path: Absolute path to the generated audio artifact.
+        response_format: Expected audio format and filename suffix.
+        content_type: Expected response content type for the format.
+        metadata: Provider metadata used to validate raw PCM parameters.
+        max_bytes: Maximum artifact size accepted for bounded reading.
+
+    Returns:
+        The validated byte length and SHA-256 identity, or ``None`` when the
+        path, file identity, size, metadata, or audio structure is invalid.
+    """
 
     if (
         type(path) is not type(Path())

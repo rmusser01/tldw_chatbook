@@ -26,7 +26,10 @@ from urllib.parse import urlparse
 import httpx
 
 from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
-from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
+from tldw_chatbook.Chat.provider_endpoint_contract import (
+    normalize_provider_key_for_contract,
+    resolve_provider_endpoint,
+)
 
 DISCOVERY_PROBE_TIMEOUT_SECONDS = 2.5
 MODEL_PROBE_RESPONSE_MAX_BYTES = 1024 * 1024
@@ -59,7 +62,12 @@ _ENDPOINT_CONFIG_KEYS = (
 
 def normalize_probe_provider_key(provider: object) -> str:
     """Return the established provider config-key spelling for probe routing."""
-    return str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+    raw = str(provider or "").strip()
+    direct = normalize_provider_key_for_contract(raw)
+    if direct:
+        return direct
+    normalized = raw.lower().replace(" ", "_").replace("-", "_")
+    return normalize_provider_key_for_contract(normalized)
 
 
 def connect_error_is_refused(error: BaseException) -> bool:

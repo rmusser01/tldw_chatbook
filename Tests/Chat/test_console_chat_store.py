@@ -414,9 +414,7 @@ def test_pristine_session_allows_harmless_initialized_empty_cache_entries():
             id="missing-settings",
         ),
         pytest.param(
-            lambda store, session: session.todos.append(
-                {"content": "work", "status": "pending"}
-            ),
+            lambda store, session: session.todo_store.create(content="work"),
             id="todo-work",
         ),
         pytest.param(

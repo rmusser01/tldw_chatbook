@@ -82,7 +82,7 @@ def resolve_provider_endpoint(
 
     if not isinstance(provider, str) or len(provider) > _MAX_PROVIDER_LENGTH:
         return _invalid_resolution("", "Provider name is invalid or too long.")
-    provider_key = _normalize_provider_key(provider)
+    provider_key = normalize_provider_key_for_contract(provider)
     if not provider_key:
         return _invalid_resolution("", "Select a valid provider.")
     if not isinstance(value, str):
@@ -218,7 +218,15 @@ def canonical_connection_identity(
     )
 
 
-def _normalize_provider_key(provider: object) -> str:
+def normalize_provider_key_for_contract(provider: object) -> str:
+    """Return the canonical provider key accepted by this endpoint contract.
+
+    Args:
+        provider: Provider config key or established display-name alias.
+
+    Returns:
+        The canonical provider key, or an empty string when unsupported.
+    """
     if not isinstance(provider, str):
         return ""
     provider_key = provider.strip()
@@ -363,7 +371,7 @@ def _normalized_netloc(hostname: str, port: int | None) -> str:
 def _is_exact_schemeless_host(netloc: str) -> bool:
     return any(
         netloc == host or netloc.startswith(f"{host}:")
-        for host in ("localhost", "127.0.0.1")
+        for host in ("localhost", "127.0.0.1", "[::1]")
     )
 
 

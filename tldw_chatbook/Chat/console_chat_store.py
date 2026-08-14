@@ -612,7 +612,7 @@ def is_untouched_default_session(
         or session.speech_preferences != ConsoleSpeechPreferences()
         or session.identity_revision != 0
         or session.ephemeral
-        or session.todos
+        or session.todo_store.list_after(None)
     )
 
 

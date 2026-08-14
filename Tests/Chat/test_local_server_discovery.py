@@ -280,6 +280,25 @@ async def test_probe_success_returns_model_ids() -> None:
 
 
 @pytest.mark.asyncio
+async def test_probe_canonicalizes_dotted_local_llamacpp_display_name() -> None:
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json=_openai_models_payload("m-a"))
+
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        provider_key="local llama.cpp",
+        http_client=_client(handler),
+    )
+
+    assert result.ok is True
+    assert result.model_ids == ("m-a",)
+    assert seen == ["http://127.0.0.1:9099/v1/models"]
+
+
+@pytest.mark.asyncio
 async def test_probe_full_chat_url_uses_contract_derived_models_sibling() -> None:
     seen: list[str] = []
 

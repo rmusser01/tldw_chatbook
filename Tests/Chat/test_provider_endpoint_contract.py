@@ -456,7 +456,6 @@ def test_empty_provider_is_rejected_with_bounded_copy() -> None:
         "192.168.1.10:8000/v1",
         "10.0.0.1/v1",
         "127.0.0.2:9000/v1",
-        "[::1]:8080/v1",
         "example.test/v1",
         "service.local:8000/v1",
     ],
@@ -468,6 +467,15 @@ def test_schemeless_remote_ip_and_dns_endpoints_are_rejected(value: str) -> None
     assert result.chat_url is None
     assert result.models_url is None
     assert result.errors
+
+
+def test_exact_schemeless_ipv6_loopback_is_accepted() -> None:
+    result = contract.resolve_provider_endpoint("custom", "[::1]:8080/v1")
+
+    assert result.errors == ()
+    assert result.normalized_input == "http://[::1]:8080/v1"
+    assert result.chat_url == "http://[::1]:8080/v1/chat/completions"
+    assert result.models_url == "http://[::1]:8080/v1/models"
 
 
 @pytest.mark.parametrize(

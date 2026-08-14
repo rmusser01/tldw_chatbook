@@ -50,6 +50,7 @@ from tldw_chatbook.UI.Screens.settings_config_models import (
 )
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
+    SettingsEndpointProbePurpose,
     probe_settings_endpoint,
 )
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
@@ -3243,7 +3244,13 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
             await pilot.pause(0.01)
 
         assert probe_calls == [
-            ("http://127.0.0.1:11434", {"provider": "ollama"})
+            (
+                "http://127.0.0.1:11434",
+                {
+                    "provider": "ollama",
+                    "purpose": SettingsEndpointProbePurpose.CHAT_CATALOG,
+                },
+            )
         ]
         message, kwargs = toasts[-1]
         assert message == (
@@ -7280,6 +7287,7 @@ async def test_settings_provider_category_updates_existing_non_normalized_provid
         "api_base_url": "https://proxy.example.com/v1",
         "model": "gpt-4.1",
         "api_key_env_var": "CHATBOOK_OPENAI_API_KEY",
+        "credential_source": "environment",
     }
 
 
@@ -7595,7 +7603,10 @@ async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch
         "provider": "llama_cpp",
         "model": "",
     }
-    assert app.app_config["api_settings"]["llama_cpp"] == {"model": ""}
+    assert app.app_config["api_settings"]["llama_cpp"] == {
+        "model": "",
+        "credential_source": "none",
+    }
 
 
 @pytest.mark.asyncio

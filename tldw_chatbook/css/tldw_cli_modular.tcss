@@ -8131,6 +8131,11 @@ _CredentialClearModal {
     background: transparent;
 }
 
+#settings-speech-inspector {
+    width: 100%;
+    height: auto;
+}
+
 #settings-speech-details > CollapsibleTitle,
 #settings-speech-scope-inspector > CollapsibleTitle {
     width: 100%;

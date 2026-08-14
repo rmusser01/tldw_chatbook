@@ -1116,7 +1116,9 @@ class ConsoleProviderGateway:
         if continuation_target is not None and (
             continuation_target.provider,
             continuation_target.model,
-            continuation_target.api_base_url,
+            normalize_generic_endpoint_for_compare(
+                continuation_target.api_base_url
+            ),
         ) != (
             provider_config_key(resolution.provider),
             resolution.model or "",

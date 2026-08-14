@@ -240,7 +240,13 @@ class _StudioNativeService(_NativeService):
             provider_id="audio_cpp",
             model_id="second-model",
             voice_id="second-voice",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
             revisions=SimpleNamespace(provider_configuration=3),
+            sources={},
+            provider_option_sources={},
+            studio_preview=False,
         )
 
 
@@ -910,7 +916,7 @@ async def test_first_time_audio_cpp_setup_lab_generation_and_console_handoff(
                 refresh for _provider, refresh in catalog_service.catalog_calls
             )
 
-            playground.query_one("#tts-test-connection-btn", Button).press()
+            playground.query_one("#tts-refresh-catalog-btn", Button).press()
             await _wait_until(
                 pilot,
                 lambda: (
@@ -928,7 +934,6 @@ async def test_first_time_audio_cpp_setup_lab_generation_and_console_handoff(
                     for provider, model, _refresh in catalog_service.voice_calls
                 ),
             )
-            await speech_host.workers.wait_for_complete()
             playground.query_one("#tts-voice-select", Select).value = "second-voice"
             await pilot.pause()
             playground.query_one("#tts-refresh-catalog-btn", Button).press()
@@ -939,7 +944,7 @@ async def test_first_time_audio_cpp_setup_lab_generation_and_console_handoff(
                     == initial_refreshes + 2
                 ),
             )
-            await speech_host.workers.wait_for_complete()
+            await pilot.pause()
             assert playground.query_one("#tts-model-select", Select).value == (
                 "second-model"
             )
@@ -963,7 +968,7 @@ async def test_first_time_audio_cpp_setup_lab_generation_and_console_handoff(
             )
             artifact = speech_host._stts_handler.playground_state().artifact
             assert artifact is not None
-            assert playground.current_audio_artifact is artifact
+            assert playground.current_audio_artifact == artifact
             assert not playground.query_one("#audio-play-btn", Button).disabled
             with wave.open(str(artifact.path), "rb") as wav_file:
                 assert wav_file.getnchannels() == 1
