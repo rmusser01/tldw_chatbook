@@ -2916,6 +2916,8 @@ class LibraryScreen(BaseAppScreen):
         # starts, and the next then rebuilds from state that is by then
         # settled.
         self._library_rag_panel_refresh_lock = asyncio.Lock()
+        # Superseded workers cannot stop admitted to_thread retrievals.
+        self._library_rag_search_execution_lock = asyncio.Lock()
         # (task-2075 D5) Cache of the last `library_rag_scope_shows_recovery`
         # result actually mirrored into the DOM, read by
         # `_sync_library_rag_scope_toggle_and_run_gate_widgets` to change-gate
@@ -29139,15 +29141,15 @@ class LibraryScreen(BaseAppScreen):
         The rail box and the Search canvas's query box share one state
         field (``_library_rag_query``); this keeps the mounted WIDGETS in
         lockstep as the user types in either. The programmatic assignment
-        fires the sibling's own ``Input.Changed``, whose value-equality
-        guard makes it a no-op -- no feedback loop.
+        suppresses the sibling's own ``Input.Changed`` event.
         """
         try:
             sibling = self.query_one(selector, Input)
         except (NoMatches, QueryError):
             return
         if sibling.value != value:
-            sibling.value = value
+            with sibling.prevent(Input.Changed):
+                sibling.value = value
 
     @on(Input.Submitted, "#library-search-input")
     async def handle_library_search_submitted(self, event: Input.Submitted) -> None:
@@ -30734,8 +30736,26 @@ class LibraryScreen(BaseAppScreen):
     async def _execute_library_rag_search(
         self, request: LibraryRagSearchRequest
     ) -> None:
-        outcome = await run_library_rag_search(self.app_instance, request)
-        await self._apply_library_rag_search_outcome(request, outcome)
+        """Serialize retrieval admission and retain repeated cancellation.
+
+        Canceled workers drain admitted retrievals under the lock, then
+        re-raise before outcome application so stale work cannot overlap or
+        apply after a newer request.
+        """
+        async with self._library_rag_search_execution_lock:
+            retrieval_task = asyncio.create_task(
+                run_library_rag_search(self.app_instance, request)
+            )
+            cancellation: asyncio.CancelledError | None = None
+            while not retrieval_task.done():
+                try:
+                    await asyncio.shield(retrieval_task)
+                except asyncio.CancelledError as error:
+                    cancellation = cancellation or error
+            outcome = retrieval_task.result()
+            if cancellation is not None:
+                raise cancellation
+            await self._apply_library_rag_search_outcome(request, outcome)
 
     async def _apply_library_rag_search_outcome(
         self,
