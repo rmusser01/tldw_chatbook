@@ -16,7 +16,7 @@ from Tests.UI.app_factory import _build_test_app
 
 @pytest.fixture(autouse=True)
 def _deterministic_models_mount(monkeypatch):
-    """Neutralise two pre-existing, unrelated timing hazards this file's
+    """Neutralise a pre-existing, unrelated timing hazard this file's
     press/pause sequences are long enough to occasionally hit (found during
     Task 7 review: 3/5 runs failed before this fixture existed).
 
@@ -34,17 +34,6 @@ def _deterministic_models_mount(monkeypatch):
        there is no later auto-transition left to race against. Every other
        section/key still resolves through the real ``get_cli_setting``, so
        this does not change any other test-environment behaviour.
-    2. Live network call. ``ModelSearchWidget.on_mount`` -> ``_initial_browse``
-       -> ``perform_search()`` (``model_search_widget.py`` ~142-272) fires a
-       browse that used to fire on mount now waits for its view (task-887)
-       the moment ``LLMScreen``'s body mounts -- confirmed independently:
-       the search widget lives inside ``llm-view-download-models``, which
-       ``LLMManagementWindow.compose()`` builds eagerly. That request's
-       variable real-world latency was the other half of the timing budget
-       that let cause (1) surface at all. Patching it to an async no-op
-       keeps this file's timing deterministic and independent of network
-       reachability.
-
     Args:
         monkeypatch: pytest's monkeypatch fixture; reverts both patches
             automatically at the end of each test.

@@ -88,7 +88,6 @@ MODELS_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("installed", "Installed"),
             ("external", "External"),
             ("remote", "Remote"),
-            ("download-models", "Download Models"),
         ),
     ),
 )

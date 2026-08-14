@@ -274,22 +274,8 @@ async def test_lab_route_and_mode_strip_navigate_the_real_shell(
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 
     _prepare_clean_environment(monkeypatch, tmp_path)
-    # Isolate the navigation test from the remaining Download Models widgets:
-    # their init-fired reactives and download workers schedule
-    # deferred DOM updates (call_later/thread completion) that race child
-    # mounting and screen switches under run_test -- a pre-existing family of
-    # races in those widgets, unrelated to shell navigation.
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
-    from tldw_chatbook.Widgets.HuggingFace.download_manager import DownloadManager
-    from tldw_chatbook.Widgets.HuggingFace.model_search_widget import ModelSearchWidget
 
-    async def _noop_async_update(self, *args):
-        return None
-
-    monkeypatch.setattr(ModelSearchWidget, "perform_search", lambda self: None)
-    monkeypatch.setattr(ModelSearchWidget, "_update_results_list", _noop_async_update)
-    monkeypatch.setattr(DownloadManager, "_refresh_downloads_list", _noop_async_update)
-    monkeypatch.setattr(DownloadManager, "_update_summary", lambda self: None)
     app = _build_test_app()
     app.app_config["_first_run"] = True
     app._initial_tab_value = "chat"
@@ -374,11 +360,14 @@ def _has_border(widget) -> bool:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("route", "active_chip"), [
-    ("llm", "lab-mode-models"),
-    ("stts", "lab-mode-speech"),
-    ("evals", "lab-mode-evals"),
-])
+@pytest.mark.parametrize(
+    ("route", "active_chip"),
+    [
+        ("llm", "lab-mode-models"),
+        ("stts", "lab-mode-speech"),
+        ("evals", "lab-mode-evals"),
+    ],
+)
 async def test_active_mode_chip_has_no_border_so_its_label_renders(route, active_chip):
     """The active chip must not gain the bundle's global `.is-active` border.
 
@@ -398,11 +387,14 @@ async def test_active_mode_chip_has_no_border_so_its_label_renders(route, active
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("route", "active_chip", "other_chip"), [
-    ("llm", "lab-mode-models", "lab-mode-speech"),
-    ("stts", "lab-mode-speech", "lab-mode-evals"),
-    ("evals", "lab-mode-evals", "lab-mode-models"),
-])
+@pytest.mark.parametrize(
+    ("route", "active_chip", "other_chip"),
+    [
+        ("llm", "lab-mode-models", "lab-mode-speech"),
+        ("stts", "lab-mode-speech", "lab-mode-evals"),
+        ("evals", "lab-mode-evals", "lab-mode-models"),
+    ],
+)
 async def test_focused_non_active_chip_does_not_impersonate_the_active_chip(
     route, active_chip, other_chip
 ):
@@ -448,11 +440,14 @@ def _rendered_text(app: App) -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("route", "active_label"), [
-    ("llm", "Models"),
-    ("stts", "Speech"),
-    ("evals", "Evals"),
-])
+@pytest.mark.parametrize(
+    ("route", "active_label"),
+    [
+        ("llm", "Models"),
+        ("stts", "Speech"),
+        ("evals", "Evals"),
+    ],
+)
 async def test_active_mode_chip_label_is_actually_rendered(route, active_label):
     """Assert the active chip's rendered label text, not a styles proxy.
 

@@ -43,7 +43,6 @@ CHATBOOKS_IMPROVED = ROOT / "tldw_chatbook/css/features/_chatbooks_improved.tcss
 CHATBOOKS_WINDOW_IMPROVED = ROOT / "tldw_chatbook/UI/Chatbooks_Window_Improved.py"
 EMOJI_PICKER = ROOT / "tldw_chatbook/Widgets/emoji_picker.py"
 ENHANCED_FILE_PICKER = ROOT / "tldw_chatbook/Widgets/enhanced_file_picker.py"
-MODEL_CARD_VIEWER = ROOT / "tldw_chatbook/Widgets/HuggingFace/model_card_viewer.py"
 CONSOLE_MODAL_FILES = (
     ROOT / "tldw_chatbook/Widgets/Console/console_settings_modal.py",
     ROOT / "tldw_chatbook/Widgets/Console/console_edit_message_modal.py",
@@ -1717,15 +1716,6 @@ def test_compact_custom_buttons_use_readable_focus_cues():
         assert "$accent" not in block
         assert "background: $ds-focus-bg;" in block
         assert "color: $ds-focus-fg;" in block
-
-
-def test_huggingface_model_card_selected_file_row_is_readable():
-    text = MODEL_CARD_VIEWER.read_text(encoding="utf-8")
-    for selector in (
-        "ModelCardViewer .file-item.selected",
-        "ModelCardViewer .file-item.selected:hover",
-    ):
-        assert_readable_inline_selected_state_contract(css_block(text, selector))
 
 
 def test_config_search_highlight_focus_uses_thin_non_semantic_focus():

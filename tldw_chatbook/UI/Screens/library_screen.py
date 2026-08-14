@@ -1666,7 +1666,7 @@ def _sync_library_canvas(
         # gone; the coupling itself is recorded in the task file's residuals.
 
     except Exception:
-        logger.opt(exception=True).debug(f"Library {kind} canvas sync failed.")
+        logger.debug(f"Library {kind} canvas sync failed.")
         if allow_screen_fallback:
             screen.refresh(recompose=True)
             if then is not None:
@@ -7295,7 +7295,7 @@ class LibraryScreen(BaseAppScreen):
                 return self._sync_library_entry_owner_from_current_state(replacement)
             except Exception:
                 mount_failures += 1
-                logger.opt(exception=True).debug(
+                logger.debug(
                     "Library entry canvas repair attempt failed."
                 )
                 if mount_failures >= 2:
@@ -7348,7 +7348,7 @@ class LibraryScreen(BaseAppScreen):
             if self.is_running:
                 self.app.capture_mouse(None)
         except Exception:
-            logger.opt(exception=True).debug(
+            logger.debug(
                 "Strict Library entry shell synchronization failed."
             )
             return LibraryEntryReconcileResult.FAILED
@@ -7364,7 +7364,7 @@ class LibraryScreen(BaseAppScreen):
             if outgoing:
                 await canvas_host.remove_children(outgoing)
         except Exception:
-            logger.opt(exception=True).debug(
+            logger.debug(
                 "Strict Library entry canvas removal failed."
             )
             await self._repair_library_entry_canvas_owner()
@@ -7376,7 +7376,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             await canvas_host.mount(widget)
         except Exception:
-            logger.opt(exception=True).debug(
+            logger.debug(
                 "Strict Library entry canvas mount failed."
             )
             await self._repair_library_entry_canvas_owner()
@@ -7479,7 +7479,7 @@ class LibraryScreen(BaseAppScreen):
             if header_text != shell.header_line:
                 header.update(shell.header_line)
         except Exception:
-            logger.opt(exception=True).debug(
+            logger.debug(
                 "Library snapshot shell reconciliation failed."
             )
             return self._fail_library_entry_reconcile(generation, route_key)
@@ -7598,7 +7598,7 @@ class LibraryScreen(BaseAppScreen):
                     )
                 await canvas_host.mount(replacement)
             except Exception:
-                logger.opt(exception=True).debug(
+                logger.debug(
                     "Library snapshot canvas replacement failed."
                 )
                 return self._retry_or_fail_library_entry_reconcile(
@@ -7655,7 +7655,7 @@ class LibraryScreen(BaseAppScreen):
             try:
                 self._sync_library_rag_scope_toggle_and_run_gate_widgets()
             except Exception:
-                logger.opt(exception=True).debug(
+                logger.debug(
                     "Library Search/RAG snapshot sync failed."
                 )
                 return self._retry_or_fail_library_entry_reconcile(

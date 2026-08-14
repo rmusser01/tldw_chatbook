@@ -4,11 +4,12 @@ from __future__ import annotations
 
 
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Select, Static
 
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
@@ -17,13 +18,11 @@ from Tests.UI.app_factory import _build_test_app
 
 @pytest.fixture(autouse=True)
 def _deterministic_models_mount(monkeypatch):
-    """Neutralise the splash race and live network call this file's
-    press/pause sequences can hit. Same rationale as the identically named
-    fixture in ``test_lab_frame_mode_keys.py``: ``SplashScreen`` starts a
-    real 1.5s timer that can push a competing screen mid-test, and
-    The ``HuggingFaceAPI.search_models`` stub that used to sit here is gone:
-    the browse now waits for the Download Models view to be activated
-    (task-887), so mounting Models reaches no network at all.
+    """Neutralise the splash race this file's press/pause sequences can hit.
+
+    Same rationale as the identically named fixture in
+    ``test_lab_frame_mode_keys.py``: ``SplashScreen`` starts a real 1.5s
+    timer that can push a competing screen mid-test.
 
     Args:
         monkeypatch: pytest's monkeypatch fixture; reverts both patches
@@ -55,17 +54,27 @@ async def _models_screen(pilot_app):
 def _app():
     """Build the test app.
 
-    No CSS bundle: every assertion here is behavioural (class membership,
-    reactive values, chip text), not rendered styling. Rail-row styling is
-    asserted in test_lab_workbench.py against a class-level CSS_PATH -- a
-    post-construction `app.CSS_PATH = ...` would silently do nothing, since
-    App.__init__ reads CSS_PATH once at construction.
+    ``_build_test_app`` constructs the real ``TldwCli``, so its class-level
+    ``CSS_PATH`` is loaded during ``App.__init__`` and the production bundle
+    applies to mounted compositor assertions.
     """
     return _build_test_app()
 
 
 def _rail_rows(screen):
     return list(screen.query(".lab-rail-row").results(Button))
+
+
+def _assert_painted_inside(app, widget, parent) -> None:
+    """Assert real compositor visibility inside one owning region."""
+    assert widget in app.screen._compositor.visible_widgets
+    assert widget.is_on_screen
+    assert widget.region.width > 0 and widget.region.height > 0
+    bounds = parent.content_region
+    assert widget.region.x >= bounds.x
+    assert widget.region.right <= bounds.right
+    assert widget.region.y >= bounds.y
+    assert widget.region.bottom <= bounds.bottom
 
 
 @pytest.mark.asyncio
@@ -88,8 +97,140 @@ async def test_all_provider_and_model_rows_live_in_the_rail():
             "installed",
             "external",
             "remote",
-            "download-models",
         ]
+
+
+@pytest.mark.asyncio
+async def test_empty_models_recovery_routes_hold_at_80_columns(
+    tmp_path,
+    monkeypatch,
+):
+    """Downloader retirement leaves explicit, distinct, in-bounds recovery."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactDiskUsage
+    from tldw_chatbook.Model_Artifacts.remote_huggingface import (
+        HuggingFaceRemoteAdapter,
+    )
+    from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    search = AsyncMock(return_value=())
+    monkeypatch.setattr(HuggingFaceRemoteAdapter, "search", search)
+    app = _app()
+    app._parakeet_source_service = _FakeExternalSourceService()
+    async with app.run_test(size=(80, 40)) as pilot:
+        assert app.CSS_PATH == TldwCli.CSS_PATH
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#installed-models-view")), pilot
+        )
+
+        rows = _rail_rows(screen)
+        keys = [row.lab_view_key for row in rows]
+        assert "download-models" not in keys
+        assert not screen.query("#lab-models-row-download-models")
+        rail = screen.query_one("#lab-rail")
+        for row in rows:
+            _assert_painted_inside(app, row, rail)
+
+        window = screen.query_one(LLMManagementWindow)
+        assert "download-models" not in window.view_mapping
+        assert not window.query("#llm-view-download-models")
+
+        installed = window.query_one("#installed-models-view", InstalledView)
+        legacy_root = tmp_path / "empty-legacy-root"
+        legacy_root.mkdir()
+        managed_root = tmp_path / "managed-store"
+        service = MagicMock()
+        service.list_installed.return_value = ()
+        service.disk_usage.return_value = ArtifactDiskUsage(0, 0, 64 * 1024 * 1024)
+        service.artifacts_path = managed_root
+        installed._service_factory = lambda: service
+        installed._legacy_dir = legacy_root
+        installed_row = next(row for row in rows if row.lab_view_key == "installed")
+        installed_row.press()
+        assert await _wait_for(lambda: installed._loaded, pilot)
+
+        recovery = next(
+            item
+            for item in installed.query(Static)
+            if str(item.renderable).startswith("No managed or legacy models found.")
+        )
+        import_button = installed.query_one("#installed-models-import-gguf", Button)
+        installed_parent = window.query_one("#llm-view-installed")
+        assert import_button in app.screen._compositor.visible_widgets
+        assert import_button.is_on_screen
+        assert import_button.region.right <= app.size.width
+        assert import_button.region.bottom <= app.size.height
+        _assert_painted_inside(app, recovery, installed_parent)
+        assert import_button.can_focus
+
+        for provider, view_key in (
+            ("llamacpp", "llama-cpp"),
+            ("llamafile", "llamafile"),
+        ):
+            next(row for row in rows if row.lab_view_key == view_key).press()
+            await pilot.pause()
+            mode = window.query_one(f"#{provider}-gguf-source-mode", Select)
+            labels = tuple(str(label) for label, _value in mode._options)
+            assert "External GGUF" in labels
+            if mode.value != "external":
+                mode.value = "external"
+                await pilot.pause()
+            external_region = window.query_one(f"#{provider}-gguf-external-region")
+            external_region.scroll_visible()
+            await pilot.pause()
+            model_path = window.query_one(f"#{provider}-model-path", Input)
+            browse = window.query_one(f"#{provider}-browse-model-button", Button)
+            view = window.query_one(f"#llm-view-{view_key}")
+            _assert_painted_inside(app, model_path, view)
+            _assert_painted_inside(app, browse, view)
+            source_copy = "\n".join(
+                str(item.renderable) for item in external_region.query(Static)
+            )
+            assert "used in place" in source_copy
+            assert "not imported, copied, deleted, or selected globally" in source_copy
+
+        external_row = next(row for row in rows if row.lab_view_key == "external")
+        assert str(external_row.label) == "External"
+        external_row.press()
+        await pilot.pause()
+        external = window.query_one("#external-models-view", ExternalModelView)
+        external_text = "\n".join(
+            str(item.renderable) for item in external.query(Static)
+        )
+        assert "external Parakeet sources" in external_text
+        assert "GGUF" not in external_text
+
+        transformers_row = next(
+            row for row in rows if row.lab_view_key == "transformers"
+        )
+        transformers_row.press()
+        await pilot.pause()
+        transformers_view = window.query_one("#llm-view-transformers")
+        for selector in (
+            "#transformers-models-dir-path",
+            "#transformers-browse-models-dir-button",
+            "#transformers-list-local-models-button",
+        ):
+            control = window.query_one(selector)
+            control.scroll_visible()
+            await pilot.pause()
+            _assert_painted_inside(app, control, transformers_view)
+        assert not window.query("#transformers-download-model-button")
+
+        remote_row = next(row for row in rows if row.lab_view_key == "remote")
+        remote_row.press()
+        await pilot.pause()
+        assert window.active_view == "remote"
+        assert window.query_one("#remote-models-view")
+        search.assert_not_awaited()
+
+    expected = (
+        "No managed or legacy models found. Use Import GGUF… for a managed copy, "
+        "or choose External GGUF under Llama.cpp or Llamafile to use a file in place."
+    )
+    assert str(recovery.renderable) == expected
+    assert str(tmp_path) not in str(recovery.renderable)
 
 
 @pytest.mark.asyncio
@@ -534,8 +675,7 @@ async def test_curated_install_progress_after_recompose_still_mirrors_into_insta
             await pilot.pause()
 
         assert fresh_installed._install_progress == second_progress, (
-            "InstalledView's mirroring handler never observed the "
-            "post-recompose tick"
+            "InstalledView's mirroring handler never observed the post-recompose tick"
         )
         assert fresh_installed._install_active is True
 
@@ -594,7 +734,10 @@ async def test_deliver_curated_falls_back_to_the_screen_when_llm_window_is_stale
             "this must still be the stale, closed reference"
         )
         assert old_window._closed is True
-        assert old_window.post_message(InstallStatusChanged(reference, active=True)) is False, (
+        assert (
+            old_window.post_message(InstallStatusChanged(reference, active=True))
+            is False
+        ), (
             "test setup bug: the removed window must already be closed, "
             "i.e. post_message on it must return False, for this to be "
             "the gap _deliver_curated needs to survive"
@@ -691,8 +834,7 @@ async def test_hydration_mirrors_a_tick_delivered_during_the_recompose_gap_into_
 
         fresh_window = screen.llm_window
         assert fresh_window is not old_window, (
-            "test setup bug: _mount_lab_body did not actually replace "
-            "the window"
+            "test setup bug: _mount_lab_body did not actually replace the window"
         )
         fresh_installed = fresh_window.query_one(InstalledView)
         assert fresh_installed is not old_installed
@@ -1605,87 +1747,58 @@ async def test_the_initial_view_is_marked_active_on_arrival_with_no_press():
 
 
 @pytest.mark.asyncio
-async def test_mounting_models_reaches_no_network_until_the_view_is_opened(monkeypatch):
-    """Opening Models must not call huggingface.co (task-887).
+async def test_surviving_model_rails_trigger_no_unprompted_http_or_search(monkeypatch):
+    """Traversing the mounted Models rail stays idle until an explicit action."""
+    import httpx
 
-    `ModelSearchWidget` used to `call_after_refresh(self._initial_browse)`
-    from `on_mount`, and it lives inside `llm-view-download-models`, which
-    `LLMManagementWindow.compose()` builds eagerly -- so every visit to this
-    screen fired a live request for users who never open Download Models.
-
-    Counting calls is the oracle. Asserting the results list is empty would
-    pass whether the request was skipped or merely returned nothing.
-    """
-    from tldw_chatbook.LLM_Calls.huggingface_api import HuggingFaceAPI
-
-    calls: list[int] = []
-
-    async def counted(self, *args, **kwargs):
-        calls.append(1)
-        return []
-
-    monkeypatch.setattr(HuggingFaceAPI, "search_models", counted)
-
-    app = _app()
-    async with app.run_test(size=(120, 40)) as pilot:
-        screen = await _models_screen(app)
-        await pilot.pause()
-        await pilot.pause()
-        assert calls == [], "mounting Models reached the network"
-
-        window = screen.llm_window
-        assert window is not None
-        window.active_view = "download-models"
-        await pilot.pause()
-        await pilot.pause()
-        assert len(calls) == 1, "opening Download Models did not browse"
-
-        window.active_view = "llama-cpp"
-        await pilot.pause()
-        window.active_view = "download-models"
-        await pilot.pause()
-        await pilot.pause()
-        assert len(calls) == 1, "re-opening the view browsed again"
-
-
-@pytest.mark.asyncio
-async def test_pressing_remote_still_waits_for_explicit_search(monkeypatch):
-    """Remote activation itself must remain metadata-I/O free."""
     from tldw_chatbook.Model_Artifacts.remote_huggingface import (
         HuggingFaceRemoteAdapter,
     )
     from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
 
-    calls: list[str] = []
+    http_calls: list[tuple[str, str]] = []
+    search_calls: list[str] = []
+    original_search = HuggingFaceRemoteAdapter.search
+
+    async def counted_send(self, request, *args, **kwargs):
+        http_calls.append((request.method, str(request.url)))
+        return httpx.Response(200, json=[], request=request)
 
     async def counted_search(self, query, *, token=None):
-        calls.append("search")
-        return ()
+        search_calls.append(query)
+        return await original_search(self, query, token=token)
 
-    async def counted_resolve(self, repository, *, token=None):
-        calls.append("resolve")
-        raise AssertionError("Remote resolve ran before Search")
-
+    monkeypatch.setattr(httpx.AsyncClient, "send", counted_send)
     monkeypatch.setattr(HuggingFaceRemoteAdapter, "search", counted_search)
-    monkeypatch.setattr(HuggingFaceRemoteAdapter, "resolve", counted_resolve)
 
     app = _app()
     async with app.run_test(size=(120, 40)) as pilot:
         screen = await _models_screen(app)
-        await pilot.pause()
-        await pilot.pause()
-        remote_row = next(
-            row for row in _rail_rows(screen) if row.lab_view_key == "remote"
-        )
+        for _ in range(6):
+            await pilot.pause()
 
-        remote_row.press()
-        await pilot.pause()
-        await pilot.pause()
+        for row in _rail_rows(screen):
+            row.press()
+            await pilot.pause()
+
+        assert http_calls == [], f"rail traversal issued HTTP: {http_calls}"
+        assert search_calls == [], f"rail traversal searched Remote: {search_calls}"
 
         window = screen.query_one(LLMManagementWindow)
-        assert window.active_view == "remote"
-        assert window.query_one("#remote-models-view", RemoteView)
-        assert calls == []
+        remote = window.query_one("#remote-models-view", RemoteView)
+        remote.query_one("#remote-model-query", Input).value = "quantized model"
+        await pilot.click("#remote-model-search")
+        for _ in range(50):
+            if http_calls:
+                break
+            await pilot.pause()
+
+        expected = (
+            "GET",
+            "https://huggingface.co/api/models?search=quantized+model&limit=50",
+        )
+        assert search_calls == ["quantized model"]
+        assert http_calls == [expected]
 
 
 # ---------------------------------------------------------------------------
@@ -1794,8 +1907,12 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
 
     catalog = _remote_catalog()
     reference = catalog.artifact.reference
-    first_progress = AcquisitionProgress("fetch", reference, "model-part-1.gguf", 100, 1024)
-    second_progress = AcquisitionProgress("fetch", reference, "model-part-2.gguf", 400, 1024)
+    first_progress = AcquisitionProgress(
+        "fetch", reference, "model-part-1.gguf", 100, 1024
+    )
+    second_progress = AcquisitionProgress(
+        "fetch", reference, "model-part-2.gguf", 400, 1024
+    )
     resume = asyncio.Event()
 
     class _FakeAcquisitionService:
@@ -1810,7 +1927,9 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
                 credential_resolver: The credential resolver (unused).
             """
 
-        async def provision(self, root, consent, catalog, *, sources, progress, activate):
+        async def provision(
+            self, root, consent, catalog, *, sources, progress, activate
+        ):
             """Deliver two progress ticks with the recompose in between.
 
             Args:
@@ -1910,15 +2029,21 @@ async def test_remote_install_progress_after_recompose_still_mirrors_into_instal
 
     catalog = _remote_catalog()
     reference = catalog.artifact.reference
-    first_progress = AcquisitionProgress("fetch", reference, "model-part-1.gguf", 100, 1024)
-    second_progress = AcquisitionProgress("fetch", reference, "model-part-2.gguf", 400, 1024)
+    first_progress = AcquisitionProgress(
+        "fetch", reference, "model-part-1.gguf", 100, 1024
+    )
+    second_progress = AcquisitionProgress(
+        "fetch", reference, "model-part-2.gguf", 400, 1024
+    )
     resume = asyncio.Event()
 
     class _FakeAcquisitionService:
         def __init__(self, _service, *, credential_resolver=None) -> None:
             """See the sibling recompose test above for this fake's rationale."""
 
-        async def provision(self, root, consent, catalog, *, sources, progress, activate):
+        async def provision(
+            self, root, consent, catalog, *, sources, progress, activate
+        ):
             progress(first_progress)
             await resume.wait()
             progress(second_progress)
@@ -1968,8 +2093,7 @@ async def test_remote_install_progress_after_recompose_still_mirrors_into_instal
             await pilot.pause()
 
         assert fresh_installed._install_progress == second_progress, (
-            "InstalledView's mirroring handler never observed the "
-            "post-recompose tick"
+            "InstalledView's mirroring handler never observed the post-recompose tick"
         )
         assert fresh_installed._install_active is True
 
@@ -2374,7 +2498,9 @@ def test_a_second_concurrent_install_is_refused_regardless_of_kind_or_phase(
     screen._model_install_service = MagicMock()
     screen._model_install_registry = MagicMock() if first_kind == "curated" else None
     screen._model_install_sources = {} if first_kind == "curated" else None
-    screen._model_install_catalog = _remote_catalog() if first_kind == "remote" else None
+    screen._model_install_catalog = (
+        _remote_catalog() if first_kind == "remote" else None
+    )
     screen._model_install_candidate = None
     screen._model_install_credential_resolver = (
         MagicMock() if first_kind == "remote" else None
@@ -2707,9 +2833,7 @@ async def test_provision_remote_reuses_exact_preflight_values_without_activation
                 activate,
             )
 
-    monkeypatch.setattr(
-        acquisition_module, "ArtifactAcquisitionService", _Acquisition
-    )
+    monkeypatch.setattr(acquisition_module, "ArtifactAcquisitionService", _Acquisition)
 
     screen = module.LLMScreen.__new__(module.LLMScreen)
     screen._model_install_service = core

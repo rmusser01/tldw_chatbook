@@ -61,10 +61,9 @@
  * `3fr` with `min-width: 24`). The bounds keep the labels intact at 80
  * columns without letting the rail sprawl at 200.
  *
- * The 24 floor is measured, not guessed: at 20 the longest Models label
- * ("Download Models") rendered as "Download" -- Textual drops the whole
- * overflowing word rather than clipping mid-word, so the truncation is
- * silent and total. `Tests/UI/test_lab_workbench.py` pins it.
+ * The 24 floor fits the exact surviving longest label, "Speech Recognition",
+ * including padding, border, and the active accent. The rendered oracle in
+ * `Tests/UI/test_lab_workbench.py` pins it.
  */
 
 .lab-workbench {
@@ -284,8 +283,7 @@
     min-width: 6;
 }
 
-/* Rail width is per-mode, because label length is per-mode. The shared floor
- * fits Models (longest: "Download Models", 15 cells). Speech's rows carry
+/* Rail width is per-mode, because label length is per-mode. Speech's rows carry
  * double-width emoji -- "🔤 Speech Recognition" measures 21 cells, and at the
  * shared floor Textual dropped the overflowing word entirely, rendering
  * "🔤 Speech" and a bare "📚". Measured, not estimated. */

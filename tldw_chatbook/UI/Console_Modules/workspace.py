@@ -2110,9 +2110,7 @@ class ConsoleWorkspaceController:
                 try:
                     self._sync_console_workspace_context()
                 except Exception:
-                    logger.opt(exception=True).debug(
-                        "Star-toggle cancellation re-sync failed"
-                    )
+                    logger.debug("Star-toggle cancellation re-sync failed")
                 raise
             except Exception:
                 logger.exception(
