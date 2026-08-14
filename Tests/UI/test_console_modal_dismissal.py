@@ -70,16 +70,30 @@ class _HostScreen(Screen[None]):
         super().__init__()
         self.composer_fallback_calls: list[bool] = []
         self.underlying_button_presses = 0
+        self.unrelated_button_presses = 0
+        self.screen_mouse_ups = 0
+        self.screen_clicks = 0
 
     def compose(self) -> ComposeResult:
         yield Button("Underlying action", id="modal-test-underlying-action")
         yield Input(id="modal-test-opener")
         yield Input(id="modal-test-other-focus")
+        yield Button("Unrelated action", id="modal-test-unrelated-action")
         yield Static("host", id="modal-test-host-label")
 
     @on(Button.Pressed, "#modal-test-underlying-action")
     def _underlying_action(self) -> None:
         self.underlying_button_presses += 1
+
+    @on(Button.Pressed, "#modal-test-unrelated-action")
+    def _unrelated_action(self) -> None:
+        self.unrelated_button_presses += 1
+
+    def on_mouse_up(self, _event: events.MouseUp) -> None:
+        self.screen_mouse_ups += 1
+
+    def on_click(self, _event: events.Click) -> None:
+        self.screen_clicks += 1
 
     def _focus_console_composer_if_needed(self, *, force: bool) -> None:
         self.composer_fallback_calls.append(force)
@@ -162,19 +176,21 @@ async def _mount_modal(
     return opener
 
 
-def _outside_click(modal: _SafeTestModal) -> events.Click:
+def _outside_click(
+    modal: _SafeTestModal, screen_x: int = 0, screen_y: int = 0
+) -> events.Click:
     return events.Click(
         modal,
-        0,
-        0,
+        screen_x,
+        screen_y,
         0,
         0,
         1,
         False,
         False,
         False,
-        screen_x=0,
-        screen_y=0,
+        screen_x=screen_x,
+        screen_y=screen_y,
     )
 
 
@@ -349,7 +365,7 @@ async def test_restore_focus_uses_console_fallback_when_opener_was_removed():
 
 
 @pytest.mark.asyncio
-async def test_backdrop_click_chain_cannot_press_revealed_underlying_button():
+async def test_backdrop_shield_is_inert_to_revealed_screen_and_focus():
     app = _ModalHarness()
     results: list[bool | None] = []
     modal = _SafeTestModal()
@@ -360,7 +376,7 @@ async def test_backdrop_click_chain_cannot_press_revealed_underlying_button():
             underlying.region.x + 1,
             underlying.region.y + 1,
         )
-        await _mount_modal(app, pilot, modal, results)
+        opener = await _mount_modal(app, pilot, modal, results)
         assert not modal.query_one("#modal-test-content", Vertical).region.contains(
             *click_point
         )
@@ -371,10 +387,12 @@ async def test_backdrop_click_chain_cannot_press_revealed_underlying_button():
 
         assert results == [False]
         assert app.host.underlying_button_presses == 0
-        assert app.mouse_captured is app.host
+        assert app.host.screen_mouse_ups == 0
+        assert app.host.screen_clicks == 0
+        assert app.host.focused is opener
+        assert app.mouse_captured is None
 
         await pilot.pause(app.CLICK_CHAIN_TIME_THRESHOLD + 0.05)
-        assert app.mouse_captured is None
 
         await pilot.click(offset=click_point)
         await pilot.pause()
@@ -382,23 +400,25 @@ async def test_backdrop_click_chain_cannot_press_revealed_underlying_button():
 
 
 @pytest.mark.asyncio
-async def test_backdrop_shield_does_not_release_a_new_mouse_capture_owner():
+async def test_backdrop_shield_allows_an_unrelated_coordinate_action():
     app = _ModalHarness()
     results: list[bool | None] = []
     modal = _SafeTestModal()
 
     async with app.run_test(size=(80, 24)) as pilot:
+        underlying = app.host.query_one("#modal-test-underlying-action", Button)
+        unrelated = app.host.query_one("#modal-test-unrelated-action", Button)
+        origin = (underlying.region.x + 1, underlying.region.y + 1)
+        unrelated_point = (unrelated.region.x + 1, unrelated.region.y + 1)
         await _mount_modal(app, pilot, modal, results)
-        await pilot.click(offset=(0, 0))
+
+        await pilot.click(offset=origin)
+        await pilot.click(offset=unrelated_point)
         await pilot.pause()
-        assert app.mouse_captured is app.host
 
-        new_owner = app.host.query_one("#modal-test-other-focus", Input)
-        new_owner.capture_mouse()
-        await pilot.pause(app.CLICK_CHAIN_TIME_THRESHOLD + 0.05)
-
-        assert app.mouse_captured is new_owner
-        new_owner.release_mouse()
+        assert app.host.underlying_button_presses == 0
+        assert app.host.unrelated_button_presses == 1
+        assert app.mouse_captured is None
 
 
 @pytest.mark.asyncio
@@ -461,12 +481,14 @@ async def test_real_click_dispatch_keeps_descendant_and_inside_geometry_open():
 
 @pytest.mark.parametrize("source", ["escape", "button"])
 @pytest.mark.asyncio
-async def test_non_backdrop_cancel_does_not_capture_revealed_screen(source: str):
+async def test_non_backdrop_cancel_does_not_shield_revealed_screen(source: str):
     app = _ModalHarness()
     results: list[bool | None] = []
     modal = _SafeTestModal()
 
     async with app.run_test(size=(80, 24)) as pilot:
+        underlying = app.host.query_one("#modal-test-underlying-action", Button)
+        click_point = (underlying.region.x + 1, underlying.region.y + 1)
         await _mount_modal(app, pilot, modal, results)
         if source == "escape":
             await modal.action_request_safe_cancel()
@@ -476,6 +498,9 @@ async def test_non_backdrop_cancel_does_not_capture_revealed_screen(source: str)
 
         assert app.screen is app.host
         assert app.mouse_captured is None
+        await pilot.click(offset=click_point)
+        await pilot.pause()
+        assert app.host.underlying_button_presses == 1
 
 
 @pytest.mark.asyncio
@@ -510,10 +535,14 @@ async def test_pending_escape_records_backdrop_before_terminal_dismissal():
         await pilot.pause()
 
         assert app.host.underlying_button_presses == 0
-        assert app.mouse_captured is app.host
+        assert app.host.screen_mouse_ups == 0
+        assert app.host.screen_clicks == 0
+        assert app.mouse_captured is None
 
         await pilot.pause(app.CLICK_CHAIN_TIME_THRESHOLD + 0.05)
-        assert app.mouse_captured is None
+        await pilot.click(offset=click_point)
+        await pilot.pause()
+        assert app.host.underlying_button_presses == 1
 
 
 @pytest.mark.parametrize("retry_source", ["escape", "button"])
@@ -556,3 +585,91 @@ async def test_stale_backdrop_attempt_does_not_shield_later_retry(
         await pilot.click(offset=click_point)
         await pilot.pause()
         assert app.host.underlying_button_presses == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_backdrop_chain_adds_no_shield():
+    app = _ModalHarness()
+
+    async def outlive_click_chain() -> None:
+        await asyncio.sleep(app.CLICK_CHAIN_TIME_THRESHOLD + 0.05)
+
+    results: list[bool | None] = []
+    modal = _SafeTestModal(cancel_effect=outlive_click_chain)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        underlying = app.host.query_one("#modal-test-underlying-action", Button)
+        click_point = (underlying.region.x + 1, underlying.region.y + 1)
+        await _mount_modal(app, pilot, modal, results)
+
+        await pilot.click(offset=click_point)
+        assert app.screen is app.host
+
+        await pilot.click(offset=click_point)
+        await pilot.pause()
+
+        assert app.host.underlying_button_presses == 1
+        assert app.mouse_captured is None
+
+
+@pytest.mark.asyncio
+async def test_old_request_generation_cannot_dismiss_repushed_presentation():
+    first_entered = asyncio.Event()
+    first_release = asyncio.Event()
+    second_entered = asyncio.Event()
+    second_release = asyncio.Event()
+    effect_calls = 0
+
+    async def generation_effect() -> None:
+        nonlocal effect_calls
+        effect_calls += 1
+        if effect_calls == 1:
+            first_entered.set()
+            await first_release.wait()
+        else:
+            second_entered.set()
+            await second_release.wait()
+
+    app = _ModalHarness()
+    first_results: list[bool | None] = []
+    second_results: list[bool | None] = []
+    modal = _SafeTestModal(cancel_effect=generation_effect)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        underlying = app.host.query_one("#modal-test-underlying-action", Button)
+        click_point = (underlying.region.x + 1, underlying.region.y + 1)
+        await _mount_modal(app, pilot, modal, first_results)
+        old_request = asyncio.create_task(modal.action_request_safe_cancel())
+        await first_entered.wait()
+
+        modal.dismiss(None)
+        await pilot.pause()
+        assert first_results == [None]
+        assert app.screen is app.host
+
+        await _mount_modal(app, pilot, modal, second_results)
+        new_request = asyncio.create_task(
+            modal.on_click(_outside_click(modal, *click_point))
+        )
+        await second_entered.wait()
+
+        first_release.set()
+        await old_request
+        await pilot.pause()
+
+        try:
+            assert app.screen is modal
+            assert second_results == []
+            await modal.action_request_safe_cancel()
+            assert app.screen is modal
+            assert effect_calls == 2
+        finally:
+            second_release.set()
+            await new_request
+        await pilot.pause()
+
+        assert app.screen is app.host
+        assert second_results == [False]
+        await pilot.click(offset=click_point)
+        await pilot.pause()
+        assert app.host.underlying_button_presses == 0

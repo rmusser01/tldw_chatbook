@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from functools import partial
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from weakref import ReferenceType, ref
 
 from textual import events
+from textual._time import get_time
 from textual.app import App
 from textual.screen import Screen
 from textual.widget import Widget
@@ -26,6 +27,11 @@ if TYPE_CHECKING:
         def query_one(self, selector: str, expect_type: type[Widget]) -> Widget: ...
 
         def dismiss(self, result: object) -> object: ...
+
+
+_safe_request_generation: ContextVar[tuple[int, int] | None] = ContextVar(
+    "safe_modal_request_generation", default=None
+)
 
 
 def is_modal_backdrop_click(
@@ -59,27 +65,79 @@ def _restore_focus_after_dismissal(
         focus_console_composer(force=True)
 
 
-def _release_backdrop_click_shield(app: App[Any], revealed_screen: Screen[Any]) -> None:
-    if app.mouse_captured is revealed_screen:
-        revealed_screen.release_mouse()
+class _BackdropClickShield(Widget):
+    """One-cell overlay that consumes the remainder of a backdrop click chain."""
+
+    can_focus = False
+
+    DEFAULT_CSS = """
+    _BackdropClickShield {
+        width: 1;
+        height: 1;
+        position: absolute;
+        overlay: screen;
+        background: transparent;
+    }
+    """
+
+    @staticmethod
+    def _consume(event: events.MouseEvent) -> None:
+        event.stop()
+        event.prevent_default()
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        self._consume(event)
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        self._consume(event)
+
+    def on_click(self, event: events.Click) -> None:
+        self._consume(event)
 
 
-def _capture_revealed_screen_for_click_chain(
-    app: App[Any], revealed_screen: Screen[Any]
+async def _remove_backdrop_click_shield(shield: _BackdropClickShield) -> None:
+    if shield.is_attached:
+        await shield.remove()
+
+
+async def _mount_backdrop_click_shield(
+    app: App[Any],
+    revealed_screen: Screen[Any],
+    event_time: float,
+    screen_x: int,
+    screen_y: int,
 ) -> None:
     if app.screen is not revealed_screen:
         return
-    revealed_screen.capture_mouse()
+    remaining = app.CLICK_CHAIN_TIME_THRESHOLD - (get_time() - event_time)
+    if remaining <= 0:
+        return
+
+    shield = _BackdropClickShield()
+    shield.styles.offset = (screen_x, screen_y)
+    await revealed_screen.mount(shield)
+
+    remaining = app.CLICK_CHAIN_TIME_THRESHOLD - (get_time() - event_time)
+    if remaining <= 0:
+        await shield.remove()
+        return
     revealed_screen.set_timer(
-        app.CLICK_CHAIN_TIME_THRESHOLD,
-        partial(_release_backdrop_click_shield, app, revealed_screen),
+        remaining,
+        lambda: _remove_backdrop_click_shield(shield),
     )
 
 
-def _shield_revealed_screen_from_click_chain(app: App[Any]) -> None:
+def _shield_revealed_screen_from_click_chain(
+    app: App[Any], event_time: float, screen_x: int, screen_y: int
+) -> None:
     revealed_screen = app.screen
     revealed_screen.call_after_refresh(
-        _capture_revealed_screen_for_click_chain, app, revealed_screen
+        _mount_backdrop_click_shield,
+        app,
+        revealed_screen,
+        event_time,
+        screen_x,
+        screen_y,
     )
 
 
@@ -92,7 +150,8 @@ class SafeModalDismissMixin:
     _safe_cancel_effect_committed = False
     _safe_dismiss_committed = False
     _safe_opener_focus_ref: ReferenceType[Widget] | None = None
-    _safe_backdrop_seen_in_attempt = False
+    _safe_backdrop_event_in_attempt: tuple[float, int, int] | None = None
+    _safe_mount_generation = 0
 
     def on_mount(self) -> None:
         """Remember the opener's focused widget for post-dismiss restoration."""
@@ -100,7 +159,8 @@ class SafeModalDismissMixin:
         self._safe_cancel_effect_committed = False
         self._safe_dismiss_committed = False
         self._safe_opener_focus_ref = None
-        self._safe_backdrop_seen_in_attempt = False
+        self._safe_backdrop_event_in_attempt = None
+        self._safe_mount_generation += 1
 
         host = cast("_SafeModalHost", self)
         screen_stack = host.app.screen_stack
@@ -119,17 +179,20 @@ class SafeModalDismissMixin:
 
     async def request_safe_cancel(self, *, source: str) -> None:
         """Run one cancellation request while consuming concurrent requests."""
-        if source == "backdrop":
-            self._safe_backdrop_seen_in_attempt = True
         if self._safe_cancel_pending:
             return
+        request_generation = self._safe_mount_generation
+        request_identity = (id(self), request_generation)
         self._safe_cancel_pending = True
+        generation_token = _safe_request_generation.set(request_identity)
         try:
             await self._perform_safe_cancel(source=source)
         finally:
-            self._safe_backdrop_seen_in_attempt = False
-            if cast("_SafeModalHost", self).is_mounted:
-                self._safe_cancel_pending = False
+            if self._safe_mount_generation == request_generation:
+                self._safe_backdrop_event_in_attempt = None
+                if cast("_SafeModalHost", self).is_mounted:
+                    self._safe_cancel_pending = False
+            _safe_request_generation.reset(generation_token)
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         """Perform the default terminal cancellation."""
@@ -147,6 +210,10 @@ class SafeModalDismissMixin:
 
     def dismiss_safe_once(self, result: object) -> bool:
         """Dismiss only this mounted, topmost modal and restore opener focus."""
+        request_identity = _safe_request_generation.get()
+        current_identity = (id(self), self._safe_mount_generation)
+        if request_identity is not None and request_identity != current_identity:
+            return False
         if self._safe_dismiss_committed:
             return False
         host = cast("_SafeModalHost", self)
@@ -156,9 +223,10 @@ class SafeModalDismissMixin:
         self._safe_dismiss_committed = True
         app = host.app
         opener_ref = self._safe_opener_focus_ref
+        backdrop_event = self._safe_backdrop_event_in_attempt
         host.dismiss(result)
-        if self._safe_backdrop_seen_in_attempt:
-            _shield_revealed_screen_from_click_chain(app)
+        if backdrop_event is not None:
+            _shield_revealed_screen_from_click_chain(app, *backdrop_event)
         app.screen.call_after_refresh(_restore_focus_after_dismissal, app, opener_ref)
         return True
 
@@ -191,4 +259,9 @@ class SafeModalDismissMixin:
 
         event.stop()
         event.prevent_default()
+        self._safe_backdrop_event_in_attempt = (
+            event.time,
+            int(event.screen_x),
+            int(event.screen_y),
+        )
         await self.request_safe_cancel(source="backdrop")
