@@ -349,16 +349,12 @@ async def test_task_16001_console_collapsed_context_button_visual_sweep(
             )
             assert context_handle.region.width == 13
             assert context_handle.content_region.width == 11
-            assert context_button.region.x >= context_handle.content_region.x
-            assert context_button.region.right <= context_handle.content_region.right
+            assert context_handle.content_region.contains_region(context_button.region)
             assert inspector_button.label == "Inspect->"
             assert transcript.region.width > 0
-            painted_context_rows = [
-                row
-                for row in _painted_region_rows(screen, context_button.region)
-                if row.startswith("Context")
+            assert _painted_region_rows(screen, context_button.region) == [
+                "Context--->"
             ]
-            assert painted_context_rows == ["Context--->"]
             assert context_button.label == "Context--->"
 
             svg = app.export_screenshot(
