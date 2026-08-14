@@ -4044,6 +4044,152 @@ def _task5_uncertain_item(
     )
 
 
+def _task5_update_capable_item(
+    *,
+    match_kind: ImportMatchKind,
+    classification: ImportClassification,
+    note_version: int | None,
+    payload_count: int,
+) -> ImportPreviewItem:
+    payloads = tuple(
+        ParsedNotePayload(title=f"Note {index}", content=f"Body {index}")
+        for index in range(payload_count)
+    )
+    memberships = tuple(
+        ProposedFolderMembership(
+            payload_index=index,
+            folder_segments=("Project", "Meetings"),
+        )
+        for index in range(payload_count)
+    )
+    return _new_item(
+        payloads=payloads,
+        memberships=memberships,
+        classification=classification,
+        default_action=ImportAction.CREATE_NEW,
+        selected_action=ImportAction.CREATE_NEW,
+        allowed_actions=(
+            ImportAction.SKIP,
+            ImportAction.CREATE_NEW,
+            ImportAction.UPDATE_EXISTING,
+        ),
+        match=ImportMatch(
+            kind=match_kind,
+            note_id="note-update-target",
+            note_version=note_version,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("match_kind", "classification"),
+    [
+        (ImportMatchKind.EXACT, ImportClassification.CHANGED_REPEAT),
+        (ImportMatchKind.USER_CONFIRMED, ImportClassification.UNCERTAIN_MATCH),
+    ],
+)
+@pytest.mark.parametrize(
+    ("note_version", "payload_count"),
+    [(None, 1), (7, 2)],
+)
+def test_update_capable_item_requires_one_payload_and_a_current_version(
+    match_kind: ImportMatchKind,
+    classification: ImportClassification,
+    note_version: int | None,
+    payload_count: int,
+) -> None:
+    with pytest.raises(ValueError, match="one payload and a current note version"):
+        _task5_update_capable_item(
+            match_kind=match_kind,
+            classification=classification,
+            note_version=note_version,
+            payload_count=payload_count,
+        )
+
+
+def test_single_versioned_exact_and_confirmed_items_remain_update_capable() -> None:
+    exact = _task5_update_capable_item(
+        match_kind=ImportMatchKind.EXACT,
+        classification=ImportClassification.CHANGED_REPEAT,
+        note_version=4,
+        payload_count=1,
+    )
+    confirmed = _task5_update_capable_item(
+        match_kind=ImportMatchKind.USER_CONFIRMED,
+        classification=ImportClassification.UNCERTAIN_MATCH,
+        note_version=5,
+        payload_count=1,
+    )
+
+    assert ImportAction.UPDATE_EXISTING in exact.allowed_actions
+    assert ImportAction.UPDATE_EXISTING in confirmed.allowed_actions
+
+
+def test_multi_payload_versionless_uncertain_item_remains_create_only() -> None:
+    payloads = (
+        ParsedNotePayload(title="One", content="First"),
+        ParsedNotePayload(title="Two", content="Second"),
+    )
+    memberships = (
+        ProposedFolderMembership(
+            payload_index=0,
+            folder_segments=("Project", "Meetings"),
+        ),
+        ProposedFolderMembership(
+            payload_index=1,
+            folder_segments=("Project", "Meetings"),
+        ),
+    )
+
+    item = _task5_uncertain_item(
+        payloads=payloads,
+        memberships=memberships,
+        note_version=None,
+    )
+
+    assert item.allowed_actions == (ImportAction.SKIP, ImportAction.CREATE_NEW)
+    assert item.selected_action is ImportAction.CREATE_NEW
+
+
+@pytest.mark.parametrize(
+    ("match_kind", "classification", "note_version", "payload_count"),
+    [
+        (
+            ImportMatchKind.EXACT,
+            ImportClassification.CHANGED_REPEAT,
+            None,
+            1,
+        ),
+        (
+            ImportMatchKind.USER_CONFIRMED,
+            ImportClassification.UNCERTAIN_MATCH,
+            8,
+            2,
+        ),
+    ],
+)
+def test_caller_cannot_build_an_override_plan_that_bypasses_update_authorization(
+    match_kind: ImportMatchKind,
+    classification: ImportClassification,
+    note_version: int | None,
+    payload_count: int,
+) -> None:
+    with pytest.raises(ValueError, match="one payload and a current note version"):
+        item = _task5_update_capable_item(
+            match_kind=match_kind,
+            classification=classification,
+            note_version=note_version,
+            payload_count=payload_count,
+        )
+        plan = _plan_with_item(item)
+        note_import_planner.apply_item_override(
+            plan,
+            item.item_id,
+            ImportAction.UPDATE_EXISTING,
+            replace_content=True,
+        )
+
+
 @pytest.mark.parametrize(
     "existing_name",
     [

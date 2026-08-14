@@ -442,6 +442,12 @@ class ImportPreviewItem:
             raise ValueError("Create new requires membership approval.")
         if self.add_membership and covered_payload_indexes != expected_payload_indexes:
             raise ValueError("membership must cover every payload.")
+        if ImportAction.UPDATE_EXISTING in allowed_actions and (
+            len(payloads) != 1 or self.match is None or self.match.note_version is None
+        ):
+            raise ValueError(
+                "Update authorization requires one payload and a current note version."
+            )
         if self.selected_action is ImportAction.UPDATE_EXISTING and not (
             self.replace_content or self.add_membership
         ):
