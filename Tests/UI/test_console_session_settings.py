@@ -312,6 +312,59 @@ def _first_chat_session_snapshot(session: ConsoleChatSession) -> dict[str, objec
     return snapshot
 
 
+def _mounted_first_chat_projection(console: ChatScreen) -> dict[str, object]:
+    """Capture first-chat-owned mounted state without retaining widgets."""
+
+    store = console._ensure_console_chat_store()
+    controller = console._ensure_console_chat_controller()
+    control_bar = console.query_one("#console-control-bar")
+    composer = console.query_one("#console-native-composer")
+    tabs = tuple(
+        (
+            str(tab.id),
+            str(getattr(tab, "label", "")),
+            tuple(sorted(tab.classes)),
+        )
+        for tab in console.query(".console-session-tab")
+    )
+    return {
+        "active_session_id": store.active_session_id,
+        "controller": (
+            controller.provider,
+            controller.model,
+            controller.configured_model,
+            controller.system_prompt,
+        ),
+        "control_scalars": (
+            console._console_control_provider,
+            console._console_control_model,
+        ),
+        "summary": _summary_text(console),
+        "control_state": deepcopy(control_bar.state),
+        "provider_label": str(
+            console.query_one("#console-provider-label", Static).renderable
+        ),
+        "model_label": str(
+            console.query_one("#console-model-label", Static).renderable
+        ),
+        "tabs": tabs,
+        "composer_draft": composer.draft_text(),
+        "focus_id": getattr(console.app.focused, "id", None),
+    }
+
+
+async def _wait_for_first_chat_projection(
+    console: ChatScreen,
+    pilot,
+    expected: dict[str, object],
+) -> None:
+    for _ in range(80):
+        if _mounted_first_chat_projection(console) == expected:
+            return
+        await pilot.pause(0.05)
+    assert _mounted_first_chat_projection(console) == expected
+
+
 def test_console_store_can_reserve_an_exact_first_chat_session_id() -> None:
     settings = build_default_console_session_settings(_first_chat_config())
     store = ConsoleChatStore()
@@ -790,7 +843,11 @@ def test_first_chat_failed_acknowledgement_rolls_back_and_requeues(
     )
     intent = ConsoleFirstChatIntent("ack-race", "openai", "model-a", 51)
     app.pending_handoffs.stage_reserved_console_first_chat(intent)
-    monkeypatch.setattr(app.pending_handoffs, "acknowledge", lambda _claim: False)
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "acknowledge_current",
+        lambda _claim: False,
+    )
 
     assert console.consume_pending_console_first_chat_intent() is False
     assert all(item.id != intent.session_id for item in store.sessions())
@@ -905,6 +962,156 @@ async def test_mounted_first_chat_preserves_restored_and_concurrent_sessions(
         assert [
             _first_chat_session_snapshot(item) for item in store.sessions()
         ] == sessions_after_success
+
+
+@pytest.mark.asyncio
+async def test_mounted_first_chat_replacement_before_ack_restores_prior_ui(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    notifications: list[str] = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **_kwargs: notifications.append(str(message)),
+    )
+    snapshot = RuntimeConfigSnapshot(
+        59,
+        _first_chat_config("llama_cpp", "replacement-race-model"),
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_runtime_config_snapshot",
+        lambda: snapshot,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        store = console._ensure_console_chat_store()
+        prior_settings = ConsoleSessionSettings(
+            provider="openai",
+            model="prior-mounted-model",
+            source="user",
+            system_prompt="Preserve this system prompt.",
+        )
+        prior = ConsoleChatSession(
+            id="prior-mounted-replacement",
+            title="Prior mounted work",
+            settings=prior_settings,
+            draft="preserve mounted draft",
+            has_user_work=True,
+        )
+        store.restore_state(sessions=[prior], active_session_id=prior.id)
+        await console._sync_native_console_chat_ui()
+        console._focus_console_composer_if_needed(force=True)
+        await pilot.pause()
+        sessions_before = [
+            _first_chat_session_snapshot(item) for item in store.sessions()
+        ]
+        mounted_before = _mounted_first_chat_projection(console)
+        old_intent = ConsoleFirstChatIntent(
+            "mounted-old-target",
+            "llama_cpp",
+            "replacement-race-model",
+            snapshot.generation,
+        )
+        replacement = replace(old_intent, session_id="mounted-replacement-target")
+        app.pending_handoffs.stage_reserved_console_first_chat(old_intent)
+        real_acknowledge_current = getattr(
+            app.pending_handoffs,
+            "acknowledge_current",
+            None,
+        )
+
+        def replace_immediately_before_ack(claim) -> bool:
+            app.pending_handoffs.stage_reserved_console_first_chat(replacement)
+            if real_acknowledge_current is None:
+                return False
+            return real_acknowledge_current(claim)
+
+        monkeypatch.setattr(
+            app.pending_handoffs,
+            "acknowledge_current",
+            replace_immediately_before_ack,
+            raising=False,
+        )
+
+        assert console.consume_pending_console_first_chat_intent() is False
+        await _wait_for_first_chat_projection(console, pilot, mounted_before)
+        assert [
+            _first_chat_session_snapshot(item) for item in store.sessions()
+        ] == sessions_before
+        assert all(item.id != old_intent.session_id for item in store.sessions())
+        assert store.active_session_id == prior.id
+        assert _pending_first_chat(app) == replacement
+        assert notifications == []
+
+
+@pytest.mark.asyncio
+async def test_mounted_first_chat_failed_ack_restores_exact_prior_ui_and_retries(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    snapshot = RuntimeConfigSnapshot(
+        61,
+        _first_chat_config("llama_cpp", "failed-ack-model"),
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_runtime_config_snapshot",
+        lambda: snapshot,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        store = console._ensure_console_chat_store()
+        prior_settings = ConsoleSessionSettings(
+            provider="openai",
+            model="prior-failed-ack-model",
+            source="user",
+            system_prompt="Keep the mounted controller state.",
+        )
+        prior = ConsoleChatSession(
+            id="prior-mounted-failed-ack",
+            title="Prior failed-ack work",
+            settings=prior_settings,
+            draft="keep the composer exact",
+            has_user_work=True,
+        )
+        store.restore_state(sessions=[prior], active_session_id=prior.id)
+        await console._sync_native_console_chat_ui()
+        console._focus_console_composer_if_needed(force=True)
+        await pilot.pause()
+        sessions_before = [
+            _first_chat_session_snapshot(item) for item in store.sessions()
+        ]
+        mounted_before = _mounted_first_chat_projection(console)
+        intent = ConsoleFirstChatIntent(
+            "mounted-failed-ack-target",
+            "llama_cpp",
+            "failed-ack-model",
+            snapshot.generation,
+        )
+        app.pending_handoffs.stage_reserved_console_first_chat(intent)
+        monkeypatch.setattr(
+            app.pending_handoffs,
+            "acknowledge_current",
+            lambda _claim: False,
+            raising=False,
+        )
+
+        assert console.consume_pending_console_first_chat_intent() is False
+        await _wait_for_first_chat_projection(console, pilot, mounted_before)
+        assert [
+            _first_chat_session_snapshot(item) for item in store.sessions()
+        ] == sessions_before
+        assert all(item.id != intent.session_id for item in store.sessions())
+        assert store.active_session_id == prior.id
+        assert _pending_first_chat(app) == intent
 
 
 async def _click_console_session_tab(console, store, pilot, session_id: str) -> None:

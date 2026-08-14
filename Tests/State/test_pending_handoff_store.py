@@ -190,6 +190,33 @@ def test_acknowledging_old_claim_preserves_newer_replacement() -> None:
     assert _claim_title(store, HandoffChannel.CHAT) == "second"
 
 
+def test_acknowledge_current_rejects_replaced_claim_and_preserves_replacement(
+) -> None:
+    store = PendingHandoffStore()
+    store.stage(HandoffChannel.CHAT, _chat_payload("first"))
+    claim = store.claim(HandoffChannel.CHAT)
+    assert claim is not None
+    store.stage(HandoffChannel.CHAT, _chat_payload("replacement"))
+
+    assert store.acknowledge_current(claim) is False
+    assert store.release(claim) is True
+    replacement = store.claim(HandoffChannel.CHAT)
+
+    assert replacement is not None
+    assert replacement.value.title == "replacement"
+    assert store.acknowledge_current(replacement) is True
+
+
+def test_acknowledge_current_is_idempotent_for_exact_claim() -> None:
+    store = PendingHandoffStore()
+    store.stage(HandoffChannel.CHAT, _chat_payload())
+    claim = store.claim(HandoffChannel.CHAT)
+    assert claim is not None
+
+    assert store.acknowledge_current(claim) is True
+    assert store.acknowledge_current(claim) is False
+
+
 def test_chat_stage_claim_and_release_values_are_structurally_detached() -> None:
     source = _chat_payload()
     store = PendingHandoffStore()

@@ -4404,6 +4404,45 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify(message, severity="warning")
         return False
 
+    async def _resync_console_after_first_chat_rollback(
+        self,
+        prior_focused_widget: Widget | None,
+    ) -> None:
+        """Re-render restored Console state, then restore still-mounted focus."""
+
+        if not self.is_mounted:
+            return
+        await self._sync_native_console_chat_ui()
+        if not self.is_mounted:
+            return
+        if (
+            prior_focused_widget is not None
+            and prior_focused_widget.is_mounted
+        ):
+            prior_focused_widget.focus()
+
+    def _resync_mounted_console_after_first_chat_rollback(
+        self,
+        *,
+        prior_control_provider: str | None,
+        prior_control_model: str | None,
+        prior_focused_widget: Widget | None,
+    ) -> None:
+        """Restore first-chat-owned scalars and every mounted Console projection."""
+
+        self._console_control_provider = prior_control_provider
+        self._console_control_model = prior_control_model
+        if not self.is_mounted:
+            return
+        self._sync_console_chat_core_state()
+        self._sync_console_settings_summary()
+        self._sync_console_control_bar()
+        self.run_worker(
+            self._resync_console_after_first_chat_rollback(prior_focused_widget),
+            group="console-first-chat-rollback",
+            exit_on_error=False,
+        )
+
     def consume_pending_console_first_chat_intent(self) -> bool:
         """Activate one exact first-run target without overwriting user state."""
 
@@ -4431,6 +4470,9 @@ class ChatScreen(BaseAppScreen):
 
         store = self._ensure_console_chat_store()
         prior_active_id = store.active_session_id
+        prior_control_provider = self._console_control_provider
+        prior_control_model = self._console_control_model
+        prior_focused_widget = self.app.focused if self.is_mounted else None
         created_target = None
         refreshed_prior: tuple[
             ConsoleSessionSettings,
@@ -4455,6 +4497,11 @@ class ChatScreen(BaseAppScreen):
                     prior_canonical_settings=prior_baseline,
                     prior_updated_at=prior_updated_at,
                 )
+            self._resync_mounted_console_after_first_chat_rollback(
+                prior_control_provider=prior_control_provider,
+                prior_control_model=prior_control_model,
+                prior_focused_widget=prior_focused_widget,
+            )
 
         def fence_matches(*, expected_active_id: str) -> bool:
             current = self._current_first_chat_defaults(
@@ -4564,8 +4611,6 @@ class ChatScreen(BaseAppScreen):
                 "The first chat target no longer matches provider setup. It was left unchanged.",
             )
 
-        prior_control_provider = self._console_control_provider
-        prior_control_model = self._console_control_model
         self._console_control_provider = target.settings.provider
         self._console_control_model = target.settings.model
         if self.is_mounted:
@@ -4573,16 +4618,12 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_settings_summary()
             self._sync_console_control_bar()
         if not fence_matches(expected_active_id=intent.session_id):
-            self._console_control_provider = prior_control_provider
-            self._console_control_model = prior_control_model
             rollback_mutation()
             return self._release_first_chat_claim(
                 claim,
                 "Console changed before the first chat finished opening. It will retry.",
             )
-        if not self.app_instance.pending_handoffs.acknowledge(claim):
-            self._console_control_provider = prior_control_provider
-            self._console_control_model = prior_control_model
+        if not self.app_instance.pending_handoffs.acknowledge_current(claim):
             rollback_mutation()
             return self._release_first_chat_claim(
                 claim,

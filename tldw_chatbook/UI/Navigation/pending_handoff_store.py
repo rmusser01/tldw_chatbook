@@ -152,6 +152,7 @@ class PendingHandoffStore:
             raise TypeError("pending handoff clock must be callable")
         self._owner_thread_id = threading.get_ident()
         self._monotonic_clock = monotonic_clock
+        self._lock = threading.RLock()
         self._slots = {channel: _Slot() for channel in HandoffChannel}
 
     def stage(self, channel: HandoffChannel, value: Any) -> int:
@@ -178,79 +179,102 @@ class PendingHandoffStore:
         reserves_new_session: bool,
     ) -> int:
         self._assert_owner_thread()
-        slot = self._slot_for(channel)
         normalized = self._detached_value(channel, value)
-        if slot.pending is not None:
-            slot.reserved_revisions.discard(slot.pending[0])
-        slot.revision += 1
-        slot.pending = (slot.revision, normalized)
-        if reserves_new_session:
-            slot.reserved_revisions.add(slot.revision)
-        return slot.revision
+        with self._lock:
+            slot = self._slot_for(channel)
+            if slot.pending is not None:
+                slot.reserved_revisions.discard(slot.pending[0])
+            slot.revision += 1
+            slot.pending = (slot.revision, normalized)
+            if reserves_new_session:
+                slot.reserved_revisions.add(slot.revision)
+            return slot.revision
 
     def clear_pending(self, channel: HandoffChannel) -> int:
         """Advance a channel and remove its latest unclaimed value."""
         self._assert_owner_thread()
-        slot = self._slot_for(channel)
-        if slot.pending is not None:
-            slot.reserved_revisions.discard(slot.pending[0])
-        slot.revision += 1
-        slot.pending = None
-        return slot.revision
+        with self._lock:
+            slot = self._slot_for(channel)
+            if slot.pending is not None:
+                slot.reserved_revisions.discard(slot.pending[0])
+            slot.revision += 1
+            slot.pending = None
+            return slot.revision
 
     def claim(self, channel: HandoffChannel) -> HandoffClaim[Any] | None:
         """Claim the pending value when no other consumer is in flight."""
         self._assert_owner_thread()
-        slot = self._slot_for(channel)
-        if slot.in_flight is not None or slot.pending is None:
-            return None
-        revision, retained_value = slot.pending
-        status: HandoffClaimStatus = "ready"
-        if channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
-            now = self._monotonic_now()
-            if retained_value.is_expired(now_monotonic=now):
-                status = "expired"
-        delivered_value = self._detached_value(channel, retained_value)
-        claim = HandoffClaim(
-            channel=channel,
-            revision=revision,
-            value=delivered_value,
-            status=status,
-        )
-        slot.pending = None
-        slot.in_flight = _InFlight(
-            claim=claim,
-            retained_value=retained_value,
-        )
-        return claim
+        with self._lock:
+            slot = self._slot_for(channel)
+            if slot.in_flight is not None or slot.pending is None:
+                return None
+            revision, retained_value = slot.pending
+            status: HandoffClaimStatus = "ready"
+            if channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
+                now = self._monotonic_now()
+                if retained_value.is_expired(now_monotonic=now):
+                    status = "expired"
+            delivered_value = self._detached_value(channel, retained_value)
+            claim = HandoffClaim(
+                channel=channel,
+                revision=revision,
+                value=delivered_value,
+                status=status,
+            )
+            slot.pending = None
+            slot.in_flight = _InFlight(
+                claim=claim,
+                retained_value=retained_value,
+            )
+            return claim
 
     def has_pending(self, channel: HandoffChannel) -> bool:
         """Return whether a channel has an unclaimed value without exposing it."""
         self._assert_owner_thread()
-        return self._slot_for(channel).pending is not None
+        with self._lock:
+            return self._slot_for(channel).pending is not None
 
     def is_current_claim(self, claim: HandoffClaim[Any]) -> bool:
         """Return whether a claim still owns the channel's latest revision."""
 
         self._assert_owner_thread()
-        slot = self._slot_for_claim(claim)
-        current = slot.in_flight
-        return (
-            current is not None
-            and current.claim is claim
-            and slot.revision == claim.revision
-        )
+        with self._lock:
+            slot = self._slot_for_claim(claim)
+            current = slot.in_flight
+            return (
+                current is not None
+                and current.claim is claim
+                and slot.revision == claim.revision
+            )
 
     def acknowledge(self, claim: HandoffClaim[Any]) -> bool:
         """Settle only the exact claim currently in flight."""
         self._assert_owner_thread()
-        slot = self._slot_for_claim(claim)
-        current = slot.in_flight
-        if current is None or current.claim is not claim:
-            return False
-        slot.in_flight = None
-        slot.reserved_revisions.discard(claim.revision)
-        return True
+        with self._lock:
+            slot = self._slot_for_claim(claim)
+            current = slot.in_flight
+            if current is None or current.claim is not claim:
+                return False
+            slot.in_flight = None
+            slot.reserved_revisions.discard(claim.revision)
+            return True
+
+    def acknowledge_current(self, claim: HandoffClaim[Any]) -> bool:
+        """Settle a claim only while it still owns the latest revision."""
+
+        self._assert_owner_thread()
+        with self._lock:
+            slot = self._slot_for_claim(claim)
+            current = slot.in_flight
+            if (
+                current is None
+                or current.claim is not claim
+                or slot.revision != claim.revision
+            ):
+                return False
+            slot.in_flight = None
+            slot.reserved_revisions.discard(claim.revision)
+            return True
 
     def claim_reserves_new_console_session(
         self,
@@ -259,15 +283,16 @@ class PendingHandoffStore:
         """Return reservation metadata only for the exact in-flight claim."""
 
         self._assert_owner_thread()
-        slot = self._slot_for_claim(claim)
-        if claim.channel is not HandoffChannel.CONSOLE_FIRST_CHAT:
-            raise ValueError("reservation metadata requires a first-chat claim")
-        current = slot.in_flight
-        return (
-            current is not None
-            and current.claim is claim
-            and claim.revision in slot.reserved_revisions
-        )
+        with self._lock:
+            slot = self._slot_for_claim(claim)
+            if claim.channel is not HandoffChannel.CONSOLE_FIRST_CHAT:
+                raise ValueError("reservation metadata requires a first-chat claim")
+            current = slot.in_flight
+            return (
+                current is not None
+                and current.claim is claim
+                and claim.revision in slot.reserved_revisions
+            )
 
     def release(self, claim: HandoffClaim[Any]) -> bool:
         """Release an exact claim without overwriting a newer revision."""
@@ -306,23 +331,27 @@ class PendingHandoffStore:
     ) -> tuple[bool, HandoffClaimStatus | None]:
         """Settle one exact claim and report a Prompt retry outcome."""
         self._assert_owner_thread()
-        slot = self._slot_for_claim(claim)
-        current = slot.in_flight
-        if current is None or current.claim is not claim:
-            return False, None
-        slot.in_flight = None
-        should_requeue = slot.revision == claim.revision
-        prompt_status: HandoffClaimStatus | None = None
-        if should_requeue and claim.channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
-            should_requeue = claim.status == "ready" and self._prompt_is_unexpired(
-                current.retained_value
-            )
-            prompt_status = "ready" if should_requeue else "expired"
-        if should_requeue:
-            slot.pending = (claim.revision, current.retained_value)
-        else:
-            slot.reserved_revisions.discard(claim.revision)
-        return True, prompt_status
+        with self._lock:
+            slot = self._slot_for_claim(claim)
+            current = slot.in_flight
+            if current is None or current.claim is not claim:
+                return False, None
+            slot.in_flight = None
+            should_requeue = slot.revision == claim.revision
+            prompt_status: HandoffClaimStatus | None = None
+            if (
+                should_requeue
+                and claim.channel is HandoffChannel.CONSOLE_PROMPT_INSERT
+            ):
+                should_requeue = claim.status == "ready" and self._prompt_is_unexpired(
+                    current.retained_value
+                )
+                prompt_status = "ready" if should_requeue else "expired"
+            if should_requeue:
+                slot.pending = (claim.revision, current.retained_value)
+            else:
+                slot.reserved_revisions.discard(claim.revision)
+            return True, prompt_status
 
     def _prompt_is_unexpired(self, value: PromptVariableApplication) -> bool:
         try:
