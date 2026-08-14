@@ -1,5 +1,5 @@
 ---
-id: TASK-16301
+id: TASK-16310
 title: >-
   Fix credential/URL persistence: silent keyring gap, false-success config
   saves, and encryption fallbacks

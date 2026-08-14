@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11+, pytest with `monkeypatch`/`tmp_path`, stdlib `toml`/`tomllib`, keyring (via existing `runtime_policy/server_credentials.py`).
 
-**Spec:** `backlog/tasks/task-16301 - Fix-credential-URL-persistence-silent-keyring-gap-false-success-config-saves-and-encryption-fallbacks.md`
+**Spec:** `backlog/tasks/task-16310 - Fix-credential-URL-persistence-silent-keyring-gap-false-success-config-saves-and-encryption-fallbacks.md`
 
 ADR required: no
 ADR path: N/A
@@ -668,11 +668,11 @@ git commit -m "fix(settings): write server token to OS keyring at save time and 
 
 ---
 
-### Task 5: Remove stale `Media_Ingest` pycache directory and close out task-16301
+### Task 5: Remove stale `Media_Ingest` pycache directory and close out task-16310
 
 **Files:**
 - Delete: `tldw_chatbook/Widgets/Media_Ingest/` (entire directory — contains only `__pycache__` with `.pyc` files of modules deleted in commit `0d45bf802`)
-- Modify: `backlog/tasks/task-16301 - ....md` (check ACs, add Implementation Notes)
+- Modify: `backlog/tasks/task-16310 - ....md` (check ACs, add Implementation Notes)
 
 **Interfaces:**
 - Consumes: none.
@@ -703,15 +703,15 @@ Expected: all pass.
 
 - [ ] **Step 4: Update the backlog task**
 
-- Mark all ACs `- [x]` in `backlog/tasks/task-16301 - ....md`.
+- Mark all ACs `- [x]` in `backlog/tasks/task-16310 - ....md`.
 - Append an `## Implementation Notes` section: summary of the four fixes, files touched, test files added, the `Widgets/Media_Ingest` deletion (local-only, no git change), and the note that the LLM provider key path was audited and needed no changes.
-- `backlog task edit 16301 -s Done --notes "Implemented: config save conflict semantics, encryption hard-fail, eager keyring write + surfacing, stale pycache removal"`
+- `backlog task edit 16310 -s Done --notes "Implemented: config save conflict semantics, encryption hard-fail, eager keyring write + surfacing, stale pycache removal"`
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add backlog/tasks/ docs/superpowers/plans/2026-08-14-credential-persistence-fixes.md
-git commit -m "fix(backlog): complete task-16301 credential persistence fixes"
+git commit -m "fix(backlog): complete task-16310 credential persistence fixes"
 ```
 
 ---
