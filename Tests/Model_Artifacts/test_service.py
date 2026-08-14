@@ -1916,6 +1916,152 @@ def test_losing_control_cleanup_owner_composes_into_winning_control(
     )
 
 
+def test_losing_group_child_owner_moves_to_winning_release_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, first_item, _source, _target = installed_artifact(tmp_path / "first")
+    second, second_item, _source, _target = installed_artifact(tmp_path / "second")
+    first_contender = service_module.ModelArtifactService(
+        tmp_path / "first" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    second_contender = service_module.ModelArtifactService(
+        tmp_path / "second" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_LOSING_GROUP:{tmp_path}:pid={os.getpid()}:owner"
+    first_owner = first.acquire_removal_authority(first_item.reference)
+    first_owner._make_cleanup_only()
+    losing_child = SystemExit(private)
+    setattr(losing_child, "_artifact_removal_cleanup_owner", first_owner)
+    losing_group = BaseExceptionGroup(
+        private,
+        [BaseExceptionGroup(private, [losing_child])],
+    )
+    winner = KeyboardInterrupt(private)
+    second_owner = second.acquire_removal_authority(second_item.reference)
+    target_id = id(second_owner._target_lease)
+    lifecycle_id = id(second_owner._lifecycle_lease)
+    real_release = service_module.ArtifactOperationLease.release
+
+    def interrupt_both_releases(lease: object) -> None:
+        if id(lease) == target_id:
+            raise winner
+        if id(lease) == lifecycle_id:
+            raise losing_group
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        interrupt_both_releases,
+    )
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        with second_owner:
+            raise service_module.ArtifactStateError(private)
+
+    assert caught.value is winner
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert service_module.take_artifact_removal_cleanup_owner(caught.value) is None
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_losing_ordinary_carrier_owner_moves_to_winning_release_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, first_item, _source, _target = installed_artifact(tmp_path / "first")
+    second, second_item, _source, _target = installed_artifact(tmp_path / "second")
+    first_contender = service_module.ModelArtifactService(
+        tmp_path / "first" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    second_contender = service_module.ModelArtifactService(
+        tmp_path / "second" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_LOSING_CARRIER:{tmp_path}:pid={os.getpid()}:owner"
+    first_owner = first.acquire_removal_authority(first_item.reference)
+    losing_carrier = service_module.ArtifactRemovalCleanupError(first_owner)
+    winner = KeyboardInterrupt(private)
+    second_owner = second.acquire_removal_authority(second_item.reference)
+    target_id = id(second_owner._target_lease)
+    lifecycle_id = id(second_owner._lifecycle_lease)
+    real_release = service_module.ArtifactOperationLease.release
+
+    def interrupt_both_releases(lease: object) -> None:
+        if id(lease) == target_id:
+            raise winner
+        if id(lease) == lifecycle_id:
+            raise losing_carrier
+        real_release(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        interrupt_both_releases,
+    )
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        with second_owner:
+            raise service_module.ArtifactStateError(private)
+
+    assert caught.value is winner
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert service_module.take_artifact_removal_cleanup_owner(losing_carrier) is None
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "release",
+        real_release,
+    )
+    cleanup_owner.close()
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
 @pytest.mark.parametrize("control_type", REMOVAL_CONTROL_TYPES)
 def test_delete_context_cleanup_control_wins_and_transfers_owner(
     tmp_path: Path,
