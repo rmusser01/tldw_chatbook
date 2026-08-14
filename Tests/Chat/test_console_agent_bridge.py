@@ -262,11 +262,26 @@ class _SignalChunkGateway(_ChunkGateway):
             yield chunk
 
 
-class _NativeResolution:
-    """A fake resolution whose execution_key resolves to a native-capable provider."""
+def _test_resolution(**over):
+    """Minimal REAL-shaped resolution for the shared harness.
 
-    provider = "Groq"
-    execution_key = "groq"
+    TASK-16270: PR #1612 widened ``_StreamingModelAdapter``'s implicit
+    ``resolution`` contract past an opaque token — ``.provider`` and
+    ``.model`` are now read unconditionally after every streamed turn
+    (usage accounting), so ``object()`` stand-ins no longer satisfy it.
+    Constructing the PRODUCTION ``ConsoleProviderResolution`` dataclass
+    here (instead of a hand-rolled stand-in) keeps this fixture from
+    silently drifting the next time the contract widens: a new required
+    field fails loudly in every suite that shares ``_run``.
+    """
+    fields = dict(provider="TestProvider", base_url="", model=None, ready=True)
+    fields.update(over)
+    return ConsoleProviderResolution(**fields)
+
+
+def _native_resolution():
+    """A real resolution whose execution_key resolves to a native-capable provider."""
+    return _test_resolution(provider="Groq", execution_key="groq")
 
 
 def _native_calls(name, args, call_id="c1"):
@@ -310,7 +325,7 @@ def _run(bridge, store, session, assistant_id, **over):
     kwargs = dict(
         conversation_id="conv-1",
         session_id=session.id,
-        resolution=object(),
+        resolution=_test_resolution(),
         assistant_message_id=assistant_id,
         model="test-model",
         session_system_prompt="",
@@ -489,23 +504,31 @@ def test_joined_continuation_never_logs_private_tool_arguments_or_results(
     )
     captured: list[str] = []
     sink = logger.add(lambda record: captured.append(str(record)), level="DEBUG")
+    target = ContinuationRestoreTarget(
+        provider="moonshot",
+        model="kimi-k2",
+        protocol="chat_completions",
+        api_base_url="https://api.moonshot.ai/v1",
+    )
     try:
         outcome = _run(
             bridge,
             store,
             session,
             assistant.id,
-            resolution=SimpleNamespace(
+            resolution=_test_resolution(
                 provider="Moonshot",
                 execution_key="moonshot",
+                model="kimi-k2",
+                base_url="https://api.moonshot.ai/v1",
             ),
             restore_provider_continuation=checkpoint,
-            restore_provider_target=ContinuationRestoreTarget(
-                provider="moonshot",
-                model="kimi-k2",
-                protocol="chat_completions",
-                api_base_url="https://api.moonshot.ai/v1",
-            ),
+            restore_provider_target=target,
+            # TASK-16270: PR #1612 widened the resume contract — an ACTIVE
+            # checkpoint now rides as a continuation group and requires an
+            # owner (production always passes assistant_message_id and
+            # derives the owner key from the continuation target).
+            continuation_target=target,
             expand_provider_continuation=lambda _checkpoint: [],
             resume_provider_continuation=True,
         )
@@ -732,7 +755,7 @@ def test_native_tool_call_round_trip_streams_final_answer(tmp_path):
     bridge, db, store, session, aid = _bridge(
         tmp_path, [[_native_calls("get_current_datetime", {})], ["It is ", "now."]]
     )
-    outcome = _run(bridge, store, session, aid, resolution=_NativeResolution())
+    outcome = _run(bridge, store, session, aid, resolution=_native_resolution())
     assert outcome.status == "done"
     assert store.get_message(aid).content == "It is now."
     gateway = bridge._gateway
@@ -757,7 +780,7 @@ def test_native_leaked_prose_is_reset_before_final_answer(tmp_path):
         tmp_path,
         [["Let me check. ", _native_calls("get_current_datetime", {})], ["Done."]],
     )
-    outcome = _run(bridge, store, session, aid, resolution=_NativeResolution())
+    outcome = _run(bridge, store, session, aid, resolution=_native_resolution())
     assert outcome.status == "done"
     assert store.get_message(aid).content == "Done."
 
@@ -768,7 +791,7 @@ def test_native_kill_switch_off_stays_on_fence_path(tmp_path):
         [[_fence("get_current_datetime", {})], ["Done."]],
         native_tools_enabled=lambda: False,
     )
-    outcome = _run(bridge, store, session, aid, resolution=_NativeResolution())
+    outcome = _run(bridge, store, session, aid, resolution=_native_resolution())
     assert outcome.status == "done"
     assert bridge._gateway.tools_seen[0] is None  # no tools= despite groq
 
@@ -787,7 +810,7 @@ def test_captured_native_tools_override_beats_later_callback_change(tmp_path):
         store,
         session,
         aid,
-        resolution=_NativeResolution(),
+        resolution=_native_resolution(),
         native_tools_enabled=True,
     )
 
@@ -4396,8 +4419,25 @@ def test_resumed_sidecars_reach_normal_prepared_gateway_once(tmp_path) -> None:
         ],
         restore_provider_continuation=active,
         restore_provider_target=target,
+        # TASK-16270: PR #1612 widened the resume contract — the ACTIVE
+        # checkpoint now rides as its own continuation group, attached to
+        # the canonical assistant row carrying the pending call's
+        # tool_calls, so the expanded transcript must include that row.
         expand_provider_continuation=lambda _checkpoint: [
-            {"role": "assistant", "content": "ACTIVE-CANONICAL-ONCE"}
+            {
+                "role": "assistant",
+                "content": "ACTIVE-CANONICAL-ONCE",
+                "tool_calls": [
+                    {
+                        "id": "active-call",
+                        "type": "function",
+                        "function": {
+                            "name": "calculator",
+                            "arguments": '{"expression":"2+2"}',
+                        },
+                    }
+                ],
+            }
         ],
         resume_provider_continuation=True,
         continuation_sidecar=(ProviderContinuationSidecar("prior", prior),),
@@ -4411,8 +4451,12 @@ def test_resumed_sidecars_reach_normal_prepared_gateway_once(tmp_path) -> None:
     assert len(gateway.dispatched) == 1
     prepared = gateway.dispatched[0]
     assert isinstance(prepared, PreparedProviderRequest)
+    # TASK-16270: since PR #1612 the ACTIVE checkpoint rides as its own
+    # continuation group, owned by the assistant message being resumed —
+    # alongside the prior sidecar group.
     assert [group.owner_message_id for group in prepared.continuation_groups] == [
-        "prior"
+        "prior",
+        aid,
     ]
     without_private = gateway.prepare_chat_request(
         resolution,
