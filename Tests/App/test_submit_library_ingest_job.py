@@ -2793,8 +2793,9 @@ def test_invalid_audio_request_allows_next_job_to_dispatch(
     assert valid_job.state is IngestJobState.PARSING
     assert pool_creation_calls == 1
     assert len(pool.calls) == 1
-    _, (source_path, options), _, _ = pool.calls[0]
+    _, (source_path, options, progress_context), _, _ = pool.calls[0]
     assert source_path == valid.source_path
+    assert progress_context == (app._ingest_parse_pool_generation, valid.job_id)
     assert options["transcription_provider"] == "faster-whisper"
     routing_warnings = [
         message
