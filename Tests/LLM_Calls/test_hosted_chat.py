@@ -748,6 +748,47 @@ def test_hosted_chat_stream_rejects_differing_trailing_usage_duplicate() -> None
 
 
 @pytest.mark.parametrize(
+    "choice_usage,trailing_usages",
+    [
+        ({"total_tokens": 3}, [{"total_tokens": 3}, {"total_tokens": 3}]),
+        (None, [{"total_tokens": 3}, {"total_tokens": 3}]),
+        ({"total_tokens": 1}, [{"total_tokens": True}]),
+    ],
+)
+def test_hosted_chat_stream_rejects_unobserved_usage_duplicates(
+    choice_usage: dict[str, object] | None,
+    trailing_usages: list[dict[str, object]],
+) -> None:
+    choice: dict[str, object] = {
+        "index": 0,
+        "delta": {"content": "done"},
+        "finish_reason": "stop",
+    }
+    if choice_usage is not None:
+        choice["usage"] = choice_usage
+    records = iter(
+        [
+            SSERecord(
+                event=None,
+                data=json.dumps({"choices": [choice]}),
+            ),
+            *(
+                SSERecord(
+                    event=None,
+                    data=json.dumps({"choices": [], "usage": usage}),
+                )
+                for usage in trailing_usages
+            ),
+            SSERecord(event=None, data="[DONE]"),
+        ]
+    )
+    stream = HostedChatStream(records, finish_policy=_POLICY)
+
+    with pytest.raises(HostedChatProtocolError):
+        list(stream)
+
+
+@pytest.mark.parametrize(
     "choice_usage,top_level_usage,finish_reason",
     [
         (True, None, "stop"),

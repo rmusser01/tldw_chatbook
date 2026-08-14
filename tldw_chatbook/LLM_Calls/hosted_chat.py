@@ -48,6 +48,22 @@ class HostedChatProtocolError(ValueError):
     """Raised when a hosted provider returns malformed Chat data."""
 
 
+def _same_json_value(left: object, right: object) -> bool:
+    return json.dumps(
+        left,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ) == json.dumps(
+        right,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
 class HostedChatFinishPolicy(Protocol):
     """Provider-owned finish and reasoning validation policy."""
 
@@ -110,6 +126,8 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         self._call_ids: set[str] = set()
         self._finish_reason: str | None = None
         self._usage: dict[str, Any] | None = None
+        self._usage_from_choice = False
+        self._trailing_usage_seen = False
         self._terminal_turn: HostedChatTurn | None = None
         self._output_chars = 0
         self._closed = False
@@ -199,6 +217,7 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             _required_metadata(fingerprint, "system fingerprint")
         choices = event.get("choices")
         usage = event.get("usage")
+        usage_from_choice = False
         if not isinstance(choices, Sequence) or isinstance(choices, (str, bytes)):
             raise HostedChatProtocolError("Hosted Chat stream choices are malformed.")
         if usage is not None and not isinstance(usage, Mapping):
@@ -207,9 +226,16 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             if self._finish_reason is None or usage is None:
                 raise HostedChatProtocolError("Hosted Chat stream usage is misplaced.")
             normalized_usage = deepcopy(dict(usage))
-            if self._usage is not None and self._usage != normalized_usage:
+            if self._usage is None:
+                self._usage = normalized_usage
+            elif not (
+                self._usage_from_choice
+                and not self._trailing_usage_seen
+                and _same_json_value(self._usage, normalized_usage)
+            ):
                 raise HostedChatProtocolError("Hosted Chat stream usage is malformed.")
-            self._usage = normalized_usage
+            else:
+                self._trailing_usage_seen = True
             return deepcopy(dict(event))
         if self._finish_reason is not None:
             raise HostedChatProtocolError(
@@ -232,6 +258,7 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             if "usage" in event or not isinstance(choice_usage, Mapping):
                 raise HostedChatProtocolError("Hosted Chat stream usage is malformed.")
             usage = choice_usage
+            usage_from_choice = True
         if type(choice.get("index")) is not int or choice.get("index") != 0:
             raise HostedChatProtocolError(
                 "Hosted Chat stream choice index is malformed."
@@ -273,6 +300,7 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             )
             if usage is not None:
                 self._usage = deepcopy(dict(usage))
+                self._usage_from_choice = usage_from_choice
         elif usage is not None:
             raise HostedChatProtocolError(
                 "Hosted Chat stream usage preceded terminal state."

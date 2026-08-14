@@ -4,7 +4,7 @@
 
 **Goal:** Accept Moonshot Kimi K3's bounded `system_fingerprint`, terminal choice usage, and identical trailing usage SSE shapes so the real Console native-tool continuation UAT completes instead of surfacing a synthetic 502.
 
-**Architecture:** Keep request construction, provider policy, AgentService, and Console unchanged. Correct the provider-neutral hosted streaming response allowlists, validate the optional fingerprint under the existing metadata cap, accept mapping-valued usage only on a terminal choice with no same-event top-level usage, and accept a later top-level duplicate only when it is identical. Prove the fix at both the pure parser and real Console-to-scripted-HTTP boundaries before the final paid UAT.
+**Architecture:** Keep request construction, provider policy, AgentService, and Console unchanged. Correct the provider-neutral hosted streaming response allowlists, validate the optional fingerprint under the existing metadata cap, accept mapping-valued usage only on a terminal choice with no same-event top-level usage, and accept exactly one later top-level duplicate only when it is identical under type-strict canonical JSON equality. Prove the fix at both the pure parser and real Console-to-scripted-HTTP boundaries before the final paid UAT.
 
 **Tech Stack:** Python 3.12, pytest, requests/SSE, Textual Console agent bridge, Loguru redaction tests, Backlog.md, GitHub CLI
 
@@ -244,8 +244,10 @@ preserve Z.ai's existing single trailing top-level usage event.
 
 Admit `usage` in the strict choice allowlist, require it to be a mapping, reject
 same-event dual placement, reuse the existing terminal-placement check, and
-accept a later top-level mapping only when it equals the recorded usage. Do not
-coerce, merge, log, or persist provider usage data.
+accept exactly one later top-level mapping only when it canonically equals the
+recorded usage with JSON types preserved. Reject further duplicates and
+top-level-only repeats. Do not coerce, merge, log, or persist provider usage
+data.
 
 - [ ] **Step 3: Verify GREEN and commit**
 

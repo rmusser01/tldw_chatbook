@@ -56,7 +56,8 @@ presents its default safe 502 error copy.
   matching the existing non-streaming contract.
 - Admit Moonshot's mapping-valued terminal `choices[0].usage` while rejecting
   nonterminal, non-mapping, or same-event dual placement; allow a later
-  top-level usage event only when it exactly matches the terminal mapping.
+  top-level usage event only when it exactly matches the terminal mapping under
+  type-strict canonical JSON equality; reject any further duplicate.
 - Pin both exact live event shapes in deterministic parser and joined Console
   native-tool regressions.
 - Correct the narrowest owner of the invalid value while preserving Moonshot,
@@ -116,7 +117,8 @@ top-level and choice-level OpenAI-shaped event allowlists. It accepts
 `system_fingerprint` only as optional bounded metadata and accepts choice-level
 usage only as a mapping on the terminal choice when no same-event top-level
 usage is present. A subsequent empty-choice top-level usage event is accepted
-only when its mapping exactly matches the already recorded terminal usage.
+only once and only when its mapping exactly matches the already recorded
+terminal usage under type-strict canonical JSON equality.
 Unknown keys, malformed/oversized fingerprints, non-mapping usage, same-event
 dual placement, conflicting duplicates, and nonterminal usage remain rejected.
 Tool, reasoning, finish, provider, and request construction behavior remain
