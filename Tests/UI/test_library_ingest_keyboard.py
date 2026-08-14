@@ -520,7 +520,7 @@ async def test_options_panel_header_focus_is_glyph_level_under_real_css():
             glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS
         ), f"focused header shows no structural cue: {focused_rows!r}"
         # The cue must not eat the header text (task-2041's trap).
-        assert any("Plain text" in row for row in focused_rows), (
+        assert any("Import behavior" in row for row in focused_rows), (
             f"focus treatment ate the header title: {focused_rows!r}"
         )
         # Dimensional stability: same region, same painted row count.
