@@ -514,3 +514,45 @@ async def test_pending_escape_records_backdrop_before_terminal_dismissal():
 
         await pilot.pause(app.CLICK_CHAIN_TIME_THRESHOLD + 0.05)
         assert app.mouse_captured is None
+
+
+@pytest.mark.parametrize("retry_source", ["escape", "button"])
+@pytest.mark.asyncio
+async def test_stale_backdrop_attempt_does_not_shield_later_retry(
+    retry_source: str,
+):
+    app = _ModalHarness()
+    nested = _NestedModal()
+
+    async def push_nested() -> None:
+        app.push_screen(nested)
+
+    results: list[bool | None] = []
+    modal = _SafeTestModal(cancel_effect=push_nested)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        underlying = app.host.query_one("#modal-test-underlying-action", Button)
+        click_point = (underlying.region.x + 1, underlying.region.y + 1)
+        await _mount_modal(app, pilot, modal, results)
+
+        await pilot.click(offset=(0, 0))
+        await pilot.pause()
+        assert app.screen is nested
+
+        nested.dismiss(None)
+        await pilot.pause(app.CLICK_CHAIN_TIME_THRESHOLD + 0.05)
+        assert app.screen is modal
+
+        if retry_source == "escape":
+            await modal.action_request_safe_cancel()
+        else:
+            await pilot.click("#modal-test-cancel")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen is app.host
+        assert app.mouse_captured is None
+
+        await pilot.click(offset=click_point)
+        await pilot.pause()
+        assert app.host.underlying_button_presses == 1

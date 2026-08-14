@@ -92,7 +92,7 @@ class SafeModalDismissMixin:
     _safe_cancel_effect_committed = False
     _safe_dismiss_committed = False
     _safe_opener_focus_ref: ReferenceType[Widget] | None = None
-    _safe_backdrop_seen_committed = False
+    _safe_backdrop_seen_in_attempt = False
 
     def on_mount(self) -> None:
         """Remember the opener's focused widget for post-dismiss restoration."""
@@ -100,7 +100,7 @@ class SafeModalDismissMixin:
         self._safe_cancel_effect_committed = False
         self._safe_dismiss_committed = False
         self._safe_opener_focus_ref = None
-        self._safe_backdrop_seen_committed = False
+        self._safe_backdrop_seen_in_attempt = False
 
         host = cast("_SafeModalHost", self)
         screen_stack = host.app.screen_stack
@@ -120,13 +120,14 @@ class SafeModalDismissMixin:
     async def request_safe_cancel(self, *, source: str) -> None:
         """Run one cancellation request while consuming concurrent requests."""
         if source == "backdrop":
-            self._safe_backdrop_seen_committed = True
+            self._safe_backdrop_seen_in_attempt = True
         if self._safe_cancel_pending:
             return
         self._safe_cancel_pending = True
         try:
             await self._perform_safe_cancel(source=source)
         finally:
+            self._safe_backdrop_seen_in_attempt = False
             if cast("_SafeModalHost", self).is_mounted:
                 self._safe_cancel_pending = False
 
@@ -156,7 +157,7 @@ class SafeModalDismissMixin:
         app = host.app
         opener_ref = self._safe_opener_focus_ref
         host.dismiss(result)
-        if self._safe_backdrop_seen_committed:
+        if self._safe_backdrop_seen_in_attempt:
             _shield_revealed_screen_from_click_chain(app)
         app.screen.call_after_refresh(_restore_focus_after_dismissal, app, opener_ref)
         return True
