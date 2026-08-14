@@ -11,10 +11,15 @@ import hashlib
 import hmac
 import json
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import PurePosixPath
 from unicodedata import normalize
 
+from tldw_chatbook.Notes.note_folder_models import (
+    FolderValidationError,
+    NormalizedFolderName,
+    normalize_folder_name,
+)
 from tldw_chatbook.Notes.note_import_discovery import (
     DiscoveredImportSource,
     ImportDiscovery,
@@ -41,6 +46,9 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportSourceKind,
     NoteImportPlan,
     ParsedNotePayload,
+    ProposedFolderMembership,
+    RootCollisionChoice,
+    RootCollisionState,
 )
 
 _NEW_REASON = "Ready to import as a new note."
@@ -393,6 +401,320 @@ def _bounded_reason(value: str, bounds: ImportBounds) -> str:
     return value[: bounds.max_reason_length]
 
 
+def analyze_root_collision(
+    plan: NoteImportPlan,
+    existing_top_level_names: Iterable[str],
+) -> NoteImportPlan:
+    """Return ``plan`` with immutable directory-root collision state.
+
+    A manual destination used for selected files is not an imported directory root.
+    Empty plans and plans whose selected actions create no memberships therefore
+    carry no collision state.
+    """
+    _require_plan(plan)
+    root_label = _meaningful_directory_root(plan)
+    if root_label is None:
+        if plan.root_collision is None:
+            return plan
+        return replace(plan, root_collision=None)
+
+    existing_keys = _existing_folder_keys(existing_top_level_names, plan.bounds)
+    root = _normalized_folder_name(root_label)
+    return replace(
+        plan,
+        root_collision=RootCollisionState(
+            proposed_label=root.display,
+            collides=root.key in existing_keys,
+        ),
+    )
+
+
+def resolve_root_collision(
+    plan: NoteImportPlan,
+    choice: RootCollisionChoice,
+    *,
+    existing_top_level_names: Iterable[str],
+    renamed_root: str | None = None,
+) -> NoteImportPlan:
+    """Resolve one previously detected directory-root collision explicitly."""
+    _require_plan(plan)
+    if not isinstance(choice, RootCollisionChoice):
+        raise TypeError("choice must be a RootCollisionChoice.")
+    root_label = _meaningful_directory_root(plan)
+    if root_label is None:
+        raise ValueError("The plan does not contain a meaningful directory root.")
+    collision = plan.root_collision
+    if collision is None or not collision.collides or collision.choice is not None:
+        raise ValueError("Resolution requires one unresolved colliding root.")
+    root = _normalized_folder_name(root_label)
+    proposed = _normalized_folder_name(collision.proposed_label)
+    if root.key != proposed.key:
+        raise ValueError("The collision state does not match the proposed root.")
+
+    existing_keys = _existing_folder_keys(existing_top_level_names, plan.bounds)
+    if proposed.key not in existing_keys:
+        raise ValueError("Resolution requires one unresolved colliding root.")
+
+    if choice is RootCollisionChoice.USE_EXISTING:
+        if renamed_root is not None:
+            raise ValueError("Use-existing does not accept a replacement root.")
+        return replace(
+            plan,
+            root_collision=RootCollisionState(
+                proposed_label=collision.proposed_label,
+                collides=True,
+                choice=choice,
+            ),
+        )
+
+    if choice is RootCollisionChoice.UNIQUE_SIBLING:
+        if renamed_root is not None:
+            raise ValueError("Unique-sibling chooses its replacement root.")
+        resolved_label = _unique_sibling_label(
+            collision.proposed_label,
+            existing_keys,
+            plan.bounds,
+        )
+    else:
+        if renamed_root is None:
+            raise ValueError("Renamed-root requires a replacement root.")
+        resolved = _normalized_folder_name(renamed_root)
+        if resolved.key in existing_keys:
+            raise ValueError("The replacement root collides with an existing folder.")
+        resolved_label = resolved.display
+
+    return _rebase_root(plan, collision, choice, resolved_label)
+
+
+def confirm_uncertain_match(plan: NoteImportPlan, item_id: str) -> NoteImportPlan:
+    """Confirm one uncertain match without changing its classification."""
+    _require_plan(plan)
+    item_index, item = _find_item(plan, item_id)
+    if (
+        item.classification is not ImportClassification.UNCERTAIN_MATCH
+        or item.match is None
+        or item.match.kind is not ImportMatchKind.UNCERTAIN
+    ):
+        raise ValueError("Only an uncertain match can be explicitly confirmed.")
+    confirmed = replace(
+        item,
+        match=replace(item.match, kind=ImportMatchKind.USER_CONFIRMED),
+        allowed_actions=(
+            ImportAction.SKIP,
+            ImportAction.CREATE_NEW,
+            ImportAction.UPDATE_EXISTING,
+        ),
+    )
+    return _replace_item(plan, item_index, confirmed)
+
+
+def apply_item_override(
+    plan: NoteImportPlan,
+    item_id: str,
+    action: ImportAction,
+    *,
+    replace_content: bool = False,
+    add_membership: bool = False,
+) -> NoteImportPlan:
+    """Apply one validated action/effect choice to a frozen preview item."""
+    _require_plan(plan)
+    if not isinstance(action, ImportAction):
+        raise TypeError("action must be an ImportAction.")
+    if type(replace_content) is not bool or type(add_membership) is not bool:
+        raise TypeError("override effects must be booleans.")
+    item_index, item = _find_item(plan, item_id)
+    if action not in item.allowed_actions:
+        raise ValueError("The requested action is not allowed for this item.")
+
+    if action is ImportAction.SKIP:
+        requested_replace = False
+        requested_membership = False
+    elif action is ImportAction.CREATE_NEW:
+        if replace_content:
+            raise ValueError("Create new cannot replace existing content.")
+        requested_replace = False
+        requested_membership = True
+    else:
+        if not (replace_content or add_membership):
+            raise ValueError("Update must replace content or add membership.")
+        requested_replace = replace_content
+        requested_membership = add_membership
+
+    updated = replace(
+        item,
+        selected_action=action,
+        replace_content=requested_replace,
+        add_membership=requested_membership,
+    )
+    return _replace_item(plan, item_index, updated)
+
+
+def _require_plan(plan: NoteImportPlan) -> None:
+    if not isinstance(plan, NoteImportPlan):
+        raise TypeError("plan must be a NoteImportPlan.")
+
+
+def _normalized_folder_name(value: str) -> NormalizedFolderName:
+    try:
+        return normalize_folder_name(value)
+    except FolderValidationError:
+        raise ValueError("Folder inputs must contain valid folder names.") from None
+    except Exception:  # noqa: BLE001 - sanitize foreign validation failures
+        raise ValueError("Folder inputs could not be validated safely.") from None
+
+
+def _existing_folder_keys(
+    raw_names: Iterable[str],
+    bounds: ImportBounds,
+) -> frozenset[str]:
+    if isinstance(raw_names, (str, bytes)):
+        raise TypeError("existing folder names must be a collection.")
+    try:
+        iterator = iter(raw_names)
+    except TypeError:
+        raise TypeError("existing folder names must be a collection.") from None
+    except Exception:  # noqa: BLE001 - sanitize caller iterator failures
+        raise ValueError("existing folder names could not be read safely.") from None
+
+    keys: set[str] = set()
+    count = 0
+    while True:
+        try:
+            value = next(iterator)
+        except StopIteration:
+            break
+        except Exception:  # noqa: BLE001 - sanitize caller iterator failures
+            raise ValueError(
+                "existing folder names could not be read safely."
+            ) from None
+        count += 1
+        if count > bounds.max_entries:
+            raise ValueError("existing folder names contain too many values.")
+        if not isinstance(value, str):
+            raise TypeError("existing folder names must contain text values.")
+        keys.add(_normalized_folder_name(value).key)
+    return frozenset(keys)
+
+
+def _meaningful_directory_root(plan: NoteImportPlan) -> str | None:
+    if not plan.proposed_folder_paths:
+        return None
+    relevant_items = tuple(
+        item
+        for item in plan.items
+        if item.source.kind is ImportSourceKind.DIRECTORY_MEMBER and item.add_membership
+    )
+    if not relevant_items:
+        return None
+
+    root_label = plan.proposed_folder_paths[0][0]
+    if any(path[0] != root_label for path in plan.proposed_folder_paths):
+        raise ValueError("Proposed folders do not share one directory root.")
+    for item in plan.items:
+        for membership in item.memberships:
+            if membership.folder_segments[0] != root_label:
+                raise ValueError(
+                    "Proposed memberships do not share the directory root."
+                )
+    return root_label
+
+
+def _unique_sibling_label(
+    proposed_label: str,
+    existing_keys: frozenset[str],
+    bounds: ImportBounds,
+) -> str:
+    for sequence in range(2, bounds.max_entries + 3):
+        suffix = f" ({sequence})"
+        available = 255 - len(suffix)
+        base = proposed_label[:available].rstrip()
+        if not base:
+            raise ValueError("A unique sibling root could not be generated safely.")
+        candidate = _normalized_folder_name(f"{base}{suffix}")
+        if candidate.key not in existing_keys:
+            return candidate.display
+    raise ValueError("A unique sibling root could not be generated safely.")
+
+
+def _rebase_root(
+    plan: NoteImportPlan,
+    collision: RootCollisionState,
+    choice: RootCollisionChoice,
+    resolved_label: str,
+) -> NoteImportPlan:
+    original_label = plan.proposed_folder_paths[0][0]
+    paths = tuple((resolved_label, *path[1:]) for path in plan.proposed_folder_paths)
+    items: list[ImportPreviewItem] = []
+    for item in plan.items:
+        memberships: list[ProposedFolderMembership] = []
+        for membership in item.memberships:
+            if membership.folder_segments[0] != original_label:
+                raise ValueError(
+                    "Proposed memberships do not share the directory root."
+                )
+            memberships.append(
+                replace(
+                    membership,
+                    folder_segments=(
+                        resolved_label,
+                        *membership.folder_segments[1:],
+                    ),
+                )
+            )
+        items.append(replace(item, memberships=tuple(memberships)))
+    return replace(
+        plan,
+        items=tuple(items),
+        proposed_folder_paths=paths,
+        root_collision=RootCollisionState(
+            proposed_label=collision.proposed_label,
+            collides=True,
+            choice=choice,
+            resolved_label=resolved_label,
+        ),
+    )
+
+
+def _find_item(
+    plan: NoteImportPlan,
+    item_id: str,
+) -> tuple[int, ImportPreviewItem]:
+    if (
+        not isinstance(item_id, str)
+        or not item_id
+        or len(item_id) > 256
+        or not item_id.isascii()
+        or any(
+            not (character.isalnum() or character in "-_.:") for character in item_id
+        )
+    ):
+        raise ValueError("item_id must be a safe opaque item identifier.")
+    matches = tuple(
+        (index, item)
+        for index, item in enumerate(plan.items)
+        if item.item_id == item_id
+    )
+    if len(matches) != 1:
+        raise ValueError("The item identifier must match exactly one preview item.")
+    return matches[0]
+
+
+def _replace_item(
+    plan: NoteImportPlan,
+    item_index: int,
+    item: ImportPreviewItem,
+) -> NoteImportPlan:
+    items = list(plan.items)
+    items[item_index] = item
+    updated = replace(plan, items=tuple(items))
+    if (
+        updated.root_collision is not None
+        and _meaningful_directory_root(updated) is None
+    ):
+        return replace(updated, root_collision=None)
+    return updated
+
+
 __all__ = [
     "SUPPORTED_NOTE_EXTENSIONS",
     "DiscoveredImportSource",
@@ -404,7 +726,11 @@ __all__ = [
     "ParsedImportSource",
     "PriorImportObservation",
     "SourceIdentity",
+    "analyze_root_collision",
+    "apply_item_override",
     "classify_import_batch",
+    "confirm_uncertain_match",
     "discover_import_sources",
     "parse_import_sources",
+    "resolve_root_collision",
 ]

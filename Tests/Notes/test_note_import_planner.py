@@ -3920,3 +3920,612 @@ def test_discovery_failures_are_carried_forward_without_retry(
     assert batch.issues[0].classification is ImportClassification.FAILED
     assert batch.issues[0].reason_code == "nested_symlink"
     assert batch.proposed_folder_paths == ()
+
+
+def _task5_directory_plan(
+    *,
+    root_label: str = "Work",
+    item: ImportPreviewItem | None = None,
+) -> NoteImportPlan:
+    first_item = item or _new_item(
+        item_id="item-root",
+        source=ImportSource(
+            kind=ImportSourceKind.DIRECTORY_MEMBER,
+            display_path=f"{root_label}/note.md",
+            source_path=Path("/private/source/note.md"),
+        ),
+        memberships=(
+            ProposedFolderMembership(
+                payload_index=0,
+                folder_segments=(root_label,),
+            ),
+        ),
+    )
+    nested_item = _new_item(
+        item_id="item-nested",
+        source=ImportSource(
+            kind=ImportSourceKind.DIRECTORY_MEMBER,
+            display_path=f"{root_label}/Ideas/nested.md",
+            source_path=Path("/private/source/Ideas/nested.md"),
+        ),
+        memberships=(
+            ProposedFolderMembership(
+                payload_index=0,
+                folder_segments=(root_label, "Ideas"),
+            ),
+        ),
+    )
+    return NoteImportPlan(
+        bounds=_discovery_bounds(),
+        items=(first_item, nested_item),
+        proposed_folder_paths=((root_label,), (root_label, "Ideas")),
+    )
+
+
+def _task5_exact_item(
+    *,
+    item_id: str = "item-exact",
+    selected_action: ImportAction = ImportAction.CREATE_NEW,
+    replace_content: bool = False,
+    add_membership: bool = True,
+) -> ImportPreviewItem:
+    return _new_item(
+        item_id=item_id,
+        classification=ImportClassification.CHANGED_REPEAT,
+        default_action=ImportAction.CREATE_NEW,
+        selected_action=selected_action,
+        allowed_actions=(
+            ImportAction.SKIP,
+            ImportAction.CREATE_NEW,
+            ImportAction.UPDATE_EXISTING,
+        ),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id="note-17",
+            note_version=9,
+        ),
+        replace_content=replace_content,
+        add_membership=add_membership,
+    )
+
+
+def _task5_uncertain_item() -> ImportPreviewItem:
+    return _new_item(
+        item_id="item-uncertain",
+        classification=ImportClassification.UNCERTAIN_MATCH,
+        default_action=ImportAction.CREATE_NEW,
+        selected_action=ImportAction.CREATE_NEW,
+        allowed_actions=(ImportAction.SKIP, ImportAction.CREATE_NEW),
+        match=ImportMatch(
+            kind=ImportMatchKind.UNCERTAIN,
+            note_id="note-possible",
+            note_version=12,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "existing_name",
+    [
+        "work",
+        "Ｗｏｒｋ",
+        "WoRK",
+    ],
+)
+def test_root_collision_detection_uses_folder_canonical_semantics(
+    existing_name: str,
+) -> None:
+    plan = _task5_directory_plan()
+
+    analyzed = note_import_planner.analyze_root_collision(plan, (existing_name,))
+
+    assert analyzed.root_collision == RootCollisionState(
+        proposed_label="Work",
+        collides=True,
+    )
+    assert analyzed.proposed_folder_paths == plan.proposed_folder_paths
+    assert analyzed.items == plan.items
+
+
+def test_root_collision_detection_uses_unicode_normalization() -> None:
+    plan = _task5_directory_plan(root_label="Café")
+
+    analyzed = note_import_planner.analyze_root_collision(plan, ("Cafe\u0301",))
+
+    assert analyzed.root_collision is not None
+    assert analyzed.root_collision.collides
+
+
+def test_noncolliding_root_is_explicitly_analyzed_but_cannot_be_fake_resolved() -> None:
+    plan = note_import_planner.analyze_root_collision(
+        _task5_directory_plan(),
+        ("Archive",),
+    )
+
+    assert plan.root_collision == RootCollisionState(
+        proposed_label="Work",
+        collides=False,
+    )
+    with pytest.raises(ValueError, match="colliding root"):
+        note_import_planner.resolve_root_collision(
+            plan,
+            RootCollisionChoice.USE_EXISTING,
+            existing_top_level_names=("Archive",),
+        )
+
+
+def test_use_existing_resolves_collision_without_rewriting_the_root() -> None:
+    original = _task5_directory_plan()
+    analyzed = note_import_planner.analyze_root_collision(original, ("work",))
+
+    resolved = note_import_planner.resolve_root_collision(
+        analyzed,
+        RootCollisionChoice.USE_EXISTING,
+        existing_top_level_names=("work",),
+    )
+
+    assert resolved.root_collision == RootCollisionState(
+        proposed_label="Work",
+        collides=True,
+        choice=RootCollisionChoice.USE_EXISTING,
+    )
+    assert resolved.proposed_folder_paths == original.proposed_folder_paths
+    assert tuple(item.memberships for item in resolved.items) == tuple(
+        item.memberships for item in original.items
+    )
+    assert analyzed.root_collision is not None
+    assert analyzed.root_collision.choice is None
+
+
+def test_unique_sibling_uses_first_genuinely_noncolliding_canonical_name() -> None:
+    analyzed = note_import_planner.analyze_root_collision(
+        _task5_directory_plan(),
+        ("work", "WORK (2)", "Ｗｏｒｋ (3)"),
+    )
+
+    resolved = note_import_planner.resolve_root_collision(
+        analyzed,
+        RootCollisionChoice.UNIQUE_SIBLING,
+        existing_top_level_names=("work", "WORK (2)", "Ｗｏｒｋ (3)"),
+    )
+
+    assert resolved.root_collision == RootCollisionState(
+        proposed_label="Work",
+        collides=True,
+        choice=RootCollisionChoice.UNIQUE_SIBLING,
+        resolved_label="Work (4)",
+    )
+    assert resolved.proposed_folder_paths == (
+        ("Work (4)",),
+        ("Work (4)", "Ideas"),
+    )
+
+
+def test_renamed_root_rewrites_every_folder_reference_but_not_sources_or_payloads() -> (
+    None
+):
+    original = _task5_directory_plan()
+    analyzed = note_import_planner.analyze_root_collision(original, ("work",))
+
+    resolved = note_import_planner.resolve_root_collision(
+        analyzed,
+        RootCollisionChoice.RENAMED_ROOT,
+        existing_top_level_names=("work",),
+        renamed_root="Archive",
+    )
+
+    assert resolved.proposed_folder_paths == (
+        ("Archive",),
+        ("Archive", "Ideas"),
+    )
+    assert tuple(
+        membership.folder_segments
+        for item in resolved.items
+        for membership in item.memberships
+    ) == (("Archive",), ("Archive", "Ideas"))
+    assert tuple(item.source for item in resolved.items) == tuple(
+        item.source for item in original.items
+    )
+    assert tuple(item.payloads for item in resolved.items) == tuple(
+        item.payloads for item in original.items
+    )
+    assert tuple(
+        membership.payload_index
+        for item in resolved.items
+        for membership in item.memberships
+    ) == (0, 0)
+    assert original.proposed_folder_paths == (("Work",), ("Work", "Ideas"))
+    assert original.items[0].memberships[0].folder_segments == ("Work",)
+
+
+@pytest.mark.parametrize(
+    ("choice", "renamed_root"),
+    [
+        ("use_existing", None),
+        (RootCollisionChoice.RENAMED_ROOT, " "),
+        (RootCollisionChoice.RENAMED_ROOT, "work"),
+        (RootCollisionChoice.RENAMED_ROOT, "Ｗｏｒｋ"),
+        (RootCollisionChoice.UNIQUE_SIBLING, "Caller supplied"),
+        (RootCollisionChoice.USE_EXISTING, "Caller supplied"),
+    ],
+)
+def test_root_collision_resolution_rejects_coercion_invalid_or_inapplicable_names(
+    choice: object,
+    renamed_root: str | None,
+) -> None:
+    analyzed = note_import_planner.analyze_root_collision(
+        _task5_directory_plan(),
+        ("work",),
+    )
+
+    with pytest.raises((TypeError, ValueError)):
+        note_import_planner.resolve_root_collision(
+            analyzed,
+            choice,  # type: ignore[arg-type]
+            existing_top_level_names=("work",),
+            renamed_root=renamed_root,
+        )
+
+
+def test_collision_name_inputs_are_bounded_and_iterator_errors_are_sanitized() -> None:
+    plan = _task5_directory_plan()
+    private_error = "SECRET /private/folder-name"
+
+    def too_many_names() -> object:
+        for index in range(plan.bounds.max_entries + 1):
+            yield f"Folder {index}"
+        raise AssertionError("collision analysis over-consumed its bounded input")
+
+    with pytest.raises(ValueError, match="too many"):
+        note_import_planner.analyze_root_collision(plan, too_many_names())  # type: ignore[arg-type]
+
+    def broken_names() -> object:
+        raise RuntimeError(private_error)
+        yield  # pragma: no cover
+
+    with pytest.raises(ValueError, match="read safely") as raised:
+        note_import_planner.analyze_root_collision(plan, broken_names())  # type: ignore[arg-type]
+    assert private_error not in str(raised.value)
+    assert private_error not in repr(raised.value)
+
+
+def test_collision_analysis_rejects_unsafe_existing_names_without_echoing_them() -> (
+    None
+):
+    unsafe_name = "SECRET/private-root"
+
+    with pytest.raises(ValueError, match="valid folder names") as raised:
+        note_import_planner.analyze_root_collision(
+            _task5_directory_plan(),
+            (unsafe_name,),
+        )
+
+    assert unsafe_name not in str(raised.value)
+    assert unsafe_name not in repr(raised.value)
+
+
+def test_selected_file_destination_is_not_mistaken_for_a_directory_root() -> None:
+    plan = NoteImportPlan(
+        bounds=_discovery_bounds(),
+        items=(
+            _new_item(
+                source=ImportSource(
+                    kind=ImportSourceKind.SELECTED_FILE,
+                    display_path="note.md",
+                    source_path=Path("/private/source/note.md"),
+                )
+            ),
+        ),
+        proposed_folder_paths=(("Imported",),),
+    )
+
+    analyzed = note_import_planner.analyze_root_collision(plan, ("Imported",))
+
+    assert analyzed.root_collision is None
+    with pytest.raises(ValueError, match="directory root"):
+        note_import_planner.resolve_root_collision(
+            NoteImportPlan(
+                bounds=plan.bounds,
+                items=plan.items,
+                proposed_folder_paths=plan.proposed_folder_paths,
+                root_collision=RootCollisionState(
+                    proposed_label="Imported",
+                    collides=True,
+                ),
+            ),
+            RootCollisionChoice.USE_EXISTING,
+            existing_top_level_names=("Imported",),
+        )
+
+
+def test_empty_or_skip_only_plan_has_no_collision_or_folder_creation() -> None:
+    unsupported = _new_item(
+        item_id="item-failed",
+        payloads=(),
+        memberships=(),
+        classification=ImportClassification.UNSUPPORTED,
+        reason="Unsupported.",
+        default_action=ImportAction.SKIP,
+        selected_action=ImportAction.SKIP,
+        allowed_actions=(ImportAction.SKIP,),
+        match=None,
+        replace_content=False,
+        add_membership=False,
+    )
+    plan = NoteImportPlan(
+        bounds=_discovery_bounds(),
+        items=(unsupported,),
+        proposed_folder_paths=(),
+    )
+
+    analyzed = note_import_planner.analyze_root_collision(plan, ("Project",))
+
+    assert analyzed is plan
+    assert analyzed.proposed_folder_paths == ()
+    assert analyzed.root_collision is None
+
+
+def test_collision_analysis_ignores_a_directory_with_no_selected_membership() -> None:
+    skipped_item = _task5_exact_item(
+        item_id="item-root",
+        selected_action=ImportAction.SKIP,
+        add_membership=False,
+    )
+    plan = NoteImportPlan(
+        bounds=_discovery_bounds(),
+        items=(skipped_item,),
+        proposed_folder_paths=(("Project",), ("Project", "Meetings")),
+    )
+
+    analyzed = note_import_planner.analyze_root_collision(plan, ("Project",))
+
+    assert analyzed.root_collision is None
+
+
+def test_skipping_the_last_membership_clears_obsolete_collision_state() -> None:
+    item = _task5_exact_item(item_id="item-root")
+    plan = NoteImportPlan(
+        bounds=_discovery_bounds(),
+        items=(item,),
+        proposed_folder_paths=(("Project",), ("Project", "Meetings")),
+        root_collision=RootCollisionState(
+            proposed_label="Project",
+            collides=True,
+            choice=RootCollisionChoice.USE_EXISTING,
+        ),
+    )
+
+    skipped = note_import_planner.apply_item_override(
+        plan,
+        "item-root",
+        ImportAction.SKIP,
+    )
+
+    assert skipped.root_collision is None
+
+
+def test_confirm_uncertain_match_adds_update_without_changing_classification() -> None:
+    uncertain = _task5_uncertain_item()
+    original = _plan_with_item(uncertain)
+
+    confirmed = note_import_planner.confirm_uncertain_match(
+        original,
+        "item-uncertain",
+    )
+
+    item = confirmed.items[0]
+    assert item.classification is ImportClassification.UNCERTAIN_MATCH
+    assert item.match == ImportMatch(
+        kind=ImportMatchKind.USER_CONFIRMED,
+        note_id="note-possible",
+        note_version=12,
+    )
+    assert item.allowed_actions == (
+        ImportAction.SKIP,
+        ImportAction.CREATE_NEW,
+        ImportAction.UPDATE_EXISTING,
+    )
+    assert item.selected_action is ImportAction.CREATE_NEW
+    assert item.default_action is ImportAction.CREATE_NEW
+    assert original.items[0].match is not None
+    assert original.items[0].match.kind is ImportMatchKind.UNCERTAIN
+
+
+@pytest.mark.parametrize("item_id", ["missing", "", "unsafe/path", 17])
+def test_confirm_uncertain_match_rejects_missing_or_unsafe_item_ids(
+    item_id: object,
+) -> None:
+    with pytest.raises((TypeError, ValueError), match="item"):
+        note_import_planner.confirm_uncertain_match(
+            _plan_with_item(_task5_uncertain_item()),
+            item_id,  # type: ignore[arg-type]
+        )
+
+
+def test_only_uncertain_matches_can_be_confirmed() -> None:
+    with pytest.raises(ValueError, match="uncertain match"):
+        note_import_planner.confirm_uncertain_match(
+            _plan_with_item(_task5_exact_item()),
+            "item-exact",
+        )
+
+
+def test_uncertain_update_requires_confirmation_first() -> None:
+    plan = _plan_with_item(_task5_uncertain_item())
+
+    with pytest.raises(ValueError, match="allowed"):
+        note_import_planner.apply_item_override(
+            plan,
+            "item-uncertain",
+            ImportAction.UPDATE_EXISTING,
+            replace_content=True,
+            add_membership=False,
+        )
+
+    confirmed = note_import_planner.confirm_uncertain_match(plan, "item-uncertain")
+    updated = note_import_planner.apply_item_override(
+        confirmed,
+        "item-uncertain",
+        ImportAction.UPDATE_EXISTING,
+        replace_content=True,
+        add_membership=False,
+    )
+    assert updated.items[0].selected_action is ImportAction.UPDATE_EXISTING
+
+
+@pytest.mark.parametrize(
+    ("replace_content", "add_membership"),
+    [(True, False), (False, True), (True, True)],
+)
+def test_update_override_keeps_content_and_membership_choices_independent(
+    replace_content: bool,
+    add_membership: bool,
+) -> None:
+    original = _plan_with_item(_task5_exact_item())
+
+    updated = note_import_planner.apply_item_override(
+        original,
+        "item-exact",
+        ImportAction.UPDATE_EXISTING,
+        replace_content=replace_content,
+        add_membership=add_membership,
+    )
+
+    item = updated.items[0]
+    assert item.selected_action is ImportAction.UPDATE_EXISTING
+    assert item.replace_content is replace_content
+    assert item.add_membership is add_membership
+    assert item.match == original.items[0].match
+    assert item.match is not None and item.match.note_version == 9
+    assert item.source is original.items[0].source
+    assert item.payloads is original.items[0].payloads
+    assert item.memberships is original.items[0].memberships
+    assert original.items[0].selected_action is ImportAction.CREATE_NEW
+
+
+def test_update_override_requires_at_least_one_effect() -> None:
+    with pytest.raises(ValueError, match="replace content or add membership"):
+        note_import_planner.apply_item_override(
+            _plan_with_item(_task5_exact_item()),
+            "item-exact",
+            ImportAction.UPDATE_EXISTING,
+            replace_content=False,
+            add_membership=False,
+        )
+
+
+def test_skip_and_create_overrides_set_their_only_valid_effects() -> None:
+    original = _plan_with_item(_task5_exact_item())
+
+    skipped = note_import_planner.apply_item_override(
+        original,
+        "item-exact",
+        ImportAction.SKIP,
+    )
+    recreated = note_import_planner.apply_item_override(
+        skipped,
+        "item-exact",
+        ImportAction.CREATE_NEW,
+    )
+
+    assert not skipped.items[0].replace_content
+    assert not skipped.items[0].add_membership
+    assert not recreated.items[0].replace_content
+    assert recreated.items[0].add_membership
+    assert original.items[0].selected_action is ImportAction.CREATE_NEW
+
+
+@pytest.mark.parametrize(
+    ("action", "replace_content", "add_membership"),
+    [
+        ("skip", False, False),
+        (ImportAction.UPDATE_EXISTING, 1, False),
+        (ImportAction.UPDATE_EXISTING, False, 0),
+        (ImportAction.CREATE_NEW, True, False),
+    ],
+)
+def test_item_override_rejects_coerced_actions_bools_and_invalid_effects(
+    action: object,
+    replace_content: object,
+    add_membership: object,
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        note_import_planner.apply_item_override(
+            _plan_with_item(_task5_exact_item()),
+            "item-exact",
+            action,  # type: ignore[arg-type]
+            replace_content=replace_content,  # type: ignore[arg-type]
+            add_membership=add_membership,  # type: ignore[arg-type]
+        )
+
+
+def test_skip_only_items_reject_create_and_update_overrides() -> None:
+    unsupported = _new_item(
+        item_id="item-unsupported",
+        payloads=(),
+        memberships=(),
+        classification=ImportClassification.UNSUPPORTED,
+        reason="Unsupported.",
+        default_action=ImportAction.SKIP,
+        selected_action=ImportAction.SKIP,
+        allowed_actions=(ImportAction.SKIP,),
+        match=None,
+        replace_content=False,
+        add_membership=False,
+    )
+    plan = _plan_with_item(unsupported)
+
+    for action in (ImportAction.CREATE_NEW, ImportAction.UPDATE_EXISTING):
+        with pytest.raises(ValueError, match="allowed"):
+            note_import_planner.apply_item_override(
+                plan,
+                "item-unsupported",
+                action,
+                replace_content=action is ImportAction.UPDATE_EXISTING,
+            )
+
+
+def test_item_override_returns_new_plan_and_preserves_unaffected_frozen_values() -> (
+    None
+):
+    original = _task5_directory_plan(item=_task5_exact_item(item_id="item-root"))
+
+    updated = note_import_planner.apply_item_override(
+        original,
+        "item-root",
+        ImportAction.SKIP,
+    )
+
+    assert updated is not original
+    assert updated.items[0] is not original.items[0]
+    assert updated.items[1] is original.items[1]
+    assert updated.bounds is original.bounds
+    assert updated.proposed_folder_paths == original.proposed_folder_paths
+    assert original.items[0].selected_action is ImportAction.CREATE_NEW
+
+
+def test_collision_and_override_transforms_do_not_write_to_disk(
+    tmp_path: Path,
+) -> None:
+    sentinel = tmp_path / "sentinel.txt"
+    sentinel.write_text("unchanged", encoding="utf-8")
+    before = tuple(sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")))
+    analyzed = note_import_planner.analyze_root_collision(
+        _task5_directory_plan(),
+        ("work",),
+    )
+    resolved = note_import_planner.resolve_root_collision(
+        analyzed,
+        RootCollisionChoice.UNIQUE_SIBLING,
+        existing_top_level_names=("work",),
+    )
+    overridden = note_import_planner.apply_item_override(
+        resolved,
+        "item-root",
+        ImportAction.SKIP,
+    )
+    after = tuple(sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")))
+
+    assert overridden.items[0].selected_action is ImportAction.SKIP
+    assert before == after
+    assert sentinel.read_text(encoding="utf-8") == "unchanged"
