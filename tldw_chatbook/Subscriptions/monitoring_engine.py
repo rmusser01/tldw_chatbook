@@ -569,6 +569,28 @@ def classify_change_type(previous_text: str, current_text: str) -> str:
     return "content"
 
 
+def _build_significant_change_details(
+    previous_text: str, current_text: str
+) -> tuple[str, str, str, str, str]:
+    """Build all significant-change diff details from one segmentation pass."""
+    old_segments = _segment_for_diff(previous_text)
+    new_segments = _segment_for_diff(current_text)
+    diff_body, diff_summary = build_change_diff(
+        previous_text,
+        current_text,
+        old_segments=old_segments,
+        new_segments=new_segments,
+    )
+    added_text, removed_text = added_and_removed_text(
+        previous_text,
+        current_text,
+        old_segments=old_segments,
+        new_segments=new_segments,
+    )
+    change_type = classify_change_type(previous_text, current_text)
+    return diff_body, diff_summary, added_text, removed_text, change_type
+
+
 ########################################################################################################################
 #
 # Check dispositions (TASK-1362, spec §4)
@@ -1309,8 +1331,10 @@ class URLMonitor:
 
             # Calculate change details
             previous_text = previous["extracted_content"] or ""
-            change_percentage = ContentExtractor.calculate_change_percentage(
-                previous_text, current_content["text"]
+            change_percentage = await asyncio.to_thread(
+                ContentExtractor.calculate_change_percentage,
+                previous_text,
+                current_content["text"],
             )
 
             # Check if change exceeds threshold. Both sides of this comparison
@@ -1348,23 +1372,16 @@ class URLMonitor:
             # reader's `[full page]` / `[previous snapshot]` affordances read
             # from; storing it a second time here bought nothing and left the
             # reader unable to see what had actually changed.
-            # Segment each side ONCE and share it with both consumers: the
-            # reader's diff body and the "appeared"/"disappeared" added/removed
-            # text (TASK-1363) are different outputs of the same segmentation,
-            # and a page can be up to 10 MB (Qodo -- do not segment it twice).
-            _old_segments = _segment_for_diff(previous_text)
-            _new_segments = _segment_for_diff(current_content["text"])
-            diff_body, diff_summary = build_change_diff(
+            (
+                diff_body,
+                diff_summary,
+                added_text,
+                removed_text,
+                change_type,
+            ) = await asyncio.to_thread(
+                _build_significant_change_details,
                 previous_text,
                 current_content["text"],
-                old_segments=_old_segments,
-                new_segments=_new_segments,
-            )
-            added_text, removed_text = added_and_removed_text(
-                previous_text,
-                current_content["text"],
-                old_segments=_old_segments,
-                new_segments=_new_segments,
             )
             change_info = {
                 "type": "url_change",
@@ -1386,9 +1403,7 @@ class URLMonitor:
                 # reachable at all, a real 35% change would have displayed as
                 # "0% changed" and a total rewrite as "1% changed".
                 "change_percentage": change_percentage * 100.0,
-                "change_type": classify_change_type(
-                    previous_text, current_content["text"]
-                ),
+                "change_type": change_type,
                 "diff_summary": diff_summary,
                 "published_date": datetime.now(timezone.utc).isoformat(),
                 # Filters and content-alert rules are evaluated on the raw
