@@ -1470,8 +1470,13 @@ def test_the_prf_probe_over_the_real_fixtures(tmp_path, capsys):
         "ceiling reads as a property of the retrieval path, which a review "
         "measured to be false"
     )
-    # The verdict must never see a control point. This is the assertion that
-    # keeps the axis run from becoming a grid search with extra steps.
+    # The verdict must never see a control point. Honestly stated: this is a
+    # TEST-LEVEL assertion over the list the verdict already consumed —
+    # `_format_verdict` itself never inspects `.selector`, so a bug that fed
+    # it a control point would print a wrong verdict first and red HERE one
+    # step later (the test still fails; the printed text is what a -s reader
+    # would have seen in between). The list separation in the body is the
+    # primary defense; this pins it against drift.
     assert all(report.selector.endswith("(PRE-REGISTERED)") for report in reports), (
         f"a non-pre-registered selector reached the verdict: "
         f"{[report.selector for report in reports]}"
