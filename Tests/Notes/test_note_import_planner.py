@@ -1,8 +1,10 @@
 """Contract tests for one-time Database Notes import planning."""
 
+import os
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Self
 
 import pytest
 
@@ -20,6 +22,11 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ProposedFolderMembership,
     RootCollisionChoice,
     RootCollisionState,
+)
+from tldw_chatbook.Notes.note_import_planner import (
+    ImportDiscovery,
+    ImportSelectionError,
+    discover_import_sources,
 )
 
 
@@ -895,3 +902,444 @@ def test_plan_rejects_duplicate_proposed_folder_paths() -> None:
             items=[_new_item()],
             proposed_folder_paths=[["Project"], ["Project"]],
         )
+
+
+def _discovery_bounds(**overrides: int) -> ImportBounds:
+    values = {
+        "max_files": 20,
+        "max_file_bytes": 1_000,
+        "max_total_bytes": 5_000,
+        "max_depth": 4,
+        "max_reason_length": 120,
+        "max_entries": 100,
+    }
+    values.update(overrides)
+    return ImportBounds(**values)
+
+
+def test_discovery_accepts_several_individual_regular_files(tmp_path: Path) -> None:
+    """Several file selections become deterministic selected-file candidates."""
+    second = tmp_path / "second.md"
+    first = tmp_path / "first.txt"
+    second.write_text("two", encoding="utf-8")
+    first.write_text("one", encoding="utf-8")
+
+    discovery = discover_import_sources([second, first], _discovery_bounds())
+
+    assert discovery.root_label is None
+    assert [candidate.source.display_path for candidate in discovery.candidates] == [
+        "first.txt",
+        "second.md",
+    ]
+    assert all(
+        candidate.source.kind is ImportSourceKind.SELECTED_FILE
+        for candidate in discovery.candidates
+    )
+    assert [candidate.size_bytes for candidate in discovery.candidates] == [3, 3]
+    assert discovery.total_bytes == 6
+    assert discovery.failures == ()
+
+
+def test_discovery_accepts_one_directory_and_scans_it_recursively(
+    tmp_path: Path,
+) -> None:
+    """A directory selection retains its root label and relative hierarchy."""
+    root = tmp_path / "Project"
+    nested = root / "child" / "deeper"
+    nested.mkdir(parents=True)
+    (root / "root.md").write_text("root", encoding="utf-8")
+    (nested / "note.txt").write_text("nested", encoding="utf-8")
+
+    discovery = discover_import_sources([root], _discovery_bounds())
+
+    assert discovery.root_label == "Project"
+    assert [candidate.source.display_path for candidate in discovery.candidates] == [
+        "Project/child/deeper/note.txt",
+        "Project/root.md",
+    ]
+    assert all(
+        candidate.source.kind is ImportSourceKind.DIRECTORY_MEMBER
+        for candidate in discovery.candidates
+    )
+    assert discovery.entry_count == 4
+
+
+@pytest.mark.parametrize(
+    ("selection_factory", "reason_code"),
+    [
+        (lambda root: [], "empty_selection"),
+        (
+            lambda root: [root / "note.md", root / "folder"],
+            "mixed_selection",
+        ),
+        (
+            lambda root: [root / "folder", root / "other-folder"],
+            "multiple_directories",
+        ),
+    ],
+)
+def test_discovery_rejects_invalid_selection_shapes(
+    tmp_path: Path,
+    selection_factory: object,
+    reason_code: str,
+) -> None:
+    """Selection is files-only or exactly one directory, never empty or mixed."""
+    (tmp_path / "note.md").write_text("note", encoding="utf-8")
+    (tmp_path / "folder").mkdir()
+    (tmp_path / "other-folder").mkdir()
+    selection = selection_factory(tmp_path)  # type: ignore[operator]
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources(selection, _discovery_bounds())
+
+    assert raised.value.reason_code == reason_code
+    assert str(tmp_path) not in str(raised.value)
+
+
+@pytest.mark.parametrize("target_kind", ["file", "directory"])
+def test_discovery_rejects_a_selected_symlink(
+    tmp_path: Path,
+    target_kind: str,
+) -> None:
+    """A selected link is fatal even when its target is otherwise admissible."""
+    target = tmp_path / "target"
+    if target_kind == "file":
+        target.write_text("note", encoding="utf-8")
+    else:
+        target.mkdir()
+    selected = tmp_path / "selected-link"
+    selected.symlink_to(target, target_is_directory=target_kind == "directory")
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([selected], _discovery_bounds())
+
+    assert raised.value.reason_code == "selected_symlink"
+    assert str(target) not in repr(raised.value)
+
+
+def test_nested_symlinks_are_visible_failures_and_are_never_traversed(
+    tmp_path: Path,
+) -> None:
+    """Nested links become Skip-ready failures without admitting their targets."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("secret", encoding="utf-8")
+    root = tmp_path / "Project"
+    root.mkdir()
+    (root / "safe.md").write_text("safe", encoding="utf-8")
+    (root / "file-link.md").symlink_to(root / "safe.md")
+    (root / "folder-link").symlink_to(outside, target_is_directory=True)
+
+    discovery = discover_import_sources([root], _discovery_bounds())
+
+    assert [candidate.source.display_path for candidate in discovery.candidates] == [
+        "Project/safe.md"
+    ]
+    assert [failure.display_path for failure in discovery.failures] == [
+        "Project/file-link.md",
+        "Project/folder-link",
+    ]
+    assert {failure.reason_code for failure in discovery.failures} == {"nested_symlink"}
+    assert all("secret.md" not in repr(failure) for failure in discovery.failures)
+
+
+def test_missing_and_non_regular_top_level_selections_fail_safely(
+    tmp_path: Path,
+) -> None:
+    """Missing and special top-level entries reject the whole selection."""
+    missing = tmp_path / "missing.md"
+
+    with pytest.raises(ImportSelectionError) as missing_error:
+        discover_import_sources([missing], _discovery_bounds())
+
+    assert missing_error.value.reason_code == "selection_missing"
+    assert str(missing) not in str(missing_error.value)
+
+    fifo = tmp_path / "selected-fifo"
+    os.mkfifo(fifo)
+    with pytest.raises(ImportSelectionError) as fifo_error:
+        discover_import_sources([fifo], _discovery_bounds())
+
+    assert fifo_error.value.reason_code == "selection_not_regular"
+    assert str(fifo) not in str(fifo_error.value)
+
+
+def test_nested_non_regular_entries_become_bounded_safe_failures(
+    tmp_path: Path,
+) -> None:
+    """A nested special entry is categorized without aborting safe candidates."""
+    root = tmp_path / "Project"
+    root.mkdir()
+    fifo = root / "events"
+    os.mkfifo(fifo)
+
+    discovery = discover_import_sources(
+        [root],
+        _discovery_bounds(max_reason_length=24),
+    )
+
+    assert discovery.candidates == ()
+    assert len(discovery.failures) == 1
+    failure = discovery.failures[0]
+    assert failure.display_path == "Project/events"
+    assert failure.reason_code == "nested_not_regular"
+    assert 0 < len(failure.user_message) <= 24
+    assert str(root) not in repr(failure)
+
+
+def test_nested_unsafe_names_are_escaped_in_visible_failures(tmp_path: Path) -> None:
+    """A rejected source name cannot inject an ambiguous diagnostic path."""
+    root = tmp_path / "Project"
+    root.mkdir()
+    (root / "unsafe\\name.md").write_text("note", encoding="utf-8")
+
+    discovery = discover_import_sources([root], _discovery_bounds())
+
+    assert discovery.candidates == ()
+    assert discovery.failures[0].display_path == "Project/unsafe%5Cname.md"
+    assert "\\" not in repr(discovery.failures[0])
+
+
+def test_directory_discovery_order_is_deterministic(tmp_path: Path) -> None:
+    """Filesystem enumeration order cannot affect public candidate/failure order."""
+    root = tmp_path / "Project"
+    (root / "z-dir").mkdir(parents=True)
+    (root / "a-dir").mkdir()
+    for relative_path in ("z.md", "a-dir/z.md", "a.md", "z-dir/a.md"):
+        path = root / relative_path
+        path.write_text(relative_path, encoding="utf-8")
+
+    first = discover_import_sources([root], _discovery_bounds())
+    second = discover_import_sources([root], _discovery_bounds())
+
+    expected = sorted(candidate.source.display_path for candidate in first.candidates)
+    assert [candidate.source.display_path for candidate in first.candidates] == expected
+    assert second == first
+
+
+def test_discovery_redacts_internal_paths_and_identity_from_repr(
+    tmp_path: Path,
+) -> None:
+    """Only relative source names and the selected root label are diagnostic."""
+    private_parent = tmp_path / "PRIVATE-ABSOLUTE-PARENT"
+    root = private_parent / "Project"
+    root.mkdir(parents=True)
+    note = root / "child.md"
+    note.write_text("private body", encoding="utf-8")
+
+    discovery = discover_import_sources([root], _discovery_bounds())
+
+    candidate = discovery.candidates[0]
+    assert discovery.root_label == "Project"
+    assert candidate.source.display_path == "Project/child.md"
+    assert candidate.source.source_path == note.absolute()
+    assert candidate.identity.size == len("private body")
+    rendered = repr(discovery)
+    assert str(private_parent) not in rendered
+    assert "private body" not in rendered
+    assert "st_dev" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("tree_factory", "bounds_overrides", "reason_code"),
+    [
+        (
+            lambda root: (root / "child").mkdir(),
+            {"max_depth": 0},
+            "max_depth_exceeded",
+        ),
+        (
+            lambda root: [
+                (root / name).write_text(name, encoding="utf-8")
+                for name in ("one.md", "two.md")
+            ],
+            {"max_files": 1},
+            "max_files_exceeded",
+        ),
+        (
+            lambda root: (root / "large.md").write_bytes(b"1234"),
+            {"max_file_bytes": 3},
+            "max_file_bytes_exceeded",
+        ),
+        (
+            lambda root: [
+                (root / name).write_bytes(b"12") for name in ("one.md", "two.md")
+            ],
+            {"max_file_bytes": 3, "max_total_bytes": 3},
+            "max_total_bytes_exceeded",
+        ),
+        (
+            lambda root: [(root / name).mkdir() for name in ("one", "two", "three")],
+            {"max_entries": 2},
+            "max_entries_exceeded",
+        ),
+    ],
+)
+def test_directory_discovery_limits_fail_closed(
+    tmp_path: Path,
+    tree_factory: object,
+    bounds_overrides: dict[str, int],
+    reason_code: str,
+) -> None:
+    """Any resource-limit breach rejects discovery instead of returning a prefix."""
+    root = tmp_path / "Project"
+    root.mkdir()
+    tree_factory(root)  # type: ignore[operator]
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([root], _discovery_bounds(**bounds_overrides))
+
+    assert raised.value.reason_code == reason_code
+    assert str(root) not in str(raised.value)
+
+
+def test_nested_unsafe_entries_count_toward_the_breadth_limit(
+    tmp_path: Path,
+) -> None:
+    """Links cannot bypass the directory-entry budget just because they are skipped."""
+    root = tmp_path / "Project"
+    root.mkdir()
+    target = tmp_path / "target.md"
+    target.write_text("target", encoding="utf-8")
+    (root / "one-link").symlink_to(target)
+    (root / "two-link").symlink_to(target)
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([root], _discovery_bounds(max_entries=1))
+
+    assert raised.value.reason_code == "max_entries_exceeded"
+
+
+def test_entry_limit_stops_directory_enumeration_before_unbounded_sort(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breadth rejection occurs while enumerating, before sorting an oversized list."""
+    root = tmp_path / "Project"
+    root.mkdir()
+
+    class GuardedScandir:
+        yielded = 0
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def __iter__(self) -> Self:
+            return self
+
+        def __next__(self) -> SimpleNamespace:
+            self.yielded += 1
+            if self.yielded > 3:
+                raise AssertionError("discovery consumed beyond the entry bound")
+            return SimpleNamespace(name=f"entry-{self.yielded}")
+
+    guarded = GuardedScandir()
+    monkeypatch.setattr(os, "scandir", lambda _directory_fd: guarded)
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([root], _discovery_bounds(max_entries=2))
+
+    assert raised.value.reason_code == "max_entries_exceeded"
+    assert guarded.yielded == 3
+
+
+def test_selected_file_count_and_size_limits_fail_closed(tmp_path: Path) -> None:
+    """Direct file selections obey the same candidate and byte ceilings."""
+    first = tmp_path / "first.md"
+    second = tmp_path / "second.md"
+    first.write_bytes(b"12")
+    second.write_bytes(b"34")
+
+    with pytest.raises(ImportSelectionError) as count_error:
+        discover_import_sources(
+            [first, second],
+            _discovery_bounds(max_files=1),
+        )
+    assert count_error.value.reason_code == "max_files_exceeded"
+
+    with pytest.raises(ImportSelectionError) as total_error:
+        discover_import_sources(
+            [first, second],
+            _discovery_bounds(max_file_bytes=3, max_total_bytes=3),
+        )
+    assert total_error.value.reason_code == "max_total_bytes_exceeded"
+
+
+def test_duplicate_selected_file_display_names_are_rejected(tmp_path: Path) -> None:
+    """Separate files cannot produce an ambiguous manual-selection display path."""
+    first = tmp_path / "first" / "note.md"
+    second = tmp_path / "second" / "note.md"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_text("one", encoding="utf-8")
+    second.write_text("two", encoding="utf-8")
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([first, second], _discovery_bounds())
+
+    assert raised.value.reason_code == "ambiguous_display_path"
+
+
+@pytest.mark.parametrize("max_entries", [0, -1])
+def test_import_bounds_require_a_positive_entry_limit(max_entries: int) -> None:
+    """Breadth must have its own finite, explicit capacity."""
+    with pytest.raises(ValueError, match="max_entries"):
+        _discovery_bounds(max_entries=max_entries)
+
+
+def test_import_bounds_entry_limit_rejects_booleans() -> None:
+    """A boolean cannot masquerade as a directory-entry budget."""
+    with pytest.raises(TypeError, match="max_entries"):
+        _discovery_bounds(max_entries=True)
+
+
+def test_discovery_performs_no_app_level_filesystem_mutation(
+    tmp_path: Path,
+) -> None:
+    """Discovery reads metadata only and leaves the selected tree byte-identical."""
+    root = tmp_path / "Project"
+    nested = root / "child"
+    nested.mkdir(parents=True)
+    note = nested / "note.md"
+    note.write_bytes(b"unchanged")
+    before = {
+        path.relative_to(root).as_posix(): (
+            "directory" if path.is_dir() else path.read_bytes()
+        )
+        for path in root.rglob("*")
+    }
+
+    discovery = discover_import_sources([root], _discovery_bounds())
+
+    after = {
+        path.relative_to(root).as_posix(): (
+            "directory" if path.is_dir() else path.read_bytes()
+        )
+        for path in root.rglob("*")
+    }
+    assert discovery.candidates
+    assert after == before
+
+
+def test_discovery_aggregate_copies_collections_into_immutable_tuples() -> None:
+    """Frozen discovery results cannot retain mutable caller-owned collections."""
+    candidates: list[object] = []
+    failures: list[object] = []
+
+    discovery = ImportDiscovery(
+        candidates=candidates,  # type: ignore[arg-type]
+        failures=failures,  # type: ignore[arg-type]
+        root_label=None,
+        total_bytes=0,
+        entry_count=0,
+    )
+    candidates.append(object())
+    failures.append(object())
+
+    assert discovery.candidates == ()
+    assert discovery.failures == ()
+    with pytest.raises(FrozenInstanceError):
+        discovery.total_bytes = 1  # type: ignore[misc]

@@ -234,6 +234,7 @@ class ImportBounds:
     max_total_bytes: int
     max_depth: int
     max_reason_length: int = 240
+    max_entries: int = 10_000
 
     def __post_init__(self) -> None:
         positive_fields = (
@@ -241,6 +242,7 @@ class ImportBounds:
             "max_file_bytes",
             "max_total_bytes",
             "max_reason_length",
+            "max_entries",
         )
         for field_name in positive_fields:
             value = getattr(self, field_name)
