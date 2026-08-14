@@ -2,6 +2,7 @@
 
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -211,6 +212,29 @@ def test_update_requires_an_exact_or_user_confirmed_match(
                 ImportAction.UPDATE_EXISTING,
             ],
             match=match,
+            replace_content=True,
+        )
+
+
+def test_update_rejects_a_mutable_exact_match_lookalike() -> None:
+    """Only the immutable public match record can authorize an update."""
+    mutable_match = SimpleNamespace(
+        kind=ImportMatchKind.EXACT,
+        note_id="note-7",
+        note_version=4,
+        fingerprint="private-fingerprint",
+    )
+
+    with pytest.raises(TypeError, match="ImportMatch"):
+        _new_item(
+            classification=ImportClassification.CHANGED_REPEAT,
+            selected_action=ImportAction.UPDATE_EXISTING,
+            allowed_actions=[
+                ImportAction.SKIP,
+                ImportAction.CREATE_NEW,
+                ImportAction.UPDATE_EXISTING,
+            ],
+            match=mutable_match,
             replace_content=True,
         )
 

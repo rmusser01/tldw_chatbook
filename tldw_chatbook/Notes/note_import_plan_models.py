@@ -282,6 +282,8 @@ class ImportPreviewItem:
             raise ValueError("item_id must be non-empty text.")
         if not isinstance(self.source, ImportSource):
             raise TypeError("source must be an ImportSource.")
+        if self.match is not None and not isinstance(self.match, ImportMatch):
+            raise TypeError("match must be an ImportMatch when provided.")
         if not all(isinstance(payload, ParsedNotePayload) for payload in payloads):
             raise ValueError("payloads must contain ParsedNotePayload values.")
         if not all(
