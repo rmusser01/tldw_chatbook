@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 
 import pytest
-from textual.app import App
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
