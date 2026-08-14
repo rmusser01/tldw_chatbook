@@ -4,7 +4,7 @@
 
 **Goal:** Identify and remove the measured CPU spin in the first fresh-profile Library RAG Answer query so the exact 36-note cold fixture renders its first Evidence row in under 30 seconds without freezing the TUI or permitting overlapping stale retrieval work.
 
-**Architecture:** Preserve Library's existing request/state ownership and the process-wide `EnhancedRAGServiceV2` runtime. The completed profile names the Textual input-mirror spin: suppress the programmatic sibling event at `_patch_sibling_library_search_input()` with Textual's existing `prevent(Input.Changed)` mechanism. A separate required supersession RED proves Textual cancellation does not stop an already-admitted `asyncio.to_thread` retrieval; serialize those admitted calls with one screen-owned async lock and retain the canceled worker's shielded retrieval task to settlement before releasing the lock and re-raising, without changing the retrieval runtime or service contract.
+**Architecture:** Preserve Library's existing request/state ownership and the process-wide `EnhancedRAGServiceV2` runtime. The completed profile names the Textual input-mirror spin: suppress the programmatic sibling event at `_patch_sibling_library_search_input()` with Textual's existing `prevent(Input.Changed)` mechanism. Supersession REDs prove Textual cancellation does not stop an already-admitted `asyncio.to_thread` retrieval and navigation replaces `LibraryScreen`; serialize those admitted calls with one narrow Library-only, app-lifetime async lock exposed by `TldwCli`, while each screen worker retains its canceled shielded retrieval task to settlement before releasing admission and re-raising. Normalize a restored transient `searching` status because no worker is restored with the fresh screen. This adds no broad root state and changes no retrieval runtime or service contract.
 
 **Tech Stack:** Python 3.11+, asyncio, Textual 8.x workers/Pilot, `EnhancedRAGServiceV2`, Chroma/SQLite FTS5, py-spy or cProfile, pytest, Ruff.
 
@@ -14,7 +14,7 @@
 
 - Design authority: `Docs/superpowers/specs/2026-08-13-task-15810-library-rag-first-query-design.md`.
 - Task authority: `backlog/tasks/task-15810 - Library-RAG-Answers-first-query-on-a-fresh-profile-never-returns-CPU-bound-reproduced-twice.md`.
-- Existing ownership: ADR-003 (`backlog/decisions/003-settings-library-rag-defaults.md`) and ADR-005 (`backlog/decisions/005-invest-in-local-rag-mirroring-tldw-server.md`).
+- Existing ownership: ADR-003 (`backlog/decisions/003-settings-library-rag-defaults.md`), ADR-005 (`backlog/decisions/005-invest-in-local-rag-mirroring-tldw-server.md`), and ADR-033 (`backlog/decisions/033-application-session-state-ownership.md`).
 - Worktree: `.worktrees/task-15810-rag-first-query`; branch `codex/task-15810-rag-first-query`, rebased on `origin/dev` before this plan.
 - Python: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python`. Before every profile/test command, assert `tldw_chatbook.__file__` resolves beneath this worktree by setting `PYTHONPATH` to the worktree root. A main-checkout import is a failed run.
 - Baseline at plan time: 143 focused Library RAG service/Pilot tests passed.
@@ -22,8 +22,9 @@
   independently approved plan amendment names that edit's exact file/function,
   complete RED test, mutation, complete implementation snippet, owner suite,
   Ruff targets, and downstream commands. The profile rejects retrieval
-  offloading as the spin fix; the independently reproduced supersession RED
-  still requires serialization at the existing screen orchestration boundary.
+  offloading as the spin fix; independently reproduced same-screen and
+  cross-screen supersession REDs still require Library-only admission
+  serialization across the app session.
 - Never log or store query text, note bodies, retrieved content, answer prompts, credentials, or secrets in profiler/diagnostic artifacts. The approved fixed queries may appear in the fixture description, but profile output remains symbol/timing-only.
 - No new dependency, retrieval implementation, runtime, process pool, cache
   layer, or background warm-up. The QA harness may clone the already-cached
@@ -46,18 +47,23 @@ Files fixed before profiling:
 
 Files selected by the named profile and required supersession RED:
 
+- Modify: `tldw_chatbook/app.py` — expose one lazy, Library-only app-lifetime
+  retrieval-admission lock so fresh `LibraryScreen` instances share the same
+  admission owner without adding broad root application state.
 - Modify: `tldw_chatbook/UI/Screens/library_screen.py` — suppress the sibling
   input's programmatic `Input.Changed` in
-  `LibraryScreen._patch_sibling_library_search_input()`, and serialize retained
-  underlying retrieval tasks in `LibraryScreen._execute_library_rag_search()`.
+  `LibraryScreen._patch_sibling_library_search_input()`, use the app-lifetime
+  Library admission accessor in `LibraryScreen._execute_library_rag_search()`,
+  and normalize a restored transient `searching` status.
 - Test: `Tests/UI/test_library_shell.py` — use the real `LibraryHarness`, both
-  mounted inputs, real handlers, real Textual message pump, and the existing
-  Library RAG worker seam.
+  mounted inputs, real handlers, real Textual message pump, the existing
+  Library RAG worker seam, and real `TldwCli` fresh-screen navigation.
 
 No RAG engine, runtime construction, service, or storage file is selected. The
 direct service-only run completed and the live profile measured the repeated UI
-caller chain below. The same screen file additionally owns the required
-serialization of superseded but still-running underlying retrieval calls.
+caller chain below. `LibraryScreen` continues to own requests, workers, stale
+suppression, and results; `TldwCli` coordinates only the smallest app-lifetime
+Library admission primitive required because navigation replaces that screen.
 
 ---
 
@@ -324,12 +330,13 @@ Expected: committed evidence before any production diff exists.
 
 ---
 
-### Task 2: Convert the profile into one exact RED regression and amend this plan
+### Task 2: Convert the profile and supersession probes into exact regressions
 
 **Files:**
 
 - Modify: `Docs/superpowers/plans/2026-08-13-task-15810-library-rag-first-query.md`
 - Test: `Tests/UI/test_library_shell.py`
+- Later production edit: `tldw_chatbook/app.py`
 - Later production edit: `tldw_chatbook/UI/Screens/library_screen.py`
 
 - [ ] **Step 1: Record the profiled chain, mechanism, and ADR decision**
@@ -364,25 +371,47 @@ Textual cancels B's worker coroutine, but B's already-admitted
 retrievals. D also cancels B a second time while superseding C, so the retained
 cancellation loop must survive repeated cancellation until B really settles.
 
-Lowest shared owner:
+Post-implementation navigation probing exposed a second lifetime hole:
+`TldwCli._create_navigation_screen()` constructs a fresh `LibraryScreen` on
+every entry. Two real screen instances therefore had distinct per-screen
+locks, and a D Run after navigating away entered alongside B (`active=2`,
+`max_active=2`, `distinct_locks=True`). The outgoing state snapshot also
+persisted `retrieval_status="searching"`, although the new screen restores no
+worker capable of settling that transient status.
+
+Lowest mirror-event owner:
 `LibraryScreen._patch_sibling_library_search_input()` in
 `tldw_chatbook/UI/Screens/library_screen.py`. Both handlers already call it,
 and Textual's `prevent(Input.Changed)` is an established repository pattern.
+
+Narrow admission-lifetime owner:
+`TldwCli.library_rag_search_execution_lock()` in `tldw_chatbook/app.py`.
+`TldwCli` already coordinates fresh-screen construction and owns other lazy
+application-lifetime locks such as `_screen_navigation_lock()`. The new
+accessor owns only admission for Library retrieval calls; query construction,
+worker cancellation retention, stale suppression, outcome application, and
+saved Library view state remain in `LibraryScreen`. It is not added to a broad
+root `AppState` or to the RAG service.
 
 ADR required: no
 
 ADR path: N/A
 
-Reason: both corrections stay inside the existing `LibraryScreen` orchestration
-owner: one suppresses a programmatic mirror event and one serializes already
-admitted retrieval calls until their real underlying work settles. They change
-no runtime, service, storage, security, dependency, or cross-module contract;
-ADR-003 and ADR-005 remain unchanged.
+Reason: this is direct conformance to existing decisions, not a new boundary.
+ADR-003 keeps active Library query execution/source/results in Library;
+ADR-005 keeps the existing local RAG runtime/service direction; ADR-033 says
+navigation creates fresh screens, app-lifetime coordination belongs in a
+narrow owner, and broad root application state is forbidden. `TldwCli` exposes
+one Library-specific lock while `LibraryScreen` retains all domain behavior.
+Normalizing a transient `searching` snapshot merely prevents a fresh screen
+from claiming an operation it does not own. No storage, service, runtime,
+security, dependency, or cross-module service contract changes.
 
 - [ ] **Step 2: Add the complete gated-service helper and mechanism RED test**
 
 Add this helper near the existing `_GatedLibraryRagSearchService` fakes in
-`Tests/UI/test_library_shell.py`; both mandatory seam tests below use it:
+`Tests/UI/test_library_shell.py`; the mandatory gated execution tests below use
+it:
 
 ```python
 class _SequencedGatedLibraryRagSearchService:
@@ -575,11 +604,14 @@ async def test_library_shell_gated_search_keeps_heartbeat_and_navigation_live():
             assert not service.finished["B"].is_set()
         finally:
             service.release["B"].set()
-            await _wait_for_condition(
-                pilot,
-                service.finished["B"].is_set,
-                message="The gated Library search did not terminate after release.",
-            )
+            if service.entered["B"].is_set():
+                await _wait_for_condition(
+                    pilot,
+                    service.finished["B"].is_set,
+                    message=(
+                        "The admitted Library search did not terminate after release."
+                    ),
+                )
             await _wait_for_condition(
                 pilot,
                 lambda: not any(
@@ -589,7 +621,6 @@ async def test_library_shell_gated_search_keeps_heartbeat_and_navigation_live():
                 ),
                 message="The gated Library search worker did not terminate.",
             )
-            await screen.workers.wait_for_complete()
             await pilot.pause()
 ```
 
@@ -601,7 +632,11 @@ PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/py
 
 Expected before and after the input-mirror fix: PASS. This is a mandatory
 regression protecting the already-correct worker/event-loop boundary; the
-profile does not authorize changing that boundary.
+profile does not authorize changing that boundary. Opening B's gate happens
+unconditionally, but teardown waits for `finished["B"]` only if B was actually
+admitted; a failure before admission therefore cannot replace the original
+assertion with a teardown timeout. The worker-group poll still catches a
+scheduled-but-not-yet-admitted worker, which sees the already-open gate.
 
 - [ ] **Step 4: Add the mandatory repeated-supersession/no-overlap RED**
 
@@ -615,7 +650,7 @@ apply, then the test navigates back to Search and asserts mounted D evidence.
 
 ```python
 @pytest.mark.asyncio
-async def test_library_shell_repeated_supersession_serializes_retrieval(
+async def test_library_shell_repeated_supersession_serializes_underlying_retrieval(
     monkeypatch,
 ):
     app = _build_test_app()
@@ -740,7 +775,6 @@ async def test_library_shell_repeated_supersession_serializes_retrieval(
                 ),
                 message="Library RAG workers did not terminate after D settled.",
             )
-            await screen.workers.wait_for_complete()
             screen.query_one("#library-row-browse-search", Button).press()
             await _wait_for_selector(screen, pilot, "#library-rag-result-0")
             await pilot.pause()
@@ -761,7 +795,6 @@ async def test_library_shell_repeated_supersession_serializes_retrieval(
                 ),
                 message="A Library RAG worker remained active at teardown.",
             )
-            await screen.workers.wait_for_complete()
 
         assert service.snapshot() == (("B", "D"), 0, 1)
         assert not service.entered["C"].is_set()
@@ -777,48 +810,288 @@ async def test_library_shell_repeated_supersession_serializes_retrieval(
 Run:
 
 ```bash
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_retrieval -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_underlying_retrieval -q --tb=short
 ```
 
 Expected before serialization: FAIL before B is released because C and D enter
 underlying calls instead of waiting; calls differ from `("B",)` and max active
 exceeds one. The `finally` block opens all three gates, polls real worker
-registration without canceling a worker, then performs the now-immediate plain
-worker wait, so the RED is bounded and cannot leak executor threads.
+registration without canceling a worker, and does not wait on the unrelated
+app-wide worker manager, so the RED is bounded and cannot leak executor
+threads.
 
 The mounted-harness prototype of the approved retained loop observed
 `(("B",), active=1, max=1)` before release, then `("B", "D")` with
 active/max still one, and terminal active zero with only D applied and mounted.
 
-- [ ] **Step 5: Independently re-review the amended plan**
+- [ ] **Step 5: Add the real-navigation app-lifetime admission RED**
 
-Dispatch one plan-document reviewer with this plan, the design spec, task, and profile report. Do not proceed until it confirms that the proposed test fails for the profiled mechanism and the fix is the lowest shared owner. Limit the loop to three review passes.
+This test uses the real `TldwCli.handle_screen_navigation()` path, not a
+two-screen harness shortcut. B enters on the first `LibraryScreen`; navigation
+to Home saves that screen and cancels its worker while its admitted thread
+drains. Re-entering Library creates a different screen, where D must wait on
+the same narrow app-lifetime admission lock. Add a local import for
+`NavigateToScreen` in the test body so the existing module import surface is
+not broadened unnecessarily.
 
-- [ ] **Step 6: Write every regression before production code**
+```python
+@pytest.mark.asyncio
+async def test_library_shell_fresh_screen_reentry_serializes_draining_retrieval(
+    monkeypatch,
+):
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
-Write the amended mechanism regression, heartbeat regression, and
-supersession/serialization regression before production code. The heartbeat is
-mandatory even though it passes on the unfixed implementation; the mechanism
-and real-Run supersession nodes must both fail for their named reasons. Prefer
-deterministic counts/state/termination assertions over a wall-clock timeout.
-The profile selected the UI screen owner, so no concrete-engine fixture is
-required or permitted for these screen-owned corrections.
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    service = _SequencedGatedLibraryRagSearchService()
+    app.library_rag_search_service = service
+    applied_queries: list[tuple[int, str]] = []
+    real_apply = LibraryScreen._apply_library_rag_search_outcome
 
-- [ ] **Step 7: Run RED and inspect the reason**
+    async def recording_apply(screen, request, outcome):
+        applied_queries.append((id(screen), request.query))
+        await real_apply(screen, request, outcome)
 
-Run the three exact node commands above, then the combined command:
+    monkeypatch.setattr(
+        LibraryScreen, "_apply_library_rag_search_outcome", recording_apply
+    )
 
-```bash
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_retrieval -q --tb=short
+    async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        first = None
+        second = None
+        try:
+            await _wait_for_condition(
+                pilot,
+                lambda: getattr(app, "_initial_screen_pushed", False),
+                message="The app never finished pushing its initial screen.",
+            )
+            await app.handle_screen_navigation(NavigateToScreen("library"))
+            first = app.screen
+            assert isinstance(first, LibraryScreen)
+            await _wait_for_library_shell(first, pilot)
+            first.query_one("#library-row-browse-search", Button).press()
+            await _wait_for_selector(first, pilot, "#library-rag-query-input")
+            first.query_one("#library-rag-query-input", Input).value = "B"
+            await _wait_for_library_rag_query_ready(first, pilot, "B")
+            first.query_one("#library-rag-run-query", Button).press()
+            await _wait_for_condition(
+                pilot,
+                service.entered["B"].is_set,
+                message="Query B never entered on the first Library screen.",
+            )
+
+            await app.handle_screen_navigation(NavigateToScreen("home"))
+            assert app.screen is not first
+            await app.handle_screen_navigation(NavigateToScreen("library"))
+            second = app.screen
+            assert isinstance(second, LibraryScreen)
+            assert second is not first
+            await _wait_for_library_shell(second, pilot)
+            await _wait_for_selector(second, pilot, "#library-rag-query-input")
+
+            canvas = second.query_one("#library-rag-query-input", Input)
+            canvas.value = "D"
+            await _wait_for_library_rag_query_ready(second, pilot, "D")
+            second.query_one("#library-rag-run-query", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    service.entered["D"].is_set()
+                    or any(
+                        worker.node is second
+                        and worker.group == "library_rag_search"
+                        for worker in app.workers
+                    )
+                ),
+                message="Query D never entered or registered after re-entry.",
+            )
+            heartbeat = asyncio.Event()
+            second.call_later(heartbeat.set)
+            await _wait_for_condition(
+                pilot,
+                heartbeat.is_set,
+                message="The fresh Library screen heartbeat stalled behind B.",
+            )
+            for _ in range(8):
+                await pilot.pause()
+
+            assert service.snapshot() == (("B",), 1, 1)
+            assert not service.entered["D"].is_set()
+            assert applied_queries == []
+
+            service.release["B"].set()
+            await _wait_for_condition(
+                pilot,
+                service.entered["D"].is_set,
+                message="Query D did not enter after query B settled.",
+            )
+            assert service.finished["B"].is_set()
+            assert service.snapshot() == (("B", "D"), 1, 1)
+            assert applied_queries == []
+
+            service.release["D"].set()
+            await _wait_for_condition(
+                pilot,
+                service.finished["D"].is_set,
+                message="Query D did not finish after release.",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: not any(
+                    (worker.node is first or worker.node is second)
+                    and worker.group == "library_rag_search"
+                    for worker in app.workers
+                ),
+                message="A cross-screen Library RAG worker did not terminate.",
+            )
+            await _wait_for_selector(second, pilot, "#library-rag-result-0")
+        finally:
+            for query in ("B", "C", "D"):
+                service.release[query].set()
+            for query in ("B", "C", "D"):
+                if service.entered[query].is_set():
+                    await _wait_for_condition(
+                        pilot,
+                        service.finished[query].is_set,
+                        message=f"Admitted query {query} did not terminate.",
+                    )
+            await _wait_for_condition(
+                pilot,
+                lambda: service.snapshot()[1] == 0,
+                message="A cross-screen retrieval thread remained active.",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: not any(
+                    (worker.node is first or worker.node is second)
+                    and worker.group == "library_rag_search"
+                    for worker in app.workers
+                ),
+                message="A cross-screen Library RAG worker remained registered.",
+            )
+
+        assert second is not None
+        assert service.snapshot() == (("B", "D"), 0, 1)
+        assert applied_queries == [(id(second), "D")]
+        assert second._library_rag_query == "D"
+        assert [row.title for row in second._library_rag_results] == ["D"]
+        assert second._library_rag_retrieval_status == "ready"
+        assert second.query_one("#library-rag-query-input", Input).value == "D"
+        assert second.query("#library-rag-result-0")
 ```
 
-Expected: two failures and one pass. The mechanism test fails because
-`mirror_calls` contains the reproduced 10-call A/B chain. The supersession test
-fails before B release because C/D entered and max active calls exceeded one.
-Neither failure may be a timeout, fixture error, selector error, or dependency
-failure.
+Run:
 
-- [ ] **Step 8: Pin the complete minimal production edit and inverse mutation**
+```bash
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_fresh_screen_reentry_serializes_draining_retrieval -q --tb=short
+```
+
+Expected before the app-lifetime fix: FAIL before B release because the fresh
+screen's distinct lock admits D; calls are `("B", "D")` and max active is two.
+The existing same-screen B-to-C-to-D test remains mandatory and still proves
+repeated cancellation on one screen. This new test proves the separate
+application-lifetime invariant across real screen replacement.
+
+The real-navigation prototype failed the current per-screen implementation at
+the pre-release snapshot assertion and completed teardown. Injecting one shared
+lock across both real screen instances made the identical body pass: heartbeat
+ran while D waited, calls settled in B/D order, max active stayed one, and only
+the fresh screen applied D.
+
+- [ ] **Step 6: Add the transient restored-status RED**
+
+Persisted evidence and settled statuses remain valid destination state, but
+`searching` describes a live worker and cannot survive into a fresh screen that
+does not restore that worker. Drive the real save/restore pair and mount the
+fresh screen to pin both state and control behavior:
+
+```python
+@pytest.mark.asyncio
+async def test_library_shell_restore_normalizes_transient_rag_searching_state():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    original = LibraryScreen(app)
+    original._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
+    original._library_rag_query = "B"
+    original._library_rag_retrieval_status = "searching"
+    saved = original.save_state()
+    assert saved["library_rag_retrieval_status"] == "searching"
+
+    restored = LibraryScreen(app)
+    restored.restore_state(saved)
+    assert restored._library_rag_retrieval_status == ""
+    host = LibraryHarness(app, screen=restored)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        await _wait_for_library_rag_query_ready(screen, pilot, "B")
+
+        assert screen._library_rag_retrieval_status == ""
+        assert screen.query_one("#library-rag-query-input", Input).value == "B"
+        assert screen.query_one("#library-rag-run-query", Button).disabled is False
+        assert not screen.query("#library-rag-searching-line")
+```
+
+Run:
+
+```bash
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_restore_normalizes_transient_rag_searching_state -q --tb=short
+```
+
+Expected before normalization: FAIL because the restored screen still reports
+`searching` and mounts its searching line despite owning no corresponding
+worker. Query text, settled evidence, and non-transient statuses are unchanged.
+The current implementation fails immediately on the direct restored-status
+assertion (not on a readiness timeout); emulating the exact normalization makes
+the complete mounted Run-enabled/status-line body pass.
+
+- [ ] **Step 7: Independently re-review the amended plan**
+
+Dispatch independent spec and quality plan-document reviewers with this plan,
+the design spec, task, profile report, ADR-003, ADR-005, and ADR-033. Do not
+proceed until both confirm that the current two REDs fail for the named
+lifetime/state mechanisms, the prior three regressions remain coherent, and
+the app-lifetime Library-only lock is the smallest compliant owner. Limit the
+loop to three review passes.
+
+- [ ] **Step 8: Write every regression before production code**
+
+The mirror, heartbeat, and same-screen supersession regressions already exist
+and pass on the current post-implementation branch. Write the new fresh-screen-
+reentry and restored-status regressions before any further production edit;
+both must fail for their newly named reasons. Keep all five nodes as the final
+contract. Prefer deterministic counts/state/termination assertions over a
+wall-clock timeout. The profile selected UI/app orchestration, so no concrete-
+engine fixture is required or permitted for these corrections.
+
+- [ ] **Step 9: Run RED and inspect the reason**
+
+Run the five exact node commands above, then the combined command:
+
+```bash
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_underlying_retrieval Tests/UI/test_library_shell.py::test_library_shell_fresh_screen_reentry_serializes_draining_retrieval Tests/UI/test_library_shell.py::test_library_shell_restore_normalizes_transient_rag_searching_state -q --tb=short
+```
+
+Expected on the current post-implementation branch before this amendment's
+production edit: mirror PASS, heartbeat PASS, same-screen supersession PASS,
+fresh-screen re-entry FAIL because D overlaps B, and restore FAIL immediately
+because dead `searching` survives. Historical RED/mutation evidence remains:
+removing `prevent` fails the mirror count and removing same-screen retained
+serialization fails the B-to-C-to-D max-active contract. No failure may be a
+timeout, fixture error, selector error, dependency failure, or teardown masking
+the original assertion.
+
+Post-implementation amendment stop rule: make no further production edit until
+the fresh-screen node fails specifically with B/D overlap on the current
+per-screen lock, the restore node fails immediately on retained `searching`,
+both complete teardown, and independent spec/quality review approves the
+app-lifetime Library-only owner. If real navigation requires broader app state,
+service locking, a new runtime contract, or a different persistence policy,
+stop and revisit the ADR decision instead of expanding this patch.
+
+- [ ] **Step 10: Pin the complete minimal production edit and inverse mutation**
 
 In `LibraryScreen._patch_sibling_library_search_input()`, replace only the
 assignment block with:
@@ -833,26 +1106,35 @@ Update the helper docstring's final sentence to say that the programmatic
 assignment suppresses the sibling Changed event, rather than claiming the
 sibling handler makes it harmless.
 
-In `LibraryScreen.__init__`, immediately after
-`_library_rag_panel_refresh_lock`, add the screen-owned admission lock:
+In `TldwCli`, immediately before `_screen_navigation_lock()`, add the narrow
+lazy application-lifetime accessor, matching that existing lock's lifecycle:
 
 ```python
-        # A superseded Textual worker cannot stop an already-admitted
-        # asyncio.to_thread retrieval. Keep the next Run asynchronous but
-        # serialized until that real underlying call settles.
-        self._library_rag_search_execution_lock = asyncio.Lock()
+    def library_rag_search_execution_lock(self) -> asyncio.Lock:
+        """Return the app-lifetime admission lock for Library retrieval calls.
+
+        Returns:
+            The shared Library-only admission lock for this app session.
+        """
+        lock = getattr(self, "_library_rag_search_execution_lock_instance", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._library_rag_search_execution_lock_instance = lock
+        return lock
 ```
 
-Replace `_execute_library_rag_search()`'s body with:
+Do not add this lock to a generic `AppState`, runtime-policy object, or RAG
+service. Remove the per-screen `_library_rag_search_execution_lock` constructor
+line, then replace `_execute_library_rag_search()`'s body with:
 
 ```python
-        """Serialize retrieval admission and retain repeated cancellation.
+        """Serialize Library admission across screens and retain cancellation.
 
-        Canceled workers drain admitted retrievals under the lock, then
-        re-raise before outcome application so stale work cannot overlap or
-        apply after a newer request.
+        The app-lifetime Library-only lock prevents fresh screens from
+        overlapping admitted calls. Canceled workers drain admitted retrievals
+        under that lock, then re-raise before stale outcomes can apply.
         """
-        async with self._library_rag_search_execution_lock:
+        async with self.app_instance.library_rag_search_execution_lock():
             retrieval_task = asyncio.create_task(
                 run_library_rag_search(self.app_instance, request)
             )
@@ -868,6 +1150,34 @@ Replace `_execute_library_rag_search()`'s body with:
             await self._apply_library_rag_search_outcome(request, outcome)
 ```
 
+In `LibraryScreen.restore_state()`, replace the direct retrieval-status restore
+with the exact transient normalization:
+
+```python
+        restored_retrieval_status = str(
+            state.get("library_rag_retrieval_status") or ""
+        )
+        self._library_rag_retrieval_status = (
+            "" if restored_retrieval_status == "searching"
+            else restored_retrieval_status
+        )
+```
+
+Only `searching` is normalized. Settled `ready`, `empty`, recovery/error state,
+results, query, diagnostics, and searched-query state retain the existing
+snapshot contract.
+
+Update `save_state()`'s existing RAG snapshot paragraph so it no longer claims
+every retrieval status is restored verbatim. Replace that paragraph with:
+
+```python
+        The RAG results tuple and settled retrieval/recovery state are safe to
+        carry because their rows are frozen dataclasses. A transient
+        ``searching`` value may be snapshotted while admitted work drains, but
+        ``restore_state`` normalizes it because a fresh screen owns no matching
+        worker.
+```
+
 The lock acquisition remains an ordinary await: if C is superseded by D while
 still waiting for B, C cancels without starting underlying work. Once a request
 has acquired the lock and created its retrieval task, cancellation is retained
@@ -879,6 +1189,17 @@ is the same retained-shield pattern already used by
 Mirror inverse mutation: remove the `with sibling.prevent(Input.Changed):`
 context and restore the direct `sibling.value = value`. Run the mechanism node
 and prove it fails with the bounded 10-call chain.
+
+Application-lifetime inverse mutation: restore the removed per-screen
+`asyncio.Lock()` and make `_execute_library_rag_search()` acquire it instead of
+the app accessor. Run the fresh-screen-reentry node. It must fail before B is
+released with calls `("B", "D")`, active/max two, while the same-screen
+B-to-C-to-D node still passes. This proves the lifetime change, not merely the
+presence of a lock.
+
+Transient-state inverse mutation: restore the raw `str(...)` assignment in
+`restore_state()`. Run the restored-status node and prove it fails on the dead
+`searching` status/searching line while the query remains Run-enabled.
 
 Repeated-cancellation inverse mutation: replace the `while` loop only with this
 one-shot catch, leaving the lock and owned retrieval task intact:
@@ -895,29 +1216,32 @@ Keep `outcome = retrieval_task.result()` immediately after this mutated block.
 Run the repeated-supersession node. D's second cancellation escapes the
 one-shot catch, releases B's admission lock while B's underlying thread still
 runs, and admits D: the prototype observed calls `("B", "D")` with
-active/max equal to two before B release. Restore the retained `while` loop and
-mirror snippet only through `apply_patch`, rerun all three nodes, and inspect
-the diff.
+active/max equal to two before B release. Restore the retained `while` loop,
+app-lifetime accessor, status normalization, and mirror snippet only through
+`apply_patch`; rerun all five nodes and inspect the diff.
 
-Expected: each mutation fails only its named mechanism; restoring both snippets
-makes all three nodes pass.
+Expected: each mutation fails only its named mechanism; restoring all snippets
+makes all five nodes pass.
 
 ---
 
-### Task 3: Apply the two approved screen-owned corrections
+### Task 3: Apply the approved narrow UI/app-lifetime corrections
 
 **Files:**
 
+- Modify: `tldw_chatbook/app.py`
 - Modify: `tldw_chatbook/UI/Screens/library_screen.py`
 - Test: `Tests/UI/test_library_shell.py`
 
 - [ ] **Step 1: Implement only the amended code snippets**
 
-Apply the `prevent(Input.Changed)` mirror fix, one execution-lock constructor
-line, the concise worker-orchestration docstring, and the retained shield loop
-exactly as amended. Keep request/outcome contracts, active-profile routing,
-ranking, source filtering, citations, and error shapes unchanged. Do not add a
-second retrieval path.
+Apply the `prevent(Input.Changed)` mirror fix, the lazy app-lifetime
+Library-only lock accessor, removal of the per-screen lock, the concise
+worker-orchestration docstring, retained shield loop, and transient restored-
+status normalization plus snapshot-docstring correction exactly as amended.
+Keep request/outcome contracts,
+active-profile routing, ranking, source filtering, citations, and error shapes
+unchanged. Do not add a broad app-state field or second retrieval path.
 
 - [ ] **Step 2: Run the RED node to GREEN**
 
@@ -926,7 +1250,9 @@ Run:
 ```bash
 PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic -q --tb=short
 PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live -q --tb=short
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_retrieval -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_underlying_retrieval -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_fresh_screen_reentry_serializes_draining_retrieval -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_restore_normalizes_transient_rag_searching_state -q --tb=short
 ```
 
 Expected: PASS with the measured operation bounded/terminated as asserted.
@@ -934,11 +1260,11 @@ Expected: PASS with the measured operation bounded/terminated as asserted.
 - [ ] **Step 3: Run the closest owner suite**
 
 ```bash
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py Tests/UI/test_screen_navigation.py -q --tb=short
 ```
 
-Expected: the complete owning Library shell suite passes; no tests collected is
-failure.
+Expected: the complete owning Library shell and real-navigation suites pass; no
+tests collected is failure.
 
 - [ ] **Step 4: Commit the mechanism fix**
 
@@ -947,9 +1273,9 @@ then stage only the exact amended test/production/plan files and commit the
 regression and minimal implementation together:
 
 ```bash
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/UI/Screens/library_screen.py Tests/UI/test_library_shell.py
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/app.py tldw_chatbook/UI/Screens/library_screen.py Tests/UI/test_library_shell.py
 git diff --check
-git add Docs/superpowers/plans/2026-08-13-task-15810-library-rag-first-query.md Tests/UI/test_library_shell.py tldw_chatbook/UI/Screens/library_screen.py
+git add Docs/superpowers/plans/2026-08-13-task-15810-library-rag-first-query.md Tests/UI/test_library_shell.py tldw_chatbook/app.py tldw_chatbook/UI/Screens/library_screen.py
 git commit -m "fix(rag): bound the first Library query (TASK-15810)"
 ```
 
@@ -957,11 +1283,12 @@ Expected: no profiler-only, unrelated formatting, or speculative refactor hunks.
 
 ---
 
-### Task 4: Verify event-loop responsiveness and non-overlapping supersession
+### Task 4: Verify responsiveness and same-/cross-screen supersession
 
 **Files:**
 
 - Test: `Tests/UI/test_library_shell.py`
+- Verify only: `tldw_chatbook/app.py`
 - Verify only: `tldw_chatbook/UI/Screens/library_screen.py`
 
 - [ ] **Step 1: Confirm the prewritten deterministic heartbeat regression**
@@ -970,10 +1297,12 @@ Confirm
 `test_library_shell_gated_search_keeps_heartbeat_and_navigation_live` uses the
 real Library Run control and worker, holds its gated service active, then
 records a scheduled Textual heartbeat and Media-row navigation before opening
-the release event. The `finally` block always releases the blocking thread and
-polls `host.workers` for terminal group registration before the plain,
-now-immediate `screen.workers.wait_for_complete()`, so the bound never cancels
-the retained worker it is trying to observe.
+the release event. The `finally` block always opens B's gate, waits for
+`finished["B"]` only if admission actually occurred, then polls `host.workers`
+for terminal RAG-group registration. It deliberately does not call bare
+`screen.workers.wait_for_complete()`, which targets the entire app worker
+manager. A failure before admission therefore cannot hang in cleanup or mask
+the first assertion through unrelated work.
 
 Expected: the observation is exactly `(release_open=False, active=1,
 max_active=1, calls=("B",))`, the Media row is selected, and the service has
@@ -983,7 +1312,7 @@ fix because the profile rejected an event-loop offloading defect.
 - [ ] **Step 2: Confirm the prewritten supersession/serialization regression**
 
 Confirm
-`test_library_shell_repeated_supersession_serializes_retrieval` tracks active
+`test_library_shell_repeated_supersession_serializes_underlying_retrieval` tracks active
 underlying service threads with a lock-protected counter. Start B, Run C while
 B remains gated, then Run D while C waits, and assert:
 
@@ -998,46 +1327,65 @@ after navigating back to Search: mounted input/result and shared query == D
 
 The test enters three times through the real Run seam. Its `finally` block
 opens all three gates first, waits for active thread count zero, polls the real
-worker-group registration to empty, and only then performs the plain immediate
-`screen.workers.wait_for_complete()` before final mounted-state assertions.
+worker-group registration to empty, and then makes final mounted-state
+assertions. It never performs a bare all-manager worker wait.
 
-- [ ] **Step 3: Run RED where applicable**
+- [ ] **Step 3: Confirm cross-screen admission and restored-state regressions**
+
+Confirm
+`test_library_shell_fresh_screen_reentry_serializes_draining_retrieval` uses
+real app navigation and two distinct `LibraryScreen` instances. B remains an
+active admitted call after the first screen unmounts; D registers on the fresh
+screen without entering until B settles. Assert app heartbeat, calls/order,
+active/max one, terminal worker registration, and only fresh-screen D outcome.
+
+Confirm
+`test_library_shell_restore_normalizes_transient_rag_searching_state` drives
+the real `save_state()`/`restore_state()` pair. The fresh mounted screen keeps
+the query and a usable Run control but neither the transient `searching` value
+nor its in-flight status line.
+
+- [ ] **Step 4: Run RED where applicable**
 
 Run:
 
 ```bash
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_retrieval -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_underlying_retrieval Tests/UI/test_library_shell.py::test_library_shell_fresh_screen_reentry_serializes_draining_retrieval Tests/UI/test_library_shell.py::test_library_shell_restore_normalizes_transient_rag_searching_state -q --tb=short
 ```
 
-Expected before serialization: heartbeat PASS and supersession FAIL on
-calls/max-active before B release. Expected after both approved corrections:
-two passes. Both tests enter through real mounted Library controls and the real
-`_execute_library_rag_search` worker; only the service result is gated.
+Expected against the per-screen-lock implementation: heartbeat and same-screen
+supersession PASS; cross-screen admission FAIL on calls/max-active before B
+release; restore FAIL on dead `searching`. Expected after the amended fixes:
+four passes. All execution tests enter through real mounted Library controls
+and the real `_execute_library_rag_search` worker; only the service result is
+gated.
 
-- [ ] **Step 4: Stop on any unrelated worker defect**
+- [ ] **Step 5: Stop on any unrelated worker defect**
 
 Task 4 may not add production code: Task 3 already applies the independently
-reviewed screen-owned serialization. If either test exposes a different gap,
-stop and amend/re-review rather than adding another scheduler, service lock,
-process, or retrieval implementation.
+reviewed narrow app-lifetime admission owner and screen-owned worker retention.
+If any test exposes a different gap, stop and amend/re-review rather than adding
+another scheduler, service lock, process, or retrieval implementation.
 
-- [ ] **Step 5: Run GREEN**
+- [ ] **Step 6: Run GREEN**
 
 Run:
 
 ```bash
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_retrieval -q --tb=short
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py -q --tb=short
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/UI/Screens/library_screen.py Tests/UI/test_library_shell.py
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_underlying_retrieval Tests/UI/test_library_shell.py::test_library_shell_fresh_screen_reentry_serializes_draining_retrieval Tests/UI/test_library_shell.py::test_library_shell_restore_normalizes_transient_rag_searching_state -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py Tests/UI/test_screen_navigation.py -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/app.py tldw_chatbook/UI/Screens/library_screen.py Tests/UI/test_library_shell.py
 git diff --check
 ```
 
 Task 3 already commits these prewritten tests with the fix; Task 4 makes no
 separate commit.
 
-Expected: heartbeat/navigation processed while D waits, C never enters, max
-active calls one, stale B/C never apply, mounted D evidence appears after B
-settles, all work is terminal, and the owner suite and Ruff are green.
+Expected: heartbeat/navigation processes while same-screen and fresh-screen D
+wait, C never enters, max active calls remains one across both lifetimes, stale
+B/C never apply, mounted D evidence appears after B settles, restored dead
+`searching` is normalized, all work is terminal, and owner/navigation suites
+and Ruff are green.
 
 ---
 
@@ -1058,9 +1406,9 @@ settles, all work is terminal, and the owner suite and Ruff are green.
 Run:
 
 ```bash
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_retrieval -q --tb=short
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Library/test_library_local_rag_search_service.py Tests/Library/test_library_rag_service.py Tests/Library/test_library_rag_mode_resolution.py Tests/UI/test_product_maturity_gate16_library_search_rag.py Tests/UI/test_library_shell.py -q --tb=short
-PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/UI/Screens/library_screen.py Tests/UI/test_library_shell.py
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_shell.py::test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic Tests/UI/test_library_shell.py::test_library_shell_gated_search_keeps_heartbeat_and_navigation_live Tests/UI/test_library_shell.py::test_library_shell_repeated_supersession_serializes_underlying_retrieval Tests/UI/test_library_shell.py::test_library_shell_fresh_screen_reentry_serializes_draining_retrieval Tests/UI/test_library_shell.py::test_library_shell_restore_normalizes_transient_rag_searching_state -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Library/test_library_local_rag_search_service.py Tests/Library/test_library_rag_service.py Tests/Library/test_library_rag_mode_resolution.py Tests/UI/test_product_maturity_gate16_library_search_rag.py Tests/UI/test_library_shell.py Tests/UI/test_screen_navigation.py -q --tb=short
+PYTHONPATH="$PWD" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/app.py tldw_chatbook/UI/Screens/library_screen.py Tests/UI/test_library_shell.py
 git diff --check
 ```
 
@@ -1080,27 +1428,31 @@ Record any truthful named initialization phase; if none remains, keep ordinary
 
 Launch another new TUI process against the same scratch index. Label the
 already-approved query `how do I schedule a watchlist brief` as B and the
-distinct fixture query `how do I schedule a watchlist brief?` as C and
-`how do I schedule recurring watchlist briefs?` as D. Run B, confirm its
-visible status is still `searching`, immediately replace the input with C and
-activate the real Run control, then replace it with D and Run a third time
-while the status remains `searching`. While D is waiting/running, activate
-Browse ▸ Media, the exact navigation action pinned by Task 4, and record
-acknowledgement within one second. After the work settles, return to Browse ▸
+distinct fixture query `how do I schedule recurring watchlist briefs?` as D.
+Run B and, while its visible status is still `searching`, navigate to Home and
+immediately re-enter Library through the real app navigation. Confirm this is
+a fresh destination paint: the retained B query is present, but a dead
+`searching` line is absent and Run is enabled. Replace the input with D and
+activate the real Run control. While D is waiting/running, activate Browse ▸
+Media, the exact in-screen navigation action pinned by Task 4, and record
+acknowledgement within one second. After work settles, return to Browse ▸
 Search and verify the mounted input, terminal status, and Evidence belong to D;
-observe one additional message-pump turn and verify no B/C outcome overwrites
-it. Record only the B/C/D labels and action/status timestamps in live evidence,
-not the query bodies again.
+observe one additional message-pump turn and verify no B outcome overwrites it.
+Record only the B/D labels and action/status timestamps in live evidence, not
+the query bodies again.
 
-The live process proves real-control responsiveness and no stale overwrite; it
-must not infer underlying call overlap from CPU shape. The lock-protected
-`test_library_shell_repeated_supersession_serializes_retrieval` in Task 4 is
-the authoritative serialization evidence (`max_active_calls == 1`).
+The live process proves real fresh-screen navigation, usable restored controls,
+real-control responsiveness, and no stale overwrite; it must not infer
+underlying call overlap from CPU shape. The lock-protected same-screen
+B-to-C-to-D test and real-navigation B-to-D test in Task 4 are the authoritative
+serialization evidence (`max_active_calls == 1`).
 
-Expected: Media acknowledges within one second while the real B-to-C-to-D
-sequence is pending, terminal mounted Search state belongs only to D, no B/C
+Expected: Home and fresh Library re-entry remain responsive, restored Library
+does not claim a dead in-flight state, Media acknowledges within one second
+while D is pending, terminal mounted Search state belongs only to D, no B
 overwrite appears, and all residual work is terminal. Task 4 supplies the
-separate deterministic no-overlap and repeated-cancellation proof.
+deterministic same-screen repeated-cancellation and cross-screen no-overlap
+proofs.
 
 - [ ] **Step 4: Prove isolation and write live evidence**
 
@@ -1166,18 +1518,27 @@ Expected: clean worktree, complete task notes/AC/status, profiler and live evide
 - AC #2: Python-level named frame/callers committed before production edits in Task 1; Task 2 cannot proceed without it.
 - AC #3: actual PTY UI run, Evidence row, isolation proof, and responsive input in Task 5.
 - Concrete runtime: not selected; the service-only path completed, the live
-  profile named the UI mirror spin, and the supersession RED named the screen
-  worker-orchestration gap.
+  profile named the UI mirror spin, and the supersession REDs named worker
+  retention plus fresh-screen admission-lifetime gaps.
 - Event loop: deterministic heartbeat/navigation ordering plus separate live
   acknowledgement, not inferred from final completion.
 - Supersession: real Runs B, C, then D keep C/D outside admission while B
   drains through repeated cancellation without blocking the UI, never exceed
   one underlying retrieval, never apply stale B/C, and return to mounted
-  terminal D evidence.
+  terminal D evidence. A separate real-navigation B-to-D run proves the same
+  admission bound across distinct fresh `LibraryScreen` instances.
+- Restore: fresh Library screens keep saved query/results but normalize the
+  transient `searching` claim because no matching worker is restored; Run is
+  enabled and no dead in-flight line mounts.
 - Privacy: artifacts allow only symbols, timing, aggregate counts, IDs, paths, and fingerprints.
-- ADR: no new decision under current boundaries; explicit stop if the profile requires one.
-- YAGNI: one measured owner, one retrieval path, no new dependency or scheduler.
+- ADR: no new record; the Library-only app-lifetime lock directly implements
+  ADR-033's narrow lifecycle owner while preserving ADR-003 Library ownership
+  and ADR-005's runtime direction. Explicit stop if implementation requires a
+  broader owner or service contract.
+- YAGNI: one measured mirror owner, one narrow admission primitive, one
+  retrieval path, no broad app state, new dependency, or scheduler.
 - Approved corrections: suppress the programmatic sibling `Input.Changed` in
-  `_patch_sibling_library_search_input()` and retain/serialize admitted
-  retrieval tasks in `_execute_library_rag_search()`. No new offload, thread,
-  process, runtime, storage, or service change is proposed.
+  `_patch_sibling_library_search_input()`; retain admitted retrieval tasks in
+  `_execute_library_rag_search()` under the app-lifetime Library-only accessor;
+  and normalize restored transient `searching`. No new offload, thread,
+  process, runtime, storage, broad state, or service change is proposed.
