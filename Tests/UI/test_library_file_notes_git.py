@@ -1094,6 +1094,16 @@ def _assert_visible_editor_actions_fit(
 
 async def _assert_visible_panel_buttons_fit(panel, pilot) -> None:
     bounds = panel.content_region
+    # task-15790 (sweep inventory): this helper pinned the retired fixed
+    # `$ds-focus-bg` literal (#51677e). task-15509 (77998601b) made focus
+    # surfaces follow the ACTIVE THEME -- background from the theme's
+    # `primary-background` variable -- and its own test asserts the fixed
+    # token is gone from the panel CSS. Assert the semantic contract the
+    # way that test does, so these ten cases stop re-pinning a retired
+    # constant and start guarding the theming they actually run under.
+    expected_focus = Color.parse(
+        str(panel.app.get_css_variables()["primary-background"])
+    )
     for button in panel.query(Button):
         if not _is_effectively_displayed(button):
             continue
@@ -1108,7 +1118,7 @@ async def _assert_visible_panel_buttons_fit(panel, pilot) -> None:
         assert button.region.y >= bounds.y
         assert button.region.bottom <= bounds.bottom
         assert not button.styles.outline
-        assert button.styles.background == Color.parse("#51677e")
+        assert button.styles.background == expected_focus
         assert button.styles.text_style.bold
         assert button.styles.text_style.underline
 
@@ -1144,7 +1154,12 @@ async def test_commit_panel_count_uses_only_the_authorized_projection() -> None:
             _commit_draft_projection(staged_note_count=0)
         )
         await pilot.pause()
-        assert str(commit_button.label) == "Commit staged (0)"
+        # task-15790: the Library a11y batch's disabled-presentation
+        # convention prefixes a "○ " marker onto disabled actions
+        # (`_sync_disabled_action_presentation`); at zero staged notes the
+        # commit action is disabled (and hidden -- asserted below), so the
+        # label carries the marker.
+        assert str(commit_button.label) == "○ Commit staged (0)"
         assert not commit_button.display
         assert zero_copy.display
         assert _text(zero_copy) == "Stage at least one session note to commit"
@@ -3104,10 +3119,19 @@ async def test_thousand_unrelated_notes_send_only_three_session_groups_and_resto
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         files_tree = workspace.query_one("#file-notes-tree", Tree)
         search_tree = workspace.query_one("#file-notes-search-results", Tree)
+        # task-15790: same dataclass migration as the "folder" lookup below
+        # -- folders carry `_FolderNodeData(relative_path)` now.
         archive_node = next(
-            node
-            for node in files_tree.root.children
-            if node.data == ("folder", "archive")
+            (
+                node
+                for node in files_tree.root.children
+                if getattr(node.data, "relative_path", None) == "archive"
+            ),
+            None,
+        )
+        assert archive_node is not None, (
+            "the 'archive' navigator node is missing: "
+            f"{[node.data for node in files_tree.root.children]!r}"
         )
         search = workspace.query_one("#file-notes-search", Input)
         search.value = "scale marker 1004"
@@ -4115,7 +4139,11 @@ async def test_stage_flushes_then_gate_keeps_editor_back_and_one_latest_refresh(
         assert not workspace.query_one("#file-notes-git-back", Button).disabled
         assert workspace.query_one("#file-notes-new", Button).disabled
         assert workspace.query_one("#file-notes-move", Button).disabled
-        assert not workspace.query_one("#file-notes-protect", Button).disabled
+        # task-15790: dca0594a5 (quiet focus and distill file actions) added
+        # Protect to the structurally-gated set, so during an unsaved edit it
+        # is disabled exactly like Move/New above -- the old exemption is the
+        # stale premise here.
+        assert workspace.query_one("#file-notes-protect", Button).disabled
         assert not await workspace.flush_pending_work()
 
         assert owner.record_change(binding, SessionChange("modified", "latest.md"))
@@ -4801,7 +4829,24 @@ async def test_narrow_git_navigation_retains_editor_search_tree_and_row_selectio
         search.value = "needle"
         await pilot.pause()
         tree = workspace.query_one("#file-notes-tree", Tree)
-        folder = next(node for node in tree.root.children if node.data == ("folder", "folder"))
+        # task-15790: folders now carry `_FolderNodeData(relative_path)` (a
+        # frozen dataclass), not the old ("folder", value) tuple -- leaves
+        # kept tuples, so the tuple lookup silently matched NOTHING and
+        # `next()` with no default converted "node missing" into an opaque
+        # StopIteration -> RuntimeError. Match on the dataclass field, and
+        # fail with a message when the node is genuinely absent.
+        folder = next(
+            (
+                node
+                for node in tree.root.children
+                if getattr(node.data, "relative_path", None) == "folder"
+            ),
+            None,
+        )
+        assert folder is not None, (
+            "the 'folder' navigator node is missing: "
+            f"{[node.data for node in tree.root.children]!r}"
+        )
         folder.expand()
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
@@ -5288,7 +5333,16 @@ async def test_narrow_delete_confirmation_keeps_complete_action_labels(
 
         assert str(delete.label) == "Confirm delete"
         assert delete.has_class("-confirm-delete")
-        assert delete.styles.column_span == 2
+        # task-15790: a85232c37 (improve navigation and delete safety) added a
+        # narrower `-single-editor-actions` refinement UNDER the stacked mode;
+        # in a single-column toolbar every action spans the one column, so
+        # "Confirm delete spans the full width" is span 1 there and span 2 in
+        # the two-column stack. The label-fit helper below still guards
+        # legibility either way.
+        expected_span = (
+            1 if workspace.has_class("-single-editor-actions") else 2
+        )
+        assert delete.styles.column_span == expected_span
         _assert_visible_editor_actions_fit(workspace)
 
         editor = workspace.query_one("#file-notes-editor", TextArea)

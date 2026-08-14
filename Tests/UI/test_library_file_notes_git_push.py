@@ -2355,7 +2355,10 @@ async def test_workspace_push_recovery_authorizes_then_queries_retained_endpoint
             "#file-notes-session-changes",
             Button,
         )
-        assert "Push checking" in str(session_git.label)
+        # task-15790: the indicator's phase copy moved into a suffix --
+        # "Review session changes (N) · Checking push" (67fec3f35 polish);
+        # the phase-visibility claim is unchanged, the spelling is.
+        assert "Checking push" in str(session_git.label)
         assert session_git.has_focus
 
         recovery_release.set()
@@ -2725,7 +2728,7 @@ async def test_workspace_edit_stales_rows_without_hiding_push_candidate(
         workspace._refresh_session_changes()
 
         assert workspace._push_availability == candidate
-        assert "Push checking" in str(
+        assert "Checking push" in str(
             workspace.query_one("#file-notes-session-changes").label
         )
         release.set()
@@ -2779,7 +2782,7 @@ async def test_workspace_first_rehydrate_rejects_stale_retained_candidate(
         assert workspace._push_availability == candidate_b
         assert workspace._push_observer_task is None
         assert workspace._push_phase == "idle"
-        assert "Push checking" not in str(
+        assert "Checking push" not in str(
             workspace.query_one("#file-notes-session-changes").label
         )
 
@@ -2923,7 +2926,7 @@ async def test_workspace_binding_change_rejects_old_push_settlement(
         assert workspace._push_phase == "idle"
         assert not workspace._rehydrate_git_presentation()
         assert workspace._push_phase == "idle"
-        assert "Push checking" not in str(
+        assert "Checking push" not in str(
             workspace.query_one("#file-notes-session-changes").label
         )
 
@@ -3539,7 +3542,7 @@ async def test_workspace_session_git_indicator_shows_hidden_push_checking(
             "workspace initialization did not settle",
         )
 
-        assert "Push checking" in str(
+        assert "Checking push" in str(
             workspace.query_one("#file-notes-session-changes").label
         )
         assert workspace._navigator_mode == "files"
@@ -3590,7 +3593,7 @@ async def test_workspace_back_to_files_keeps_push_publication_and_attention(
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        assert "Push checking" in str(
+        assert "Checking push" in str(
             workspace.query_one("#file-notes-session-changes").label
         )
 

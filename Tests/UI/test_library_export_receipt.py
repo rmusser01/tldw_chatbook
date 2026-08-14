@@ -211,6 +211,9 @@ async def test_apply_library_export_counts_patches_tooltip_alongside_disabled():
                 "destination_exists": False,
             },
             _library_export_running=False,
+            # task-15790: production gained this flag (library_screen
+            # __init__); the double predates it -- the stale-double class.
+            _library_export_quality_choices_visible=False,
             _library_export_status="",
             _library_export_error="",
             _library_export_last_path="",
@@ -266,6 +269,9 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
                 "destination_exists": False,
             },
             _library_export_running=False,
+            # task-15790: production gained this flag (library_screen
+            # __init__); the double predates it -- the stale-double class.
+            _library_export_quality_choices_visible=False,
             _library_export_status="",
             _library_export_error="",
             _library_export_last_path="/tmp/out.zip",

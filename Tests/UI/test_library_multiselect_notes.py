@@ -28,6 +28,8 @@ def _fake(select_mode):
         _opened=[],
         _flushed=0,
         _library_notes_view="list",
+        # task-15790: production gained this in-flight guard; stale double.
+        _library_notes_mutation_in_flight=False,
     )
 
 
