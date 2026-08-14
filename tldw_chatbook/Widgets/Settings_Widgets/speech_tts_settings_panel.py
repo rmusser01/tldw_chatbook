@@ -133,14 +133,28 @@ _MAX_DRAFT_GRAPH_NODES = 4096
 _MAX_DRAFT_GRAPH_TEXT_CHARACTERS = 262_144
 _PRIVATE_DRAFT_KEYS = frozenset(
     {
+        "token",
         "api_key",
+        "auth_token",
+        "client_secret",
         "access_token",
         "refresh_token",
         "password",
+        "passphrase",
         "secret",
         "credential",
+        "credentials",
         "handoff_token",
     }
+)
+_PRIVATE_DRAFT_KEY_SUFFIXES = (
+    "_token",
+    "_secret",
+    "_credential",
+    "_credentials",
+    "_password",
+    "_passphrase",
+    "_api_key",
 )
 
 _PROVIDER_OPTIONS = [
@@ -348,7 +362,7 @@ def _detached_draft_data(value: object) -> object:
                     raise TypeError("Global Speech & TTS draft key is invalid")
                 normalized = key.casefold()
                 if normalized in _PRIVATE_DRAFT_KEYS or normalized.endswith(
-                    ("_api_key", "_access_token", "_refresh_token", "_password")
+                    _PRIVATE_DRAFT_KEY_SUFFIXES
                 ):
                     raise ValueError("Global Speech & TTS draft is private")
                 detached[key] = detach(child, depth + 1)
