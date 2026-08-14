@@ -4,12 +4,30 @@ Event handlers for the Collections/Tag management functionality.
 Handles keyword operations like rename, merge, delete, and statistics.
 """
 
-from typing import TYPE_CHECKING, List, Dict, Any
+import asyncio
+from typing import TYPE_CHECKING, Callable, List, Dict, Any
 from textual.message import Message
 from loguru import logger
 
 if TYPE_CHECKING:
     from ..app import TldwCli
+
+
+async def _media_db_off_loop(app: "TldwCli", func: Callable, /, *args: Any) -> Any:
+    """Run one sync media-DB call off the event loop.
+
+    task-15471: this file's handlers called ``app.run_in_thread``, which
+    does not exist -- neither Textual 8.x's ``App`` nor ``TldwCli`` defines
+    it -- so every rename/merge/delete raised ``AttributeError`` into its
+    own error toast. Replaced with ``asyncio.to_thread`` (the DB uses
+    thread-local connections, so a pool thread opens its own), guarded the
+    same way as the Console browser-search threading: a per-connection
+    ``:memory:`` DB is only visible to the thread that migrated it and must
+    stay on the loop thread.
+    """
+    if bool(getattr(app.media_db, "is_memory_db", False)):
+        return func(*args)
+    return await asyncio.to_thread(func, *args)
 
 
 class KeywordRenameEvent(Message):
@@ -59,8 +77,8 @@ async def handle_keyword_rename(app: "TldwCli", event: KeywordRenameEvent) -> No
             raise RuntimeError("Media DB service not available")
 
         # Perform the rename operation
-        success = await app.run_in_thread(
-            app.media_db.rename_keyword, event.keyword_id, event.new_name
+        success = await _media_db_off_loop(
+            app, app.media_db.rename_keyword, event.keyword_id, event.new_name
         )
 
         if success:
@@ -105,7 +123,8 @@ async def handle_keyword_merge(app: "TldwCli", event: KeywordMergeEvent) -> None
             raise RuntimeError("Media DB service not available")
 
         # Perform the merge operation
-        success = await app.run_in_thread(
+        success = await _media_db_off_loop(
+            app,
             app.media_db.merge_keywords,
             event.source_keyword_ids,
             event.target_keyword,
@@ -154,37 +173,40 @@ async def handle_keyword_delete(app: "TldwCli", event: KeywordDeleteEvent) -> No
         if not app.media_db:
             raise RuntimeError("Media DB service not available")
 
-        # Get keywords info for notification
-        keywords_info = []
-        for keyword_id in event.keyword_ids:
-            try:
-                # Get keyword name before deletion
-                cursor = app.media_db.execute_query(
-                    "SELECT keyword FROM Keywords WHERE id = ? AND deleted = 0",
-                    (keyword_id,),
-                )
-                result = cursor.fetchone()
-                if result:
-                    keywords_info.append(result["keyword"])
-            except Exception:
-                pass
+        # Resolve keyword names ONCE, off the loop -- this lookup used to run
+        # twice per keyword (once for the notification, once again before the
+        # delete), synchronously on the event loop (task-15471). The single
+        # batch serves both the notification and the delete below.
+        def _fetch_keyword_names() -> Dict[int, str]:
+            names: Dict[int, str] = {}
+            for keyword_id in event.keyword_ids:
+                try:
+                    cursor = app.media_db.execute_query(
+                        "SELECT keyword FROM Keywords WHERE id = ? AND deleted = 0",
+                        (keyword_id,),
+                    )
+                    result = cursor.fetchone()
+                    if result:
+                        names[keyword_id] = result["keyword"]
+                except Exception:
+                    pass
+            return names
+
+        keyword_names = await _media_db_off_loop(app, _fetch_keyword_names)
+        keywords_info = list(keyword_names.values())
 
         # Perform the delete operations
         success_count = 0
         for keyword_id in event.keyword_ids:
+            keyword = keyword_names.get(keyword_id)
+            if keyword is None:
+                continue
             try:
-                # Get keyword name for soft_delete_keyword method
-                cursor = app.media_db.execute_query(
-                    "SELECT keyword FROM Keywords WHERE id = ? AND deleted = 0",
-                    (keyword_id,),
+                success = await _media_db_off_loop(
+                    app, app.media_db.soft_delete_keyword, keyword
                 )
-                result = cursor.fetchone()
-                if result:
-                    success = await app.run_in_thread(
-                        app.media_db.soft_delete_keyword, result["keyword"]
-                    )
-                    if success:
-                        success_count += 1
+                if success:
+                    success_count += 1
             except Exception as e:
                 logger.error(f"Error deleting keyword ID {keyword_id}: {e}")
 
@@ -235,7 +257,7 @@ async def load_keyword_statistics(app: "TldwCli") -> List[Dict[str, Any]]:
             return []
 
         # Get keyword statistics
-        stats = await app.run_in_thread(app.media_db.get_keyword_usage_stats)
+        stats = await _media_db_off_loop(app, app.media_db.get_keyword_usage_stats)
         logger.debug(f"Loaded statistics for {len(stats)} keywords")
         return stats
 

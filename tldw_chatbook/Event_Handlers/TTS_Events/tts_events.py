@@ -2549,28 +2549,38 @@ class TTSEventHandler:
                 # Add extension from source file
                 output_path = output_path.with_suffix(source_file.suffix)
 
-            # Create parent directory if needed
-            output_path.parent.mkdir(parents=True, exist_ok=True)
+            def _write_export() -> None:
+                """Copy the audio + optional metadata sidecar to disk.
 
-            # Copy audio file
-            shutil.copy2(source_file, output_path)
-            logger.info(f"Exported audio to {output_path}")
+                task-15471: the `copy2` moves megabytes of audio and used
+                to run directly in this handler, on the event loop.
+                """
+                # Create parent directory if needed
+                output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Add metadata if requested
-            if event.include_metadata:
-                metadata = {
-                    "message_id": event.message_id,
-                    "export_time": datetime.now().isoformat(),
-                    "format": source_file.suffix[1:],  # Remove dot
-                    "source": "tldw_chatbook_tts",
-                }
+                # Copy audio file
+                shutil.copy2(source_file, output_path)
+                logger.info(f"Exported audio to {output_path}")
 
-                # Save metadata as JSON sidecar file
-                metadata_path = output_path.with_suffix(output_path.suffix + ".json")
-                with open(metadata_path, "w") as f:
-                    json.dump(metadata, f, indent=2)
+                # Add metadata if requested
+                if event.include_metadata:
+                    metadata = {
+                        "message_id": event.message_id,
+                        "export_time": datetime.now().isoformat(),
+                        "format": source_file.suffix[1:],  # Remove dot
+                        "source": "tldw_chatbook_tts",
+                    }
 
-                logger.info(f"Saved metadata to {metadata_path}")
+                    # Save metadata as JSON sidecar file
+                    metadata_path = output_path.with_suffix(
+                        output_path.suffix + ".json"
+                    )
+                    with open(metadata_path, "w") as f:
+                        json.dump(metadata, f, indent=2)
+
+                    logger.info(f"Saved metadata to {metadata_path}")
+
+            await asyncio.to_thread(_write_export)
 
             self.notify(f"Audio exported to {output_path.name}", severity="success")
 

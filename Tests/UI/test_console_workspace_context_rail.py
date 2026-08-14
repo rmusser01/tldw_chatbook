@@ -1329,6 +1329,9 @@ async def test_console_conversation_star_press_confirms_the_toggle():
         console.app_instance.notify = lambda message, **kwargs: notes.append(message)
 
         await console.on_button_pressed(Button.Pressed(star))
+        # task-15471: the durable write + confirmation run on a worker now.
+        await console.workers.wait_for_complete()
+        await pilot.pause()
 
         assert any("Starred" in note for note in notes)
         # The markup is escaped (literal backslash-brackets), never interpreted.
@@ -1381,6 +1384,9 @@ async def test_console_conversation_star_confirms_an_untitled_conversation():
         console.app_instance.notify = lambda message, **kwargs: notes.append(message)
 
         await console.on_button_pressed(Button.Pressed(star))
+        # task-15471: the durable write + confirmation run on a worker now.
+        await console.workers.wait_for_complete()
+        await pilot.pause()
 
         # The durable write always landed; the confirmation is what was lost.
         assert starred, "the star write did not happen"

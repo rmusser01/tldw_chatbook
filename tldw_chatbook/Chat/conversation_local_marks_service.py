@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -51,6 +52,21 @@ class ConversationLocalMarksService:
                 context manager.
         """
         self.db = db
+        # task-15471: Console's conversation-browser refresh calls
+        # `list_marked_conversation_ids` on the event loop from every
+        # repaint path, so the answer is cached and only invalidated by
+        # this service's own writers (`set_mark`/`clear_mark` -- every star
+        # and fleet mark in the process goes through this instance). Guarded
+        # by a `threading.Lock`, not just loop discipline: the star toggle
+        # now writes from a pool thread via `asyncio.to_thread`.
+        self._list_cache: dict[tuple[str, int], tuple[str, ...]] = {}
+        self._list_cache_lock = threading.Lock()
+
+    def _invalidate_list_cache(self, mark_type: str) -> None:
+        """Drop cached id lists for one mark type after a write."""
+        with self._list_cache_lock:
+            for key in [k for k in self._list_cache if k[0] == mark_type]:
+                del self._list_cache[key]
 
     @staticmethod
     def _now() -> str:
@@ -134,6 +150,7 @@ class ConversationLocalMarksService:
                 """,
                 (conversation_id, mark_type, now, now),
             )
+        self._invalidate_list_cache(mark_type)
 
     def clear_mark(self, conversation_id: str, mark_type: str | None = None) -> None:
         """Remove a local conversation mark if present.
@@ -156,6 +173,7 @@ class ConversationLocalMarksService:
                 """,
                 (conversation_id, mark_type),
             )
+        self._invalidate_list_cache(mark_type)
 
     def has_mark(self, conversation_id: str, mark_type: str | None = None) -> bool:
         """Return whether a local mark exists for a conversation.
@@ -251,6 +269,11 @@ class ConversationLocalMarksService:
         safe_limit = int(limit)
         if safe_limit <= 0:
             raise ValueError("limit must be positive")
+        cache_key = (mark_type, safe_limit)
+        with self._list_cache_lock:
+            cached = self._list_cache.get(cache_key)
+        if cached is not None:
+            return cached
         with self.db.transaction() as conn:
             rows = conn.execute(
                 """
@@ -262,4 +285,7 @@ class ConversationLocalMarksService:
                 """,
                 (mark_type, safe_limit),
             ).fetchall()
-        return tuple(str(row["conversation_id"]) for row in rows)
+        result = tuple(str(row["conversation_id"]) for row in rows)
+        with self._list_cache_lock:
+            self._list_cache[cache_key] = result
+        return result

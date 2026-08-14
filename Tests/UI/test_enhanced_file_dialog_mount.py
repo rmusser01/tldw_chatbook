@@ -1337,3 +1337,65 @@ def test_file_list_highlight_is_visible():
     assert "$surface" not in block, (
         "Highlighted row must not fall back to the near-invisible $surface color"
     )
+
+
+@pytest.mark.asyncio
+async def test_search_keystrokes_debounce_into_one_filtered_repopulation(tmp_path):
+    """A search-keystroke burst coalesces into ONE repopulation (task-15471).
+
+    Before task-15471 every ``search_filter`` assignment (one per
+    Input.Changed keystroke) rebuilt the whole option list synchronously on
+    the event loop -- measured at ~120 ms per keystroke on a 1000-file
+    directory. Now a burst only (re)arms the debounce timer; the single
+    deferred rebuild applies the final query, so the visible set is
+    unchanged from the pre-debounce behavior.
+    """
+    for name in ("alpha.txt", "beta.txt", "gamma.txt"):
+        (tmp_path / name).write_text("x")
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Debounced Search",
+        context="test_debounced_search",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        repopulates = {"count": 0}
+        real_repopulate = dir_nav._repopulate_display
+
+        def counting_repopulate() -> None:
+            repopulates["count"] += 1
+            real_repopulate()
+
+        dir_nav._repopulate_display = counting_repopulate
+
+        # Three "keystrokes" -- exactly what the dialog's _on_search_changed
+        # does per Input.Changed. Watchers run synchronously on assignment,
+        # so a per-keystroke rebuild would already have counted here.
+        for fragment in ("b", "be", "bet"):
+            dir_nav.search_filter = fragment
+        assert repopulates["count"] == 0, (
+            "a keystroke must only arm the debounce timer, not rebuild inline"
+        )
+
+        # After the debounce interval: exactly one rebuild, final query applied.
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if repopulates["count"]:
+                break
+        dir_nav._repopulate_display = real_repopulate
+        assert repopulates["count"] == 1
+
+        visible = {
+            dir_nav.get_option_at_index(index).location.name
+            for index in range(dir_nav.option_count)
+        }
+        assert "beta.txt" in visible
+        assert "alpha.txt" not in visible
+        assert "gamma.txt" not in visible

@@ -293,3 +293,48 @@ def test_get_mark_returns_timestamps_with_created_at_stable_across_refreshes(
         service.get_mark("", ConversationLocalMarksService.FLEET_UNSEEN)
     with pytest.raises(ValueError):
         service.get_mark("conv-a", "not-a-mark")
+
+
+def test_list_marked_ids_cache_never_serves_stale_results_across_writes(tmp_path):
+    """`list_marked_conversation_ids` may cache, but writes must invalidate.
+
+    task-15471 made the list read cached (Console's browser refresh calls it
+    on the event loop from every repaint path). The cache is only sound if
+    every writer path -- star AND unstar, and the independent fleet mark
+    type -- drops it, so a toggle is never followed by a stale repaint.
+    """
+    service = ConversationLocalMarksService(_db(tmp_path))
+
+    assert service.list_marked_conversation_ids() == ()
+
+    service.star_conversation("conv-a")
+    assert service.list_marked_conversation_ids() == ("conv-a",)
+
+    # Repeat read (cache hit) must equal the first.
+    assert service.list_marked_conversation_ids() == ("conv-a",)
+
+    service.star_conversation("conv-b")
+    assert set(service.list_marked_conversation_ids()) == {"conv-a", "conv-b"}
+
+    service.unstar_conversation("conv-a")
+    assert service.list_marked_conversation_ids() == ("conv-b",)
+
+    # Mark types are cached independently: writing a fleet mark must not
+    # bleed into the starred list, and its own list must see the write.
+    service.set_mark("conv-c", ConversationLocalMarksService.FLEET_UNSEEN)
+    assert service.list_marked_conversation_ids() == ("conv-b",)
+    assert service.list_marked_conversation_ids(
+        ConversationLocalMarksService.FLEET_UNSEEN
+    ) == ("conv-c",)
+    service.clear_mark("conv-c", ConversationLocalMarksService.FLEET_UNSEEN)
+    assert (
+        service.list_marked_conversation_ids(
+            ConversationLocalMarksService.FLEET_UNSEEN
+        )
+        == ()
+    )
+
+    # Different limits are distinct cache keys and must both reflect writes.
+    assert service.list_marked_conversation_ids(limit=1) == ("conv-b",)
+    service.star_conversation("conv-d")
+    assert service.list_marked_conversation_ids(limit=1) == ("conv-d",)

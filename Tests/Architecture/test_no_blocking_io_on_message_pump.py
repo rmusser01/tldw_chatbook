@@ -124,19 +124,9 @@ BASELINE: dict[tuple[str, str, str], str] = {
         "action_refresh",
         "zipfile.ZipFile",
     ): "dead file, no importers",
-    # `glob("*.zip")` plus one `stat` per entry -- no per-file archive open or
-    # parse, unlike the pre-TASK-1320 scan that measured 1030ms. A stat per
-    # chatbook is sub-millisecond for any realistic export directory.
-    (
-        "UI/ChatbookExportManagementWindow.py",
-        "on_mount",
-        "self.chatbooks_dir.glob",
-    ): "glob + one stat per entry, no archive read",
-    (
-        "UI/ChatbookExportManagementWindow.py",
-        "on_button_pressed",
-        "self.chatbooks_dir.glob",
-    ): "glob + one stat per entry, no archive read",
+    # The ChatbookExportManagementWindow glob+stat scan that was baselined
+    # here moved off the pump in task-15471 (`refresh_chatbook_list` now
+    # runs `_scan_chatbook_files` via `asyncio.to_thread`).
     # `glob("*.toml")` plus a `toml.load` per user-created theme, when the theme
     # editor is shown. Bounded by how many themes the user has authored by hand,
     # realistically single digits.

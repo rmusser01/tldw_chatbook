@@ -581,10 +581,37 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
                 continue
             yield cls, method
 
+    #: Debounce interval for search keystrokes -- matches the Console rail
+    #: conversation-search debounce (task-15454's 0.2 s reference).
+    SEARCH_DEBOUNCE_SECONDS = 0.2
+
     def __init__(self, location: Path | str = ".") -> None:
         super().__init__(location)
         self._type_ahead_buffer = ""
         self._type_ahead_timer: Optional[Timer] = None
+        self._search_debounce_timer: Optional[Timer] = None
+
+    def _watch_search_filter(self) -> None:
+        """Debounce repopulation while the user is typing a search query.
+
+        task-15471: the vendored base watcher repopulated synchronously per
+        keystroke -- a full rebuild (one stat per entry plus the option-list
+        rebuild, ~120 ms measured on a 1000-file directory) on the event
+        loop for every character typed. A keystroke now only (re)arms one
+        widget-owned timer; the rebuild runs once, after typing pauses.
+        `_repopulate_display` reads `self.search_filter` at fire time, so a
+        superseded fragment is never applied.
+        """
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+        self._search_debounce_timer = self.set_timer(
+            self.SEARCH_DEBOUNCE_SECONDS, self._apply_search_filter_after_debounce
+        )
+
+    def _apply_search_filter_after_debounce(self) -> None:
+        """Debounce timer callback: run the deferred repopulation."""
+        self._search_debounce_timer = None
+        self._repopulate_display()
 
     def _restart_type_ahead_timer(self) -> None:
         """Reset the inactivity timeout that clears the type-ahead buffer."""
@@ -684,6 +711,40 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
         multi_select = getattr(screen, "multi_select", False)
         selected = getattr(screen, "_selected_paths", set()) if multi_select else set()
 
+        # One pass over the entries computes both the visible options and the
+        # filter-hidden count (task-15471). Previously a second full loop
+        # below re-ran ``is_file`` on EVERY entry -- one extra stat per entry
+        # per repopulate, unconditionally, even with no ``file_filter`` set
+        # (``is_file`` was first in that ``and`` chain). The per-entry
+        # predicates here are the vendored ``DirectoryNavigation.hide()``
+        # unrolled: filter check first (files only), then the dotfile/
+        # show-hidden rule, so the visible set is unchanged.
+        #
+        # The filter-hidden count (task-431 AC#2) still counts a real file
+        # that passes the show-hidden/dotfile check but fails the filter,
+        # guarded by an explicit "not already dotfile-hidden" check so
+        # dotfiles aren't double-counted as filter-hidden.
+        file_filter = self.file_filter
+        filter_hidden = 0
+        display_entries: list[DirectoryEntry] = []
+        for entry in self._entries:
+            location = entry.location
+            dot_hidden = self.is_hidden(location) and not self.show_hidden
+            fails_filter = False
+            if file_filter is not None and is_file(location):
+                fails_filter = not file_filter(location)
+                if fails_filter and not dot_hidden:
+                    filter_hidden += 1
+            if fails_filter or dot_hidden:
+                continue
+            if query and query not in location.name.lower():
+                continue
+            display_entries.append(
+                MultiSelectDirectoryEntry(location, styles, location in selected)
+                if multi_select
+                else FormattedDirectoryEntry(location, styles)
+            )
+
         with self.app.batch_update():
             self.clear_options()
             if not self.is_root:
@@ -691,18 +752,7 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
                     self.add_option(MultiSelectDirectoryEntry(self._location / "..", styles, False))
                 else:
                     self.add_option(FormattedDirectoryEntry(self._location / "..", styles))
-            self.add_options(
-                self._sort(
-                    (
-                        MultiSelectDirectoryEntry(entry.location, styles, entry.location in selected)
-                        if multi_select
-                        else FormattedDirectoryEntry(entry.location, styles)
-                    )
-                    for entry in self._entries
-                    if not self.hide(entry.location)
-                    and (not query or query in entry.location.name.lower())
-                )
-            )
+            self.add_options(self._sort(display_entries))
         self._settle_highlight()
 
         # Restore the previous highlight if the entry still exists.
@@ -713,22 +763,6 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
                     break
 
         self.post_message(self.SearchCountChanged(self, self.option_count, query))
-
-        # Count entries excluded *specifically* by the active file_filter
-        # (task-431 AC#2) -- a real file that passes the show-hidden/dotfile
-        # check but fails the filter. Reuses the same filter-check condition
-        # as the vendored ``DirectoryNavigation.hide()`` (directory_navigation.py)
-        # rather than reinventing it, guarded by an explicit "not already
-        # dotfile-hidden" check so dotfiles aren't double-counted as
-        # filter-hidden.
-        filter_hidden = sum(
-            1
-            for entry in self._entries
-            if is_file(entry.location)
-            and not (self.is_hidden(entry.location) and not self.show_hidden)
-            and self.file_filter is not None
-            and not self.file_filter(entry.location)
-        )
         self.post_message(self.FilterHiddenCountChanged(self, filter_hidden))
 
     def _on_option_list_option_selected(
