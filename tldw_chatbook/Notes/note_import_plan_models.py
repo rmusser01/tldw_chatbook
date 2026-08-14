@@ -1,7 +1,9 @@
 """Immutable domain vocabulary for one-time Database Notes import plans.
 
 The records in this module describe a read-only preview. They deliberately carry
-no receipt fingerprints, persistence services, or execution behavior.
+no receipt fingerprints, persistence services, or execution behavior. Generic
+dataclass serialization such as :func:`dataclasses.asdict` is not safe for logs;
+use :meth:`NoteImportPlan.to_diagnostic` for the supported redacted projection.
 """
 
 from __future__ import annotations
@@ -54,6 +56,10 @@ class RootCollisionChoice(str, Enum):
     RENAMED_ROOT = "renamed_root"
 
 
+MAX_IMPORT_REASON_LENGTH = 1_024
+"""Absolute safety ceiling for a public import-preview reason."""
+
+
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
 
@@ -96,10 +102,10 @@ def _validate_folder_segment(segment: str, *, field_name: str) -> None:
 class ParsedNotePayload:
     """One parsed note produced by a source file."""
 
-    title: str
-    content: str
-    keywords: tuple[str, ...] = ()
-    template_name: str | None = None
+    title: str = field(repr=False)
+    content: str = field(repr=False)
+    keywords: tuple[str, ...] = field(default=(), repr=False)
+    template_name: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not isinstance(self.content, str):
@@ -130,7 +136,11 @@ class ImportSource:
         if "\\" in self.display_path or "\x00" in self.display_path:
             raise ValueError("display_path must be a safe relative POSIX path.")
         display_path = PurePosixPath(self.display_path)
-        if display_path.is_absolute() or ".." in display_path.parts:
+        if (
+            display_path == PurePosixPath(".")
+            or display_path.is_absolute()
+            or ".." in display_path.parts
+        ):
             raise ValueError("display_path must be a safe relative path.")
         if not isinstance(self.source_path, Path):
             raise TypeError("source_path must be a Path.")
@@ -144,7 +154,9 @@ class ProposedFolderMembership:
     folder_segments: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.payload_index, int) or self.payload_index < 0:
+        if type(self.payload_index) is not int:
+            raise TypeError("payload_index must be an integer.")
+        if self.payload_index < 0:
             raise ValueError("payload_index must be a non-negative integer.")
         segments = _as_tuple(self.folder_segments, field_name="folder_segments")
         if not segments:
@@ -167,10 +179,11 @@ class ImportMatch:
             raise TypeError("kind must be an ImportMatchKind.")
         if not isinstance(self.note_id, str) or not self.note_id:
             raise ValueError("note_id must be non-empty text.")
-        if self.note_version is not None and (
-            not isinstance(self.note_version, int) or self.note_version < 0
-        ):
-            raise ValueError("note_version must be a non-negative integer.")
+        if self.note_version is not None:
+            if type(self.note_version) is not int:
+                raise TypeError("note_version must be an integer.")
+            if self.note_version < 0:
+                raise ValueError("note_version must be a non-negative integer.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,12 +244,20 @@ class ImportBounds:
         )
         for field_name in positive_fields:
             value = getattr(self, field_name)
-            if not isinstance(value, int) or value <= 0:
+            if type(value) is not int:
+                raise TypeError(f"{field_name} must be an integer.")
+            if value <= 0:
                 raise ValueError(f"{field_name} must be a positive integer.")
-        if not isinstance(self.max_depth, int) or self.max_depth < 0:
+        if type(self.max_depth) is not int:
+            raise TypeError("max_depth must be an integer.")
+        if self.max_depth < 0:
             raise ValueError("max_depth must be a non-negative integer.")
         if self.max_file_bytes > self.max_total_bytes:
             raise ValueError("max_file_bytes cannot exceed max_total_bytes.")
+        if self.max_reason_length > MAX_IMPORT_REASON_LENGTH:
+            raise ValueError(
+                "max_reason_length cannot exceed the absolute safety ceiling."
+            )
 
 
 _DEFAULT_ACTIONS = {
@@ -255,7 +276,7 @@ class ImportPreviewItem:
 
     item_id: str
     source: ImportSource
-    payloads: tuple[ParsedNotePayload, ...]
+    payloads: tuple[ParsedNotePayload, ...] = field(repr=False)
     memberships: tuple[ProposedFolderMembership, ...]
     classification: ImportClassification
     reason: str
@@ -297,7 +318,11 @@ class ImportPreviewItem:
             raise TypeError("classification must be an ImportClassification.")
         if not isinstance(self.reason, str):
             raise TypeError("reason must be text.")
-        if len(self.reason) > 240 or "\x00" in self.reason:
+        if (
+            not self.reason.strip()
+            or len(self.reason) > MAX_IMPORT_REASON_LENGTH
+            or "\x00" in self.reason
+        ):
             raise ValueError("reason must be bounded, safe text.")
         if not isinstance(self.default_action, ImportAction) or not isinstance(
             self.selected_action,
@@ -308,6 +333,11 @@ class ImportPreviewItem:
             raise ValueError("allowed_actions cannot be empty.")
         if len(set(allowed_actions)) != len(allowed_actions):
             raise ValueError("allowed_actions cannot contain duplicates.")
+        if not isinstance(self.replace_content, bool) or not isinstance(
+            self.add_membership,
+            bool,
+        ):
+            raise TypeError("replace_content and add_membership must be booleans.")
 
         if self.selected_action is ImportAction.UPDATE_EXISTING and (
             self.match is None
@@ -327,23 +357,37 @@ class ImportPreviewItem:
             raise ValueError("selected_action must be present in allowed_actions.")
         if self.default_action is not _DEFAULT_ACTIONS[self.classification]:
             raise ValueError("default_action does not match the classification.")
+        importable = self.classification not in {
+            ImportClassification.UNSUPPORTED,
+            ImportClassification.FAILED,
+        }
+        if importable and not payloads:
+            raise ValueError("Importable items require at least one payload.")
+
+        covered_payload_indexes: set[int] = set()
+        for membership in memberships:
+            if membership.payload_index >= len(payloads):
+                raise ValueError("A membership payload index is outside payloads.")
+            covered_payload_indexes.add(membership.payload_index)
+        expected_payload_indexes = set(range(len(payloads)))
+
         if (
             self.replace_content
             and self.selected_action is not ImportAction.UPDATE_EXISTING
         ):
             raise ValueError("replace_content requires Update existing.")
+        if self.selected_action is ImportAction.CREATE_NEW and not self.add_membership:
+            raise ValueError("Create new requires membership approval.")
+        if self.add_membership and covered_payload_indexes != expected_payload_indexes:
+            raise ValueError("membership must cover every payload.")
+        if self.selected_action is ImportAction.UPDATE_EXISTING and not (
+            self.replace_content or self.add_membership
+        ):
+            raise ValueError("Update must replace content or add membership.")
         if self.selected_action is ImportAction.SKIP and (
             self.replace_content or self.add_membership
         ):
             raise ValueError("Skip cannot replace content or add membership.")
-        if not isinstance(self.replace_content, bool) or not isinstance(
-            self.add_membership,
-            bool,
-        ):
-            raise TypeError("replace_content and add_membership must be booleans.")
-        for membership in memberships:
-            if membership.payload_index >= len(payloads):
-                raise ValueError("A membership payload index is outside payloads.")
 
     def _validate_classification_contract(
         self,
@@ -394,6 +438,27 @@ class ImportPreviewItem:
 
 
 @dataclass(frozen=True, slots=True)
+class ImportItemDiagnostic:
+    """Redacted, content-free diagnostic view of one preview item."""
+
+    source_display_path: str
+    classification: ImportClassification
+    selected_action: ImportAction
+    reason: str
+    payload_count: int
+    membership_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ImportPlanDiagnostic:
+    """Immutable diagnostic projection safe for structured logging."""
+
+    item_count: int
+    proposed_folder_count: int
+    items: tuple[ImportItemDiagnostic, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class NoteImportPlan:
     """Aggregate immutable preview returned by the read-only planner."""
 
@@ -426,6 +491,10 @@ class NoteImportPlan:
             raise ValueError("items must contain ImportPreviewItem values.")
         if len({item.item_id for item in items}) != len(items):
             raise ValueError("Preview item identifiers must be unique.")
+        if len(set(paths)) != len(paths):
+            raise ValueError("Proposed folder paths cannot contain duplicates.")
+        if any(len(item.reason) > self.bounds.max_reason_length for item in items):
+            raise ValueError("An item reason exceeds bounds.max_reason_length.")
         if self.root_collision is not None and not isinstance(
             self.root_collision,
             RootCollisionState,
@@ -434,3 +503,22 @@ class NoteImportPlan:
 
         object.__setattr__(self, "items", items)
         object.__setattr__(self, "proposed_folder_paths", tuple(paths))
+
+    def to_diagnostic(self) -> ImportPlanDiagnostic:
+        """Return the only supported content-free serialization for logging."""
+        diagnostic_items = tuple(
+            ImportItemDiagnostic(
+                source_display_path=item.source.display_path,
+                classification=item.classification,
+                selected_action=item.selected_action,
+                reason=item.reason,
+                payload_count=len(item.payloads),
+                membership_count=len(item.memberships),
+            )
+            for item in self.items
+        )
+        return ImportPlanDiagnostic(
+            item_count=len(self.items),
+            proposed_folder_count=len(self.proposed_folder_paths),
+            items=diagnostic_items,
+        )
