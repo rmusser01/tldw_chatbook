@@ -6,12 +6,14 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
+from packaging.requirements import Requirement
 
 from scripts.evaluate_visual_compaction import (
     RENDERER_PROFILE_CHOICES,
@@ -51,6 +53,31 @@ CORPUS_PATH = (
 )
 SUPPORT_MATRIX_PATH = CORPUS_PATH.with_name("support-matrix.json")
 CLI_PATH = REPOSITORY_ROOT / "scripts" / "evaluate_visual_compaction.py"
+EVALUATED_PILLOW_VERSION = "11.2.1"
+
+
+def test_deterministic_visual_renderer_pins_evaluated_pillow_version() -> None:
+    pyproject = tomllib.loads(
+        (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    project_pillow = next(
+        Requirement(value)
+        for value in pyproject["project"]["dependencies"]
+        if Requirement(value).name.lower() == "pillow"
+    )
+    requirements_pillow = next(
+        Requirement(value)
+        for value in (REPOSITORY_ROOT / "requirements.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if value.strip()
+        and not value.lstrip().startswith("#")
+        and Requirement(value).name.lower() == "pillow"
+    )
+
+    expected = f"=={EVALUATED_PILLOW_VERSION}"
+    assert str(project_pillow.specifier) == expected
+    assert str(requirements_pillow.specifier) == expected
 
 
 def _run_immediate(coroutine):

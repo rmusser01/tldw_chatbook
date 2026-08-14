@@ -23,7 +23,7 @@ textual==8.2.8
 textual-diff-view==0.1.5
 psutil
 requests
-pillow
+pillow==11.2.1
 loguru
 pydantic
 portalocker==3.2.0

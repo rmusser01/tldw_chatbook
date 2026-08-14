@@ -45,7 +45,7 @@ dependencies = [
     "rich",
     "wcwidth>=0.2.14,<1",
     "rich-pixels>=3.0.0",
-    "pillow",
+    "pillow==11.2.1",  # ADR-054 renderer identity; matches reviewed context-use evidence
     "PyYAML",
     "pydantic>=2.4,<3",
     "portalocker==3.2.0",
