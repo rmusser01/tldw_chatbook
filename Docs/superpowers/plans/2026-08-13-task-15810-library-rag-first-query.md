@@ -198,6 +198,15 @@ scratch root, and differs from the real cache. Import
 credential recovery, and an enabled Library Run gate. Hash the real config and
 data inventory before launch.
 
+The real config hash must remain identical. The real data fingerprint must also
+remain identical unless an unrelated independently started process is
+concurrently writing that profile. In that exceptional case, do not stop or
+alter the external process. Record its PID, executable, cwd, and before/after `lsof`; the
+task may proceed only when the TASK-15810 TUI PID has zero real-profile handles
+and every differing real-profile path is present in the independently
+identified external PID's handle inventory. Any unattributed difference is a
+hard isolation failure.
+
 Expected: all assertions pass before any app import or DB open.
 
 - [ ] **Step 4: Seed through production APIs in a separate process**
@@ -251,6 +260,10 @@ PID. Run `lsof -p <validated-pid>` and assert:
 - zero handles beneath the real config/data/profile roots;
 - every database/vector handle is beneath the scratch root; and
 - at least one live scratch data handle exists.
+
+Repeat this validated-PID handle check for every TUI process used as accepted
+reproduction or profile evidence; a run without its own captured handle proof
+is rejected even when another run used the same scratch fixture.
 
 In Library, verify `Notes (36)`, RAG Answer mode, Notes-only scope, top_k 15, citations on, and active `hybrid_basic`/hybrid disclosure.
 
@@ -510,7 +523,9 @@ After each boot/run:
 
 - parse effective TOML again;
 - capture validated-PID `lsof` evidence (zero real-profile handles, scratch handles present);
-- compare real config/data fingerprints to the before state; and
+- compare the real config/data fingerprints to the before state, applying the
+  narrowly defined external-writer attribution rule from Task 1 when and only
+  when every changed path is accounted for; and
 - terminate the app cleanly.
 
 After the final run, terminate the previously validated loopback-stub PID
