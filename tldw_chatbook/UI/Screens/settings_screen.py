@@ -2821,6 +2821,7 @@ class SettingsScreen(BaseAppScreen):
         # switch INTO the category.
         self._maybe_refresh_rag_index_status_on_show()
         self.call_after_refresh(self._update_inspector_overflow_hint)
+        self.call_after_refresh(self._refresh_provider_picker)
 
     def _workbench_compact_now(self) -> bool:
         return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
@@ -9058,9 +9059,12 @@ class SettingsScreen(BaseAppScreen):
         return ""
 
     def _provider_model_default(self, provider: str) -> str:
-        configured_model = resolve_remembered_provider_model(
-            self._app_config_mapping(), provider
-        )
+        try:
+            configured_model = resolve_remembered_provider_model(
+                self._app_config_mapping(), provider
+            )
+        except ValueError:
+            configured_model = None
         if configured_model is not None and configured_model != "None":
             return configured_model
         return self._provider_catalog_model_default(provider)
@@ -15784,6 +15788,8 @@ class SettingsScreen(BaseAppScreen):
         the intent names.
         """
         await super().recompose()
+        if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
+            self._refresh_provider_picker()
         category_value = self._pending_category_focus_value
         if category_value is None:
             return
@@ -18031,9 +18037,7 @@ class SettingsScreen(BaseAppScreen):
                     self._provider_setting_values_mapping().get("provider") or ""
                 )
                 self._sync_provider_manual_widget(current_provider)
-            self.call_after_refresh(
-                self.query_one("#settings-provider-manual-value", Input).focus
-            )
+                self.query_one("#settings-provider-manual-value", Input).focus()
             return
         if provider_id is not None:
             selector.value = provider_id
@@ -18059,6 +18063,8 @@ class SettingsScreen(BaseAppScreen):
         if provider_config_key(provider) == provider_config_key(current_provider):
             return
         self._apply_provider_value_change(provider)
+        if selected_value == PROVIDER_MANUAL_SELECT_VALUE:
+            self.query_one("#settings-provider-manual-value", Input).focus()
 
     @on(Input.Changed, "#settings-provider-manual-value")
     def handle_provider_manual_value_changed(self, event: Input.Changed) -> None:

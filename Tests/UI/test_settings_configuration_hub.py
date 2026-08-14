@@ -2616,6 +2616,228 @@ async def test_settings_provider_picker_search_keeps_draft_endpoint_and_api_key(
         assert all(option.disabled for option in headings)
 
 
+def _provider_picker_option_index(
+    picker: OptionList,
+    *,
+    provider_id: str | None = None,
+    action: str | None = None,
+) -> int:
+    for index in range(picker.option_count):
+        option = picker.get_option_at_index(index)
+        if (
+            provider_id is not None
+            and getattr(option, "provider_id", None) == provider_id
+        ):
+            return index
+        if action is not None and getattr(option, "action", None) == action:
+            return index
+    raise AssertionError(
+        f"picker option not found: provider_id={provider_id!r}, action={action!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_initial_known_provider_enter_is_noop_for_drafts():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        endpoint.value = "https://draft.example/v1"
+        api_key.value = "draft-provider-key"
+        await pilot.pause()
+
+        highlighted = picker.get_option_at_index(picker.highlighted)
+        assert getattr(highlighted, "provider_id", None) == "openai"
+
+        picker.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert screen._provider_setting_values_mapping()["provider"] == "OpenAI"
+        assert screen.query_one("#settings-provider-endpoint-value", Input) is endpoint
+        assert screen.query_one("#settings-provider-api-key", Input) is api_key
+        assert endpoint.value == "https://draft.example/v1"
+        assert api_key.value == "draft-provider-key"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_initial_unknown_provider_is_selected_exactly():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "Exact_Custom-ID",
+        "model": "custom-model",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        highlighted = picker.get_option_at_index(picker.highlighted)
+
+        assert getattr(highlighted, "provider_id", None) == "Exact_Custom-ID"
+        assert (
+            screen.query_one("#settings-provider-manual-value", Input).value
+            == "Exact_Custom-ID"
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_filter_clear_restores_current_highlight():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+
+        search.value = "anthropic"
+        await pilot.pause()
+        assert getattr(
+            picker.get_option_at_index(picker.highlighted), "provider_id", None
+        ) == "anthropic"
+
+        search.value = ""
+        await pilot.pause()
+        assert getattr(
+            picker.get_option_at_index(picker.highlighted), "provider_id", None
+        ) == "openai"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_filtered_selection_uses_provider_lifecycle():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    app.app_config["api_settings"] = {
+        "anthropic": {"model": "claude-3-7-sonnet-latest"}
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+
+        search.value = "anthropic"
+        await pilot.pause()
+        picker.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert screen._provider_setting_values_mapping()["provider"] == "anthropic"
+        assert (
+            screen.query_one("#settings-model-value", Input).value
+            == "claude-3-7-sonnet-latest"
+        )
+        assert str(
+            screen.query_one("#settings-category-providers-models", Button).label
+        ).endswith(" *")
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_no_match_is_honest_with_manual_action():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+
+        search.value = "provider-that-does-not-exist"
+        await pilot.pause()
+
+        status = screen.query_one("#settings-provider-search-status", Static)
+        assert "No catalog providers match" in str(status.renderable)
+        manual_index = _provider_picker_option_index(
+            picker, action="enter_provider_id"
+        )
+        assert picker.get_option_at_index(manual_index).disabled is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved_provider", ["OpenAI", "Exact_Custom-ID"])
+async def test_settings_provider_picker_enter_provider_id_focuses_manual_field(
+    saved_provider,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": saved_provider,
+        "model": "saved-model",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        search.value = "provider-that-does-not-exist"
+        await pilot.pause()
+        picker.highlighted = _provider_picker_option_index(
+            picker, action="enter_provider_id"
+        )
+        picker.focus()
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+        assert manual.disabled is False
+        assert manual.has_focus, repr(host.focused)
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_arbitrary_manual_id_stays_exact_without_exception():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        search.value = "provider-that-does-not-exist"
+        await pilot.pause()
+        picker.highlighted = _provider_picker_option_index(
+            picker, action="enter_provider_id"
+        )
+        picker.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+
+        manual.value = "Exact_Custom-ID"
+        await pilot.pause()
+
+        assert host._exception is None
+        assert manual.value == "Exact_Custom-ID"
+        assert (
+            screen._provider_setting_values_mapping()["provider"]
+            == "Exact_Custom-ID"
+        )
+
+
 @pytest.mark.asyncio
 async def test_settings_provider_api_key_focus_style_has_no_underline():
     """task-185 in passing: focused inputs must not underline placeholder copy."""
