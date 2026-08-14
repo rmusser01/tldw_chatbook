@@ -46,10 +46,12 @@ def _make_json_only_filter() -> Filters:
 class _DialogHost(App[None]):
     """Minimal host that immediately pushes the dialog under test."""
 
-    def __init__(self, dialog):
+    def __init__(self, dialog, *, exit_on_result: bool = True):
         super().__init__()
         self._dialog = dialog
+        self._exit_on_result = exit_on_result
         self._result: object = None
+        self._result_seen = False
 
     def compose(self) -> ComposeResult:
         yield from ()
@@ -57,7 +59,9 @@ class _DialogHost(App[None]):
     async def on_mount(self) -> None:
         def _capture(result):
             self._result = result
-            self.exit()
+            self._result_seen = True
+            if self._exit_on_result:
+                self.exit()
 
         await self.push_screen(self._dialog, callback=_capture)
 
@@ -1293,6 +1297,143 @@ async def test_escape_closes_recent_overlay_first(tmp_path):
         result.append(app._result)
 
     assert result[0] is None, "second Esc must dismiss the picker"
+
+
+class _TrackedSafeFileOpen(EnhancedFileOpen):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.safe_dismiss_results: list[object] = []
+        self.dismiss_results: list[object] = []
+        self.persisted_last_directories: list[Path | None] = []
+
+    def dismiss_safe_once(self, result: object) -> bool:
+        self.safe_dismiss_results.append(result)
+        return super().dismiss_safe_once(result)
+
+    def dismiss(self, result: object) -> None:
+        self.dismiss_results.append(result)
+        super().dismiss(result)
+
+    def _persist_recent_and_last_directory(
+        self, last_directory: Path | None
+    ) -> None:
+        self.persisted_last_directories.append(last_directory)
+
+
+class _TrackedSafeFileSave(EnhancedFileSave):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.safe_dismiss_results: list[object] = []
+        self.dismiss_results: list[object] = []
+        self.persisted_last_directories: list[Path | None] = []
+
+    def dismiss_safe_once(self, result: object) -> bool:
+        self.safe_dismiss_results.append(result)
+        return super().dismiss_safe_once(result)
+
+    def dismiss(self, result: object) -> None:
+        self.dismiss_results.append(result)
+        super().dismiss(result)
+
+    def _persist_recent_and_last_directory(
+        self, last_directory: Path | None
+    ) -> None:
+        self.persisted_last_directories.append(last_directory)
+
+
+def _safe_dialog(dialog_type, tmp_path, context: str):
+    kwargs = {
+        "location": str(tmp_path),
+        "context": context,
+    }
+    if issubclass(dialog_type, EnhancedFileSave):
+        kwargs["default_filename"] = "output.txt"
+    return dialog_type(**kwargs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dialog_type", [_TrackedSafeFileOpen, _TrackedSafeFileSave])
+@pytest.mark.parametrize("source", ["terminal-escape", "backdrop", "visible"])
+async def test_file_dialog_terminal_cancel_sources_use_safe_dismiss_once(
+    tmp_path,
+    dialog_type,
+    source,
+):
+    dialog = _safe_dialog(
+        dialog_type, tmp_path, f"safe_{dialog_type.__name__}_{source}"
+    )
+    app = _DialogHost(dialog, exit_on_result=False)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert dialog.query_one("#enhanced-file-dialog")
+
+        if source == "terminal-escape":
+            await pilot.press("escape")
+        elif source == "backdrop":
+            await pilot.click(offset=(0, 0))
+        else:
+            await pilot.click("#cancel")
+        await pilot.pause()
+
+    assert app._result_seen
+    assert app._result is None
+    assert dialog.safe_dismiss_results == [None]
+    assert dialog.dismiss_results == [None]
+    assert dialog.persisted_last_directories == [tmp_path]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dialog_type", [EnhancedFileOpen, EnhancedFileSave])
+@pytest.mark.parametrize(
+    ("open_surface", "surface_selector"),
+    [
+        ("path", "#path-input"),
+        ("search", "#search-input"),
+        ("recent", "#recent-locations"),
+        ("bookmarks", "#bookmarks-panel"),
+    ],
+)
+async def test_file_dialog_sub_surfaces_peel_on_escape_and_clicks_stay_inside(
+    tmp_path,
+    dialog_type,
+    open_surface,
+    surface_selector,
+):
+    dialog = _safe_dialog(
+        dialog_type,
+        tmp_path,
+        f"surface_{dialog_type.__name__}_{open_surface}",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        if open_surface == "path":
+            dialog.action_focus_path_input()
+        elif open_surface == "search":
+            dialog.action_focus_search()
+        elif open_surface == "recent":
+            dialog.action_toggle_recent()
+        else:
+            dialog.action_toggle_bookmarks()
+        await pilot.pause()
+
+        await pilot.click(surface_selector)
+        await pilot.pause()
+        assert app.screen is dialog
+        assert not app._result_seen
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is dialog
+        assert not app._result_seen
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert app._result_seen
+    assert app._result is None
 
 
 def test_file_list_highlight_is_visible():

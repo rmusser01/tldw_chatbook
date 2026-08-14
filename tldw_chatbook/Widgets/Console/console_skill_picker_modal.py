@@ -55,6 +55,7 @@ from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_skill_resolver import SKILLS_EMPTY_LIST_ROW
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 SkillSearch = Callable[[str], Awaitable[list[Mapping[str, object]]]]
 
@@ -90,10 +91,13 @@ MODAL_TITLE = "Run skill"
 _LEGAL_ID_SUFFIX = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-class ConsoleSkillPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
+class ConsoleSkillPickerModal(
+    SafeModalDismissMixin, ModalScreen[Optional[Mapping[str, object]]]
+):
     """Search and pick a trusted, user-invocable skill to run in the Console."""
 
-    BINDINGS = [("escape", "dismiss_picker", "Cancel")]
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-skill-picker-modal"
 
     def __init__(
         self,
@@ -154,8 +158,8 @@ class ConsoleSkillPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         except (NoMatches, QueryError):
             pass
 
-    def action_dismiss_picker(self) -> None:
-        self.dismiss(None)
+    async def action_dismiss_picker(self) -> None:
+        await self.request_safe_cancel(source="visible")
 
     @on(Input.Changed, f"#{FILTER_INPUT_ID}")
     def _filter_changed(self, event: Input.Changed) -> None:

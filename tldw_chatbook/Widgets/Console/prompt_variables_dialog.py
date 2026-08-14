@@ -19,6 +19,7 @@ from tldw_chatbook.Prompt_Management.prompt_variables import (
     compile_prompt_variables,
     validate_prompt_application_guards,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
 MODAL_ID = "prompt-variables-dialog"
@@ -64,10 +65,13 @@ class PromptVariablesDialogRequest:
         )
 
 
-class PromptVariablesDialog(ModalScreen[PromptVariableApplication | None]):
+class PromptVariablesDialog(
+    SafeModalDismissMixin, ModalScreen[PromptVariableApplication | None]
+):
     """Collect shared values and return a guarded application without mutation."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+    SAFE_MODAL_CONTENT = "#prompt-variables-dialog"
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel", show=False)]
 
     def __init__(self, request: PromptVariablesDialogRequest) -> None:
         super().__init__()
@@ -144,9 +148,6 @@ class PromptVariablesDialog(ModalScreen[PromptVariableApplication | None]):
                 return "A Prompt variable name exceeds 64 characters."
             return "This Prompt has more than 64 variables."
         return ""
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
 
     def _compile_active_plan(self) -> PromptVariablePlan:
         return compile_prompt_variables(
@@ -251,9 +252,9 @@ class PromptVariablesDialog(ModalScreen[PromptVariableApplication | None]):
         )
 
     @on(Button.Pressed, f"#{CANCEL_BUTTON_ID}")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="button")
 
     @on(Button.Pressed, f"#{APPLY_BUTTON_ID}")
     def _apply(self, event: Button.Pressed) -> None:

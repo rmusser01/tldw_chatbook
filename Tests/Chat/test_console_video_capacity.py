@@ -13,7 +13,6 @@ from types import MethodType, SimpleNamespace
 from typing import cast
 
 import pytest
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -24,6 +23,9 @@ from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
     CapacityAction,
     CapacityReason,
     ConsoleVideoCapacityModal,
+)
+from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
+    CancelConfirmationDialog,
 )
 from tldw_chatbook.Chat.console_generate_video import PendingVideoArtifact
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -136,19 +138,6 @@ async def test_modal_buttons_dismiss_with_typed_actions(
         await pilot.pause()
 
     assert results == [expected]
-
-
-@pytest.mark.asyncio
-async def test_modal_escape_dismisses_as_discard() -> None:
-    app = _ModalHost()
-    results: list[CapacityAction] = []
-    async with app.run_test(size=(120, 40)) as pilot:
-        await _mount_modal(app, reason="over_capacity", results=results)
-        await pilot.pause()
-        await pilot.press("escape")
-        await pilot.pause()
-
-    assert results == ["discard"]
 
 
 @pytest.mark.parametrize(
@@ -303,6 +292,137 @@ def _artifact(
         reason=cast(CapacityReason, reason),
         stream=_TrackingStream(payload),
     )
+
+
+@pytest.mark.parametrize(
+    ("reason", "request_source", "cancel_guard_with", "expected_focus"),
+    [
+        ("over_capacity", "escape", "continue", "video-capacity-save"),
+        ("store_failure", "backdrop", "backdrop", "video-capacity-keep"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_generic_capacity_dismissal_guards_real_staged_artifact(
+    reason: str,
+    request_source: str,
+    cancel_guard_with: str,
+    expected_focus: str,
+) -> None:
+    """Retain a staged artifact until discard is explicitly confirmed.
+
+    Args:
+        reason: Capacity outcome presented by the modal.
+        request_source: Escape or backdrop dismissal source.
+        cancel_guard_with: Action used to cancel the nested discard guard.
+        expected_focus: Control that must regain focus after cancellation.
+    """
+    from Tests.UI.app_factory import _build_test_app
+
+    class TrackingChatScreen(ChatScreen):
+        capacity_results: list[object]
+
+        def __init__(self, app_instance) -> None:
+            super().__init__(app_instance)
+            self.capacity_results = []
+
+        async def _wait_for_console_screen_result(self, screen):
+            result = await super()._wait_for_console_screen_result(screen)
+            if isinstance(screen, ConsoleVideoCapacityModal):
+                self.capacity_results.append(result)
+            return result
+
+    class Host(ConsolidatedCSSApp):
+        def __init__(self, app_instance) -> None:
+            super().__init__()
+            self.app_instance = app_instance
+            self.pending_handoffs = app_instance.pending_handoffs
+
+        async def on_mount(self) -> None:
+            await self.push_screen(TrackingChatScreen(self.app_instance))
+
+    artifact = _artifact(reason=reason, message_id=f"guarded-{reason}")
+    host = Host(_build_test_app())
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        screen = host.screen
+        assert isinstance(screen, TrackingChatScreen)
+        screen.app_instance = host
+        worker = screen.run_worker(
+            screen._resolve_generated_video_outcome(
+                artifact,
+                session_id="session",
+                message_id=artifact.message_id,
+            ),
+            exclusive=False,
+            exit_on_error=False,
+        )
+        await pilot.pause()
+        capacity_modal = host.screen
+        assert isinstance(capacity_modal, ConsoleVideoCapacityModal)
+        other_focus = (
+            "video-capacity-keep"
+            if expected_focus == "video-capacity-save"
+            else "video-capacity-save"
+        )
+        capacity_modal.query_one(f"#{other_focus}", Button).focus()
+        await pilot.pause()
+        assert capacity_modal.focused is not None
+        assert capacity_modal.focused.id == other_focus
+
+        if request_source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+        assert isinstance(host.screen, CancelConfirmationDialog)
+        assert screen._owns_pending_console_video(artifact)
+        assert not artifact.stream.closed
+
+        await capacity_modal.request_safe_cancel(source="escape")
+        await capacity_modal.request_safe_cancel(source="backdrop")
+        await pilot.pause()
+        guard_count = sum(
+            isinstance(candidate, CancelConfirmationDialog)
+            for candidate in host.screen_stack
+        )
+        assert guard_count == 1
+
+        if cancel_guard_with == "continue":
+            await pilot.click("#continue-btn")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+        assert host.screen is capacity_modal
+        assert capacity_modal.focused is not None
+        assert capacity_modal.focused.id == expected_focus
+        assert screen._owns_pending_console_video(artifact)
+        assert not artifact.stream.closed
+
+        await capacity_modal.request_safe_cancel(source="escape")
+        await pilot.pause()
+        guard = host.screen
+        assert isinstance(guard, CancelConfirmationDialog)
+        guard.dismiss(None)
+        await pilot.pause()
+
+        assert host.screen is capacity_modal
+        assert screen._owns_pending_console_video(artifact)
+        assert not artifact.stream.closed
+
+        await capacity_modal.request_safe_cancel(source="backdrop")
+        await pilot.pause()
+        assert isinstance(host.screen, CancelConfirmationDialog)
+        await pilot.click("#cancel-btn")
+        await worker.wait()
+        await pilot.pause()
+
+        assert host.screen is screen
+        assert screen.capacity_results == ["discard"]
+        assert screen._pending_console_video_artifacts() == {}
+        assert artifact.stream.closed
+        assert cast(_TrackingStream, artifact.stream).close_calls == 1
 
 
 class _OutcomeHarness:

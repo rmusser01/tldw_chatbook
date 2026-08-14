@@ -26,13 +26,14 @@ from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
     CancelConfirmationDialog,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
-class ConsolePromptQueueModal(ModalScreen[None]):
+class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
     """Manage one queue without ever retargeting to the viewed Console tab."""
 
     BINDINGS = [
-        Binding("escape", "dismiss", "Close", show=False),
+        Binding("escape", "request_safe_cancel", "Close", show=False),
         Binding("j", "select_next", "Next", show=False),
         Binding("k", "select_previous", "Previous", show=False),
         Binding("e", "edit", "Edit", show=False),
@@ -40,6 +41,7 @@ class ConsolePromptQueueModal(ModalScreen[None]):
         Binding("d", "move_down", "Move down", show=False),
         Binding("x", "remove", "Remove", show=False),
     ]
+    SAFE_MODAL_CONTENT = "#console-prompt-queue-dialog"
 
     DEFAULT_CSS = """
     ConsolePromptQueueModal {
@@ -410,7 +412,7 @@ class ConsolePromptQueueModal(ModalScreen[None]):
         )
 
     @on(Button.Pressed)
-    def handle_button(self, event: Button.Pressed) -> None:
+    async def handle_button(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
         if button_id.startswith("console-prompt-queue-entry-"):
             event.stop()
@@ -424,12 +426,14 @@ class ConsolePromptQueueModal(ModalScreen[None]):
             "console-prompt-queue-save": self._save_edit,
             "console-prompt-queue-up": lambda: self._move_selected(-1),
             "console-prompt-queue-down": lambda: self._move_selected(1),
-            "console-prompt-queue-close": self.dismiss,
         }
         handler = handlers.get(button_id)
         if handler is not None:
             event.stop()
             handler()
+        elif button_id == "console-prompt-queue-close":
+            event.stop()
+            await self.request_safe_cancel(source="visible")
         elif button_id == "console-prompt-queue-remove":
             event.stop()
             self.run_worker(

@@ -21,6 +21,7 @@ def _picker(books):
     listing = _Listing()
     picker.query_one = Mock(return_value=listing)
     picker.dismiss = Mock()
+    picker.dismiss_safe_once = Mock()
     return picker, listing
 
 
@@ -67,4 +68,4 @@ def test_cancel_returns_none():
     picker._cancel(event)
 
     event.stop.assert_called_once_with()
-    picker.dismiss.assert_called_once_with(None)
+    picker.dismiss_safe_once.assert_called_once_with(None)

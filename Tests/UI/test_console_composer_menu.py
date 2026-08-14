@@ -390,7 +390,6 @@ async def test_menu_opens_from_the_composer_button_and_returns_an_action():
     menu in a running app, presses the Generate Image row, and asserts the
     screen receives that action id.
     """
-    from textual.app import App
     from textual.widgets import Button
 
     from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
@@ -424,7 +423,6 @@ async def test_menu_opens_from_the_composer_button_and_returns_an_action():
 @pytest.mark.asyncio
 async def test_generate_image_modal_returns_the_composed_command():
     """Integration: type a prompt, accept, and get the command back."""
-    from textual.app import App
     from textual.widgets import Input
 
     from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
@@ -1292,8 +1290,6 @@ async def test_menu_dismisses_on_backdrop_click_but_not_on_inside_click():
     for the backdrop. A click INSIDE the menu chrome (header, padding)
     must not dismiss -- only the backdrop is an exit surface.
     """
-    from textual.app import App
-
     from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
         ConsoleComposerMenuModal,
     )
@@ -1321,7 +1317,9 @@ async def test_menu_dismisses_on_backdrop_click_but_not_on_inside_click():
         # A click with no screen coordinates (synthesized clicks under
         # textual-web arrive that way) cannot be located: it must keep the
         # menu open rather than guess, and must not raise.
-        modal.on_click(SimpleNamespace(screen_x=None, screen_y=None))
+        await modal.on_click(
+            SimpleNamespace(screen_x=None, screen_y=None, widget=None, button=1)
+        )
         await pilot.pause()
         assert app.screen is modal
         assert received == []

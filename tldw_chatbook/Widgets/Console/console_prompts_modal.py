@@ -13,6 +13,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.events import DescendantFocus
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Checkbox, Static, TextArea
@@ -38,6 +39,7 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
     set_artifact_type,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 from .console_prompts_browse import ConsolePromptsBrowse
 from .console_prompt_improve_view import (
@@ -173,7 +175,9 @@ def _saved_record_identifier(record: Mapping[str, Any]) -> str:
     return str(value)
 
 
-class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
+class ConsolePromptsModal(
+    SafeModalDismissMixin, ModalScreen[ConsolePromptsResult | None]
+):
     """One responsive modal shell with internal prompt-workbench modes."""
 
     MODES = ("browse", "edit", "improve", "recipe")
@@ -199,7 +203,8 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
     #console-prompts-dirty-guard.visible { display: block; }
     """
 
-    BINDINGS = [("escape", "back", "Back")]
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
+    SAFE_MODAL_CONTENT = "#console-prompts-modal"
 
     def __init__(
         self,
@@ -251,6 +256,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         self._compatibility_state = ""
         self._request_counter = 0
         self._active_request_id: str | None = None
+        self._apply_in_progress = False
         self._improvement_worker: Any | None = None
         self._activation_counter = 0
         self._active_activation_id: str | None = None
@@ -304,6 +310,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         )
 
     def on_mount(self) -> None:
+        self._apply_in_progress = False
         self._set_responsive(self.app.size.width, self.app.size.height)
         self.run_worker(
             self.reload_browse(),
@@ -346,6 +353,17 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         if widget_id:
             self.state = self.state.remember_focus(self.state.mode, widget_id)
 
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        widget_id = event.widget.id
+        if not widget_id:
+            return
+        try:
+            body = self.query_one("#console-prompts-body", Vertical)
+        except NoMatches:
+            return
+        if body in event.widget.ancestors:
+            self.state = self.state.remember_focus(self.state.mode, widget_id)
+
     def _focus_widget(self, widget_id: str | None) -> None:
         if not widget_id:
             return
@@ -371,6 +389,8 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         )
 
     async def _back_internal(self, *, discard: bool = False) -> None:
+        if self._apply_in_progress:
+            return
         self._cancel_improvement_activation()
         self._reset_persistence_retry()
         if self._active_request_id is not None:
@@ -1209,48 +1229,102 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         )
 
     async def _coordinate_apply(
-        self, result: ConsolePromptsResult, captured: Any
+        self,
+        result: ConsolePromptsResult,
+        captured: Any,
+        *,
+        _generation: int | None = None,
     ) -> None:
+        generation = _generation
+        if generation is None:
+            generation = self._claim_apply_transaction()
+            if generation is None:
+                return
+        if not self._apply_presentation_is_current(generation):
+            return
         self._reset_persistence_retry()
         if self._apply_improvement_result is None:
-            self.dismiss(result)
+            self.dismiss_safe_once(result)
+            self._set_apply_in_progress(False)
             return
         try:
-            outcome = await _maybe_await(
-                self._apply_improvement_result(result, captured)
-            )
-        except Exception:
+            try:
+                outcome = await _maybe_await(
+                    self._apply_improvement_result(result, captured)
+                )
+            except Exception:
+                if self._apply_presentation_is_current(generation):
+                    self._set_improvement_status(
+                        "The prompt changed while this result was open. Capture it again and retry."
+                    )
+                return
+            if not self._apply_presentation_is_current(generation):
+                return
+            kind = str(getattr(outcome, "kind", "applied"))
+            if kind == "applied":
+                if not self.dismiss_safe_once(result):
+                    self._set_improvement_status("Applied to the Console.")
+                return
+            if kind == "persistence_failed":
+                self._pending_persistence_result = result
+                self._set_improvement_status(
+                    "Applied to this session, but could not save to the conversation."
+                )
+                self._set_persistence_retry_visible(
+                    True,
+                    focus=True,
+                )
+                return
+            if (
+                kind == "stale"
+                and getattr(captured, "mode", "") in {"auto", "review"}
+                and result.apply_user
+                and result.user_text is not None
+            ):
+                await self._mount_review(result.user_text)
             self._set_improvement_status(
-                "The prompt changed while this result was open. Capture it again and retry."
+                str(
+                    getattr(outcome, "user_message", "")
+                    or "The live Console state changed. Capture the prompt again and retry."
+                )
             )
-            return
-        kind = str(getattr(outcome, "kind", "applied"))
-        if kind == "applied":
-            self.dismiss(result)
-            return
-        if kind == "persistence_failed":
-            self._pending_persistence_result = result
-            self._set_improvement_status(
-                "Applied to this session, but could not save to the conversation."
-            )
-            self._set_persistence_retry_visible(
-                True,
-                focus=True,
-            )
-            return
-        if (
-            kind == "stale"
-            and getattr(captured, "mode", "") in {"auto", "review"}
-            and result.apply_user
-            and result.user_text is not None
+        finally:
+            if self._safe_mount_generation == generation:
+                self._set_apply_in_progress(False)
+
+    def _apply_presentation_is_current(self, generation: int) -> bool:
+        return self.is_mounted and self._safe_mount_generation == generation
+
+    def _claim_apply_transaction(self) -> int | None:
+        if self._apply_in_progress or not self.is_mounted:
+            return None
+        self._set_apply_in_progress(True)
+        return self._safe_mount_generation
+
+    def _set_apply_in_progress(self, active: bool) -> None:
+        self._apply_in_progress = active
+        for selector in (
+            "#console-prompts-back",
+            "#console-prompts-close",
+            "#console-prompts-review-apply",
+            "#prompt-editor-apply",
         ):
-            await self._mount_review(result.user_text)
-        self._set_improvement_status(
-            str(
-                getattr(outcome, "user_message", "")
-                or "The live Console state changed. Capture the prompt again and retry."
-            )
-        )
+            try:
+                self.query_one(selector, Button).disabled = active
+            except NoMatches:
+                continue
+        if not self.is_mounted:
+            return
+        try:
+            status = self.query_one("#console-prompts-improvement-status", Static)
+        except NoMatches:
+            return
+        status.can_focus = active
+        if active:
+            status.update("Applying changes to the Console…")
+            status.focus()
+        else:
+            self._sync_editor_host_gates()
 
     async def _mount_review(self, candidate: str) -> None:
         body = self.query_one("#console-prompts-body", Vertical)
@@ -1271,19 +1345,27 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             )
         )
 
-    async def _apply_review_candidate(self) -> None:
+    async def _apply_review_candidate(self, generation: int) -> None:
+        if not self._apply_presentation_is_current(generation):
+            return
         captured = self._captured_improvement_request
         if captured is None:
             self._set_improvement_status("The captured request is no longer available.")
+            self._set_apply_in_progress(False)
             return
         candidate = self.query_one("#console-prompts-review-user", TextArea).text
         try:
             if self._validate_improvement is not None:
                 await _maybe_await(self._validate_improvement(captured, candidate))
         except Exception:
+            if not self._apply_presentation_is_current(generation):
+                return
             self._set_improvement_status(
                 "Protected prompt material changed. Restore the protected placeholders before applying."
             )
+            self._set_apply_in_progress(False)
+            return
+        if not self._apply_presentation_is_current(generation):
             return
         await self._coordinate_apply(
             self._result_for(
@@ -1294,6 +1376,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
                 captured=captured,
             ),
             captured,
+            _generation=generation,
         )
 
     async def _mount_recipe_editor(
@@ -1392,6 +1475,8 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
 
     def _show_dirty_guard(self) -> None:
         guard = self.query_one("#console-prompts-dirty-guard", Vertical)
+        if guard.display:
+            return
         guard.add_class("visible")
         guard.display = True
         self.call_after_refresh(self._focus_widget, "console-prompts-keep-editing")
@@ -1400,6 +1485,40 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         guard = self.query_one("#console-prompts-dirty-guard", Vertical)
         guard.remove_class("visible")
         guard.display = False
+
+    def _keep_editing(self) -> None:
+        self._hide_dirty_guard()
+        self.call_after_refresh(
+            self._focus_widget,
+            self.state.focus_for(self.state.mode),
+        )
+
+    def _improvement_is_cancelling(self) -> bool:
+        worker = self._improvement_worker
+        return bool(worker is not None and worker.is_cancelled and worker.is_running)
+
+    def _request_close(self) -> None:
+        if self._apply_in_progress:
+            return
+        self._recipe_selecting = False
+        self._cancel_improvement_activation()
+        if self._active_request_id is not None:
+            self._cancel_improvement()
+            return
+        if self._improvement_is_cancelling():
+            return
+        if self.state.mode in {"edit", "recipe"} and self.state.dirty:
+            self._show_dirty_guard()
+            return
+        self.dismiss_safe_once(None)
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        guard = self.query_one("#console-prompts-dirty-guard", Vertical)
+        if guard.display:
+            if source == "escape":
+                self._keep_editing()
+            return
+        self._request_close()
 
     @on(ConsolePromptsBrowse.ImproveRequested)
     def _improve_requested(self, event: ConsolePromptsBrowse.ImproveRequested) -> None:
@@ -1510,9 +1629,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             )
 
     @on(PromptBlockEditor.ApplyRequested)
-    async def _apply_not_available(
-        self, event: PromptBlockEditor.ApplyRequested
-    ) -> None:
+    def _apply_not_available(self, event: PromptBlockEditor.ApplyRequested) -> None:
         event.stop()
         if self.state.mode == "edit":
             decoded = self._decoded
@@ -1559,15 +1676,20 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             )
         else:
             return
-        await self._coordinate_apply(
-            self._result_for(
-                user_text=event.user_prompt,
-                system_text=event.system_prompt,
-                apply_user=event.apply_user,
-                apply_system=event.apply_system,
-                captured=guard,
-            ),
-            guard,
+        generation = self._claim_apply_transaction()
+        if generation is None:
+            return
+        result = self._result_for(
+            user_text=event.user_prompt,
+            system_text=event.system_prompt,
+            apply_user=event.apply_user,
+            apply_system=event.apply_system,
+            captured=guard,
+        )
+        self.run_worker(
+            self._coordinate_apply(result, guard, _generation=generation),
+            exclusive=False,
+            group=f"console-prompts-apply-{id(self)}",
         )
 
     def _cancel_improvement(self) -> None:
@@ -1594,7 +1716,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
         kind = str(getattr(outcome, "kind", ""))
         if kind == "applied":
             self._reset_persistence_retry()
-            self.dismiss(result)
+            self.dismiss_safe_once(result)
             return
         if kind == "persistence_failed":
             self._set_improvement_status(
@@ -1730,22 +1852,10 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             await self._back_internal()
         elif button_id == "console-prompts-close":
             event.stop()
-            self._recipe_selecting = False
-            self._cancel_improvement_activation()
-            if self._active_request_id is not None:
-                self._cancel_improvement()
-                return
-            if self.state.mode in {"edit", "recipe"} and self.state.dirty:
-                self._show_dirty_guard()
-            else:
-                self.dismiss(None)
+            self._request_close()
         elif button_id == "console-prompts-keep-editing":
             event.stop()
-            self._hide_dirty_guard()
-            self.call_after_refresh(
-                self._focus_widget,
-                self.state.focus_for(self.state.mode),
-            )
+            self._keep_editing()
         elif button_id == "console-prompts-discard":
             event.stop()
             self._hide_dirty_guard()
@@ -1772,7 +1882,13 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
             await self._retry_persistence()
         elif button_id == "console-prompts-review-apply":
             event.stop()
-            await self._apply_review_candidate()
+            generation = self._claim_apply_transaction()
+            if generation is not None:
+                self.run_worker(
+                    self._apply_review_candidate(generation),
+                    exclusive=False,
+                    group=f"console-prompts-apply-{id(self)}",
+                )
         elif button_id == "console-prompts-recipe-outcome-first":
             event.stop()
             self._recipe_source = None
@@ -1814,7 +1930,7 @@ class ConsolePromptsModal(ModalScreen[ConsolePromptsResult | None]):
 
     def action_back(self) -> None:
         if self.query_one("#console-prompts-dirty-guard", Vertical).display:
-            self._hide_dirty_guard()
+            self._keep_editing()
             return
         self.run_worker(
             self._back_internal(),

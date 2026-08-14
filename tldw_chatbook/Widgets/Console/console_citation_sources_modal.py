@@ -32,6 +32,7 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
 OPEN_SOURCE_TYPES = {
@@ -212,10 +213,13 @@ def build_console_citation_source_rows(
     return tuple(rows)
 
 
-class ConsoleCitationSourcesModal(ModalScreen[dict[str, str] | None]):
+class ConsoleCitationSourcesModal(
+    SafeModalDismissMixin, ModalScreen[dict[str, str] | None]
+):
     """Show exact cited snapshots after lazy authorized hydration."""
 
-    BINDINGS = [("escape", "dismiss", "Close")]
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
+    SAFE_MODAL_CONTENT = "#console-citation-sources-modal"
 
     def __init__(
         self,
@@ -287,14 +291,19 @@ class ConsoleCitationSourcesModal(ModalScreen[dict[str, str] | None]):
     def on_unmount(self) -> None:
         self._request_generation += 1
 
-    def action_dismiss(self) -> None:
-        self._request_generation += 1
-        self.dismiss(None)
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+
+        async def invalidate_requests() -> None:
+            self._request_generation += 1
+
+        await self.run_cancel_effect_once(invalidate_requests)
+        self.dismiss_safe_once(None)
 
     @on(Button.Pressed, "#console-citation-sources-close")
-    def _close(self, event: Button.Pressed) -> None:
+    async def _close(self, event: Button.Pressed) -> None:
         event.stop()
-        self.action_dismiss()
+        await self.request_safe_cancel(source="visible")
 
     def _hydrate_rows(self) -> tuple[ConsoleCitationSourceRow, ...] | None:
         repository = self._repository

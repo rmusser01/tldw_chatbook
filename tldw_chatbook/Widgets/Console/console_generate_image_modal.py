@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_command_grammar import (
     COMMAND_PREFIX,
     GENERATE_IMAGE_COMMAND_NAME,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 #: Select sentinel for "use whatever the config default is".
 DEFAULT_CHOICE = "__default__"
@@ -54,7 +55,7 @@ def build_generate_image_command(
     return " ".join(parts)
 
 
-class ConsoleGenerateImageModal(ModalScreen["str | None"]):
+class ConsoleGenerateImageModal(SafeModalDismissMixin, ModalScreen["str | None"]):
     """Collect backend/style/prompt; dismiss with the command text."""
 
     DEFAULT_CSS = """
@@ -91,7 +92,8 @@ class ConsoleGenerateImageModal(ModalScreen["str | None"]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss_modal", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-generate-image-modal"
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
     def __init__(
         self,
@@ -185,13 +187,13 @@ class ConsoleGenerateImageModal(ModalScreen["str | None"]):
             event.stop()
             self._accept()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "console-generate-image-accept":
             event.stop()
             self._accept()
         elif event.button.id == "console-generate-image-cancel":
             event.stop()
-            self.dismiss(None)
+            await self.request_safe_cancel(source="button")
 
     def _accept(self) -> None:
         prompt = self.query_one("#console-generate-image-prompt", Input).value.strip()
@@ -199,6 +201,3 @@ class ConsoleGenerateImageModal(ModalScreen["str | None"]):
             self.notify("Enter a prompt first.", severity="warning")
             return
         self.dismiss(self._current_command())
-
-    def action_dismiss_modal(self) -> None:
-        self.dismiss(None)

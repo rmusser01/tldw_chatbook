@@ -18,6 +18,8 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
 if TYPE_CHECKING:  # pragma: no cover
     from PIL import Image as PILImage
 
@@ -38,7 +40,7 @@ class ClickableAvatarBox(Container):
         self.post_message(AvatarViewRequested())
 
 
-class ConsoleImageViewerModal(ModalScreen[None]):
+class ConsoleImageViewerModal(SafeModalDismissMixin, ModalScreen[None]):
     """Show one image as large as the current viewport allows."""
 
     DEFAULT_CSS = """
@@ -76,7 +78,8 @@ class ConsoleImageViewerModal(ModalScreen[None]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss_viewer", "Close")]
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
+    SAFE_MODAL_CONTENT = "#console-image-viewer"
 
     def __init__(self, image: "PILImage.Image", *, title: str = "") -> None:
         super().__init__()
@@ -91,7 +94,7 @@ class ConsoleImageViewerModal(ModalScreen[None]):
                 "Esc / click to close", id="console-image-viewer-hint", markup=False
             )
 
-    async def on_mount(self) -> None:
+    async def on_mount(self) -> None:  # type: ignore[override]
         body = self.query_one("#console-image-viewer-body", Container)
         widget = self._build_full_size_widget()
         # Inline styles, not CSS: the app-tier stylesheet bundle outranks a
@@ -160,9 +163,10 @@ class ConsoleImageViewerModal(ModalScreen[None]):
         except Exception:
             return "pixels"
 
-    def on_click(self, event: events.Click) -> None:
+    async def on_click(self, event: events.Click) -> None:
         event.stop()
-        self.dismiss(None)
+        event.prevent_default()
+        await self.request_safe_cancel(source="click-anywhere")
 
-    def action_dismiss_viewer(self) -> None:
-        self.dismiss(None)
+    async def action_dismiss_viewer(self) -> None:
+        await self.request_safe_cancel(source="visible")

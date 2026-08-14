@@ -26,6 +26,8 @@ from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
 ROW_ID_PREFIX = "console-rewind-row-"
 ROW_CLASS = "console-rewind-row"
 
@@ -81,7 +83,9 @@ class ConsoleRewindChoice:
     prompt_text: str
 
 
-class ConsoleRewindModal(ModalScreen["ConsoleRewindChoice | None"]):
+class ConsoleRewindModal(
+    SafeModalDismissMixin, ModalScreen["ConsoleRewindChoice | None"]
+):
     """Pick a prior Console USER prompt, then Restore / Summarize / cancel."""
 
     DEFAULT_CSS = """
@@ -122,7 +126,8 @@ class ConsoleRewindModal(ModalScreen["ConsoleRewindChoice | None"]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss_rewind", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-rewind-modal"
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
     def __init__(self, *, prompts: tuple[RewindPromptRow, ...], **kwargs: Any) -> None:
         """Initialize the modal.
@@ -151,10 +156,6 @@ class ConsoleRewindModal(ModalScreen["ConsoleRewindChoice | None"]):
                         compact=True,
                     )
             yield Vertical(id=ACTIONS_CONTAINER_ID)
-
-    def action_dismiss_rewind(self) -> None:
-        """Dismiss the modal with no result (Escape)."""
-        self.dismiss(None)
 
     @on(Button.Pressed, f".{ROW_CLASS}")
     async def _row_pressed(self, event: Button.Pressed) -> None:
@@ -235,14 +236,14 @@ class ConsoleRewindModal(ModalScreen["ConsoleRewindChoice | None"]):
         )
 
     @on(Button.Pressed, f"#{CANCEL_ACTION_ID}")
-    def _cancel_pressed(self, event: Button.Pressed) -> None:
+    async def _cancel_pressed(self, event: Button.Pressed) -> None:
         """Dismiss with no result ("Never mind").
 
         Args:
             event: The Never-mind button's press event.
         """
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="button")
 
     @staticmethod
     def _row_index(widget_id: str) -> int | None:

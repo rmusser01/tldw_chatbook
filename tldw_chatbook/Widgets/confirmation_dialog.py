@@ -11,13 +11,15 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Container
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static
+
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 #
 #######################################################################################################################
 #
 # Classes:
 
 
-class ConfirmationDialog(ModalScreen):
+class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
     """
     A modal confirmation dialog for user actions.
 
@@ -28,8 +30,9 @@ class ConfirmationDialog(ModalScreen):
     # dialog without reaching for the mouse. Dismissing is always the safe
     # (non-destructive) outcome: confirm stays click/enter-on-button only.
     BINDINGS = [
-        Binding("escape", "cancel_dialog", "Cancel", show=False),
+        Binding("escape", "request_safe_cancel", "Cancel", show=False),
     ]
+    SAFE_MODAL_CONTENT = "#confirmation-dialog"
 
     # CSS for styling
     DEFAULT_CSS = """
@@ -105,11 +108,11 @@ class ConfirmationDialog(ModalScreen):
         self.cancel_label = cancel_label
         self.confirm_callback = confirm_callback
         self.cancel_callback = cancel_callback
-        self.result = None
+        self.result: bool | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the dialog UI."""
-        with Container():
+        with Container(id="confirmation-dialog"):
             yield Static(self.title, classes="dialog-title")
             yield Label(self.message, classes="dialog-message")
 
@@ -129,6 +132,7 @@ class ConfirmationDialog(ModalScreen):
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
+        event.stop()
         if event.button.id == "confirm-button":
             self.result = True
             if self.confirm_callback:
@@ -139,10 +143,15 @@ class ConfirmationDialog(ModalScreen):
 
     async def action_cancel_dialog(self) -> None:
         """Cancel the dialog (Escape and the Cancel button share this path)."""
+        await self.request_safe_cancel(source="button")
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        """Run the existing callback once, then return the exact cancel value."""
+        del source
         self.result = False
         if self.cancel_callback:
-            await self.cancel_callback()
-        self.dismiss(False)
+            await self.run_cancel_effect_once(self.cancel_callback)
+        self.dismiss_safe_once(False)
 
 
 class UnsavedChangesDialog(ConfirmationDialog):

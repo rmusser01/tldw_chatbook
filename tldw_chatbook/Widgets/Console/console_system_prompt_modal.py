@@ -21,6 +21,8 @@ from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static, TextArea
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
 MODAL_ID = "console-system-prompt-modal"
 SCOPE_STATIC_ID = "console-system-prompt-scope"
 TEXT_AREA_ID = "console-system-prompt-text"
@@ -45,7 +47,7 @@ SAVE_TO_LIBRARY_ERROR_COPY = "Couldn't save this prompt. Try again."
 SaveToLibrary = Callable[[str, str], Awaitable[str]]
 
 
-class ConsoleSystemPromptModal(ModalScreen[Optional[str]]):
+class ConsoleSystemPromptModal(SafeModalDismissMixin, ModalScreen[Optional[str]]):
     """Edit (or clear) the active Console session's system prompt.
 
     Dismisses with:
@@ -55,7 +57,8 @@ class ConsoleSystemPromptModal(ModalScreen[Optional[str]]):
         plumbing already normalizes a blank string to ``None``).
     """
 
-    BINDINGS = [("escape", "dismiss_editor", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-system-prompt-modal"
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
     def __init__(
         self,
@@ -117,14 +120,10 @@ class ConsoleSystemPromptModal(ModalScreen[Optional[str]]):
         except (NoMatches, QueryError):
             pass
 
-    def action_dismiss_editor(self) -> None:
-        """Dismiss with ``None`` (no change), bound to the Escape key."""
-        self.dismiss(None)
-
     @on(Button.Pressed, f"#{CANCEL_BUTTON_ID}")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="button")
 
     @on(Button.Pressed, f"#{APPLY_BUTTON_ID}")
     def _apply(self, event: Button.Pressed) -> None:
