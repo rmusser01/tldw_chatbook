@@ -373,10 +373,62 @@ async def test_dispose_shuts_the_controller_down_and_closes_the_gateway():
     assert controller._shutdown_requested.is_set()
     assert controller._disposed is True
     assert closed == [True], "dispose must close the app-owned gateway"
-    assert runtime.chat_controller is None
-    assert runtime.chat_store is None
     assert runtime.view is None
     assert runtime.generation == 1
+
+
+@pytest.mark.asyncio
+async def test_dispose_does_not_let_a_late_ensure_rebuild_the_runtime():
+    """A quit-time tick must not resurrect what dispose just tore down.
+
+    `_shutdown_app_owned_lifecycles` runs BEFORE Textual closes screen
+    state, so a Console screen and its 0.2s timers can still be live while
+    `dispose()` runs -- and ~75 `_ensure_console_chat_*` call sites are
+    reachable from them. If `ensure_*` built a fresh object then, quit
+    would leave a brand-new controller alive that nothing ever shuts down.
+    """
+    store = ConsoleChatStore()
+    gateway = _StalledGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(store)
+    runtime.set_provider_gateway(gateway)
+    runtime.set_chat_controller(controller)
+    runtime.attach_view(_View())
+
+    await asyncio.wait_for(runtime.dispose(), timeout=2)
+
+    # (a) an ALREADY-BUILT slot hands back the torn-down object rather than
+    #     a fresh one -- dispose keeps its references precisely for this.
+    assert runtime.ensure_chat_controller() is controller, (
+        "dispose must not let a late ensure build a SECOND controller"
+    )
+    assert runtime.ensure_chat_store() is store
+    assert runtime.ensure_provider_gateway() is gateway
+    # ...and what it hands back is genuinely torn down, so it refuses work.
+    assert controller._shutdown_requested.is_set()
+
+
+@pytest.mark.asyncio
+async def test_dispose_does_not_let_a_late_ensure_build_an_unbuilt_slot():
+    """The `_disposed` latch itself, on the case references cannot cover.
+
+    A slot that was never built before quit has no reference to hand back,
+    so only the latch stops `ensure_*` constructing a brand-new store (and,
+    with it, a fresh `ChatPersistenceService`) while the app is exiting.
+    """
+    runtime = ConsoleRuntime(app=None)
+    runtime.attach_view(_View())
+    assert runtime.chat_store is None, "nothing built yet -- that is the point"
+
+    await asyncio.wait_for(runtime.dispose(), timeout=2)
+
+    assert runtime.ensure_chat_store() is None, (
+        "a late tick built a fresh store DURING QUIT"
+    )
+    assert runtime.ensure_provider_gateway() is None
+    assert runtime.ensure_chat_controller() is None
+    assert runtime.chat_store is None
 
 
 @pytest.mark.asyncio

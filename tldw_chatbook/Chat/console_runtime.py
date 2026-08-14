@@ -250,6 +250,10 @@ class ConsoleRuntime:
         #: first and this attribute names it; the outgoing screen's later
         #: detach sees a different claimant and does nothing.
         self.view: Any | None = None
+        #: Latched by `dispose()` (app exit). Every `ensure_*` returns what
+        #: it already holds afterwards and builds nothing new -- see
+        #: `dispose` for why a rebuild during quit is the hazard.
+        self._disposed: bool = False
         #: Bumped by every `dispose()` -- i.e. once per app run, not once
         #: per navigation. `Tests/UI/test_console_runtime_ownership.py`
         #: reads it to prove the runtime survived a visit.
@@ -325,7 +329,7 @@ class ConsoleRuntime:
         Returns:
             ConsoleChatStore: The runtime's store.
         """
-        if self._chat_store is not None:
+        if self._chat_store is not None or self._disposed:
             return self._chat_store
         from tldw_chatbook.Chat.chat_persistence_service import (
             ChatPersistenceService,
@@ -382,7 +386,7 @@ class ConsoleRuntime:
         Returns:
             Any: The runtime's provider gateway.
         """
-        if self._provider_gateway is not None:
+        if self._provider_gateway is not None or self._disposed:
             return self._provider_gateway
         factory = getattr(self._app, "console_provider_gateway_factory", None)
         if callable(factory):
@@ -433,7 +437,7 @@ class ConsoleRuntime:
             Any: The `ConsoleAgentBridge`, or `None` when there is no
             durable ChaChaNotes DB to key the sibling `AgentRunsDB` off.
         """
-        if self._agent_bridge is not None:
+        if self._agent_bridge is not None or self._disposed:
             return self._agent_bridge
         db = getattr(self._app, "chachanotes_db", None)
         db_path = getattr(db, "db_path", None) if db is not None else None
@@ -489,7 +493,7 @@ class ConsoleRuntime:
         Returns:
             ConsoleChatController: The runtime's controller.
         """
-        if self._chat_controller is not None:
+        if self._chat_controller is not None or self._disposed:
             return self._chat_controller
         from tldw_chatbook.Chat.console_chat_controller import (
             ConsoleChatController,
@@ -630,14 +634,22 @@ class ConsoleRuntime:
         cancellation Event permanently, and cancels/awaits EVERY session's
         stream task) and then `await gateway.aclose()`. Reached from
         `TldwCli._shutdown_app_owned_lifecycles`.
+
+        **The built objects are NOT dropped, and `_disposed` latches.**
+        `_shutdown_app_owned_lifecycles` runs BEFORE Textual closes screen
+        state, so a Console screen -- and its timers -- can still be live
+        while this runs, and there are ~75 `_ensure_console_chat_*` call
+        sites reachable from those. Dropping the references would let one
+        of them BUILD A FRESH CONTROLLER during quit, which nothing would
+        ever shut down; returning `None` instead would crash a tick that
+        has never had to handle it. Keeping the torn-down objects is the
+        only option that does neither: a shut-down controller already
+        refuses work through its permanently-set cancellation Event, which
+        is exactly the right answer at exit.
         """
+        self._disposed = True
         self.detach_view(None)
         controller, gateway = self._chat_controller, self._provider_gateway
-        self._chat_controller = None
-        self._agent_bridge = None
-        self._provider_gateway = None
-        self._chat_store = None
-        self.view = None
         self.generation += 1
         if controller is not None:
             try:
