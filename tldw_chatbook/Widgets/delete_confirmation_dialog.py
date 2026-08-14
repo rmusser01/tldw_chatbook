@@ -140,7 +140,7 @@ class DeleteConfirmationDialog(ConfirmationDialog):
 
     def compose(self) -> ComposeResult:
         """Compose the dialog UI with additional warning if provided."""
-        with Container():
+        with Container(id="confirmation-dialog"):
             yield Static(self.title, classes="dialog-title")
             yield Label(self.message, classes="dialog-message")
 

@@ -22,6 +22,17 @@ from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Prompt_Management.prompt_variables import PromptVariableApplication
+from tldw_chatbook.UI.Screens.change_review_screen import (
+    ChangeReviewScreen,
+    ChangeRevertConfirmModal,
+)
+from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
+from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
+from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
+    CancelConfirmationDialog,
+)
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ConsoleComposerMenuModal,
 )
@@ -91,10 +102,16 @@ from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
 )
+from tldw_chatbook.Widgets.enhanced_file_picker import (
+    EnhancedFileOpen,
+    EnhancedFileSave,
+)
 from tldw_chatbook.Widgets.modal_dismissal import (
     SafeModalDismissMixin,
     is_modal_backdrop_click,
 )
+from tldw_chatbook.Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
+from tldw_chatbook.Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
 
 
 @dataclass(frozen=True)
@@ -116,6 +133,18 @@ class _Task3ModalContract:
     content_selector: str
     cancel_result: object
     success_result_types: tuple[type[object], ...]
+    opener: str
+    pre_cancel_hook: str | None
+    guard: str
+    focus_postcondition: str
+
+
+@dataclass(frozen=True)
+class _Task4ModalContract:
+    modal_type: type[ModalScreen[Any]]
+    content_selector: str | None
+    cancel_result: object
+    escape_action: str
     opener: str
     pre_cancel_hook: str | None
     guard: str
@@ -472,6 +501,100 @@ TASK3_MODAL_CONTRACTS = (
 )
 
 
+TASK4_MODAL_CONTRACTS = (
+    _Task4ModalContract(
+        WorkbenchHelpPanel,
+        "#workbench-help-panel",
+        None,
+        "request_safe_cancel",
+        "Console contextual help action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task4ModalContract(
+        DictionaryPicker,
+        "#dictionary-picker-dialog",
+        None,
+        "request_safe_cancel",
+        "Console character dictionary action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task4ModalContract(
+        WorldBookPicker,
+        "#world-book-picker-dialog",
+        None,
+        "request_safe_cancel",
+        "Console character world-book action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task4ModalContract(
+        ConfirmationDialog,
+        "#confirmation-dialog",
+        False,
+        "request_safe_cancel",
+        "Console confirmation launch sites",
+        "cancel_callback via run_cancel_effect_once",
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task4ModalContract(
+        CancelConfirmationDialog,
+        "#cancel-confirmation-dialog",
+        False,
+        "request_safe_cancel",
+        "Console prompt queue cancellation",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task4ModalContract(
+        EnhancedFileOpen,
+        "#enhanced-file-dialog",
+        None,
+        "smart_dismiss",
+        "Console attachment action",
+        None,
+        "path/search/recent/bookmarks peel before terminal Escape",
+        _RESTORE_OPENER,
+    ),
+    _Task4ModalContract(
+        EnhancedFileSave,
+        "#enhanced-file-dialog",
+        None,
+        "smart_dismiss",
+        "Console generated-video export",
+        None,
+        "path/search/recent/bookmarks peel before terminal Escape",
+        _RESTORE_OPENER,
+    ),
+    _Task4ModalContract(
+        VideoPlayerScreen,
+        None,
+        None,
+        "request_safe_cancel",
+        "Console video Play action",
+        "player cleanup on unmount",
+        "whole screen is content; no synthetic backdrop",
+        _RESTORE_OPENER,
+    ),
+    _Task4ModalContract(
+        ChangeRevertConfirmModal,
+        "#change-revert-confirm",
+        False,
+        "request_safe_cancel",
+        "ChangeReviewScreen revert actions",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+)
+
+
 def _binding_key_action(binding: object) -> tuple[str, str]:
     if isinstance(binding, Binding):
         return binding.key, binding.action
@@ -561,16 +684,186 @@ def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
         assert contract.focus_postcondition == _RESTORE_OPENER
 
 
+def test_task4_transitive_modal_contract_table_is_complete_and_adopted() -> None:
+    assert len(TASK4_MODAL_CONTRACTS) == 9
+    assert {contract.modal_type.__name__ for contract in TASK4_MODAL_CONTRACTS} == {
+        "WorkbenchHelpPanel",
+        "DictionaryPicker",
+        "WorldBookPicker",
+        "ConfirmationDialog",
+        "CancelConfirmationDialog",
+        "EnhancedFileOpen",
+        "EnhancedFileSave",
+        "VideoPlayerScreen",
+        "ChangeRevertConfirmModal",
+    }
+    for contract in TASK4_MODAL_CONTRACTS:
+        assert issubclass(contract.modal_type, SafeModalDismissMixin)
+        assert contract.modal_type.SAFE_MODAL_CONTENT == contract.content_selector
+        escape_actions = [
+            action
+            for binding in contract.modal_type.BINDINGS
+            for key, action in [_binding_key_action(binding)]
+            if key == "escape"
+        ]
+        assert escape_actions == [contract.escape_action]
+        assert contract.cancel_result is None or contract.cancel_result is False
+        assert contract.opener
+        assert contract.guard
+        assert contract.focus_postcondition == _RESTORE_OPENER
+
+    launch_source = inspect.getsource(ChangeReviewScreen._confirm_and_revert)
+    launch_source += inspect.getsource(ChangeReviewScreen.action_undo_all)
+    assert "ChangeRevertConfirmModal(" in launch_source
+
+
 class _Task2Harness(App[None]):
     CSS = """
     Screen { align: center middle; }
     #console-citation-sources-modal,
-    #console-style-picker-modal { width: 60; height: 20; }
+    #console-style-picker-modal,
+    #change-revert-confirm { width: 60; height: 20; }
     """
 
     def __init__(self) -> None:
         super().__init__()
         self.results: list[object] = []
+
+
+@dataclass(frozen=True)
+class _MountedTask4Contract:
+    name: str
+    factory: Callable[[], ModalScreen[Any]]
+    visible_cancel: str
+    cancel_result: object
+
+
+MOUNTED_TASK4_CONTRACTS = (
+    _MountedTask4Contract(
+        "workbench-help",
+        lambda: WorkbenchHelpPanel(
+            WorkbenchHelpState(route_id="console", title="Console help")
+        ),
+        "#workbench-help-close",
+        None,
+    ),
+    _MountedTask4Contract(
+        "dictionary-picker",
+        lambda: DictionaryPicker([]),
+        "#dict-pick-cancel",
+        None,
+    ),
+    _MountedTask4Contract(
+        "world-book-picker",
+        lambda: WorldBookPicker([]),
+        "#worldbook-pick-cancel",
+        None,
+    ),
+    _MountedTask4Contract(
+        "confirmation",
+        ConfirmationDialog,
+        "#cancel-button",
+        False,
+    ),
+    _MountedTask4Contract(
+        "cancel-confirmation",
+        CancelConfirmationDialog,
+        "#continue-btn",
+        False,
+    ),
+    _MountedTask4Contract(
+        "change-revert-confirm",
+        lambda: ChangeRevertConfirmModal("Revert a.txt?", []),
+        "#change-revert-no",
+        False,
+    ),
+)
+
+
+@pytest.mark.parametrize("contract", MOUNTED_TASK4_CONTRACTS, ids=lambda row: row.name)
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_task4_shared_modal_cancel_sources_return_exact_result(
+    contract: _MountedTask4Contract,
+    source: str,
+) -> None:
+    app = _Task2Harness()
+    modal = contract.factory()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+
+        if source == "visible":
+            await pilot.click(contract.visible_cancel)
+        elif source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+    assert len(app.results) == 1
+    assert app.results[0] is contract.cancel_result
+
+
+@pytest.mark.asyncio
+async def test_delete_confirmation_inherits_safe_backdrop_cancel_contract() -> None:
+    app = _Task2Harness()
+    modal = DeleteConfirmationDialog(item_type="Conversation", item_name="Example")
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+    assert len(app.results) == 1
+    assert app.results[0] is False
+
+
+@pytest.mark.asyncio
+async def test_confirmation_cancel_callback_is_once_across_repeated_and_nested_input():
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    callback_calls = 0
+    nested = _NestedModal()
+    app = _Task2Harness()
+
+    async def cancel_callback() -> None:
+        nonlocal callback_calls
+        callback_calls += 1
+        entered.set()
+        await release.wait()
+        app.push_screen(nested)
+
+    modal = ConfirmationDialog(cancel_callback=cancel_callback)
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+
+        first_request = asyncio.create_task(modal.action_request_safe_cancel())
+        await entered.wait()
+        repeated_escape = asyncio.create_task(modal.action_request_safe_cancel())
+        await pilot.click(offset=(0, 0))
+        assert callback_calls == 1
+        assert app.screen is modal
+
+        release.set()
+        await asyncio.gather(first_request, repeated_escape)
+        await pilot.pause()
+        assert app.screen is nested
+        assert app.results == []
+
+        nested.dismiss(None)
+        await pilot.pause()
+        assert app.screen is modal
+
+        await modal.action_request_safe_cancel()
+        await pilot.pause()
+
+    assert callback_calls == 1
+    assert app.results == [False]
 
 
 @pytest.mark.parametrize(

@@ -29,6 +29,7 @@ from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryE
 from ..Third_Party.textual_fspicker.path_maker import MakePath
 from ..Third_Party.textual_fspicker.safe_tests import is_dir, is_file
 from ..Utils.path_validation import validate_path_simple
+from .modal_dismissal import SafeModalDismissMixin
 from ..config import (
     get_cli_setting,
     save_setting_to_cli_config,
@@ -946,7 +947,7 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
 SearchableDirectoryNavigation = EnhancedDirectoryNavigation
 
 
-class EnhancedFileDialog(BaseFileDialog):
+class EnhancedFileDialog(SafeModalDismissMixin, BaseFileDialog):
     """Enhanced file picker with keyboard shortcuts, recent files, breadcrumbs, bookmarks, and search"""
 
     DEFAULT_CSS = BaseFileDialog.DEFAULT_CSS + """
@@ -1218,6 +1219,8 @@ class EnhancedFileDialog(BaseFileDialog):
         *[Binding(str(n), f"jump_bookmark('{n}')", f"Bookmark {n}", show=False) for n in range(1, 10)],
     ]
 
+    SAFE_MODAL_CONTENT = "#enhanced-file-dialog"
+
     show_bookmarks = reactive(False)
     show_hints = reactive(True)
 
@@ -1231,6 +1234,7 @@ class EnhancedFileDialog(BaseFileDialog):
         FileSystemPickerScreen._on_clear_search,
         FileSystemPickerScreen._on_directory_changed,
         FileSystemPickerScreen._on_path_input_submit,
+        FileSystemPickerScreen._cancel,
     }
 
     def _get_dispatch_methods(self, method_name: str, message: Message):
@@ -1384,7 +1388,7 @@ class EnhancedFileDialog(BaseFileDialog):
         from ..Third_Party.textual_fspicker.base_dialog import Dialog, InputBar
         from ..Third_Party.textual_fspicker.parts import DriveNavigation
 
-        with Dialog() as dialog:
+        with Dialog(id="enhanced-file-dialog") as dialog:
             dialog.border_title = self._title
 
             with Horizontal(id="dialog-body"):
@@ -1708,7 +1712,13 @@ class EnhancedFileDialog(BaseFileDialog):
             self.show_bookmarks = False
             return
 
-        self.dismiss(None)
+        self.dismiss_safe_once(None)
+
+    @on(Button.Pressed, "#cancel")
+    def _cancel_safe(self, event: Button.Pressed) -> None:
+        """Route the visible Cancel button through terminal safe dismissal."""
+        event.stop()
+        self.dismiss_safe_once(None)
 
     def _select_file(self, event: DirectoryNavigation.Selected) -> None:
         """No-op override of ``BaseFileDialog._select_file``.

@@ -11,6 +11,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
 from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchAction
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
 @dataclass(frozen=True)
@@ -57,7 +58,7 @@ class WorkbenchHelpState:
         return "\n".join(lines)
 
 
-class WorkbenchHelpPanel(ModalScreen[None]):
+class WorkbenchHelpPanel(SafeModalDismissMixin, ModalScreen[None]):
     """Modal panel showing contextual Workbench help.
 
     Fleet-UX expert review F2 follow-up (task-1232 round 1, Critical): before
@@ -75,7 +76,7 @@ class WorkbenchHelpPanel(ModalScreen[None]):
     """
 
     BINDINGS = [
-        Binding("escape", "dismiss", "Close", show=False),
+        Binding("escape", "request_safe_cancel", "Close", show=False),
         # task-4023 AC#4 (RC-10): F1 toggles the help CLOSED. With the
         # panel on top, the app-level F1 delegate finds no
         # ``action_show_workbench_help`` on this screen, so a second F1
@@ -83,8 +84,10 @@ class WorkbenchHelpPanel(ModalScreen[None]):
         # binding resolves before the app binding, so this wins while the
         # panel is up -- making F1 a true open/close toggle on every
         # screen that pushes this shared panel.
-        Binding("f1", "dismiss", "Close", show=False),
+        Binding("f1", "request_safe_cancel", "Close", show=False),
     ]
+
+    SAFE_MODAL_CONTENT = "#workbench-help-panel"
 
     # KEEP IN SYNC with the live bundle source
     # css/components/_workbench.tcss (the "task-1232 round 1" block): this
@@ -141,8 +144,8 @@ class WorkbenchHelpPanel(ModalScreen[None]):
                 yield Static(self.state.render_text(), id="workbench-help-body")
             yield Button("Close", id="workbench-help-close", compact=True)
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Dismiss the panel from its close button."""
         if event.button.id == "workbench-help-close":
             event.stop()
-            self.dismiss(None)
+            await self.request_safe_cancel(source="button")
