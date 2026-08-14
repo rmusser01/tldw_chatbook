@@ -3,12 +3,29 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any
+from functools import partial
+from typing import TYPE_CHECKING, Any, Protocol, cast
 from weakref import ReferenceType, ref
 
 from textual import events
 from textual.app import App
+from textual.screen import Screen
 from textual.widget import Widget
+
+if TYPE_CHECKING:
+
+    class _SafeModalHost(Protocol):
+        """Textual surface required by ``SafeModalDismissMixin``."""
+
+        @property
+        def app(self) -> App[Any]: ...
+
+        @property
+        def is_mounted(self) -> bool: ...
+
+        def query_one(self, selector: str, expect_type: type[Widget]) -> Widget: ...
+
+        def dismiss(self, result: object) -> object: ...
 
 
 def is_modal_backdrop_click(
@@ -42,6 +59,30 @@ def _restore_focus_after_dismissal(
         focus_console_composer(force=True)
 
 
+def _release_backdrop_click_shield(app: App[Any], revealed_screen: Screen[Any]) -> None:
+    if app.mouse_captured is revealed_screen:
+        revealed_screen.release_mouse()
+
+
+def _capture_revealed_screen_for_click_chain(
+    app: App[Any], revealed_screen: Screen[Any]
+) -> None:
+    if app.screen is not revealed_screen:
+        return
+    revealed_screen.capture_mouse()
+    revealed_screen.set_timer(
+        app.CLICK_CHAIN_TIME_THRESHOLD,
+        partial(_release_backdrop_click_shield, app, revealed_screen),
+    )
+
+
+def _shield_revealed_screen_from_click_chain(app: App[Any]) -> None:
+    revealed_screen = app.screen
+    revealed_screen.call_after_refresh(
+        _capture_revealed_screen_for_click_chain, app, revealed_screen
+    )
+
+
 class SafeModalDismissMixin:
     """Provide one-shot cancellation and backdrop handling for a modal screen."""
 
@@ -51,10 +92,18 @@ class SafeModalDismissMixin:
     _safe_cancel_effect_committed = False
     _safe_dismiss_committed = False
     _safe_opener_focus_ref: ReferenceType[Widget] | None = None
+    _safe_cancel_source: str | None = None
 
     def on_mount(self) -> None:
         """Remember the opener's focused widget for post-dismiss restoration."""
-        screen_stack = self.app.screen_stack
+        self._safe_cancel_pending = False
+        self._safe_cancel_effect_committed = False
+        self._safe_dismiss_committed = False
+        self._safe_opener_focus_ref = None
+        self._safe_cancel_source = None
+
+        host = cast("_SafeModalHost", self)
+        screen_stack = host.app.screen_stack
         if len(screen_stack) < 2:
             return
         opener = screen_stack[-2].focused
@@ -73,10 +122,12 @@ class SafeModalDismissMixin:
         if self._safe_cancel_pending:
             return
         self._safe_cancel_pending = True
+        self._safe_cancel_source = source
         try:
             await self._perform_safe_cancel(source=source)
         finally:
-            if self.is_mounted:
+            self._safe_cancel_source = None
+            if cast("_SafeModalHost", self).is_mounted:
                 self._safe_cancel_pending = False
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
@@ -97,13 +148,17 @@ class SafeModalDismissMixin:
         """Dismiss only this mounted, topmost modal and restore opener focus."""
         if self._safe_dismiss_committed:
             return False
-        if not self.is_mounted or self.app.screen is not self:
+        host = cast("_SafeModalHost", self)
+        if not host.is_mounted or host.app.screen is not self:
             return False
 
         self._safe_dismiss_committed = True
-        app = self.app
+        app = host.app
         opener_ref = self._safe_opener_focus_ref
-        self.dismiss(result)
+        shield_click_chain = self._safe_cancel_source == "backdrop"
+        host.dismiss(result)
+        if shield_click_chain:
+            _shield_revealed_screen_from_click_chain(app)
         app.screen.call_after_refresh(_restore_focus_after_dismissal, app, opener_ref)
         return True
 
@@ -112,7 +167,8 @@ class SafeModalDismissMixin:
         if self.SAFE_MODAL_CONTENT is None:
             return
 
-        content = self.query_one(self.SAFE_MODAL_CONTENT, Widget)
+        host = cast("_SafeModalHost", self)
+        content = host.query_one(self.SAFE_MODAL_CONTENT, Widget)
         target = event.widget
         coordinates_known = event.screen_x is not None and event.screen_y is not None
         provenance_known = isinstance(target, Widget) and coordinates_known
