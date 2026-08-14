@@ -53,6 +53,22 @@ class SourceIdentity:
     modified_ns: int = field(repr=False)
     changed_ns: int = field(repr=False)
 
+    def __post_init__(self) -> None:
+        integer_fields = (
+            "device",
+            "inode",
+            "mode",
+            "size",
+            "modified_ns",
+            "changed_ns",
+        )
+        for field_name in integer_fields:
+            if type(getattr(self, field_name)) is not int:
+                raise TypeError(f"{field_name} must be an integer.")
+        for field_name in ("device", "inode", "mode", "size"):
+            if getattr(self, field_name) < 0:
+                raise ValueError(f"{field_name} must be non-negative.")
+
 
 @dataclass(frozen=True, slots=True)
 class DiscoveredImportSource:
@@ -62,6 +78,31 @@ class DiscoveredImportSource:
     size_bytes: int
     identity: SourceIdentity = field(repr=False)
     parent_identities: tuple[SourceIdentity, ...] = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, ImportSource):
+            raise TypeError("source must be an ImportSource.")
+        if type(self.size_bytes) is not int:
+            raise TypeError("size_bytes must be an integer.")
+        if self.size_bytes < 0:
+            raise ValueError("size_bytes must be non-negative.")
+        if not isinstance(self.identity, SourceIdentity):
+            raise TypeError("identity must be a SourceIdentity.")
+        if isinstance(self.parent_identities, (str, bytes)):
+            raise TypeError("parent_identities must be a collection.")
+        try:
+            parent_identities = tuple(self.parent_identities)
+        except TypeError as error:
+            raise TypeError("parent_identities must be a collection.") from error
+        if not parent_identities:
+            raise ValueError("parent_identities cannot be empty.")
+        if not all(
+            isinstance(identity, SourceIdentity) for identity in parent_identities
+        ):
+            raise ValueError("parent_identities must contain SourceIdentity values.")
+        if self.size_bytes != self.identity.size:
+            raise ValueError("size_bytes must match identity.size.")
+        object.__setattr__(self, "parent_identities", parent_identities)
 
 
 @dataclass(frozen=True, slots=True)
@@ -892,9 +933,19 @@ def _directory_open_flags() -> int:
 
 def _file_open_flags() -> int:
     no_follow_flag = getattr(os, "O_NOFOLLOW", None)
-    if not isinstance(no_follow_flag, int) or no_follow_flag <= 0:
+    nonblocking_flag = getattr(os, "O_NONBLOCK", None)
+    if (
+        not isinstance(no_follow_flag, int)
+        or no_follow_flag <= 0
+        or not isinstance(nonblocking_flag, int)
+        or nonblocking_flag <= 0
+    ):
         raise _SecureDiscoveryUnavailable
-    return os.O_RDONLY | no_follow_flag
+    flags = os.O_RDONLY | no_follow_flag | nonblocking_flag
+    close_on_exec_flag = getattr(os, "O_CLOEXEC", 0)
+    if isinstance(close_on_exec_flag, int) and close_on_exec_flag > 0:
+        flags |= close_on_exec_flag
+    return flags
 
 
 def _close_descriptors(descriptors: Iterable[int]) -> bool:

@@ -62,6 +62,19 @@ MAX_IMPORT_REASON_LENGTH = 1_024
 MAX_IMPORT_DEPTH = 64
 """Absolute recursion-safe ceiling for one import discovery walk."""
 
+MAX_IMPORT_FILES = 10_000
+MAX_IMPORT_FILE_BYTES = 64 * 1024 * 1024
+MAX_IMPORT_TOTAL_BYTES = 512 * 1024 * 1024
+MAX_IMPORT_ENTRIES = 100_000
+MAX_IMPORT_NOTES_PER_FILE = 10_000
+MAX_IMPORT_KEYWORDS_PER_NOTE = 1_000
+"""Absolute resource ceilings for one bounded import preview."""
+
+MAX_IMPORT_TITLE_LENGTH = 4_096
+MAX_IMPORT_TEMPLATE_NAME_LENGTH = 1_024
+MAX_IMPORT_KEYWORD_LENGTH = 512
+"""Absolute scalar lengths for parsed note metadata."""
+
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
@@ -257,6 +270,17 @@ class ImportBounds:
                 raise TypeError(f"{field_name} must be an integer.")
             if value <= 0:
                 raise ValueError(f"{field_name} must be a positive integer.")
+        absolute_ceilings = {
+            "max_files": MAX_IMPORT_FILES,
+            "max_file_bytes": MAX_IMPORT_FILE_BYTES,
+            "max_total_bytes": MAX_IMPORT_TOTAL_BYTES,
+            "max_entries": MAX_IMPORT_ENTRIES,
+            "max_notes_per_file": MAX_IMPORT_NOTES_PER_FILE,
+            "max_keywords_per_note": MAX_IMPORT_KEYWORDS_PER_NOTE,
+        }
+        for field_name, ceiling in absolute_ceilings.items():
+            if getattr(self, field_name) > ceiling:
+                raise ValueError(f"{field_name} exceeds its absolute safety ceiling.")
         if type(self.max_depth) is not int:
             raise TypeError("max_depth must be an integer.")
         if self.max_depth < 0:

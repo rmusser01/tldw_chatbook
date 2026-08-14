@@ -25,7 +25,10 @@ from tldw_chatbook.Notes.note_import_discovery import (
     read_discovered_source,
 )
 from tldw_chatbook.Notes.note_import_plan_models import (
+    MAX_IMPORT_KEYWORD_LENGTH,
     MAX_IMPORT_REASON_LENGTH,
+    MAX_IMPORT_TEMPLATE_NAME_LENGTH,
+    MAX_IMPORT_TITLE_LENGTH,
     ImportBounds,
     ImportClassification,
     ImportSourceKind,
@@ -35,6 +38,13 @@ from tldw_chatbook.Notes.note_import_plan_models import (
 
 SUPPORTED_NOTE_EXTENSIONS = frozenset(
     {".txt", ".text", ".md", ".markdown", ".rst", ".json", ".yaml", ".yml", ".csv"}
+)
+
+_TITLE_ALIASES = ("title", "name")
+_CONTENT_ALIASES = ("content", "body")
+_KEYWORD_ALIASES = ("keywords", "tags")
+_CSV_RESERVED_HEADERS = frozenset(
+    (*_TITLE_ALIASES, *_CONTENT_ALIASES, *_KEYWORD_ALIASES, "template")
 )
 
 
@@ -360,6 +370,8 @@ def _parse_text(
                 if line.startswith("# ") and line[2:].strip():
                     title = line[2:].strip()
                     break
+        if len(title) > MAX_IMPORT_TITLE_LENGTH:
+            raise _ParseFailure("invalid_content")
         return (ParsedNotePayload(title=title, content=text),)
     if extension == ".json":
         value = json.loads(text, object_pairs_hook=_unique_json_object)
@@ -404,6 +416,11 @@ def _payload_from_mapping(
 ) -> ParsedNotePayload:
     if not all(isinstance(key, str) for key in record):
         raise _ParseFailure("invalid_content")
+    if any(
+        sum(alias in record for alias in aliases) > 1
+        for aliases in (_TITLE_ALIASES, _CONTENT_ALIASES, _KEYWORD_ALIASES)
+    ):
+        raise _ParseFailure("invalid_content")
     content_value = record.get("content", record.get("body"))
     if not isinstance(content_value, str) or not content_value.strip():
         raise _ParseFailure("invalid_content")
@@ -412,10 +429,14 @@ def _payload_from_mapping(
         raise _ParseFailure("invalid_content")
     if not title_value.strip():
         title_value = "Untitled"
+    if len(title_value) > MAX_IMPORT_TITLE_LENGTH:
+        raise _ParseFailure("invalid_content")
     keywords_value = record.get("keywords", record.get("tags"))
     keywords = _keywords(keywords_value, bounds)
     template = record.get("template")
     if template is not None and not isinstance(template, str):
+        raise _ParseFailure("invalid_content")
+    if template is not None and len(template) > MAX_IMPORT_TEMPLATE_NAME_LENGTH:
         raise _ParseFailure("invalid_content")
     return ParsedNotePayload(
         title=title_value,
@@ -437,7 +458,9 @@ def _keywords(value: Any, bounds: ImportBounds) -> tuple[str, ...]:
     else:
         raise _ParseFailure("invalid_content")
     keywords = tuple(keyword.strip() for keyword in raw_keywords)
-    if any(not keyword for keyword in keywords):
+    if any(
+        not keyword or len(keyword) > MAX_IMPORT_KEYWORD_LENGTH for keyword in keywords
+    ):
         raise _ParseFailure("invalid_content")
     if len(keywords) > bounds.max_keywords_per_note:
         raise _ParseFailure("too_many_keywords")
@@ -460,19 +483,15 @@ def _csv_payloads(text: str, bounds: ImportBounds) -> tuple[ParsedNotePayload, .
     ):
         raise _ParseFailure("invalid_content")
 
-    title_index = _first_header(normalized_headers, ("title", "name"))
-    content_index = _first_header(normalized_headers, ("content", "body"))
+    title_index = _role_header_index(normalized_headers, _TITLE_ALIASES)
+    content_index = _role_header_index(normalized_headers, _CONTENT_ALIASES)
+    keyword_index = _role_header_index(normalized_headers, _KEYWORD_ALIASES)
     if title_index is None and content_index is None:
         title_index, content_index = 0, 1
     elif title_index is None:
-        title_index = next(
-            index for index in range(len(headers)) if index != content_index
-        )
+        title_index = _fallback_header_index(normalized_headers)
     elif content_index is None:
-        content_index = next(
-            index for index in range(len(headers)) if index != title_index
-        )
-    keyword_index = _first_header(normalized_headers, ("keywords", "tags"))
+        content_index = _fallback_header_index(normalized_headers)
     template_index = _first_header(normalized_headers, ("template",))
 
     payloads: list[ParsedNotePayload] = []
@@ -500,6 +519,23 @@ def _first_header(headers: tuple[str, ...], names: tuple[str, ...]) -> int | Non
         if name in headers:
             return headers.index(name)
     return None
+
+
+def _role_header_index(
+    headers: tuple[str, ...],
+    aliases: tuple[str, ...],
+) -> int | None:
+    indexes = [index for index, header in enumerate(headers) if header in aliases]
+    if len(indexes) > 1:
+        raise _ParseFailure("invalid_content")
+    return indexes[0] if indexes else None
+
+
+def _fallback_header_index(headers: tuple[str, ...]) -> int:
+    for index, header in enumerate(headers):
+        if header not in _CSV_RESERVED_HEADERS:
+            return index
+    raise _ParseFailure("invalid_content")
 
 
 def _folder_segments(

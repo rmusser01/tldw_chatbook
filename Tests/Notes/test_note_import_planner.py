@@ -4,6 +4,7 @@ import os
 from collections import Counter
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from threading import Thread
 from types import SimpleNamespace
 from typing import Self
 
@@ -348,6 +349,71 @@ def test_import_bounds_reject_non_positive_capacity(
 
     with pytest.raises(ValueError):
         ImportBounds(**values)
+
+
+def test_import_resource_and_scalar_absolute_ceilings_are_named() -> None:
+    assert note_import_plan_models.MAX_IMPORT_FILES == 10_000
+    assert note_import_plan_models.MAX_IMPORT_FILE_BYTES == 64 * 1024 * 1024
+    assert note_import_plan_models.MAX_IMPORT_TOTAL_BYTES == 512 * 1024 * 1024
+    assert note_import_plan_models.MAX_IMPORT_ENTRIES == 100_000
+    assert note_import_plan_models.MAX_IMPORT_NOTES_PER_FILE == 10_000
+    assert note_import_plan_models.MAX_IMPORT_KEYWORDS_PER_NOTE == 1_000
+    assert note_import_plan_models.MAX_IMPORT_TITLE_LENGTH == 4_096
+    assert note_import_plan_models.MAX_IMPORT_TEMPLATE_NAME_LENGTH == 1_024
+    assert note_import_plan_models.MAX_IMPORT_KEYWORD_LENGTH == 512
+
+
+def _absolute_ceiling_bounds(**overrides: int) -> ImportBounds:
+    values = {
+        "max_files": 1,
+        "max_file_bytes": 1,
+        "max_total_bytes": note_import_plan_models.MAX_IMPORT_TOTAL_BYTES,
+        "max_depth": 1,
+        "max_entries": 1,
+        "max_notes_per_file": 1,
+        "max_keywords_per_note": 1,
+    }
+    values.update(overrides)
+    return ImportBounds(**values)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "ceiling"),
+    [
+        ("max_files", 10_000),
+        ("max_file_bytes", 64 * 1024 * 1024),
+        ("max_total_bytes", 512 * 1024 * 1024),
+        ("max_entries", 100_000),
+        ("max_notes_per_file", 10_000),
+        ("max_keywords_per_note", 1_000),
+    ],
+)
+def test_import_bounds_accept_each_absolute_resource_ceiling(
+    field_name: str,
+    ceiling: int,
+) -> None:
+    bounds = _absolute_ceiling_bounds(**{field_name: ceiling})
+
+    assert getattr(bounds, field_name) == ceiling
+
+
+@pytest.mark.parametrize(
+    ("field_name", "ceiling"),
+    [
+        ("max_files", 10_000),
+        ("max_file_bytes", 64 * 1024 * 1024),
+        ("max_total_bytes", 512 * 1024 * 1024),
+        ("max_entries", 100_000),
+        ("max_notes_per_file", 10_000),
+        ("max_keywords_per_note", 1_000),
+    ],
+)
+def test_import_bounds_reject_values_above_absolute_resource_ceilings(
+    field_name: str,
+    ceiling: int,
+) -> None:
+    with pytest.raises(ValueError, match=field_name):
+        _absolute_ceiling_bounds(**{field_name: ceiling + 1})
 
 
 def test_memberships_reference_an_existing_payload() -> None:
@@ -1353,6 +1419,96 @@ def test_discovery_aggregate_copies_collections_into_immutable_tuples() -> None:
         discovery.total_bytes = 1  # type: ignore[misc]
 
 
+def _source_identity(**overrides: object) -> object:
+    values: dict[str, object] = {
+        "device": 1,
+        "inode": 2,
+        "mode": 0o100644,
+        "size": 4,
+        "modified_ns": 5,
+        "changed_ns": 6,
+    }
+    values.update(overrides)
+    return note_import_planner.SourceIdentity(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["device", "inode", "mode", "size", "modified_ns", "changed_ns"],
+)
+def test_source_identity_integer_fields_reject_booleans(field_name: str) -> None:
+    with pytest.raises(TypeError, match=field_name):
+        _source_identity(**{field_name: True})
+
+
+@pytest.mark.parametrize("field_name", ["device", "inode", "mode", "size"])
+def test_source_identity_nonnegative_fields_reject_negative_values(
+    field_name: str,
+) -> None:
+    with pytest.raises(ValueError, match=field_name):
+        _source_identity(**{field_name: -1})
+
+
+def test_source_identity_timestamps_may_be_negative_integers() -> None:
+    identity = _source_identity(modified_ns=-2, changed_ns=-1)
+
+    assert identity.modified_ns == -2
+    assert identity.changed_ns == -1
+
+
+def test_discovered_source_defensively_copies_parent_identity_collections() -> None:
+    source = ImportSource(
+        kind=ImportSourceKind.SELECTED_FILE,
+        display_path="note.txt",
+        source_path=Path("/private/note.txt"),
+    )
+    identity = _source_identity(size=4)
+    parents = [_source_identity(mode=0o040755, size=0)]
+
+    candidate = note_import_planner.DiscoveredImportSource(
+        source=source,
+        size_bytes=4,
+        identity=identity,
+        parent_identities=parents,
+    )
+    parents.clear()
+
+    assert len(candidate.parent_identities) == 1
+    assert isinstance(candidate.parent_identities, tuple)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"source": object()},
+        {"size_bytes": True},
+        {"size_bytes": -1},
+        {"identity": object()},
+        {"parent_identities": []},
+        {"parent_identities": [object()]},
+        {"parent_identities": "not-identities"},
+        {"size_bytes": 3},
+    ],
+)
+def test_discovered_source_rejects_invalid_exported_record_state(
+    overrides: dict[str, object],
+) -> None:
+    values: dict[str, object] = {
+        "source": ImportSource(
+            kind=ImportSourceKind.SELECTED_FILE,
+            display_path="note.txt",
+            source_path=Path("/private/note.txt"),
+        ),
+        "size_bytes": 4,
+        "identity": _source_identity(size=4),
+        "parent_identities": [_source_identity(mode=0o040755, size=0)],
+    }
+    values.update(overrides)
+
+    with pytest.raises((TypeError, ValueError)):
+        note_import_planner.DiscoveredImportSource(**values)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("selected_kind", ["file", "directory"])
 def test_selected_paths_reject_symlinked_parent_components(
     tmp_path: Path,
@@ -2102,6 +2258,40 @@ def test_structured_sources_reject_duplicates_aliases_and_empty_results(
     assert batch.issues[0].reason_code == reason_code
 
 
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        (
+            "notes.json",
+            '{"title":"One","name":"One","content":"Body"}',
+        ),
+        (
+            "notes.json",
+            '{"title":"One","content":"Body","body":"Body"}',
+        ),
+        (
+            "notes.json",
+            '{"content":"Body","keywords":["a"],"tags":["a"]}',
+        ),
+        ("notes.yaml", "title: One\nname: One\ncontent: Body\n"),
+        ("notes.yaml", "title: One\ncontent: Body\nbody: Body\n"),
+        ("notes.yaml", "content: Body\nkeywords: [a]\ntags: [a]\n"),
+    ],
+)
+def test_structured_mapping_rejects_conflicting_semantic_aliases_atomically(
+    tmp_path: Path,
+    filename: str,
+    content: str,
+) -> None:
+    source = tmp_path / filename
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code == "invalid_content"
+
+
 def test_duplicate_normalized_csv_headers_fail_atomically(tmp_path: Path) -> None:
     source = tmp_path / "notes.csv"
     source.write_text("Title, title ,content\nOne,Other,Body\n", encoding="utf-8")
@@ -2110,6 +2300,70 @@ def test_duplicate_normalized_csv_headers_fail_atomically(tmp_path: Path) -> Non
 
     assert batch.parsed == ()
     assert batch.issues[0].reason_code == "invalid_content"
+
+
+@pytest.mark.parametrize(
+    "csv_content",
+    [
+        "title,name,content\nOne,One,Body\n",
+        "title,content,body\nOne,Body,Body\n",
+        "title,content,keywords,tags\nOne,Body,a,a\n",
+    ],
+)
+def test_csv_rejects_multiple_headers_for_one_semantic_role(
+    tmp_path: Path,
+    csv_content: str,
+) -> None:
+    source = tmp_path / "notes.csv"
+    source.write_text(csv_content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code == "invalid_content"
+
+
+@pytest.mark.parametrize(
+    "csv_content",
+    [
+        "title,tags\nOne,alpha\n",
+        "body,template\nBody,Meeting\n",
+    ],
+)
+def test_csv_partial_semantic_role_requires_an_unreserved_fallback_column(
+    tmp_path: Path,
+    csv_content: str,
+) -> None:
+    source = tmp_path / "notes.csv"
+    source.write_text(csv_content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code == "invalid_content"
+
+
+@pytest.mark.parametrize(
+    ("csv_content", "expected_title", "expected_content"),
+    [
+        ("body,tags,subject\nBody,alpha,One\n", "One", "Body"),
+        ("name,template,text\nOne,Meeting,Body\n", "One", "Body"),
+    ],
+)
+def test_csv_partial_semantic_role_skips_reserved_fallback_columns(
+    tmp_path: Path,
+    csv_content: str,
+    expected_title: str,
+    expected_content: str,
+) -> None:
+    source = tmp_path / "notes.csv"
+    source.write_text(csv_content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    payload = batch.parsed[0].payloads[0]
+    assert payload.title == expected_title
+    assert payload.content == expected_content
 
 
 def test_unsupported_candidates_are_not_opened_and_have_safe_issues(
@@ -2241,6 +2495,104 @@ def test_structured_blank_titles_fall_back_without_stripping_content(
     payload = batch.parsed[0].payloads[0]
     assert payload.title == "Untitled"
     assert payload.content.startswith("  Body ")
+
+
+def _parse_scalar_limit_source(
+    tmp_path: Path,
+    filename: str,
+    content: str,
+) -> object:
+    source = tmp_path / filename
+    source.write_text(content, encoding="utf-8")
+    bounds = _discovery_bounds(max_file_bytes=20_000, max_total_bytes=50_000)
+    return _parse_selection(
+        [source],
+        bounds=bounds,
+        destination=("Imported",),
+    )
+
+
+@pytest.mark.parametrize("format_name", ["markdown", "json", "yaml", "csv"])
+@pytest.mark.parametrize("extra_length", [0, 1])
+def test_parsed_title_scalar_limit_boundary(
+    tmp_path: Path,
+    format_name: str,
+    extra_length: int,
+) -> None:
+    limit = note_import_plan_models.MAX_IMPORT_TITLE_LENGTH
+    title = "T" * (limit + extra_length)
+    if format_name == "markdown":
+        filename, content = "note.md", f"# {title}\nBody"
+    elif format_name == "json":
+        filename, content = "note.json", f'{{"title":"{title}","content":"Body"}}'
+    elif format_name == "yaml":
+        filename, content = "note.yaml", f'title: "{title}"\ncontent: Body\n'
+    else:
+        filename, content = "note.csv", f"title,content\n{title},Body\n"
+
+    batch = _parse_scalar_limit_source(tmp_path, filename, content)
+
+    if extra_length:
+        assert batch.parsed == ()
+        assert batch.issues[0].reason_code == "invalid_content"
+    else:
+        assert batch.parsed[0].payloads[0].title == title
+
+
+@pytest.mark.parametrize("format_name", ["json", "yaml", "csv"])
+@pytest.mark.parametrize("extra_length", [0, 1])
+def test_parsed_template_scalar_limit_boundary(
+    tmp_path: Path,
+    format_name: str,
+    extra_length: int,
+) -> None:
+    limit = note_import_plan_models.MAX_IMPORT_TEMPLATE_NAME_LENGTH
+    template = "M" * (limit + extra_length)
+    if format_name == "json":
+        filename = "note.json"
+        content = f'{{"content":"Body","template":"{template}"}}'
+    elif format_name == "yaml":
+        filename = "note.yaml"
+        content = f'content: Body\ntemplate: "{template}"\n'
+    else:
+        filename = "note.csv"
+        content = f"title,content,template\nOne,Body,{template}\n"
+
+    batch = _parse_scalar_limit_source(tmp_path, filename, content)
+
+    if extra_length:
+        assert batch.parsed == ()
+        assert batch.issues[0].reason_code == "invalid_content"
+    else:
+        assert batch.parsed[0].payloads[0].template_name == template
+
+
+@pytest.mark.parametrize("format_name", ["json", "yaml", "csv"])
+@pytest.mark.parametrize("extra_length", [0, 1])
+def test_parsed_keyword_scalar_limit_boundary(
+    tmp_path: Path,
+    format_name: str,
+    extra_length: int,
+) -> None:
+    limit = note_import_plan_models.MAX_IMPORT_KEYWORD_LENGTH
+    keyword = "K" * (limit + extra_length)
+    if format_name == "json":
+        filename = "note.json"
+        content = f'{{"content":"Body","keywords":"{keyword}"}}'
+    elif format_name == "yaml":
+        filename = "note.yaml"
+        content = f'content: Body\nkeywords: "{keyword}"\n'
+    else:
+        filename = "note.csv"
+        content = f"title,content,keywords\nOne,Body,{keyword}\n"
+
+    batch = _parse_scalar_limit_source(tmp_path, filename, content)
+
+    if extra_length:
+        assert batch.parsed == ()
+        assert batch.issues[0].reason_code == "invalid_content"
+    else:
+        assert batch.parsed[0].payloads[0].keywords == (keyword,)
 
 
 @pytest.mark.parametrize(
@@ -2542,6 +2894,92 @@ def test_bounded_read_does_not_trust_discovered_stat_size(
 
     assert batch.parsed == ()
     assert batch.issues[0].reason_code == "max_file_bytes_exceeded"
+
+
+def test_leaf_fifo_swap_between_stat_and_open_fails_without_blocking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "note.txt"
+    source.write_text("original", encoding="utf-8")
+    bounds = _discovery_bounds()
+    discovery = discover_import_sources([source], bounds)
+    real_stat = os.stat
+    swapped = False
+
+    def swap_after_stat(
+        path: object,
+        *args: object,
+        dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+        **kwargs: object,
+    ) -> os.stat_result:
+        nonlocal swapped
+        metadata = real_stat(
+            path,
+            *args,
+            dir_fd=dir_fd,
+            follow_symlinks=follow_symlinks,
+            **kwargs,
+        )
+        if os.fspath(path) == source.name and dir_fd is not None and not swapped:
+            swapped = True
+            source.unlink()
+            os.mkfifo(source)
+        return metadata
+
+    monkeypatch.setattr(note_import_discovery.os, "stat", swap_after_stat)
+    results: list[object] = []
+    errors: list[BaseException] = []
+
+    def parse() -> None:
+        try:
+            results.append(
+                note_import_planner.parse_import_sources(
+                    discovery,
+                    bounds,
+                    destination_folder_segments=("Imported",),
+                )
+            )
+        except BaseException as error:  # noqa: BLE001 - test must join the worker.
+            errors.append(error)
+
+    worker = Thread(target=parse, daemon=True)
+    worker.start()
+    worker.join(1.0)
+    completed_promptly = not worker.is_alive()
+    if worker.is_alive():
+        writer = os.open(source, os.O_WRONLY | os.O_NONBLOCK)
+        os.close(writer)
+        worker.join(1.0)
+
+    assert not worker.is_alive()
+    assert completed_promptly
+    assert errors == []
+    assert len(results) == 1
+    batch = results[0]
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code in {"source_changed", "source_unavailable"}
+
+
+def test_missing_nonblocking_leaf_open_capability_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "note.txt"
+    source.write_text("Body", encoding="utf-8")
+    bounds = _discovery_bounds()
+    discovery = discover_import_sources([source], bounds)
+    monkeypatch.delattr(note_import_discovery.os, "O_NONBLOCK")
+
+    batch = note_import_planner.parse_import_sources(
+        discovery,
+        bounds,
+        destination_folder_segments=("Imported",),
+    )
+
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code == "secure_read_unavailable"
 
 
 def test_directory_hierarchy_proposes_only_successful_ancestor_paths(
