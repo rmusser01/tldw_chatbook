@@ -978,3 +978,25 @@ def test_native_windows_source_handle_denies_concurrent_writer(
             os.close(writer)
     finally:
         filesystem.close(descriptor)
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_windows_descriptor_cleanup_propagates_interruptions_after_closing_all(
+    interruption: type[BaseException],
+) -> None:
+    """Windows cleanup closes every handle and then preserves an interruption."""
+
+    class InterruptingFilesystem(FakeWindowsFilesystem):
+        def close(self, descriptor: int) -> None:
+            super().close(descriptor)
+            if descriptor == 2:
+                raise interruption()
+
+    filesystem = InterruptingFilesystem()
+    filesystem.live_pins = {1: Path("first"), 2: Path("second")}
+
+    with pytest.raises(interruption):
+        note_import_windows_fs._close_filesystem_descriptors(filesystem, (1, 2))
+
+    assert filesystem.closed_pins == [2, 1]
+    assert filesystem.live_pins == {}

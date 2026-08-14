@@ -19,6 +19,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportSource,
     ImportSourceKind,
 )
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 
 class ImportSelectionError(ValueError):
@@ -211,7 +212,19 @@ def discover_import_sources(
     paths: Iterable[Path],
     bounds: ImportBounds,
 ) -> ImportDiscovery:
-    """Dispatch source discovery to the platform's read-only strategy."""
+    """Dispatch source discovery to the platform's read-only strategy.
+
+    Args:
+        paths: User-selected files or one directory to discover.
+        bounds: Resource and diagnostic limits for the discovery pass.
+
+    Returns:
+        An immutable description of admitted sources and safe failures.
+
+    Raises:
+        ImportSelectionError: The selection is invalid or cannot be inspected safely.
+        TypeError: ``bounds`` or a selected path has an invalid type.
+    """
     if _platform_uses_windows_adapter():
         from tldw_chatbook.Notes.note_import_windows_fs import (
             discover_import_sources as discover_windows_sources,
@@ -289,7 +302,19 @@ def read_discovered_source(
     candidate: DiscoveredImportSource,
     bounds: ImportBounds,
 ) -> bytes:
-    """Dispatch verified reads to the platform's read-only strategy."""
+    """Dispatch a verified source read to the platform-specific strategy.
+
+    Args:
+        candidate: Source identity and path admitted by discovery.
+        bounds: Resource limits that must still admit the source.
+
+    Returns:
+        The source bytes read through verified handles or descriptors.
+
+    Raises:
+        TypeError: ``candidate`` or ``bounds`` has an invalid type.
+        VerifiedSourceReadError: The source is unavailable, changed, or unsafe.
+    """
     if _platform_uses_windows_adapter():
         from tldw_chatbook.Notes.note_import_windows_fs import (
             read_discovered_source as read_windows_source,
@@ -475,7 +500,11 @@ def _copy_bounded_selection(
     for path in paths:
         if not isinstance(path, Path):
             _reject(bounds, "invalid_selection")
-        selected.append(path)
+        try:
+            validated_path = validate_path_simple(path, probe_existing=False)
+        except ValueError:
+            _reject(bounds, "invalid_selection")
+        selected.append(validated_path)
         if len(selected) > bounds.max_entries:
             _reject(bounds, "max_entries_exceeded")
         if len(selected) > bounds.max_files:
@@ -975,7 +1004,11 @@ def _directory_open_flags() -> int:
         or no_follow_flag <= 0
     ):
         raise _SecureDiscoveryUnavailable
-    return os.O_RDONLY | directory_flag | no_follow_flag
+    flags = os.O_RDONLY | directory_flag | no_follow_flag
+    close_on_exec_flag = getattr(os, "O_CLOEXEC", 0)
+    if isinstance(close_on_exec_flag, int) and close_on_exec_flag > 0:
+        flags |= close_on_exec_flag
+    return flags
 
 
 def _file_open_flags() -> int:
@@ -998,11 +1031,17 @@ def _file_open_flags() -> int:
 def _close_descriptors(descriptors: Iterable[int]) -> bool:
     """Close descriptors completely and report failure without leaking OS text."""
     failed = False
+    interruption: BaseException | None = None
     for descriptor in reversed(tuple(descriptors)):
         try:
             os.close(descriptor)
-        except BaseException:  # noqa: BLE001 - never mask an active interruption.
+        except OSError:  # Descriptor errors become a path-free cleanup failure.
             failed = True
+        except (KeyboardInterrupt, SystemExit, GeneratorExit) as error:
+            if interruption is None:
+                interruption = error
+    if interruption is not None:
+        raise interruption
     return failed
 
 

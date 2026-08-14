@@ -75,8 +75,9 @@ not passing native evidence.
 
 Verification on 2026-08-14:
 
-- Planner plus Windows-adapter gate: 401 passed, 3 native-Windows-only skipped.
-- Established Notes/Library regression gate: 267 passed, 592 deselected.
+- Planner plus Windows-adapter gate: 415 passed, 3 native-Windows-only skipped.
+- Established Notes/Library regression gate: 267 passed, 593 deselected after
+  rebasing onto the latest `origin/dev`.
 - Broader `Tests/Notes` gate: 1,953 passed, 11 failed, 50 skipped; an untouched
   latest-`origin/dev` worktree reproduced the same 11 Git integration/environment
   failures with 1,552 passed and 47 skipped, showing the planner branch added 401
@@ -87,6 +88,11 @@ Verification on 2026-08-14:
 - Independent specification and quality reviews approved every implementation slice
   after Windows TOCTOU, surrogate-error privacy, optimistic-version, duplicate-target,
   empty-folder, and model-boundary findings were corrected with regression tests.
+- PR review follow-up routes user selections through the shared lexical path validator
+  without weakening the no-follow boundary, marks POSIX directory descriptors
+  close-on-exec, preserves process interruptions raised during POSIX/Windows cleanup,
+  and documents all public planner functions in Google style. Fourteen focused
+  regressions cover these review corrections.
 
 ADR required: no. ADR-059 and ADR-060 remain the governing ownership, privacy,
 matching, hierarchy, and update-safety decisions. The Windows path/handle incident

@@ -249,7 +249,21 @@ def parse_import_sources(
     *,
     destination_folder_segments: Iterable[str] | None = None,
 ) -> ParsedImportBatch:
-    """Parse a discovered selection without writes or durable side effects."""
+    """Parse a discovered selection without writes or durable side effects.
+
+    Args:
+        discovery: Previously admitted sources and safe discovery failures.
+        bounds: Resource and diagnostic limits for parsing.
+        destination_folder_segments: Optional manual destination for selected files.
+
+    Returns:
+        Parsed note payloads, safe issues, and proposed folder paths.
+
+    Raises:
+        TypeError: An argument has an invalid type.
+        ValueError: A destination folder segment is invalid.
+        ImportSelectionError: Discovery totals changed or exceed the bounds.
+    """
     if not isinstance(discovery, ImportDiscovery):
         raise TypeError("discovery must be an ImportDiscovery.")
     if not isinstance(bounds, ImportBounds):

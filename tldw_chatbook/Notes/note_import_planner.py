@@ -190,6 +190,18 @@ def classify_import_batch(
     Observations are cardinality-one per relative source path. Unknown, duplicate,
     or ambiguous batch paths are rejected rather than guessed. A multi-note parsed
     source always degrades a source-level prior observation to ``UNCERTAIN_MATCH``.
+
+    Args:
+        batch: Parsed sources, issues, and proposed folder hierarchy.
+        bounds: Resource and diagnostic limits governing the preview.
+        prior_observations: Device-local prior import observations to compare.
+
+    Returns:
+        An immutable preview with classifications and safe default actions.
+
+    Raises:
+        TypeError: An argument has an invalid type.
+        ValueError: Batch paths or prior observations are inconsistent.
     """
     if not isinstance(batch, ParsedImportBatch):
         raise TypeError("batch must be a ParsedImportBatch.")
@@ -411,6 +423,17 @@ def analyze_root_collision(
     A manual destination used for selected files is not an imported directory root.
     Empty plans and plans whose selected actions create no memberships therefore
     carry no collision state.
+
+    Args:
+        plan: Preview whose proposed directory root should be analyzed.
+        existing_top_level_names: Existing top-level folder labels.
+
+    Returns:
+        A new immutable plan carrying the applicable collision state.
+
+    Raises:
+        TypeError: ``plan`` or an existing folder name has an invalid type.
+        ValueError: An existing folder name violates folder constraints.
     """
     _require_plan(plan)
     root_label = _meaningful_directory_root(plan)
@@ -437,7 +460,21 @@ def resolve_root_collision(
     existing_top_level_names: Iterable[str],
     renamed_root: str | None = None,
 ) -> NoteImportPlan:
-    """Resolve one previously detected directory-root collision explicitly."""
+    """Resolve one previously detected directory-root collision explicitly.
+
+    Args:
+        plan: Preview with one unresolved root collision.
+        choice: Explicit resolution selected by the user.
+        existing_top_level_names: Existing top-level folder labels.
+        renamed_root: Replacement root label for ``RENAMED_ROOT``.
+
+    Returns:
+        A new immutable plan with the root collision resolved.
+
+    Raises:
+        TypeError: An argument has an invalid type.
+        ValueError: The collision state or requested resolution is invalid.
+    """
     _require_plan(plan)
     if not isinstance(choice, RootCollisionChoice):
         raise TypeError("choice must be a RootCollisionChoice.")
@@ -488,7 +525,19 @@ def resolve_root_collision(
 
 
 def confirm_uncertain_match(plan: NoteImportPlan, item_id: str) -> NoteImportPlan:
-    """Confirm one uncertain match without changing its classification."""
+    """Confirm one uncertain match without changing its classification.
+
+    Args:
+        plan: Preview containing the uncertain item.
+        item_id: Stable identifier of the item to confirm.
+
+    Returns:
+        A new plan whose item permits an explicit update action.
+
+    Raises:
+        TypeError: ``plan`` or ``item_id`` has an invalid type.
+        ValueError: The item is missing or cannot be confirmed for update.
+    """
     _require_plan(plan)
     item_index, item = _find_item(plan, item_id)
     if (
@@ -519,7 +568,22 @@ def apply_item_override(
     replace_content: bool = False,
     add_membership: bool = False,
 ) -> NoteImportPlan:
-    """Apply one validated action/effect choice to a frozen preview item."""
+    """Apply one validated action and effect choice to a frozen preview item.
+
+    Args:
+        plan: Preview containing the item to override.
+        item_id: Stable identifier of the item to override.
+        action: Import action selected by the user.
+        replace_content: Whether an update replaces note content.
+        add_membership: Whether an update adds proposed folder membership.
+
+    Returns:
+        A new immutable plan with the validated override applied.
+
+    Raises:
+        TypeError: An argument has an invalid type.
+        ValueError: The item or requested action/effects are invalid.
+    """
     _require_plan(plan)
     if not isinstance(action, ImportAction):
         raise TypeError("action must be an ImportAction.")

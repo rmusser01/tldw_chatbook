@@ -259,7 +259,20 @@ def discover_import_sources(
     *,
     filesystem: WindowsReadOnlyFilesystem = OS_WINDOWS_FILESYSTEM,
 ) -> ImportDiscovery:
-    """Discover sources through bounded, non-following Windows path checks."""
+    """Discover sources through bounded, non-following Windows path checks.
+
+    Args:
+        paths: User-selected files or one directory to discover.
+        bounds: Resource and diagnostic limits for discovery.
+        filesystem: Read-only Windows filesystem capability provider.
+
+    Returns:
+        An immutable description of admitted sources and safe failures.
+
+    Raises:
+        ImportSelectionError: The selection is invalid or cannot be inspected safely.
+        TypeError: ``bounds`` or a selected path has an invalid type.
+    """
     if not isinstance(bounds, ImportBounds):
         raise TypeError("bounds must be an ImportBounds.")
 
@@ -340,7 +353,20 @@ def read_discovered_source(
     *,
     filesystem: WindowsReadOnlyFilesystem = OS_WINDOWS_FILESYSTEM,
 ) -> bytes:
-    """Read only after the opened Windows handle matches discovery exactly."""
+    """Read only after the opened Windows handle matches discovery exactly.
+
+    Args:
+        candidate: Source identity and path admitted by discovery.
+        bounds: Resource limits that must still admit the source.
+        filesystem: Read-only Windows filesystem capability provider.
+
+    Returns:
+        Bytes read through a verified, non-reparse source handle.
+
+    Raises:
+        TypeError: ``candidate`` or ``bounds`` has an invalid type.
+        VerifiedSourceReadError: The source is unavailable, changed, or unsafe.
+    """
     if not isinstance(candidate, DiscoveredImportSource):
         raise TypeError("candidate must be a DiscoveredImportSource.")
     if not isinstance(bounds, ImportBounds):
@@ -786,11 +812,17 @@ def _close_filesystem_descriptors(
     descriptors: Iterable[int],
 ) -> bool:
     failed = False
+    interruption: BaseException | None = None
     for descriptor in reversed(tuple(descriptors)):
         try:
             filesystem.close(descriptor)
-        except BaseException:  # noqa: BLE001 - close all handles before reporting.
+        except OSError:  # Handle errors become a path-free cleanup failure.
             failed = True
+        except (KeyboardInterrupt, SystemExit, GeneratorExit) as error:
+            if interruption is None:
+                interruption = error
+    if interruption is not None:
+        raise interruption
     return failed
 
 

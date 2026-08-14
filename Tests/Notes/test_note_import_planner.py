@@ -1,6 +1,7 @@
 """Contract tests for one-time Database Notes import planning."""
 
 import csv
+import inspect
 import os
 from collections import Counter
 from dataclasses import FrozenInstanceError
@@ -5017,3 +5018,94 @@ def test_collision_and_override_transforms_do_not_write_to_disk(
     assert overridden.items[0].selected_action is ImportAction.SKIP
     assert before == after
     assert sentinel.read_text(encoding="utf-8") == "unchanged"
+
+
+def test_discovery_uses_the_shared_path_validator_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact shared-validator result, not the raw selection, reaches the OS."""
+    selected = tmp_path / "selected.md"
+    selected.write_text("selected", encoding="utf-8")
+    validated = tmp_path / "validated.md"
+    validated.write_text("validated", encoding="utf-8")
+    calls: list[tuple[Path, bool, bool]] = []
+
+    def validate(
+        path: Path,
+        require_exists: bool = False,
+        *,
+        probe_existing: bool = True,
+    ) -> Path:
+        calls.append((path, require_exists, probe_existing))
+        return validated
+
+    monkeypatch.setattr(
+        note_import_discovery,
+        "validate_path_simple",
+        validate,
+        raising=False,
+    )
+
+    discovery = discover_import_sources([selected], _discovery_bounds())
+
+    assert calls == [(selected, False, False)]
+    assert discovery.candidates[0].source.source_path == validated
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_posix_descriptor_cleanup_propagates_interruptions_after_closing_all(
+    monkeypatch: pytest.MonkeyPatch,
+    interruption: type[BaseException],
+) -> None:
+    """Cleanup finishes every close but never converts a process interruption."""
+    closed: list[int] = []
+
+    def close(descriptor: int) -> None:
+        closed.append(descriptor)
+        if descriptor == 2:
+            raise interruption()
+
+    monkeypatch.setattr(note_import_discovery.os, "close", close)
+
+    with pytest.raises(interruption):
+        note_import_discovery._close_descriptors((1, 2))
+
+    assert closed == [2, 1]
+
+
+def test_directory_descriptors_are_opened_close_on_exec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every POSIX directory descriptor receives close-on-exec hardening."""
+    close_on_exec = 0x400000
+    monkeypatch.setattr(note_import_discovery.os, "O_CLOEXEC", close_on_exec)
+
+    flags = note_import_discovery._directory_open_flags()
+
+    assert flags & close_on_exec == close_on_exec
+
+
+@pytest.mark.parametrize(
+    "public_function",
+    [
+        note_import_discovery.discover_import_sources,
+        note_import_discovery.read_discovered_source,
+        note_import_parsers.parse_import_sources,
+        note_import_planner.classify_import_batch,
+        note_import_planner.analyze_root_collision,
+        note_import_planner.resolve_root_collision,
+        note_import_planner.confirm_uncertain_match,
+        note_import_planner.apply_item_override,
+    ],
+)
+def test_note_import_public_functions_use_google_style_docstrings(
+    public_function: object,
+) -> None:
+    """Public import functions document inputs, outputs, and failure contracts."""
+    documentation = inspect.getdoc(public_function)
+
+    assert documentation is not None
+    assert "Args:" in documentation
+    assert "Returns:" in documentation
+    assert "Raises:" in documentation
