@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook import config
+from tldw_chatbook.Notes import note_import_receipts as receipt_module
 from tldw_chatbook.Notes.note_import_execution_models import (
     ImportEffectState,
     ImportItemOutcome,
@@ -39,6 +40,8 @@ from tldw_chatbook.Notes.note_import_receipts import (
     ITEM_OUTCOME_TRANSITIONS,
     SESSION_STATE_TRANSITIONS,
     EffectTransition,
+    ImportBatchResult,
+    ImportEffectCategory,
     ImportReceiptConflictError,
     ImportReceiptError,
     ImportReceiptTransitionError,
@@ -53,6 +56,230 @@ _PRIVATE_BODY = "Body secret which must never be persisted"
 _PRIVATE_KEYWORD = "confidential-keyword"
 _PRIVATE_TEMPLATE = "Private journal template"
 _RAW_EXCEPTION = "raw exception /private/alice/Project/notes.json"
+
+
+def test_public_effect_api_exposes_semantic_categories_and_lightweight_batch_result() -> (
+    None
+):
+    assert receipt_module.ImportEffectCategory.PAYLOAD.value == "payload"
+    assert receipt_module.ImportEffectCategory.FOLDER.value == "folder"
+    assert receipt_module.ImportEffectCategory.MEMBERSHIP.value == "membership"
+    assert "ImportEffectCategory" in receipt_module.__all__
+    assert "ImportBatchResult" in receipt_module.__all__
+
+
+def test_effect_transition_public_signature_uses_category_not_table_name() -> None:
+    parameters = inspect.signature(EffectTransition).parameters
+
+    assert "category" in parameters
+    assert "table" not in parameters
+
+
+def test_effect_category_requires_the_exact_public_enum_type(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    payload = repository.load_session_snapshot(_APPROVAL_ID).payload_effects[0]
+
+    with pytest.raises(TypeError, match="ImportEffectCategory"):
+        repository.transition_effects(
+            _APPROVAL_ID,
+            (
+                EffectTransition(
+                    category="payload",  # type: ignore[arg-type]
+                    effect_id=payload.effect_id,
+                    state=ImportEffectState.FAILED,
+                    reason_code="database_busy",
+                ),
+            ),
+        )
+    with pytest.raises(TypeError, match="ImportEffectCategory"):
+        repository.reset_retryable_effect(
+            _APPROVAL_ID,
+            category="payload",  # type: ignore[arg-type]
+            effect_id=payload.effect_id,
+        )
+
+
+def test_transition_batch_returns_only_changed_semantic_records(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    payload = repository.load_session_snapshot(_APPROVAL_ID).payload_effects[0]
+    assert payload.category is ImportEffectCategory.PAYLOAD
+    assert not hasattr(payload, "table")
+
+    result = repository.transition_batch(
+        _APPROVAL_ID,
+        effect_transitions=(
+            EffectTransition(
+                category=ImportEffectCategory.PAYLOAD,
+                effect_id=payload.effect_id,
+                state=ImportEffectState.FAILED,
+                reason_code="database_busy",
+                retryable=True,
+                target_note_id="opaque-note-7",
+                observed_version=7,
+            ),
+        ),
+    )
+
+    assert isinstance(result, ImportBatchResult)
+    assert result.items == ()
+    assert len(result.effects) == 1
+    assert result.effects[0].category is ImportEffectCategory.PAYLOAD
+    assert not hasattr(result, "session_id")
+    assert payload.effect_id not in repr(result)
+
+
+def test_effect_transition_and_reset_do_not_load_a_full_session_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    payload = repository.load_session_snapshot(_APPROVAL_ID).payload_effects[0]
+
+    def reject_full_scan(*_args, **_kwargs):
+        raise AssertionError("per-effect mutation must not load the full session")
+
+    monkeypatch.setattr(repository, "_load_snapshot", reject_full_scan)
+    changed = repository.transition_effects(
+        _APPROVAL_ID,
+        (
+            EffectTransition(
+                category=ImportEffectCategory.PAYLOAD,
+                effect_id=payload.effect_id,
+                state=ImportEffectState.FAILED,
+                reason_code="database_busy",
+                retryable=True,
+            ),
+        ),
+    )
+    assert changed[0].effect_id == payload.effect_id
+
+    monkeypatch.undo()
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.NEEDS_ATTENTION)
+    monkeypatch.setattr(repository, "_load_snapshot", reject_full_scan)
+    reset = repository.reset_retryable_effect(
+        _APPROVAL_ID,
+        category=ImportEffectCategory.PAYLOAD,
+        effect_id=payload.effect_id,
+    )
+    assert reset.state is ImportEffectState.PENDING
+
+
+def test_effect_transition_loads_only_the_affected_dependency_subgraph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    items = tuple(
+        replace(
+            _item(item_id=f"create-{index}", selected_action=ImportAction.CREATE_NEW),
+            payloads=(
+                replace(
+                    _item(selected_action=ImportAction.CREATE_NEW).payloads[0],
+                    content=f"private body {index}",
+                ),
+            ),
+        )
+        for index in range(40)
+    )
+    repository = _repository(tmp_path)
+    repository.begin(
+        approve_note_import_plan(
+            replace(_plan(), items=items),
+            approval_id=_APPROVAL_ID,
+        ),
+        batch_size=25,
+    )
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    target = repository.load_session_snapshot(_APPROVAL_ID).payload_effects[17]
+    original = repository._load_dependency_snapshot
+    observed: list[tuple[int, int, int, int]] = []
+    statements: list[str] = []
+    original_connect = repository._connect
+
+    def capture(*args, **kwargs):
+        snapshot = original(*args, **kwargs)
+        observed.append(
+            (
+                len(snapshot.items),
+                len(snapshot.payload_effects),
+                len(snapshot.membership_effects),
+                len(snapshot.folder_effects),
+            )
+        )
+        return snapshot
+
+    monkeypatch.setattr(repository, "_load_dependency_snapshot", capture)
+
+    def traced_connect():
+        connection = original_connect()
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(repository, "_connect", traced_connect)
+    repository.transition_effects(
+        _APPROVAL_ID,
+        (
+            EffectTransition(
+                category=ImportEffectCategory.PAYLOAD,
+                effect_id=target.effect_id,
+                state=ImportEffectState.FAILED,
+                reason_code="database_busy",
+                target_note_id="opaque-created-note",
+                observed_version=1,
+            ),
+        ),
+    )
+
+    assert observed == [(1, 1, 1, 2)]
+    assert _repository(tmp_path).aggregate_receipt(_APPROVAL_ID).failed == 1
+    large_selects = [
+        sql for sql in statements if sql.lstrip().upper().startswith("SELECT")
+    ]
+    assert all("GROUP BY" not in sql.upper() for sql in large_selects)
+    assert any("target_note_id =" in sql for sql in large_selects)
+
+    small_id = "00000000-0000-4000-8000-000000000012"
+    small = NoteImportReceiptRepository(tmp_path / "small.sqlite3")
+    small.begin(
+        _approved_for_item(
+            _item(item_id="small", selected_action=ImportAction.CREATE_NEW),
+            approval_id=small_id,
+        ),
+        batch_size=25,
+    )
+    small.transition_session(small_id, ImportSessionState.RUNNING)
+    small_target = small.load_session_snapshot(small_id).payload_effects[0]
+    small_statements: list[str] = []
+    small_connect = small._connect
+
+    def traced_small_connect():
+        connection = small_connect()
+        connection.set_trace_callback(small_statements.append)
+        return connection
+
+    monkeypatch.setattr(small, "_connect", traced_small_connect)
+    small.transition_effects(
+        small_id,
+        (
+            EffectTransition(
+                category=ImportEffectCategory.PAYLOAD,
+                effect_id=small_target.effect_id,
+                state=ImportEffectState.FAILED,
+                reason_code="database_busy",
+                target_note_id="opaque-small-note",
+                observed_version=1,
+            ),
+        ),
+    )
+    small_selects = [
+        sql for sql in small_statements if sql.lstrip().upper().startswith("SELECT")
+    ]
+    assert len(large_selects) == len(small_selects)
 
 
 def _item(
@@ -177,6 +404,19 @@ def _create_item_with_payloads(*, payload_count: int = 2) -> ImportPreviewItem:
     )
 
 
+def _create_item_in_folder(*, item_id: str, leaf: str) -> ImportPreviewItem:
+    item = _item(item_id=item_id, selected_action=ImportAction.CREATE_NEW)
+    return replace(
+        item,
+        memberships=(
+            ProposedFolderMembership(
+                payload_index=0,
+                folder_segments=("Imported Project", leaf),
+            ),
+        ),
+    )
+
+
 def _approved_for_item(
     item: ImportPreviewItem,
     *,
@@ -207,23 +447,23 @@ def _applied_transition(effect, *, note_id: str = "opaque-note-1"):
         if effect.folder_path_digest is not None
         else "opaque-folder-1"
     )
-    if effect.table == "import_payload_effects":
+    if effect.category is ImportEffectCategory.PAYLOAD:
         return EffectTransition(
-            table=effect.table,
+            category=effect.category,
             effect_id=effect.effect_id,
             state=ImportEffectState.APPLIED,
             target_note_id=note_id,
             observed_version=1,
         )
-    if effect.table == "import_folder_effects":
+    if effect.category is ImportEffectCategory.FOLDER:
         return EffectTransition(
-            table=effect.table,
+            category=effect.category,
             effect_id=effect.effect_id,
             state=ImportEffectState.APPLIED,
             target_folder_id=folder_id,
         )
     return EffectTransition(
-        table=effect.table,
+        category=effect.category,
         effect_id=effect.effect_id,
         state=ImportEffectState.APPLIED,
         target_note_id=note_id,
@@ -333,6 +573,94 @@ def test_schema_column_census_excludes_content_and_exception_fields(
     }
 
 
+def test_schema_v1_indexes_targeted_dependency_and_identity_queries(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    NoteImportReceiptRepository(database).begin(_approved(), batch_size=25)
+
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP INDEX idx_import_payload_target")
+        connection.execute("DROP INDEX idx_import_folder_target")
+        connection.execute("DROP INDEX idx_import_membership_path")
+        connection.execute("DROP INDEX idx_import_folder_parent")
+        connection.commit()
+
+    NoteImportReceiptRepository(database).load_session_snapshot(_APPROVAL_ID)
+
+    with sqlite3.connect(database) as connection:
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            ).fetchall()
+        }
+        detail = " ".join(
+            str(row[3])
+            for row in connection.execute(
+                """EXPLAIN QUERY PLAN SELECT item_id
+                FROM import_membership_effects
+                WHERE session_id = ? AND folder_path_digest = ?""",
+                ("opaque-session", "0" * 64),
+            ).fetchall()
+        )
+        payload_detail = " ".join(
+            str(row[3])
+            for row in connection.execute(
+                """EXPLAIN QUERY PLAN SELECT effect_id
+                FROM import_payload_effects
+                WHERE session_id = ? AND target_note_id = ?""",
+                ("opaque-session", "opaque-note"),
+            ).fetchall()
+        )
+        folder_detail = " ".join(
+            str(row[3])
+            for row in connection.execute(
+                """EXPLAIN QUERY PLAN SELECT effect_id
+                FROM import_folder_effects
+                WHERE session_id = ? AND target_folder_id = ?""",
+                ("opaque-session", "opaque-folder"),
+            ).fetchall()
+        )
+
+    assert {
+        "idx_import_payload_target",
+        "idx_import_folder_target",
+        "idx_import_membership_path",
+        "idx_import_folder_parent",
+    } <= indexes
+    assert "idx_import_membership_path" in detail
+    assert "idx_import_payload_target" in payload_detail
+    assert "idx_import_folder_target" in folder_detail
+
+
+def test_existing_v1_without_folder_parent_authority_fails_safe(tmp_path: Path) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE import_items (
+                session_id TEXT, outcome TEXT, target_note_id TEXT,
+                selected_action TEXT
+            );
+            CREATE TABLE import_payload_effects (
+                session_id TEXT, state TEXT, target_note_id TEXT
+            );
+            CREATE TABLE import_folder_effects (
+                session_id TEXT, state TEXT, target_folder_id TEXT
+            );
+            CREATE TABLE import_membership_effects (
+                session_id TEXT, state TEXT, folder_path_digest TEXT,
+                item_id TEXT
+            );
+            PRAGMA user_version = 1;
+            """
+        )
+
+    with pytest.raises(ImportReceiptError, match="incompatible"):
+        NoteImportReceiptRepository(database).load_session_snapshot(_APPROVAL_ID)
+
+
 def test_begin_is_idempotent_durable_and_rejects_digest_or_batch_substitution(
     tmp_path: Path,
 ) -> None:
@@ -359,6 +687,115 @@ def test_begin_validates_bounded_batch_size_without_creating_a_database(
     for invalid in (0, 101, True, 1.5, "25"):
         with pytest.raises((TypeError, ValueError)):
             repository.begin(_approved(), batch_size=invalid)  # type: ignore[arg-type]
+    assert not database.exists()
+
+
+def test_begin_rejects_missing_required_folder_prefix_before_database_creation(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    plan = replace(
+        _plan(),
+        proposed_folder_paths=(("Imported Project", "Meetings"),),
+    )
+    repository = NoteImportReceiptRepository(database)
+
+    with pytest.raises(ImportReceiptError, match="folder"):
+        repository.begin(
+            approve_note_import_plan(plan, approval_id=_APPROVAL_ID),
+            batch_size=25,
+        )
+
+    assert not database.exists()
+
+
+def test_begin_seeds_required_nested_folders_in_depth_then_plan_order(
+    tmp_path: Path,
+) -> None:
+    plan = replace(
+        _plan(),
+        proposed_folder_paths=(
+            ("Unused",),
+            ("Imported Project", "Meetings"),
+            ("Imported Project",),
+        ),
+    )
+    repository = _repository(tmp_path)
+
+    repository.begin(
+        approve_note_import_plan(plan, approval_id=_APPROVAL_ID),
+        batch_size=25,
+    )
+    folders = repository.load_session_snapshot(_APPROVAL_ID).folder_effects
+
+    assert [effect.folder_path_digest for effect in folders] == [
+        receipt_module._folder_path_digest(("Imported Project",)),
+        receipt_module._folder_path_digest(("Imported Project", "Meetings")),
+    ]
+
+
+def test_begin_enforces_plan_bounds_before_database_creation(tmp_path: Path) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    payload = _item(selected_action=ImportAction.CREATE_NEW).payloads[0]
+    oversized_payload = replace(payload, keywords=("one", "two"))
+    oversized_item = replace(
+        _item(selected_action=ImportAction.CREATE_NEW),
+        payloads=(oversized_payload,),
+    )
+    plan = replace(
+        _plan(),
+        bounds=replace(_plan().bounds, max_keywords_per_note=1),
+        items=(oversized_item,),
+    )
+
+    with pytest.raises(ImportReceiptError, match="bounds"):
+        NoteImportReceiptRepository(database).begin(
+            approve_note_import_plan(plan, approval_id=_APPROVAL_ID),
+            batch_size=25,
+        )
+
+    assert not database.exists()
+
+
+def test_begin_enforces_file_and_payload_bounds_before_database_creation(
+    tmp_path: Path,
+) -> None:
+    first = _item(item_id="first", selected_action=ImportAction.CREATE_NEW)
+    second = _item(item_id="second", selected_action=ImportAction.CREATE_NEW)
+    file_plan = replace(
+        _plan(),
+        bounds=replace(_plan().bounds, max_files=1),
+        items=(first, second),
+    )
+    payload_plan = replace(
+        _plan(),
+        bounds=replace(_plan().bounds, max_notes_per_file=1),
+        items=(_create_item_with_payloads(payload_count=2),),
+    )
+
+    for name, plan in (
+        ("files.sqlite3", file_plan),
+        ("payloads.sqlite3", payload_plan),
+    ):
+        database = tmp_path / name
+        with pytest.raises(ImportReceiptError, match="bounds"):
+            NoteImportReceiptRepository(database).begin(
+                approve_note_import_plan(plan, approval_id=_APPROVAL_ID),
+                batch_size=25,
+            )
+        assert not database.exists()
+
+
+def test_begin_enforces_absolute_ledger_row_ceiling_before_database_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    monkeypatch.setattr(receipt_module, "_MAX_LEDGER_ROWS", 5)
+
+    with pytest.raises(ImportReceiptError, match="ledger"):
+        NoteImportReceiptRepository(database).begin(_approved(), batch_size=25)
+
     assert not database.exists()
 
 
@@ -447,7 +884,7 @@ def test_multi_payload_create_counts_notes_and_reopens_all_target_ids(
     note_ids = ("opaque-created-note-1", "opaque-created-note-2")
     transitions = [
         EffectTransition(
-            table=effect.table,
+            category=effect.category,
             effect_id=effect.effect_id,
             state=ImportEffectState.APPLIED,
             target_note_id=note_ids[effect.payload_index],
@@ -493,7 +930,7 @@ def test_multi_payload_receipt_preserves_partial_success_failure_and_note_ids(
         tuple(_applied_transition(effect) for effect in snapshot.folder_effects)
         + (
             EffectTransition(
-                table=first_payload.table,
+                category=first_payload.category,
                 effect_id=first_payload.effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-created-note-a",
@@ -504,7 +941,7 @@ def test_multi_payload_receipt_preserves_partial_success_failure_and_note_ids(
                 note_id="opaque-created-note-a",
             ),
             EffectTransition(
-                table=second_payload.table,
+                category=second_payload.category,
                 effect_id=second_payload.effect_id,
                 state=ImportEffectState.FAILED,
                 reason_code="database_busy",
@@ -607,7 +1044,7 @@ def test_create_item_metadata_rejection_rolls_back_mixed_effect_batch(
             ),
             effect_transitions=(
                 EffectTransition(
-                    table=payload.table,
+                    category=payload.category,
                     effect_id=payload.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="durable-payload-note",
@@ -654,7 +1091,7 @@ def test_reducer_rejects_corrupt_create_metadata_after_reopen(
         )
         + (
             EffectTransition(
-                table=snapshot.payload_effects[0].table,
+                category=snapshot.payload_effects[0].category,
                 effect_id=snapshot.payload_effects[0].effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="durable-payload-note",
@@ -764,7 +1201,7 @@ def test_matched_create_plan_seeds_unbound_authority_and_imports_new_note(
         )
         + (
             EffectTransition(
-                table=snapshot.payload_effects[0].table,
+                category=snapshot.payload_effects[0].category,
                 effect_id=snapshot.payload_effects[0].effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="newly-created-note",
@@ -802,7 +1239,7 @@ def test_transition_batch_rejects_terminal_create_with_pending_membership(
             ),
             effect_transitions=(
                 EffectTransition(
-                    table=payload.table,
+                    category=payload.category,
                     effect_id=payload.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="durable-payload-note",
@@ -830,7 +1267,7 @@ def test_transition_batch_allows_pending_parent_with_terminal_child_effect(
     repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
     payload = repository.load_session_snapshot(_APPROVAL_ID).payload_effects[0]
     transition = EffectTransition(
-        table=payload.table,
+        category=payload.category,
         effect_id=payload.effect_id,
         state=child_state,
         reason_code="database_busy"
@@ -862,7 +1299,7 @@ def test_multi_payload_retryable_count_is_derived_per_failed_note_unit(
         _APPROVAL_ID,
         (
             EffectTransition(
-                table=payloads[0].table,
+                category=payloads[0].category,
                 effect_id=payloads[0].effect_id,
                 state=ImportEffectState.FAILED,
                 reason_code="database_busy",
@@ -871,7 +1308,7 @@ def test_multi_payload_retryable_count_is_derived_per_failed_note_unit(
                 observed_version=1,
             ),
             EffectTransition(
-                table=payloads[1].table,
+                category=payloads[1].category,
                 effect_id=payloads[1].effect_id,
                 state=ImportEffectState.FAILED,
                 reason_code="invalid_payload",
@@ -908,14 +1345,14 @@ def test_create_membership_note_identity_must_match_its_payload(
             _APPROVAL_ID,
             (
                 EffectTransition(
-                    table=snapshot.payload_effects[0].table,
+                    category=snapshot.payload_effects[0].category,
                     effect_id=snapshot.payload_effects[0].effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-created-note-a",
                     observed_version=1,
                 ),
                 EffectTransition(
-                    table=snapshot.membership_effects[0].table,
+                    category=snapshot.membership_effects[0].category,
                     effect_id=snapshot.membership_effects[0].effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-created-note-b",
@@ -943,7 +1380,7 @@ def test_conflicting_failed_membership_identity_rolls_back_at_transition(
         tuple(_applied_transition(effect) for effect in snapshot.folder_effects)
         + (
             EffectTransition(
-                table=payload.table,
+                category=payload.category,
                 effect_id=payload.effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-created-note-a",
@@ -957,7 +1394,7 @@ def test_conflicting_failed_membership_identity_rolls_back_at_transition(
             _APPROVAL_ID,
             (
                 EffectTransition(
-                    table=membership.table,
+                    category=membership.category,
                     effect_id=membership.effect_id,
                     state=ImportEffectState.FAILED,
                     reason_code="database_busy",
@@ -1118,7 +1555,7 @@ def test_create_membership_cannot_bind_before_its_payload_target(
     repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
     membership = repository.load_session_snapshot(_APPROVAL_ID).membership_effects[0]
     transition = EffectTransition(
-        table=membership.table,
+        category=membership.category,
         effect_id=membership.effect_id,
         state=state,
         reason_code="database_busy" if state is ImportEffectState.FAILED else None,
@@ -1147,7 +1584,7 @@ def test_failed_create_membership_may_omit_identities_before_authority_exists(
         _APPROVAL_ID,
         (
             EffectTransition(
-                table=membership.table,
+                category=membership.category,
                 effect_id=membership.effect_id,
                 state=ImportEffectState.FAILED,
                 reason_code="database_busy",
@@ -1175,14 +1612,14 @@ def test_applied_membership_requires_applied_folder_authority(tmp_path: Path) ->
             _APPROVAL_ID,
             (
                 EffectTransition(
-                    table=payload.table,
+                    category=payload.category,
                     effect_id=payload.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-note-7",
                     observed_version=8,
                 ),
                 EffectTransition(
-                    table=membership.table,
+                    category=membership.category,
                     effect_id=membership.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-note-7",
@@ -1209,7 +1646,7 @@ def test_failed_membership_folder_binding_requires_known_folder_authority(
             _APPROVAL_ID,
             (
                 EffectTransition(
-                    table=membership.table,
+                    category=membership.category,
                     effect_id=membership.effect_id,
                     state=ImportEffectState.FAILED,
                     reason_code="database_busy",
@@ -1240,7 +1677,7 @@ def test_applied_create_membership_requires_an_applied_payload(
         tuple(_applied_transition(effect) for effect in snapshot.folder_effects)
         + (
             EffectTransition(
-                table=payload.table,
+                category=payload.category,
                 effect_id=payload.effect_id,
                 state=ImportEffectState.FAILED,
                 reason_code="database_busy",
@@ -1256,7 +1693,7 @@ def test_applied_create_membership_requires_an_applied_payload(
             _APPROVAL_ID,
             (
                 EffectTransition(
-                    table=membership.table,
+                    category=membership.category,
                     effect_id=membership.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-created-note",
@@ -1347,7 +1784,7 @@ def test_distinct_folder_paths_cannot_bind_the_same_folder_identity(
             _APPROVAL_ID,
             tuple(
                 EffectTransition(
-                    table=effect.table,
+                    category=effect.category,
                     effect_id=effect.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_folder_id="aliased-folder",
@@ -1378,7 +1815,7 @@ def test_membership_folder_identity_must_match_its_approved_path(
             _APPROVAL_ID,
             tuple(
                 EffectTransition(
-                    table=effect.table,
+                    category=effect.category,
                     effect_id=effect.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_folder_id=f"approved-folder-{index}",
@@ -1387,14 +1824,14 @@ def test_membership_folder_identity_must_match_its_approved_path(
             )
             + (
                 EffectTransition(
-                    table=payload.table,
+                    category=payload.category,
                     effect_id=payload.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-note-7",
                     observed_version=8,
                 ),
                 EffectTransition(
-                    table=membership.table,
+                    category=membership.category,
                     effect_id=membership.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-note-7",
@@ -1422,7 +1859,7 @@ def test_completion_reducer_rejects_corrupt_folder_identity_atomically(
     membership = snapshot.membership_effects[0]
     folder_transitions = tuple(
         EffectTransition(
-            table=effect.table,
+            category=effect.category,
             effect_id=effect.effect_id,
             state=ImportEffectState.APPLIED,
             target_folder_id=f"approved-folder-{index}",
@@ -1434,14 +1871,14 @@ def test_completion_reducer_rejects_corrupt_folder_identity_atomically(
         folder_transitions
         + (
             EffectTransition(
-                table=payload.table,
+                category=payload.category,
                 effect_id=payload.effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
                 observed_version=8,
             ),
             EffectTransition(
-                table=membership.table,
+                category=membership.category,
                 effect_id=membership.effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
@@ -1487,14 +1924,14 @@ def test_membership_failure_makes_its_create_note_unit_retryable_failed(
         tuple(_applied_transition(effect) for effect in snapshot.folder_effects)
         + (
             EffectTransition(
-                table=payload.table,
+                category=payload.category,
                 effect_id=payload.effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-created-note",
                 observed_version=1,
             ),
             EffectTransition(
-                table=membership.table,
+                category=membership.category,
                 effect_id=membership.effect_id,
                 state=ImportEffectState.FAILED,
                 reason_code="folder_conflict",
@@ -1569,7 +2006,7 @@ def test_replace_content_update_waits_for_membership_then_counts_one_unit(
         tuple(_applied_transition(effect) for effect in snapshot.folder_effects)
         + (
             EffectTransition(
-                table=payload.table,
+                category=payload.category,
                 effect_id=payload.effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
@@ -1685,7 +2122,7 @@ def test_replace_update_observation_must_be_exactly_expected_plus_one(
             )
             + (
                 EffectTransition(
-                    table=payload.table,
+                    category=payload.category,
                     effect_id=payload.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-note-7",
@@ -1725,7 +2162,7 @@ def test_replace_payload_first_rejects_non_successor_version_atomically(
             _APPROVAL_ID,
             (
                 EffectTransition(
-                    table=payload.table,
+                    category=payload.category,
                     effect_id=payload.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-note-7",
@@ -1751,7 +2188,7 @@ def test_replace_payload_first_success_reopens_and_later_finalizes_item(
         _APPROVAL_ID,
         (
             EffectTransition(
-                table=snapshot.payload_effects[0].table,
+                category=snapshot.payload_effects[0].category,
                 effect_id=snapshot.payload_effects[0].effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
@@ -1801,7 +2238,7 @@ def test_reducer_rejects_corrupt_pending_parent_replace_payload_version(
         _APPROVAL_ID,
         (
             EffectTransition(
-                table=snapshot.payload_effects[0].table,
+                category=snapshot.payload_effects[0].category,
                 effect_id=snapshot.payload_effects[0].effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
@@ -1843,7 +2280,7 @@ def test_replace_payload_rejects_missing_expected_version_authority(
             _APPROVAL_ID,
             (
                 EffectTransition(
-                    table=snapshot.payload_effects[0].table,
+                    category=snapshot.payload_effects[0].category,
                     effect_id=snapshot.payload_effects[0].effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-note-7",
@@ -1878,7 +2315,7 @@ def test_replace_payload_rejects_divergent_expected_authority_atomically(
             _APPROVAL_ID,
             (
                 EffectTransition(
-                    table=snapshot.payload_effects[0].table,
+                    category=snapshot.payload_effects[0].category,
                     effect_id=snapshot.payload_effects[0].effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-note-7",
@@ -1915,7 +2352,7 @@ def test_completion_reducer_rejects_corrupt_payload_expected_authority(
         )
         + (
             EffectTransition(
-                table=snapshot.payload_effects[0].table,
+                category=snapshot.payload_effects[0].category,
                 effect_id=snapshot.payload_effects[0].effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
@@ -1962,7 +2399,7 @@ def test_replace_update_item_observation_must_match_applied_payload(
         tuple(_applied_transition(effect) for effect in snapshot.folder_effects)
         + (
             EffectTransition(
-                table=payload.table,
+                category=payload.category,
                 effect_id=payload.effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
@@ -2001,7 +2438,7 @@ def test_completion_reducer_rejects_corrupt_update_observation_atomically(
         tuple(_applied_transition(effect) for effect in snapshot.folder_effects)
         + (
             EffectTransition(
-                table=snapshot.payload_effects[0].table,
+                category=snapshot.payload_effects[0].category,
                 effect_id=snapshot.payload_effects[0].effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
@@ -2061,7 +2498,7 @@ def test_replace_update_completion_rejects_non_successor_version_after_reopen(
         )
         + (
             EffectTransition(
-                table=snapshot.payload_effects[0].table,
+                category=snapshot.payload_effects[0].category,
                 effect_id=snapshot.payload_effects[0].effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
@@ -2159,7 +2596,7 @@ def test_receipt_keeps_note_unit_pending_until_all_required_effects_apply(
         _APPROVAL_ID,
         (
             EffectTransition(
-                table=payload.table,
+                category=payload.category,
                 effect_id=payload.effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
@@ -2266,7 +2703,7 @@ def test_session_item_and_effect_illegal_transitions_fail_without_mutation(
             _APPROVAL_ID,
             (
                 EffectTransition(
-                    table=effect.table,
+                    category=effect.category,
                     effect_id=effect.effect_id,
                     state=ImportEffectState.PENDING,
                 ),
@@ -2335,7 +2772,7 @@ def test_cancelled_session_rejects_item_effect_and_retry_mutations_durably(
             _APPROVAL_ID,
             (
                 EffectTransition(
-                    table=effect.table,
+                    category=effect.category,
                     effect_id=effect.effect_id,
                     state=ImportEffectState.FAILED,
                     retryable=True,
@@ -2346,7 +2783,7 @@ def test_cancelled_session_rejects_item_effect_and_retry_mutations_durably(
     with pytest.raises(ImportReceiptTransitionError):
         repository.reset_retryable_effect(
             _APPROVAL_ID,
-            table=effect.table,
+            category=effect.category,
             effect_id=effect.effect_id,
         )
 
@@ -2438,7 +2875,7 @@ def test_skipped_transition_metadata_rejects_the_entire_mixed_batch(
             ),
             effect_transitions=(
                 EffectTransition(
-                    table=payload.table,
+                    category=payload.category,
                     effect_id=payload.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-created-note",
@@ -2515,7 +2952,7 @@ def test_multi_item_effect_transition_is_atomic_when_one_row_is_invalid(
         _APPROVAL_ID,
         (
             EffectTransition(
-                table=effects[1].table,
+                category=effects[1].category,
                 effect_id=effects[1].effect_id,
                 state=ImportEffectState.APPLIED,
                 target_folder_id="opaque-folder-2",
@@ -2533,13 +2970,13 @@ def test_multi_item_effect_transition_is_atomic_when_one_row_is_invalid(
             ),
             effect_transitions=(
                 EffectTransition(
-                    table=effects[0].table,
+                    category=effects[0].category,
                     effect_id=effects[0].effect_id,
                     state=ImportEffectState.APPLIED,
                     target_folder_id="opaque-folder-1",
                 ),
                 EffectTransition(
-                    table=effects[1].table,
+                    category=effects[1].category,
                     effect_id=effects[1].effect_id,
                     state=ImportEffectState.FAILED,
                     reason_code="folder_conflict",
@@ -2566,7 +3003,7 @@ def test_failed_effect_retry_requires_explicit_reset_and_safe_reason_codes(
         _APPROVAL_ID,
         (
             EffectTransition(
-                table=effect.table,
+                category=effect.category,
                 effect_id=effect.effect_id,
                 state=ImportEffectState.FAILED,
                 reason_code="database_busy",
@@ -2581,7 +3018,7 @@ def test_failed_effect_retry_requires_explicit_reset_and_safe_reason_codes(
             _APPROVAL_ID,
             (
                 EffectTransition(
-                    table=effect.table,
+                    category=effect.category,
                     effect_id=effect.effect_id,
                     state=ImportEffectState.APPLIED,
                 ),
@@ -2589,7 +3026,7 @@ def test_failed_effect_retry_requires_explicit_reset_and_safe_reason_codes(
         )
     reset = repository.reset_retryable_effect(
         _APPROVAL_ID,
-        table=effect.table,
+        category=effect.category,
         effect_id=effect.effect_id,
     )
     assert reset.state is ImportEffectState.PENDING
@@ -2605,6 +3042,167 @@ def test_failed_effect_retry_requires_explicit_reset_and_safe_reason_codes(
             retryable=True,
         )
     assert _RAW_EXCEPTION not in str(caught.value)
+
+
+def test_shared_failed_folder_marks_each_dependent_note_unit_and_reset_restores_pending(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(
+        _approved_for_item(_create_item_with_payloads(payload_count=2)),
+        batch_size=25,
+    )
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    folder = repository.load_session_snapshot(_APPROVAL_ID).folder_effects[-1]
+    repository.transition_effects(
+        _APPROVAL_ID,
+        (
+            EffectTransition(
+                category=ImportEffectCategory.FOLDER,
+                effect_id=folder.effect_id,
+                state=ImportEffectState.FAILED,
+                reason_code="database_busy",
+                retryable=True,
+            ),
+        ),
+    )
+
+    failed = _repository(tmp_path).aggregate_receipt(_APPROVAL_ID)
+    assert (failed.total, failed.failed, failed.completed, failed.retryable) == (
+        2,
+        2,
+        2,
+        2,
+    )
+
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.NEEDS_ATTENTION)
+    repository.reset_retryable_effect(
+        _APPROVAL_ID,
+        category=ImportEffectCategory.FOLDER,
+        effect_id=folder.effect_id,
+    )
+    pending = _repository(tmp_path).aggregate_receipt(_APPROVAL_ID)
+    assert (pending.total, pending.failed, pending.completed, pending.retryable) == (
+        2,
+        0,
+        0,
+        0,
+    )
+
+
+def test_failed_root_folder_propagates_across_descendants_and_resets_items_first(
+    tmp_path: Path,
+) -> None:
+    items = (
+        _create_item_in_folder(item_id="alpha", leaf="Alpha"),
+        _create_item_in_folder(item_id="beta", leaf="Beta"),
+    )
+    plan = replace(
+        _plan(),
+        items=items,
+        proposed_folder_paths=(
+            ("Imported Project",),
+            ("Imported Project", "Alpha"),
+            ("Imported Project", "Beta"),
+        ),
+    )
+    repository = _repository(tmp_path)
+    repository.begin(
+        approve_note_import_plan(plan, approval_id=_APPROVAL_ID),
+        batch_size=25,
+    )
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    root = repository.load_session_snapshot(_APPROVAL_ID).folder_effects[0]
+    repository.transition_effects(
+        _APPROVAL_ID,
+        (
+            EffectTransition(
+                category=ImportEffectCategory.FOLDER,
+                effect_id=root.effect_id,
+                state=ImportEffectState.FAILED,
+                reason_code="database_busy",
+                retryable=True,
+            ),
+        ),
+    )
+    failed = _repository(tmp_path).aggregate_receipt(_APPROVAL_ID)
+    assert (failed.total, failed.failed, failed.retryable) == (2, 2, 2)
+
+    for item in items:
+        repository.transition_item(
+            _APPROVAL_ID,
+            item.item_id,
+            ImportItemOutcome.FAILED,
+            reason_code="database_busy",
+            retryable=True,
+        )
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.NEEDS_ATTENTION)
+    with pytest.raises(ImportReceiptTransitionError, match="dependent item"):
+        repository.reset_retryable_effect(
+            _APPROVAL_ID,
+            category=ImportEffectCategory.FOLDER,
+            effect_id=root.effect_id,
+        )
+
+    repository.reset_retryable_item(_APPROVAL_ID, item_id="alpha")
+    interrupted = _repository(tmp_path).aggregate_receipt(_APPROVAL_ID)
+    assert (interrupted.failed, interrupted.retryable) == (2, 2)
+    _repository(tmp_path).reset_retryable_item(_APPROVAL_ID, item_id="beta")
+    before_folder_reset = _repository(tmp_path).aggregate_receipt(_APPROVAL_ID)
+    assert (before_folder_reset.failed, before_folder_reset.retryable) == (2, 2)
+
+    _repository(tmp_path).reset_retryable_effect(
+        _APPROVAL_ID,
+        category=ImportEffectCategory.FOLDER,
+        effect_id=root.effect_id,
+    )
+    pending = _repository(tmp_path).aggregate_receipt(_APPROVAL_ID)
+    assert (pending.failed, pending.completed, pending.retryable) == (0, 0, 0)
+
+
+def test_shared_folder_transition_respects_a_lowered_sqlite_variable_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    items = tuple(
+        _create_item_in_folder(item_id=f"item-{index}", leaf="Shared")
+        for index in range(45)
+    )
+    plan = replace(
+        _plan(),
+        items=items,
+        proposed_folder_paths=(
+            ("Imported Project",),
+            ("Imported Project", "Shared"),
+        ),
+    )
+    repository = _repository(tmp_path)
+    repository.begin(
+        approve_note_import_plan(plan, approval_id=_APPROVAL_ID), batch_size=25
+    )
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    root = repository.load_session_snapshot(_APPROVAL_ID).folder_effects[0]
+    original_connect = repository._connect
+
+    def limited_connect():
+        connection = original_connect()
+        connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 40)
+        return connection
+
+    monkeypatch.setattr(repository, "_connect", limited_connect)
+    repository.transition_effects(
+        _APPROVAL_ID,
+        (
+            EffectTransition(
+                category=ImportEffectCategory.FOLDER,
+                effect_id=root.effect_id,
+                state=ImportEffectState.FAILED,
+                reason_code="database_busy",
+            ),
+        ),
+    )
+
+    assert _repository(tmp_path).aggregate_receipt(_APPROVAL_ID).failed == 45
 
 
 def test_item_retry_preserves_target_but_accepts_a_fresh_observed_version(
@@ -2645,7 +3243,7 @@ def test_item_retry_preserves_target_but_accepts_a_fresh_observed_version(
         ),
         effect_transitions=(
             EffectTransition(
-                table=payload.table,
+                category=payload.category,
                 effect_id=payload.effect_id,
                 state=ImportEffectState.FAILED,
                 reason_code="database_busy",
@@ -2662,7 +3260,7 @@ def test_item_retry_preserves_target_but_accepts_a_fresh_observed_version(
     assert (reset.target_note_id, reset.observed_version) == ("opaque-note-7", None)
     reset_payload = repository.reset_retryable_effect(
         _APPROVAL_ID,
-        table=payload.table,
+        category=payload.category,
         effect_id=payload.effect_id,
     )
     assert (reset_payload.target_note_id, reset_payload.observed_version) == (
@@ -2696,7 +3294,7 @@ def test_item_retry_preserves_target_but_accepts_a_fresh_observed_version(
         tuple(_applied_transition(effect) for effect in retry_snapshot.folder_effects)
         + (
             EffectTransition(
-                table=retry_snapshot.payload_effects[0].table,
+                category=retry_snapshot.payload_effects[0].category,
                 effect_id=retry_snapshot.payload_effects[0].effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
@@ -2742,7 +3340,7 @@ def test_item_owned_effect_retry_requires_parent_reset_first(
         ),
         effect_transitions=(
             EffectTransition(
-                table=payload.table,
+                category=payload.category,
                 effect_id=payload.effect_id,
                 state=ImportEffectState.FAILED,
                 reason_code="database_busy",
@@ -2758,7 +3356,7 @@ def test_item_owned_effect_retry_requires_parent_reset_first(
     with pytest.raises(ImportReceiptTransitionError, match="parent"):
         repository.reset_retryable_effect(
             _APPROVAL_ID,
-            table=payload.table,
+            category=payload.category,
             effect_id=payload.effect_id,
         )
     unchanged = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID)
@@ -2780,7 +3378,7 @@ def test_item_owned_effect_retry_requires_parent_reset_first(
 
     child_reset = repository.reset_retryable_effect(
         _APPROVAL_ID,
-        table=payload.table,
+        category=payload.category,
         effect_id=payload.effect_id,
     )
     both_pending_receipt = _repository(tmp_path).aggregate_receipt(_APPROVAL_ID)
@@ -2807,11 +3405,16 @@ def test_effect_bindings_survive_retry_and_mixed_conflict_rolls_back_after_reope
         for effect in durable.folder_effects
         if effect.folder_path_digest == membership.folder_path_digest
     )
+    ancestor = next(
+        effect
+        for effect in durable.folder_effects
+        if effect.effect_id == folder.parent_effect_id
+    )
     repository.transition_effects(
         _APPROVAL_ID,
         (
             EffectTransition(
-                table=payload.table,
+                category=payload.category,
                 effect_id=payload.effect_id,
                 state=ImportEffectState.FAILED,
                 reason_code="database_busy",
@@ -2820,7 +3423,13 @@ def test_effect_bindings_survive_retry_and_mixed_conflict_rolls_back_after_reope
                 observed_version=7,
             ),
             EffectTransition(
-                table=folder.table,
+                category=ancestor.category,
+                effect_id=ancestor.effect_id,
+                state=ImportEffectState.APPLIED,
+                target_folder_id="opaque-root-folder",
+            ),
+            EffectTransition(
+                category=folder.category,
                 effect_id=folder.effect_id,
                 state=ImportEffectState.FAILED,
                 reason_code="database_busy",
@@ -2828,7 +3437,7 @@ def test_effect_bindings_survive_retry_and_mixed_conflict_rolls_back_after_reope
                 target_folder_id="opaque-effect-folder",
             ),
             EffectTransition(
-                table=membership.table,
+                category=membership.category,
                 effect_id=membership.effect_id,
                 state=ImportEffectState.FAILED,
                 reason_code="database_busy",
@@ -2842,12 +3451,12 @@ def test_effect_bindings_survive_retry_and_mixed_conflict_rolls_back_after_reope
     for effect in (payload, folder, membership):
         repository.reset_retryable_effect(
             _APPROVAL_ID,
-            table=effect.table,
+            category=effect.category,
             effect_id=effect.effect_id,
         )
     reopened = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID)
     rebound = {
-        effect.table: effect
+        effect.category: effect
         for effect in (
             reopened.payload_effects[0],
             next(
@@ -2859,13 +3468,13 @@ def test_effect_bindings_survive_retry_and_mixed_conflict_rolls_back_after_reope
         )
     }
     assert (
-        rebound[payload.table].target_note_id,
-        rebound[payload.table].observed_version,
+        rebound[payload.category].target_note_id,
+        rebound[payload.category].observed_version,
     ) == ("opaque-note-7", None)
-    assert rebound[folder.table].target_folder_id == "opaque-effect-folder"
+    assert rebound[folder.category].target_folder_id == "opaque-effect-folder"
     assert (
-        rebound[membership.table].target_note_id,
-        rebound[membership.table].target_folder_id,
+        rebound[membership.category].target_note_id,
+        rebound[membership.category].target_folder_id,
     ) == ("opaque-note-7", "opaque-effect-folder")
     repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
 
@@ -2882,14 +3491,14 @@ def test_effect_bindings_survive_retry_and_mixed_conflict_rolls_back_after_reope
             ),
             effect_transitions=(
                 EffectTransition(
-                    table=payload.table,
+                    category=payload.category,
                     effect_id=payload.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-note-7",
                     observed_version=8,
                 ),
                 EffectTransition(
-                    table=folder.table,
+                    category=folder.category,
                     effect_id=folder.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_folder_id="substituted-folder",
@@ -2899,25 +3508,32 @@ def test_effect_bindings_survive_retry_and_mixed_conflict_rolls_back_after_reope
     rolled_back = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID)
     assert rolled_back.items[0].outcome is ImportItemOutcome.PENDING
     assert rolled_back.payload_effects[0].state is ImportEffectState.PENDING
-    assert rolled_back.folder_effects[0].state is ImportEffectState.PENDING
+    assert (
+        next(
+            effect
+            for effect in rolled_back.folder_effects
+            if effect.effect_id == folder.effect_id
+        ).state
+        is ImportEffectState.PENDING
+    )
     applied = repository.transition_effects(
         _APPROVAL_ID,
         (
             EffectTransition(
-                table=payload.table,
+                category=payload.category,
                 effect_id=payload.effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
                 observed_version=8,
             ),
             EffectTransition(
-                table=folder.table,
+                category=folder.category,
                 effect_id=folder.effect_id,
                 state=ImportEffectState.APPLIED,
                 target_folder_id="opaque-effect-folder",
             ),
             EffectTransition(
-                table=membership.table,
+                category=membership.category,
                 effect_id=membership.effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
@@ -2933,17 +3549,17 @@ def test_effect_bindings_survive_retry_and_mixed_conflict_rolls_back_after_reope
     "transition",
     [
         EffectTransition(
-            table="import_payload_effects",
+            category=ImportEffectCategory.PAYLOAD,
             effect_id="opaque-effect",
             state=ImportEffectState.APPLIED,
         ),
         EffectTransition(
-            table="import_folder_effects",
+            category=ImportEffectCategory.FOLDER,
             effect_id="opaque-effect",
             state=ImportEffectState.APPLIED,
         ),
         EffectTransition(
-            table="import_membership_effects",
+            category=ImportEffectCategory.MEMBERSHIP,
             effect_id="opaque-effect",
             state=ImportEffectState.APPLIED,
         ),
@@ -2958,11 +3574,11 @@ def test_applied_effects_require_their_reconciliation_identities(
     repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
     snapshot = repository.load_session_snapshot(_APPROVAL_ID)
     effects = {
-        "import_payload_effects": snapshot.payload_effects[0],
-        "import_folder_effects": snapshot.folder_effects[0],
-        "import_membership_effects": snapshot.membership_effects[0],
+        ImportEffectCategory.PAYLOAD: snapshot.payload_effects[0],
+        ImportEffectCategory.FOLDER: snapshot.folder_effects[0],
+        ImportEffectCategory.MEMBERSHIP: snapshot.membership_effects[0],
     }
-    seeded = effects[transition.table]
+    seeded = effects[transition.category]
 
     with pytest.raises(ImportReceiptTransitionError):
         repository.transition_effects(
@@ -2981,7 +3597,7 @@ def test_transition_collection_ceiling_fails_before_database_open(
     database = tmp_path / "notes-sync.sqlite3"
     repository = NoteImportReceiptRepository(database)
     transition = EffectTransition(
-        table="import_payload_effects",
+        category=ImportEffectCategory.PAYLOAD,
         effect_id="opaque-effect",
         state=ImportEffectState.FAILED,
         reason_code="database_busy",
@@ -3003,7 +3619,7 @@ def test_hostile_transition_iterator_is_sanitized_before_database_open(
     repository = NoteImportReceiptRepository(database)
     secret = "hostile iterator detail must not leak"
     transition = EffectTransition(
-        table="import_payload_effects",
+        category=ImportEffectCategory.PAYLOAD,
         effect_id="opaque-effect",
         state=ImportEffectState.FAILED,
         reason_code="database_busy",
@@ -3043,9 +3659,7 @@ def test_begin_sanitizes_stateful_private_canonicalization_failure(
     assert secret not in str(caught.value)
     assert caught.value.__context__ is None
     database = tmp_path / "notes-sync.sqlite3"
-    if database.exists():
-        with sqlite3.connect(database) as connection:
-            assert connection.execute("PRAGMA user_version").fetchone() == (0,)
+    assert not database.exists()
 
 
 def test_aggregate_receipt_uses_frozen_projection_and_hides_private_values(
@@ -3059,7 +3673,7 @@ def test_aggregate_receipt_uses_frozen_projection_and_hides_private_values(
         _APPROVAL_ID,
         (
             EffectTransition(
-                table=payload.table,
+                category=payload.category,
                 effect_id=payload.effect_id,
                 state=ImportEffectState.FAILED,
                 reason_code="version_conflict",

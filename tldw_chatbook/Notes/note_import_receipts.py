@@ -12,6 +12,7 @@ import sqlite3
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from itertools import islice
 from pathlib import Path
 from types import MappingProxyType
@@ -35,6 +36,8 @@ _SCHEMA_VERSION = 1
 _MIN_BATCH_SIZE = 1
 _MAX_BATCH_SIZE = 100
 _MAX_TRANSITIONS = MAX_IMPORT_ENTRIES
+_MAX_LEDGER_ROWS = MAX_IMPORT_ENTRIES
+_SQL_PARAMETER_CHUNK = 32
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _SAFE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}\Z")
 
@@ -110,6 +113,32 @@ class ImportReceiptTransitionError(ImportReceiptError):
     """A requested lifecycle transition is not explicitly allowed."""
 
 
+class ImportEffectCategory(str, Enum):
+    """Semantic category for one independently replayable import effect."""
+
+    PAYLOAD = "payload"
+    FOLDER = "folder"
+    MEMBERSHIP = "membership"
+
+
+_CATEGORY_TO_TABLE: Mapping[ImportEffectCategory, str] = MappingProxyType(
+    {
+        ImportEffectCategory.PAYLOAD: _PAYLOAD_TABLE,
+        ImportEffectCategory.FOLDER: _FOLDER_TABLE,
+        ImportEffectCategory.MEMBERSHIP: _MEMBERSHIP_TABLE,
+    }
+)
+_TABLE_TO_CATEGORY: Mapping[str, ImportEffectCategory] = MappingProxyType(
+    {table: category for category, table in _CATEGORY_TO_TABLE.items()}
+)
+
+
+def _table_for_category(category: object) -> str:
+    if type(category) is not ImportEffectCategory:
+        raise TypeError("category must be an ImportEffectCategory.")
+    return _CATEGORY_TO_TABLE[category]
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class ImportItemRecord:
     """Frozen private item projection returned by the repository."""
@@ -135,7 +164,7 @@ class ImportItemRecord:
 class ImportEffectRecord:
     """Frozen private independently replayable effect projection."""
 
-    table: str
+    category: ImportEffectCategory
     effect_id: str
     item_id: str | None
     payload_index: int | None
@@ -148,6 +177,7 @@ class ImportEffectRecord:
     reason_code: str | None
     retryable: bool
     folder_path_digest: str | None = field(default=None, repr=False)
+    parent_effect_id: str | None = field(default=None, repr=False)
 
     def __repr__(self) -> str:
         return (
@@ -179,6 +209,31 @@ class ImportSessionSnapshot:
         )
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class ImportBatchResult:
+    """Frozen changed-row projection returned by one transition batch."""
+
+    items: tuple[ImportItemRecord, ...] = ()
+    effects: tuple[ImportEffectRecord, ...] = ()
+
+    def __repr__(self) -> str:
+        return (
+            f"ImportBatchResult(items={len(self.items)!r}, "
+            f"effects={len(self.effects)!r})"
+        )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _SeedBlueprint:
+    """Fully validated, content-free rows ready for one atomic seed."""
+
+    session: tuple[object, ...]
+    items: tuple[tuple[object, ...], ...]
+    payloads: tuple[tuple[object, ...], ...]
+    folders: tuple[tuple[object, ...], ...]
+    memberships: tuple[tuple[object, ...], ...]
+
+
 @dataclass(frozen=True, slots=True)
 class ReceiptSchemaSnapshot:
     """Test-only immutable schema census."""
@@ -204,7 +259,7 @@ class ItemTransition:
 class EffectTransition:
     """One requested effect transition in an atomic repository update."""
 
-    table: str
+    category: ImportEffectCategory
     effect_id: str = field(repr=False)
     state: ImportEffectState
     reason_code: str | None = None
@@ -214,7 +269,7 @@ class EffectTransition:
     observed_version: int | None = None
 
 
-_SCHEMA_STATEMENTS = (
+_SCHEMA_TABLE_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS import_sessions (
         session_id TEXT PRIMARY KEY,
@@ -309,6 +364,7 @@ _SCHEMA_STATEMENTS = (
         session_id TEXT NOT NULL,
         folder_ordinal INTEGER NOT NULL CHECK (folder_ordinal >= 0),
         path_digest TEXT NOT NULL,
+        parent_effect_id TEXT,
         effect_kind TEXT NOT NULL DEFAULT 'ensure_folder' CHECK (effect_kind = 'ensure_folder'),
         state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'applied', 'failed')),
         target_folder_id TEXT,
@@ -323,6 +379,8 @@ _SCHEMA_STATEMENTS = (
         created_at INTEGER NOT NULL CHECK (created_at > 0),
         updated_at INTEGER NOT NULL CHECK (updated_at > 0),
         FOREIGN KEY (session_id) REFERENCES import_sessions(session_id) ON DELETE CASCADE,
+        FOREIGN KEY (parent_effect_id)
+            REFERENCES import_folder_effects(effect_id) ON DELETE RESTRICT,
         UNIQUE (session_id, path_digest),
         UNIQUE (session_id, folder_ordinal),
         CHECK (length(effect_id) BETWEEN 1 AND 256),
@@ -367,11 +425,21 @@ _SCHEMA_STATEMENTS = (
         CHECK (state = 'failed' OR retryable = 0)
     )
     """,
+)
+
+_SCHEMA_INDEX_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_import_items_outcome ON import_items(session_id, outcome)",
     "CREATE INDEX IF NOT EXISTS idx_import_payload_state ON import_payload_effects(session_id, state)",
     "CREATE INDEX IF NOT EXISTS idx_import_folder_state ON import_folder_effects(session_id, state)",
     "CREATE INDEX IF NOT EXISTS idx_import_membership_state ON import_membership_effects(session_id, state)",
+    "CREATE INDEX IF NOT EXISTS idx_import_payload_target ON import_payload_effects(session_id, target_note_id)",
+    "CREATE INDEX IF NOT EXISTS idx_import_folder_target ON import_folder_effects(session_id, target_folder_id)",
+    "CREATE INDEX IF NOT EXISTS idx_import_membership_path ON import_membership_effects(session_id, folder_path_digest, item_id)",
+    "CREATE INDEX IF NOT EXISTS idx_import_folder_parent ON import_folder_effects(session_id, parent_effect_id)",
+    "CREATE INDEX IF NOT EXISTS idx_import_items_target ON import_items(session_id, target_note_id, selected_action)",
 )
+
+_SCHEMA_STATEMENTS = (*_SCHEMA_TABLE_STATEMENTS, *_SCHEMA_INDEX_STATEMENTS)
 
 
 def _now() -> int:
@@ -460,6 +528,14 @@ def _copy_bounded_transitions(
     return copied
 
 
+def _sql_chunks(values: set[str]) -> tuple[tuple[str, ...], ...]:
+    ordered = sorted(values)
+    return tuple(
+        tuple(ordered[offset : offset + _SQL_PARAMETER_CHUNK])
+        for offset in range(0, len(ordered), _SQL_PARAMETER_CHUNK)
+    )
+
+
 def _safe_private_digest(factory) -> str:
     failure: ImportReceiptError | None = None
     try:
@@ -508,6 +584,13 @@ class NoteImportReceiptRepository:
         if current_version not in {0, _SCHEMA_VERSION}:
             raise ImportReceiptError("Unsupported private receipt schema version.")
         if current_version == _SCHEMA_VERSION:
+            try:
+                for statement in _SCHEMA_INDEX_STATEMENTS:
+                    connection.execute(statement)
+            except sqlite3.Error:
+                raise ImportReceiptError(
+                    "The private receipt schema is incompatible with canonical v1."
+                ) from None
             return
         for statement in _SCHEMA_STATEMENTS:
             connection.execute(statement)
@@ -528,6 +611,11 @@ class NoteImportReceiptRepository:
         plan_digest = approved._private_plan_digest()
         if _DIGEST_PATTERN.fullmatch(plan_digest) is None:
             raise ValueError("The approved plan digest is invalid.")
+        blueprint = self._build_seed_blueprint(
+            approved,
+            batch_size=validated_batch_size,
+            plan_digest=plan_digest,
+        )
 
         connection = self._connect()
         try:
@@ -543,21 +631,14 @@ class NoteImportReceiptRepository:
                         "The approval is already bound to different receipt authority."
                     )
             else:
-                seed_failure: ImportReceiptError | None = None
                 try:
-                    self._seed_approved_plan(
-                        connection,
-                        approved,
-                        batch_size=validated_batch_size,
-                    )
+                    self._seed_blueprint(connection, blueprint)
                 except (ImportReceiptError, TypeError, ValueError, sqlite3.Error):
                     raise
                 except Exception:  # noqa: BLE001 - sanitize unexpected private failures
-                    seed_failure = ImportReceiptError(
+                    raise ImportReceiptError(
                         "The approved import receipt could not be seeded safely."
-                    )
-                if seed_failure is not None:
-                    raise seed_failure from None
+                    ) from None
             connection.commit()
         except Exception:
             connection.rollback()
@@ -567,37 +648,82 @@ class NoteImportReceiptRepository:
         return self.get_session(approval_id)
 
     @staticmethod
-    def _seed_approved_plan(
-        connection: sqlite3.Connection,
+    def _build_seed_blueprint(
         approved: ApprovedNoteImportPlan,
         *,
         batch_size: int,
-    ) -> None:
+        plan_digest: str,
+    ) -> _SeedBlueprint:
+        """Validate and canonicalize every planned row before opening SQLite."""
+
         session_id = str(uuid4())
         timestamp = _now()
         plan = approved.plan
+        bounds = plan.bounds
+        if len(plan.items) > bounds.max_files or len(plan.items) > bounds.max_entries:
+            raise ImportReceiptError("The approved import plan exceeds its bounds.")
+        if len(plan.proposed_folder_paths) > bounds.max_entries:
+            raise ImportReceiptError("The approved import plan exceeds its bounds.")
+        if len(set(plan.proposed_folder_paths)) != len(plan.proposed_folder_paths):
+            raise ImportReceiptError("The approved import folder plan is ambiguous.")
+
+        required_folder_paths: set[tuple[str, ...]] = set()
+        payload_effect_count = 0
+        membership_effect_count = 0
+        for item in plan.items:
+            if len(item.payloads) > bounds.max_notes_per_file:
+                raise ImportReceiptError("The approved import plan exceeds its bounds.")
+            if any(
+                len(payload.keywords) > bounds.max_keywords_per_note
+                for payload in item.payloads
+            ):
+                raise ImportReceiptError("The approved import plan exceeds its bounds.")
+            if item.selected_action is ImportAction.CREATE_NEW or (
+                item.selected_action is ImportAction.UPDATE_EXISTING
+                and item.replace_content
+            ):
+                payload_effect_count += len(item.payloads)
+            if item.selected_action is ImportAction.SKIP or not item.add_membership:
+                continue
+            membership_effect_count += len(item.memberships)
+            if len(item.memberships) > bounds.max_entries:
+                raise ImportReceiptError("The approved import plan exceeds its bounds.")
+            for membership in item.memberships:
+                path = tuple(membership.folder_segments)
+                required_folder_paths.update(
+                    path[:depth] for depth in range(1, len(path) + 1)
+                )
+        if len(required_folder_paths) > bounds.max_entries:
+            raise ImportReceiptError("The approved import plan exceeds its bounds.")
+        proposed_ordinals = {
+            path: ordinal for ordinal, path in enumerate(plan.proposed_folder_paths)
+        }
+        if required_folder_paths.difference(proposed_ordinals):
+            raise ImportReceiptError(
+                "The approved import folder plan is missing a required path or prefix."
+            )
+        ordered_folders = sorted(
+            required_folder_paths,
+            key=lambda path: (len(path), proposed_ordinals[path]),
+        )
+        ledger_rows = (
+            1
+            + len(plan.items)
+            + payload_effect_count
+            + len(ordered_folders)
+            + membership_effect_count
+        )
+        if ledger_rows > _MAX_LEDGER_ROWS:
+            raise ImportReceiptError(
+                "The approved import receipt exceeds its ledger ceiling."
+            )
+
+        item_rows: list[tuple[object, ...]] = []
+        payload_rows: list[tuple[object, ...]] = []
+        membership_rows: list[tuple[object, ...]] = []
         total_count = sum(
             _outcome_count(item.selected_action, len(item.payloads))
             for item in plan.items
-        )
-        connection.execute(
-            """
-            INSERT INTO import_sessions (
-                session_id, approval_id, plan_digest, state, batch_size,
-                total_count, reason_code, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                session_id,
-                approved.approval_id,
-                approved._private_plan_digest(),
-                ImportSessionState.PENDING.value,
-                batch_size,
-                total_count,
-                None,
-                timestamp,
-                timestamp,
-            ),
         )
         for item in plan.items:
             outcome_count = _outcome_count(
@@ -616,14 +742,7 @@ class NoteImportReceiptRepository:
                 update_match.note_id if update_match is not None else None,
                 field_name="target_note_id",
             )
-            connection.execute(
-                """
-                INSERT INTO import_items (
-                    session_id, item_id, source_locator_digest, selected_action,
-                    outcome_count, outcome, target_note_id, expected_version,
-                    observed_version, reason_code, retryable, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+            item_rows.append(
                 (
                     session_id,
                     item.item_id,
@@ -640,7 +759,7 @@ class NoteImportReceiptRepository:
                     0,
                     timestamp,
                     timestamp,
-                ),
+                )
             )
             effect_kind: str | None = None
             if item.selected_action is ImportAction.CREATE_NEW:
@@ -652,15 +771,7 @@ class NoteImportReceiptRepository:
                 effect_kind = "replace_content"
             if effect_kind is not None:
                 for payload_index, payload in enumerate(item.payloads):
-                    connection.execute(
-                        """
-                        INSERT INTO import_payload_effects (
-                            effect_id, session_id, item_id, payload_index,
-                            payload_digest, effect_kind, state, target_note_id,
-                            expected_version, observed_version, reason_code,
-                            retryable, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
+                    payload_rows.append(
                         (
                             str(uuid4()),
                             session_id,
@@ -682,17 +793,10 @@ class NoteImportReceiptRepository:
                             timestamp,
                         ),
                     )
-            if item.add_membership:
+            if item.selected_action is not ImportAction.SKIP and item.add_membership:
                 for membership_ordinal, membership in enumerate(item.memberships):
-                    connection.execute(
-                        """
-                        INSERT INTO import_membership_effects (
-                            effect_id, session_id, item_id, payload_index,
-                            membership_ordinal, folder_path_digest, effect_kind,
-                            state, target_note_id, target_folder_id, reason_code,
-                            retryable, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
+                    path = tuple(membership.folder_segments)
+                    membership_rows.append(
                         (
                             str(uuid4()),
                             session_id,
@@ -700,9 +804,7 @@ class NoteImportReceiptRepository:
                             membership.payload_index,
                             membership_ordinal,
                             _safe_private_digest(
-                                lambda membership=membership: _folder_path_digest(
-                                    membership.folder_segments
-                                )
+                                lambda path=path: _folder_path_digest(path)
                             ),
                             "attach_membership",
                             ImportEffectState.PENDING.value,
@@ -714,42 +816,108 @@ class NoteImportReceiptRepository:
                             timestamp,
                         ),
                     )
-        required_folder_paths: set[tuple[str, ...]] = set()
-        for item in plan.items:
-            if item.selected_action is ImportAction.SKIP or not item.add_membership:
-                continue
-            for membership in item.memberships:
-                required_folder_paths.update(
-                    tuple(membership.folder_segments[:depth])
-                    for depth in range(1, len(membership.folder_segments) + 1)
-                )
-        for folder_ordinal, folder_path in enumerate(plan.proposed_folder_paths):
-            if folder_path not in required_folder_paths:
-                continue
-            connection.execute(
-                """
-                INSERT INTO import_folder_effects (
-                    effect_id, session_id, folder_ordinal, path_digest,
-                    effect_kind, state, target_folder_id, reason_code,
-                    retryable, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    str(uuid4()),
-                    session_id,
-                    folder_ordinal,
-                    _safe_private_digest(
-                        lambda folder_path=folder_path: _folder_path_digest(folder_path)
-                    ),
-                    "ensure_folder",
-                    ImportEffectState.PENDING.value,
-                    None,
-                    None,
-                    0,
-                    timestamp,
-                    timestamp,
-                ),
+
+        folder_effect_ids = {path: str(uuid4()) for path in ordered_folders}
+        folder_rows = tuple(
+            (
+                folder_effect_ids[path],
+                session_id,
+                folder_ordinal,
+                _safe_private_digest(lambda path=path: _folder_path_digest(path)),
+                folder_effect_ids.get(path[:-1]),
+                "ensure_folder",
+                ImportEffectState.PENDING.value,
+                None,
+                None,
+                0,
+                timestamp,
+                timestamp,
             )
+            for folder_ordinal, path in enumerate(ordered_folders)
+        )
+        if ledger_rows != (
+            1
+            + len(item_rows)
+            + len(payload_rows)
+            + len(folder_rows)
+            + len(membership_rows)
+        ):
+            raise ImportReceiptError(
+                "The approved import receipt plan is inconsistent."
+            )
+        return _SeedBlueprint(
+            session=(
+                session_id,
+                approved.approval_id,
+                plan_digest,
+                ImportSessionState.PENDING.value,
+                batch_size,
+                total_count,
+                None,
+                timestamp,
+                timestamp,
+            ),
+            items=tuple(item_rows),
+            payloads=tuple(payload_rows),
+            folders=folder_rows,
+            memberships=tuple(membership_rows),
+        )
+
+    @staticmethod
+    def _seed_blueprint(
+        connection: sqlite3.Connection,
+        blueprint: _SeedBlueprint,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO import_sessions (
+                session_id, approval_id, plan_digest, state, batch_size,
+                total_count, reason_code, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            blueprint.session,
+        )
+        connection.executemany(
+            """
+            INSERT INTO import_items (
+                session_id, item_id, source_locator_digest, selected_action,
+                outcome_count, outcome, target_note_id, expected_version,
+                observed_version, reason_code, retryable, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            blueprint.items,
+        )
+        connection.executemany(
+            """
+            INSERT INTO import_payload_effects (
+                effect_id, session_id, item_id, payload_index, payload_digest,
+                effect_kind, state, target_note_id, expected_version,
+                observed_version, reason_code, retryable, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            blueprint.payloads,
+        )
+        connection.executemany(
+            """
+            INSERT INTO import_folder_effects (
+                effect_id, session_id, folder_ordinal, path_digest,
+                parent_effect_id, effect_kind, state, target_folder_id,
+                reason_code, retryable, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            blueprint.folders,
+        )
+        connection.executemany(
+            """
+            INSERT INTO import_membership_effects (
+                effect_id, session_id, item_id, payload_index,
+                membership_ordinal, folder_path_digest, effect_kind, state,
+                target_note_id, target_folder_id, reason_code, retryable,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            blueprint.memberships,
+        )
 
     def get_session(self, approval_id: str) -> ImportSessionSnapshot:
         """Return the durable frozen snapshot for one approval."""
@@ -844,7 +1012,7 @@ class NoteImportReceiptRepository:
                 """
                 SELECT effect_id, item_id, payload_index, effect_kind, state,
                        target_note_id, NULL, expected_version, observed_version,
-                       reason_code, retryable, NULL
+                       reason_code, retryable, NULL, NULL
                 FROM import_payload_effects WHERE session_id = ? ORDER BY rowid
                 """,
                 (session_id,),
@@ -854,7 +1022,7 @@ class NoteImportReceiptRepository:
                 """
                 SELECT effect_id, NULL, NULL, effect_kind, state, NULL,
                        target_folder_id, NULL, NULL, reason_code, retryable,
-                       path_digest
+                       path_digest, parent_effect_id
                 FROM import_folder_effects WHERE session_id = ? ORDER BY folder_ordinal
                 """,
                 (session_id,),
@@ -864,30 +1032,279 @@ class NoteImportReceiptRepository:
                 """
                 SELECT effect_id, item_id, payload_index, effect_kind, state,
                        target_note_id, target_folder_id, NULL, NULL,
-                       reason_code, retryable, folder_path_digest
+                       reason_code, retryable, folder_path_digest, NULL
                 FROM import_membership_effects WHERE session_id = ? ORDER BY rowid
                 """,
                 (session_id,),
             ).fetchall()
         else:
             raise ValueError("Unknown receipt effect table.")
+        return NoteImportReceiptRepository._effect_records(table, rows)
+
+    @staticmethod
+    def _effect_records(
+        table: str,
+        rows: Sequence[tuple[object, ...]],
+    ) -> tuple[ImportEffectRecord, ...]:
         return tuple(
             ImportEffectRecord(
-                table=table,
-                effect_id=row[0],
-                item_id=row[1],
-                payload_index=row[2],
-                effect_kind=row[3],
-                state=ImportEffectState(row[4]),
-                target_note_id=row[5],
-                target_folder_id=row[6],
-                expected_version=row[7],
-                observed_version=row[8],
-                reason_code=row[9],
+                category=_TABLE_TO_CATEGORY[table],
+                effect_id=str(row[0]),
+                item_id=None if row[1] is None else str(row[1]),
+                payload_index=None if row[2] is None else int(row[2]),
+                effect_kind=str(row[3]),
+                state=ImportEffectState(str(row[4])),
+                target_note_id=None if row[5] is None else str(row[5]),
+                target_folder_id=None if row[6] is None else str(row[6]),
+                expected_version=None if row[7] is None else int(row[7]),
+                observed_version=None if row[8] is None else int(row[8]),
+                reason_code=None if row[9] is None else str(row[9]),
                 retryable=bool(row[10]),
-                folder_path_digest=row[11],
+                folder_path_digest=None if row[11] is None else str(row[11]),
+                parent_effect_id=None if row[12] is None else str(row[12]),
             )
             for row in rows
+        )
+
+    @staticmethod
+    def _item_records(
+        rows: Sequence[tuple[object, ...]],
+    ) -> tuple[ImportItemRecord, ...]:
+        return tuple(
+            ImportItemRecord(
+                item_id=str(row[0]),
+                source_locator_digest=str(row[1]),
+                selected_action=ImportAction(str(row[2])),
+                outcome_count=int(row[3]),
+                outcome=ImportItemOutcome(str(row[4])),
+                target_note_id=None if row[5] is None else str(row[5]),
+                expected_version=None if row[6] is None else int(row[6]),
+                observed_version=None if row[7] is None else int(row[7]),
+                reason_code=None if row[8] is None else str(row[8]),
+                retryable=bool(row[9]),
+            )
+            for row in rows
+        )
+
+    @staticmethod
+    def _affected_item_ids(
+        connection: sqlite3.Connection,
+        session_id: str,
+        items: tuple[ItemTransition, ...],
+        effects: tuple[EffectTransition, ...],
+    ) -> set[str]:
+        affected = {transition.item_id for transition in items}
+        for transition in effects:
+            if transition.category is ImportEffectCategory.PAYLOAD:
+                row = connection.execute(
+                    "SELECT item_id FROM import_payload_effects WHERE session_id = ? AND effect_id = ?",
+                    (session_id, transition.effect_id),
+                ).fetchone()
+                if row is not None:
+                    affected.add(row[0])
+            elif transition.category is ImportEffectCategory.MEMBERSHIP:
+                row = connection.execute(
+                    "SELECT item_id FROM import_membership_effects WHERE session_id = ? AND effect_id = ?",
+                    (session_id, transition.effect_id),
+                ).fetchone()
+                if row is not None:
+                    affected.add(row[0])
+            else:
+                rows = connection.execute(
+                    """
+                    WITH RECURSIVE descendants(effect_id, path_digest) AS (
+                        SELECT effect_id, path_digest FROM import_folder_effects
+                        WHERE session_id = ? AND effect_id = ?
+                        UNION ALL
+                        SELECT child.effect_id, child.path_digest
+                        FROM import_folder_effects AS child
+                        JOIN descendants AS parent
+                          ON child.parent_effect_id = parent.effect_id
+                        WHERE child.session_id = ?
+                    )
+                    SELECT DISTINCT membership.item_id
+                    FROM descendants AS folder
+                    JOIN import_membership_effects AS membership
+                      ON membership.session_id = ?
+                     AND membership.folder_path_digest = folder.path_digest
+                    """,
+                    (session_id, transition.effect_id, session_id, session_id),
+                ).fetchall()
+                affected.update(row[0] for row in rows)
+        return affected
+
+    @staticmethod
+    def _validate_transition_identity_points(
+        connection: sqlite3.Connection,
+        session_id: str,
+        transitions: tuple[EffectTransition, ...],
+    ) -> None:
+        for transition in transitions:
+            if (
+                transition.category is ImportEffectCategory.PAYLOAD
+                and transition.target_note_id is not None
+            ):
+                action_row = connection.execute(
+                    """SELECT item.selected_action
+                    FROM import_payload_effects AS payload
+                    JOIN import_items AS item
+                      ON item.session_id = payload.session_id
+                     AND item.item_id = payload.item_id
+                    WHERE payload.session_id = ? AND payload.effect_id = ?""",
+                    (session_id, transition.effect_id),
+                ).fetchone()
+                if action_row is None:
+                    raise KeyError("Import receipt effect was not found.")
+                if ImportAction(action_row[0]) is ImportAction.CREATE_NEW:
+                    duplicate_create = connection.execute(
+                        """SELECT 1 FROM import_payload_effects AS payload
+                        JOIN import_items AS item
+                          ON item.session_id = payload.session_id
+                         AND item.item_id = payload.item_id
+                        WHERE payload.session_id = ?
+                          AND payload.target_note_id = ?
+                          AND payload.effect_id != ?
+                          AND item.selected_action = 'create_new' LIMIT 1""",
+                        (
+                            session_id,
+                            transition.target_note_id,
+                            transition.effect_id,
+                        ),
+                    ).fetchone()
+                    update_alias = connection.execute(
+                        """SELECT 1 FROM import_items
+                        WHERE session_id = ? AND target_note_id = ?
+                          AND selected_action = 'update_existing' LIMIT 1""",
+                        (session_id, transition.target_note_id),
+                    ).fetchone()
+                    if duplicate_create is not None or update_alias is not None:
+                        raise ImportReceiptConflictError(
+                            "Create payload note identities must be unique per note unit."
+                        )
+            elif (
+                transition.category is ImportEffectCategory.FOLDER
+                and transition.target_folder_id is not None
+            ):
+                duplicate_folder = connection.execute(
+                    """SELECT 1 FROM import_folder_effects
+                    WHERE session_id = ? AND target_folder_id = ?
+                      AND effect_id != ? LIMIT 1""",
+                    (
+                        session_id,
+                        transition.target_folder_id,
+                        transition.effect_id,
+                    ),
+                ).fetchone()
+                if duplicate_folder is not None:
+                    raise ImportReceiptConflictError(
+                        "Distinct approved folder paths require distinct folder identities."
+                    )
+
+    @staticmethod
+    def _load_dependency_snapshot(
+        connection: sqlite3.Connection,
+        approval_id: str,
+        session_id: str,
+        state: ImportSessionState,
+        item_ids: set[str],
+        folder_effect_ids: set[str],
+    ) -> ImportSessionSnapshot:
+        item_rows: list[tuple[object, ...]] = []
+        payload_rows: list[tuple[object, ...]] = []
+        membership_rows: list[tuple[object, ...]] = []
+        for chunk in _sql_chunks(item_ids):
+            placeholders = ",".join("?" for _ in chunk)
+            parameters = (session_id, *chunk)
+            item_rows.extend(
+                connection.execute(
+                    f"""SELECT item_id, source_locator_digest, selected_action,
+                        outcome_count, outcome, target_note_id, expected_version,
+                        observed_version, reason_code, retryable FROM import_items
+                        WHERE session_id = ? AND item_id IN ({placeholders})
+                        ORDER BY rowid""",
+                    parameters,
+                ).fetchall()
+            )
+            payload_rows.extend(
+                connection.execute(
+                    f"""SELECT effect_id, item_id, payload_index, effect_kind,
+                        state, target_note_id, NULL, expected_version,
+                        observed_version, reason_code, retryable, NULL, NULL
+                        FROM import_payload_effects WHERE session_id = ?
+                        AND item_id IN ({placeholders}) ORDER BY rowid""",
+                    parameters,
+                ).fetchall()
+            )
+            membership_rows.extend(
+                connection.execute(
+                    f"""SELECT effect_id, item_id, payload_index, effect_kind,
+                        state, target_note_id, target_folder_id, NULL, NULL,
+                        reason_code, retryable, folder_path_digest, NULL
+                        FROM import_membership_effects WHERE session_id = ?
+                        AND item_id IN ({placeholders}) ORDER BY rowid""",
+                    parameters,
+                ).fetchall()
+            )
+        folder_digests = {str(row[11]) for row in membership_rows}
+        folder_rows_by_id: dict[str, tuple[object, ...]] = {}
+        for chunk in _sql_chunks(folder_digests):
+            placeholders = ",".join("?" for _ in chunk)
+            rows = connection.execute(
+                f"""WITH RECURSIVE ancestors(
+                        effect_id, effect_kind, state, target_folder_id,
+                        reason_code, retryable, path_digest, parent_effect_id
+                    ) AS (
+                        SELECT effect_id, effect_kind, state, target_folder_id,
+                               reason_code, retryable, path_digest, parent_effect_id
+                        FROM import_folder_effects WHERE session_id = ?
+                          AND path_digest IN ({placeholders})
+                        UNION ALL
+                        SELECT parent.effect_id, parent.effect_kind, parent.state,
+                               parent.target_folder_id, parent.reason_code,
+                               parent.retryable, parent.path_digest,
+                               parent.parent_effect_id
+                        FROM import_folder_effects AS parent
+                        JOIN ancestors AS child
+                          ON parent.effect_id = child.parent_effect_id
+                        WHERE parent.session_id = ?
+                    )
+                    SELECT effect_id, NULL, NULL, effect_kind, state, NULL,
+                           target_folder_id, NULL, NULL, reason_code, retryable,
+                           path_digest, parent_effect_id FROM ancestors""",
+                (session_id, *chunk, session_id),
+            ).fetchall()
+            folder_rows_by_id.update((str(row[0]), row) for row in rows)
+        for chunk in _sql_chunks(folder_effect_ids):
+            placeholders = ",".join("?" for _ in chunk)
+            rows = connection.execute(
+                f"""SELECT effect_id, NULL, NULL, effect_kind, state, NULL,
+                    target_folder_id, NULL, NULL, reason_code, retryable,
+                    path_digest, parent_effect_id FROM import_folder_effects
+                    WHERE session_id = ? AND effect_id IN ({placeholders})""",
+                (session_id, *chunk),
+            ).fetchall()
+            folder_rows_by_id.update((str(row[0]), row) for row in rows)
+        folder_rows = list(folder_rows_by_id.values())
+        records = NoteImportReceiptRepository._item_records(item_rows)
+        total = sum(item.outcome_count for item in records)
+        return ImportSessionSnapshot(
+            approval_id=approval_id,
+            session_id=session_id,
+            plan_digest="0" * 64,
+            state=state,
+            batch_size=1,
+            total=total,
+            reason_code=None,
+            items=records,
+            payload_effects=NoteImportReceiptRepository._effect_records(
+                _PAYLOAD_TABLE, payload_rows
+            ),
+            folder_effects=NoteImportReceiptRepository._effect_records(
+                _FOLDER_TABLE, folder_rows
+            ),
+            membership_effects=NoteImportReceiptRepository._effect_records(
+                _MEMBERSHIP_TABLE, membership_rows
+            ),
         )
 
     def transition_session(
@@ -1034,15 +1451,10 @@ class NoteImportReceiptRepository:
             effect_transitions=copied,
         )
         by_key = {
-            (effect.table, effect.effect_id): effect
-            for effect in (
-                *snapshot.payload_effects,
-                *snapshot.folder_effects,
-                *snapshot.membership_effects,
-            )
+            (effect.category, effect.effect_id): effect for effect in snapshot.effects
         }
         return tuple(
-            by_key[(transition.table, transition.effect_id)] for transition in copied
+            by_key[(transition.category, transition.effect_id)] for transition in copied
         )
 
     def transition_batch(
@@ -1051,7 +1463,7 @@ class NoteImportReceiptRepository:
         *,
         item_transitions: Sequence[ItemTransition] = (),
         effect_transitions: Sequence[EffectTransition] = (),
-    ) -> ImportSessionSnapshot:
+    ) -> ImportBatchResult:
         """Apply selected item and effect transitions in one transaction."""
 
         _validate_id(approval_id, field_name="approval_id")
@@ -1114,10 +1526,44 @@ class NoteImportReceiptRepository:
                 )
             for transition in effects:
                 self._update_effect(connection, session_id, transition, timestamp)
-            snapshot = self._load_snapshot(connection, approval_id)
+            affected_item_ids = self._affected_item_ids(
+                connection, session_id, items, effects
+            )
+            folder_effect_ids = {
+                transition.effect_id
+                for transition in effects
+                if transition.category is ImportEffectCategory.FOLDER
+            }
+            self._validate_transition_identity_points(connection, session_id, effects)
+            snapshot = self._load_dependency_snapshot(
+                connection,
+                approval_id,
+                session_id,
+                ImportSessionState.RUNNING,
+                affected_item_ids,
+                folder_effect_ids,
+            )
             self._derive_receipt_counts(snapshot)
+            changed_item_ids = {transition.item_id for transition in items}
+            changed_effect_keys = {
+                (transition.category, transition.effect_id) for transition in effects
+            }
+            result = ImportBatchResult(
+                items=tuple(
+                    item for item in snapshot.items if item.item_id in changed_item_ids
+                ),
+                effects=tuple(
+                    effect
+                    for effect in (
+                        *snapshot.payload_effects,
+                        *snapshot.folder_effects,
+                        *snapshot.membership_effects,
+                    )
+                    if (effect.category, effect.effect_id) in changed_effect_keys
+                ),
+            )
             connection.commit()
-            return snapshot
+            return result
         except Exception:
             connection.rollback()
             raise
@@ -1208,10 +1654,9 @@ class NoteImportReceiptRepository:
                 raise TypeError(
                     "effect_transitions must contain EffectTransition values."
                 )
-            if transition.table not in _EFFECT_TABLES:
-                raise ValueError("Unknown receipt effect table.")
+            table = _table_for_category(transition.category)
             effect_id = _validate_id(transition.effect_id, field_name="effect_id")
-            key = (transition.table, effect_id)
+            key = (transition.category, effect_id)
             if key in seen:
                 raise ValueError(
                     "An effect may be transitioned only once per transaction."
@@ -1233,7 +1678,7 @@ class NoteImportReceiptRepository:
             _validate_optional_version(transition.observed_version)
             row = NoteImportReceiptRepository._select_effect_authority(
                 connection,
-                table=transition.table,
+                table=table,
                 session_id=session_id,
                 effect_id=effect_id,
             )
@@ -1251,10 +1696,10 @@ class NoteImportReceiptRepository:
                 transition.target_folder_id,
             )
             _assert_compatible_authority(stored_version, transition.observed_version)
-            if transition.table == _PAYLOAD_TABLE:
+            if table == _PAYLOAD_TABLE:
                 if transition.target_folder_id is not None:
                     raise ValueError("Payload effects cannot bind a folder identifier.")
-            elif transition.table == _FOLDER_TABLE:
+            elif table == _FOLDER_TABLE:
                 if (
                     transition.target_note_id is not None
                     or transition.observed_version is not None
@@ -1271,11 +1716,11 @@ class NoteImportReceiptRepository:
                     else stored_version
                 )
                 missing_identity = (
-                    transition.table == _PAYLOAD_TABLE
+                    table == _PAYLOAD_TABLE
                     and (final_note_id is None or final_version is None)
-                ) or (transition.table == _FOLDER_TABLE and final_folder_id is None)
+                ) or (table == _FOLDER_TABLE and final_folder_id is None)
                 missing_identity = missing_identity or (
-                    transition.table == _MEMBERSHIP_TABLE
+                    table == _MEMBERSHIP_TABLE
                     and (final_note_id is None or final_folder_id is None)
                 )
                 if missing_identity:
@@ -1325,12 +1770,13 @@ class NoteImportReceiptRepository:
         transition: EffectTransition,
         timestamp: int,
     ) -> None:
+        table = _table_for_category(transition.category)
         reason_code, retryable = _validate_transition_metadata(
             failed=transition.state is ImportEffectState.FAILED,
             reason_code=transition.reason_code,
             retryable=transition.retryable,
         )
-        if transition.table == _PAYLOAD_TABLE:
+        if table == _PAYLOAD_TABLE:
             connection.execute(
                 """
                 UPDATE import_payload_effects
@@ -1350,7 +1796,7 @@ class NoteImportReceiptRepository:
                     transition.effect_id,
                 ),
             )
-        elif transition.table == _FOLDER_TABLE:
+        elif table == _FOLDER_TABLE:
             connection.execute(
                 """
                 UPDATE import_folder_effects
@@ -1398,40 +1844,37 @@ class NoteImportReceiptRepository:
         """Explicitly reset one retryable failed item to pending."""
 
         _validate_id(item_id, field_name="item_id")
-        snapshot = self._reset_retryable(
+        record = self._reset_retryable(
             approval_id,
             table="import_items",
             key_value=item_id,
         )
-        return next(item for item in snapshot.items if item.item_id == item_id)
+        if not isinstance(record, ImportItemRecord):
+            raise ImportReceiptError("The reset receipt row category is inconsistent.")
+        return record
 
     def reset_retryable_effect(
         self,
         approval_id: str,
         *,
-        table: str,
+        category: ImportEffectCategory,
         effect_id: str,
     ) -> ImportEffectRecord:
         """Explicitly reset one retryable failed effect to pending."""
 
-        if table not in _EFFECT_TABLES:
-            raise ValueError("Unknown receipt effect table.")
+        table = _table_for_category(category)
         _validate_id(effect_id, field_name="effect_id")
-        snapshot = self._reset_retryable(
+        record = self._reset_retryable(
             approval_id,
             table=table,
             key_value=effect_id,
         )
-        effects = (
-            *snapshot.payload_effects,
-            *snapshot.folder_effects,
-            *snapshot.membership_effects,
-        )
-        return next(
-            effect
-            for effect in effects
-            if effect.table == table and effect.effect_id == effect_id
-        )
+        if (
+            not isinstance(record, ImportEffectRecord)
+            or record.category is not category
+        ):
+            raise ImportReceiptError("The reset receipt row category is inconsistent.")
+        return record
 
     def _reset_retryable(
         self,
@@ -1439,7 +1882,7 @@ class NoteImportReceiptRepository:
         *,
         table: str,
         key_value: str,
-    ) -> ImportSessionSnapshot:
+    ) -> ImportItemRecord | ImportEffectRecord:
         _validate_id(approval_id, field_name="approval_id")
         connection = self._connect()
         try:
@@ -1482,20 +1925,115 @@ class NoteImportReceiptRepository:
                     raise ImportReceiptTransitionError(
                         "The parent item must be reset before its retryable effect."
                     )
+            if table == _FOLDER_TABLE and self._folder_has_failed_dependents(
+                connection,
+                session_id=session_id,
+                effect_id=key_value,
+            ):
+                raise ImportReceiptTransitionError(
+                    "Every dependent item must be reset before its folder effect."
+                )
             self._update_retryable_row(
                 connection,
                 table=table,
                 session_id=session_id,
                 key_value=key_value,
             )
-            snapshot = self._load_snapshot(connection, approval_id)
+            if table == "import_items":
+                item_row = connection.execute(
+                    """SELECT item_id, source_locator_digest, selected_action,
+                        outcome_count, outcome, target_note_id, expected_version,
+                        observed_version, reason_code, retryable FROM import_items
+                        WHERE session_id = ? AND item_id = ?""",
+                    (session_id, key_value),
+                ).fetchone()
+                if item_row is None:
+                    raise KeyError("Import receipt item was not found.")
+                record: ImportItemRecord | ImportEffectRecord = self._item_records(
+                    (item_row,)
+                )[0]
+            else:
+                record = self._load_effect_record(
+                    connection,
+                    table=table,
+                    session_id=session_id,
+                    effect_id=key_value,
+                )
             connection.commit()
-            return snapshot
+            return record
         except Exception:
             connection.rollback()
             raise
         finally:
             connection.close()
+
+    @staticmethod
+    def _folder_has_failed_dependents(
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        effect_id: str,
+    ) -> bool:
+        row = connection.execute(
+            """
+            WITH RECURSIVE descendants(effect_id, path_digest) AS (
+                SELECT effect_id, path_digest FROM import_folder_effects
+                WHERE session_id = ? AND effect_id = ?
+                UNION ALL
+                SELECT child.effect_id, child.path_digest
+                FROM import_folder_effects AS child
+                JOIN descendants AS parent
+                  ON child.parent_effect_id = parent.effect_id
+                WHERE child.session_id = ?
+            )
+            SELECT 1 FROM descendants AS folder
+            JOIN import_membership_effects AS membership
+              ON membership.session_id = ?
+             AND membership.folder_path_digest = folder.path_digest
+            JOIN import_items AS item
+              ON item.session_id = membership.session_id
+             AND item.item_id = membership.item_id
+            WHERE item.outcome = 'failed' LIMIT 1
+            """,
+            (session_id, effect_id, session_id, session_id),
+        ).fetchone()
+        return row is not None
+
+    @staticmethod
+    def _load_effect_record(
+        connection: sqlite3.Connection,
+        *,
+        table: str,
+        session_id: str,
+        effect_id: str,
+    ) -> ImportEffectRecord:
+        if table == _PAYLOAD_TABLE:
+            row = connection.execute(
+                """SELECT effect_id, item_id, payload_index, effect_kind, state,
+                    target_note_id, NULL, expected_version, observed_version,
+                    reason_code, retryable, NULL, NULL FROM import_payload_effects
+                    WHERE session_id = ? AND effect_id = ?""",
+                (session_id, effect_id),
+            ).fetchone()
+        elif table == _FOLDER_TABLE:
+            row = connection.execute(
+                """SELECT effect_id, NULL, NULL, effect_kind, state, NULL,
+                    target_folder_id, NULL, NULL, reason_code, retryable,
+                    path_digest, parent_effect_id
+                    FROM import_folder_effects WHERE session_id = ? AND effect_id = ?""",
+                (session_id, effect_id),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                """SELECT effect_id, item_id, payload_index, effect_kind, state,
+                    target_note_id, target_folder_id, NULL, NULL, reason_code,
+                    retryable, folder_path_digest, NULL FROM import_membership_effects
+                    WHERE session_id = ? AND effect_id = ?""",
+                (session_id, effect_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError("Import receipt effect was not found.")
+        return NoteImportReceiptRepository._effect_records(table, (row,))[0]
 
     @staticmethod
     def _select_parent_item_outcome(
@@ -1804,6 +2342,7 @@ class NoteImportReceiptRepository:
     @staticmethod
     def _validate_folder_identities(snapshot: ImportSessionSnapshot) -> None:
         folders_by_path: dict[str, ImportEffectRecord] = {}
+        folders_by_id: dict[str, ImportEffectRecord] = {}
         target_paths: dict[str, str] = {}
         for effect in snapshot.folder_effects:
             if effect.folder_path_digest is None:
@@ -1815,6 +2354,11 @@ class NoteImportReceiptRepository:
                     "Durable folder effects have duplicate path authority."
                 )
             folders_by_path[effect.folder_path_digest] = effect
+            if effect.effect_id in folders_by_id:
+                raise ImportReceiptError(
+                    "Durable folder effects have duplicate effect authority."
+                )
+            folders_by_id[effect.effect_id] = effect
             if effect.target_folder_id is None:
                 continue
             previous_path = target_paths.setdefault(
@@ -1826,6 +2370,22 @@ class NoteImportReceiptRepository:
                     "Distinct approved folder paths require distinct folder identities."
                 )
 
+        for effect in snapshot.folder_effects:
+            visited: set[str] = set()
+            current = effect
+            while current.parent_effect_id is not None:
+                if current.effect_id in visited:
+                    raise ImportReceiptError(
+                        "Durable folder effects have cyclic parent authority."
+                    )
+                visited.add(current.effect_id)
+                parent = folders_by_id.get(current.parent_effect_id)
+                if parent is None:
+                    raise ImportReceiptError(
+                        "A durable folder effect has missing parent authority."
+                    )
+                current = parent
+
         for effect in snapshot.membership_effects:
             if (
                 effect.folder_path_digest is None
@@ -1835,9 +2395,12 @@ class NoteImportReceiptRepository:
                     "A durable membership has inconsistent folder-path authority."
                 )
             folder = folders_by_path[effect.folder_path_digest]
-            if (
-                effect.state is ImportEffectState.APPLIED
-                and folder.state is not ImportEffectState.APPLIED
+            required_folders = NoteImportReceiptRepository._required_folder_chain(
+                effect, folders_by_path, folders_by_id
+            )
+            if effect.state is ImportEffectState.APPLIED and any(
+                required.state is not ImportEffectState.APPLIED
+                for required in required_folders
             ):
                 raise ImportReceiptConflictError(
                     "An applied membership requires its applied folder authority."
@@ -1855,6 +2418,36 @@ class NoteImportReceiptRepository:
                 raise ImportReceiptConflictError(
                     "An applied membership requires its applied folder authority."
                 )
+
+    @staticmethod
+    def _required_folder_chain(
+        membership: ImportEffectRecord,
+        folders_by_path: Mapping[str | None, ImportEffectRecord],
+        folders_by_id: Mapping[str, ImportEffectRecord],
+    ) -> tuple[ImportEffectRecord, ...]:
+        folder = folders_by_path.get(membership.folder_path_digest)
+        if folder is None:
+            raise ImportReceiptError(
+                "A durable membership has inconsistent folder-path authority."
+            )
+        chain: list[ImportEffectRecord] = []
+        visited: set[str] = set()
+        current = folder
+        while True:
+            if current.effect_id in visited:
+                raise ImportReceiptError(
+                    "Durable folder effects have cyclic parent authority."
+                )
+            visited.add(current.effect_id)
+            chain.append(current)
+            if current.parent_effect_id is None:
+                return tuple(chain)
+            parent = folders_by_id.get(current.parent_effect_id)
+            if parent is None:
+                raise ImportReceiptError(
+                    "A durable folder effect has missing parent authority."
+                )
+            current = parent
 
     @staticmethod
     def _validate_reconciliation_authority(snapshot: ImportSessionSnapshot) -> None:
@@ -1926,6 +2519,16 @@ class NoteImportReceiptRepository:
         memberships_by_item: dict[str, list[ImportEffectRecord]] = {
             item_id: [] for item_id in items_by_id
         }
+        folders_by_path = {
+            effect.folder_path_digest: effect for effect in snapshot.folder_effects
+        }
+        folders_by_id = {effect.effect_id: effect for effect in snapshot.folder_effects}
+        if None in folders_by_path or len(folders_by_path) != len(
+            snapshot.folder_effects
+        ):
+            raise ImportReceiptError(
+                "Durable folder effects have inconsistent path authority."
+            )
         for effect in snapshot.payload_effects:
             if effect.item_id not in payloads_by_item:
                 raise ImportReceiptError(
@@ -1979,9 +2582,18 @@ class NoteImportReceiptRepository:
                     memberships_by_index[effect.payload_index].append(effect)
                 for payload_index in range(item.outcome_count):
                     payload = payload_by_index[payload_index]
+                    unit_memberships = memberships_by_index[payload_index]
+                    required_folders = tuple(
+                        folder
+                        for effect in unit_memberships
+                        for folder in NoteImportReceiptRepository._required_folder_chain(
+                            effect, folders_by_path, folders_by_id
+                        )
+                    )
                     required = (
                         payload,
-                        *memberships_by_index[payload_index],
+                        *unit_memberships,
+                        *required_folders,
                     )
                     unit_results.append(
                         NoteImportReceiptRepository._classify_required_effects(
@@ -2006,7 +2618,14 @@ class NoteImportReceiptRepository:
                     raise ImportReceiptError(
                         "A durable Update item has inconsistent mutation effects."
                     )
-                required = (*payloads, *memberships)
+                required_folders = tuple(
+                    folder
+                    for effect in memberships
+                    for folder in NoteImportReceiptRepository._required_folder_chain(
+                        effect, folders_by_path, folders_by_id
+                    )
+                )
+                required = (*payloads, *memberships, *required_folders)
                 if required:
                     unit_results.append(
                         NoteImportReceiptRepository._classify_required_effects(
@@ -2176,6 +2795,8 @@ __all__ = [
     "ITEM_OUTCOME_TRANSITIONS",
     "SESSION_STATE_TRANSITIONS",
     "EffectTransition",
+    "ImportBatchResult",
+    "ImportEffectCategory",
     "ImportEffectRecord",
     "ImportItemRecord",
     "ImportReceiptConflictError",
