@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import sqlite3
 import stat
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ def _create_subscriptions_database(path: Path) -> None:
 
 def _database_snapshot(path: Path) -> tuple[str, tuple[str, ...], tuple[int, int, int]]:
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn:
         schema = tuple(
             row[0]
             for row in conn.execute(
@@ -240,6 +241,31 @@ def test_read_only_view_preserves_live_wal_data_and_logical_database(
     assert after_artifacts[f"{path.name}-wal"] == before_artifacts[
         f"{path.name}-wal"
     ]
+
+
+def test_standalone_read_only_view_creates_only_private_sqlite_sidecars(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "subscriptions.db"
+    _create_subscriptions_database(path)
+    before_database = _database_snapshot(path)
+    before_artifacts = _sqlite_artifact_snapshot(path)
+    assert before_artifacts.keys() == {path.name}
+
+    reader = SubscriptionsDB(path, client_id="standalone-agent", read_only=True)
+    reader.assert_agent_read_ready()
+    assert reader.conn.execute("SELECT name FROM subscriptions").fetchone()[0] == (
+        "Example source"
+    )
+    reader.close()
+
+    after_artifacts = _sqlite_artifact_snapshot(path)
+    expected_sidecars = {f"{path.name}-wal", f"{path.name}-shm"}
+    assert after_artifacts.keys() - before_artifacts.keys() <= expected_sidecars
+    assert after_artifacts.keys() <= {path.name, *expected_sidecars}
+    assert all(mode & 0o077 == 0 for mode, *_rest in after_artifacts.values())
+    assert after_artifacts[path.name] == before_artifacts[path.name]
+    assert _database_snapshot(path) == before_database
 
 
 def test_readiness_requires_only_agent_tool_core_schema_and_failure_is_closeable(

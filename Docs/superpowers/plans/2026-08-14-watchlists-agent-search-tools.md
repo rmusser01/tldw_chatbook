@@ -61,7 +61,7 @@ Reason: Watchlists data expands the existing synthetic local-tool principal into
 
   Add a keyword-only `initialize_schema: bool = True` (or equivalently named positive default) to `BaseDB.__init__`, and a keyword-only `read_only: bool = False` to `SubscriptionsDB.__init__`. The read-only branch must skip schema initialization and startup integrity writes, use the dedicated private-SQLite owner with `read_only=True, must_exist=True`, omit WAL/synchronous write tuning, and keep normal app/test behavior unchanged. Register the owner policy as read-only URI only with source-file mode preservation.
 
-  This is a logical database read-only guarantee, not a byte-stable-sidecar guarantee. A normal SQLite `mode=ro` reader must participate in WAL coordination and may update the existing `-shm` file while reading committed frames from a live `-wal`. Do not use `immutable=1` to suppress that coordination: an immutable view can ignore uncheckpointed WAL and return stale or unavailable Watchlists data. A zero-sidecar-mutation guarantee would require a separately designed snapshot boundary and is outside this task.
+  This is a logical database read-only guarantee, not a byte-stable-sidecar guarantee. A normal SQLite `mode=ro` reader must participate in WAL coordination and may create or update SQLite-managed `-wal`/`-shm` sidecars while reading the current database. Do not use `immutable=1` to suppress that coordination: an immutable view can ignore uncheckpointed WAL and return stale or unavailable Watchlists data. A zero-sidecar-mutation guarantee would require a separately designed snapshot boundary and is outside this task.
 
 - [ ] **Step 4: Add the exact readiness probe**
 
