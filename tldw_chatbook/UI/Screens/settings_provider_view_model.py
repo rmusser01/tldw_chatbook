@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from ...Chat.provider_catalog import PROVIDER_CUSTOM_GROUP_KEYS
+from ...config import normalize_provider_config_key
 
 
 class ProviderCatalogEntry(Protocol):
@@ -97,17 +98,13 @@ def build_settings_overview(
     )
 
 
-def _comparison_key(value: object) -> str:
-    return "_".join(str(value or "").strip().casefold().replace("-", "_").split())
-
-
 _CUSTOM_PROVIDER_KEYS = frozenset(
-    _comparison_key(key) for key in PROVIDER_CUSTOM_GROUP_KEYS
+    normalize_provider_config_key(key) for key in PROVIDER_CUSTOM_GROUP_KEYS
 )
 
 
 def _provider_group_id(entry: ProviderCatalogEntry) -> str:
-    provider_key = _comparison_key(entry.readiness_key)
+    provider_key = normalize_provider_config_key(entry.readiness_key)
     if provider_key in _CUSTOM_PROVIDER_KEYS:
         return "custom"
     return "cloud" if entry.requires_api_key else "local"
@@ -126,7 +123,7 @@ def build_provider_picker_groups(
 
     normalized_query = str(query or "").strip().casefold()
     known_provider_keys = {
-        _comparison_key(entry.readiness_key) for entry in catalog
+        normalize_provider_config_key(entry.readiness_key) for entry in catalog
     }
     grouped: dict[str, list[ProviderPickerOption]] = {
         group_id: [] for group_id, _label in _PROVIDER_GROUPS
@@ -145,7 +142,7 @@ def build_provider_picker_groups(
     groups: list[ProviderPickerGroup] = []
     saved_text = str(saved_provider or "")
     saved_unknown = bool(saved_text.strip()) and (
-        _comparison_key(saved_text) not in known_provider_keys
+        normalize_provider_config_key(saved_text) not in known_provider_keys
     )
     if saved_unknown:
         saved_option = ProviderPickerOption(

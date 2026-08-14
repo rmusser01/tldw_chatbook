@@ -2148,6 +2148,8 @@ class SettingsScreen(BaseAppScreen):
         # Input.Changed is delivered after a programmatic value assignment
         # returns, so a synchronous boolean cannot suppress that deferred
         # message. Consume exact expected values once instead.
+        self._provider_endpoint_suppress_queue: list[str] = []
+        self._provider_credential_env_var_suppress_queue: list[str] = []
         self._provider_api_key_suppress_queue: list[str] = []
         self._provider_context_window_suppress_queue: list[str] = []
         self._syncing_provider_credential_env_var = False
@@ -9000,7 +9002,7 @@ class SettingsScreen(BaseAppScreen):
         picker.add_options(self._provider_picker_options(groups))
 
         current_provider = str(
-            self._provider_setting_values_mapping().get("provider") or ""
+            self._provider_display_setting_values().get("provider") or ""
         )
         first_selectable: int | None = None
         selected_index: int | None = None
@@ -9024,14 +9026,15 @@ class SettingsScreen(BaseAppScreen):
         if normalized_query and not self._provider_picker_has_catalog_matches(groups):
             status.update(
                 f'No catalog providers match "{normalized_query}". '
-                "Enter a provider ID to use a custom provider."
+                "Enter a supported provider ID or alias."
             )
         elif any(group.group_id == "saved" for group in groups):
             status.update(
-                "The saved provider is not in the catalog; it remains available."
+                "This legacy saved provider is not supported here. Choose a listed "
+                "provider to migrate it."
             )
         else:
-            status.update("Choose a provider or enter a provider ID.")
+            status.update("Choose a provider or enter a supported provider alias.")
 
     def _provider_select_value_for_provider(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
@@ -9129,6 +9132,29 @@ class SettingsScreen(BaseAppScreen):
         finally:
             self._syncing_provider_manual = False
         self._refresh_provider_picker()
+
+    def _show_provider_manual_editor(self, provider: str) -> None:
+        """Expose the correction field without changing the active provider."""
+        try:
+            manual_row = self.query_one("#settings-provider-manual-row", Horizontal)
+            manual_input = self.query_one("#settings-provider-manual-value", Input)
+        except QueryError:
+            return
+        uses_manual_entry = (
+            self._provider_select_value_for_provider(provider)
+            == PROVIDER_MANUAL_SELECT_VALUE
+        )
+        self._syncing_provider_manual = True
+        try:
+            manual_input.disabled = False
+            if uses_manual_entry:
+                manual_input.value = provider
+            elif manual_input.value == provider:
+                manual_input.value = ""
+            manual_row.remove_class("settings-provider-manual-hidden")
+        finally:
+            self._syncing_provider_manual = False
+        manual_input.focus()
 
     def _sync_provider_api_mode_widget(self, provider: str) -> None:
         """Show QwenCloud's mode selector and hide it for every other provider."""
@@ -15546,6 +15572,21 @@ class SettingsScreen(BaseAppScreen):
         provider_settings = self._provider_setting_values_mapping()
         model_value = str(model or provider_settings.get("model") or "").strip()
         self._sync_provider_manual_widget(provider_value)
+        try:
+            endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
+            self._syncing_provider_endpoint = True
+            try:
+                endpoint_value = self._provider_endpoint_value(provider_value)
+                if endpoint_input.value != endpoint_value:
+                    self._provider_endpoint_suppress_queue.append(endpoint_value)
+                    endpoint_input.value = endpoint_value
+                endpoint_input.placeholder = self._provider_endpoint_placeholder(
+                    provider_value
+                )
+            finally:
+                self._syncing_provider_endpoint = False
+        except QueryError:
+            pass
         self._sync_provider_credential_widget(provider_value)
         try:
             self._syncing_provider_model_value = True
@@ -17942,13 +17983,18 @@ class SettingsScreen(BaseAppScreen):
         self._mark_storage_settings_staged()
 
     def _apply_provider_value_change(self, provider: str) -> None:
-        self._clear_navigation_provider_context()
         loaded_provider = str(
             self._provider_loaded_setting_values().get("provider") or ""
         )
         previous_provider = str(
             self._provider_setting_values_mapping().get("provider") or ""
         )
+        if provider and provider_config_key(provider) == provider_config_key(
+            previous_provider
+        ):
+            self._sync_provider_manual_widget(previous_provider)
+            return
+        self._clear_navigation_provider_context()
         self._snapshot_provider_api_mode_widget(previous_provider)
         provider_changed = bool(provider) and provider_config_key(
             provider
@@ -18030,14 +18076,10 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         if action == "enter_provider_id":
-            if selector.value != PROVIDER_MANUAL_SELECT_VALUE:
-                selector.value = PROVIDER_MANUAL_SELECT_VALUE
-            else:
-                current_provider = str(
-                    self._provider_setting_values_mapping().get("provider") or ""
-                )
-                self._sync_provider_manual_widget(current_provider)
-                self.query_one("#settings-provider-manual-value", Input).focus()
+            current_provider = str(
+                self._provider_display_setting_values().get("provider") or ""
+            )
+            self._show_provider_manual_editor(current_provider)
             return
         if provider_id is None:
             return
@@ -18080,7 +18122,20 @@ class SettingsScreen(BaseAppScreen):
     def handle_provider_manual_value_changed(self, event: Input.Changed) -> None:
         if self._syncing_provider_manual:
             return
-        self._apply_provider_value_change(event.value.strip())
+        provider = event.value.strip()
+        select_value = self._provider_select_value_for_provider(provider)
+        try:
+            status = self.query_one("#settings-provider-search-status", Static)
+        except QueryError:
+            status = None
+        if not provider or select_value == PROVIDER_MANUAL_SELECT_VALUE:
+            if status is not None:
+                status.update(
+                    "Unsupported provider ID. Choose a listed provider or enter a "
+                    "supported alias."
+                )
+            return
+        self._apply_provider_value_change(select_value)
 
     @on(Input.Changed, "#settings-model-value")
     def handle_model_value_changed(self, event: Input.Changed) -> None:
@@ -18173,6 +18228,16 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-provider-endpoint-value")
     def handle_provider_endpoint_changed(self, event: Input.Changed) -> None:
+        queue = self._provider_endpoint_suppress_queue
+        if queue and event.value == queue[0]:
+            queue.pop(0)
+            self._update_provider_dynamic_widgets()
+            return
+        if self._navigation_provider and event.value.strip() == self._provider_endpoint_value(
+            self._navigation_provider
+        ):
+            self._update_provider_dynamic_widgets()
+            return
         if self._syncing_provider_endpoint:
             self._update_provider_dynamic_widgets()
             return
@@ -18251,6 +18316,18 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-provider-credential-env-var")
     def handle_provider_credential_env_var_changed(self, event: Input.Changed) -> None:
+        queue = self._provider_credential_env_var_suppress_queue
+        if queue and event.value == queue[0]:
+            queue.pop(0)
+            self._update_provider_dynamic_widgets()
+            return
+        if (
+            self._navigation_provider
+            and event.value.strip()
+            == self._provider_credential_env_var(self._navigation_provider)
+        ):
+            self._update_provider_dynamic_widgets()
+            return
         if self._syncing_provider_credential_env_var:
             self._update_provider_dynamic_widgets()
             return

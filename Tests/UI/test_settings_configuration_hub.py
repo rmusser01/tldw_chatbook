@@ -2850,8 +2850,12 @@ async def test_settings_provider_picker_enter_provider_id_focuses_manual_field(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_picker_arbitrary_manual_id_stays_exact_without_exception():
+async def test_settings_provider_picker_rejects_unsupported_manual_id_without_losing_drafts():
     app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -2868,16 +2872,126 @@ async def test_settings_provider_picker_arbitrary_manual_id_stays_exact_without_
         await pilot.press("enter")
         await pilot.pause()
         manual = screen.query_one("#settings-provider-manual-value", Input)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        model = screen.query_one("#settings-model-value", Input)
+        endpoint.value = "https://draft.example/v1"
+        api_key.value = "draft-provider-key"
+        model.value = "draft-model"
+        await pilot.pause()
 
         manual.value = "Exact_Custom-ID"
         await pilot.pause()
 
         assert host._exception is None
         assert manual.value == "Exact_Custom-ID"
-        assert (
-            screen._provider_setting_values_mapping()["provider"]
-            == "Exact_Custom-ID"
+        assert screen._provider_widget_value() == "openai"
+        values = screen._provider_setting_values_mapping()
+        assert values["provider"] == "OpenAI"
+        assert values["model"] == "draft-model"
+        assert endpoint.value == "https://draft.example/v1"
+        assert api_key.value == "draft-provider-key"
+        assert "Choose a listed provider or enter a supported alias" in _visible_text(
+            screen
         )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_supported_manual_alias_uses_catalog_lifecycle():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        search.value = "provider-that-does-not-exist"
+        await pilot.pause()
+        picker.highlighted = _provider_picker_option_index(
+            picker, action="enter_provider_id"
+        )
+        picker.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+        manual.value = "LOCAL-OLLAMA"
+        await pilot.pause()
+
+        assert host._exception is None
+        assert (
+            screen.query_one("#settings-provider-value", Select).value
+            == "local_ollama"
+        )
+        assert screen._provider_setting_values_mapping()["provider"] == "local_ollama"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_current_alias_preserves_connection_drafts():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        endpoint.value = "https://draft.example/v1"
+        api_key.value = "draft-provider-key"
+        await pilot.pause()
+
+        screen._show_provider_manual_editor("OpenAI")
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+        manual.value = "OPENAI"
+        await pilot.pause()
+
+        assert screen._provider_setting_values_mapping()["provider"] == "OpenAI"
+        assert endpoint.value == "https://draft.example/v1"
+        assert api_key.value == "draft-provider-key"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_size", [(180, 50), (80, 24)])
+async def test_settings_provider_picker_geometry_is_bounded_and_non_overlapping(
+    terminal_size,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=terminal_size) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        status = screen.query_one("#settings-provider-search-status", Static)
+        model = screen.query_one("#settings-model-value", Input)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        regions = [
+            search.region,
+            picker.region,
+            status.region,
+            model.region,
+            endpoint.region,
+        ]
+
+        for index in range(len(regions) - 1):
+            upper, lower = regions[index : index + 2]
+            assert not upper.overlaps(lower), (
+                f"provider controls overlap at {terminal_size}: {upper} vs {lower}"
+            )
+            assert upper.bottom <= lower.y
+        assert 4 <= picker.region.height <= 8
+        assert picker.virtual_size.height > picker.container_size.height
 
 
 @pytest.mark.asyncio
@@ -5668,6 +5782,52 @@ async def test_settings_provider_category_renders_catalog_select_with_visible_va
 # -- is untouched and remains that task's to close. Its sibling xfail
 # (`..._does_not_create_provider_draft`) still xfails for the same reason.
 # The strict marker did its job by flipping loudly; the test is a live pin now.
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_navigation_context_uses_one_presentation_identity():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099/v1"},
+        "huggingface": {
+            "api_url": "https://huggingface.example/v1",
+            "api_key_env_var": "HUGGINGFACE_API_KEY",
+        },
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(
+            {
+                "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+                "provider": "huggingface",
+                "model": "meta-llama/test-model",
+            }
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        highlighted = picker.get_option_at_index(picker.highlighted)
+        assert getattr(highlighted, "provider_id", None) == "huggingface"
+        assert screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        assert screen.query_one("#settings-model-value", Input).value == (
+            "meta-llama/test-model"
+        )
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        credential = screen.query_one(
+            "#settings-provider-credential-env-var", Input
+        )
+        assert endpoint.value == "https://huggingface.example/v1"
+        assert credential.value == "HUGGINGFACE_API_KEY"
+        assert screen._provider_loaded_setting_values()["provider"] == "llama_cpp"
+        assert not screen._category_has_unsaved_changes(
+            SettingsCategoryId.PROVIDERS_MODELS
+        )
+
+
 @pytest.mark.asyncio
 async def test_settings_navigation_context_can_preselect_provider_category_target():
     app = _build_test_app()

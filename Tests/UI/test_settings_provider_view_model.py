@@ -3,6 +3,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from tldw_chatbook.Chat.console_provider_support import ConsoleProviderCatalogEntry
+from tldw_chatbook.config import normalize_provider_config_key
 
 
 def _entry(
@@ -150,3 +151,42 @@ def test_provider_picker_no_match_keeps_only_honest_manual_action():
 
     assert [group.group_id for group in groups] == ["actions"]
     assert groups[0].options[0].action == "enter_provider_id"
+
+
+@pytest.mark.parametrize(
+    ("catalog_id", "saved_provider"),
+    [
+        ("alpha__beta", "  ALPHA  BETA  "),
+        ("unicode_ß", "UNICODE-ẞ"),
+        ("local_ollama", "LOCAL-OLLAMA"),
+    ],
+)
+def test_provider_picker_known_identity_matches_runtime_normalization(
+    catalog_id,
+    saved_provider,
+):
+    from tldw_chatbook.UI.Screens.settings_provider_view_model import (
+        build_provider_picker_groups,
+    )
+
+    assert normalize_provider_config_key(saved_provider) == catalog_id
+    groups = build_provider_picker_groups(
+        (_entry(catalog_id, "Matched provider", requires_api_key=False),),
+        saved_provider,
+        "",
+    )
+
+    assert not any(option.saved_unknown for option in _all_options(groups))
+
+
+def test_provider_picker_unknown_identity_preserves_exact_saved_text():
+    from tldw_chatbook.UI.Screens.settings_provider_view_model import (
+        build_provider_picker_groups,
+    )
+
+    saved_provider = "  Exact_Custom-ID  "
+    groups = build_provider_picker_groups(_catalog(), saved_provider, "")
+    saved = next(option for option in _all_options(groups) if option.saved_unknown)
+
+    assert saved.provider_id == saved_provider
+    assert saved_provider in saved.label

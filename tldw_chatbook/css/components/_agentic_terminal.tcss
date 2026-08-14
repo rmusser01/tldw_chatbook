@@ -5704,6 +5704,22 @@ Button.settings-category-group-toggle:focus {
     margin: 0;
 }
 
+/* The provider search is content-sized, while its OptionList owns a bounded
+   scrolling viewport. Explicit sizing keeps following fields in document
+   order at both the standard and compact Settings workbench widths. */
+#settings-provider-picker-block {
+    width: 100%;
+    height: auto;
+    min-height: 9;
+}
+
+#settings-provider-picker {
+    width: 100%;
+    height: 6;
+    min-height: 6;
+    max-height: 6;
+}
+
 .settings-select-row {
     width: 100%;
     height: 3;
