@@ -5,9 +5,9 @@ from __future__ import annotations
 import os
 import stat
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
-from urllib.parse import quote
+from urllib.parse import quote_from_bytes
 
 from tldw_chatbook.Notes.note_import_plan_models import (
     ImportBounds,
@@ -44,6 +44,7 @@ class DiscoveredImportSource:
     source: ImportSource
     size_bytes: int
     identity: SourceIdentity = field(repr=False)
+    parent_identities: tuple[SourceIdentity, ...] = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +99,13 @@ class _DiscoveryState:
     entry_count: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class _SelectedPath:
+    path: Path = field(repr=False)
+    metadata: os.stat_result = field(repr=False)
+    parent_identities: tuple[SourceIdentity, ...] = field(repr=False)
+
+
 _MESSAGES = {
     "empty_selection": "Choose at least one file or one folder.",
     "invalid_selection": "The selected source is not valid.",
@@ -116,6 +124,7 @@ _MESSAGES = {
     "max_total_bytes_exceeded": "The selected files are too large in total.",
     "max_entries_exceeded": "The selected folder contains too many entries.",
     "nested_symlink": "Linked entries are skipped for safety.",
+    "nested_unsafe_name": "This entry has an unsafe name and will be skipped.",
     "nested_not_regular": "This entry is not a regular file and will be skipped.",
     "nested_unavailable": "This entry cannot be inspected safely and will be skipped.",
 }
@@ -130,10 +139,8 @@ def discover_import_sources(
         raise TypeError("bounds must be an ImportBounds.")
 
     selected_paths = _copy_bounded_selection(paths, bounds)
-    selected = [
-        (_absolute_path(path), _selected_lstat(path, bounds)) for path in selected_paths
-    ]
-    kinds = [_mode_kind(metadata.st_mode) for _, metadata in selected]
+    selected = [_inspect_selected_path(path, bounds) for path in selected_paths]
+    kinds = [_mode_kind(item.metadata.st_mode) for item in selected]
 
     if any(kind == "symlink" for kind in kinds):
         _reject(bounds, "selected_symlink")
@@ -151,11 +158,11 @@ def discover_import_sources(
 
     state = _DiscoveryState(bounds=bounds)
     if directory_count == 1:
-        root_path, root_metadata = selected[0]
-        root_label = root_path.name
+        selected_root = selected[0]
+        root_label = selected_root.path.name
         if not _is_safe_display_segment(root_label):
             _reject(bounds, "unsafe_display_path")
-        _scan_selected_directory(root_path, root_metadata, root_label, state)
+        _scan_selected_directory(selected_root, root_label, state)
     else:
         root_label = None
         _admit_selected_files(selected, state)
@@ -166,9 +173,10 @@ def discover_import_sources(
             key=lambda item: _display_sort_key(item.source.display_path),
         )
     )
-    failures = tuple(
+    ordered_failures = tuple(
         sorted(state.failures, key=lambda item: _display_sort_key(item.display_path))
     )
+    failures = _disambiguate_failure_paths(candidates, ordered_failures)
     return ImportDiscovery(
         candidates=candidates,
         failures=failures,
@@ -202,14 +210,73 @@ def _absolute_path(path: Path) -> Path:
     return Path(os.path.abspath(os.fspath(path)))
 
 
-def _selected_lstat(path: Path, bounds: ImportBounds) -> os.stat_result:
+def _inspect_selected_path(path: Path, bounds: ImportBounds) -> _SelectedPath:
+    """Inspect every absolute path component from a pinned root descriptor."""
     absolute_path = _absolute_path(path)
+    descriptors: list[int] = []
+    result: _SelectedPath | None = None
+    primary_error: ImportSelectionError | None = None
     try:
-        return absolute_path.lstat()
+        flags = _directory_open_flags()
+        anchor = absolute_path.anchor
+        if not anchor:
+            _reject(bounds, "invalid_selection")
+        current_fd = os.open(anchor, flags)
+        descriptors.append(current_fd)
+        root_metadata = os.fstat(current_fd)
+        components = absolute_path.parts[1:]
+        if not components:
+            result = _SelectedPath(
+                path=absolute_path,
+                metadata=root_metadata,
+                parent_identities=(),
+            )
+        else:
+            parent_identities = [_identity_from_stat(root_metadata)]
+            for component in components[:-1]:
+                metadata = os.stat(
+                    component,
+                    dir_fd=current_fd,
+                    follow_symlinks=False,
+                )
+                if _is_link_or_reparse(metadata):
+                    _reject(bounds, "selected_symlink")
+                if not stat.S_ISDIR(metadata.st_mode):
+                    _reject(bounds, "selection_not_regular")
+                next_fd = os.open(component, flags, dir_fd=current_fd)
+                descriptors.append(next_fd)
+                opened_metadata = os.fstat(next_fd)
+                if not _same_object(metadata, opened_metadata):
+                    _reject(bounds, "selection_changed")
+                current_fd = next_fd
+                parent_identities.append(_identity_from_stat(opened_metadata))
+            leaf_metadata = os.stat(
+                components[-1],
+                dir_fd=current_fd,
+                follow_symlinks=False,
+            )
+            if _is_link_or_reparse(leaf_metadata):
+                _reject(bounds, "selected_symlink")
+            result = _SelectedPath(
+                path=absolute_path,
+                metadata=leaf_metadata,
+                parent_identities=tuple(parent_identities),
+            )
+    except ImportSelectionError as error:
+        primary_error = error
     except FileNotFoundError:
-        _reject(bounds, "selection_missing")
-    except OSError:
+        primary_error = _selection_error(bounds, "selection_missing")
+    except (OSError, NotImplementedError, TypeError):
+        primary_error = _selection_error(bounds, "selection_unreadable")
+
+    close_failed = _close_descriptors(descriptors)
+    if primary_error is not None:
+        raise primary_error
+    if close_failed:
         _reject(bounds, "selection_unreadable")
+    if result is None:
+        _reject(bounds, "selection_unreadable")
+    return result
 
 
 def _mode_kind(mode: int) -> str:
@@ -223,13 +290,16 @@ def _mode_kind(mode: int) -> str:
 
 
 def _admit_selected_files(
-    selected: list[tuple[Path, os.stat_result]],
+    selected: list[_SelectedPath],
     state: _DiscoveryState,
 ) -> None:
     names: set[str] = set()
-    ordered = sorted(selected, key=lambda item: _display_sort_key(item[0].name))
-    for path, metadata in ordered:
-        display_path = path.name
+    ordered = sorted(
+        selected,
+        key=lambda item: _display_sort_key(item.path.name),
+    )
+    for item in ordered:
+        display_path = item.path.name
         normalized_name = display_path.casefold()
         if not _is_safe_display_segment(display_path):
             _reject(state.bounds, "unsafe_display_path")
@@ -238,39 +308,47 @@ def _admit_selected_files(
         names.add(normalized_name)
         state.entry_count += 1
         _admit_file(
-            path,
+            item.path,
             display_path,
-            metadata,
+            item.metadata,
             ImportSourceKind.SELECTED_FILE,
+            item.parent_identities,
             state,
         )
 
 
 def _scan_selected_directory(
-    root_path: Path,
-    root_metadata: os.stat_result,
+    selected_root: _SelectedPath,
     root_label: str,
     state: _DiscoveryState,
 ) -> None:
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    root_fd = _open_verified_directory(selected_root, state.bounds)
+    primary_error: ImportSelectionError | None = None
     try:
-        root_fd = os.open(root_path, flags)
-    except OSError:
-        _reject(state.bounds, "selection_unreadable")
-    try:
-        if not _same_object(root_metadata, os.fstat(root_fd)):
-            _reject(state.bounds, "selection_changed")
-        _scan_directory_fd(
+        scan_succeeded = _scan_directory_fd(
             directory_fd=root_fd,
-            directory_path=root_path,
+            directory_path=selected_root.path,
             relative_parts=(),
             parent_depth=0,
             root_label=root_label,
+            directory_identities=(
+                *selected_root.parent_identities,
+                _identity_from_stat(selected_root.metadata),
+            ),
             state=state,
-            is_selected_root=True,
         )
-    finally:
-        os.close(root_fd)
+        if not scan_succeeded:
+            primary_error = _selection_error(state.bounds, "selection_unreadable")
+    except ImportSelectionError as error:
+        primary_error = error
+    except (OSError, NotImplementedError, TypeError):
+        primary_error = _selection_error(state.bounds, "selection_unreadable")
+
+    close_failed = _close_descriptors([root_fd])
+    if primary_error is not None:
+        raise primary_error
+    if close_failed:
+        _reject(state.bounds, "selection_unreadable")
 
 
 def _scan_directory_fd(
@@ -280,9 +358,9 @@ def _scan_directory_fd(
     relative_parts: tuple[str, ...],
     parent_depth: int,
     root_label: str,
+    directory_identities: tuple[SourceIdentity, ...],
     state: _DiscoveryState,
-    is_selected_root: bool = False,
-) -> None:
+) -> bool:
     try:
         with os.scandir(directory_fd) as iterator:
             entries: list[os.DirEntry[str]] = []
@@ -300,18 +378,14 @@ def _scan_directory_fd(
                     relative_parts=relative_parts,
                     parent_depth=parent_depth,
                     root_label=root_label,
+                    directory_identities=directory_identities,
                     state=state,
                 )
-    except OSError:
-        if is_selected_root:
-            _reject(state.bounds, "selection_unreadable")
-        else:
-            _add_failure(
-                state,
-                directory_path,
-                _display_path(root_label, relative_parts),
-                "nested_unavailable",
-            )
+    except ImportSelectionError:
+        raise
+    except (OSError, NotImplementedError, TypeError):
+        return False
+    return True
 
 
 def _scan_entry(
@@ -322,24 +396,24 @@ def _scan_entry(
     relative_parts: tuple[str, ...],
     parent_depth: int,
     root_label: str,
+    directory_identities: tuple[SourceIdentity, ...],
     state: _DiscoveryState,
 ) -> None:
     entry_path = directory_path / entry.name
     entry_parts = (*relative_parts, entry.name)
     display_path = _display_path(root_label, entry_parts)
     if not _is_safe_display_path(display_path):
-        safe_parts = tuple(quote(part, safe="-._~") for part in entry_parts)
-        safe_display_path = _display_path(root_label, safe_parts)
-        _add_failure(state, entry_path, safe_display_path, "nested_unavailable")
+        safe_display_path = _unsafe_failure_display_path(root_label, entry_parts)
+        _add_failure(state, entry_path, safe_display_path, "nested_unsafe_name")
         return
     try:
         metadata = entry.stat(follow_symlinks=False)
-    except OSError:
+    except (OSError, NotImplementedError, TypeError):
         _add_failure(state, entry_path, display_path, "nested_unavailable")
         return
 
     kind = _mode_kind(metadata.st_mode)
-    if kind == "symlink":
+    if _is_link_or_reparse(metadata):
         _add_failure(state, entry_path, display_path, "nested_symlink")
     elif kind == "other":
         _add_failure(state, entry_path, display_path, "nested_not_regular")
@@ -349,6 +423,7 @@ def _scan_entry(
             display_path,
             metadata,
             ImportSourceKind.DIRECTORY_MEMBER,
+            directory_identities,
             state,
         )
     else:
@@ -364,6 +439,7 @@ def _scan_entry(
             child_depth=child_depth,
             root_label=root_label,
             display_path=display_path,
+            parent_identities=directory_identities,
             state=state,
         )
 
@@ -378,28 +454,50 @@ def _scan_child_directory(
     child_depth: int,
     root_label: str,
     display_path: str,
+    parent_identities: tuple[SourceIdentity, ...],
     state: _DiscoveryState,
 ) -> None:
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    candidate_mark = len(state.candidates)
+    failure_mark = len(state.failures)
+    total_bytes_mark = state.total_bytes
+    child_fd: int | None = None
+    primary_error: ImportSelectionError | None = None
+    scan_succeeded = False
     try:
-        child_fd = os.open(entry.name, flags, dir_fd=parent_fd)
-    except OSError:
-        _add_failure(state, entry_path, display_path, "nested_unavailable")
-        return
-    try:
-        if not _same_object(metadata, os.fstat(child_fd)):
-            _add_failure(state, entry_path, display_path, "nested_unavailable")
-            return
-        _scan_directory_fd(
-            directory_fd=child_fd,
-            directory_path=entry_path,
-            relative_parts=entry_parts,
-            parent_depth=child_depth,
-            root_label=root_label,
-            state=state,
+        child_fd = os.open(
+            entry.name,
+            _directory_open_flags(),
+            dir_fd=parent_fd,
         )
-    finally:
-        os.close(child_fd)
+        opened_metadata = os.fstat(child_fd)
+        if _same_object(metadata, opened_metadata):
+            scan_succeeded = _scan_directory_fd(
+                directory_fd=child_fd,
+                directory_path=entry_path,
+                relative_parts=entry_parts,
+                parent_depth=child_depth,
+                root_label=root_label,
+                directory_identities=(
+                    *parent_identities,
+                    _identity_from_stat(opened_metadata),
+                ),
+                state=state,
+            )
+    except ImportSelectionError as error:
+        primary_error = error
+    except (OSError, NotImplementedError, TypeError):
+        scan_succeeded = False
+
+    close_failed = _close_descriptors([child_fd]) if child_fd is not None else False
+    if primary_error is not None:
+        raise primary_error
+    if close_failed:
+        scan_succeeded = False
+    if not scan_succeeded:
+        del state.candidates[candidate_mark:]
+        del state.failures[failure_mark:]
+        state.total_bytes = total_bytes_mark
+        _add_failure(state, entry_path, display_path, "nested_unavailable")
 
 
 def _admit_file(
@@ -407,6 +505,7 @@ def _admit_file(
     display_path: str,
     metadata: os.stat_result,
     kind: ImportSourceKind,
+    parent_identities: tuple[SourceIdentity, ...],
     state: _DiscoveryState,
 ) -> None:
     size = metadata.st_size
@@ -426,6 +525,7 @@ def _admit_file(
             ),
             size_bytes=size,
             identity=_identity_from_stat(metadata),
+            parent_identities=parent_identities,
         )
     )
 
@@ -449,6 +549,103 @@ def _same_object(first: os.stat_result, second: os.stat_result) -> bool:
     )
 
 
+def _open_verified_directory(
+    selected: _SelectedPath,
+    bounds: ImportBounds,
+) -> int:
+    """Reopen a selected directory through its verified component identities."""
+    descriptors: list[int] = []
+    leaf_fd: int | None = None
+    primary_error: ImportSelectionError | None = None
+    try:
+        flags = _directory_open_flags()
+        current_fd = os.open(selected.path.anchor, flags)
+        descriptors.append(current_fd)
+        root_metadata = os.fstat(current_fd)
+        if not _identity_matches(selected.parent_identities[0], root_metadata):
+            _reject(bounds, "selection_changed")
+
+        components = selected.path.parts[1:]
+        for index, component in enumerate(components):
+            metadata = os.stat(
+                component,
+                dir_fd=current_fd,
+                follow_symlinks=False,
+            )
+            if _is_link_or_reparse(metadata):
+                _reject(bounds, "selected_symlink")
+            if not stat.S_ISDIR(metadata.st_mode):
+                _reject(bounds, "selection_changed")
+            next_fd = os.open(component, flags, dir_fd=current_fd)
+            descriptors.append(next_fd)
+            opened_metadata = os.fstat(next_fd)
+            expected_identity = (
+                _identity_from_stat(selected.metadata)
+                if index == len(components) - 1
+                else selected.parent_identities[index + 1]
+            )
+            if not _identity_matches(expected_identity, opened_metadata):
+                _reject(bounds, "selection_changed")
+            current_fd = next_fd
+        leaf_fd = current_fd
+    except ImportSelectionError as error:
+        primary_error = error
+    except FileNotFoundError:
+        primary_error = _selection_error(bounds, "selection_missing")
+    except (OSError, NotImplementedError, TypeError):
+        primary_error = _selection_error(bounds, "selection_unreadable")
+
+    if primary_error is not None:
+        _close_descriptors(descriptors)
+        raise primary_error
+    if leaf_fd is None:
+        _close_descriptors(descriptors)
+        _reject(bounds, "selection_unreadable")
+    parent_close_failed = _close_descriptors(descriptors[:-1])
+    if parent_close_failed:
+        _close_descriptors([leaf_fd])
+        _reject(bounds, "selection_unreadable")
+    return leaf_fd
+
+
+def _directory_open_flags() -> int:
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    no_follow_flag = getattr(os, "O_NOFOLLOW", None)
+    if (
+        not isinstance(directory_flag, int)
+        or directory_flag <= 0
+        or not isinstance(no_follow_flag, int)
+        or no_follow_flag <= 0
+    ):
+        raise NotImplementedError("Secure directory descriptors are unavailable.")
+    return os.O_RDONLY | directory_flag | no_follow_flag
+
+
+def _close_descriptors(descriptors: Iterable[int]) -> bool:
+    """Close descriptors completely and report failure without leaking OS text."""
+    failed = False
+    for descriptor in reversed(tuple(descriptors)):
+        try:
+            os.close(descriptor)
+        except (OSError, NotImplementedError, TypeError):
+            failed = True
+    return failed
+
+
+def _identity_matches(identity: SourceIdentity, metadata: os.stat_result) -> bool:
+    return (
+        stat.S_ISDIR(metadata.st_mode)
+        and identity.device == metadata.st_dev
+        and identity.inode == metadata.st_ino
+    )
+
+
+def _is_link_or_reparse(metadata: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    file_attributes = getattr(metadata, "st_file_attributes", 0)
+    return stat.S_ISLNK(metadata.st_mode) or bool(file_attributes & reparse_flag)
+
+
 def _add_failure(
     state: _DiscoveryState,
     source_path: Path,
@@ -467,6 +664,43 @@ def _add_failure(
 
 def _display_path(root_label: str, relative_parts: tuple[str, ...]) -> str:
     return PurePosixPath(root_label, *relative_parts).as_posix()
+
+
+def _unsafe_failure_display_path(
+    root_label: str,
+    relative_parts: tuple[str, ...],
+) -> str:
+    encoded_parts = tuple(_quote_filename_segment(part) for part in relative_parts)
+    return _display_path(root_label, (".unsafe-entry", *encoded_parts))
+
+
+def _quote_filename_segment(segment: str) -> str:
+    try:
+        encoded = os.fsencode(segment)
+    except UnicodeEncodeError:
+        encoded = segment.encode("utf-8", errors="surrogatepass")
+    return quote_from_bytes(encoded, safe="-._~")
+
+
+def _disambiguate_failure_paths(
+    candidates: tuple[DiscoveredImportSource, ...],
+    failures: tuple[ImportDiscoveryFailure, ...],
+) -> tuple[ImportDiscoveryFailure, ...]:
+    used = {candidate.source.display_path.casefold() for candidate in candidates}
+    disambiguated: list[ImportDiscoveryFailure] = []
+    for failure in failures:
+        display_path = failure.display_path
+        suffix = 1
+        while display_path.casefold() in used:
+            display_path = f"{failure.display_path}~failure-{suffix}"
+            suffix += 1
+        used.add(display_path.casefold())
+        disambiguated.append(
+            failure
+            if display_path == failure.display_path
+            else replace(failure, display_path=display_path)
+        )
+    return tuple(disambiguated)
 
 
 def _is_safe_display_segment(segment: str) -> bool:
@@ -500,3 +734,10 @@ def _bounded_message(bounds: ImportBounds, reason_code: str) -> str:
 
 def _reject(bounds: ImportBounds, reason_code: str) -> None:
     raise ImportSelectionError(reason_code, _bounded_message(bounds, reason_code))
+
+
+def _selection_error(
+    bounds: ImportBounds,
+    reason_code: str,
+) -> ImportSelectionError:
+    return ImportSelectionError(reason_code, _bounded_message(bounds, reason_code))

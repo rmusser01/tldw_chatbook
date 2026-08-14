@@ -8,6 +8,7 @@ from typing import Self
 
 import pytest
 
+from tldw_chatbook.Notes import note_import_planner
 from tldw_chatbook.Notes.note_import_plan_models import (
     ImportAction,
     ImportBounds,
@@ -1096,7 +1097,9 @@ def test_nested_unsafe_names_are_escaped_in_visible_failures(tmp_path: Path) -> 
     discovery = discover_import_sources([root], _discovery_bounds())
 
     assert discovery.candidates == ()
-    assert discovery.failures[0].display_path == "Project/unsafe%5Cname.md"
+    assert (
+        discovery.failures[0].display_path == "Project/.unsafe-entry/unsafe%5Cname.md"
+    )
     assert "\\" not in repr(discovery.failures[0])
 
 
@@ -1343,3 +1346,227 @@ def test_discovery_aggregate_copies_collections_into_immutable_tuples() -> None:
     assert discovery.failures == ()
     with pytest.raises(FrozenInstanceError):
         discovery.total_bytes = 1  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("selected_kind", ["file", "directory"])
+def test_selected_paths_reject_symlinked_parent_components(
+    tmp_path: Path,
+    selected_kind: str,
+) -> None:
+    """Every selected path component is checked without following parent links."""
+    real_parent = tmp_path / "real-parent"
+    project = real_parent / "Project"
+    project.mkdir(parents=True)
+    note = project / "note.md"
+    note.write_text("note", encoding="utf-8")
+    alias = tmp_path / "alias"
+    alias.symlink_to(real_parent, target_is_directory=True)
+    selected = alias / "Project"
+    if selected_kind == "file":
+        selected /= "note.md"
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([selected], _discovery_bounds())
+
+    assert raised.value.reason_code == "selected_symlink"
+    assert str(real_parent) not in str(raised.value)
+
+
+def test_surrogate_escaped_nested_name_becomes_a_total_safe_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Undecodable filename bytes cannot crash failure-display encoding."""
+    root = tmp_path / "Project"
+    root.mkdir()
+
+    class SurrogateScandir:
+        yielded = False
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def __iter__(self) -> Self:
+            return self
+
+        def __next__(self) -> SimpleNamespace:
+            if self.yielded:
+                raise StopIteration
+            self.yielded = True
+            return SimpleNamespace(name="unsafe-\udcff.md")
+
+    monkeypatch.setattr(os, "scandir", lambda _directory_fd: SurrogateScandir())
+
+    discovery = discover_import_sources([root], _discovery_bounds())
+
+    assert discovery.candidates == ()
+    assert len(discovery.failures) == 1
+    assert discovery.failures[0].reason_code == "nested_unsafe_name"
+    assert "%FF" in discovery.failures[0].display_path
+    assert str(root) not in repr(discovery.failures[0])
+
+
+def test_unsafe_failure_display_cannot_collide_with_literal_percent_filename(
+    tmp_path: Path,
+) -> None:
+    """Encoded unsafe names occupy a distinct, deterministic display namespace."""
+    root = tmp_path / "Project"
+    root.mkdir()
+    (root / "unsafe\\name.md").write_text("unsafe", encoding="utf-8")
+    (root / "unsafe%5Cname.md").write_text("literal", encoding="utf-8")
+
+    discovery = discover_import_sources([root], _discovery_bounds())
+
+    candidate_path = discovery.candidates[0].source.display_path
+    failure_path = discovery.failures[0].display_path
+    assert candidate_path == "Project/unsafe%5Cname.md"
+    assert failure_path == "Project/.unsafe-entry/unsafe%5Cname.md"
+    assert failure_path != candidate_path
+
+
+@pytest.mark.parametrize("operation", ["fstat", "close"])
+def test_root_descriptor_errors_are_normalized_without_raw_os_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    """Root descriptor inspection and cleanup expose only stable selection errors."""
+    root = tmp_path / "Project"
+    root.mkdir()
+    private_error = "PRIVATE ROOT DESCRIPTOR ERROR"
+
+    if operation == "fstat":
+        monkeypatch.setattr(
+            note_import_planner.os,
+            "fstat",
+            lambda _descriptor: (_ for _ in ()).throw(OSError(private_error)),
+        )
+    else:
+        real_close = os.close
+
+        def close_then_fail(descriptor: int) -> None:
+            real_close(descriptor)
+            raise OSError(private_error)
+
+        monkeypatch.setattr(note_import_planner.os, "close", close_then_fail)
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([root], _discovery_bounds())
+
+    assert raised.value.reason_code == "selection_unreadable"
+    assert private_error not in str(raised.value)
+    assert str(root) not in str(raised.value)
+
+
+def test_unsupported_descriptor_api_fails_closed_with_a_stable_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Platforms lacking secure descriptor operations never fall back to path walks."""
+    note = tmp_path / "note.md"
+    note.write_text("note", encoding="utf-8")
+    monkeypatch.setattr(
+        note_import_planner.os,
+        "open",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            NotImplementedError("PRIVATE UNSUPPORTED API")
+        ),
+    )
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([note], _discovery_bounds())
+
+    assert raised.value.reason_code == "selection_unreadable"
+    assert "PRIVATE" not in str(raised.value)
+
+
+def test_close_failure_does_not_mask_a_stable_selected_symlink_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cleanup errors cannot replace the safer primary selection diagnosis."""
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real_parent, target_is_directory=True)
+    real_close = os.close
+
+    def close_then_fail(descriptor: int) -> None:
+        real_close(descriptor)
+        raise OSError("PRIVATE CLOSE ERROR")
+
+    monkeypatch.setattr(note_import_planner.os, "close", close_then_fail)
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([alias / "missing.md"], _discovery_bounds())
+
+    assert raised.value.reason_code == "selected_symlink"
+    assert "PRIVATE" not in str(raised.value)
+
+
+@pytest.mark.parametrize("operation", ["open", "fstat", "close", "scandir"])
+def test_child_descriptor_errors_become_one_safe_nested_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    """Every child-descriptor failure is normalized and never aborts with OS text."""
+    root = tmp_path / "Project"
+    child = root / "child"
+    child.mkdir(parents=True)
+    private_error = "PRIVATE CHILD DESCRIPTOR ERROR"
+    real_open = os.open
+    real_fstat = os.fstat
+    real_close = os.close
+    real_scandir = os.scandir
+    child_descriptors: set[int] = set()
+
+    def tracked_open(
+        path: object,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if os.fspath(path) == "child" and dir_fd is not None:
+            if operation == "open":
+                raise OSError(private_error)
+            descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+            child_descriptors.add(descriptor)
+            return descriptor
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    def injected_fstat(descriptor: int) -> os.stat_result:
+        if operation == "fstat" and descriptor in child_descriptors:
+            raise OSError(private_error)
+        return real_fstat(descriptor)
+
+    def injected_close(descriptor: int) -> None:
+        if operation == "close" and descriptor in child_descriptors:
+            child_descriptors.discard(descriptor)
+            real_close(descriptor)
+            raise OSError(private_error)
+        real_close(descriptor)
+
+    def injected_scandir(descriptor: int) -> os.ScandirIterator[str]:
+        if operation == "scandir" and descriptor in child_descriptors:
+            raise OSError(private_error)
+        return real_scandir(descriptor)
+
+    monkeypatch.setattr(note_import_planner.os, "open", tracked_open)
+    monkeypatch.setattr(note_import_planner.os, "fstat", injected_fstat)
+    monkeypatch.setattr(note_import_planner.os, "close", injected_close)
+    monkeypatch.setattr(note_import_planner.os, "scandir", injected_scandir)
+
+    discovery = discover_import_sources([root], _discovery_bounds())
+
+    assert discovery.candidates == ()
+    assert len(discovery.failures) == 1
+    failure = discovery.failures[0]
+    assert failure.display_path == "Project/child"
+    assert failure.reason_code == "nested_unavailable"
+    assert private_error not in failure.user_message
+    assert private_error not in repr(discovery)
