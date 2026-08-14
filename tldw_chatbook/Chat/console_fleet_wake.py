@@ -93,11 +93,11 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from loguru import logger
 
-from tldw_chatbook.Agents.agent_models import RunBudget
+from tldw_chatbook.Agents.agent_models import RunBudget, TERMINAL_RUN_STATUSES
 from tldw_chatbook.Agents.agent_service import (
     AUTOWAKE_ENABLED_KEY,
     DEFAULT_AUTOWAKE_ENABLED,
@@ -300,6 +300,15 @@ class ConsoleFleetWakeCoordinator:
         #: ``authorizes``.
         self._delivering: str | None = None
         self._delivery_tasks: set[asyncio.Task] = set()
+        #: task-15862: screen-wired hook fired on the loop thread the
+        #: moment a delivery is scheduled (``_delivering`` already set).
+        #: The screen arms its 0.2s transcript poll here -- a wake turn
+        #: enters through this coordinator, never the user-send worker
+        #: that normally arms the poll, so without this hook NOTHING
+        #: repaints the wake turn's stream, terminal tab glyph, or
+        #: composer state (the live 4+ minute freeze in PR3a-2 Task 7's
+        #: findings). Best-effort: a raising hook never blocks delivery.
+        self.delivery_ui_hook: Callable[[str], None] | None = None
 
     # -- wiring ---------------------------------------------------------------
 
@@ -356,6 +365,20 @@ class ConsoleFleetWakeCoordinator:
         """Whether ``conversation_id`` still owes a wake."""
         with self._registry_lock:
             return bool(self._pending.get(conversation_id))
+
+    def delivering_conversation_id(self) -> str | None:
+        """The conversation a wake turn is delivering into right now.
+
+        task-15862: set synchronously in ``_attempt`` before the delivery
+        task is created and cleared in ``_deliver``'s ``finally``, so it
+        covers the whole wake turn. The screen reads it to keep the
+        transcript poll alive through the turn and to name the wake in the
+        composer's blocked-state copy.
+
+        Returns:
+            The conversation id being delivered, or ``None``.
+        """
+        return self._delivering
 
     # -- the drain half (child thread) ---------------------------------------
 
@@ -472,6 +495,18 @@ class ConsoleFleetWakeCoordinator:
         authorization = AgentWakeAuthorization(
             self, session_id, _key=_WAKE_AUTHORIZATION_KEY
         )
+        # task-15862: tell the screen a wake turn is starting so it can arm
+        # the transcript poll. ``_delivering`` is already set, so a poll
+        # beat racing the delivery task's first run cannot self-stop in the
+        # gap. Never let a UI hook block the delivery itself.
+        hook = self.delivery_ui_hook
+        if callable(hook):
+            try:
+                hook(session_id)
+            except Exception:  # noqa: BLE001 -- UI freshness is best-effort
+                logger.opt(exception=True).debug(
+                    "wake delivery UI hook raised"
+                )
         task = loop.create_task(
             self._deliver(
                 conversation_id,
@@ -646,6 +681,33 @@ class ConsoleFleetWakeCoordinator:
                     row = runs_db.get_run(run_id)
                 except Exception:  # noqa: BLE001
                     row = None
+            if row is not None and (
+                str(row.get("status")) not in TERMINAL_RUN_STATUSES
+            ):
+                # task-15863: a pending run is terminal BY CONSTRUCTION --
+                # it entered the registry from the settle hook (which
+                # fires strictly after the terminal DB write; `run_child`'s
+                # finally ordering) or from the durable ledger (terminal
+                # statuses only). A non-terminal read here is therefore a
+                # stale snapshot pinned on this thread's reused held
+                # connection (observed live: a minute-old 'done' child
+                # announced as 'running'). Re-read through a fresh
+                # connection, which cannot inherit the pin.
+                fresh_read = getattr(runs_db, "get_run_fresh", None)
+                if callable(fresh_read):
+                    try:
+                        fresh_row = fresh_read(run_id)
+                    except Exception:  # noqa: BLE001
+                        fresh_row = None
+                    if fresh_row is not None:
+                        row = fresh_row
+                if str(row.get("status")) not in TERMINAL_RUN_STATUSES:
+                    # Last honest resort (a double without the fresh-read
+                    # seam, or a genuinely unreadable file): the settle/
+                    # ledger-recorded terminal word is the child's known
+                    # state at delivery -- never announce 'running' for a
+                    # settled child.
+                    row = {**row, "status": status}
             if row is not None and row.get("wake_delivered_at"):
                 stale.append(run_id)
                 continue

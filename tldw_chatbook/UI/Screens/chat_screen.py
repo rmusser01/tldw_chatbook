@@ -5227,6 +5227,12 @@ class ChatScreen(BaseAppScreen):
         wake = getattr(self._console_chat_controller, "fleet_wake", None)
         if wake is not None:
             wake.wire(app=self.app_instance)
+            # task-15862: a wake turn enters through the coordinator, never
+            # the user-send worker that arms the 0.2s transcript poll --
+            # without this hook nothing repaints the wake turn's streamed
+            # reply, its terminal tab glyph, or the composer state (the
+            # live 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
+            wake.delivery_ui_hook = self._on_console_wake_delivery_started
         self._console_chat_controller.wake_user_priority_probe = (
             self._console_wake_user_priority
         )
@@ -10408,6 +10414,34 @@ class ChatScreen(BaseAppScreen):
             rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
 
+    def _console_browser_unseen_marker(self, conversation_id: str | None) -> str:
+        """Resolved ◈ glyph for a marked conversation's sessionless row.
+
+        task-15864 AC#1: the unseen-badge derivation lived only on the
+        open-session (native) row path
+        (``_console_run_marker_with_unseen``), so after a restart --
+        session tabs do not restore, making no-open-session the NORMAL
+        restart shape -- the marked conversation's sidebar row rendered no
+        ◈ at all. Membership and persisted rows thread this through the
+        same durable-mark backing; when a native row also exists for the
+        conversation it wins the merge's identity slot with its full
+        precedence chain, so this cannot mask a live turn glyph.
+
+        Args:
+            conversation_id: The row's persisted conversation id.
+
+        Returns:
+            The resolved unseen glyph, or ``""`` when unmarked.
+        """
+        conversation_key = str(conversation_id or "").strip()
+        if not conversation_key:
+            return ""
+        if conversation_key not in self._console_fleet_unseen_ids():
+            return ""
+        return resolve_glyph(
+            CONSOLE_RUN_MARKER_GLYPHS.get(ConsoleRunMarker.SUBAGENT_UNSEEN, "")
+        )
+
     def _membership_console_browser_rows(
         self,
         current_conversation_id: str | None = None,
@@ -10468,6 +10502,11 @@ class ChatScreen(BaseAppScreen):
                     ),
                     source_kind="membership",
                     updated_sort=str(getattr(membership, "created_at", "") or ""),
+                    # task-15864 AC#1: sessionless rows still surface the
+                    # durable unseen mark (the restart shape).
+                    run_marker=self._console_browser_unseen_marker(
+                        conversation_id
+                    ),
                     openable=conversation_id
                     not in getattr(self, "_console_broken_conversation_ids", set()),
                 )
@@ -10630,6 +10669,11 @@ class ChatScreen(BaseAppScreen):
                         # from last_modified (normalize_conversation_row exposes
                         # no updated_at) or the rail degrades to creation order.
                         updated_sort=console_persisted_row_updated_sort(item),
+                        # task-15864 AC#1: sessionless rows still surface
+                        # the durable unseen mark (the restart shape).
+                        run_marker=self._console_browser_unseen_marker(
+                            conversation_id
+                        ),
                     )
                     rows.append(
                         self._apply_console_browser_star_state(row, starred_ids)
@@ -10828,6 +10872,11 @@ class ChatScreen(BaseAppScreen):
                         # from last_modified (normalize_conversation_row exposes
                         # no updated_at) or the rail degrades to creation order.
                         updated_sort=console_persisted_row_updated_sort(item),
+                        # task-15864 AC#1: sessionless rows still surface
+                        # the durable unseen mark (the restart shape).
+                        run_marker=self._console_browser_unseen_marker(
+                            conversation_id
+                        ),
                     )
                     rows.append(
                         self._apply_console_browser_star_state(row, starred_ids)
@@ -14729,6 +14778,87 @@ class ChatScreen(BaseAppScreen):
             return False
         return bool(composer.draft_text().strip())
 
+    def _poke_console_wake_retry(self) -> None:
+        """Retry a staged auto-wake (task-15864 AC#2: session-open trigger).
+
+        Called after a persisted conversation is resumed into a native
+        session -- the moment a mount-claimed pending wake finally has an
+        open session to deliver into. Session tabs do not restore across
+        restart, so before this trigger a restart-staged wake sat pending
+        until an unrelated composer keystroke. getattr-guarded like every
+        wake seam here (UI tests swap controller doubles).
+        """
+        controller = getattr(self, "_console_chat_controller", None)
+        wake = getattr(controller, "fleet_wake", None)
+        retry = getattr(wake, "retry_soon", None)
+        if callable(retry):
+            retry()
+
+    def _on_console_wake_delivery_started(self, session_id: str) -> None:
+        """Arm the transcript poll for a machine-injected wake turn.
+
+        task-15862: manual sends arm the 0.2s poll in
+        ``_submit_console_native_draft``; a wake turn bypasses that worker
+        entirely (``ConsoleFleetWakeCoordinator._deliver`` calls
+        ``controller.submit_draft`` directly), so before this hook nothing
+        repainted the wake turn's stream, its terminal tab glyph, or the
+        composer state until the user interacted. Runs on the app loop
+        (the coordinator's ``_attempt`` thread), with the coordinator's
+        ``_delivering`` already set -- so the poll's wake-delivery stop
+        guard holds it alive through the scheduling gap. The poll still
+        self-stops at the wake turn's terminal edge (15664 AC#2: no
+        recurring idle repaint).
+
+        Args:
+            session_id: The session the wake turn fires into (unused; the
+                poll repaints every session's surfaces).
+        """
+        if not self.is_mounted:
+            return
+        # Hop through the message pump before creating the timer. Textual's
+        # ``Timer._tick`` reads the ``active_app`` ContextVar, and an
+        # asyncio task inherits the context it was CREATED in -- this hook
+        # can run in a bare ``call_soon_threadsafe`` callback context (the
+        # coordinator's drain intake hops from the child's thread, whose
+        # copied context has no active_app), where a directly-created
+        # timer's task dies on its first tick without ever beating.
+        # Observed live (task-15862 diagnosis): "arm-poll" logged, zero
+        # beats, transcript frozen through the whole wake turn. A
+        # ``Callback`` message runs inside the pump's own task, which
+        # carries the app context, so the timer it creates ticks.
+        self.call_later(self._start_console_transcript_sync_timer)
+
+    def _console_wake_turn_active(self, session_id: str | None) -> bool:
+        """Whether the auto-wake coordinator is delivering into ``session_id``.
+
+        task-15862 AC#3: the composer's blocked-state copy must name the
+        actual blocker during a wake turn. getattr-guarded throughout --
+        several UI tests swap in hand-built controller doubles.
+
+        Args:
+            session_id: The session whose composer state is being synced.
+
+        Returns:
+            True while a wake delivery targets this session's conversation.
+        """
+        if not session_id:
+            return False
+        controller = getattr(self, "_console_chat_controller", None)
+        wake = getattr(controller, "fleet_wake", None)
+        delivering_read = getattr(wake, "delivering_conversation_id", None)
+        delivering = delivering_read() if callable(delivering_read) else None
+        if delivering is None:
+            return False
+        store = self._console_chat_store
+        if store is None:
+            return False
+        session = next(
+            (s for s in store.sessions() if s.id == session_id), None
+        )
+        if session is None:
+            return False
+        return delivering in (session.persisted_conversation_id, session.id)
+
     async def confirm_navigation(self) -> bool:
         """Delegate revision-pinned Console loss confirmation."""
 
@@ -16130,8 +16260,28 @@ class ChatScreen(BaseAppScreen):
                 active_conversation_id = (
                     active.persisted_conversation_id or active.id
                 )
-                if active_conversation_id in unseen_ids and (
-                    clear_fleet_unseen_completion(
+                # task-15864 AC#3: the view-clear YIELDS while the wake
+                # coordinator still owes this conversation. The mark is
+                # both the unseen INDICATOR (viewing satisfies that) and
+                # the restart STAGING bit the marks-indexed mount-claim
+                # depends on -- clearing it mid-deferral (a draft holding
+                # a due wake, or the kill switch OFF) left an owed,
+                # unmarked run across restart that `seed_from_marks`
+                # could never seed. Delivery's own commit clears through
+                # the same named seam once nothing undelivered remains.
+                wake = (
+                    getattr(controller, "fleet_wake", None)
+                    if controller is not None
+                    else None
+                )
+                has_pending = getattr(wake, "has_pending", None)
+                wake_owed = callable(has_pending) and bool(
+                    has_pending(active_conversation_id)
+                )
+                if (
+                    active_conversation_id in unseen_ids
+                    and not wake_owed
+                    and clear_fleet_unseen_completion(
                         self.app_instance, active_conversation_id
                     )
                 ):
@@ -16215,9 +16365,20 @@ class ChatScreen(BaseAppScreen):
             # TASK-251's TTL cache exists to prevent; the resulting bound
             # on staleness is `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`
             # (2s), the documented backstop for exactly this gap.
+            # task-15862: a wake delivery scheduled but not yet busy (the
+            # coordinator's `_delivering` is set synchronously BEFORE its
+            # asyncio task first runs) must not let a poll beat in that gap
+            # self-stop -- the wake turn would then stream with no poll and
+            # freeze exactly as before the delivery hook existed.
+            wake = getattr(controller, "fleet_wake", None)
+            delivering_read = getattr(wake, "delivering_conversation_id", None)
+            wake_delivering = (
+                callable(delivering_read) and delivering_read() is not None
+            )
             if (
                 controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES
                 and controller.in_flight_run_count() == 0
+                and not wake_delivering
             ):
                 # TASK-251: the run just left an active status -- invalidate
                 # so the finalized conversation's title/timestamps appear in
@@ -21065,6 +21226,10 @@ class ChatScreen(BaseAppScreen):
                 if queue_presentation is not None
                 else "Send"
             ),
+            # task-15862 AC#3: mid-wake, the queue tooltip above rode the
+            # setup slot and painted as "finish provider setup"; the flag
+            # makes the composer name the wake instead.
+            wake_turn_active=self._console_wake_turn_active(active_session_id),
         )
         composer.sync_dictation_state(self._console_dictation_state)
         # sync_action_state resets the attach button's tooltip to generic copy

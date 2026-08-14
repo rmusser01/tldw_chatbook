@@ -200,6 +200,7 @@ class ConsoleWorkspaceController:
         conversation_browser_config: Callable[[], dict[str, Any]],
         focus_conversation_search: Callable[[], None],
         sync_workspace_context: Callable[[], None],
+        wake_retry_poke: Callable[[], None] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -337,6 +338,11 @@ class ConsoleWorkspaceController:
         self._conversation_browser_config_fn = conversation_browser_config
         self._focus_conversation_search_fn = focus_conversation_search
         self._sync_workspace_context_fn = sync_workspace_context
+        #: task-15864 AC#2: `ChatScreen._poke_console_wake_retry` -- resume
+        #: is the one loader of persisted conversations into sessions, so
+        #: session-open becomes a wake retry trigger here. Optional so the
+        #: pre-existing direct-construction tests need no new kwarg.
+        self._wake_retry_poke_fn = wake_retry_poke
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_workspace_conversation_query = ""
@@ -1413,6 +1419,15 @@ class ConsoleWorkspaceController:
         self._note_console_follow_intent()
         self._sync_console_chat_core_state()
         await self._sync_native_console_chat_ui()
+        # task-15864 AC#2: opening a conversation creates the session a
+        # mount-claimed (or otherwise staged) wake has been waiting for --
+        # session-open IS a retry trigger. Before this, a restart-staged
+        # wake sat pending until an unrelated composer keystroke (live
+        # scenario 5). The poke only schedules `_attempt_all`; every
+        # delivery gate (kill switch, send gate, user-wins-ties) still
+        # applies unchanged.
+        if callable(self._wake_retry_poke_fn):
+            self._wake_retry_poke_fn()
         self._focus_console_composer_if_needed(force=True)
         return True
 

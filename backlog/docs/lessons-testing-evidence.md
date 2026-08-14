@@ -3911,6 +3911,33 @@ structural and its price is statements, neither of which a census can see.
 A number that cannot see the decision must never be cited as its
 justification.
 
+## A harness convenience call that bypasses the production entry path verifies nothing about that path (tasks 15862/15970, 2026-08-13)
+
+**Two incidents in one live pass, same shape.** (1) The wake-UI freshness
+suite injected `FleetDrained` events by calling `on_fleet_drained` from the
+test coroutine — whose context carries Textual's `active_app` under
+`run_test`. Production delivers the drain from the CHILD's daemon thread,
+whose `call_soon_threadsafe`-copied context has no `active_app`; a
+transcript-poll timer created in that bare context dies on its first tick
+(`Timer._tick` reads the ContextVar; an asyncio task inherits its CREATION
+context). The suite went green against a fix that did not work — live
+frames showed "arm-poll" logged and zero beats, the exact frozen-UI bug the
+tests claimed to kill. (2) The user-wins-ties wiring test staged the draft
+with `composer.load_draft(...)`, which writes the canonical segments
+directly; a live draft typed with real keys was invisible to
+`draft_text()` at probe time (pane showed the text, probe read `''`), and a
+wake fired straight through the user's held draft — the deferral the test
+"proved" (task-15970).
+
+**The rule.** Before trusting a test that drives an event or input, ask
+which THREAD, CONTEXT, and ENTRY POINT production uses, and drive that. A
+drain must come from a plain thread; typed input must be typed
+(`pilot.press`), not loaded. If the harness path and the production path
+diverge at any of those three, the test is verifying the harness. The fix
+pattern for (1): route the drain through
+`threading.Thread(target=...)` in the test, and hop UI arming through the
+message pump (`call_later`) in production — after which reverting the hop
+fails three tests instead of zero.
 ---
 
 ## A control that holds a second variable fixed measures the PAIR, not the thing you named (TASK-15965, 2026-08-13)
