@@ -528,7 +528,7 @@ def _csv_payloads(text: str, bounds: ImportBounds) -> tuple[ParsedNotePayload, .
         content_index = _role_header_index(normalized_headers, _CONTENT_ALIASES)
         keyword_index = _role_header_index(normalized_headers, _KEYWORD_ALIASES)
         if title_index is None and content_index is None:
-            title_index, content_index = 0, 1
+            title_index, content_index = _generic_header_indexes(normalized_headers)
         elif title_index is None:
             title_index = _fallback_header_index(normalized_headers)
         elif content_index is None:
@@ -577,6 +577,17 @@ def _fallback_header_index(headers: tuple[str, ...]) -> int:
         if header not in _CSV_RESERVED_HEADERS:
             return index
     raise _ParseFailure("invalid_content")
+
+
+def _generic_header_indexes(headers: tuple[str, ...]) -> tuple[int, int]:
+    indexes = tuple(
+        index
+        for index, header in enumerate(headers)
+        if header not in _CSV_RESERVED_HEADERS
+    )
+    if len(indexes) < 2:
+        raise _ParseFailure("invalid_content")
+    return indexes[0], indexes[1]
 
 
 def _folder_segments(

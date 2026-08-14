@@ -196,7 +196,36 @@ _MESSAGES = {
 }
 
 
+def _platform_uses_windows_adapter() -> bool:
+    """Return whether the dedicated Windows path adapter is required."""
+    return os.name == "nt"
+
+
+def _windows_filesystem() -> object:
+    from tldw_chatbook.Notes.note_import_windows_fs import OS_WINDOWS_FILESYSTEM
+
+    return OS_WINDOWS_FILESYSTEM
+
+
 def discover_import_sources(
+    paths: Iterable[Path],
+    bounds: ImportBounds,
+) -> ImportDiscovery:
+    """Dispatch source discovery to the platform's read-only strategy."""
+    if _platform_uses_windows_adapter():
+        from tldw_chatbook.Notes.note_import_windows_fs import (
+            discover_import_sources as discover_windows_sources,
+        )
+
+        return discover_windows_sources(
+            paths,
+            bounds,
+            filesystem=_windows_filesystem(),  # type: ignore[arg-type]
+        )
+    return _discover_import_sources_posix(paths, bounds)
+
+
+def _discover_import_sources_posix(
     paths: Iterable[Path],
     bounds: ImportBounds,
 ) -> ImportDiscovery:
@@ -257,6 +286,24 @@ def discover_import_sources(
 
 
 def read_discovered_source(
+    candidate: DiscoveredImportSource,
+    bounds: ImportBounds,
+) -> bytes:
+    """Dispatch verified reads to the platform's read-only strategy."""
+    if _platform_uses_windows_adapter():
+        from tldw_chatbook.Notes.note_import_windows_fs import (
+            read_discovered_source as read_windows_source,
+        )
+
+        return read_windows_source(
+            candidate,
+            bounds,
+            filesystem=_windows_filesystem(),  # type: ignore[arg-type]
+        )
+    return _read_discovered_source_posix(candidate, bounds)
+
+
+def _read_discovered_source_posix(
     candidate: DiscoveredImportSource,
     bounds: ImportBounds,
 ) -> bytes:

@@ -2365,6 +2365,44 @@ def test_csv_falls_back_to_first_two_distinct_columns(tmp_path: Path) -> None:
     )
 
 
+def test_csv_generic_fallback_skips_reserved_metadata_columns(tmp_path: Path) -> None:
+    source = tmp_path / "notes.csv"
+    source.write_text(
+        "tags,template,subject,text\nalpha,Meeting,One,Body\n",
+        encoding="utf-8",
+    )
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.issues == ()
+    assert batch.parsed[0].payloads[0] == ParsedNotePayload(
+        title="One",
+        content="Body",
+        keywords=("alpha",),
+        template_name="Meeting",
+    )
+
+
+@pytest.mark.parametrize(
+    "csv_content",
+    [
+        "tags,template\nalpha,Meeting\n",
+        "tags,subject\nalpha,One\n",
+    ],
+)
+def test_csv_generic_fallback_requires_two_unreserved_columns(
+    tmp_path: Path,
+    csv_content: str,
+) -> None:
+    source = tmp_path / "notes.csv"
+    source.write_text(csv_content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed == ()
+    assert batch.issues[0].reason_code == "invalid_content"
+
+
 @pytest.mark.parametrize(
     ("csv_content", "expected_title", "expected_content"),
     [
