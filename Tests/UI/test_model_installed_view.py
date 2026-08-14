@@ -3045,7 +3045,7 @@ async def test_blocked_audio_cpp_removal_paints_recovery_and_restores_delete_foc
 async def test_delayed_bulk_observation_restores_installed_delete_focus(
     tmp_path: Path,
 ) -> None:
-    """Evidence recomposition restores the id-less exact-ref Delete button."""
+    """Evidence refresh preserves the focused id-less Delete button in place."""
     import asyncio
     from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
     from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
@@ -3096,10 +3096,73 @@ async def test_delayed_bulk_observation_restores_installed_delete_focus(
             pilot,
             lambda: "Configured: Saved Settings" in _rendered_static_text(view),
         )
-        assert delete is not app.focused
+        assert delete is app.focused
         assert view.query_one(".model-delete", Button).has_focus
 
     assert calls == [(descriptor.reference,)]
+
+
+@pytest.mark.asyncio
+async def test_delete_press_during_observation_refresh_reviews_once(
+    tmp_path: Path,
+) -> None:
+    """Refreshing evidence cannot unmount Delete before its intent is delivered."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
+    )
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    descriptor, _sources = audio_cpp_curated_entries()[0]
+    installed = InstalledArtifact(
+        path=tmp_path / "managed-package",
+        descriptor=descriptor,
+        ready=False,
+        active=False,
+        error=None,
+    )
+    service = MagicMock()
+    service.list_installed.return_value = (installed,)
+    service.disk_usage.return_value = ArtifactDiskUsage(1, 0, 64 * 1024 * 1024)
+    refresh_entered = asyncio.Event()
+    release_refresh = asyncio.Event()
+    calls = 0
+
+    async def observe(references):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            refresh_entered.set()
+            await release_refresh.wait()
+        return AudioCppModelLibraryObservationSnapshot(
+            (AudioCppArtifactRemovalEvidence(references[0]),)
+        )
+
+    view = InstalledView(
+        service_factory=lambda: service,
+        legacy_dir=tmp_path,
+        observation_provider=observe,
+    )
+    view._review_audio_cpp_deletion = MagicMock()
+    app = _StyledInstalledApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        await _wait_until(pilot, lambda: calls == 1)
+        delete = view.query_one(".model-delete", Button)
+        assert delete.disabled is False
+
+        view.refresh_observations()
+        assert delete.is_attached
+        delete.press()
+
+        await _wait_until(pilot, refresh_entered.is_set)
+        await _wait_until(
+            pilot,
+            lambda: view._review_audio_cpp_deletion.call_count == 1,
+        )
+        view._review_audio_cpp_deletion.assert_called_once_with(descriptor.reference)
+        release_refresh.set()
 
 
 @pytest.mark.asyncio

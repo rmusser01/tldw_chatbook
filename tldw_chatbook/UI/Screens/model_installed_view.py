@@ -544,8 +544,16 @@ class InstalledView(Widget):
             ),
             Static(f"Recipe: {projection.recipe}", markup=False),
             Static(f"Compatibility: {projection.compatibility}", markup=False),
-            Static(f"Configured: {projection.configured}", markup=False),
-            Static(f"Running: {projection.running}", markup=False),
+            Static(
+                f"Configured: {projection.configured}",
+                classes="audio-cpp-configured",
+                markup=False,
+            ),
+            Static(
+                f"Running: {projection.running}",
+                classes="audio-cpp-running",
+                markup=False,
+            ),
             Static(f"Speech tasks: {projection.speech_tasks}", markup=False),
             Static(
                 f"Required package files: {projection.required_files}", markup=False
@@ -734,11 +742,8 @@ class InstalledView(Widget):
         }
         if projections != self._audio_cpp_projections:
             self._audio_cpp_projections = projections
-            self.refresh(recompose=True)
-            if locator is not None:
-                self.call_after_refresh(self.restore_focus, locator)
-        else:
-            self.refresh()
+            self._update_audio_cpp_observation_facts()
+        self.refresh()
         self.call_after_refresh(
             self._start_audio_cpp_observation,
             self._observation_generation,
@@ -802,9 +807,29 @@ class InstalledView(Widget):
         if focused is not None and self in focused.ancestors_with_self:
             locator = self.focus_locator(focused) or locator
         self._audio_cpp_projections = projections
-        await self.recompose()
+        self._update_audio_cpp_observation_facts()
+        self.refresh()
         if locator is not None:
             self.restore_focus(locator)
+
+    def _update_audio_cpp_observation_facts(self) -> None:
+        """Update the two observed facts without replacing row actions."""
+
+        for widget in self.query(".audio-cpp-model-row"):
+            projection = self._audio_cpp_projections.get(
+                getattr(widget, "reference", None)
+            )
+            if projection is None:
+                continue
+            try:
+                widget.query_one(".audio-cpp-configured", Static).update(
+                    f"Configured: {projection.configured}"
+                )
+                widget.query_one(".audio-cpp-running", Static).update(
+                    f"Running: {projection.running}"
+                )
+            except NoMatches:
+                continue
 
     def _focus_import_recovery(self) -> None:
         """Restore focus to one stable import control after recomposition."""
