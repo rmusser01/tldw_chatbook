@@ -5891,7 +5891,7 @@ class ConsoleChatController:
         # Tombstone first: `begin_shutdown`'s ordering contract ("before any
         # teardown cancellation"), unchanged.
         self.prompt_queue_coordinator.shutdown()
-        # MUTATION: the visit Event is never set
+        self._shutdown_requested.set()
         for message_id in tuple(self._original_attempts):
             self.clear_original_attempt(message_id)
         wake_sessions = set(self._agent_wake_turn_sessions)
