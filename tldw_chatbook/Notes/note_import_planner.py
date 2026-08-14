@@ -7,6 +7,7 @@ import stat
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
+from unicodedata import normalize
 from urllib.parse import quote_from_bytes
 
 from tldw_chatbook.Notes.note_import_plan_models import (
@@ -212,11 +213,11 @@ def _absolute_path(path: Path) -> Path:
 
 def _inspect_selected_path(path: Path, bounds: ImportBounds) -> _SelectedPath:
     """Inspect every absolute path component from a pinned root descriptor."""
-    absolute_path = _absolute_path(path)
     descriptors: list[int] = []
     result: _SelectedPath | None = None
     primary_error: ImportSelectionError | None = None
     try:
+        absolute_path = _absolute_path(path)
         flags = _directory_open_flags()
         anchor = absolute_path.anchor
         if not anchor:
@@ -266,6 +267,8 @@ def _inspect_selected_path(path: Path, bounds: ImportBounds) -> _SelectedPath:
         primary_error = error
     except FileNotFoundError:
         primary_error = _selection_error(bounds, "selection_missing")
+    except ValueError:
+        primary_error = _selection_error(bounds, "invalid_selection")
     except (OSError, NotImplementedError, TypeError):
         primary_error = _selection_error(bounds, "selection_unreadable")
 
@@ -300,7 +303,7 @@ def _admit_selected_files(
     )
     for item in ordered:
         display_path = item.path.name
-        normalized_name = display_path.casefold()
+        normalized_name = _display_collision_key(display_path)
         if not _is_safe_display_segment(display_path):
             _reject(state.bounds, "unsafe_display_path")
         if normalized_name in names:
@@ -341,7 +344,7 @@ def _scan_selected_directory(
             primary_error = _selection_error(state.bounds, "selection_unreadable")
     except ImportSelectionError as error:
         primary_error = error
-    except (OSError, NotImplementedError, TypeError):
+    except (OSError, NotImplementedError, TypeError, ValueError):
         primary_error = _selection_error(state.bounds, "selection_unreadable")
 
     close_failed = _close_descriptors([root_fd])
@@ -383,7 +386,7 @@ def _scan_directory_fd(
                 )
     except ImportSelectionError:
         raise
-    except (OSError, NotImplementedError, TypeError):
+    except (OSError, NotImplementedError, TypeError, ValueError):
         return False
     return True
 
@@ -408,7 +411,7 @@ def _scan_entry(
         return
     try:
         metadata = entry.stat(follow_symlinks=False)
-    except (OSError, NotImplementedError, TypeError):
+    except (OSError, NotImplementedError, TypeError, ValueError):
         _add_failure(state, entry_path, display_path, "nested_unavailable")
         return
 
@@ -485,7 +488,7 @@ def _scan_child_directory(
             )
     except ImportSelectionError as error:
         primary_error = error
-    except (OSError, NotImplementedError, TypeError):
+    except (OSError, NotImplementedError, TypeError, ValueError):
         scan_succeeded = False
 
     close_failed = _close_descriptors([child_fd]) if child_fd is not None else False
@@ -592,7 +595,7 @@ def _open_verified_directory(
         primary_error = error
     except FileNotFoundError:
         primary_error = _selection_error(bounds, "selection_missing")
-    except (OSError, NotImplementedError, TypeError):
+    except (OSError, NotImplementedError, TypeError, ValueError):
         primary_error = _selection_error(bounds, "selection_unreadable")
 
     if primary_error is not None:
@@ -627,7 +630,7 @@ def _close_descriptors(descriptors: Iterable[int]) -> bool:
     for descriptor in reversed(tuple(descriptors)):
         try:
             os.close(descriptor)
-        except (OSError, NotImplementedError, TypeError):
+        except (OSError, NotImplementedError, TypeError, ValueError):
             failed = True
     return failed
 
@@ -686,15 +689,18 @@ def _disambiguate_failure_paths(
     candidates: tuple[DiscoveredImportSource, ...],
     failures: tuple[ImportDiscoveryFailure, ...],
 ) -> tuple[ImportDiscoveryFailure, ...]:
-    used = {candidate.source.display_path.casefold() for candidate in candidates}
+    used = {
+        _display_collision_key(candidate.source.display_path)
+        for candidate in candidates
+    }
     disambiguated: list[ImportDiscoveryFailure] = []
     for failure in failures:
         display_path = failure.display_path
         suffix = 1
-        while display_path.casefold() in used:
+        while _display_collision_key(display_path) in used:
             display_path = f"{failure.display_path}~failure-{suffix}"
             suffix += 1
-        used.add(display_path.casefold())
+        used.add(_display_collision_key(display_path))
         disambiguated.append(
             failure
             if display_path == failure.display_path
@@ -725,7 +731,11 @@ def _is_safe_display_path(display_path: str) -> bool:
 
 
 def _display_sort_key(display_path: str) -> tuple[str, str]:
-    return display_path.casefold(), display_path
+    return _display_collision_key(display_path), display_path
+
+
+def _display_collision_key(display_path: str) -> str:
+    return normalize("NFKC", display_path).casefold()
 
 
 def _bounded_message(bounds: ImportBounds, reason_code: str) -> str:

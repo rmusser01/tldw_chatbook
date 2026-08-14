@@ -1570,3 +1570,37 @@ def test_child_descriptor_errors_become_one_safe_nested_failure(
     assert failure.reason_code == "nested_unavailable"
     assert private_error not in failure.user_message
     assert private_error not in repr(discovery)
+
+
+@pytest.mark.parametrize("path_text", ["bad\x00name", "bad\ud800name"])
+def test_invalid_selected_path_text_is_normalized_without_leaking(
+    path_text: str,
+) -> None:
+    """Invalid lexical or filesystem text exposes only a stable generic error."""
+    bounds = _discovery_bounds(max_reason_length=32)
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([Path(path_text)], bounds)
+
+    assert raised.value.reason_code == "invalid_selection"
+    assert 0 < len(raised.value.user_message) <= 32
+    assert path_text not in str(raised.value)
+    assert path_text not in repr(raised.value)
+
+
+def test_selected_file_names_reject_canonical_unicode_ambiguity(
+    tmp_path: Path,
+) -> None:
+    """Canonically equivalent basenames cannot produce two manual display paths."""
+    composed = tmp_path / "composed" / "Caf\N{LATIN SMALL LETTER E WITH ACUTE}.md"
+    decomposed = tmp_path / "decomposed" / "Cafe\N{COMBINING ACUTE ACCENT}.md"
+    composed.parent.mkdir()
+    decomposed.parent.mkdir()
+    composed.write_text("one", encoding="utf-8")
+    decomposed.write_text("two", encoding="utf-8")
+
+    with pytest.raises(ImportSelectionError) as raised:
+        discover_import_sources([composed, decomposed], _discovery_bounds())
+
+    assert raised.value.reason_code == "ambiguous_display_path"
+    assert str(tmp_path) not in str(raised.value)
