@@ -1476,6 +1476,7 @@ class ConsoleComposerBar(Horizontal):
         setup_blocked_reason: str = "",
         ephemeral: bool = False,
         send_label: str = "Send",
+        wake_turn_active: bool = False,
     ) -> None:
         """Refresh composer action priority and disabled state.
 
@@ -1488,6 +1489,11 @@ class ConsoleComposerBar(Horizontal):
             ephemeral: Whether the active session is temporary, which blocks
                 Save Chatbook (a second door onto the same write the
                 workbench's Save Chatbook action already gates).
+            wake_turn_active: Whether the active session is busy with a
+                machine-injected auto-wake turn (task-15862 AC#3) -- the
+                blocked copy then names the wake, and whatever queue/setup
+                copy rode ``setup_blocked_reason`` never paints as a
+                provider-setup problem.
         """
         has_draft = bool(has_draft)
         run_active = bool(run_active)
@@ -1531,7 +1537,15 @@ class ConsoleComposerBar(Horizontal):
         # feedback (toast + transcript system row) survives the flag.
         send_button.disabled = not send_ready
         send_button.variant = "primary" if send_ready else "default"
-        if send_blocked and setup_blocked_reason:
+        if send_blocked and wake_turn_active:
+            # task-15862 AC#3: a wake turn's blocked state names itself --
+            # the queue tooltip riding `setup_blocked_reason` mid-wake read
+            # as a provider-setup problem.
+            send_button.tooltip = (
+                "A background sub-agent result is being delivered. "
+                "Wait for it to finish."
+            )
+        elif send_blocked and setup_blocked_reason:
             send_button.tooltip = setup_blocked_reason
         elif send_blocked:
             send_button.tooltip = (
@@ -1548,7 +1562,7 @@ class ConsoleComposerBar(Horizontal):
         send_button.set_class(not has_draft, "console-send-inactive")
         send_button.set_class(send_blocked, "console-send-blocked")
         self.set_class(
-            send_blocked and bool(setup_blocked_reason),
+            send_blocked and bool(setup_blocked_reason) and not wake_turn_active,
             "console-composer-setup-blocked",
         )
         reason = build_console_disabled_reason(
@@ -1556,6 +1570,7 @@ class ConsoleComposerBar(Horizontal):
             has_draft=has_draft,
             send_blocked=send_blocked,
             setup_blocked_reason=setup_blocked_reason,
+            wake_turn_active=wake_turn_active,
         )
         reason_changed = reason != self._send_disabled_reason
         self._send_disabled_reason = reason

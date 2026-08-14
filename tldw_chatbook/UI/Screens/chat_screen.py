@@ -5227,6 +5227,12 @@ class ChatScreen(BaseAppScreen):
         wake = getattr(self._console_chat_controller, "fleet_wake", None)
         if wake is not None:
             wake.wire(app=self.app_instance)
+            # task-15862: a wake turn enters through the coordinator, never
+            # the user-send worker that arms the 0.2s transcript poll --
+            # without this hook nothing repaints the wake turn's streamed
+            # reply, its terminal tab glyph, or the composer state (the
+            # live 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
+            wake.delivery_ui_hook = self._on_console_wake_delivery_started
         self._console_chat_controller.wake_user_priority_probe = (
             self._console_wake_user_priority
         )
@@ -14729,6 +14735,60 @@ class ChatScreen(BaseAppScreen):
             return False
         return bool(composer.draft_text().strip())
 
+    def _on_console_wake_delivery_started(self, session_id: str) -> None:
+        """Arm the transcript poll for a machine-injected wake turn.
+
+        task-15862: manual sends arm the 0.2s poll in
+        ``_submit_console_native_draft``; a wake turn bypasses that worker
+        entirely (``ConsoleFleetWakeCoordinator._deliver`` calls
+        ``controller.submit_draft`` directly), so before this hook nothing
+        repainted the wake turn's stream, its terminal tab glyph, or the
+        composer state until the user interacted. Runs on the app loop
+        (the coordinator's ``_attempt`` thread), with the coordinator's
+        ``_delivering`` already set -- so the poll's wake-delivery stop
+        guard holds it alive through the scheduling gap. The poll still
+        self-stops at the wake turn's terminal edge (15664 AC#2: no
+        recurring idle repaint).
+
+        Args:
+            session_id: The session the wake turn fires into (unused; the
+                poll repaints every session's surfaces).
+        """
+        if not self.is_mounted:
+            return
+        self._start_console_transcript_sync_timer()
+
+    def _console_wake_turn_active(self, session_id: str | None) -> bool:
+        """Whether the auto-wake coordinator is delivering into ``session_id``.
+
+        task-15862 AC#3: the composer's blocked-state copy must name the
+        actual blocker during a wake turn. getattr-guarded throughout --
+        several UI tests swap in hand-built controller doubles.
+
+        Args:
+            session_id: The session whose composer state is being synced.
+
+        Returns:
+            True while a wake delivery targets this session's conversation.
+        """
+        if not session_id:
+            return False
+        controller = getattr(self, "_console_chat_controller", None)
+        wake = getattr(controller, "fleet_wake", None)
+        delivering_read = getattr(wake, "delivering_conversation_id", None)
+        delivering = delivering_read() if callable(delivering_read) else None
+        if delivering is None:
+            return False
+        store = self._console_chat_store
+        if store is None:
+            return False
+        session = next(
+            (s for s in store.sessions() if s.id == session_id), None
+        )
+        if session is None:
+            return False
+        return delivering in (session.persisted_conversation_id, session.id)
+
     async def confirm_navigation(self) -> bool:
         """Delegate revision-pinned Console loss confirmation."""
 
@@ -16215,9 +16275,20 @@ class ChatScreen(BaseAppScreen):
             # TASK-251's TTL cache exists to prevent; the resulting bound
             # on staleness is `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`
             # (2s), the documented backstop for exactly this gap.
+            # task-15862: a wake delivery scheduled but not yet busy (the
+            # coordinator's `_delivering` is set synchronously BEFORE its
+            # asyncio task first runs) must not let a poll beat in that gap
+            # self-stop -- the wake turn would then stream with no poll and
+            # freeze exactly as before the delivery hook existed.
+            wake = getattr(controller, "fleet_wake", None)
+            delivering_read = getattr(wake, "delivering_conversation_id", None)
+            wake_delivering = (
+                callable(delivering_read) and delivering_read() is not None
+            )
             if (
                 controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES
                 and controller.in_flight_run_count() == 0
+                and not wake_delivering
             ):
                 # TASK-251: the run just left an active status -- invalidate
                 # so the finalized conversation's title/timestamps appear in
@@ -21065,6 +21136,10 @@ class ChatScreen(BaseAppScreen):
                 if queue_presentation is not None
                 else "Send"
             ),
+            # task-15862 AC#3: mid-wake, the queue tooltip above rode the
+            # setup slot and painted as "finish provider setup"; the flag
+            # makes the composer name the wake instead.
+            wake_turn_active=self._console_wake_turn_active(active_session_id),
         )
         composer.sync_dictation_state(self._console_dictation_state)
         # sync_action_state resets the attach button's tooltip to generic copy

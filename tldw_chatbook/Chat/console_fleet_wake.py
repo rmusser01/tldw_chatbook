@@ -93,7 +93,7 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from loguru import logger
 
@@ -300,6 +300,15 @@ class ConsoleFleetWakeCoordinator:
         #: ``authorizes``.
         self._delivering: str | None = None
         self._delivery_tasks: set[asyncio.Task] = set()
+        #: task-15862: screen-wired hook fired on the loop thread the
+        #: moment a delivery is scheduled (``_delivering`` already set).
+        #: The screen arms its 0.2s transcript poll here -- a wake turn
+        #: enters through this coordinator, never the user-send worker
+        #: that normally arms the poll, so without this hook NOTHING
+        #: repaints the wake turn's stream, terminal tab glyph, or
+        #: composer state (the live 4+ minute freeze in PR3a-2 Task 7's
+        #: findings). Best-effort: a raising hook never blocks delivery.
+        self.delivery_ui_hook: Callable[[str], None] | None = None
 
     # -- wiring ---------------------------------------------------------------
 
@@ -356,6 +365,20 @@ class ConsoleFleetWakeCoordinator:
         """Whether ``conversation_id`` still owes a wake."""
         with self._registry_lock:
             return bool(self._pending.get(conversation_id))
+
+    def delivering_conversation_id(self) -> str | None:
+        """The conversation a wake turn is delivering into right now.
+
+        task-15862: set synchronously in ``_attempt`` before the delivery
+        task is created and cleared in ``_deliver``'s ``finally``, so it
+        covers the whole wake turn. The screen reads it to keep the
+        transcript poll alive through the turn and to name the wake in the
+        composer's blocked-state copy.
+
+        Returns:
+            The conversation id being delivered, or ``None``.
+        """
+        return self._delivering
 
     # -- the drain half (child thread) ---------------------------------------
 
@@ -472,6 +495,18 @@ class ConsoleFleetWakeCoordinator:
         authorization = AgentWakeAuthorization(
             self, session_id, _key=_WAKE_AUTHORIZATION_KEY
         )
+        # task-15862: tell the screen a wake turn is starting so it can arm
+        # the transcript poll. ``_delivering`` is already set, so a poll
+        # beat racing the delivery task's first run cannot self-stop in the
+        # gap. Never let a UI hook block the delivery itself.
+        hook = self.delivery_ui_hook
+        if callable(hook):
+            try:
+                hook(session_id)
+            except Exception:  # noqa: BLE001 -- UI freshness is best-effort
+                logger.opt(exception=True).debug(
+                    "wake delivery UI hook raised"
+                )
         task = loop.create_task(
             self._deliver(
                 conversation_id,
