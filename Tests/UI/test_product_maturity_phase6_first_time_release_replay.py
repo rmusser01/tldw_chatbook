@@ -102,6 +102,26 @@ async def _wait_until(
     raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s")
 
 
+async def _press_nav_destination(pilot, app, button_id: str) -> None:
+    """Press a destination through the visible strip or overflow menu."""
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        button = app.screen.query_one(f"#{button_id}", Button)
+        if not button.disabled:
+            button.press()
+            return
+        overflow = app.query_one("#nav-overflow-hint", Button)
+        if overflow.display:
+            overflow.press()
+            await pilot.pause(0.05)
+            if app.screen.__class__.__name__ == "NavOverflowMenu":
+                destination_id = button_id.removeprefix("nav-")
+                app.screen.query_one(f"#nav-overflow-{destination_id}", Button).press()
+                return
+        await pilot.pause(0.05)
+    raise AssertionError(f"#{button_id} never became keyboard/mouse reachable")
+
+
 def _phase_overview_row(markdown: str, phase_title: str) -> list[str]:
     for line in markdown.splitlines():
         if not line.startswith("|"):
@@ -173,7 +193,7 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
                     "nav-console",
                     "chat",
                     "ChatScreen",
-                    ("Console", "Live work sources", "Model: not selected"),
+                    ("Console", "Live work sources", "Set up provider"),
                 ),
                 (
                     "nav-library",
@@ -191,7 +211,7 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
                     ("Settings", "Global preferences", "Appearance"),
                 ),
             ):
-                app.screen.query_one(f"#{button_id}", Button).press()
+                await _press_nav_destination(pilot, app, button_id)
                 await _wait_until(
                     pilot,
                     lambda current_tab=current_tab, screen_name=screen_name: (
