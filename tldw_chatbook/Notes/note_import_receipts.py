@@ -12,6 +12,7 @@ import sqlite3
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import islice
 from pathlib import Path
 from types import MappingProxyType
 from uuid import uuid4
@@ -28,11 +29,12 @@ from tldw_chatbook.Notes.note_import_execution_models import (
     _private_source_locator_digest,
     _validate_reason_code,
 )
-from tldw_chatbook.Notes.note_import_plan_models import ImportAction
+from tldw_chatbook.Notes.note_import_plan_models import MAX_IMPORT_ENTRIES, ImportAction
 
 _SCHEMA_VERSION = 1
 _MIN_BATCH_SIZE = 1
 _MAX_BATCH_SIZE = 100
+_MAX_TRANSITIONS = MAX_IMPORT_ENTRIES
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _SAFE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}\Z")
 
@@ -115,6 +117,7 @@ class ImportItemRecord:
     item_id: str
     source_locator_digest: str
     selected_action: ImportAction
+    outcome_count: int
     outcome: ImportItemOutcome
     target_note_id: str | None
     expected_version: int | None
@@ -161,6 +164,7 @@ class ImportSessionSnapshot:
     plan_digest: str
     state: ImportSessionState
     batch_size: int
+    total: int
     reason_code: str | None
     items: tuple[ImportItemRecord, ...] = ()
     payload_effects: tuple[ImportEffectRecord, ...] = ()
@@ -240,6 +244,7 @@ _SCHEMA_STATEMENTS = (
         source_locator_digest TEXT NOT NULL,
         selected_action TEXT NOT NULL
             CHECK (selected_action IN ('skip', 'create_new', 'update_existing')),
+        outcome_count INTEGER NOT NULL CHECK (outcome_count > 0),
         outcome TEXT NOT NULL DEFAULT 'pending'
             CHECK (outcome IN ('pending', 'imported', 'updated', 'skipped', 'failed')),
         target_note_id TEXT,
@@ -426,6 +431,62 @@ def _folder_path_digest(segments: tuple[str, ...]) -> str:
     )
 
 
+def _outcome_count(action: ImportAction, payload_count: int) -> int:
+    if action is ImportAction.CREATE_NEW:
+        return payload_count
+    return 1
+
+
+def _copy_bounded_transitions(
+    values: object,
+    *,
+    field_name: str,
+) -> tuple[object, ...]:
+    if isinstance(values, (str, bytes)):
+        raise TypeError(f"{field_name} must be a collection.")
+    failure: ValueError | None = None
+    try:
+        copied = tuple(islice(values, _MAX_TRANSITIONS + 1))  # type: ignore[arg-type]
+    except Exception:  # noqa: BLE001 - hostile iterators must fail before DB access
+        copied = ()
+        failure = ValueError(
+            f"{field_name} could not be read within the transition ceiling."
+        )
+    if failure is not None:
+        raise failure from None
+    if len(copied) > _MAX_TRANSITIONS:
+        raise ValueError(f"{field_name} exceeds the transition ceiling.")
+    return copied
+
+
+def _safe_private_digest(factory) -> str:
+    failure: ImportReceiptError | None = None
+    try:
+        digest = factory()
+    except Exception:  # noqa: BLE001 - private canonicalizers are untrusted here
+        digest = None
+        failure = ImportReceiptError(
+            "Private import receipt material could not be derived safely."
+        )
+    if failure is not None:
+        raise failure from None
+    if type(digest) is not str or _DIGEST_PATTERN.fullmatch(digest) is None:
+        raise ImportReceiptError(
+            "Private import receipt material could not be derived safely."
+        )
+    return digest
+
+
+def _assert_compatible_authority(
+    stored: object,
+    proposed: object,
+) -> None:
+    if proposed is not None and stored is not None and proposed != stored:
+        raise ImportReceiptConflictError(
+            "Receipt reconciliation authority cannot be replaced."
+        )
+
+
 class NoteImportReceiptRepository:
     """Own the profile-local schema-v1 import receipt ledger."""
 
@@ -481,11 +542,21 @@ class NoteImportReceiptRepository:
                         "The approval is already bound to different receipt authority."
                     )
             else:
-                self._seed_approved_plan(
-                    connection,
-                    approved,
-                    batch_size=validated_batch_size,
-                )
+                seed_failure: ImportReceiptError | None = None
+                try:
+                    self._seed_approved_plan(
+                        connection,
+                        approved,
+                        batch_size=validated_batch_size,
+                    )
+                except (ImportReceiptError, TypeError, ValueError, sqlite3.Error):
+                    raise
+                except Exception:  # noqa: BLE001 - sanitize unexpected private failures
+                    seed_failure = ImportReceiptError(
+                        "The approved import receipt could not be seeded safely."
+                    )
+                if seed_failure is not None:
+                    raise seed_failure from None
             connection.commit()
         except Exception:
             connection.rollback()
@@ -504,6 +575,10 @@ class NoteImportReceiptRepository:
         session_id = str(uuid4())
         timestamp = _now()
         plan = approved.plan
+        total_count = sum(
+            _outcome_count(item.selected_action, len(item.payloads))
+            for item in plan.items
+        )
         connection.execute(
             """
             INSERT INTO import_sessions (
@@ -517,13 +592,17 @@ class NoteImportReceiptRepository:
                 approved._private_plan_digest(),
                 ImportSessionState.PENDING.value,
                 batch_size,
-                len(plan.items),
+                total_count,
                 None,
                 timestamp,
                 timestamp,
             ),
         )
         for item in plan.items:
+            outcome_count = _outcome_count(
+                item.selected_action,
+                len(item.payloads),
+            )
             expected_version = (
                 item.match.note_version if item.match is not None else None
             )
@@ -535,15 +614,18 @@ class NoteImportReceiptRepository:
                 """
                 INSERT INTO import_items (
                     session_id, item_id, source_locator_digest, selected_action,
-                    outcome, target_note_id, expected_version, observed_version,
-                    reason_code, retryable, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    outcome_count, outcome, target_note_id, expected_version,
+                    observed_version, reason_code, retryable, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
                     item.item_id,
-                    _private_source_locator_digest(item),
+                    _safe_private_digest(
+                        lambda item=item: _private_source_locator_digest(item)
+                    ),
                     item.selected_action.value,
+                    outcome_count,
                     ImportItemOutcome.PENDING.value,
                     target_note_id,
                     expected_version,
@@ -578,7 +660,11 @@ class NoteImportReceiptRepository:
                             session_id,
                             item.item_id,
                             payload_index,
-                            _private_payload_fingerprint((payload,)),
+                            _safe_private_digest(
+                                lambda payload=payload: _private_payload_fingerprint(
+                                    (payload,)
+                                )
+                            ),
                             effect_kind,
                             ImportEffectState.PENDING.value,
                             target_note_id,
@@ -607,7 +693,11 @@ class NoteImportReceiptRepository:
                             item.item_id,
                             membership.payload_index,
                             membership_ordinal,
-                            _folder_path_digest(membership.folder_segments),
+                            _safe_private_digest(
+                                lambda membership=membership: _folder_path_digest(
+                                    membership.folder_segments
+                                )
+                            ),
                             "attach_membership",
                             ImportEffectState.PENDING.value,
                             target_note_id,
@@ -618,7 +708,18 @@ class NoteImportReceiptRepository:
                             timestamp,
                         ),
                     )
+        required_folder_paths: set[tuple[str, ...]] = set()
+        for item in plan.items:
+            if item.selected_action is ImportAction.SKIP or not item.add_membership:
+                continue
+            for membership in item.memberships:
+                required_folder_paths.update(
+                    tuple(membership.folder_segments[:depth])
+                    for depth in range(1, len(membership.folder_segments) + 1)
+                )
         for folder_ordinal, folder_path in enumerate(plan.proposed_folder_paths):
+            if folder_path not in required_folder_paths:
+                continue
             connection.execute(
                 """
                 INSERT INTO import_folder_effects (
@@ -631,7 +732,9 @@ class NoteImportReceiptRepository:
                     str(uuid4()),
                     session_id,
                     folder_ordinal,
-                    _folder_path_digest(folder_path),
+                    _safe_private_digest(
+                        lambda folder_path=folder_path: _folder_path_digest(folder_path)
+                    ),
                     "ensure_folder",
                     ImportEffectState.PENDING.value,
                     None,
@@ -671,7 +774,8 @@ class NoteImportReceiptRepository:
     ) -> ImportSessionSnapshot:
         session_row = connection.execute(
             """
-            SELECT session_id, approval_id, plan_digest, state, batch_size, reason_code
+            SELECT session_id, approval_id, plan_digest, state, batch_size,
+                   total_count, reason_code
             FROM import_sessions WHERE approval_id = ?
             """,
             (approval_id,),
@@ -681,8 +785,8 @@ class NoteImportReceiptRepository:
         session_id = session_row[0]
         item_rows = connection.execute(
             """
-            SELECT item_id, source_locator_digest, selected_action, outcome,
-                   target_note_id, expected_version, observed_version,
+            SELECT item_id, source_locator_digest, selected_action, outcome_count,
+                   outcome, target_note_id, expected_version, observed_version,
                    reason_code, retryable
             FROM import_items WHERE session_id = ? ORDER BY rowid
             """,
@@ -693,12 +797,13 @@ class NoteImportReceiptRepository:
                 item_id=row[0],
                 source_locator_digest=row[1],
                 selected_action=ImportAction(row[2]),
-                outcome=ImportItemOutcome(row[3]),
-                target_note_id=row[4],
-                expected_version=row[5],
-                observed_version=row[6],
-                reason_code=row[7],
-                retryable=bool(row[8]),
+                outcome_count=row[3],
+                outcome=ImportItemOutcome(row[4]),
+                target_note_id=row[5],
+                expected_version=row[6],
+                observed_version=row[7],
+                reason_code=row[8],
+                retryable=bool(row[9]),
             )
             for row in item_rows
         )
@@ -708,7 +813,8 @@ class NoteImportReceiptRepository:
             plan_digest=session_row[2],
             state=ImportSessionState(session_row[3]),
             batch_size=session_row[4],
-            reason_code=session_row[5],
+            total=session_row[5],
+            reason_code=session_row[6],
             items=items,
             payload_effects=NoteImportReceiptRepository._load_effects(
                 connection, _PAYLOAD_TABLE, session_id
@@ -794,16 +900,19 @@ class NoteImportReceiptRepository:
             connection.execute("BEGIN IMMEDIATE")
             self._initialize_schema(connection)
             row = connection.execute(
-                "SELECT state FROM import_sessions WHERE approval_id = ?",
+                "SELECT session_id, state FROM import_sessions WHERE approval_id = ?",
                 (approval_id,),
             ).fetchone()
             if row is None:
                 raise KeyError("Import receipt session was not found.")
-            current = ImportSessionState(row[0])
+            session_id = row[0]
+            current = ImportSessionState(row[1])
             if state not in SESSION_STATE_TRANSITIONS[current]:
                 raise ImportReceiptTransitionError(
                     "The requested session transition is not allowed."
                 )
+            if state is ImportSessionState.COMPLETED:
+                self._validate_completion(connection, session_id)
             connection.execute(
                 """
                 UPDATE import_sessions SET state = ?, reason_code = ?, updated_at = ?
@@ -819,6 +928,38 @@ class NoteImportReceiptRepository:
             raise
         finally:
             connection.close()
+
+    @staticmethod
+    def _validate_completion(
+        connection: sqlite3.Connection,
+        session_id: str,
+    ) -> None:
+        invalid_items = connection.execute(
+            """
+            SELECT COUNT(*) FROM import_items
+            WHERE session_id = ? AND (
+                outcome IN ('pending', 'failed')
+                OR (selected_action = 'skip' AND outcome != 'skipped')
+                OR (selected_action = 'create_new' AND outcome != 'imported')
+                OR (selected_action = 'update_existing' AND outcome != 'updated')
+            )
+            """,
+            (session_id,),
+        ).fetchone()[0]
+        unapplied_effects = 0
+        for statement in (
+            "SELECT COUNT(*) FROM import_payload_effects WHERE session_id = ? AND state != 'applied'",
+            "SELECT COUNT(*) FROM import_folder_effects WHERE session_id = ? AND state != 'applied'",
+            "SELECT COUNT(*) FROM import_membership_effects WHERE session_id = ? AND state != 'applied'",
+        ):
+            unapplied_effects += connection.execute(
+                statement,
+                (session_id,),
+            ).fetchone()[0]
+        if invalid_items or unapplied_effects:
+            raise ImportReceiptTransitionError(
+                "A session can complete only after every approved outcome and effect."
+            )
 
     def transition_item(
         self,
@@ -855,7 +996,10 @@ class NoteImportReceiptRepository:
     ) -> tuple[ImportEffectRecord, ...]:
         """Atomically transition selected independently replayable effects."""
 
-        copied = tuple(transitions)
+        copied = _copy_bounded_transitions(
+            transitions,
+            field_name="effect_transitions",
+        )
         snapshot = self.transition_batch(
             approval_id,
             effect_transitions=copied,
@@ -882,21 +1026,33 @@ class NoteImportReceiptRepository:
         """Apply selected item and effect transitions in one transaction."""
 
         _validate_id(approval_id, field_name="approval_id")
-        items = tuple(item_transitions)
-        effects = tuple(effect_transitions)
+        items = _copy_bounded_transitions(
+            item_transitions,
+            field_name="item_transitions",
+        )
+        effects = _copy_bounded_transitions(
+            effect_transitions,
+            field_name="effect_transitions",
+        )
         if not items and not effects:
             raise ValueError("At least one transition is required.")
+        if len(items) + len(effects) > _MAX_TRANSITIONS:
+            raise ValueError("The combined transition collection exceeds the ceiling.")
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
             self._initialize_schema(connection)
             session_row = connection.execute(
-                "SELECT session_id FROM import_sessions WHERE approval_id = ?",
+                "SELECT session_id, state FROM import_sessions WHERE approval_id = ?",
                 (approval_id,),
             ).fetchone()
             if session_row is None:
                 raise KeyError("Import receipt session was not found.")
             session_id = session_row[0]
+            if ImportSessionState(session_row[1]) is not ImportSessionState.RUNNING:
+                raise ImportReceiptTransitionError(
+                    "Item and effect transitions require a running session."
+                )
             self._validate_item_transitions(connection, session_id, items)
             self._validate_effect_transitions(connection, session_id, effects)
             timestamp = _now()
@@ -966,7 +1122,10 @@ class NoteImportReceiptRepository:
             )
             _validate_optional_version(transition.observed_version)
             row = connection.execute(
-                "SELECT outcome FROM import_items WHERE session_id = ? AND item_id = ?",
+                """
+                SELECT outcome, selected_action, target_note_id, observed_version
+                FROM import_items WHERE session_id = ? AND item_id = ?
+                """,
                 (session_id, item_id),
             ).fetchone()
             if row is None:
@@ -976,6 +1135,27 @@ class NoteImportReceiptRepository:
                 raise ImportReceiptTransitionError(
                     "The requested item transition is not allowed."
                 )
+            action = ImportAction(row[1])
+            allowed_outcomes = {
+                ImportAction.SKIP: {
+                    ImportItemOutcome.SKIPPED,
+                    ImportItemOutcome.FAILED,
+                },
+                ImportAction.CREATE_NEW: {
+                    ImportItemOutcome.IMPORTED,
+                    ImportItemOutcome.FAILED,
+                },
+                ImportAction.UPDATE_EXISTING: {
+                    ImportItemOutcome.UPDATED,
+                    ImportItemOutcome.FAILED,
+                },
+            }
+            if transition.outcome not in allowed_outcomes[action]:
+                raise ImportReceiptTransitionError(
+                    "The requested item outcome does not match its approved action."
+                )
+            _assert_compatible_authority(row[2], transition.target_note_id)
+            _assert_compatible_authority(row[3], transition.observed_version)
 
     @staticmethod
     def _validate_effect_transitions(
@@ -1012,7 +1192,7 @@ class NoteImportReceiptRepository:
                 transition.target_folder_id, field_name="target_folder_id"
             )
             _validate_optional_version(transition.observed_version)
-            row = NoteImportReceiptRepository._select_effect_state(
+            row = NoteImportReceiptRepository._select_effect_authority(
                 connection,
                 table=transition.table,
                 session_id=session_id,
@@ -1025,19 +1205,58 @@ class NoteImportReceiptRepository:
                 raise ImportReceiptTransitionError(
                     "The requested effect transition is not allowed."
                 )
+            stored_note_id, stored_folder_id, stored_version = row[1:]
+            _assert_compatible_authority(stored_note_id, transition.target_note_id)
+            _assert_compatible_authority(
+                stored_folder_id,
+                transition.target_folder_id,
+            )
+            _assert_compatible_authority(stored_version, transition.observed_version)
+            if transition.table == _PAYLOAD_TABLE:
+                if transition.target_folder_id is not None:
+                    raise ValueError("Payload effects cannot bind a folder identifier.")
+            elif transition.table == _FOLDER_TABLE:
+                if (
+                    transition.target_note_id is not None
+                    or transition.observed_version is not None
+                ):
+                    raise ValueError("Folder effects accept only a folder identifier.")
+            elif transition.observed_version is not None:
+                raise ValueError("Membership effects do not accept a note version.")
+            if transition.state is ImportEffectState.APPLIED:
+                final_note_id = transition.target_note_id or stored_note_id
+                final_folder_id = transition.target_folder_id or stored_folder_id
+                final_version = (
+                    transition.observed_version
+                    if transition.observed_version is not None
+                    else stored_version
+                )
+                missing_identity = (
+                    transition.table == _PAYLOAD_TABLE
+                    and (final_note_id is None or final_version is None)
+                ) or (transition.table == _FOLDER_TABLE and final_folder_id is None)
+                missing_identity = missing_identity or (
+                    transition.table == _MEMBERSHIP_TABLE
+                    and (final_note_id is None or final_folder_id is None)
+                )
+                if missing_identity:
+                    raise ImportReceiptTransitionError(
+                        "Applied effects require their reconciliation identities."
+                    )
 
     @staticmethod
-    def _select_effect_state(
+    def _select_effect_authority(
         connection: sqlite3.Connection,
         *,
         table: str,
         session_id: str,
         effect_id: str,
-    ) -> tuple[str] | None:
+    ) -> tuple[str, str | None, str | None, int | None] | None:
         if table == _PAYLOAD_TABLE:
             return connection.execute(
                 """
-                SELECT state FROM import_payload_effects
+                SELECT state, target_note_id, NULL, observed_version
+                FROM import_payload_effects
                 WHERE session_id = ? AND effect_id = ?
                 """,
                 (session_id, effect_id),
@@ -1045,14 +1264,16 @@ class NoteImportReceiptRepository:
         if table == _FOLDER_TABLE:
             return connection.execute(
                 """
-                SELECT state FROM import_folder_effects
+                SELECT state, NULL, target_folder_id, NULL
+                FROM import_folder_effects
                 WHERE session_id = ? AND effect_id = ?
                 """,
                 (session_id, effect_id),
             ).fetchone()
         return connection.execute(
             """
-            SELECT state FROM import_membership_effects
+            SELECT state, target_note_id, target_folder_id, NULL
+            FROM import_membership_effects
             WHERE session_id = ? AND effect_id = ?
             """,
             (session_id, effect_id),
@@ -1186,12 +1407,19 @@ class NoteImportReceiptRepository:
             connection.execute("BEGIN IMMEDIATE")
             self._initialize_schema(connection)
             session_row = connection.execute(
-                "SELECT session_id FROM import_sessions WHERE approval_id = ?",
+                "SELECT session_id, state FROM import_sessions WHERE approval_id = ?",
                 (approval_id,),
             ).fetchone()
             if session_row is None:
                 raise KeyError("Import receipt session was not found.")
             session_id = session_row[0]
+            if (
+                ImportSessionState(session_row[1])
+                is not ImportSessionState.NEEDS_ATTENTION
+            ):
+                raise ImportReceiptTransitionError(
+                    "Retry resets require a session that needs attention."
+                )
             row = self._select_retryable_row(
                 connection,
                 table=table,
@@ -1340,8 +1568,12 @@ class NoteImportReceiptRepository:
     ) -> ImportExecutionReceipt:
         counts = {outcome: 0 for outcome in ImportItemOutcome}
         for item in snapshot.items:
-            counts[item.outcome] += 1
-        completed = len(snapshot.items) - counts[ImportItemOutcome.PENDING]
+            counts[item.outcome] += item.outcome_count
+        completed = sum(
+            item.outcome_count
+            for item in snapshot.items
+            if item.outcome is not ImportItemOutcome.PENDING
+        )
         failed_items = [
             item for item in snapshot.items if item.outcome is ImportItemOutcome.FAILED
         ]
@@ -1363,19 +1595,30 @@ class NoteImportReceiptRepository:
         return ImportExecutionReceipt(
             approval_id=snapshot.approval_id,
             state=snapshot.state,
-            total=len(snapshot.items),
+            total=snapshot.total,
             completed=completed,
             imported=counts[ImportItemOutcome.IMPORTED],
             updated=counts[ImportItemOutcome.UPDATED],
             skipped=counts[ImportItemOutcome.SKIPPED],
             failed=counts[ImportItemOutcome.FAILED],
-            retryable=sum(item.retryable for item in failed_items),
+            retryable=sum(
+                item.outcome_count for item in failed_items if item.retryable
+            ),
             reason_code=reason_code,
             _note_ids=tuple(
                 dict.fromkeys(
-                    item.target_note_id
-                    for item in snapshot.items
-                    if item.target_note_id is not None
+                    (
+                        *(
+                            effect.target_note_id
+                            for effect in snapshot.payload_effects
+                            if effect.target_note_id is not None
+                        ),
+                        *(
+                            item.target_note_id
+                            for item in snapshot.items
+                            if item.target_note_id is not None
+                        ),
+                    )
                 )
             ),
             _folder_ids=tuple(
