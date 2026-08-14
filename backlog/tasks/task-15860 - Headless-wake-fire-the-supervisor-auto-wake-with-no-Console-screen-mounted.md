@@ -38,6 +38,28 @@ the hardened terminal signal + fan-out seam, the durable unseen-completion
 mark, the wake-delivery ledger, and the full wake machinery (kill switch,
 app-wide serialization, user-wins-ties, approval floor, AGENT_WAKE
 authorization). The only delta is WHERE the wake runs.
+
+**State update 2026-08-14 (wake-integrity arc, tasks 15970/15971):** the
+"no Console at all" case has NARROWED. On current dev a Chat screen can
+stay resident (mounted, controller live) after nav-away — observed live
+and harness-reproduced: a navigation issued while a pushed screen sits
+above Chat pops the modal off the stack, not Chat — and the coordinator's
+design ruling made off-screen delivery from such a resident screen the
+INTENDED behavior (the user learns of it via the settle toast + the
+FLEET_UNSEEN ◈ mark, which an off-view delivery now leaves SET until
+viewed; `ConsoleFleetWakeCoordinator._conversation_in_view` /
+`ChatScreen._console_wake_conversation_in_view`). The genuinely-headless
+gap this task owns is therefore restart / first boot — the window before
+the first Console open, where no controller has ever existed — plus any
+nav path that truly unmounts the Chat screen (the plain nav path still
+does: `on_unmount` → `controller.shutdown()`). The description above
+predates that ruling; scope accordingly. Also note: whether the
+resident-screen state itself (the modal-atop-Chat stack leak) is a nav
+bug to fix or the intended residency model is the coordinator's open
+call — see task-16210 (filed by the wake-integrity arc with the harness
+repro); if it is fixed toward always-unmount, the staged-wake path grows
+back to covering every nav-away and this task's ACs cover more ground
+again.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

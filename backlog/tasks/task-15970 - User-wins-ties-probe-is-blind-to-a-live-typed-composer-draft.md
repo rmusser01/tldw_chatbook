@@ -1,9 +1,11 @@
 ---
 id: TASK-15970
 title: User-wins-ties probe is blind to a live-typed composer draft
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-14 01:17'
+updated_date: '2026-08-14 02:53'
 labels:
   - fleet
   - console
@@ -22,3 +24,9 @@ PR3a-2 residue-arc live verification (2026-08-13, scratch profile, real Anthropi
 - [ ] #1 The user-wins-ties probe defers a due wake while a draft typed with real keys (not load_draft) is present
 - [ ] #2 A test drives the probe through real typed input and fails on the blindness before the fix
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce RED with real key input through the production on_key path (not load_draft)\n2. Diagnose where typed state lives vs where the probe reads\n3. Fix the probe to read the composer the user actually types into\n4. Mutation-test the fix\n5. Live re-verify the deferral with typed text
+<!-- SECTION:PLAN:END -->

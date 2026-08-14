@@ -434,6 +434,28 @@ now fights the target, and nothing long-term sneaks into this program's ACs.
   ownership above the screen and is a filed follow-up (task-15860).
   Everything PR 3a-2 built is substrate that version needs; the only delta
   is where the wake runs.
+
+  *(Corrected 2026-08-14, wake-integrity arc — tasks 15970/15971, per the
+  coordinator's design ruling.)* "Whenever a Console screen is mounted"
+  includes a Console screen the user has NAVIGATED AWAY FROM: a Chat
+  screen can stay resident in the screen stack — mounted, pump running,
+  controller live — while another screen displays (observed live and
+  harness-reproduced: a navigation issued while a pushed screen sits
+  above Chat pops the modal off the stack, not Chat). **Off-screen
+  delivery from that resident screen is the intended behavior** — the
+  supervisor acts immediately; that IS the auto-wake invariant, and
+  staging ever existed only because the screen used to die on nav-away.
+  What the user is owed instead of staging is *knowledge*: the settle
+  toast fires at settle from any screen, and a wake turn that completes
+  while its conversation is not the displayed-and-active one **leaves the
+  `FLEET_UNSEEN` mark set** (delivery-commit visibility probe,
+  `wake_conversation_in_view`), so the `◈` badge points at the delivered
+  result until the user views it — view-clear applies normally then,
+  since a delivered wake has nothing pending. "Viewing" means DISPLAYED:
+  a mounted-but-hidden Console's sync tick never view-clears the mark.
+  Durable staging (mark + `wake_delivered_at` ledger + mount-claim +
+  session-open trigger) remains exactly for the genuinely-unmounted
+  case: restart / first boot, where no controller exists at all.
 - **Cost:** per-child token spend rolls into the existing Console cost
   ticker, attributed per agent in expanded rows; fleet aggregate visible on
   the summary line's expansion.
