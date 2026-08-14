@@ -197,7 +197,9 @@ class ConsoleModelPopover(
                 model_select = Select(
                     model_options,
                     value=(
-                        self._settings.model if self._settings.model else Select.BLANK
+                        self._settings.model
+                        if self._settings.model
+                        else Select.BLANK
                     ),
                     id="console-popover-model",
                     allow_blank=True,
@@ -299,7 +301,6 @@ class ConsoleModelPopover(
 
     def on_mount(self) -> None:
         """Settle the narrow-height fold affordance after first layout."""
-        super().on_mount()
         self.call_after_refresh(self._sync_fold_hint)
 
     def on_resize(self, _event: events.Resize) -> None:

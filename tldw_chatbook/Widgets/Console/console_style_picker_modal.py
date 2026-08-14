@@ -206,7 +206,6 @@ class ConsoleStylePickerModal(
             yield Static(DETAIL_EMPTY_COPY, id=DETAIL_STATIC_ID, markup=False)
 
     async def on_mount(self) -> None:
-        super().on_mount()
         self._focus_filter_input()
         await self._apply_filter(self._initial_query)
 
@@ -301,9 +300,7 @@ class ConsoleStylePickerModal(
         await container.remove_children()
         self._row_ids = []
         if not self._results:
-            await container.mount(
-                Static(EMPTY_STORE_COPY, id=EMPTY_STATIC_ID, markup=False)
-            )
+            await container.mount(Static(EMPTY_STORE_COPY, id=EMPTY_STATIC_ID, markup=False))
             self._sync_detail()  # clears a stale preview from before the filter narrowed to zero
             return
         buttons = []

@@ -68,10 +68,14 @@ class ConsoleCostModal(SafeModalDismissMixin, ModalScreen[None]):
     def compose(self) -> ComposeResult:
         """Build the header, scrollable row list, totals line, and Close action."""
         with Vertical(id=MODAL_ID):
-            yield Static("Cost breakdown", id="console-cost-modal-header", markup=False)
+            yield Static(
+                "Cost breakdown", id="console-cost-modal-header", markup=False
+            )
             with VerticalScroll(id="console-cost-modal-rows"):
                 if not self._rows:
-                    yield Static("No priced or estimated messages yet.", markup=False)
+                    yield Static(
+                        "No priced or estimated messages yet.", markup=False
+                    )
                 for row in self._rows:
                     yield Static(
                         self._format_row(row),

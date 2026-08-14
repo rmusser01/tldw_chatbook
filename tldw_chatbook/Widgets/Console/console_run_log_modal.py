@@ -71,7 +71,6 @@ class ConsoleRunLogModal(SafeModalDismissMixin, ModalScreen[None]):
 
     def on_mount(self) -> None:
         """Focus the text area so the log is immediately scrollable."""
-        super().on_mount()
         try:
             self.query_one(f"#{TEXT_AREA_ID}", TextArea).focus()
         except (NoMatches, QueryError):

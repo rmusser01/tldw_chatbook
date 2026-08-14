@@ -95,7 +95,6 @@ class ConsoleImageViewerModal(SafeModalDismissMixin, ModalScreen[None]):
             )
 
     async def on_mount(self) -> None:
-        super().on_mount()
         body = self.query_one("#console-image-viewer-body", Container)
         widget = self._build_full_size_widget()
         # Inline styles, not CSS: the app-tier stylesheet bundle outranks a

@@ -114,7 +114,6 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
                 yield Button("Close", id="console-context-close")
 
     def on_mount(self) -> None:
-        super().on_mount()
         self.run_worker(self._load_snapshot, exclusive=True)
 
     def watch_snapshot(self) -> None:

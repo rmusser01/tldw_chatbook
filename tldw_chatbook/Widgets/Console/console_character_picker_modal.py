@@ -85,7 +85,8 @@ def filter_character_options(
     secondary = [
         o
         for o in options
-        if text not in o.name.casefold() and text in (o.description or "").casefold()
+        if text not in o.name.casefold()
+        and text in (o.description or "").casefold()
     ]
     return tuple((primary + secondary)[:limit])
 
@@ -187,7 +188,6 @@ class ConsoleCharacterPickerModal(
             )
 
     async def on_mount(self) -> None:
-        super().on_mount()
         self.query_one("#console-character-picker-query", Input).focus()
         await self._refresh_results("")
 

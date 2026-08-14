@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import inspect
+from types import MethodType
 from typing import Any
 
 import pytest
@@ -16,6 +17,10 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
+from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
+from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterOption,
     ConsoleCharacterPickerModal,
@@ -30,6 +35,7 @@ from tldw_chatbook.Widgets.Console.console_image_viewer_modal import (
 )
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
+    MODE_INSERT,
     ConsolePromptPickerModal,
 )
 from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
@@ -37,6 +43,8 @@ from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
 )
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
+    ScopeListPage,
+    TagCount,
     ConsoleScopePickerModal,
 )
 from tldw_chatbook.Widgets.Console.console_skill_picker_modal import (
@@ -54,6 +62,7 @@ from tldw_chatbook.Widgets.modal_dismissal import (
 @dataclass(frozen=True)
 class _Task2ModalContract:
     modal_type: type[ModalScreen[Any]]
+    factory: Callable[[], ModalScreen[Any]]
     content_selector: str
     cancel_result: object
     opener: str
@@ -63,9 +72,75 @@ class _Task2ModalContract:
 
 
 _RESTORE_OPENER = "restore opener or Console composer fallback"
+
+
+async def _empty_context_snapshot() -> ConsoleContextSnapshot:
+    return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+
+
+async def _empty_records(_query: str) -> list[dict[str, object]]:
+    return []
+
+
+class _EmptySourceLister:
+    async def list_page(self, **_kwargs: object) -> ScopeListPage:
+        return ScopeListPage(items=(), total_matching=0)
+
+    async def list_ids(self, **_kwargs: object) -> tuple[str, ...]:
+        return ()
+
+
+async def _empty_tags(_query: str) -> tuple[TagCount, ...]:
+    return ()
+
+
+def _citation_factory() -> ConsoleCitationSourcesModal:
+    modal = ConsoleCitationSourcesModal(
+        native_message_id="native-1",
+        persisted_message_id="persisted-1",
+        current_body="body",
+        repository=object(),
+        request_is_current=lambda: True,
+    )
+    modal._worker_started = True
+    return modal
+
+
+def _image_factory() -> ConsoleImageViewerModal:
+    modal = ConsoleImageViewerModal(object())  # type: ignore[arg-type]
+    modal._build_full_size_widget = MethodType(  # type: ignore[method-assign]
+        lambda _self: Static("image", id="console-image-viewer-image"), modal
+    )
+    return modal
+
+
+def _queue_factory() -> ConsolePromptQueueModal:
+    registry = ConsolePromptQueueRegistry()
+    snapshot = registry.snapshot("contract-session")
+    return ConsolePromptQueueModal(
+        session_id="contract-session",
+        revision=snapshot.revision,
+        queue_controller=registry,
+    )
+
+
+def _scope_factory() -> ConsoleScopePickerModal:
+    source_lister = _EmptySourceLister()
+    return ConsoleScopePickerModal(
+        "contract target",
+        None,
+        None,
+        lambda _scope: None,
+        media_lister=source_lister,
+        notes_lister=source_lister,
+        tag_lister=_empty_tags,
+    )
+
+
 TASK2_MODAL_CONTRACTS = (
     _Task2ModalContract(
         ConsoleCharacterPickerModal,
+        lambda: ConsoleCharacterPickerModal(options=[]),
         "#console-character-picker",
         None,
         "Console character chip",
@@ -75,6 +150,7 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleCitationSourcesModal,
+        _citation_factory,
         "#console-citation-sources-modal",
         None,
         "Console citation marker",
@@ -84,6 +160,7 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleContextModal,
+        lambda: ConsoleContextModal(_empty_context_snapshot),
         "#console-context-modal",
         None,
         "Console context action",
@@ -93,6 +170,9 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleCostModal,
+        lambda: ConsoleCostModal(
+            [], ConsoleCostRowTotals(0, 0.0, False, 0)
+        ),
         "#console-cost-modal",
         None,
         "Console cost action",
@@ -102,6 +182,7 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleImageViewerModal,
+        _image_factory,
         "#console-image-viewer",
         None,
         "Console avatar",
@@ -111,6 +192,10 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleModelPopover,
+        lambda: ConsoleModelPopover(
+            settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
+            providers_models={"openai": ["gpt-test"]},
+        ),
         "#console-model-popover",
         None,
         "Console model chip",
@@ -120,6 +205,9 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsolePromptPickerModal,
+        lambda: ConsolePromptPickerModal(
+            mode=MODE_INSERT, prompt_search=_empty_records
+        ),
         "#console-prompt-picker-modal",
         None,
         "Console composer prompt command",
@@ -129,6 +217,7 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsolePromptQueueModal,
+        _queue_factory,
         "#console-prompt-queue-dialog",
         None,
         "Console prompt queue",
@@ -138,6 +227,7 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleRunLogModal,
+        lambda: ConsoleRunLogModal(run_id="run-1", log_text="log"),
         "#console-run-log-modal",
         None,
         "Console run log action",
@@ -147,6 +237,7 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleScopePickerModal,
+        _scope_factory,
         "#console-scope-picker-modal",
         None,
         "Console RAG scope action",
@@ -156,6 +247,7 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleSkillPickerModal,
+        lambda: ConsoleSkillPickerModal(skill_search=_empty_records),
         "#console-skill-picker-modal",
         None,
         "Console composer skill command",
@@ -165,6 +257,7 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleStylePickerModal,
+        lambda: ConsoleStylePickerModal(),
         "#console-style-picker-modal",
         None,
         "Console image style action",
@@ -175,8 +268,10 @@ TASK2_MODAL_CONTRACTS = (
 )
 
 
-def _binding_action(binding: object) -> str:
-    return binding.action if isinstance(binding, Binding) else binding[1]  # type: ignore[index,return-value]
+def _binding_key_action(binding: object) -> tuple[str, str]:
+    if isinstance(binding, Binding):
+        return binding.key, binding.action
+    return binding[0], binding[1]  # type: ignore[index,return-value]
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
@@ -195,12 +290,32 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
         "ConsoleSkillPickerModal",
         "ConsoleStylePickerModal",
     }
+    expected_hooks = {
+        "ConsoleCharacterPickerModal": "_cancel_query_debounce",
+        "ConsoleCitationSourcesModal": "increment _request_generation",
+        "ConsoleStylePickerModal": "_cancel_search_debounce",
+    }
     for contract in TASK2_MODAL_CONTRACTS:
         assert issubclass(contract.modal_type, SafeModalDismissMixin)
         assert contract.modal_type.SAFE_MODAL_CONTENT == contract.content_selector
-        assert "request_safe_cancel" in {
-            _binding_action(binding) for binding in contract.modal_type.BINDINGS
-        }
+        escape_actions = [
+            action
+            for binding in contract.modal_type.BINDINGS
+            for key, action in [_binding_key_action(binding)]
+            if key == "escape"
+        ]
+        assert escape_actions == ["request_safe_cancel"]
+        assert contract.cancel_result is None
+        assert contract.opener
+        assert contract.pre_cancel_hook == expected_hooks.get(
+            contract.modal_type.__name__
+        )
+        assert contract.guard == (
+            "intentional click-anywhere cancel"
+            if contract.modal_type is ConsoleImageViewerModal
+            else "none"
+        )
+        assert contract.focus_postcondition == _RESTORE_OPENER
 
 
 class _Task2Harness(App[None]):
@@ -213,6 +328,85 @@ class _Task2Harness(App[None]):
     def __init__(self) -> None:
         super().__init__()
         self.results: list[object] = []
+
+
+@pytest.mark.parametrize(
+    "contract", TASK2_MODAL_CONTRACTS, ids=lambda row: row.modal_type.__name__
+)
+@pytest.mark.asyncio
+async def test_task2_contract_selector_exists_and_escape_returns_cancel_result(
+    contract: _Task2ModalContract,
+) -> None:
+    app = _Task2Harness()
+    modal = contract.factory()
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+
+        assert modal.query_one(contract.content_selector)
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert app.results == [contract.cancel_result]
+
+
+class _LifecycleCharacterModal(ConsoleCharacterPickerModal):
+    def __init__(self) -> None:
+        super().__init__(options=[])
+        self.initialization_calls = 0
+
+    async def _refresh_results(self, query: str) -> None:
+        self.initialization_calls += 1
+        await super()._refresh_results(query)
+
+
+@pytest.mark.asyncio
+async def test_textual_mro_runs_mixin_and_modal_mount_once(monkeypatch) -> None:
+    mixin_mount_calls = 0
+    original_mixin_mount = SafeModalDismissMixin.on_mount
+
+    def count_mixin_mount(self) -> None:  # type: ignore[no-untyped-def]
+        nonlocal mixin_mount_calls
+        mixin_mount_calls += 1
+        original_mixin_mount(self)
+
+    monkeypatch.setattr(SafeModalDismissMixin, "on_mount", count_mixin_mount)
+    app = _Task2Harness()
+    modal = _LifecycleCharacterModal()
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert mixin_mount_calls == 1
+        assert modal.initialization_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_textual_mro_runs_citation_mixin_unmount_once(monkeypatch) -> None:
+    mixin_unmount_calls = 0
+    original_mixin_unmount = SafeModalDismissMixin.on_unmount
+
+    def count_mixin_unmount(self) -> None:  # type: ignore[no-untyped-def]
+        nonlocal mixin_unmount_calls
+        mixin_unmount_calls += 1
+        original_mixin_unmount(self)
+
+    monkeypatch.setattr(SafeModalDismissMixin, "on_unmount", count_mixin_unmount)
+    app = _Task2Harness()
+    modal = _citation_factory()
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        generation = modal._request_generation
+
+        modal.dismiss(None)
+        await pilot.pause()
+
+        assert mixin_unmount_calls == 1
+        assert modal._request_generation == generation + 1
 
 
 class _TrackedCharacterModal(ConsoleCharacterPickerModal):

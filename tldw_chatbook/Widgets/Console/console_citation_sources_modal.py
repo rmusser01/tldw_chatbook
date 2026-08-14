@@ -277,7 +277,6 @@ class ConsoleCitationSourcesModal(
             yield Button("Close", id="console-citation-sources-close")
 
     def on_mount(self) -> None:
-        super().on_mount()
         if self._worker_started:
             return
         self._worker_started = True
@@ -291,7 +290,6 @@ class ConsoleCitationSourcesModal(
 
     def on_unmount(self) -> None:
         self._request_generation += 1
-        super().on_unmount()
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         del source

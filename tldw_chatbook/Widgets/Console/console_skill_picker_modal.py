@@ -143,7 +143,6 @@ class ConsoleSkillPickerModal(
                 yield Static(EMPTY_STORE_COPY, id=EMPTY_STATIC_ID, markup=False)
 
     def on_mount(self) -> None:
-        super().on_mount()
         self._focus_filter_input()
         # The initial (possibly ambiguous-word-prefilled) query populates the
         # list right away -- only edits made *after* opening debounce.
