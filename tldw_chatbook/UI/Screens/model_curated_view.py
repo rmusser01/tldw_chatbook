@@ -115,7 +115,7 @@ class CuratedView(Widget):
             self.reference = reference
             super().__init__()
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     CuratedView {
         height: 100%;
     }

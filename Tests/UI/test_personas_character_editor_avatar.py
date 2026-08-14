@@ -12,6 +12,10 @@ import pytest
 from PIL import Image
 from rich_pixels import Pixels
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
@@ -42,7 +46,7 @@ from Tests.UI.test_personas_dictionaries import PersonasTestApp, patch_character
 # ===================================================================
 
 
-class _Host(App):
+class _Host(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.removed = 0

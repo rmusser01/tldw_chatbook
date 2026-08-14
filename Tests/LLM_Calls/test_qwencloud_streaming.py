@@ -15,6 +15,7 @@ from loguru import logger
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 import tldw_chatbook.LLM_Calls.qwencloud as qwencloud
 import tldw_chatbook.LLM_Calls.qwencloud_streaming as qwencloud_streaming
+import tldw_chatbook.LLM_Calls.hosted_chat_streaming as hosted_streaming
 from tldw_chatbook.LLM_Calls.qwencloud_streaming import (
     QwenCloudStream,
     QwenResponsesStreamTranslator,
@@ -552,7 +553,7 @@ def test_sse_accepts_long_valid_record_below_private_caps(
 
 
 def test_sse_line_accumulation_is_structurally_linear() -> None:
-    source = inspect.getsource(qwencloud_streaming._iter_utf8_lines)
+    source = inspect.getsource(hosted_streaming.SSERecordDecoder._consume_text)
 
     assert "buffered +=" not in source
     assert "segments" in source

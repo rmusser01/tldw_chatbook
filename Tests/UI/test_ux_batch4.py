@@ -7,6 +7,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Input, Select, Static
 
 from tldw_chatbook.UI.Logs_Window import LogRecord, LogsWindow, _styled_line
@@ -37,7 +41,7 @@ def test_fkey_labels_on_late_destinations() -> None:
 
 
 # UX-069 -----------------------------------------------------------------
-class _FormHarness(App[None]):
+class _FormHarness(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.dismissed_with = "NOT_DISMISSED"
@@ -159,7 +163,7 @@ def test_log_lines_styled_by_level_with_text_intact() -> None:
 async def test_token_display_hidden_on_non_chat_screens() -> None:
     from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
-    class FooterApp(App[None]):
+    class FooterApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield AppFooterStatus(show_token_count=False)
 
@@ -178,7 +182,7 @@ async def test_copy_all_uses_full_session_buffer() -> None:
     buffer = deque(["line one", "line two", "line three"])
     copied = {}
 
-    class LogsApp(App[None]):
+    class LogsApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield LogsWindow(SimpleNamespace(_log_records=deque(), _log_buffer=buffer))
 

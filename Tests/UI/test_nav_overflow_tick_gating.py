@@ -28,6 +28,10 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Horizontal
 
 from tldw_chatbook.UI.Navigation.main_navigation import (
@@ -36,7 +40,7 @@ from tldw_chatbook.UI.Navigation.main_navigation import (
 )
 
 
-class _NavHarness(App[None]):
+class _NavHarness(ConsolidatedCSSApp):
     def __init__(self, active: str = "logs"):
         super().__init__()
         self.active = active

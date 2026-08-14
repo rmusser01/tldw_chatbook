@@ -21,6 +21,10 @@ from unittest.mock import Mock
 
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
@@ -98,7 +102,7 @@ def test_card_statics_are_markup_free():
         assert widget._render_markup is False
 
 
-class _CardHarnessApp(App[None]):
+class _CardHarnessApp(ConsolidatedCSSApp):
     """Minimal host for `SkillScriptConfirmCard` that records `ScriptDecided`."""
 
     def __init__(self) -> None:
@@ -115,7 +119,7 @@ class _CardHarnessApp(App[None]):
         self.request_ids.append(event.request_id)
 
 
-class _CardsHarnessApp(App[None]):
+class _CardsHarnessApp(ConsolidatedCSSApp):
     """Minimal host for `ChatTaskCards`."""
 
     def compose(self) -> ComposeResult:

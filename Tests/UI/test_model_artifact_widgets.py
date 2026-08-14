@@ -5,6 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, Static
 
@@ -64,7 +68,7 @@ def _report(
     )
 
 
-class _PanelApp(App):
+class _PanelApp(ConsolidatedCSSApp):
     def __init__(
         self,
         report: PreflightReport,
@@ -85,7 +89,7 @@ class _PanelApp(App):
         )
 
 
-class _ModalApp(App):
+class _ModalApp(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         return []
 
@@ -96,7 +100,7 @@ class _StyledModalApp(_ModalApp):
     CSS_PATH = _BUNDLED_CSS
 
 
-class _ProgressApp(App):
+class _ProgressApp(ConsolidatedCSSApp):
     def __init__(self, initial=None) -> None:
         self.initial = initial
         super().__init__()
@@ -417,7 +421,7 @@ async def test_progress_callback_marshals_across_threads_not_direct_mutation() -
         make_progress_callback,
     )
 
-    class _HostApp(App):
+    class _HostApp(ConsolidatedCSSApp):
         """Mirrors every real host's own wiring, not CuratedView's specifically."""
 
         def compose(self) -> ComposeResult:
@@ -471,7 +475,7 @@ async def test_unready_root_activation_is_keyboard_reachable() -> None:
 
     reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
 
-    class _ActivationApp(App):
+    class _ActivationApp(ConsolidatedCSSApp):
         def __init__(self) -> None:
             self.requested: list[ArtifactRef] = []
             super().__init__()
@@ -508,7 +512,7 @@ async def test_default_unready_controls_keep_activation_visible_but_disabled() -
 
     reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
 
-    class _RecoveryApp(App):
+    class _RecoveryApp(ConsolidatedCSSApp):
         def __init__(self) -> None:
             self.requested: list[ArtifactRef] = []
             super().__init__()
@@ -537,7 +541,7 @@ async def test_default_unready_controls_keep_activation_visible_but_disabled() -
     assert app.requested == []
 
 
-class _ImportControlApp(App):
+class _ImportControlApp(ConsolidatedCSSApp):
     """Capture local-import requests through Textual's real message route."""
 
     def __init__(self, source: Path, *, pending: bool = False) -> None:

@@ -10,12 +10,16 @@ from __future__ import annotations
 import pytest
 from textual.app import App, ComposeResult
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 
 
-class _CardsHarness(App[None]):
+class _CardsHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield ChatTaskCards(id="chat-task-cards")
 

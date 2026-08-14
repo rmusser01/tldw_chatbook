@@ -37,6 +37,11 @@ def test_every_native_provider_forwards_tools_in_param_map():
         assert mapping.get("tools") == "tools", provider
 
 
+def test_zai_native_provider_contract_is_eligible() -> None:
+    assert "zai" in NATIVE_TOOLS_PROVIDERS
+    assert PROVIDER_PARAM_MAP["zai"]["tools"] == "tools"
+
+
 def test_native_provider_contract_requires_qwencloud_dispatch_and_history():
     """QwenCloud may be native only after all three seam invariants hold."""
     assert "qwencloud" in NATIVE_TOOLS_PROVIDERS

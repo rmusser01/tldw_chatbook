@@ -320,7 +320,14 @@ def _declarations(css: str, selector: str) -> dict[str, str]:
 
 
 def _library_screen_default_css() -> str:
-    """Read LibraryScreen.DEFAULT_CSS without importing the application."""
+    """Read LibraryScreen's own CSS without importing the application.
+
+    TASK-15450 renamed the attribute to ``BUNDLED_CSS``: the class no longer
+    registers its own stylesheet source, it is lifted into the generated
+    widget-defaults sheets at build time. Either name is accepted so this guard
+    keeps working for classes that have not been consolidated.
+    """
+    wanted = {"DEFAULT_CSS", "BUNDLED_CSS"}
     module = ast.parse(_LIBRARY_SCREEN_SOURCE.read_text(encoding="utf-8"))
     for node in module.body:
         if not isinstance(node, ast.ClassDef) or node.name != "LibraryScreen":
@@ -329,13 +336,13 @@ def _library_screen_default_css() -> str:
             if not isinstance(statement, ast.Assign):
                 continue
             if any(
-                isinstance(target, ast.Name) and target.id == "DEFAULT_CSS"
+                isinstance(target, ast.Name) and target.id in wanted
                 for target in statement.targets
             ):
                 value = ast.literal_eval(statement.value)
                 assert isinstance(value, str)
                 return value
-    raise AssertionError("LibraryScreen.DEFAULT_CSS not found")
+    raise AssertionError("LibraryScreen widget CSS not found")
 
 
 def _bundled_module(bundle: str, module_path: str) -> str:

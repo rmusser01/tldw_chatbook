@@ -306,6 +306,109 @@ def test_non_qwen_provider_lookup_keeps_first_normalized_match():
     assert readiness.api_key == "first-match-key"
 
 
+@pytest.mark.parametrize(
+    ("provider", "provider_key", "model", "base_url", "env_var"),
+    [
+        (
+            "Moonshot",
+            "moonshot",
+            "kimi-k3",
+            "https://api.moonshot.ai/v1",
+            "MOONSHOT_API_KEY",
+        ),
+        (
+            "Z.ai",
+            "zai",
+            "glm-5.2",
+            "https://api.z.ai/api/paas/v4",
+            "ZAI_API_KEY",
+        ),
+    ],
+)
+def test_hosted_readiness_validates_the_same_full_contract_as_send(
+    provider, provider_key, model, base_url, env_var
+):
+    readiness = get_provider_readiness(
+        provider,
+        {
+            "api_settings": {
+                provider_key: {
+                    "api_key_env_var": env_var,
+                    "model": model,
+                    "api_base_url": base_url,
+                    "timeout": 90,
+                    "retries": 3,
+                    "retry_delay": 1,
+                    "streaming": True,
+                }
+            }
+        },
+        environ={env_var: "hosted-secret-canary"},
+    )
+
+    assert readiness.ready is True
+    assert readiness.api_key == "hosted-secret-canary"
+    assert "hosted-secret-canary" not in readiness.user_message
+
+
+@pytest.mark.parametrize(
+    ("provider", "provider_key", "settings"),
+    [
+        ("Moonshot", "moonshot", {"model": " "}),
+        ("Moonshot", "moonshot", {"api_base_url": "https://user:pass@example.test/v1"}),
+        ("Moonshot", "moonshot", {"timeout": True}),
+        ("Z.ai", "zai", {"retries": -1}),
+        ("Z.ai", "zai", {"retry_delay": -1}),
+        ("Z.ai", "zai", {"streaming": "true"}),
+    ],
+)
+def test_hosted_readiness_blocks_malformed_send_settings(
+    provider, provider_key, settings
+):
+    source = {
+        "api_settings": {
+            provider_key: {
+                "api_key": "hosted-secret-canary",
+                **settings,
+            }
+        }
+    }
+    original = deepcopy(source)
+
+    readiness = get_provider_readiness(provider, source, environ={})
+
+    assert source == original
+    assert readiness.ready is False
+    assert readiness.reason == "Invalid provider settings"
+    assert f"api_settings.{provider_key}" in readiness.user_message
+    assert "hosted-secret-canary" not in readiness.user_message
+
+
+@pytest.mark.parametrize(
+    ("provider", "provider_key", "alias"),
+    [
+        ("Moonshot", "moonshot", " MOONSHOT "),
+        ("Z.ai", "zai", "ZAI"),
+    ],
+)
+def test_hosted_readiness_rejects_normalized_alias_conflicts(
+    provider, provider_key, alias
+):
+    source = {
+        "api_settings": {
+            alias: {"api_key": "alias-secret-canary"},
+            provider_key: {"api_key": "canonical-secret-canary"},
+        }
+    }
+
+    readiness = get_provider_readiness(provider, source, environ={})
+
+    assert readiness.ready is False
+    assert readiness.reason == "Invalid provider settings"
+    assert "alias-secret-canary" not in readiness.user_message
+    assert "canonical-secret-canary" not in readiness.user_message
+
+
 def test_keyless_local_provider_is_ready_without_api_key():
     readiness = get_provider_readiness(
         "Ollama",

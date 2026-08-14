@@ -10,6 +10,10 @@ from typing import Any
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Button, Checkbox, Input, Static
@@ -226,7 +230,7 @@ async def test_real_library_service_runner_isolates_every_collection_call_and_ke
                 "changed": True,
             }
 
-    class ResponsiveHost(App):
+    class ResponsiveHost(ConsolidatedCSSApp):
         def __init__(self) -> None:
             super().__init__()
             self.pings = 0
@@ -644,7 +648,7 @@ def test_controller_rename_refreshes_off_page_label_from_validated_response():
     assert controller.collection_label(150) == renamed
 
 
-class _ManagerHost(App):
+class _ManagerHost(ConsolidatedCSSApp):
     def __init__(
         self,
         *,
@@ -727,7 +731,7 @@ class _StyledManagerHost(_ManagerHost):
     CSS_PATH = LibraryHarness.CSS_PATH
 
 
-class _MutationManagerHost(App):
+class _MutationManagerHost(ConsolidatedCSSApp):
     def __init__(self, *, failure: Exception | None = None) -> None:
         super().__init__()
         self.failure = failure
@@ -774,7 +778,7 @@ class _MutationManagerHost(App):
         )
 
 
-class _PagingRetryManagerHost(App):
+class _PagingRetryManagerHost(ConsolidatedCSSApp):
     def __init__(
         self,
         *,
@@ -843,7 +847,7 @@ class _PagingRetryManagerHost(App):
         )
 
 
-class _CatalogMutationRaceHost(App):
+class _CatalogMutationRaceHost(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.load_started = asyncio.Event()
@@ -907,7 +911,7 @@ class _CatalogMutationRaceHost(App):
         )
 
 
-class _CollectionCanvasHost(App):
+class _CollectionCanvasHost(ConsolidatedCSSApp):
     def __init__(self, *, mode: str, membership_state=None) -> None:
         super().__init__()
         self._mode = mode

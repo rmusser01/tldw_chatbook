@@ -167,7 +167,7 @@ class DestinationHeader(Vertical):
     # Height guard for harness apps that do not load the app CSS bundle: the
     # design-system `.workbench-header` rules (height auto, border, padding)
     # always win over this when the bundle is present.
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     DestinationHeader {
         height: auto;
     }

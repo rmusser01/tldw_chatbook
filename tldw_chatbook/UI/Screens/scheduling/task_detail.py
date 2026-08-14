@@ -235,7 +235,7 @@ def status_badge_class(status: TaskStatus) -> str:
 class TaskDetail(Vertical):
     """Render the selected reminder task's core details and actions."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     #scheduling-task-detail-metadata {
         height: auto;
         padding: 0;

@@ -798,7 +798,7 @@ class EmojiPickerScreen(ModalScreen[str]):
         Binding("ctrl+left", "prev_category", "Previous Category", show=False),
         Binding("ctrl+right", "next_category", "Next Category", show=False),
     ]
-    CSS = """
+    BUNDLED_SCREEN_CSS = """
     /* Local fallbacks so this CSS parses without the app bundle. */
     $ds-focus-bg: $surface;
     $ds-focus-fg: $text;

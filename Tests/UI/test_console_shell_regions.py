@@ -114,7 +114,7 @@ async def make_console_pilot(*, size):
 @pytest.mark.parametrize(
     ("stacked", "left_width", "right_width", "left_label", "right_label"),
     [
-        (False, 13, 11, "Context ▸", "Inspect"),
+        (False, 13, 11, "Context ▸", "Inspect->"),
         (True, 3, 3, "C\no\nn\nt\ne\nx\nt", "I\nn\ns\np\ne\nc\nt\no\nr"),
     ],
 )
@@ -123,20 +123,14 @@ async def test_fresh_console_composes_saved_rail_label_style(
 ):
     """A fresh Console reads the saved style for both collapsed handles."""
     app = _build_test_app()
-    app.app_config.setdefault("console", {})[
-        "stack_collapsed_rail_labels"
-    ] = stacked
+    app.app_config.setdefault("console", {})["stack_collapsed_rail_labels"] = stacked
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 45)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        left = console.query_one(
-            "#console-context-rail-handle", ConsoleRailHandle
-        )
-        right = console.query_one(
-            "#console-inspector-rail-handle", ConsoleRailHandle
-        )
+        left = console.query_one("#console-context-rail-handle", ConsoleRailHandle)
+        right = console.query_one("#console-inspector-rail-handle", ConsoleRailHandle)
         left_button = console.query_one("#console-context-rail-open", Button)
         right_button = console.query_one("#console-inspector-rail-open", Button)
         right_badge = console.query_one("#console-inspector-rail-badge", Static)

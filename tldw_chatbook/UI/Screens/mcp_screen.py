@@ -65,7 +65,7 @@ class MCPScreen(BaseAppScreen):
         Binding("t", "mcp_test_tool", "Test tool", show=False),
     ]
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     Button.mcp-mode-chip {
         width: auto;
         /* min-width kept in lockstep with the higher-specificity app-bundle

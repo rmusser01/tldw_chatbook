@@ -17,6 +17,10 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from Tests.UI.test_console_dictation import (
@@ -48,7 +52,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 
 
-class _ComposerCSSApp(App[None]):
+class _ComposerCSSApp(ConsolidatedCSSApp):
     """Mount the composer with the production stylesheet for visual assertions."""
 
     CSS_PATH = str(_BUNDLED_STYLESHEET)

@@ -15,6 +15,10 @@ from pathlib import Path
 
 import pytest
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 _UI_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "UI"
 CHAT_SCREEN_PATH = _UI_ROOT / "Screens" / "chat_screen.py"
 _CONSOLE_MODULES_DIR = _UI_ROOT / "Console_Modules"
@@ -203,7 +207,7 @@ class TestTextualExclusiveGroupSemantics:
     def _make_app(results: dict):
         from textual.app import App
 
-        class Probe(App):
+        class Probe(ConsolidatedCSSApp):
             async def long_run(self):
                 try:
                     await asyncio.sleep(3)

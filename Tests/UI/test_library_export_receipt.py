@@ -24,6 +24,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_export_scope import ExportScope
@@ -51,7 +55,7 @@ def _state(**overrides):
     return build_library_export_form_state(**base)
 
 
-class _Host(App):
+class _Host(ConsolidatedCSSApp):
     """Minimal host: mounts one export canvas, nothing else."""
 
     def __init__(self, state):
@@ -211,6 +215,9 @@ async def test_apply_library_export_counts_patches_tooltip_alongside_disabled():
                 "destination_exists": False,
             },
             _library_export_running=False,
+            # task-15790: production gained this flag (library_screen
+            # __init__); the double predates it -- the stale-double class.
+            _library_export_quality_choices_visible=False,
             _library_export_status="",
             _library_export_error="",
             _library_export_last_path="",
@@ -266,6 +273,9 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
                 "destination_exists": False,
             },
             _library_export_running=False,
+            # task-15790: production gained this flag (library_screen
+            # __init__); the double predates it -- the stale-double class.
+            _library_export_quality_choices_visible=False,
             _library_export_status="",
             _library_export_error="",
             _library_export_last_path="/tmp/out.zip",

@@ -34,7 +34,87 @@ test only after the product behaviour is confirmed intended.
 
 ## Acceptance Criteria
 
-- [ ] The StopIteration pair is attributed (real bug vs test artifact) with evidence, before any contract is updated
-- [ ] Each cluster is attributed to its causing commit
-- [ ] Genuine product breaks are fixed rather than absorbed into expectations
+- [x] The StopIteration pair is attributed (real bug vs test artifact) with evidence, before any contract is updated
+- [x] Each cluster is attributed to its causing commit
+- [x] Genuine product breaks are fixed rather than absorbed into expectations (one found and fixed: the skills trust-panel ordering)
 - [ ] The listed modules pass whole on dev
+
+## Implementation Notes (batch 1)
+
+Re-baselined every module on CURRENT dev before touching anything -- dev had
+moved so fast that the sweep's inventory was already partly stale in both
+directions: `test_library_prompts_canvas.py` (the filed StopIteration pair)
+now passes whole (280/280), while the file-notes cluster had GROWN to 28
+failures.
+
+**The StopIteration class: test artifact, twice over.** Both remaining
+instances were `next(gen)` with no default in tests, converting "expected
+tree node missing" into an opaque `RuntimeError: coroutine raised
+StopIteration`. The nodes were missing because folders in the file-notes
+navigator now carry `_FolderNodeData(relative_path)` (a frozen dataclass)
+while the tests matched the old `("folder", value)` tuples. Both lookups now
+match the dataclass field and fail with a message listing actual node data.
+
+**One real product bug found and fixed: the skills trust panel could stick at
+"not granted" for a granted skill.** task-15457 made the skill editor's
+recompose CANVAS-scoped, driven by the canvas's own message pump -- which a
+screen-level `call_after_refresh` has no ordering against. The grant-fetch
+coroutine's deferred `_render_library_skill_trust_panel` fired before the
+canvas's children existed, swallowed `NoMatches`, and never retried (measured:
+grant stored True, render ran, button absent). It now rides the same canvas
+post-recompose hook the editor's arming follow-up already rides. This is the
+exact stuck-forever race the method's own docstring said `call_after_refresh`
+prevented -- 15457 quietly invalidated its premise.
+
+**Stale contracts updated with attribution** (each verified deliberate via
+its causing commit): the file-notes-git focus color x10 (task-15509 made
+focus theme-driven; the helper now asserts the active theme's
+`primary-background`, the same way 15509's own test does); Protect joining
+the structurally-gated set (dca0594a5); confirm-delete span under the new
+`-single-editor-actions` narrow mode (a85232c37); the disabled-marker prefix
+on the commit label (Library a11y convention); "Push checking" -> the
+"· Checking push" phase suffix x4 (67fec3f35). Stale doubles taught 4 new
+production attributes (export-quality visibility, notes/prompts mutation
+in-flight). Two measurement repairs in ingest_structural: the fold's cost is
+now the collapsible's own height delta (`virtual_region.y` stopped being an
+absolute anchor when 15513 nested the actions), and the contrast probe
+scrolls its fields on-screen first (15513's new controls pushed Language
+below the 46-row viewport -- an off-screen widget paints nothing).
+
+Green after batch 1: file_notes_git 148/148, git_push 60/60, export_receipt +
+multiselect 17/17, choice_strips + skills_canvas 230/230 (incl. the product
+fix), ingest_structural 22/22, prompts_canvas 280/280 (no change needed).
+
+## Implementation Notes (batch 2 -- the focus pair; BOTH were product bugs)
+
+The dca0594a5 suspicion was wrong -- that commit changed focus VISUALS only.
+Both failures were real product defects with different mechanisms:
+
+**1. The cancel-first confirmation focus NEVER worked.** Its feature test was
+born red at 1fbd46ec6 (verified by running it at that exact commit) and
+nobody saw, because the module never ran whole -- the born-red-test class
+again. Mechanism: `call_after_refresh(cancel.focus)` on the WORKSPACE widget
+waits for the workspace's own refresh, and `_update_controls` patches
+children in place, so that refresh never comes and the callback never fires
+(spy: same instance, mounted, focus still on the pressed button). Third
+variant of the never-firing-deferral family in one day (screen-vs-canvas in
+the skills panel, screen-vs-canvas in 15270's era, widget-vs-children here).
+Fix: `call_later` -- message-queue ordering, needs no repaint.
+
+**2. Wide->narrow hid the editor out from under its own focus.** Genuine
+regression, bisected (git bisect run, 6 steps) into 4202930d6's era; the
+test passed at its birth commit d642336e6. `_narrow_view` was only set to
+"editor" when a document was opened WHILE ALREADY NARROW, so opening on a
+wide terminal and then shrinking routed the narrow shell to the navigator --
+hiding the pane under the focused editor (Textual blurs a hidden widget's
+focus to None). User-visible: open a note, shrink the window, the note
+vanishes into the files list. Fix: on the wide->narrow TRANSITION with an
+open document, derive the view as "editor"; transition-only so Back's
+explicit navigator choice, made while narrow, keeps winning.
+
+`test_library_file_notes_workspace.py` whole: 88/88.
+
+## Remainder (open)
+
+- `test_library_shell.py` x6 (current-dev set: metadata placeholders, reset
+  to defaults, note sync-routes focus, recompose/fifty-cycles baseline, +2).

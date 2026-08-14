@@ -9,6 +9,25 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## An exact live-test gate must be the first gate that can skip the test
+
+**TASK-15676, 2026-08-13.** The opt-in Moonshot/Z.ai paid harness required an
+exact provider flag plus a nonblank provider key, and its user documentation
+showed that two-part command. The first default run never reached that contract:
+the repository's `slow` marker skipped the test with `Need --run-slow`. Removing
+that marker exposed the same problem from `optional` and `--run-optional`. Even
+with the documented environment flag and key present, the documented command
+could not execute the live case because unrelated collection-time gates ran
+before the test body's explicit safety check.
+
+**What to do.** When the public contract is an exact environment/key gate, do
+not also apply repository markers whose plugins skip before the test body unless
+every required CLI flag is part of the documented contract. Keep descriptive
+markers such as `integration`/`allow_network`, put the paid-call guard at the
+top of the test, and cover its truth table plus the default skip reason. That
+makes default collection safe while ensuring the opt-in command can actually
+reach the code it claims to verify.
+
 ## A schema-version label does not make a synthetic database historical
 
 **TASK-15705/TASK-15707, 2026-08-12.** Raising ChaChaNotes from v35 to v36
@@ -3919,3 +3938,52 @@ pattern for (1): route the drain through
 `threading.Thread(target=...)` in the test, and hop UI arming through the
 message pump (`call_later`) in production — after which reverting the hop
 fails three tests instead of zero.
+---
+
+## A control that holds a second variable fixed measures the PAIR, not the thing you named (TASK-15965, 2026-08-13)
+
+**Incident.** The PRF probe needed to know how many of its 22 target cells a
+rescue could have been *seen* in at all, so it ran a control: feed the
+retrieval the target document itself — the best expansion any feedback set
+could ever produce — and count how many targets that lifts into the top-10.
+It returned **8 of 22**, and I wrote that number down as a property of the
+retrieval path: "the four-seam path caps ANY query-widening technique at
+8/22; 14 of 22 cells are never observable." The probe printed a matching
+sentence on every run: *"a target an oracle feed cannot lift into the top-10
+could not have been rescued by any real feedback set."*
+
+The control had **two** moving parts, not one. It fixed the path — which is
+what I named — and it also fixed the **term selector** used to build the
+oracle expression (the pre-registered TF `tf/|D|` top-8). The review re-ran
+the control changing **only the ranking key**: same path, same oracle feed,
+same composition, same k. It returned **15 of 22** (rarest-8-by-corpus-DF),
+and at N=1-rarest with the query side dropped, **22 of 22**. Meanwhile 22 of
+22 oracle expressions matched their target at k=200 in *every* row — so
+nothing was ever unreachable; the misses were displacement whose severity
+scales with **expansion breadth**, which is the selector's property, not the
+path's. The defensible statement was narrower than the one I shipped (the
+path has no cross-seam ranking and a per-seam `top_k`, so a pass matching K+
+notes buries non-note targets *however hard that bites depends on breadth*),
+and the correction made the arc's null **stronger**: ≥15 observable cells,
+still 0 rescued.
+
+**Two tells were on the page before the review.** (1) The number was a bound
+that *flattered the conclusion* — a smaller observable population makes a null
+easier to explain away. A bound you would be glad to have is one to measure
+twice. (2) The printed claim quantified over something the control never
+varied: "could not have been rescued by **any** real feedback set", from a
+single selector.
+
+**What to do.** Before reading a control's output as a property of X, write
+down every variable the control holds fixed and ask which of them could have
+produced the number. If a fixed variable is plausibly load-bearing, **vary it
+and re-run** — here that was one parameter and one re-run, and it was the
+difference between a measured bound and a bound of my own making. Then make
+the instrument carry the scope: the probe now prints the selector-comparison
+table instead of the universal sentence, and an assertion fails the run if a
+non-pre-registered selector ever reaches the verdict. Sibling of "A mechanism
+sentence is an ORACLE" — but distinct in cause: that prose was refuted by data
+already on the page, this prose was wrong because the refuting data had not
+been collected. Also sibling of "A property that holds 'by construction' holds
+for the COMPONENT": both are scope errors, one about composition, this one
+about which variable the measurement was actually of.

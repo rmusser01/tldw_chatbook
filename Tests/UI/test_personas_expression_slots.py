@@ -18,6 +18,10 @@ import pytest
 import pytest_asyncio
 from PIL import Image
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
@@ -268,7 +272,7 @@ async def test_export_expression_set_cleans_up_temp_on_replace_failure(
 # (_sync_expression_slots_enabled). =====
 
 
-class _UnsavedEditorHost(App):
+class _UnsavedEditorHost(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield PersonasCharacterEditorWidget()
 

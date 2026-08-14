@@ -348,9 +348,18 @@ async def test_schema_disabled_fields_paint_legibly_inert():
                 f"disabled field still faded: opacity={model_dir.styles.opacity}"
             )
 
+            # task-15790: the 15513 Import-behavior controls grew the panel,
+            # pushing Language below the 46-row viewport -- an off-screen
+            # widget paints nothing, so the style probe returned None. Bring
+            # each field on-screen before reading its painted style; the
+            # contrast contract itself is unchanged.
+            model_dir.scroll_visible(animate=False)
+            await pilot.pause()
             disabled_style = _painted_style_of_text(
                 pilot.app, model_dir.region, "/models/parakeet-v2"
             )
+            language.scroll_visible(animate=False)
+            await pilot.pause()
             enabled_style = _painted_style_of_text(
                 pilot.app, language.region, "en"
             )
@@ -945,32 +954,37 @@ async def test_the_fold_pays_for_itself_in_the_shipped_screen():
         screen = await _shipped_ingest_screen(host, pilot)
         canvas = screen.query_one(LibraryIngestCanvas)
         breakdown = screen.query_one("#ingest-type-breakdown", Static)
-        viewport = canvas.container_size.height
-        breakdown_y = breakdown.virtual_region.y
-        folded_start = screen.query_one(
-            "#library-ingest-start", Button
-        ).virtual_region.y
-
-        # Unfold the tooling detail in place: the wall's cost, measured on
-        # the same surface, is the difference between these two.
-        screen.query_one(
+        # task-15790: `virtual_region.y` stopped being an absolute row in
+        # the canvas content when the 15513 Import-behavior work nested the
+        # form's actions in their own Vertical -- Start's y became relative
+        # to that small parent (measured: y=2 folded AND unfolded, "saving"
+        # 0). The fold's cost is the COLLAPSIBLE's own rendered height
+        # delta, which no re-nesting can distort; the breakdown check
+        # switches to screen-space visibility for the same reason.
+        detail = screen.query_one(
             "#ingest-preflight-tooling-detail", Collapsible
-        ).collapsed = False
-        await pilot.pause()
-        await pilot.pause()
-        unfolded_start = screen.query_one(
-            "#library-ingest-start", Button
-        ).virtual_region.y
+        )
+        folded_height = detail.region.height
+        breakdown_visible = (
+            breakdown.region.height > 0
+            and breakdown.region.y < canvas.region.bottom
+        )
 
-    assert breakdown_y < viewport, (
-        f"type breakdown below the fold in the shipped screen: "
-        f"y={breakdown_y} viewport={viewport}"
+        detail.collapsed = False
+        await pilot.pause()
+        await pilot.pause()
+        unfolded_height = screen.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        ).region.height
+
+    assert breakdown_visible, (
+        "type breakdown below the fold in the shipped screen"
     )
-    saving = unfolded_start - folded_start
+    saving = unfolded_height - folded_height
     assert saving >= 25, (
         "the fold no longer pays for itself in the shipped screen: "
-        f"folded start y={folded_start}, unfolded y={unfolded_start} "
-        f"(saving {saving} rows; measured 33)"
+        f"folded detail height={folded_height}, unfolded "
+        f"height={unfolded_height} (saving {saving} rows)"
     )
 
 

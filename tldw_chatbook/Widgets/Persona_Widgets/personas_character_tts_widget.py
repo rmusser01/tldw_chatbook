@@ -162,7 +162,7 @@ def _character_tts_option_suffix(option: CharacterTTSProfileOption) -> str:
 class PersonasCharacterTTSWidget(Container):
     """Render character profile state and emit identity-free action intents."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasCharacterTTSWidget {
         width: 100%;
         height: auto;

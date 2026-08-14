@@ -8,6 +8,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Container as _Container
 from textual.widgets import Input
 
@@ -22,7 +26,7 @@ def _llm_harness():
         def __init__(self, *args, **kwargs):
             super().__init__(**{k: v for k, v in kwargs.items() if k == "id"})
 
-    class Harness(App[None]):
+    class Harness(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield LLMManagementWindow(MagicMock(notify=MagicMock()))
 
@@ -100,7 +104,7 @@ def test_regex_filter_and_substring_fallback() -> None:
 def test_saved_filter_roundtrip() -> None:
     saved = {}
 
-    class LogsApp(App[None]):
+    class LogsApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield LogsWindow(SimpleNamespace(_log_records=deque()))
 

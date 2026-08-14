@@ -71,21 +71,41 @@ def drifted_modules(committed: str, rebuilt: str) -> list[str] | None:
 
 
 def main() -> int:
-    """Rebuild the bundle to a temp file and compare it to the committed one.
+    """Rebuild both generated stylesheets to a temp dir and compare them.
+
+    Covers ``tldw_cli_modular.tcss`` and ``widget_defaults.tcss`` -- the latter
+    is generated from the class-level ``BUNDLED_CSS`` declarations in the Python
+    sources (TASK-15450), so editing a widget's CSS without re-running the build
+    would otherwise ship a stale stylesheet.
 
     Returns:
-        ``0`` when the committed bundle reproduces from its sources; ``1`` when it
-        has drifted or cannot be rebuilt (with ``::error::`` annotations naming
-        the drifted modules or the missing source).
+        ``0`` when both committed stylesheets reproduce from their sources; ``1``
+        when either has drifted or cannot be rebuilt (with ``::error::``
+        annotations naming the drifted modules or the missing source).
     """
     css_dir = Path(__file__).parent
     committed = (css_dir / "tldw_cli_modular.tcss").read_text(encoding="utf-8")
+    defaults_names = (
+        _build_css.WIDGET_DEFAULTS_SELF_FILENAME,
+        _build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
+        _build_css.SCREEN_CSS_SELF_FILENAME,
+        _build_css.SCREEN_CSS_SCOPED_FILENAME,
+    )
+    committed_defaults = [
+        (css_dir / name).read_text(encoding="utf-8")
+        if (css_dir / name).is_file()
+        else None
+        for name in defaults_names
+    ]
     with tempfile.TemporaryDirectory() as tmp:
         rebuilt_path = Path(tmp) / "rebuilt.tcss"
+        rebuilt_defaults_paths = [Path(tmp) / name for name in defaults_names]
         try:
             # build_css narrates each module; silence it so CI logs stay clean.
             with contextlib.redirect_stdout(io.StringIO()):
                 _build_css.build_css(css_dir, rebuilt_path)
+                _build_css.build_widget_defaults(css_dir, *rebuilt_defaults_paths[:2])
+                _build_css.build_screen_css(css_dir, *rebuilt_defaults_paths[2:])
         except FileNotFoundError as exc:
             # A declared module was removed without updating the manifest -- a
             # desync worth failing on, but reported clearly rather than as a
@@ -95,21 +115,44 @@ def main() -> int:
                 "CSS_MODULES manifest in build_css.py to match the source tree."
             )
             return 1
+        except ValueError as exc:
+            # A BUNDLED_CSS/BUNDLED_SCREEN_CSS declaration could not be lifted
+            # out of Python (not a plain string literal, or a name collision).
+            print(f"::error::CSS bundle could not be rebuilt: {exc}")
+            return 1
         rebuilt = rebuilt_path.read_text(encoding="utf-8")
+        rebuilt_defaults = [
+            path.read_text(encoding="utf-8") for path in rebuilt_defaults_paths
+        ]
 
+    failed = False
     drifted = drifted_modules(committed, rebuilt)
     if drifted is None:
         print("CSS bundle reproduces from its source modules.")
-        return 0
+    else:
+        failed = True
+        print(
+            "::error::CSS bundle is out of sync with its source modules. Run "
+            "`python tldw_chatbook/css/build_css.py` and commit the regenerated "
+            "tldw_cli_modular.tcss."
+        )
+        for module in drifted:
+            print(f"::error::drifted module: {module}")
 
-    print(
-        "::error::CSS bundle is out of sync with its source modules. Run "
-        "`python tldw_chatbook/css/build_css.py` and commit the regenerated "
-        "tldw_cli_modular.tcss."
-    )
-    for module in drifted:
-        print(f"::error::drifted module: {module}")
-    return 1
+    for name, committed_text, rebuilt_text in zip(
+        defaults_names, committed_defaults, rebuilt_defaults
+    ):
+        if committed_text == rebuilt_text:
+            print(f"{name} reproduces from its Python sources.")
+        else:
+            failed = True
+            print(
+                f"::error::{name} is out of sync with the BUNDLED_CSS declarations "
+                "in the Python sources. Run "
+                "`python tldw_chatbook/css/build_css.py` and commit the "
+                f"regenerated {name}."
+            )
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

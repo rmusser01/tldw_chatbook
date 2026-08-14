@@ -25,6 +25,10 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 
 @pytest.fixture()
 def root(tmp_path) -> Path:
@@ -681,7 +685,7 @@ async def test_the_opener_pushes_the_screen_and_selects_the_turn(
     assert outcome.status not in ("error",), outcome.steps
     assert db.change_snapshots_for_run(run_id), "precondition: the run recorded rows"
 
-    class _ConsoleHarness(App):
+    class _ConsoleHarness(ConsolidatedCSSApp):
         def __init__(self, app_instance):
             super().__init__()
             self.app_instance = app_instance
@@ -771,7 +775,7 @@ async def test_the_summary_rows_own_review_action_opens_the_screen(
     )
     assert marker.change_review_run_id == run_id
 
-    class _ConsoleHarness(App):
+    class _ConsoleHarness(ConsolidatedCSSApp):
         def __init__(self, app_instance):
             super().__init__()
             self.app_instance = app_instance

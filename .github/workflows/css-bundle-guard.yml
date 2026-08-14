@@ -3,18 +3,38 @@ name: CSS Bundle Guard
 # TASK-395: a source .tcss edited without regenerating the bundle (or the bundle
 # hand-edited directly) silently ships broken styling -- every rebuild, including
 # the app's boot-time rebuild, strips the hand-edit. This guard fails any change
-# under tldw_chatbook/css/** whose committed bundle does not reproduce from its
-# sources. Like backlog-guard, it is a standalone workflow so it runs even while
-# the general CI suite is left in the intentionally-cancelled state.
+# whose committed stylesheets do not reproduce from their sources. Like
+# backlog-guard, it is a standalone workflow so it runs even while the general CI
+# suite is left in the intentionally-cancelled state.
+#
+# TASK-15450 widened the path filter, and the reason matters: four of the five
+# generated stylesheets are now built from class-level BUNDLED_CSS /
+# BUNDLED_SCREEN_CSS string literals in modules under Widgets/** and UI/**, not
+# from .tcss files. A PR that edits one widget's CSS and forgets to regenerate
+# touches nothing under css/**, so a css/**-only filter would never run this
+# guard on exactly the drift it exists to catch. Any .py under the package is
+# therefore in scope: build_css.py AST-scans the whole package for those
+# literals, so any module is a potential input. Over-triggering here is cheap
+# (one stdlib-only script, no install); under-triggering ships broken styling.
 
 on:
   pull_request:
     paths:
       - 'tldw_chatbook/css/**'
+      # `**.py`, not `**/*.py`: GitHub documents the former as "all .py files"
+      # at any depth, while the latter's handling of a file directly under
+      # tldw_chatbook/ (app.py -- which loads these sheets) is ambiguous.
+      - 'tldw_chatbook/**.py'
+      - '.github/workflows/css-bundle-guard.yml'
   push:
     branches: [dev, main]
     paths:
       - 'tldw_chatbook/css/**'
+      # `**.py`, not `**/*.py`: GitHub documents the former as "all .py files"
+      # at any depth, while the latter's handling of a file directly under
+      # tldw_chatbook/ (app.py -- which loads these sheets) is ambiguous.
+      - 'tldw_chatbook/**.py'
+      - '.github/workflows/css-bundle-guard.yml'
 
 # One run per workflow per ref: a new push supersedes the previous run instead of
 # queueing another alongside it. Without this, every push to `dev` stacked a full

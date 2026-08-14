@@ -156,7 +156,7 @@ def local_import_failure_message(exc: BaseException) -> str:
 class InstalledView(Widget):
     """List and manage the shared local model inventory."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     InstalledView {
         height: 100%;
     }

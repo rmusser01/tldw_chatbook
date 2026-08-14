@@ -646,7 +646,7 @@ class MCPWorkbench(Container):
             super().__init__()
             self.mode = mode
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     MCPWorkbench {
         width: 100%;
         height: 1fr;

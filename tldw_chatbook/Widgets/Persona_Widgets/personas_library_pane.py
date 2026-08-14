@@ -87,7 +87,7 @@ class PersonasLibraryPane(Vertical):
     # Structure only: colors come from the app stylesheet
     # (.console-action-subdued rows, ListView ListItem.--highlight, and
     # ListItem.personas-library-row.is-active in the bundle).
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasLibraryPane #personas-library-rows ListItem {
         width: 100%;
         min-width: 0;

@@ -520,7 +520,7 @@ class PersonasScreen(BaseAppScreen):
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
     # equal-specificity selectors and takes precedence when loaded.
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasScreen {
         background: $background;
     }

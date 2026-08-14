@@ -90,7 +90,9 @@ def _assert_content_column_contained(handle, child) -> None:
 
 
 @pytest.mark.asyncio
-async def test_vertical_handles_use_bundled_full_height_geometry_and_keep_badge_visible() -> None:
+async def test_vertical_handles_use_bundled_full_height_geometry_and_keep_badge_visible() -> (
+    None
+):
     """Bundled TCSS makes both vertical rail sides narrow, tall, and contained."""
     app = _VerticalRailHandleHarness()
 
@@ -121,7 +123,9 @@ async def test_vertical_handles_use_bundled_full_height_geometry_and_keep_badge_
         assert left_button.region.height >= len(left._display_label().splitlines())
         assert right_button.region.height >= len(right._display_label().splitlines())
         assert right_badge.region.height >= len(right._display_badge().splitlines())
-        assert right_button.region.y + right_button.region.height == right_badge.region.y
+        assert (
+            right_button.region.y + right_button.region.height == right_badge.region.y
+        )
         assert right_badge.region.y >= right.content_region.y
         assert right_badge.region.y + right_badge.region.height == (
             right.content_region.y + right.content_region.height
@@ -150,9 +154,10 @@ async def test_vertical_buttons_paint_a_single_centered_column() -> None:
         )
 
         for handle, button in pairs:
-            expected_x = handle.region.x + (
-                handle.region.width - ConsoleRailHandle.VERTICAL_CONTENT_WIDTH
-            ) // 2
+            expected_x = (
+                handle.region.x
+                + (handle.region.width - ConsoleRailHandle.VERTICAL_CONTENT_WIDTH) // 2
+            )
             painted_lines = [
                 strip
                 for y in range(button.region.height)
@@ -161,8 +166,7 @@ async def test_vertical_buttons_paint_a_single_centered_column() -> None:
 
             assert painted_lines
             assert all(
-                cell_len(strip.text) == button.region.width
-                for strip in painted_lines
+                cell_len(strip.text) == button.region.width for strip in painted_lines
             )
             assert button.region.x == expected_x
 
@@ -190,7 +194,7 @@ def test_horizontal_defaults_preserve_context_and_abbreviate_inspector_label() -
     inspector = _handle(label=CONSOLE_RAIL_INSPECTOR_LABEL, side="right")
 
     assert context._display_label() == CONSOLE_RAIL_CONTEXT_LABEL
-    assert inspector._display_label() == "Inspect"
+    assert inspector._display_label() == "Inspect->"
 
 
 def test_vertical_generic_label_normalizes_whitespace_before_stacking() -> None:
@@ -215,7 +219,9 @@ def test_vertical_canonical_context_label_derives_visible_text_from_constant(
     monkeypatch,
 ) -> None:
     canonical_label = f"Orbit {GLYPH_COLLAPSED}"
-    monkeypatch.setattr(console_rail_handle, "CONSOLE_RAIL_CONTEXT_LABEL", canonical_label)
+    monkeypatch.setattr(
+        console_rail_handle, "CONSOLE_RAIL_CONTEXT_LABEL", canonical_label
+    )
     handle = _handle(label=canonical_label, vertical=True)
 
     assert handle._display_label() == "O\nr\nb\ni\nt"

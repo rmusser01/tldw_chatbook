@@ -3,6 +3,10 @@
 import pytest
 from textual.app import App
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 
@@ -13,7 +17,7 @@ async def test_base_app_screen_mounts_exactly_one_navigation_bar():
         def __init__(self, app_instance):
             super().__init__(app_instance, "home")
 
-    class HostApp(App):
+    class HostApp(ConsolidatedCSSApp):
         async def on_mount(self):
             await self.push_screen(TestScreen(self))
 

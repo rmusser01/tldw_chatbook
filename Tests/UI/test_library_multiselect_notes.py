@@ -2,6 +2,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button
 
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -28,6 +32,8 @@ def _fake(select_mode):
         _opened=[],
         _flushed=0,
         _library_notes_view="list",
+        # task-15790: production gained this in-flight guard; stale double.
+        _library_notes_mutation_in_flight=False,
     )
 
 
@@ -84,7 +90,7 @@ def _select_mode_notes_state(selected_count: int = 0) -> LibraryNotesListState:
     )
 
 
-class _NotesCanvasApp(App):
+class _NotesCanvasApp(ConsolidatedCSSApp):
     def __init__(self, selected_count: int = 0):
         super().__init__()
         self._selected_count = selected_count

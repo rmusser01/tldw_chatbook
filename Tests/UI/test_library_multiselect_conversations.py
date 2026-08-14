@@ -3,6 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from tldw_chatbook.UI.Screens.library_screen import (
@@ -106,7 +110,7 @@ def _select_mode_canvas_state() -> LibraryConversationsCanvasState:
     )
 
 
-class _ConversationsCanvasApp(App):
+class _ConversationsCanvasApp(ConsolidatedCSSApp):
     def compose(self):
         yield LibraryConversationsCanvas(
             canvas=_select_mode_canvas_state(), id="library-conversations-canvas"
@@ -128,7 +132,7 @@ async def test_canvas_select_mode_renders_action_row_and_disables_export():
         assert export_selected_btn.disabled is True
 
 
-class _ConversationsCanvasSelectedApp(App):
+class _ConversationsCanvasSelectedApp(ConsolidatedCSSApp):
     def compose(self):
         yield LibraryConversationsCanvas(
             canvas=dataclasses.replace(_select_mode_canvas_state(), selected_count=1),

@@ -13,6 +13,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
@@ -53,7 +57,7 @@ def _trash_state(**kwargs):
     return build_library_media_trash_state(records, **kwargs)
 
 
-class _TrashCanvasApp(App):
+class _TrashCanvasApp(ConsolidatedCSSApp):
     def __init__(self, state):
         super().__init__()
         self._state = state
@@ -332,7 +336,7 @@ async def test_media_list_toolbar_offers_trash_outside_select_mode():
         [{"id": "1", "title": "One", "type": "pdf"}]
     )
 
-    class _ListApp(App):
+    class _ListApp(ConsolidatedCSSApp):
         def __init__(self, state):
             super().__init__()
             self._state = state
@@ -386,7 +390,7 @@ async def test_confirm_copies_and_receipt_point_at_trash():
         delete_receipt_count=2,
     )
 
-    class _ConfirmApp(App):
+    class _ConfirmApp(ConsolidatedCSSApp):
         def __init__(self, state):
             super().__init__()
             self._state = state
@@ -415,7 +419,7 @@ async def test_confirm_copies_and_receipt_point_at_trash():
         )
         assert receipt == "✓ deleted · 2 items · in Trash"
 
-    class _ViewerApp(App):
+    class _ViewerApp(ConsolidatedCSSApp):
         def compose(self):
             yield LibraryMediaViewer(
                 build_library_media_viewer_state(

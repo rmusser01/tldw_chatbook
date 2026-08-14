@@ -13,6 +13,10 @@ from __future__ import annotations
 import pytest
 from textual.app import App
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.UI.Navigation.main_navigation import (
     MainNavigationBar,
     NavigateToScreen,
@@ -216,7 +220,7 @@ async def test_restore_active_reverts_optimistic_highlight():
     """Widget-level: restore_active undoes the click-time optimistic state so
     the destination is re-clickable and the highlight matches reality."""
 
-    class BarApp(App):
+    class BarApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="library")
 

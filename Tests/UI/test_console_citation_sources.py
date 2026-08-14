@@ -10,6 +10,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from rich.console import Console as RichConsole
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.screen import Screen
 from textual.widgets import Button, ListItem, ListView, Static
 
@@ -1030,7 +1034,7 @@ async def test_replacement_worker_includes_unchanged_entry_still_unresolved() ->
     ]
 
 
-class _MountedTranscriptHarness(App):
+class _MountedTranscriptHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
 
@@ -1220,7 +1224,7 @@ class _HydrationRepository:
         return self.hydration
 
 
-class _CitationHarnessApp(App):
+class _CitationHarnessApp(ConsolidatedCSSApp):
     def __init__(
         self,
         screen: ChatScreen,

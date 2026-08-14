@@ -11,6 +11,10 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App
 from textual.content import Content
 from textual.css.query import NoMatches
@@ -32,6 +36,7 @@ from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
@@ -1276,7 +1281,7 @@ class ConsoleNavigationHarness(ConsoleHarness):
         message.stop()
 
 
-class RestoredConsoleHarness(App[None]):
+class RestoredConsoleHarness(ConsolidatedCSSApp):
     """Mount a Console ChatScreen from a previously saved state.
 
     Args:
@@ -7090,18 +7095,21 @@ async def test_console_browser_selecting_default_persisted_row_switches_to_defau
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "task-15120: opening a global-scoped conversation leaves the workspace "
-        "SERVICE on ws-a while the store's workspace_context flips to 'global'. "
-        "This test could never reach that assertion while the click failed with "
-        "OutOfBounds; repairing the click exposed it. strict=True so a fix flips "
-        "this loudly instead of passing unnoticed."
-    ),
-)
 @pytest.mark.asyncio
-async def test_console_browser_selecting_global_persisted_row_preserves_active_workspace():
+async def test_console_browser_selecting_global_persisted_row_switches_context_to_global():
+    """task-15120 (owner ruling): the workspace context FOLLOWS the conversation.
+
+    A user keeps conversations open across multiple workspaces at once, and
+    selecting one switches the context to that conversation's workspace -- for
+    a global-scoped conversation, the global scope, on BOTH layers. The
+    registry's stable representation of "no explicit workspace" is the
+    built-in Default workspace (`ensure_default_workspace` floors every
+    context read to it -- capability-less by design), so a global
+    conversation lands the registry on Default while the store's context
+    reads "global". What can no longer happen is what task-15120 measured:
+    the PREVIOUS workspace (ws-a) staying active, its capabilities bleeding
+    into a global conversation.
+    """
     app = _build_test_app()
     _configure_native_ready_console(app)
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
@@ -7151,9 +7159,15 @@ async def test_console_browser_selecting_global_persisted_row_preserves_active_w
         )
 
         after = service.get_active_workspace()
-        assert after is not None
-        assert after.workspace_id == "ws-a"
-        assert store.workspace_context.active_workspace_id == "ws-a"
+        assert after is not None and after.workspace_id == DEFAULT_WORKSPACE_ID, (
+            "opening a global conversation must land the registry on the "
+            "capability-less Default workspace, not stay on "
+            f"{getattr(after, 'workspace_id', None)!r}"
+        )
+        assert (
+            store.workspace_context.active_workspace_id
+            == CONSOLE_GLOBAL_WORKSPACE_ID
+        )
         assert session.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
 
 

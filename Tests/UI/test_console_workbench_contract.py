@@ -2,6 +2,10 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Vertical
 from textual.widgets import Static
 
@@ -38,7 +42,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
 
 
-class ConsoleHarness(App):
+class ConsoleHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance
@@ -47,7 +51,7 @@ class ConsoleHarness(App):
         await self.push_screen(ChatScreen(self.app_instance))
 
 
-class ConsoleFooterHarness(App):
+class ConsoleFooterHarness(ConsolidatedCSSApp):
     """Composes an `AppFooterStatus` directly on the App's own default
     screen, exactly like `TldwCli._create_main_ui_widgets` does in the real
     app (id="app-footer-status"). Task-264: `ChatScreen` (via
@@ -68,7 +72,7 @@ class ConsoleFooterHarness(App):
         await self.push_screen(ChatScreen(self.app_instance))
 
 
-class EmptyTranscriptActionHarness(App):
+class EmptyTranscriptActionHarness(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.workbench_actions: list[str] = []
@@ -81,7 +85,7 @@ class EmptyTranscriptActionHarness(App):
         self.workbench_actions.append(event.action_id)
 
 
-class SetupModalActionHarness(App):
+class SetupModalActionHarness(ConsolidatedCSSApp):
     def __init__(self, state: ConsoleSetupCardState):
         super().__init__()
         self._state = state
@@ -1583,7 +1587,7 @@ async def test_console_header_inline_css_renders_single_row():
     from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
     from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 
-    class _HeaderApp(App[None]):
+    class _HeaderApp(ConsolidatedCSSApp):
         CSS_PATH = str(_BUNDLED_STYLESHEET)
         def compose(self) -> ComposeResult:
             yield DestinationHeader(
@@ -1614,7 +1618,7 @@ async def test_console_header_inline_subtitle_ellipsizes_when_narrow():
     from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
     from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 
-    class _NarrowHeaderApp(App[None]):
+    class _NarrowHeaderApp(ConsolidatedCSSApp):
         CSS_PATH = str(_BUNDLED_STYLESHEET)
         def compose(self) -> ComposeResult:
             yield DestinationHeader(
@@ -1656,7 +1660,7 @@ async def test_console_header_inline_subtitle_visible_in_compact_density():
     from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
     from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 
-    class _CompactHeaderApp(App[None]):
+    class _CompactHeaderApp(ConsolidatedCSSApp):
         CSS_PATH = str(_BUNDLED_STYLESHEET)
 
         def compose(self) -> ComposeResult:

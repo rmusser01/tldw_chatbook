@@ -17,6 +17,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from rich.cells import cell_len
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
@@ -187,7 +191,7 @@ def test_library_carries_forward_line_escapes_markup_in_titles():
 # --- task-2856: Library keyboard story --------------------------------------
 
 
-class _RowFocusHost(App):
+class _RowFocusHost(ConsolidatedCSSApp):
     """Mount a bare Vertical of mixed rows/non-row siblings.
 
     Mirrors the Skills list canvas's exact shape (``library_skills_canvas.py``
@@ -304,7 +308,7 @@ def _stub_library_search_history_cli_fallback(monkeypatch):
     )
 
 
-class LibraryHarness(App):
+class LibraryHarness(ConsolidatedCSSApp):
     """Mount a single LibraryScreen with the real app stylesheet."""
 
     CSS_PATH = str(
@@ -17215,7 +17219,7 @@ async def test_library_shell_ingest_type_group_panel_expand_survives_recompose(
         assert screen.query_one("#type-group-generic", Collapsible).collapsed is False
 
 
-class _IngestCanvasWidgetHost(App):
+class _IngestCanvasWidgetHost(ConsolidatedCSSApp):
     """Bare host for mounting ``LibraryIngestCanvas`` directly with a
     hand-built state -- used only to exercise the widget's markup-escaping
     in isolation, without a full Library screen."""

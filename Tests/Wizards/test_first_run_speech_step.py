@@ -19,6 +19,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from loguru import logger
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, RadioButton, Static
 
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
@@ -220,7 +224,7 @@ def _active_lookup(result):
     return lambda model, precision, *, service: result
 
 
-class _StepHost(App):
+class _StepHost(ConsolidatedCSSApp):
     def __init__(self, step):
         super().__init__()
         self._step = step

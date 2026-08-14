@@ -9,7 +9,7 @@ from textual.containers import Horizontal
 class SyncStatusWidget(Horizontal):
     """Bar showing current owner, last sync timestamps, and latest error."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     SyncStatusWidget {
         height: auto;
         padding: 1;

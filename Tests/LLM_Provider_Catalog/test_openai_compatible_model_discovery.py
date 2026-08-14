@@ -750,17 +750,24 @@ def test_openrouter_api_v1_path_maps_to_models():
     )
 
 
-def test_zai_paas_v4_path_maps_to_models():
-    assert (
-        supports_openai_compatible_model_discovery(
-            "zai", "https://api.z.ai/api/paas/v4"
-        )
-        is True
-    )
-    assert (
-        build_models_url("https://api.z.ai/api/paas/v4", "zai")
-        == "https://api.z.ai/api/paas/v4/models"
-    )
+@pytest.mark.parametrize(
+    ("provider", "base_url", "models_url"),
+    [
+        (
+            "moonshot",
+            "https://api.moonshot.ai/v1",
+            "https://api.moonshot.ai/v1/models",
+        ),
+        (
+            "zai",
+            "https://api.z.ai/api/paas/v4",
+            "https://api.z.ai/api/paas/v4/models",
+        ),
+    ],
+)
+def test_kimi_zai_hosted_paths_map_to_models(provider, base_url, models_url):
+    assert supports_openai_compatible_model_discovery(provider, base_url) is True
+    assert build_models_url(base_url, provider) == models_url
 
 
 def test_anthropic_uses_x_api_key_headers():

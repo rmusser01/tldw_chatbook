@@ -82,7 +82,6 @@ class VoiceProfileDialog(ModalScreen):
     
     .help-text {
         color: $text-muted;
-        font-size: 12;
     }
     """
 

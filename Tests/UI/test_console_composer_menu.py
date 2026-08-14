@@ -22,6 +22,10 @@ from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
     build_generate_image_command,
 )
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 
 @pytest.mark.unit
 def test_menu_lists_the_requested_actions_in_order():
@@ -393,7 +397,7 @@ async def test_menu_opens_from_the_composer_button_and_returns_an_action():
         ConsoleComposerMenuModal,
     )
 
-    class _Host(App):
+    class _Host(ConsolidatedCSSApp):
         pass
 
     received: list[str | None] = []
@@ -427,7 +431,7 @@ async def test_generate_image_modal_returns_the_composed_command():
         ConsoleGenerateImageModal,
     )
 
-    class _Host(App):
+    class _Host(ConsolidatedCSSApp):
         pass
 
     received: list[str | None] = []
@@ -1294,7 +1298,7 @@ async def test_menu_dismisses_on_backdrop_click_but_not_on_inside_click():
         ConsoleComposerMenuModal,
     )
 
-    class BackdropHost(App):
+    class BackdropHost(ConsolidatedCSSApp):
         pass
 
     received: list[str | None] = []

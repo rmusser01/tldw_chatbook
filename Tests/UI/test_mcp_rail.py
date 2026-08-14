@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Select, Static
 
 import tldw_chatbook
@@ -40,7 +44,7 @@ def _snap(
     )
 
 
-class RailApp(App):
+class RailApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.events: list[object] = []
@@ -110,7 +114,7 @@ async def test_rail_hides_scope_section_for_local_source():
         assert not list(app.query("#mcp-rail-scope"))
 
 
-class RailScopeMismatchApp(App):
+class RailScopeMismatchApp(ConsolidatedCSSApp):
     """Reproduces a restored legacy scope ('team') outside Phase 1's Personal-only options."""
 
     def compose(self) -> ComposeResult:
@@ -145,7 +149,7 @@ async def test_rail_clamps_scope_value_not_in_options_instead_of_crashing():
         assert ref_select.value is Select.BLANK
 
 
-class RailScopeRefMismatchApp(App):
+class RailScopeRefMismatchApp(ConsolidatedCSSApp):
     """Reproduces a restored scope-ref value absent from real (non-empty) scope-ref options."""
 
     def compose(self) -> ComposeResult:
@@ -171,7 +175,7 @@ async def test_rail_clamps_scope_ref_value_not_in_options_to_no_selection():
         assert ref_select.value is Select.NULL
 
 
-class EmptyRailApp(App):
+class EmptyRailApp(ConsolidatedCSSApp):
     """Zero configured servers (F-060: the rail needs an empty state)."""
 
     def compose(self) -> ComposeResult:
@@ -187,7 +191,7 @@ class EmptyRailApp(App):
         )
 
 
-class FreshInstallRailApp(App):
+class FreshInstallRailApp(ConsolidatedCSSApp):
     """task-2243: the fresh-install rail -- exactly one row, the off/opt-in
     built-in (task-2239's OFF_OPT_IN display state)."""
 
@@ -277,7 +281,7 @@ async def test_disabled_scope_ref_select_explains_why():
         assert "no scope entities" in ref_select.tooltip.lower()
 
 
-class RailAppWithBundledCSS(App):
+class RailAppWithBundledCSS(ConsolidatedCSSApp):
     """Mounts MCPRail under `#mcp-hub-rail` (the id the real MCP screen uses) and
     loads the actual bundled stylesheet, so `#mcp-hub-rail Button.mcp-rail-row.is-active`
     resolves exactly as it does in the live app.
@@ -312,7 +316,7 @@ async def test_rail_active_row_label_is_not_blank_with_bundled_css():
     The rail's own `#mcp-hub-rail Button.mcp-rail-row.is-active` rule used to
     only set `text-style: bold`, leaving the generic `.is-active` rule's
     `border: round $ds-action-focus` in effect. Button.mcp-rail-row is fixed
-    at height 1 (see MCPRail.DEFAULT_CSS); a round border needs at least 2
+    at height 1 (see MCPRail.BUNDLED_CSS); a round border needs at least 2
     lines to render, so it consumed the row's only line and the label's
     content area collapsed to height 0 -- the selected row rendered as a
     blank bordered box. The fix adds `border: none` to that rule (mirroring
@@ -444,7 +448,7 @@ async def test_rail_row_state_class_covers_the_ready_state_too():
         assert STATE_CSS_CLASSES[ReadinessState.READY] in ready_row.classes
 
 
-class AdaptiveCountRailApp(App):
+class AdaptiveCountRailApp(ConsolidatedCSSApp):
     """Two rows with very different label lengths -- used to prove A6's
     per-compose() adaptive pad width, not the old fixed 36-char budget."""
 
@@ -516,7 +520,7 @@ async def test_row_label_right_aligns_tool_count_at_adaptive_column():
     assert none_label[-3:] == "   "
 
 
-class AdaptiveCountWithMarkupCharsRailApp(App):
+class AdaptiveCountWithMarkupCharsRailApp(ConsolidatedCSSApp):
     """One row's label contains a Rich-markup-special character (`[`) --
     `escape_markup()` lengthens it by one char (`[test-server]` -> 13 raw,
     14 escaped). Review-fix regression guard for A6: `pad_width` must be
@@ -724,7 +728,7 @@ async def test_sync_state_recompose_releases_a_capture_that_lands_in_the_deferre
         assert selected, "rail row click produced no event -- clicks are still swallowed"
 
 
-class RailWithSiblingApp(App):
+class RailWithSiblingApp(ConsolidatedCSSApp):
     """MCPRail alongside a genuine sibling widget outside its subtree --
     mirrors the real MCP workbench layout, where the rail is only one part
     of a larger screen (see ``mcp_workbench.py``)."""

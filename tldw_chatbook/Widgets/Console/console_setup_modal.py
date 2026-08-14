@@ -106,7 +106,7 @@ class ConsoleSetupBackdrop(Static):
     # bare test harness (no app-level stylesheet loaded); the real Console
     # stylesheet's ``.console-setup-modal-backdrop-snow`` rule (width/height
     # 100%) takes precedence wherever it is loaded.
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleSetupBackdrop {
         width: 1fr;
         height: 1fr;

@@ -25,7 +25,7 @@ class PersonasCharacterCardWidget(Container):
 
     # Structure only: colors come from the app stylesheet ($ds-* tokens do not
     # resolve in bare-App harnesses, so DEFAULT_CSS must not reference them).
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasCharacterCardWidget {
         width: 100%;
         /* height: 100% fills the (scrollable) detail-stack viewport so the

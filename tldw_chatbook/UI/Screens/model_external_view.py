@@ -40,7 +40,7 @@ class ExternalModelView(Widget):
     class CancelRequested(Message):
         """Cancel the active operation when no configured row exists."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ExternalModelView {
         height: 100%;
     }

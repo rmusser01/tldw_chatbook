@@ -10,6 +10,10 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Input, Static, Switch
 
 from tldw_chatbook.Library.library_rag_state import (
@@ -32,7 +36,7 @@ from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
 async def test_run_returns_the_query_and_is_gated_on_non_blank_text():
     """Run is disabled while blank, enables on typing, and returns the query."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     received: list[ConsoleRagSettingsResult | None] = []
@@ -72,7 +76,7 @@ async def test_run_returns_the_query_and_is_gated_on_non_blank_text():
 async def test_prefilled_query_is_runnable_and_enter_submits():
     """A prefilled modal is one keypress from retrieval (Enter submits)."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     received: list[ConsoleRagSettingsResult | None] = []
@@ -102,7 +106,7 @@ async def test_prefilled_query_is_runnable_and_enter_submits():
 async def test_cancel_escape_and_backdrop_all_dismiss_without_changes():
     """Every no-action exit returns None; inside clicks keep it open."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     received: list[ConsoleRagSettingsResult | None] = []
@@ -137,7 +141,7 @@ async def test_auto_retrieve_switch_defaults_off_when_not_given_a_value():
     the modal never reads config itself, the caller does (see the
     ``chat_screen`` tests below) -- and the modal's own default is OFF."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     app = RagHost()
@@ -154,7 +158,7 @@ async def test_auto_retrieve_switch_defaults_off_when_not_given_a_value():
 async def test_auto_retrieve_switch_reflects_a_true_constructor_value():
     """When the caller passes the persisted "on" value, the Switch opens on."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     app = RagHost()
@@ -173,7 +177,7 @@ async def test_toggling_auto_retrieve_on_and_running_returns_the_flag_set():
     through in the dismiss result -- the caller (chat_screen) is the one
     that persists it to config."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     received: list[ConsoleRagSettingsResult | None] = []
@@ -207,7 +211,7 @@ async def test_leaving_auto_retrieve_untouched_returns_the_flag_unset():
     """Sanity companion: not touching the switch keeps the flag False in
     the result, matching the constructor default."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     received: list[ConsoleRagSettingsResult | None] = []
@@ -241,7 +245,7 @@ async def test_flipping_auto_retrieve_calls_back_immediately_once_per_toggle():
     before any dismiss -- so the caller can persist it right away. Opening
     the modal alone must not fire it."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     changes: list[bool] = []
@@ -270,7 +274,7 @@ async def test_invariant_a_flip_then_escape_keeps_the_toggle_persisted():
     not re-fire it or claw it back, even though it discards the query
     draft (dismiss result is None) exactly as before."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     changes: list[bool] = []
@@ -301,7 +305,7 @@ async def test_invariant_b_flip_then_run_persists_exactly_once():
     """Invariant (b): flip + Run -- the toggle callback fires exactly once
     (from the flip); Run/dismiss must not duplicate it."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     changes: list[bool] = []
@@ -341,7 +345,7 @@ async def test_invariant_c_run_without_touching_the_switch_never_calls_back():
     fires at all. Kills the old unconditional-write-on-every-dismiss
     behavior."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     changes: list[bool] = []
@@ -370,7 +374,7 @@ async def test_invariant_d_cancel_after_flip_still_discards_the_source_type_draf
     even though the auto-retrieve toggle, flipped in the same session,
     already persisted independently and survives the Cancel."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     changes: list[bool] = []
@@ -419,7 +423,7 @@ async def test_modal_shows_one_toggle_per_library_source_with_display_labels():
     vocabulary, with Library's display-cased labels -- the checked ones
     are exactly the current selection."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     app = RagHost()
@@ -459,7 +463,7 @@ async def test_every_source_toggle_fits_inside_the_modal_box():
     alone would have passed that.
     """
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     app = RagHost()
@@ -486,7 +490,7 @@ async def test_toggling_a_source_off_returns_the_reduced_source_types():
     ``source_types`` without media (the screen then sends exactly that to
     retrieval)."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     received: list[ConsoleRagSettingsResult | None] = []
@@ -525,7 +529,7 @@ async def test_cancel_discards_toggle_changes():
     """(c) modal half: toggles changed then cancelled return nothing at
     all, so the screen's stored scope cannot move."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     received: list[ConsoleRagSettingsResult | None] = []
@@ -571,7 +575,7 @@ async def test_run_is_gated_on_at_least_one_selected_source():
     the Run action is gated on a selection the same way it is gated on a
     non-blank query."""
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     app = RagHost()
@@ -604,7 +608,7 @@ async def test_modal_summary_line_and_readiness_card_share_one_builder():
     string for the same selection, and both track a toggle."""
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-    class RagHost(App):
+    class RagHost(ConsolidatedCSSApp):
         pass
 
     screen = ChatScreen.__new__(ChatScreen)

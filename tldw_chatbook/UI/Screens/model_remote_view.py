@@ -134,7 +134,7 @@ class RemoteView(Widget):
             self.service = service
             self.credential_resolver = credential_resolver
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     RemoteView {
         height: 100%;
     }

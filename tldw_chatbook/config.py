@@ -874,7 +874,10 @@ def normalize_provider_config_key(provider: object) -> str:
         A stripped, lowercase provider key with spaces and hyphens replaced by
         underscores.
     """
-    return str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+    normalized = (
+        str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+    )
+    return "zai" if normalized == "z.ai" else normalized
 
 
 class ProviderSettingsError(ValueError):
@@ -887,10 +890,10 @@ def provider_settings_for_key(
 ) -> Mapping[str, object]:
     """Return provider settings without mutating the loaded configuration.
 
-    QwenCloud historically accepted normalized alias table names. When an
-    exact canonical table is also present, alias fields remain fallbacks while
-    exact ``api_settings.qwencloud`` fields win regardless of insertion order.
-    Other providers retain the existing first-normalized-match behavior.
+    QwenCloud historically accepts normalized aliases with the exact table
+    taking precedence. Moonshot and Z.ai require one exact canonical table and
+    reject normalized duplicates. Other providers retain the existing
+    first-normalized-match behavior.
 
     Args:
         api_settings: Loaded ``api_settings`` value.
@@ -900,11 +903,26 @@ def provider_settings_for_key(
         The resolved provider settings, or an empty mapping when none exist.
 
     Raises:
-        ProviderSettingsError: If QwenCloud's authoritative table is present
-            but malformed, or its first normalized alias is malformed when no
-            canonical table exists.
+        ProviderSettingsError: If an authoritative table is malformed or a
+            strict provider has ambiguous normalized tables.
     """
     if not isinstance(api_settings, Mapping):
+        return {}
+
+    if provider_key in {"moonshot", "zai"}:
+        canonical_settings = api_settings.get(provider_key)
+        aliases = tuple(
+            configured_provider
+            for configured_provider in api_settings
+            if configured_provider != provider_key
+            and normalize_provider_config_key(configured_provider) == provider_key
+        )
+        if provider_key in api_settings:
+            if not isinstance(canonical_settings, Mapping) or aliases:
+                raise ProviderSettingsError(
+                    f"api_settings.{provider_key} must be one unambiguous configuration table."
+                )
+            return canonical_settings
         return {}
 
     if provider_key == "qwencloud":
@@ -2921,10 +2939,10 @@ Groq = ["gemma2-9b-it", "mmeta-llama/Llama-Guard-4-12B", "llama-3.3-70b-versatil
 Google = ["gemini-2.5-flash", "gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ]
 HuggingFace = ["openai/gpt-oss-120b", "meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",]
 MistralAI = ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502", "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411", "devstral-small-2505", "mistral-small-2503", ]
-Moonshot = ["kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview", "moonshot-v1-128k-vision-preview", "kimi-k2-0711-preview"]
+Moonshot = ["kimi-k3", "kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview", "moonshot-v1-128k-vision-preview", "kimi-k2-0711-preview"]
 OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001", "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b", "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ]
 QwenCloud = ["qwen3.8-max"]
-ZAI = ["glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v", "glm-4-32b-0414-128k"]
+ZAI = ["glm-5.2", "glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v", "glm-4-32b-0414-128k"]
 # Local Providers
 Llama_cpp = ["None"]
 koboldcpp = ["None"]
@@ -3073,7 +3091,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     [api_settings.moonshot]
     api_key_env_var = "MOONSHOT_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "kimi-latest"  # Latest Kimi model, or use moonshot-v1-auto for auto selection
+    model = "kimi-k3"
     temperature = 0.7
     top_p = 0.95 # Moonshot uses top_p (OpenAI compatible)
     max_tokens = 4096
@@ -3082,7 +3100,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     timeout = 90
     retries = 3
     retry_delay = 1.0
-    streaming = false
+    streaming = true
 
     [api_settings.qwencloud]
     api_mode = "responses"
@@ -3097,7 +3115,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     [api_settings.zai] # Matches key in [providers]
     api_key_env_var = "ZAI_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "glm-4.5"
+    model = "glm-5.2"
     temperature = 0.7
     top_p = 0.95
     max_tokens = 4096
@@ -3105,7 +3123,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     timeout = 90
     retries = 3
     retry_delay = 5
-    streaming = false
+    streaming = true
 
     # --- Local Providers ---
     # Local providers default to streaming = true so slow generations render

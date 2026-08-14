@@ -884,8 +884,112 @@ async def test_cloud_provider_default_endpoints_resolve(
         provider_catalog_loader=lambda: {list_key: ["placeholder-model"]},
         settings_loader=lambda: {},
         discovery_client=fake_client,
-        environ={},
+        environ={
+            "MOONSHOT_API_KEY": "test-moonshot-key",
+            "ZAI_API_KEY": "test-zai-key",
+        },
     )
     result = await service.discover_models(provider=list_key)
     assert result.status == "success"
     assert seen_urls == [expected_url]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "list_key", "model", "base_url", "env_var", "expected_base"),
+    [
+        (
+            "moonshot",
+            "Moonshot",
+            "kimi-k3",
+            "https://gateway.example/v1/chat/completions",
+            "TEAM_MOONSHOT_KEY",
+            "https://gateway.example/v1",
+        ),
+        (
+            "zai",
+            "ZAI",
+            "glm-5.2",
+            "https://gateway.example/api/paas/v4/chat/completions",
+            "TEAM_ZAI_KEY",
+            "https://gateway.example/api/paas/v4",
+        ),
+    ],
+)
+async def test_kimi_zai_discovery_reuses_exact_hosted_send_resolution(
+    provider, list_key, model, base_url, env_var, expected_base
+):
+    seen: list[dict] = []
+
+    async def fake_client(**kwargs):
+        seen.append(kwargs)
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint="fp",
+            status="success",
+            models=(),
+        )
+
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {list_key: [model]},
+        settings_loader=lambda: {
+            "providers": {list_key: [model]},
+            "api_settings": {
+                provider: {
+                    "api_key_env_var": env_var,
+                    "model": model,
+                    "api_base_url": base_url,
+                    "timeout": 12,
+                    "retries": 1,
+                    "retry_delay": 0,
+                    "streaming": True,
+                }
+            },
+        },
+        discovery_client=fake_client,
+        environ={env_var: "catalog-secret-canary"},
+    )
+
+    result = await service.discover_models(provider=list_key)
+
+    assert result.status == "success"
+    assert len(seen) == 1
+    assert seen[0]["endpoint"] == expected_base
+    assert seen[0]["api_key"] == "catalog-secret-canary"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "list_key", "model"),
+    [
+        ("moonshot", "Moonshot", "kimi-k3"),
+        ("zai", "ZAI", "glm-5.2"),
+    ],
+)
+async def test_kimi_zai_discovery_blocks_invalid_send_settings_before_client(
+    provider, list_key, model
+):
+    client = AsyncMock()
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {list_key: [model]},
+        settings_loader=lambda: {
+            "providers": {list_key: [model]},
+            "api_settings": {
+                provider: {
+                    "api_key": "catalog-secret-canary",
+                    "model": model,
+                    "timeout": True,
+                }
+            },
+        },
+        discovery_client=client,
+        environ={},
+    )
+
+    result = await service.discover_models(provider=list_key)
+
+    assert result.status == "error"
+    assert result.error is not None
+    assert result.error.kind == "invalid_provider_settings"
+    client.assert_not_awaited()

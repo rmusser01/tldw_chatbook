@@ -11,6 +11,10 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
@@ -18,7 +22,7 @@ from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORD
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 
-class _FooterHarness(App[None]):
+class _FooterHarness(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.footer = AppFooterStatus()
@@ -90,7 +94,7 @@ async def test_footer_clear_restores_globals() -> None:
         assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
 
 
-class _NavHarness(App[None]):
+class _NavHarness(ConsolidatedCSSApp):
     def __init__(self, active: str = "home"):
         super().__init__()
         self.active = active

@@ -134,7 +134,7 @@ class DictionaryDetachRequested(Message):
 class PersonasDictionaryDetailWidget(Vertical):
     """Entries + Settings tabs for one dictionary. Emits intents; owns no I/O."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasDictionaryDetailWidget {
         height: 1fr;
         min-height: 0;

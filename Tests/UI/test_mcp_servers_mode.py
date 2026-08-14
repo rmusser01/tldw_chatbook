@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, DataTable, Static
 
 import tldw_chatbook
@@ -49,7 +53,7 @@ def _snap(
     )
 
 
-class CanvasApp(App):
+class CanvasApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.events: list[object] = []
@@ -247,7 +251,7 @@ async def test_overview_summary_glyph_carries_worst_state_class_sentence_stays_n
 async def test_overview_callouts_are_left_aligned_with_bundled_css():
     """Button defaults BOTH `text-align` and `content-align` to center (see
     Textual's own Button.DEFAULT_CSS -- the exact lesson documented on
-    `Button.mcp-rail-row` in MCPRail.DEFAULT_CSS and covered by
+    `Button.mcp-rail-row` in MCPRail.BUNDLED_CSS and covered by
     test_mcp_rail.py's sibling test). `Button.mcp-callout` in
     _agentic_terminal.tcss must override both, or the one-line callout
     strips under the overview table render centered instead of flush-left.
@@ -1568,7 +1572,7 @@ async def test_overview_table_hugs_content_so_callouts_sit_close_below():
     whole overview pane no matter how few servers were configured -- on a
     120x40 canvas a 4-row table left `#mcp-overview-callouts` stranded near
     the bottom of the pane, dozens of rows below the table row it explains.
-    `height: auto; max-height: 70%;` (MCPServersMode.DEFAULT_CSS) makes the
+    `height: auto; max-height: 70%;` (MCPServersMode.BUNDLED_CSS) makes the
     table hug its own row count instead, so the callouts container renders
     directly under the table's last row.
     """
@@ -1618,7 +1622,7 @@ async def test_overview_table_hugs_content_so_callouts_sit_close_below():
 
 def test_servers_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
     """T7 (P3 UX batch) gave `#mcp-servers-table` `height: auto; max-height:
-    70%;` in `MCPServersMode.DEFAULT_CSS` alone -- no matching rule was ever
+    70%;` in `MCPServersMode.BUNDLED_CSS` alone -- no matching rule was ever
     added to the bundle-source component file (`_agentic_terminal.tcss`),
     unlike the established `#mcp-detail-builtin-toggles` / `#mcp-servers-
     form` / `#mcp-import-list` lockstep pairs there. Without a bundle-layer
@@ -1650,7 +1654,7 @@ def test_servers_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
         )
 
 
-class InspectorAppWithBundledCSS(App):
+class InspectorAppWithBundledCSS(ConsolidatedCSSApp):
     """Mounts `MCPInspector` alone with the real bundled stylesheet, so
     `#mcp-adv-scroll:focus` resolves exactly as it does in the live
     workbench. Mirrors `CanvasAppWithBundledCSS` above and

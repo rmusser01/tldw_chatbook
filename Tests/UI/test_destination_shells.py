@@ -10,6 +10,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -859,7 +863,7 @@ class StaticHomeActiveWorkAdapter:
         return HomeDashboardInput(active_work_items=self.items)
 
 
-class DestinationHarness(App):
+class DestinationHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance, route, seen_routes=None, restored_state=None):
         super().__init__()
         self.app_instance = app_instance
@@ -3123,7 +3127,7 @@ async def test_mcp_destination_test_tool_binding_opens_panel_for_selected_tool_e
         assert screen.query_one("#mcp-inspector-test-tool", Button).disabled is True
 
 
-class MCPFooterHarness(App):
+class MCPFooterHarness(ConsolidatedCSSApp):
     """Mirrors `test_console_workbench_contract.py`'s `ConsoleFooterHarness`
     for the MCP destination: composes an `AppFooterStatus` directly on the
     App's own default screen, exactly like `TldwCli._create_main_ui_widgets`
