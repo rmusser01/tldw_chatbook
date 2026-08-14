@@ -9110,6 +9110,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 return False
             prior_rows = self._loaded_items
             pane: ArticleListPane | None = None
+            prior_pane_authority = False
             if self._dom_is_live:
                 try:
                     pane = self.query_one(
@@ -9119,16 +9120,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     pass
             try:
                 if pane is not None:
+                    prior_pane_authority = pane.search_results_authoritative
+                    pane.search_results_authoritative = True
                     await pane.apply_page_items(
                         rows,
                         focus_first=explicit_page_change,
                     )
             except asyncio.CancelledError:
                 if pane is not None:
+                    pane.search_results_authoritative = prior_pane_authority
                     await pane.apply_page_items(prior_rows, focus_first=False)
                 raise
             except Exception:
                 if pane is not None:
+                    pane.search_results_authoritative = prior_pane_authority
                     await pane.apply_page_items(prior_rows, focus_first=False)
                 if not self._items_load_is_current(generation, target_key):
                     return False
@@ -9141,6 +9146,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
             if not self._items_load_is_current(generation, target_key):
                 if pane is not None:
+                    pane.search_results_authoritative = prior_pane_authority
                     await pane.apply_page_items(prior_rows, focus_first=False)
                 return False
 

@@ -721,6 +721,86 @@ async def test_content_only_backend_match_survives_authoritative_search_load():
 
 
 @pytest.mark.asyncio
+async def test_backend_search_is_authoritative_before_row_presentation(monkeypatch):
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(0, 1)
+
+    async with _open_screen(controller) as (screen, _pilot):
+        assert await screen._load_items() is True
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        original_apply = pane.apply_page_items
+        presentation_started = asyncio.Event()
+
+        async def assert_authoritative_before_apply(items, *, focus_first=False):
+            if str(items[0]["id"]) == "77":
+                assert pane.search_results_authoritative is True
+                presentation_started.set()
+            await original_apply(items, focus_first=focus_first)
+
+        monkeypatch.setattr(
+            pane, "apply_page_items", assert_authoritative_before_apply
+        )
+        result = _item(77)
+        result.pop("content")
+        controller.list_items.return_value = [result]
+        screen._items_search_query = "full-body-only-token"
+        screen._reset_items_paging_for_context(loading=True)
+
+        assert await screen._load_items() is True
+        assert presentation_started.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", ["cancel", "exception", "stale"])
+async def test_interrupted_search_presentation_restores_provisional_authority(
+    monkeypatch, interruption
+):
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(0, 1)
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items() is True
+        prior_rows = screen._loaded_items
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        original_apply = pane.apply_page_items
+        presentation_started = asyncio.Event()
+        release_presentation = asyncio.Event()
+
+        async def interrupt_target_apply(items, *, focus_first=False):
+            if str(items[0]["id"]) == "77":
+                assert pane.search_results_authoritative is True
+                presentation_started.set()
+                if interruption == "exception":
+                    await original_apply(items, focus_first=focus_first)
+                    raise RuntimeError("presentation failed")
+                await release_presentation.wait()
+            await original_apply(items, focus_first=focus_first)
+
+        monkeypatch.setattr(pane, "apply_page_items", interrupt_target_apply)
+        controller.list_items.return_value = [_item(77)]
+        screen._items_search_query = "new search"
+        screen._reset_items_paging_for_context(loading=True)
+        load = asyncio.create_task(screen._load_items())
+        await _wait_until(pilot, presentation_started.is_set)
+
+        if interruption == "cancel":
+            load.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await load
+        elif interruption == "stale":
+            screen._items_search_query = "newer search"
+            screen._reset_items_paging_for_context(loading=True)
+            release_presentation.set()
+            assert await load is False
+        else:
+            assert await load is False
+
+        assert screen._items_search_results_authoritative is False
+        assert pane.search_results_authoritative is False
+        assert pane.items is prior_rows
+
+
+@pytest.mark.asyncio
 async def test_older_context_result_cannot_paint_after_newer_result():
     controller = AsyncMock()
     controller.list_items.return_value = _items(0, 1)
