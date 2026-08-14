@@ -244,6 +244,10 @@ class SubscriptionsDB(BaseDB):
         """
         self._local = threading.local()
         self._read_only = read_only
+        # Only the monotonic complete state is retained. A false/incomplete
+        # probe is deliberately not cached: a background FTS backfill may
+        # make the same long-lived owner complete before its next search.
+        self._fts_items_complete: Optional[bool] = None
         super().__init__(db_path, client_id, initialize_schema=not read_only)
         if read_only:
             try:
@@ -2056,6 +2060,92 @@ class SubscriptionsDB(BaseDB):
         "s.name as subscription_name, s.type as subscription_type"
     )
 
+    #: Agent search adds source/date metadata and one bounded body window to
+    #: the existing list projection. Full ``content`` and ``extracted_data``
+    #: remain absent from ordinary multi-row queries.
+    _AGENT_LIST_ITEM_COLUMNS = (
+        _LIST_ITEM_COLUMNS
+        + ", i.effective_date, "
+        "s.source AS subscription_source, "
+        "s.is_active AS subscription_is_active, "
+        "s.is_paused AS subscription_is_paused, "
+        "s.created_at AS subscription_created_at, "
+        "s.updated_at AS subscription_updated_at, "
+        "s.last_checked AS subscription_last_checked, "
+        "s.last_successful_check AS subscription_last_successful_check"
+    )
+    _AGENT_SEARCH_PAGE_LIMIT = 50
+    _AGENT_MEMBERSHIP_SOURCE_LIMIT = 50
+    _AGENT_RESOLUTION_CANDIDATE_LIMIT = 20
+
+    @classmethod
+    def _agent_search_projection(
+        cls, search_terms: Sequence[str]
+    ) -> tuple[str, List[Any]]:
+        """Build the bounded list projection and its literal context binds.
+
+        The body window is centered on the first query term found beyond its
+        leading 1,000 characters. This includes a deep body match even when
+        an earlier AND term matched only the title or author. With no deep
+        body term, the ordinary leading preview is the useful bounded input.
+        """
+        deep_match_legs: List[str] = []
+        projection_params: List[Any] = []
+        for term in search_terms:
+            deep_match_legs.append(
+                "WHEN instr(lower(COALESCE(i.content, '')), lower(?)) > 1000 "
+                "THEN instr(lower(COALESCE(i.content, '')), lower(?)) - 1000"
+            )
+            projection_params.extend((term, term))
+        start_expression = (
+            f"CASE {' '.join(deep_match_legs)} ELSE 1 END"
+            if deep_match_legs
+            else "1"
+        )
+        return (
+            cls._AGENT_LIST_ITEM_COLUMNS
+            + f", substr(i.content, {start_expression}, 2000) "
+            "AS content_match_context",
+            projection_params,
+        )
+
+    def _subscription_items_fts_is_complete(self, conn: Any) -> bool:
+        """Whether every current item id has a real FTS docsize row.
+
+        An external-content FTS table can appear to contain all content rows
+        even when its index is only partially backfilled. The shadow docsize
+        table is the actual membership authority. An anti-join proves exact
+        coverage of item ids; table presence or equal counts cannot.
+
+        Only ``True`` is cached. Existing insert/update/delete triggers keep a
+        proven-complete index complete, while an incomplete legacy database is
+        rechecked on every later search so a background backfill can take
+        effect without reopening this owner.
+        """
+        if self._fts_items_complete is True:
+            return True
+        try:
+            row = conn.execute(
+                """
+                SELECT NOT EXISTS (
+                    SELECT 1
+                    FROM subscription_items i
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM subscription_items_fts_docsize d
+                        WHERE d.id = i.id
+                    )
+                    LIMIT 1
+                )
+                """
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        complete = bool(row and row[0])
+        if complete:
+            self._fts_items_complete = True
+        return complete
+
     def _search_items_rows(
         self,
         conn: Any,
@@ -2063,6 +2153,9 @@ class SubscriptionsDB(BaseDB):
         params: List[Any],
         search_terms: List[str],
         limit: int,
+        *,
+        select_columns: Optional[str] = None,
+        select_params: Sequence[Any] = (),
     ) -> List[Any]:
         """The `search` half of `get_new_items`: FTS5 MATCH, LIKE fallback.
 
@@ -2075,27 +2168,31 @@ class SubscriptionsDB(BaseDB):
         ``\\`` stay literal). Either way the caller gets rows; the search
         box must never raise into the reader.
         """
+        columns = select_columns or self._LIST_ITEM_COLUMNS
         match = " AND ".join(self._quote_fts5_term(term) for term in search_terms)
         fts_where = (
             f"{where_clause} AND subscription_items_fts MATCH ?"
             if where_clause
             else "WHERE subscription_items_fts MATCH ?"
         )
-        try:
-            return conn.execute(
-                f"""
-                SELECT {self._LIST_ITEM_COLUMNS}
-                FROM subscription_items i
-                JOIN subscription_items_fts ON subscription_items_fts.rowid = i.id
-                JOIN subscriptions s ON i.subscription_id = s.id
-                {fts_where}
-                ORDER BY i.effective_date DESC, i.id ASC
-                LIMIT ?
-                """,
-                tuple([*params, match, limit]),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            logger.debug("subscription_items_fts unavailable; falling back to LIKE search.")
+        if self._subscription_items_fts_is_complete(conn):
+            try:
+                return conn.execute(
+                    f"""
+                    SELECT {columns}
+                    FROM subscription_items i
+                    JOIN subscription_items_fts ON subscription_items_fts.rowid = i.id
+                    JOIN subscriptions s ON i.subscription_id = s.id
+                    {fts_where}
+                    ORDER BY i.effective_date DESC, i.id ASC
+                    LIMIT ?
+                    """,
+                    tuple([*select_params, *params, match, limit]),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                logger.debug(
+                    "subscription_items_fts unavailable; falling back to LIKE search."
+                )
         like_clauses: List[str] = []
         like_params: List[Any] = []
         for term in search_terms:
@@ -2113,15 +2210,285 @@ class SubscriptionsDB(BaseDB):
         )
         return conn.execute(
             f"""
-            SELECT {self._LIST_ITEM_COLUMNS}
+            SELECT {columns}
             FROM subscription_items i
             JOIN subscriptions s ON i.subscription_id = s.id
             {like_where}
             ORDER BY i.effective_date DESC, i.id ASC
             LIMIT ?
             """,
-            tuple([*params, *like_params, limit]),
+            tuple([*select_params, *params, *like_params, limit]),
         ).fetchall()
+
+    def search_items_for_agent(
+        self,
+        *,
+        query: Optional[str] = None,
+        subscription_id: Optional[int] = None,
+        watchlist_id: Optional[int] = None,
+        statuses: Optional[Sequence[str]] = None,
+        since: Optional[str] = None,
+        limit: int = 10,
+        snapshot_max_item_id: Optional[int] = None,
+        after_effective_date: Optional[str] = None,
+        after_item_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return one bounded, stable-keyset page for agent evidence.
+
+        This is a storage seam, not the public tool contract: validation,
+        canonical IDs, cursors, JSON packing, URL handling, and excerpt text
+        normalization belong to the tool service. Values are bound SQL
+        parameters and all multi-row body material stays capped at 2,000
+        characters.
+
+        The first page captures the current maximum item id. Later pages pass
+        that value back, admitting every pre-existing row (including one with
+        a future effective date) while excluding all later inserts. The
+        continuation key follows ``effective_date DESC, id ASC`` explicitly,
+        including the NULL-date sink.
+        """
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        if limit > self._AGENT_SEARCH_PAGE_LIMIT:
+            raise ValueError(
+                f"limit must be at most {self._AGENT_SEARCH_PAGE_LIMIT}"
+            )
+        if after_effective_date is not None and after_item_id is None:
+            raise ValueError("after_item_id is required with after_effective_date")
+
+        search_terms = query.split() if query and query.strip() else []
+        select_columns, select_params = self._agent_search_projection(search_terms)
+        predicates: List[str] = []
+        params: List[Any] = []
+        if subscription_id is not None:
+            predicates.append("i.subscription_id = ?")
+            params.append(subscription_id)
+        if watchlist_id is not None:
+            predicates.append(
+                "i.subscription_id IN ("
+                "SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ?"
+                ")"
+            )
+            params.append(watchlist_id)
+        if statuses is not None:
+            placeholders = ", ".join("?" for _ in statuses)
+            predicates.append(f"i.status IN ({placeholders})")
+            params.extend(statuses)
+        if since is not None:
+            predicates.append("i.effective_date >= datetime(?)")
+            params.append(since)
+
+        with self.transaction() as conn:
+            if snapshot_max_item_id is None:
+                high_water_row = conn.execute(
+                    "SELECT COALESCE(MAX(id), 0) FROM subscription_items"
+                ).fetchone()
+                snapshot_max_item_id = int(high_water_row[0])
+            predicates.append("i.id <= ?")
+            params.append(snapshot_max_item_id)
+
+            if after_item_id is not None:
+                if after_effective_date is None:
+                    predicates.append("i.effective_date IS NULL AND i.id > ?")
+                    params.append(after_item_id)
+                else:
+                    predicates.append(
+                        "(i.effective_date IS NULL "
+                        "OR i.effective_date < datetime(?) "
+                        "OR (i.effective_date = datetime(?) AND i.id > ?))"
+                    )
+                    params.extend(
+                        [after_effective_date, after_effective_date, after_item_id]
+                    )
+
+            where_clause = f"WHERE {' AND '.join(predicates)}"
+            fetch_limit = limit + 1
+            if search_terms:
+                rows = self._search_items_rows(
+                    conn,
+                    where_clause,
+                    params,
+                    search_terms,
+                    fetch_limit,
+                    select_columns=select_columns,
+                    select_params=select_params,
+                )
+            else:
+                rows = conn.execute(
+                    f"""
+                    SELECT {select_columns}
+                    FROM subscription_items i
+                    JOIN subscriptions s ON i.subscription_id = s.id
+                    {where_clause}
+                    ORDER BY i.effective_date DESC, i.id ASC
+                    LIMIT ?
+                    """,
+                    tuple([*select_params, *params, fetch_limit]),
+                ).fetchall()
+
+        return {
+            "items": [dict(row) for row in rows[:limit]],
+            "has_more": len(rows) > limit,
+            "snapshot_max_item_id": snapshot_max_item_id,
+        }
+
+    def get_item_detail_for_agent(self, item_id: int) -> Optional[Dict[str, Any]]:
+        """Return one authoritative item joined to its source, or ``None``.
+
+        Unlike ``get_item_content``, a missing row is distinguishable from a
+        present row whose article body is NULL. The single-row detail path may
+        read full ``content``; raw ``extracted_data`` and source secrets are
+        intentionally not projected.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    i.id, i.subscription_id, i.url, i.title, i.content,
+                    i.published_date, i.author, i.status, i.diff_summary,
+                    i.change_percentage, i.change_type, i.canonical_url,
+                    i.created_at, i.updated_at, i.content_format,
+                    i.content_kind, i.effective_date,
+                    s.name AS subscription_name,
+                    s.type AS subscription_type,
+                    s.source AS subscription_source,
+                    s.is_active AS subscription_is_active,
+                    s.is_paused AS subscription_is_paused,
+                    s.created_at AS subscription_created_at,
+                    s.updated_at AS subscription_updated_at,
+                    s.last_checked AS subscription_last_checked,
+                    s.last_successful_check AS subscription_last_successful_check
+                FROM subscription_items i
+                JOIN subscriptions s ON s.id = i.subscription_id
+                WHERE i.id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    @classmethod
+    def _bounded_agent_candidate_limit(cls, limit: int) -> int:
+        """Clamp a caller's candidate request to the storage boundary."""
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        return min(limit, cls._AGENT_RESOLUTION_CANDIDATE_LIMIT)
+
+    def resolve_source_candidates(
+        self, query: Union[str, int], *, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Resolve an id, or exact name/URL first, else partial names.
+
+        Both legs query ``subscriptions`` directly, so candidates beyond the
+        legacy ``get_all_subscriptions``/UI scan ceiling remain reachable.
+        Ambiguity is retained for the tool service to report rather than being
+        silently resolved here.
+        """
+        bounded_limit = self._bounded_agent_candidate_limit(limit)
+        source_columns = (
+            "id, name, type, source, is_active, is_paused, created_at, "
+            "updated_at, last_checked, last_successful_check"
+        )
+        with self.transaction() as conn:
+            if isinstance(query, int):
+                row = conn.execute(
+                    f"SELECT {source_columns} FROM subscriptions WHERE id = ?",
+                    (query,),
+                ).fetchone()
+                return [dict(row)] if row is not None else []
+            rows = conn.execute(
+                f"""
+                SELECT {source_columns}
+                FROM subscriptions
+                WHERE lower(name) = lower(?) OR source = ?
+                ORDER BY lower(name), name, id
+                LIMIT ?
+                """,
+                (query, query, bounded_limit),
+            ).fetchall()
+            if not rows:
+                rows = conn.execute(
+                    f"""
+                    SELECT {source_columns}
+                    FROM subscriptions
+                    WHERE instr(lower(name), lower(?)) > 0
+                    ORDER BY lower(name), name, id
+                    LIMIT ?
+                    """,
+                    (query, bounded_limit),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def resolve_collection_candidates(
+        self, query: Union[str, int], *, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Resolve an id, or exact names first, else bounded partial names."""
+        bounded_limit = self._bounded_agent_candidate_limit(limit)
+        with self.transaction() as conn:
+            if isinstance(query, int):
+                row = conn.execute(
+                    "SELECT id, name FROM watchlists WHERE id = ?", (query,)
+                ).fetchone()
+                return [dict(row)] if row is not None else []
+            rows = conn.execute(
+                """
+                SELECT id, name
+                FROM watchlists
+                WHERE lower(name) = lower(?)
+                ORDER BY lower(name), name, id
+                LIMIT ?
+                """,
+                (query, bounded_limit),
+            ).fetchall()
+            if not rows:
+                rows = conn.execute(
+                    """
+                    SELECT id, name
+                    FROM watchlists
+                    WHERE instr(lower(name), lower(?)) > 0
+                    ORDER BY lower(name), name, id
+                    LIMIT ?
+                    """,
+                    (query, bounded_limit),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_source_collection_memberships(
+        self, subscription_ids: Sequence[int]
+    ) -> Dict[int, List[Dict[str, Any]]]:
+        """Load collection memberships for at most one result page.
+
+        The one ``IN`` query is deliberately capped at the public search page
+        ceiling, preventing both unbounded host parameters and an N+1 lookup
+        per source or item.
+        """
+        unique_ids = list(dict.fromkeys(subscription_ids))
+        if len(unique_ids) > self._AGENT_MEMBERSHIP_SOURCE_LIMIT:
+            raise ValueError(
+                "source collection memberships accepts at most "
+                f"{self._AGENT_MEMBERSHIP_SOURCE_LIMIT} source ids"
+            )
+        memberships: Dict[int, List[Dict[str, Any]]] = {
+            source_id: [] for source_id in unique_ids
+        }
+        if not unique_ids:
+            return memberships
+        placeholders = ", ".join("?" for _ in unique_ids)
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT ws.subscription_id, w.id, w.name
+                FROM watchlist_sources ws
+                JOIN watchlists w ON w.id = ws.watchlist_id
+                WHERE ws.subscription_id IN ({placeholders})
+                ORDER BY ws.subscription_id, lower(w.name), w.name, w.id
+                """,
+                tuple(unique_ids),
+            ).fetchall()
+        for row in rows:
+            memberships[int(row["subscription_id"])].append(
+                {"id": int(row["id"]), "name": row["name"]}
+            )
+        return memberships
 
     def get_new_items(
         self,
