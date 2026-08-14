@@ -1550,6 +1550,25 @@ def test_first_run_result_callback_rejects_objects_without_comparing_them():
     receiver.post_message.assert_not_called()
 
 
+def test_first_run_result_callback_keeps_same_tab_context_navigation():
+    from tldw_chatbook.app import TldwCli
+
+    receiver = SimpleNamespace(current_tab="settings", post_message=MagicMock())
+    TldwCli._handle_first_run_wizard_result(
+        receiver,
+        {
+            "completed": False,
+            "exit_route": "settings",
+            "exit_context": {"category": "providers-models"},
+        },
+    )
+
+    message = receiver.post_message.call_args.args[0]
+    assert isinstance(message, NavigateToScreen)
+    assert message.screen_name == "settings"
+    assert message.screen_context == {"category": "providers-models"}
+
+
 # ---------------------------------------------------------------------------
 # 3. Full track, skip every step -> app fully usable afterwards
 #    (checklist item 5).
@@ -1911,15 +1930,17 @@ async def test_mounted_wizard_generation_race_rolls_back_and_retries_intent(
             console = app.screen
             store, _user = await _seed_live_console_user_draft(console, pilot)
             console_before = _live_console_projection(console)
+            focus_before = app.focused
             console, wizard_screen = await _open_rerun_wizard_over_console(
                 app, pilot
             )
+            navigation_messages = _capture_navigation_messages(monkeypatch, app)
 
             _press(wizard_screen, "#setup-exit-chat")
             await _wait_until(pilot, lambda: len(staged) == 1)
             await _wait_until(
                 pilot,
-                lambda: app.screen is console
+                lambda: app.screen is not wizard_screen
                 and app.pending_handoffs.has_pending(
                     HandoffChannel.CONSOLE_FIRST_CHAT
                 ),
@@ -1927,7 +1948,12 @@ async def test_mounted_wizard_generation_race_rolls_back_and_retries_intent(
             await _wait_until(
                 pilot, lambda: _live_console_projection(console) == console_before
             )
+            await _wait_until(pilot, lambda: app.focused is focus_before)
+            await pilot.pause(0.2)
 
+            assert navigation_messages == []
+            assert app.screen is console
+            assert console.is_mounted
             assert all(
                 session.id != staged[0].session_id for session in store.sessions()
             )
@@ -2357,7 +2383,7 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
             # mounted (query finds it) a beat before Textual's own layout
             # pass gives it a non-empty region, so wait for the region too
             # -- otherwise this flakes with Region(0, 0, 0, 0).
-            def _speech_actions_laid_out() -> bool:
+            def _speech_actions_ready() -> bool:
                 install = app.screen.query("#setup-speech-install")
                 disk = app.screen.query("#setup-speech-use-from-disk")
                 return (
@@ -2365,9 +2391,10 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
                     and install[0].region.height > 0
                     and bool(disk)
                     and disk[0].region.height > 0
+                    and not disk[0].disabled
                 )
 
-            await _wait_until(pilot, _speech_actions_laid_out, timeout_seconds=10.0)
+            await _wait_until(pilot, _speech_actions_ready, timeout_seconds=10.0)
 
             install_button = app.screen.query_one("#setup-speech-install", Button)
             disk_button = app.screen.query_one("#setup-speech-use-from-disk", Button)

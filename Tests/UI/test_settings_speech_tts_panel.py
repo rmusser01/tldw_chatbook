@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import struct
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -959,9 +960,25 @@ async def test_first_settings_mount_probes_local_speech_dependencies_once(
         "find_spec",
         find_spec,
     )
-    import_probe = Mock(side_effect=AssertionError("must not import local runtimes"))
-    monkeypatch.setattr(lab_speech_status_module, "check_tts_deps", import_probe)
-    monkeypatch.setattr(lab_speech_status_module, "check_stt_deps", import_probe)
+    local_runtime_modules = {
+        "nemo_toolkit",
+        "faster_whisper",
+        "lightning_whisper_mlx",
+        "parakeet_mlx",
+        "kokoro_onnx",
+        "chatterbox",
+        "boson_multimodal",
+    }
+    imported_local_runtimes: list[str] = []
+    real_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name.split(".", 1)[0] in local_runtime_modules:
+            imported_local_runtimes.append(name)
+            raise AssertionError(f"must not import local runtime {name}")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
     app = _PanelHarness(state=_audio_cpp_state(saved_provider=True))
 
     async with app.run_test(size=(150, 80)):
@@ -982,7 +999,7 @@ async def test_first_settings_mount_probes_local_speech_dependencies_once(
         "chatterbox",
         "boson_multimodal",
     ]
-    import_probe.assert_not_called()
+    assert imported_local_runtimes == []
 
 
 @pytest.mark.asyncio

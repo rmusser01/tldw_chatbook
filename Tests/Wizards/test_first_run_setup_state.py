@@ -454,6 +454,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_SPEECH,
     STEP_SUMMARY,
     STEP_TOOLS,
+    STEP_VOICE,
     STEP_WELCOME,
     TRACK_FULL,
     TRACK_QUICK,
@@ -474,12 +475,12 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
 
 class TestActiveStepIds:
     def test_full_track_without_key(self):
-        """TASK-1301: the Speech step joins the FULL track only, right after
-        RAG (also model-setup-shaped) and before Tools."""
+        """Voice follows Model; Speech remains after RAG in the Full track."""
         assert active_step_ids(TRACK_FULL, key_entered=False) == (
             STEP_WELCOME,
             STEP_PROVIDER,
             STEP_MODEL,
+            STEP_VOICE,
             STEP_RAG,
             STEP_SPEECH,
             STEP_TOOLS,
@@ -496,6 +497,7 @@ class TestActiveStepIds:
             STEP_WELCOME,
             STEP_PROVIDER,
             STEP_MODEL,
+            STEP_VOICE,
             STEP_SUMMARY,
         )
 
@@ -504,6 +506,7 @@ class TestActiveStepIds:
             STEP_WELCOME,
             STEP_PROVIDER,
             STEP_MODEL,
+            STEP_VOICE,
             STEP_PROTECT,
             STEP_SUMMARY,
         )
