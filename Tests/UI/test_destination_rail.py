@@ -351,19 +351,22 @@ async def test_console_handle_abbreviates_right_side_badges(badge, expected):
 
 
 @pytest.mark.asyncio
-async def test_console_handle_abbreviates_the_inspector_label_on_the_right():
-    app = _HandleHarness(
-        _console_handle(side="right", label=CONSOLE_RAIL_INSPECTOR_LABEL)
-    )
-    async with app.run_test(size=(40, 12)) as pilot:
+async def test_console_handle_uses_inward_inspector_label_on_the_right():
+    handle = _console_handle(side="right", label=CONSOLE_RAIL_INSPECTOR_LABEL)
+    app = _StyledHandleHarness(frame_console_region(handle))
+    async with app.run_test(size=(40, 20)) as pilot:
         await pilot.pause()
         button = app.query_one("#console-rail-open", Button)
-        assert str(button.label) == "Inspect->"
+
+        assert str(button.label) == "<-Inspect"
         assert button.tooltip == "Open Inspector rail"
+        assert handle.region.width == 11
+        assert handle.content_region.width == 9
+        assert handle.content_region.contains_region(button.region)
 
 
 @pytest.mark.asyncio
-async def test_console_handle_uses_the_full_context_arrow_button_on_the_left():
+async def test_console_handle_uses_inward_context_label_on_the_left():
     handle = _console_handle(side="left", label=CONSOLE_RAIL_CONTEXT_LABEL)
     app = _StyledHandleHarness(frame_console_region(handle))
 
@@ -371,12 +374,11 @@ async def test_console_handle_uses_the_full_context_arrow_button_on_the_left():
         await pilot.pause()
         button = app.query_one("#console-rail-open", Button)
 
-        assert str(button.label) == "Context--->"
+        assert str(button.label) == "Context->"
         assert button.tooltip == "Open Context rail"
         assert handle.region.width == 13
         assert handle.content_region.width == 11
-        assert button.region.x >= handle.content_region.x
-        assert button.region.right <= handle.content_region.right
+        assert handle.content_region.contains_region(button.region)
 
 
 @pytest.mark.asyncio

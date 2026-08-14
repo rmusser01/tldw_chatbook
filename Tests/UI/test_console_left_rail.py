@@ -18,6 +18,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 import pytest
+from textual.containers import Horizontal
+from textual.widgets import Button
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -76,12 +78,44 @@ async def _click_rail_toggle(pilot, section_id: str) -> None:
     mirrors what a real user scrolling the rail before clicking would do;
     it does not change what gets clicked or what handles the click.
     """
-    toggle = pilot.app.screen.query_one(
-        f"#console-rail-section-toggle-{section_id}"
-    )
+    toggle = pilot.app.screen.query_one(f"#console-rail-section-toggle-{section_id}")
     toggle.scroll_visible(animate=False)
     await pilot.pause(0.2)
     await pilot.click(f"#console-rail-section-toggle-{section_id}")
+
+
+@pytest.mark.asyncio
+async def test_context_header_is_one_full_width_collapse_button() -> None:
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        button = screen.query_one("#console-context-rail-collapse", Button)
+        header = button.parent
+
+        assert isinstance(header, Horizontal)
+        assert list(header.children) == [button]
+        assert not screen.query("#console-context-rail-title")
+        assert str(button.label) == "<---------|Context"
+        assert button.tooltip == "Collapse Console context rail"
+        assert header.content_region.contains_region(button.region)
+        assert button.region.width == header.content_region.width
+        assert header.region.height == 1
+        assert button.region.height == 1
+        assert button.styles.text_align == "right"
+        assert button.styles.content_align_horizontal == "right"
+
+
+@pytest.mark.asyncio
+async def test_clicking_context_header_title_end_collapses_the_rail() -> None:
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        button = screen.query_one("#console-context-rail-collapse", Button)
+        assert str(button.label) == "<---------|Context"
+        title_end = (button.region.width - 2, 0)
+
+        assert await pilot.click(button, offset=title_end)
+        await pilot.pause(0.2)
+        assert screen.query_one("#console-left-rail").display is False
+        assert screen.query_one("#console-context-rail-handle").display is True
 
 
 @pytest.mark.asyncio
@@ -183,13 +217,9 @@ async def test_context_section_bodies_do_not_mix_their_controls():
         assert list(workspace_body.query("#console-active-workspace"))
         assert list(workspace_body.query("#console-change-workspace"))
         assert not list(workspace_body.query("#console-active-scope"))
-        assert not list(
-            workspace_body.query("#console-workspace-conversation-search")
-        )
+        assert not list(workspace_body.query("#console-workspace-conversation-search"))
 
-        assert list(
-            conversations_body.query("#console-workspace-conversation-search")
-        )
+        assert list(conversations_body.query("#console-workspace-conversation-search"))
         assert list(conversations_body.query("#console-workspace-conversations"))
         assert not list(conversations_body.query("#console-active-workspace"))
         assert not list(conversations_body.query("#console-active-scope"))
