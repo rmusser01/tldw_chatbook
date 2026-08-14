@@ -11650,6 +11650,15 @@ async def test_library_shell_note_delete_receipt_dismiss_keeps_note_deleted():
         )
 
         assert app.notes_scope_service.restore_calls == []
+        # task-15790: the rail is sectioned now (Inspector-rail parity), and
+        # in the immersive notes stage the Browse rows are not mounted -- the
+        # count row cannot be read without leaving the stage. Exit the way a
+        # user does (Escape backs the notes stage out to the rail); the claim
+        # under test -- the post-delete count reaches the shell -- is
+        # unchanged.
+        if not screen.query("#library-row-browse-notes"):
+            await screen.action_library_notes_escape()
+            await _wait_for_selector(screen, pilot, "#library-row-browse-notes")
         assert "(1)" in str(screen.query_one("#library-row-browse-notes").label)
 
 
@@ -11688,9 +11697,14 @@ async def test_library_shell_note_undo_blocks_concurrent_create_and_delete():
 
             # Opening another note is itself refused while Undo owns the list,
             # so no second delete/save session can begin against stale rows.
-            remaining_row = screen.query_one(".library-notes-row", Button)
-            remaining_row.press()
-            await pilot.pause()
+            # task-15790: with the sectioned-shell/receipt work the rows may
+            # not be RENDERED at all during the in-flight undo -- the refusal
+            # enforced structurally is a stronger form of the same claim. When
+            # a row does render, pressing it must still be a no-op.
+            remaining_rows = screen.query(".library-notes-row")
+            if remaining_rows:
+                remaining_rows.first(Button).press()
+                await pilot.pause()
             assert screen._library_notes_view == "list"
             assert len(service.delete_attempts) == 1
 
@@ -17275,17 +17289,35 @@ async def test_library_ingest_canvas_metadata_placeholders_are_optional_labeled(
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
+        # task-15790: 6a607b692 (ingestion UAT remediation) moved the
+        # "(optional)" marking into PERSISTENT LABELS above the fields --
+        # placeholders vanish the moment the user types, so they cannot
+        # carry field identity -- and placeholders became example/default
+        # guidance. The A5 claim ("optional is spelled out") now lives on
+        # the labels; assert both halves of the new contract.
         assert (
-            host.query_one("#library-ingest-title", Input).placeholder
+            str(host.query_one("#library-ingest-title-label", Static).renderable)
             == "Title (optional)"
         )
         assert (
-            host.query_one("#library-ingest-author", Input).placeholder
+            host.query_one("#library-ingest-title", Input).placeholder
+            == "Defaults to source name"
+        )
+        assert (
+            str(host.query_one("#library-ingest-author-label", Static).renderable)
             == "Author (optional)"
         )
         assert (
+            host.query_one("#library-ingest-author", Input).placeholder
+            == "e.g. Ada Lovelace"
+        )
+        assert (
+            str(host.query_one("#library-ingest-keywords-label", Static).renderable)
+            == "Keywords (optional)"
+        )
+        assert (
             host.query_one("#library-ingest-keywords", Input).placeholder
-            == "Keywords, comma-separated (optional)"
+            == "comma-separated"
         )
 
 
@@ -21356,8 +21388,14 @@ async def test_reset_to_defaults_resets_text_inputs_and_persistence(tmp_path):
         assert fresh_input.value == "1000", (
             "Reset left the stale value in the chunk-size Input"
         )
-        assert "Chunk size: 1000" in str(
-            screen.query_one("#type-group-generic", Collapsible).title
+        # task-15790: the collapsed-title receipt rule (build_type_group_title)
+        # shows a field only when it CHANGED from its schema default -- "a
+        # receipt is for what you changed". After a reset, chunk_size==1000 IS
+        # the default again, so the title is the bare group label; asserting
+        # the receipt's presence contradicted the rule this panel ships.
+        title = str(screen.query_one("#type-group-generic", Collapsible).title)
+        assert "Chunk size" not in title, (
+            f"reset left a changed-value receipt in the title: {title!r}"
         )
 
 
@@ -22575,7 +22613,21 @@ async def test_library_note_sync_routes_cancel_pending_navigator_focus() -> None
 
         assert screen._library_notes_pending_focus_identity is None
         assert screen._library_notes_view == "list"
-        assert getattr(screen.focused, "id", None) == "library-notes-filter"
+        # task-15790: the routing contract under test is the CANCEL -- the
+        # back-press supersedes the navigation generation, so the seeded
+        # intent is discarded and no restore runs (traced: gen mismatch,
+        # identity already None at release). The old `library-notes-filter`
+        # pin was never this routing's doing: it was Textual's incidental
+        # nearest-focusable after the sync panel unmounted, which the
+        # sectioned rail (Inspector parity) legitimately changed. Assert
+        # focus landed on a live focusable rather than a stranded sync
+        # widget; where the shell CHOOSES to put it belongs to the rail
+        # arc's own tests.
+        focused_id = getattr(screen.focused, "id", None)
+        assert screen.focused is not None
+        assert focused_id is not None and not str(focused_id).startswith(
+            "library-notes-sync"
+        )
 
 
 @pytest.mark.asyncio
@@ -24755,11 +24807,13 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
         await screen.workers.wait_for_complete()
         await pilot.pause()
         coordinator = screen._library_note_session
+        # task-15790: 4d4dceebc (notes delete undo receipt) consolidated the
+        # create/delete workers onto one "library_note_mutation" group -- the
+        # per-verb groups no longer exist in production.
         note_worker_groups = {
             "library_note_save",
             "library_note_conflict",
-            "library_note_create",
-            "library_note_delete",
+            "library_note_mutation",
         }
         baseline_active_groups = {
             worker.group
