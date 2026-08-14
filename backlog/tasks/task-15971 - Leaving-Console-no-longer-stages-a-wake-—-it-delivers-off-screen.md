@@ -55,6 +55,22 @@ immediately (that IS the auto-wake invariant; staging existed only because
 the screen used to die on nav-away). The original ACs below pinned the
 superseded staging behaviour and are replaced.
 
+**Rationale correction, 2026-08-14 (task-16300). The ruling and every AC
+below stand; the reason given for them was wrong.** "The screen used to
+die on nav-away" reads as though it stopped doing so by design. It did
+not: `App.switch_screen` pops only the TOP of the screen stack, so a
+navigation issued while a modal sat above Chat replaced the MODAL and
+left Chat resident — a violation of the invariant `app.py`'s
+`_create_navigation_screen` documents, not a lifecycle change. Screens
+die on nav-away again now (task-16300). Off-view delivery remains
+intended for the reason that never depended on residency: **a supervisor
+must act on its children's results immediately** (spec §3 invariant 5).
+The off-view cases that reach it — a modal covering Console, a different
+session tab active — are exactly the ones the live pass verified, and
+ACs #1–#3 are unchanged by the fix. What the fix does change is AC #4's
+neighbourhood: genuinely-unmounted staging now covers navigating away
+from Console as well as restart/first boot.
+
 <!-- AC:BEGIN -->
 - [x] #1 A wake turn that completes while its conversation is not the visible/active one leaves the FLEET_UNSEEN mark set (via the named seam), so the ◈ badge points at the delivered result
 - [x] #2 A mounted-but-undisplayed Console screen's sync tick does not view-clear the mark (viewing means DISPLAYED; a resident hidden screen must not count as "in Console")
@@ -84,7 +100,11 @@ view-clear is gated on _console_screen_displayed(), so a resident hidden
 screen's tick can no longer consume the mark while the user is elsewhere (the
 harness-diagnosed mechanism behind the live 'no mark ever' evidence — a
 modal-atop-Chat navigation pops the modal and leaves Chat resident; filed as
-task-16210). Genuinely-unmounted staging (restart/first-boot, task-15864)
+task-16210, refiled as task-16300 after an id collision and FIXED there on
+2026-08-14: navigation reduces the stack to its content screen first, so the
+resident hidden screen is no longer reachable — see the rationale correction
+above; this task's mechanism is unaffected, and the displayed-gate now guards
+the modal-covers-Console case rather than the leak). Genuinely-unmounted staging (restart/first-boot, task-15864)
 untouched — suites green unmodified; no pre-existing test pinned the superseded
 mounted-but-hidden staging, so none needed updating. Tests: Tests/Chat/
 test_console_fleet_wake_view_mark.py (4) + the 15971 half of Tests/UI/

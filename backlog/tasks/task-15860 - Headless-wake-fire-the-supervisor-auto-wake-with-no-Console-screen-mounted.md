@@ -53,13 +53,23 @@ gap this task owns is therefore restart / first boot — the window before
 the first Console open, where no controller has ever existed — plus any
 nav path that truly unmounts the Chat screen (the plain nav path still
 does: `on_unmount` → `controller.shutdown()`). The description above
-predates that ruling; scope accordingly. Also note: whether the
-resident-screen state itself (the modal-atop-Chat stack leak) is a nav
-bug to fix or the intended residency model is the coordinator's open
-call — see task-16210 (filed by the wake-integrity arc with the harness
-repro); if it is fixed toward always-unmount, the staged-wake path grows
-back to covering every nav-away and this task's ACs cover more ground
-again.
+predates that ruling; scope accordingly.
+
+**Correction 2026-08-14 (task-16300) — the narrowing above is REVERSED.**
+The state that narrowed it (a Chat screen resident after nav-away) was a
+screen-stack leak, not a residency model: `App.switch_screen` pops only
+the top of the stack, so a navigation under a pushed screen replaced the
+MODAL and left Chat running behind the new screen, against the invariant
+`app.py`'s `_create_navigation_screen` documents. It is fixed —
+navigation now reduces the stack to its content screen first, so leaving
+Console unmounts it and shuts the controller down on every path. **The
+open coordinator call recorded here is therefore closed toward
+always-unmount, and the staged-wake path grows back to covering every
+nav-away**: this task's ACs cover restart, first boot, AND ordinary
+navigation away from Console again. The 15971 off-view ruling is
+unaffected — it applies to a Console that is mounted but not looked at (a
+modal covering it, a different session tab active), which never depended
+on residency.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
