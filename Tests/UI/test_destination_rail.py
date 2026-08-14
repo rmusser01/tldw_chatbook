@@ -9,7 +9,10 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
 import tldw_chatbook
-from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_INSPECTOR_LABEL
+from tldw_chatbook.Chat.console_rail_state import (
+    CONSOLE_RAIL_CONTEXT_LABEL,
+    CONSOLE_RAIL_INSPECTOR_LABEL,
+)
 from tldw_chatbook.UI.Console_Modules.frame import frame_console_region
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 from tldw_chatbook.Widgets.destination_rail import (
@@ -357,6 +360,23 @@ async def test_console_handle_abbreviates_the_inspector_label_on_the_right():
         button = app.query_one("#console-rail-open", Button)
         assert str(button.label) == "Inspect->"
         assert button.tooltip == "Open Inspector rail"
+
+
+@pytest.mark.asyncio
+async def test_console_handle_uses_the_full_context_arrow_button_on_the_left():
+    handle = _console_handle(side="left", label=CONSOLE_RAIL_CONTEXT_LABEL)
+    app = _StyledHandleHarness(frame_console_region(handle))
+
+    async with app.run_test(size=(40, 20)) as pilot:
+        await pilot.pause()
+        button = app.query_one("#console-rail-open", Button)
+
+        assert str(button.label) == "Context--->"
+        assert button.tooltip == "Open Context rail"
+        assert handle.region.width == 13
+        assert handle.content_region.width == 11
+        assert button.region.x >= handle.content_region.x
+        assert button.region.right <= handle.content_region.right
 
 
 @pytest.mark.asyncio

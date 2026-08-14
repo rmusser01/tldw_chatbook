@@ -304,6 +304,74 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
             _assert_svg_healthy(svg)
 
 
+@pytest.mark.parametrize("size", ((130, 34), (140, 42), (160, 45)))
+@pytest.mark.asyncio
+async def test_task_16001_console_collapsed_context_button_visual_sweep(
+    size: tuple[int, int],
+) -> None:
+    app = _build_test_app(configured_default="home")
+    _mark_console_onboarding_complete(app)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=size) as pilot:
+            _configure_native_ready_console(app)
+            await _open_console(app, pilot)
+
+            if app.screen.query_one("#console-left-rail").display:
+                await pilot.click("#console-context-rail-collapse")
+
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.screen.query_one("#console-context-rail-handle").display
+                    and app.screen.query_one(
+                        "#console-context-rail-handle"
+                    ).region.width
+                    > 0
+                ),
+                context=f"collapsed Context handle at {size}",
+            )
+            await pilot.pause(0.5)
+
+            screen = app.screen
+            workspace = screen.query_one("#console-workspace-grid")
+            context_handle = screen.query_one("#console-context-rail-handle")
+            context_button = screen.query_one("#console-context-rail-open", Button)
+            inspector_button = screen.query_one("#console-inspector-rail-open", Button)
+            transcript = screen.query_one("#console-transcript-region")
+
+            assert context_handle.display is True
+            assert context_button.tooltip == "Open Context rail"
+            assert workspace.content_region.contains_region(context_handle.region), (
+                f"Context handle escapes workspace at {size}: "
+                f"handle={context_handle.region}, "
+                f"workspace={workspace.content_region}"
+            )
+            assert context_handle.region.width == 13
+            assert context_handle.content_region.width == 11
+            assert context_button.region.x >= context_handle.content_region.x
+            assert context_button.region.right <= context_handle.content_region.right
+            assert inspector_button.label == "Inspect->"
+            assert transcript.region.width > 0
+            painted_context_rows = [
+                row
+                for row in _painted_region_rows(screen, context_button.region)
+                if row.startswith("Context")
+            ]
+            assert painted_context_rows == ["Context--->"]
+            assert context_button.label == "Context--->"
+
+            svg = app.export_screenshot(
+                title=f"TASK-16001 Collapsed Context Button {size[0]}x{size[1]}",
+                simplify=True,
+            )
+            _assert_svg_healthy(svg)
+            rendered_text = "".join(
+                re.findall(r"<text[^>]*>([^<]*)</text>", unescape(svg))
+            ).replace("\xa0", " ")
+            assert "Context--->" in rendered_text
+
+
 @pytest.mark.asyncio
 async def test_console_workbench_standard_width_inspector_snapshot() -> None:
     app = _build_test_app()

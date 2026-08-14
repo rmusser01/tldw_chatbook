@@ -18,6 +18,7 @@ Both rails' manual toggles must always produce visible feedback.
 from __future__ import annotations
 
 import pytest
+from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -174,10 +175,19 @@ async def test_left_handle_opens_left_rail_at_90_cols():
 
         left_rail = console.query_one("#console-left-rail")
         left_handle = console.query_one("#console-context-rail-handle")
+        context_button = console.query_one("#console-context-rail-open", Button)
         assert left_rail.display is False
         assert left_handle.display is True
+        assert context_button.label == "Context--->"
+        assert context_button.tooltip == "Open Context rail"
 
-        await pilot.click("#console-context-rail-open")
+        assert await pilot.click(
+            "#console-context-rail-open",
+            offset=(
+                context_button.region.width - 1,
+                context_button.region.height // 2,
+            ),
+        )
         await pilot.pause(0.3)
 
         assert left_rail.display is True
