@@ -401,7 +401,11 @@ async def test_console_run_staging_fans_out_to_strip_and_truthful_chip() -> None
         assert "Source 1" in text
         assert "+1 more" in text
         sources_chip = screen.query_one("#console-sources-label", Static)
-        assert "Sources: 4 staged" in str(sources_chip.renderable)
+        # task-15791: 7dbbc401b (TASK-2154 UX remediation, owner-driven)
+        # shortened the chip to "Sources: N" -- the truthful COUNT is the
+        # contract; the " staged" suffix went with the same pass that
+        # renamed "RAG:" to "Library search:".
+        assert "Sources: 4" in str(sources_chip.renderable)
 
 
 @pytest.mark.asyncio
@@ -420,7 +424,7 @@ async def test_console_unstage_clears_context_strip_chip_and_tray() -> None:
         assert screen._pending_console_launch_context is None
         assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is False
         sources_chip = screen.query_one("#console-sources-label", Static)
-        assert "Sources: 0 staged" in str(sources_chip.renderable)
+        assert "Sources: 0" in str(sources_chip.renderable)
         tray = screen.query_one(
             "#console-staged-context-tray", ConsoleStagedContextTray
         )
@@ -476,7 +480,7 @@ async def test_console_library_u_key_handoff_populates_the_strip() -> None:
         assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is True
         assert "Source 1" in _strip_text(screen)
         sources_chip = screen.query_one("#console-sources-label", Static)
-        assert "Sources: 2 staged" in str(sources_chip.renderable)
+        assert "Sources: 2" in str(sources_chip.renderable)
 
 
 async def _submit(screen, draft: str):
@@ -517,7 +521,7 @@ async def test_console_send_consumes_staging_and_shows_the_sent_transient(
         assert screen._pending_console_launch_context is None
         assert "Evidence sent with this message · 2 sources" in _strip_text(screen)
         sources_chip = screen.query_one("#console-sources-label", Static)
-        assert "Sources: 0 staged" in str(sources_chip.renderable)
+        assert "Sources: 0" in str(sources_chip.renderable)
 
         # A SECOND send captures nothing: the evidence no longer rides along.
         await _submit(screen, "follow up")
@@ -552,7 +556,7 @@ async def test_console_sent_notice_counts_only_what_reached_the_model(
         screen._stage_console_library_rag_launch(launch)
         await pilot.pause()
         sources_chip = screen.query_one("#console-sources-label", Static)
-        assert "Sources: 4 staged" in str(sources_chip.renderable)
+        assert "Sources: 4" in str(sources_chip.renderable)
 
         await _submit(screen, "question")
         await pilot.pause()
@@ -700,7 +704,7 @@ async def test_console_rail_badge_and_chip_report_the_same_staged_count() -> Non
             "Source 4",
         ]
         sources_chip = screen.query_one("#console-sources-label", Static)
-        assert "Sources: 4 staged" in str(sources_chip.renderable)
+        assert "Sources: 4" in str(sources_chip.renderable)
 
 
 def test_workspace_context_falls_back_to_one_row_for_a_bundleless_launch() -> None:
@@ -900,6 +904,8 @@ async def test_console_send_blocked_reason_blocks_for_library_staged_zero_availa
 
         reason = screen._console_send_blocked_reason()
         assert (
-            "Console send blocked: Library Search/RAG has no available evidence"
+            # task-15791: same TASK-2154 rename as the chip ("RAG" -> "Library
+        # search") reached this blocked-reason copy.
+        "Console send blocked: Library search has no available evidence"
             in reason
         )
