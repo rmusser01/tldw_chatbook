@@ -1,10 +1,10 @@
 ---
 id: TASK-15676
 title: Harden Moonshot Kimi and Z.ai GLM as first-class hosted providers
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-12 20:45'
-updated_date: '2026-08-14 00:32'
+updated_date: '2026-08-14 00:45'
 labels: []
 dependencies:
   - TASK-15675
@@ -126,5 +126,10 @@ needed.
   provider-local owner for the Z.ai retry fallback and a concise docstring on
   the added transport regression. The same two exact regressions and complete
   touched modules passed (`2` and `124` tests); focused Ruff lint/format, Z.ai
-  MyPy/compileall, diff checks, and independent review were green.
+  MyPy/compileall, diff checks, and independent review were green. PR #1615's
+  delayed review caught and closed one circular-test assertion: the test now
+  independently pins the numeric `5.0` policy and the resolver's use of its
+  named owner. Mutating the owner to `1.0` failed the exact test before it was
+  restored; the restored test and static checks passed, and the review thread
+  was replied to and resolved.
 <!-- SECTION:NOTES:END -->

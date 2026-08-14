@@ -117,7 +117,7 @@ returns nothing, and asserts rather than exposing an exception contract.
 Run the two exact regressions, both complete touched test modules, Ruff
 lint/format, MyPy for Z.ai, compileall for Z.ai, and `git diff --check`.
 
-- [ ] **Step 4: Resolve PR #1614's two threads and merge the final follow-up**
+- [x] **Step 4: Resolve PR #1614's two threads and merge the final follow-up**
 
 Reply with the exact correction commit/PR, resolve both threads, verify there
 are no remaining actionable comments, and merge into `dev`.
