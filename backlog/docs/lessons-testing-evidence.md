@@ -3662,6 +3662,17 @@ after inspection. Do not assume every portable `stat_result` field has identical
 meaning across pathname and handle APIs. Preserve strict handle rechecks, test
 each stable identity field, and require native-platform evidence for filesystem
 security claims.
+
+**TASK-16230 follow-up (2026-08-14).** Host-independent Windows doubles initially
+made the one-time Notes import reader look race-safe while its real `CreateFileW`
+call still included `FILE_SHARE_WRITE`, and its pathname-to-handle check accepted
+`st_ino == 0`. Review showed that a same-size rewrite with restored mtime could be
+admitted, while a zero inode provides no promised file identity. The correction
+denies write/delete sharing on source-file handles, keeps the directory-pin share
+mode separate, and fails closed unless pathname and handle expose the same nonzero
+inode for the same device. Test the native share-mode arguments and unavailable-ID
+case explicitly; tuple equality alone does not prove the object stayed immutable.
+
 ## A whole-screen recompose is doing four things you did not ask it for
 
 **The trap.** Converting `refresh(recompose=True)` to a region-scoped rebuild looks
