@@ -1261,18 +1261,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             scope_button.tooltip = "Narrow RAG retrieval to items in this workspace"
             yield self._record_composed_node(scope_button)
 
-        if (
-            not self.state.change_workspace_enabled
-            and self.state.change_workspace_recovery
-        ):
-            yield self._record_composed_node(
-                self._static(
-                    self.state.change_workspace_recovery,
-                    id="console-change-workspace-recovery",
-                    classes="console-workspace-recovery",
-                )
-            )
-
         if self.state.recovery_copy:
             yield self._record_composed_node(
                 self._static(
