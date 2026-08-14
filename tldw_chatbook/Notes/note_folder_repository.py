@@ -11,6 +11,7 @@ from typing import NoReturn
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
+    FolderCapabilityError,
     FolderCollisionError,
     FolderConflictError,
     FolderMutationResult,
@@ -81,6 +82,7 @@ class LocalNoteFolderRepository:
                         raise FolderValidationError(
                             "Parent folder does not exist or is inactive."
                         )
+                    _require_manual_folder_subtree(cursor, parent_id)
                     parent_path = str(parent_row["path"])
                     parent_normalized_path = str(parent_row["normalized_path"])
 
@@ -294,6 +296,10 @@ class LocalNoteFolderRepository:
             else:
                 membership_rows = ()
 
+            managed_folder_rows = _load_managed_folder_rows(
+                cursor, (str(row["id"]) for row in folder_rows)
+            )
+
             total_memberships = (
                 int(membership_rows[0]["_total_memberships"])
                 if membership_rows
@@ -366,6 +372,14 @@ class LocalNoteFolderRepository:
         note_end = note_offset + len(notes)
         folder_end = folder_offset + len(folders)
         membership_end = membership_offset + len(memberships)
+        managed_folder_ids = tuple(
+            str(row["folder_id"]) for row in managed_folder_rows
+        )
+        inactive_managed_folder_ids = tuple(
+            str(row["folder_id"])
+            for row in managed_folder_rows
+            if not bool(row["owner_active"])
+        )
         return NoteFolderPage(
             folders=folders,
             memberships=memberships,
@@ -381,6 +395,13 @@ class LocalNoteFolderRepository:
                 membership_end
                 if memberships and membership_end < total_memberships
                 else None
+            ),
+            managed_folder_ids=managed_folder_ids,
+            inactive_managed_folder_ids=inactive_managed_folder_ids,
+            unfiled_note_ids=(
+                tuple(str(row["id"]) for row in note_rows)
+                if not expanded_ids
+                else ()
             ),
         )
 
@@ -408,6 +429,103 @@ class LocalNoteFolderRepository:
             _raise_mutation_operational_error(exc)
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
+
+    def load_tree_search(self, *, note_ids: Iterable[str]) -> NoteFolderPage:
+        """Load bounded search-note placements plus their complete breadcrumbs."""
+        normalized_note_ids = _normalize_ids(note_ids, field="note_ids")
+        if len(normalized_note_ids) > 250:
+            raise FolderValidationError("note_ids exceeds the allowed range.")
+        if not normalized_note_ids:
+            return NoteFolderPage(
+                folders=(),
+                memberships=(),
+                notes=(),
+                total_folders=0,
+                total_notes=0,
+                next_offset=None,
+            )
+        placeholders = _placeholders(len(normalized_note_ids))
+        with self.db.transaction() as cursor:
+            folder_rows = cursor.execute(
+                f"""
+                WITH RECURSIVE ancestors(folder_id) AS (
+                    SELECT DISTINCT m.folder_id
+                    FROM note_folder_memberships AS m
+                    JOIN note_folders AS f ON f.id = m.folder_id
+                    WHERE m.deleted = 0 AND f.deleted = 0
+                      AND m.note_id IN ({placeholders})
+                    UNION
+                    SELECT f.parent_id
+                    FROM note_folders AS f
+                    JOIN ancestors ON ancestors.folder_id = f.id
+                    WHERE f.parent_id IS NOT NULL AND f.deleted = 0
+                )
+                SELECT {_FOLDER_COLUMNS}
+                FROM note_folders
+                JOIN ancestors ON ancestors.folder_id = note_folders.id
+                WHERE note_folders.deleted = 0
+                ORDER BY note_folders.normalized_path, note_folders.id
+                LIMIT 501
+                """,
+                normalized_note_ids,
+            ).fetchall()
+            membership_rows = cursor.execute(
+                f"""
+                SELECT m.{_MEMBERSHIP_COLUMNS.replace(', ', ', m.')}
+                FROM note_folder_memberships AS m
+                JOIN note_folders AS f ON f.id = m.folder_id
+                WHERE m.deleted = 0 AND f.deleted = 0
+                  AND m.note_id IN ({placeholders})
+                ORDER BY f.normalized_path, m.note_id, m.ownership, m.owner_id, m.id
+                LIMIT 1001
+                """,
+                normalized_note_ids,
+            ).fetchall()
+            note_rows = cursor.execute(
+                f"""
+                SELECT n.{_NOTE_COLUMNS.replace(', ', ', n.')},
+                       NOT EXISTS (
+                           SELECT 1
+                           FROM note_folder_memberships AS m
+                           JOIN note_folders AS f ON f.id = m.folder_id
+                           WHERE m.note_id = n.id AND m.deleted = 0
+                             AND f.deleted = 0 AND m.owner_active = 1
+                       ) AS _unfiled
+                FROM notes AS n
+                WHERE n.deleted = 0 AND n.id IN ({placeholders})
+                ORDER BY n.title COLLATE NOCASE, n.id
+                """,
+                normalized_note_ids,
+            ).fetchall()
+            if len(folder_rows) > 500 or len(membership_rows) > 1000:
+                raise FolderValidationError(
+                    "Folder search has too many placements; narrow the search."
+                )
+            managed_folder_rows = _load_managed_folder_rows(
+                cursor, (str(row["id"]) for row in folder_rows)
+            )
+
+        managed_folder_ids = tuple(
+            str(row["folder_id"]) for row in managed_folder_rows
+        )
+        return NoteFolderPage(
+            folders=tuple(_folder_from_row(row) for row in folder_rows),
+            memberships=tuple(_membership_from_row(row) for row in membership_rows),
+            notes=tuple(_note_from_row(row) for row in note_rows),
+            total_folders=len(folder_rows),
+            total_notes=len(note_rows),
+            next_offset=None,
+            total_memberships=len(membership_rows),
+            managed_folder_ids=managed_folder_ids,
+            inactive_managed_folder_ids=tuple(
+                str(row["folder_id"])
+                for row in managed_folder_rows
+                if not bool(row["owner_active"])
+            ),
+            unfiled_note_ids=tuple(
+                str(row["id"]) for row in note_rows if bool(row["_unfiled"])
+            ),
+        )
 
     def detach_manual(
         self, *, folder_id: str, note_id: str, expected_version: int
@@ -739,6 +857,7 @@ class LocalNoteFolderRepository:
                     expected_version=expected_version,
                     deleted=False,
                 )
+                _require_manual_folder_subtree(cursor, folder_id)
                 subtree = _load_subtree(cursor, target, deleted=False)
                 parent = _load_destination_parent(
                     cursor, parent_id=target["parent_id"]
@@ -813,8 +932,11 @@ class LocalNoteFolderRepository:
                     expected_version=expected_version,
                     deleted=False,
                 )
+                _require_manual_folder_subtree(cursor, folder_id)
                 subtree = _load_subtree(cursor, target, deleted=False)
                 parent = _load_destination_parent(cursor, parent_id=parent_id)
+                if parent_id is not None:
+                    _require_manual_folder_subtree(cursor, parent_id)
                 if parent_id is not None and _has_ancestor(
                     cursor, folder_id=parent_id, ancestor_id=folder_id
                 ):
@@ -884,6 +1006,7 @@ class LocalNoteFolderRepository:
                     expected_version=expected_version,
                     deleted=False,
                 )
+                _require_manual_folder_subtree(cursor, folder_id)
                 subtree = _load_subtree(cursor, target, deleted=False)
                 now = _unique_deleted_folder_timestamp(cursor)
                 for row in subtree:
@@ -1459,6 +1582,70 @@ def _raise_wrapped_repository_error(exc: CharactersRAGDBError) -> NoReturn:
         if current.__context__ is not None:
             pending.append(current.__context__)
     raise exc
+
+
+def _require_manual_folder_subtree(
+    cursor: sqlite3.Cursor, folder_id: str
+) -> None:
+    """Reject direct folder mutations that would alter a sync-owned subtree."""
+    managed = cursor.execute(
+        """
+        WITH RECURSIVE subtree(folder_id) AS (
+            SELECT id FROM note_folders WHERE id = ? AND deleted = 0
+            UNION ALL
+            SELECT child.id
+            FROM note_folders AS child
+            JOIN subtree AS parent ON child.parent_id = parent.folder_id
+            WHERE child.deleted = 0
+        )
+        SELECT 1
+        FROM note_folder_memberships AS membership
+        JOIN subtree ON subtree.folder_id = membership.folder_id
+        WHERE membership.deleted = 0 AND membership.ownership = 'managed'
+        LIMIT 1
+        """,
+        (folder_id,),
+    ).fetchone()
+    if managed is not None:
+        raise FolderCapabilityError(
+            reason_code="sync_managed_folder",
+            user_message=(
+                "This folder is managed by sync; change its sync root instead."
+            ),
+        )
+
+
+def _load_managed_folder_rows(
+    cursor: sqlite3.Cursor, folder_ids: Iterable[str]
+) -> Sequence[sqlite3.Row]:
+    """Return every active managed folder and ancestor with aggregate owner state."""
+    normalized_folder_ids = _normalize_ids(folder_ids, field="folder_ids")
+    if not normalized_folder_ids:
+        return ()
+    placeholders = _placeholders(len(normalized_folder_ids))
+    return cursor.execute(
+        f"""
+        WITH RECURSIVE subtree(target_id, folder_id) AS (
+            SELECT id, id
+            FROM note_folders
+            WHERE deleted = 0 AND id IN ({placeholders})
+            UNION
+            SELECT subtree.target_id, child.id
+            FROM note_folders AS child
+            JOIN subtree ON child.parent_id = subtree.folder_id
+            WHERE child.deleted = 0
+        )
+        SELECT subtree.target_id AS folder_id,
+               MIN(membership.owner_active) AS owner_active
+        FROM subtree
+        JOIN note_folder_memberships AS membership
+          ON membership.folder_id = subtree.folder_id
+        WHERE membership.deleted = 0 AND membership.ownership = 'managed'
+        GROUP BY subtree.target_id
+        ORDER BY subtree.target_id
+        """,
+        normalized_folder_ids,
+    ).fetchall()
 
 
 def _folder_from_row(row: sqlite3.Row) -> NoteFolder:

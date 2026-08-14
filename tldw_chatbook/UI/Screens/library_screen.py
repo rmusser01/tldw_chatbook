@@ -314,6 +314,7 @@ from ...Notes.note_folder_models import (
     FolderConflictError,
     FolderPlacementId,
     FolderValidationError,
+    NoteFolderPage,
 )
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
@@ -2952,6 +2953,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sort_choices_visible: bool = False
         self._library_notes_filter: str = ""
         self._library_notes_filter_records: list | None = None
+        self._library_notes_tree_search_page: NoteFolderPage | None = None
         self._library_notes_notice: str = ""
         self._library_notes_tree_root_page = None
         self._library_notes_tree_expanded_page = None
@@ -9388,14 +9390,29 @@ class LibraryScreen(BaseAppScreen):
             delete_receipt=self._library_note_delete_receipt,
         )
         if self._library_notes_select_mode:
-            self._library_notes_row_selection.reconcile(r.note_id for r in state.rows)
+            projection = self._build_library_notes_tree_projection()
+            if projection is None:
+                visible_note_ids = (row.note_id for row in state.rows)
+            else:
+                visible_note_ids = (
+                    row.note_id
+                    for row in projection.rows
+                    if row.kind == "note" and row.note_id
+                )
+            self._library_notes_row_selection.reconcile(visible_note_ids)
         return state
 
     def _build_library_notes_tree_projection(
         self,
     ) -> LibraryNotesTreeProjection | None:
         """Build the visible tree only after its bounded root batch arrives."""
-        root_page = getattr(self, "_library_notes_tree_root_page", None)
+        filter_text = getattr(self, "_library_notes_filter", "")
+        search_page = getattr(self, "_library_notes_tree_search_page", None)
+        root_page = (
+            search_page
+            if filter_text.strip() and search_page is not None
+            else getattr(self, "_library_notes_tree_root_page", None)
+        )
         if root_page is None and getattr(self, "_library_notes_tree_error", ""):
             # Degraded hosts used by older/local-only integrations keep the
             # pre-folder flat browser available with an explicit warning.
@@ -9403,13 +9420,28 @@ class LibraryScreen(BaseAppScreen):
         return build_library_notes_tree(
             root_page=root_page or empty_note_folder_page(),
             expanded_page=(
-                getattr(self, "_library_notes_tree_expanded_page", None)
-                or empty_note_folder_page()
+                search_page
+                if filter_text.strip() and search_page is not None
+                else (
+                    getattr(self, "_library_notes_tree_expanded_page", None)
+                    or empty_note_folder_page()
+                )
             ),
             expanded_folder_ids=getattr(
                 self, "_library_notes_tree_expanded_ids", set()
             ),
-            filter_text=getattr(self, "_library_notes_filter", ""),
+            filter_text=filter_text,
+            matched_note_ids=(
+                frozenset(
+                    note_id
+                    for record in (
+                        getattr(self, "_library_notes_filter_records", None) or ()
+                    )
+                    if (note_id := self._source_record_id(record))
+                )
+                if filter_text.strip() and search_page is not None
+                else None
+            ),
         )
 
     def _request_library_notes_tree_refresh(self, *, refresh_root: bool) -> None:
@@ -14062,6 +14094,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_mode = "raw"
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
+        self._library_notes_tree_search_page = None
         self._reset_library_note_editor_state()
         self._reset_library_prompt_editor_state()
         self._reset_library_skills_import_state()
@@ -15228,6 +15261,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
+        self._library_notes_tree_search_page = None
         self._library_notes_sort_choices_visible = False
         self._library_notes_select_mode = False
         self._library_notes_row_selection.clear()
@@ -15245,10 +15279,13 @@ class LibraryScreen(BaseAppScreen):
         if submitted == self._library_notes_filter:
             return
         self._library_notes_filter = submitted
+        self._library_notes_filter_records = None
+        self._library_notes_tree_search_page = None
         self._library_notes_select_mode = False
         self._library_notes_row_selection.clear()
         if not submitted:
             self._library_notes_filter_records = None
+            self._library_notes_tree_search_page = None
             _sync_library_canvas(self, "notes")
             return
         self.run_worker(
@@ -15286,12 +15323,33 @@ class LibraryScreen(BaseAppScreen):
                 or "default_user",
                 isolate_in_worker=True,
             )
+            if query != self._library_notes_filter:
+                return
+            filtered_records = list(records or [])
+            load_search = getattr(service, "load_note_folder_search", None)
+            if callable(load_search):
+                search_page = await load_search(
+                    scope="local_note",
+                    note_ids=tuple(
+                        note_id
+                        for record in filtered_records
+                        if (note_id := self._source_record_id(record))
+                    ),
+                    user_id=getattr(self.app_instance, "notes_user_id", None)
+                    or "default_user",
+                )
+            else:
+                # Older/local integrations can still provide the original
+                # flat search capability. Keep their loaded tree available
+                # instead of replacing it with an artificial empty page.
+                search_page = None
         except Exception:
             logger.opt(exception=True).warning("Library notes filter failed.")
             return
         if query != self._library_notes_filter:
             return
-        self._library_notes_filter_records = list(records or [])
+        self._library_notes_filter_records = filtered_records
+        self._library_notes_tree_search_page = search_page
         _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
 
     def _focus_library_notes_filter_input(self) -> None:
@@ -26110,6 +26168,7 @@ class LibraryScreen(BaseAppScreen):
         # rendering as a ghost row until the filter box is resubmitted.
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
+        self._library_notes_tree_search_page = None
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -26539,6 +26598,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
                 self._library_notes_filter = ""
                 self._library_notes_filter_records = None
+                self._library_notes_tree_search_page = None
             if self.is_mounted:
                 self.refresh(recompose=True)
             return LibraryNoteCreateOutcome("created_not_opened", created_id)
@@ -26547,6 +26607,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
+        self._library_notes_tree_search_page = None
         self._selected_note_id = created_id
         self._library_notes_view = "editor"
         self._library_note_load_state = "loaded"
@@ -26655,6 +26716,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
+        self._library_notes_tree_search_page = None
         self._remove_library_note_source_record(admission.note_id)
         if self.is_mounted:
             self.refresh(recompose=True)

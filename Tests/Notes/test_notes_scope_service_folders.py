@@ -68,6 +68,10 @@ class RecordingFolderRepository:
         )
         return _empty_page()
 
+    def load_tree_search(self, *, note_ids: tuple[str, ...]) -> NoteFolderPage:
+        self._record(("load_tree_search", note_ids))
+        return _empty_page()
+
     def create_folder(self, *, name: str, parent_id: str | None) -> NoteFolder:
         self._record(("create_folder", name, parent_id))
         return _folder()
@@ -226,6 +230,12 @@ LOCAL_FOLDER_CASES = [
         },
         "notes.list.local",
         ("load_tree_batch", ("folder-1",), 100, 20, 40, 10, 60, 30),
+    ),
+    (
+        "load_note_folder_search",
+        {"note_ids": ("note-1", "note-2")},
+        "notes.list.local",
+        ("load_tree_search", ("note-1", "note-2")),
     ),
     (
         "create_note_folder",
@@ -501,6 +511,7 @@ async def test_local_folder_methods_fail_closed_when_repository_is_missing(
         == {
             "list_note_folder_children": "list",
             "load_note_folder_tree_batch": "list",
+            "load_note_folder_search": "list",
             "create_note_folder": "create",
             "rename_note_folder": "rename",
             "move_note_folder": "move",
@@ -552,6 +563,7 @@ async def test_unsupported_folder_scopes_fail_closed_without_backend_calls(
     operation = {
         "list_note_folder_children": "list",
         "load_note_folder_tree_batch": "list",
+        "load_note_folder_search": "list",
         "create_note_folder": "create",
         "rename_note_folder": "rename",
         "move_note_folder": "move",

@@ -39,6 +39,7 @@ def _page(
     next_folder_offset=None,
     next_note_offset=None,
     next_membership_offset=None,
+    unfiled_note_ids=None,
 ) -> NoteFolderPage:
     return NoteFolderPage(
         folders=tuple(folders),
@@ -50,6 +51,7 @@ def _page(
         next_folder_offset=next_folder_offset,
         total_memberships=len(memberships),
         next_membership_offset=next_membership_offset,
+        unfiled_note_ids=unfiled_note_ids,
     )
 
 
@@ -126,6 +128,118 @@ async def test_initial_tree_load_uses_one_bounded_bulk_call_and_no_note_detail()
     assert 1 <= call["membership_limit"] <= 1000
     assert fake._library_notes_tree_root_page.total_folders == 1
     assert fake._library_notes_tree_loading is False
+
+
+@pytest.mark.asyncio
+async def test_filter_loads_placements_for_matches_outside_expanded_branches(
+    monkeypatch,
+):
+    parent = _folder("work", None, "/Work")
+    child = _folder("project", "work", "/Work/Project")
+    search_page = _page(
+        folders=(parent, child),
+        memberships=(_membership("m1", "project", "n1"),),
+        notes=({"id": "n1", "title": "Hidden garden plan"},),
+        unfiled_note_ids=(),
+    )
+
+    class _SearchService:
+        def __init__(self) -> None:
+            self.note_ids = ()
+
+        async def search_notes(self, **kwargs):
+            return ({"id": "n1", "title": "Hidden garden plan"},)
+
+        async def load_note_folder_search(self, **kwargs):
+            self.note_ids = kwargs["note_ids"]
+            return search_page
+
+    service = _SearchService()
+    fake = _screen_fake(service)  # type: ignore[arg-type]
+    fake._library_notes_filter = "garden"
+    fake._library_notes_filter_records = None
+    fake._library_notes_tree_search_page = None
+    fake._source_record_id = lambda record: record["id"]
+    fake._focus_library_notes_filter_input = lambda: None
+    fake._run_library_service_call = lambda method, **kwargs: method(**kwargs)
+    fake._library_notes_tree_root_page = _page(folders=(parent,))
+    fake._library_notes_tree_expanded_page = _page()
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
+        lambda *args, **kwargs: None,
+    )
+
+    await LibraryScreen._run_library_notes_filter(fake, "garden")
+
+    assert service.note_ids == ("n1",)
+    projection = LibraryScreen._build_library_notes_tree_projection(fake)
+    assert projection is not None
+    assert [row.breadcrumb for row in projection.rows if row.kind == "note"] == [
+        "Work / Project / Hidden garden plan"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_filter_without_folder_search_capability_keeps_loaded_tree(
+    monkeypatch,
+):
+    class _LegacySearchService:
+        async def search_notes(self, **kwargs):
+            return ({"id": "n1", "title": "Garden plan"},)
+
+    service = _LegacySearchService()
+    fake = _screen_fake(service)  # type: ignore[arg-type]
+    fake._library_notes_filter = "garden"
+    fake._library_notes_filter_records = None
+    fake._library_notes_tree_search_page = None
+    fake._source_record_id = lambda record: record["id"]
+    fake._focus_library_notes_filter_input = lambda: None
+    fake._run_library_service_call = lambda method, **kwargs: method(**kwargs)
+    fake._library_notes_tree_root_page = _page(
+        notes=({"id": "n1", "title": "Garden plan"},),
+        unfiled_note_ids=("n1",),
+    )
+    fake._library_notes_tree_expanded_page = _page()
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
+        lambda *args, **kwargs: None,
+    )
+
+    await LibraryScreen._run_library_notes_filter(fake, "garden")
+
+    assert fake._library_notes_tree_search_page is None
+    projection = LibraryScreen._build_library_notes_tree_projection(fake)
+    assert projection is not None
+    assert [row.note_id for row in projection.rows if row.kind == "note"] == ["n1"]
+
+
+def test_submitting_new_filter_clears_previous_result_state():
+    worker_calls = []
+
+    async def _filter(query):
+        return None
+
+    def _run_worker(awaitable, **kwargs):
+        worker_calls.append(kwargs)
+        awaitable.close()
+
+    fake = SimpleNamespace(
+        _library_notes_filter="old",
+        _library_notes_filter_records=[{"id": "old-note"}],
+        _library_notes_tree_search_page=_page(notes=({"id": "old-note"},)),
+        _library_notes_select_mode=True,
+        _library_notes_row_selection=SimpleNamespace(clear=lambda: None),
+        _run_library_notes_filter=_filter,
+        _safe_text=lambda value, max_length: value[:max_length],
+        run_worker=_run_worker,
+    )
+    event = SimpleNamespace(value="new", stop=lambda: None)
+
+    LibraryScreen.handle_library_notes_filter(fake, event)
+
+    assert fake._library_notes_filter_records is None
+    assert fake._library_notes_tree_search_page is None
+    assert worker_calls == [{"exclusive": True, "group": "library_notes_filter"}]
 
 
 @pytest.mark.asyncio

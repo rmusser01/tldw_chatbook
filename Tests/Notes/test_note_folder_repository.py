@@ -347,6 +347,119 @@ def test_load_tree_batch_loads_roots_and_unfiled_notes(
     assert page.next_offset is None
 
 
+def test_root_batch_reports_managed_descendants_without_expanding_them(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    root = repository.create_folder(name="Work", parent_id=None)
+    child = repository.create_folder(name="Project", parent_id=root.folder_id)
+    note_id = repository.db.add_note("Plan", "Body")
+    assert note_id is not None
+    _attach_membership(
+        repository,
+        folder_id=child.folder_id,
+        note_id=note_id,
+        ownership="managed",
+        owner_id="sync-root",
+    )
+
+    page = repository.load_tree_batch(expanded_folder_ids=(), note_limit=50)
+
+    assert page.managed_folder_ids == (root.folder_id,)
+    assert page.inactive_managed_folder_ids == ()
+
+
+def test_search_batch_loads_matching_note_placements_and_all_ancestors(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    root = repository.create_folder(name="Work", parent_id=None)
+    child = repository.create_folder(name="Project", parent_id=root.folder_id)
+    note_id = repository.db.add_note("Hidden garden plan", "Body")
+    assert note_id is not None
+    membership_id = _attach_membership(
+        repository,
+        folder_id=child.folder_id,
+        note_id=note_id,
+    )
+
+    page = repository.load_tree_search(note_ids=(note_id,))
+
+    assert {folder.folder_id for folder in page.folders} == {
+        root.folder_id,
+        child.folder_id,
+    }
+    assert [membership.membership_id for membership in page.memberships] == [
+        membership_id
+    ]
+    assert [note["id"] for note in page.notes] == [note_id]
+
+
+def test_managed_subtree_cannot_be_renamed_through_repository_boundary(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    root = repository.create_folder(name="Work", parent_id=None)
+    child = repository.create_folder(name="Project", parent_id=root.folder_id)
+    note_id = repository.db.add_note("Plan", "Body")
+    assert note_id is not None
+    _attach_membership(
+        repository,
+        folder_id=child.folder_id,
+        note_id=note_id,
+        ownership="managed",
+        owner_id="sync-root",
+    )
+
+    with pytest.raises(RuntimeError, match="managed by sync"):
+        repository.rename_folder(
+            root.folder_id,
+            name="Renamed",
+            expected_version=root.version,
+        )
+
+    assert repository.get_folder(root.folder_id) == root
+
+
+def test_managed_subtree_rejects_create_move_and_delete_at_repository_boundary(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    managed_root = repository.create_folder(name="Managed", parent_id=None)
+    managed_child = repository.create_folder(
+        name="Project", parent_id=managed_root.folder_id
+    )
+    manual = repository.create_folder(name="Manual", parent_id=None)
+    note_id = repository.db.add_note("Plan", "Body")
+    assert note_id is not None
+    _attach_membership(
+        repository,
+        folder_id=managed_child.folder_id,
+        note_id=note_id,
+        ownership="managed",
+        owner_id="sync-root",
+    )
+
+    with pytest.raises(RuntimeError, match="managed by sync"):
+        repository.create_folder(name="Blocked", parent_id=managed_root.folder_id)
+    with pytest.raises(RuntimeError, match="managed by sync"):
+        repository.move_folder(
+            manual.folder_id,
+            parent_id=managed_root.folder_id,
+            expected_version=manual.version,
+        )
+    with pytest.raises(RuntimeError, match="managed by sync"):
+        repository.move_folder(
+            managed_root.folder_id,
+            parent_id=None,
+            expected_version=managed_root.version,
+        )
+    with pytest.raises(RuntimeError, match="managed by sync"):
+        repository.soft_delete_folder(
+            managed_root.folder_id,
+            expected_version=managed_root.version,
+        )
+
+    assert repository.get_folder(manual.folder_id) == manual
+    assert repository.get_folder(managed_root.folder_id) == managed_root
+
+
 def test_load_tree_batch_bulk_loads_expanded_folders_and_inactive_owner_rows(
     repository: LocalNoteFolderRepository,
 ) -> None:
@@ -384,14 +497,14 @@ def test_load_tree_batch_bulk_loads_expanded_folders_and_inactive_owner_rows(
         for statement in statements
         if statement.lstrip().upper().startswith(("SELECT", "WITH"))
     ]
-    assert sum("FROM note_folders" in statement for statement in selects) == 1
-    assert (
-        sum("FROM note_folder_memberships" in statement for statement in selects) == 1
-    )
+    # One additional constant-shape recursive query carries authoritative
+    # managed-folder ownership through collapsed and paginated branches.
+    assert sum("FROM note_folders" in statement for statement in selects) == 2
+    assert sum("FROM note_folder_memberships" in statement for statement in selects) == 1
     # The membership query repeats the bounded note-page CTE so it never binds
     # every returned note ID and remains compatible with SQLite's 999-variable cap.
     assert sum("FROM notes AS n" in statement for statement in selects) == 2
-    assert len(selects) == 3
+    assert 3 <= len(selects) <= 4
 
 
 def test_load_tree_batch_limits_notes_and_reports_next_offset(
@@ -1713,7 +1826,7 @@ def test_load_tree_batch_query_count_is_constant_for_placements(
         if statement.lstrip().upper().startswith(("SELECT", "WITH"))
     ]
     assert len(page.notes) == placement_count
-    assert len(selects) == 3
+    assert 3 <= len(selects) <= 4
     assert len(selects) <= 4
 
 

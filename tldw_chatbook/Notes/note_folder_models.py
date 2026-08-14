@@ -97,6 +97,9 @@ class NoteFolderPage:
     next_folder_offset: int | None = None
     total_memberships: int = 0
     next_membership_offset: int | None = None
+    managed_folder_ids: tuple[str, ...] = ()
+    inactive_managed_folder_ids: tuple[str, ...] = ()
+    unfiled_note_ids: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)

@@ -105,6 +105,46 @@ def test_notes_select_all_uses_unique_note_ids_visible_in_folder_tree():
     assert fake._library_notes_row_selection.ids == frozenset({"n1", "n2"})
 
 
+def test_tree_selection_is_not_pruned_by_unrelated_legacy_note_page(monkeypatch):
+    fake = _fake(True)
+    fake._library_notes_row_selection.select_all(["tree-note"])
+    fake._library_notes_filter_records = None
+    fake._local_source_records = {"notes": ({"id": "legacy-note"},)}
+    fake._local_source_counts = {"notes": 200}
+    fake._library_notes_sort = "newest"
+    fake._library_notes_filter = ""
+    fake._library_notes_sort_choices_visible = False
+    fake._library_notes_notice = ""
+    fake._library_notes_tree_error = ""
+    fake._library_notes_tree_loading = False
+    fake._library_note_delete_receipt = None
+    fake._library_notes_operation_for_active_region = lambda: None
+    fake._build_library_notes_tree_projection = lambda: LibraryNotesTreeProjection(
+        rows=(
+            LibraryNotesTreeRow(
+                "tree-placement",
+                "note",
+                "Tree note",
+                1,
+                note_id="tree-note",
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.build_library_notes_list_state",
+        lambda *args, **kwargs: LibraryNotesListState(
+            rows=(LibraryNotesListRow("legacy-note", "Legacy", "", False),),
+            header_copy="Notes (200)",
+            status_copy="",
+            empty_copy="",
+        ),
+    )
+
+    LibraryScreen._build_library_notes_state(fake)
+
+    assert fake._library_notes_row_selection.ids == frozenset({"tree-note"})
+
+
 # -- F-018: "Export selected" explains its disabled state -----------------
 
 

@@ -1,9 +1,10 @@
 ---
 id: TASK-15706
 title: Render and operate the Database Notes folder navigator
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-08-13 01:43'
+updated_date: '2026-08-14 00:49'
 labels:
   - notes
   - folders
@@ -35,17 +36,9 @@ Expose the local folder foundation in Library Database Notes as a lazy hierarchi
 - [x] #7 Rendered-frame, accessibility, host-routing, performance, and live restart tests pass without regressing the existing Database Note editor or File Notes.
 <!-- AC:END -->
 
-## Definition of Done
-
-- [x] Every acceptance criterion is checked with automated or recorded evidence.
-- [x] Focused tests, broader Library/Notes regressions, static analysis, and live TUI verification pass.
-- [x] Implementation Notes summarize the approach, files, trade-offs, and evidence.
-- [x] ADR-059 and ADR-060 are linked from the implementation plan and notes.
-- [x] A rendered-frame self-review confirms hierarchy and status remain legible at 60×20 without color.
-- [x] The task is set to Done only after all requirements above are complete.
-
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 ADR required: no
 ADR paths: `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`, `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
 Reason: this task implements the folder UI, placement identity, ownership, and service boundaries already accepted by those ADRs; it does not introduce a new architectural choice.
@@ -58,8 +51,17 @@ Reason: this task implements the folder UI, placement identity, ownership, and s
 6. Add widget, screen, host-routing, accessibility, compact 60x20 rendered-frame, performance, and regression tests for Database Notes and File Notes. Correct the pre-existing multiselect fixture only if the touched handler requires it.
 7. Run focused and broader Library/Notes suites, static checks, a real file-backed smoke path, and live TUI restart verification. Review the rendered 60x20 frame without color, document evidence and trade-offs, link ADR-059/060 in Implementation Notes, check every criterion, and only then set TASK-15706 to Done.
 
+### Review Follow-up Plan
+
+1. Rebase onto current `dev`, preserving both upstream and task-owned generated documentation changes.
+2. Add failing regressions for authoritative managed-folder protection, filtering collapsed/unloaded placements, and selection reconciliation beyond the legacy notes page.
+3. Fix each verified issue at its owning model/service/screen boundary, then rerun its focused tests before continuing.
+4. Update task evidence and the PR, request automated and independent review, resolve every actionable thread, and merge only after required checks pass.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented the local Database Notes folder navigator defined by
 [`ADR-059`](../../backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md)
 and
@@ -121,3 +123,14 @@ Trade-offs: this task intentionally exposes the already-landed local folder
 foundation. Server-backed folder capability and the import/sync setup flow stay
 behind their later work items; the UI degrades to the existing flat Database
 Notes list when the folder capability is unavailable.
+<!-- SECTION:NOTES:END -->
+
+## Definition of Done
+<!-- DOD:BEGIN -->
+- [x] #1 Every acceptance criterion is checked with automated or recorded evidence.
+- [x] #2 Focused tests, broader Library/Notes regressions, static analysis, and live TUI verification pass.
+- [x] #3 Implementation Notes summarize the approach, files, trade-offs, and evidence.
+- [x] #4 ADR-059 and ADR-060 are linked from the implementation plan and notes.
+- [x] #5 A rendered-frame self-review confirms hierarchy and status remain legible at 60×20 without color.
+- [ ] #6 The task is set to Done only after all requirements above are complete.
+<!-- DOD:END -->

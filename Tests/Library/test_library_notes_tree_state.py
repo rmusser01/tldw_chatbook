@@ -57,6 +57,7 @@ def _page(
     next_folder_offset=None,
     next_note_offset=None,
     next_membership_offset=None,
+    unfiled_note_ids=None,
 ) -> NoteFolderPage:
     return NoteFolderPage(
         folders=tuple(folders),
@@ -69,6 +70,7 @@ def _page(
         total_memberships=len(memberships)
         + (1 if next_membership_offset is not None else 0),
         next_membership_offset=next_membership_offset,
+        unfiled_note_ids=unfiled_note_ids,
     )
 
 
@@ -270,6 +272,29 @@ def test_managed_folder_protection_propagates_to_loaded_ancestors():
     assert project.semantic_status == "connected"
 
 
+def test_authoritative_managed_summary_protects_collapsed_folder():
+    folder = _folder("work", None, "/Work")
+    root = NoteFolderPage(
+        folders=(folder,),
+        memberships=(),
+        notes=(),
+        total_folders=1,
+        total_notes=0,
+        next_offset=None,
+        managed_folder_ids=("work",),
+    )
+
+    projection = build_library_notes_tree(
+        root_page=root,
+        expanded_page=_page(),
+        expanded_folder_ids=set(),
+    )
+
+    row = projection.row(FolderPlacementId.folder("work"))
+    assert row is not None and row.protected
+    assert row.status_text == "⇄ Sync managed"
+
+
 def test_projection_exposes_bounded_more_rows_for_each_cursor():
     projection = build_library_notes_tree(
         root_page=_page(
@@ -354,6 +379,90 @@ def test_filter_shows_every_matching_placement_with_its_breadcrumb():
         "Reading / Garden plan",
     ]
     assert all(row.label != "Unrelated" for row in projection.rows)
+
+
+def test_filter_temporarily_reveals_matches_under_collapsed_folders():
+    parent = _folder("work", None, "/Work")
+    child = _folder("project", "work", "/Work/Project")
+    search_page = _page(
+        folders=(parent, child),
+        memberships=(_membership("m1", "project", "n1"),),
+        notes=({"id": "n1", "title": "Hidden garden plan"},),
+        unfiled_note_ids=(),
+    )
+
+    projection = build_library_notes_tree(
+        root_page=search_page,
+        expanded_page=search_page,
+        expanded_folder_ids=set(),
+        filter_text="garden",
+    )
+
+    assert [row.breadcrumb for row in projection.rows if row.kind == "note"] == [
+        "Work / Project / Hidden garden plan"
+    ]
+    assert [row.label for row in projection.rows if row.kind == "folder"] == [
+        "Work",
+        "Project",
+    ]
+    assert all(row.expanded for row in projection.rows if row.kind == "folder")
+
+
+def test_search_result_identity_keeps_content_only_matches_visible():
+    folder = _folder("work", None, "/Work")
+    search_page = _page(
+        folders=(folder,),
+        memberships=(_membership("m1", "work", "n1"),),
+        notes=({"id": "n1", "title": "Weekly plan"},),
+        unfiled_note_ids=(),
+    )
+
+    projection = build_library_notes_tree(
+        root_page=search_page,
+        expanded_page=search_page,
+        expanded_folder_ids=set(),
+        filter_text="garden",
+        matched_note_ids=frozenset({"n1"}),
+    )
+
+    assert [row.breadcrumb for row in projection.rows if row.kind == "note"] == [
+        "Work / Weekly plan"
+    ]
+
+
+def test_search_keeps_inactive_managed_and_unfiled_breadcrumbs_distinct():
+    folder = _folder("work", None, "/Work")
+    page = NoteFolderPage(
+        folders=(folder,),
+        memberships=(
+            _membership(
+                "managed",
+                "work",
+                "n1",
+                ownership="managed",
+                owner_id="missing",
+                owner_active=False,
+            ),
+        ),
+        notes=({"id": "n1", "title": "Recovered"},),
+        total_folders=1,
+        total_notes=1,
+        next_offset=None,
+        unfiled_note_ids=("n1",),
+    )
+
+    projection = build_library_notes_tree(
+        root_page=page,
+        expanded_page=page,
+        expanded_folder_ids=set(),
+        filter_text="body-only match",
+        matched_note_ids=frozenset({"n1"}),
+    )
+
+    assert [row.breadcrumb for row in projection.rows if row.kind == "note"] == [
+        "Work / Recovered",
+        "Unfiled / Recovered",
+    ]
 
 
 def test_bounded_pages_merge_by_domain_identity_without_duplicates():

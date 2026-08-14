@@ -55,6 +55,30 @@ def merge_note_folder_pages(
         next_folder_offset=incoming.next_folder_offset,
         total_memberships=max(base.total_memberships, incoming.total_memberships),
         next_membership_offset=incoming.next_membership_offset,
+        managed_folder_ids=tuple(
+            sorted({*base.managed_folder_ids, *incoming.managed_folder_ids})
+        ),
+        inactive_managed_folder_ids=tuple(
+            sorted(
+                {
+                    *base.inactive_managed_folder_ids,
+                    *incoming.inactive_managed_folder_ids,
+                }
+            )
+        ),
+        unfiled_note_ids=(
+            tuple(
+                sorted(
+                    {
+                        *(base.unfiled_note_ids or ()),
+                        *(incoming.unfiled_note_ids or ()),
+                    }
+                )
+            )
+            if base.unfiled_note_ids is not None
+            or incoming.unfiled_note_ids is not None
+            else None
+        ),
     )
 
 
@@ -218,6 +242,7 @@ def build_library_notes_tree(
     expanded_page: NoteFolderPage,
     expanded_folder_ids: set[str] | frozenset[str],
     filter_text: str = "",
+    matched_note_ids: frozenset[str] | None = None,
 ) -> LibraryNotesTreeProjection:
     """Project bounded root/expanded batches into one lazy visible tree."""
     query = filter_text.strip().casefold()
@@ -235,7 +260,17 @@ def build_library_notes_tree(
     memberships_by_folder: dict[str, list[NoteFolderMembership]] = {}
     for membership in memberships:
         memberships_by_folder.setdefault(membership.folder_id, []).append(membership)
-    managed_folder_active: dict[str, bool] = {}
+    managed_ids = {
+        *root_page.managed_folder_ids,
+        *expanded_page.managed_folder_ids,
+    }
+    inactive_managed_ids = {
+        *root_page.inactive_managed_folder_ids,
+        *expanded_page.inactive_managed_folder_ids,
+    }
+    managed_folder_active: dict[str, bool] = {
+        folder_id: folder_id not in inactive_managed_ids for folder_id in managed_ids
+    }
     for membership in memberships:
         if membership.ownership != "managed":
             continue
@@ -264,8 +299,8 @@ def build_library_notes_tree(
 
     rows: list[LibraryNotesTreeRow] = []
 
-    def add_folder(folder: NoteFolder, depth: int) -> None:
-        expanded = folder.folder_id in expanded_folder_ids
+    def folder_rows(folder: NoteFolder, depth: int) -> list[LibraryNotesTreeRow]:
+        expanded = folder.folder_id in expanded_folder_ids or bool(query)
         protected = folder.folder_id in managed_folder_active
         owner_active = managed_folder_active.get(folder.folder_id, True)
         semantic_status: LibraryNotesTreeSemanticStatus = "normal"
@@ -276,27 +311,26 @@ def build_library_notes_tree(
         elif protected:
             semantic_status = "needs_attention"
             status_text = "! Needs owner review"
-        rows.append(
-            LibraryNotesTreeRow(
-                placement_id=FolderPlacementId.folder(folder.folder_id),
-                kind="folder",
-                label=folder.name,
-                depth=depth,
-                folder_id=folder.folder_id,
-                breadcrumb=folder.path.strip("/").replace("/", " / "),
-                ownership="managed" if protected else None,
-                owner_active=owner_active,
-                protected=protected,
-                semantic_status=semantic_status,
-                status_text=status_text,
-                expanded=expanded,
-                version=folder.version,
-            )
+        folder_row = LibraryNotesTreeRow(
+            placement_id=FolderPlacementId.folder(folder.folder_id),
+            kind="folder",
+            label=folder.name,
+            depth=depth,
+            folder_id=folder.folder_id,
+            breadcrumb=folder.path.strip("/").replace("/", " / "),
+            ownership="managed" if protected else None,
+            owner_active=owner_active,
+            protected=protected,
+            semantic_status=semantic_status,
+            status_text=status_text,
+            expanded=expanded,
+            version=folder.version,
         )
         if not expanded:
-            return
+            return [folder_row]
+        descendant_rows: list[LibraryNotesTreeRow] = []
         for child in children.get(folder.folder_id, ()):
-            add_folder(child, depth + 1)
+            descendant_rows.extend(folder_rows(child, depth + 1))
         for membership in memberships_by_folder.get(folder.folder_id, ()):
             note = notes.get(membership.note_id)
             if note is not None:
@@ -306,19 +340,40 @@ def build_library_notes_tree(
                     membership=membership,
                     depth=depth + 1,
                 )
-                if not query or query in note_row.breadcrumb.casefold():
-                    rows.append(note_row)
+                if not query or (
+                    membership.note_id in matched_note_ids
+                    if matched_note_ids is not None
+                    else query in note_row.breadcrumb.casefold()
+                ):
+                    descendant_rows.append(note_row)
+        folder_matches = (
+            matched_note_ids is None and query in folder_row.breadcrumb.casefold()
+        )
+        if query and not descendant_rows and not folder_matches:
+            return []
+        return [folder_row, *descendant_rows]
 
     for root in children.get(None, ()):
-        add_folder(root, 0)
+        rows.extend(folder_rows(root, 0))
 
+    unfiled_note_ids = (
+        {_record_id(note) for note in root_page.notes}
+        if root_page.unfiled_note_ids is None
+        else set(root_page.unfiled_note_ids)
+    )
     unfiled_notes = [
         note
         for note in sorted(
             root_page.notes,
             key=lambda note: (_record_title(note).casefold(), _record_id(note)),
         )
-        if not query or query in f"Unfiled / {_record_title(note)}".casefold()
+        if _record_id(note) in unfiled_note_ids
+        if not query
+        or (
+            _record_id(note) in matched_note_ids
+            if matched_note_ids is not None
+            else query in f"Unfiled / {_record_title(note)}".casefold()
+        )
     ]
     if unfiled_notes or root_page.next_offset is not None:
         rows.append(
