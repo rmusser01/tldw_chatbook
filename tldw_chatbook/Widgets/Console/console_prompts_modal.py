@@ -13,6 +13,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.events import DescendantFocus
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Checkbox, Static, TextArea
@@ -350,6 +351,17 @@ class ConsolePromptsModal(
         focused = self.app.focused
         widget_id = getattr(focused, "id", None)
         if widget_id:
+            self.state = self.state.remember_focus(self.state.mode, widget_id)
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        widget_id = event.widget.id
+        if not widget_id:
+            return
+        try:
+            body = self.query_one("#console-prompts-body", Vertical)
+        except NoMatches:
+            return
+        if body in event.widget.ancestors:
             self.state = self.state.remember_focus(self.state.mode, widget_id)
 
     def _focus_widget(self, widget_id: str | None) -> None:
@@ -1400,7 +1412,6 @@ class ConsolePromptsModal(
         guard = self.query_one("#console-prompts-dirty-guard", Vertical)
         if guard.display:
             return
-        self._remember_current_focus()
         guard.add_class("visible")
         guard.display = True
         self.call_after_refresh(self._focus_widget, "console-prompts-keep-editing")

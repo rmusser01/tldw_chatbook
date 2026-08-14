@@ -1263,6 +1263,41 @@ async def test_prompts_repeated_visible_close_preserves_guard_editor_focus(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["edit", "recipe"])
+@pytest.mark.parametrize("activation", ["click", "keyboard"])
+async def test_prompts_close_activation_restores_last_content_focus(
+    mode: str,
+    activation: str,
+) -> None:
+    backend = _PromptBackend()
+    app = _Harness(backend)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        editor = await _open_dirty_prompt_mode(modal, pilot, mode)
+        close = modal.query_one("#console-prompts-close", Button)
+        if activation == "click":
+            await pilot.click("#console-prompts-close")
+        else:
+            close.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+        await pilot.pause()
+
+        guard = modal.query_one("#console-prompts-dirty-guard")
+        assert guard.display is True
+        assert getattr(app.focused, "id", None) == "console-prompts-keep-editing"
+        assert app.results == []
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert guard.display is False
+        assert app.focused is editor
+        assert app.results == []
+
+
+@pytest.mark.asyncio
 async def test_prompts_expanded_select_descendant_owns_primary_click() -> None:
     backend = _PromptBackend()
     app = _Harness(backend)
