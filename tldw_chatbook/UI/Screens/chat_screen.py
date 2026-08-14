@@ -14975,8 +14975,11 @@ class ChatScreen(BaseAppScreen):
             wake.wire(app=self.app_instance)
             if wake.seed_from_marks():
                 wake.retry_soon()
-        except Exception:  # noqa: BLE001 -- a failed claim must never break a mount
-            logger.opt(exception=True).warning("console fleet wake mount-claim failed")
+        except Exception as exc:  # noqa: BLE001 -- a failed claim must never break a mount
+            logger.warning(
+                "console fleet wake mount-claim failed",
+                exception_type=type(exc).__name__,
+            )
 
     def _console_wake_user_priority(self, session_id: str) -> bool:
         """User-wins-ties probe for the auto-wake coordinator.
@@ -16746,8 +16749,11 @@ class ChatScreen(BaseAppScreen):
         )
         try:
             return bool(checker()) if callable(checker) else False
-        except Exception:  # noqa: BLE001 -- a timer predicate must never raise
-            logger.opt(exception=True).debug("fleet survivor check failed")
+        except Exception as exc:  # noqa: BLE001 -- a timer predicate must never raise
+            logger.debug(
+                "fleet survivor check failed",
+                exception_type=type(exc).__name__,
+            )
             return False
 
     def _maybe_start_console_fleet_survivor_tick(self) -> None:

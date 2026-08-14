@@ -226,9 +226,10 @@ class ConsoleImageController:
             prepared = await asyncio.to_thread(cache.prepare, cache_key, data)
             if prepared and self._screen.is_mounted:
                 await self._sync_native_console_chat_ui()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "remote transcript image fetch failed: {}", url
+        except Exception as exc:
+            logger.warning(
+                "remote transcript image fetch failed",
+                exception_type=type(exc).__name__,
             )
 
     def _build_generation_card_specs(
@@ -334,7 +335,8 @@ class ConsoleImageController:
             resolution = await gateway.resolve_for_send(selection)
         except Exception as exc:  # noqa: BLE001 - context composition is optional
             logger.debug(
-                f"generate-image: provider resolution for LLM context failed: {exc!r}"
+                "generate-image provider resolution for LLM context failed",
+                exception_type=type(exc).__name__,
             )
             return LLMContextOptions(
                 enabled=True,
@@ -1241,8 +1243,9 @@ class ConsoleImageController:
             if composer is not None and saved_draft:
                 composer.clear_draft()
                 composer.insert_text_as_paste(saved_draft)
-            logger.opt(exception=True).error(
-                f"Image generation batch raised for session {session.id}: {exc}"
+            logger.error(
+                "Image generation batch raised",
+                exception_type=type(exc).__name__,
             )
             await self._append_native_console_system_message(
                 f"Image generation failed: {exc}", session_id=session.id

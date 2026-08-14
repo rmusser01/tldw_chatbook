@@ -5231,8 +5231,8 @@ class TldwCli(
             # CSS was consolidated. Loud, because that is a build/packaging bug,
             # not a user-facing condition.
             loguru_logger.error(
-                f"Consolidated widget CSS missing from {css_dir}: read "
-                f"{len(sources)} of 2 sheets. Run css/build_css.py."
+                "Consolidated widget CSS incomplete: generated sheet count {}",
+                len(sources),
             )
         return sources + super()._get_default_css()
 
@@ -12249,7 +12249,7 @@ if __name__ == "__main__":
             # carrying BUNDLED_CSS -- has moved on since the last build.
             should_rebuild, reason = _generated_css_is_stale(package_root)
             if should_rebuild:
-                logging.info(f"Rebuilding CSS: {reason}")
+                logging.info("Generated CSS is stale during module entry; rebuilding")
 
             if should_rebuild and build_script_path.exists():
                 logging.info("Building modular CSS...")
@@ -12551,7 +12551,7 @@ def main_cli_runner():
             # carrying BUNDLED_CSS -- has moved on since the last build.
             should_rebuild, reason = _generated_css_is_stale(package_root)
             if should_rebuild:
-                logging.info(f"Rebuilding CSS: {reason}")
+                logging.info("Generated CSS is stale during CLI entry; rebuilding")
 
             if should_rebuild and build_script_path.exists():
                 logging.info("Building modular CSS...")

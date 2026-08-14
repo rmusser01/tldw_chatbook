@@ -26,8 +26,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/Agents/agent_service.py": {
+        "autowake_enabled is not boolean; using default": (),
         "child_max_wall_seconds is not numeric": (),
         "child_max_wall_seconds is not finite": (),
+        "on_child_settled consumer raised": ("type(exc).__name__",),
         "subagents_outlive_turn is not boolean": (),
         "sub-agents are outliving their turn": ("len(survivors)",),
     },
@@ -45,6 +47,13 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     },
     "tldw_chatbook/Chat/console_chat_controller.py": {
         "Console global user display-name accessor failed": ("type(exc).__name__",),
+        "fleet unsettled check failed for a session; treated as idle": (
+            "type(exc).__name__",
+        ),
+        "has_unsettled_children raised; recording re-attach source anyway": (
+            "type(exc).__name__",
+        ),
+        "fleet usage re-attach failed": ("type(exc).__name__",),
         "fleet survivor count failed for a session": (),
     },
     "tldw_chatbook/Chat/console_chat_store.py": {
@@ -69,9 +78,32 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Failed to flush Console roleplay context on first persist": (),
     },
     "tldw_chatbook/Chat/console_agent_bridge.py": {
+        "fleet drain consumer raised": ("type(exc).__name__",),
         "model-call loop did not stop": (),
         "could not open the post-turn window": (),
         "post-turn window failed": (),
+    },
+    "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": {
+        "Skipping malformed usage_json on message export": (),
+    },
+    "tldw_chatbook/Chat/console_fleet_attention.py": {
+        "fleet unseen revision bump failed": ("type(exc).__name__",),
+        "fleet unseen mark listing failed": ("type(exc).__name__",),
+        "fleet unseen mark clear failed": ("type(exc).__name__",),
+        "fleet unseen mark write failed": ("type(exc).__name__",),
+        "fleet completion announce failed": ("type(exc).__name__",),
+        "fleet toast title lookup failed": ("type(exc).__name__",),
+        "fleet toast session-title fallback failed": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/Chat/console_fleet_wake.py": {
+        "fleet wake drain intake failed": ("type(exc).__name__",),
+        "wake send gate raised; deferring": ("type(exc).__name__",),
+        "wake user-priority probe raised; deferring": ("type(exc).__name__",),
+        "wake delivery failed": ("type(exc).__name__",),
+        "wake delivery ledger stamp failed": ("type(exc).__name__",),
+        "wake mark listing failed": ("type(exc).__name__",),
+        "wake ledger read failed": ("type(exc).__name__",),
+        "wake session resolution failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/DB/ChaChaNotes_DB.py": {
         "Database error restoring a note": ("type(e).__name__",),
@@ -92,6 +124,10 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Saved metric baseline": ("len(metrics)",),
     },
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": {
+        "ran a fallback expression but names": (
+            "self._resolved_fts_match_construction()",
+            "FTS_MATCH_OR",
+        ),
         "has no FTS5-searchable": (),
         "Keyword search found": ("len(results)", "len(rankings)"),
         "Media keyword sub-leg found": ("len(results)",),
@@ -112,6 +148,12 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         # whose first argument is shared across ~14 call sites, so they cannot
         # be pinned individually by this registry's unique-label contract; the
         # inventory manifest owns them.
+        "Console fleet completion handoff will retry": (
+            "claim.revision",
+            "type(exc).__name__",
+        ),
+        "console fleet wake mount-claim failed": ("type(exc).__name__",),
+        "fleet survivor check failed": ("type(exc).__name__",),
         "stream resolution failed": ("type(exc).__name__",),
         "Pending sidebar-state write failed": ("type(error).__name__",),
     },
@@ -133,6 +175,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "operation",
             "type(exc).__name__",
         ),
+        "Failed to load Library conversations page.": (),
         "in bulk delete": (),
         "Failed to restore a Library media item in bulk-delete undo": (
             "type(exc).__name__",
@@ -142,6 +185,27 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Failed to persist Library ingest options": (),
         "Failed to restore a Library note": (),
         "Failed to restore a Library Collection": (),
+    },
+    "tldw_chatbook/UI/Console_Modules/image.py": {
+        "Console image edit cleanup failed": (
+            "'image_edit'",
+            "'persistence'",
+            "type(exc).__name__",
+        ),
+        "Console image edit failed": ("'image_edit'", "phase", "error_type"),
+        "Console image edit failure guidance persistence failed": (
+            "'image_edit'",
+            "'failure_guidance_persistence'",
+            "type(exc).__name__",
+        ),
+        "remote transcript image fetch failed": ("type(exc).__name__",),
+        "generate-image provider resolution for LLM context failed": (
+            "type(exc).__name__",
+        ),
+        "Image generation batch raised": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/UI/LLM_Management_Window.py": {
+        "Managed GGUF inventory load failed": (),
     },
     "tldw_chatbook/UI/Screens/llm_screen.py": {
         "External Parakeet source removal failed": ("type(exc).__name__",),
@@ -259,6 +323,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "could not open agent runs database": ("type(exc).__name__",),
     },
     "tldw_chatbook/app.py": {
+        "Consolidated widget CSS incomplete": ("len(sources)",),
         "Config load failure warning failed": ("type(e).__name__",),
         "Instance lock acquisition failed unexpectedly": (
             "type(_instance_lock_exc).__name__",
@@ -274,6 +339,15 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "route.screen_name",
             "type(exc).__name__",
         ),
+        "Generated CSS is stale during module entry; rebuilding": (),
+        "Generated CSS is stale during CLI entry; rebuilding": (),
+    },
+    "tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events.py": {
+        "GGUF launch lease close failed": ("provider",),
+        "GGUF source preparation failed": ("provider",),
+    },
+    "tldw_chatbook/Event_Handlers/LLM_Management_Events/server_lifecycle.py": {
+        "server claim resource close failed": ("provider",),
     },
     "tldw_chatbook/config.py": {
         "Invalid chat display name in [chat_defaults]": (),
@@ -363,6 +437,133 @@ def test_reviewed_diagnostic_changes_are_metadata_only() -> None:
                 )
 
     assert failures == []
+
+
+def test_task_15743_reviewed_delta_is_complete() -> None:
+    """TASK-15743: the reviewed stacked delta has exactly 31 repairs and 9 safe rows."""
+    repairs = {
+        "tldw_chatbook/Agents/agent_service.py": {
+            "autowake_enabled is not boolean; using default",
+            "on_child_settled consumer raised",
+        },
+        "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": {
+            "Skipping malformed usage_json on message export",
+        },
+        "tldw_chatbook/Chat/console_agent_bridge.py": {"fleet drain consumer raised"},
+        "tldw_chatbook/Chat/console_chat_controller.py": {
+            "fleet unsettled check failed for a session; treated as idle",
+            "has_unsettled_children raised; recording re-attach source anyway",
+            "fleet usage re-attach failed",
+        },
+        "tldw_chatbook/Chat/console_fleet_attention.py": {
+            "fleet unseen revision bump failed",
+            "fleet unseen mark listing failed",
+            "fleet unseen mark clear failed",
+            "fleet unseen mark write failed",
+            "fleet completion announce failed",
+            "fleet toast title lookup failed",
+            "fleet toast session-title fallback failed",
+        },
+        "tldw_chatbook/Chat/console_fleet_wake.py": {
+            "fleet wake drain intake failed",
+            "wake send gate raised; deferring",
+            "wake user-priority probe raised; deferring",
+            "wake delivery failed",
+            "wake delivery ledger stamp failed",
+            "wake mark listing failed",
+            "wake ledger read failed",
+            "wake session resolution failed",
+        },
+        "tldw_chatbook/UI/Screens/chat_screen.py": {
+            "console fleet wake mount-claim failed",
+            "fleet survivor check failed",
+        },
+        "tldw_chatbook/UI/Console_Modules/image.py": {
+            "remote transcript image fetch failed",
+            "generate-image provider resolution for LLM context failed",
+            "Image generation batch raised",
+        },
+        "tldw_chatbook/UI/Screens/library_screen.py": {
+            "Failed to load Library conversations page.",
+        },
+        "tldw_chatbook/app.py": {
+            "Consolidated widget CSS incomplete",
+            "Generated CSS is stale during module entry; rebuilding",
+            "Generated CSS is stale during CLI entry; rebuilding",
+        },
+    }
+    safe_rows = {
+        "tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events.py": {
+            "GGUF launch lease close failed": ("provider",),
+            "GGUF source preparation failed": ("provider",),
+        },
+        "tldw_chatbook/Event_Handlers/LLM_Management_Events/server_lifecycle.py": {
+            "server claim resource close failed": ("provider",),
+        },
+        "tldw_chatbook/RAG_Search/simplified/rag_service.py": {
+            "ran a fallback expression but names": (
+                "self._resolved_fts_match_construction()",
+                "FTS_MATCH_OR",
+            ),
+        },
+        "tldw_chatbook/UI/LLM_Management_Window.py": {
+            "Managed GGUF inventory load failed": (),
+        },
+        "tldw_chatbook/UI/Screens/chat_screen.py": {
+            "Console fleet completion handoff will retry": (
+                "claim.revision",
+                "type(exc).__name__",
+            ),
+        },
+        "tldw_chatbook/UI/Console_Modules/image.py": {
+            "Console image edit cleanup failed": (
+                "'image_edit'",
+                "'persistence'",
+                "type(exc).__name__",
+            ),
+            "Console image edit failed": ("'image_edit'", "phase", "error_type"),
+            "Console image edit failure guidance persistence failed": (
+                "'image_edit'",
+                "'failure_guidance_persistence'",
+                "type(exc).__name__",
+            ),
+        },
+    }
+    no_field_repairs = {
+        "autowake_enabled is not boolean; using default",
+        "Skipping malformed usage_json on message export",
+        "Failed to load Library conversations page.",
+        "Generated CSS is stale during module entry; rebuilding",
+        "Generated CSS is stale during CLI entry; rebuilding",
+    }
+    repair_rows = {
+        (owner, label) for owner, labels in repairs.items() for label in labels
+    }
+    reviewed_safe_rows = {
+        (owner, label) for owner, labels in safe_rows.items() for label in labels
+    }
+
+    assert len(repair_rows) == 31
+    assert len(reviewed_safe_rows) == 9
+    assert repair_rows.isdisjoint(reviewed_safe_rows)
+    for owner, label in repair_rows:
+        expected_fields = (
+            ()
+            if label in no_field_repairs
+            else ("len(sources)",)
+            if label == "Consolidated widget CSS incomplete"
+            else ("type(exc).__name__",)
+        )
+        assert (
+            REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(owner, {}).get(label)
+            == expected_fields
+        )
+    for owner, labels in safe_rows.items():
+        for label, expected_fields in labels.items():
+            assert (
+                REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(owner, {}).get(label)
+                == expected_fields
+            )
 
 
 def _run_metadata_guard(

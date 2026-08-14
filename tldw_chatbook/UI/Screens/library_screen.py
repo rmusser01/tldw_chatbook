@@ -9985,9 +9985,7 @@ class LibraryScreen(BaseAppScreen):
         except Exception:
             if generation != self._library_conversation_request_generation:
                 return
-            logger.opt(exception=True).warning(
-                "Failed to load Library conversations page."
-            )
+            logger.warning("Failed to load Library conversations page.")
             self._library_conversation_loading = False
             self._library_conversation_error = (
                 "Couldn't load conversations. Try Previous, Next, or submit "

@@ -58,8 +58,11 @@ def bump_fleet_unseen_revision(app: Any) -> None:
             FLEET_UNSEEN_REVISION_ATTR,
             int(getattr(app, FLEET_UNSEEN_REVISION_ATTR, 0)) + 1,
         )
-    except Exception:  # noqa: BLE001 -- a broken app double must not break a settle
-        logger.opt(exception=True).debug("fleet unseen revision bump failed")
+    except Exception as exc:  # noqa: BLE001 -- a broken app double must not break a settle
+        logger.debug(
+            "fleet unseen revision bump failed",
+            exception_type=type(exc).__name__,
+        )
 
 
 def fleet_unseen_conversation_ids(app: Any) -> frozenset[str]:
@@ -77,8 +80,11 @@ def fleet_unseen_conversation_ids(app: Any) -> frozenset[str]:
         return frozenset()
     try:
         return frozenset(service.list_marked_conversation_ids(service.FLEET_UNSEEN))
-    except Exception:  # noqa: BLE001
-        logger.opt(exception=True).debug("fleet unseen mark listing failed")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "fleet unseen mark listing failed",
+            exception_type=type(exc).__name__,
+        )
         return frozenset()
 
 
@@ -104,10 +110,10 @@ def clear_fleet_unseen_completion(app: Any, conversation_id: str) -> bool:
         if not service.has_mark(conversation_id, service.FLEET_UNSEEN):
             return False
         service.clear_mark(conversation_id, service.FLEET_UNSEEN)
-    except Exception:  # noqa: BLE001 -- a failed clear leaves a stale badge, not a crash
-        logger.opt(exception=True).warning(
-            "fleet unseen mark clear failed for conversation {conversation_id}",
-            conversation_id=conversation_id,
+    except Exception as exc:  # noqa: BLE001 -- a failed clear leaves a stale badge, not a crash
+        logger.warning(
+            "fleet unseen mark clear failed",
+            exception_type=type(exc).__name__,
         )
         return False
     bump_fleet_unseen_revision(app)
@@ -281,10 +287,10 @@ class ConsoleFleetAttentionConsumer:
             return
         try:
             service.set_mark(conversation_id, service.FLEET_UNSEEN)
-        except Exception:  # noqa: BLE001 -- a lost mark is a missing badge, not a broken settle
-            logger.opt(exception=True).warning(
-                "fleet unseen mark write failed for conversation {conversation_id}",
-                conversation_id=conversation_id,
+        except Exception as exc:  # noqa: BLE001 -- a lost mark is a missing badge, not a broken settle
+            logger.warning(
+                "fleet unseen mark write failed",
+                exception_type=type(exc).__name__,
             )
 
     # -- app-loop half -------------------------------------------------------
@@ -308,11 +314,10 @@ class ConsoleFleetAttentionConsumer:
                 notify(message, severity=severity)
             if not self._console_screen_active():
                 self._stage_deep_link(conversation_id, session_id)
-        except Exception:  # noqa: BLE001
-            logger.opt(exception=True).warning(
-                "fleet completion announce failed for conversation "
-                "{conversation_id}",
-                conversation_id=conversation_id,
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "fleet completion announce failed",
+                exception_type=type(exc).__name__,
             )
 
     def _conversation_title(self, conversation_id: str) -> str:
@@ -325,8 +330,11 @@ class ConsoleFleetAttentionConsumer:
                 title = str((row or {}).get("title") or "").strip()
                 if title:
                     return title
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).debug("fleet toast title lookup failed")
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "fleet toast title lookup failed",
+                    exception_type=type(exc).__name__,
+                )
         # An unpersisted session has no DB row; if a Console screen is up,
         # its store still knows the tab title.
         store = getattr(getattr(self._app, "screen", None), "_console_chat_store", None)
@@ -341,8 +349,11 @@ class ConsoleFleetAttentionConsumer:
                         title = str(session.title or "").strip()
                         if title:
                             return title
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).debug("fleet toast session-title fallback failed")
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "fleet toast session-title fallback failed",
+                    exception_type=type(exc).__name__,
+                )
         return "an unsaved Console chat"
 
     def _console_screen_active(self) -> bool:
