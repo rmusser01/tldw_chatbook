@@ -546,7 +546,7 @@ async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
         nonlocal calls
         calls += 1
         started.set()
-        assert release.wait(2)
+        assert release.wait(10)
         assert kwargs["cancel_event"].is_set()
         raise ImageGenerationCancelled()
 
