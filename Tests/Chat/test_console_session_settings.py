@@ -1,10 +1,15 @@
+import asyncio
 import builtins
 from dataclasses import FrozenInstanceError
 import inspect
 
 import pytest
+from textual.app import App
+from textual.containers import Vertical
+from textual.widgets import Button, Select, Static
 
 import tldw_chatbook.Chat.console_session_settings as session_settings
+from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
@@ -21,6 +26,10 @@ from tldw_chatbook.Chat.console_session_settings import (
     validate_console_session_settings,
 )
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
+from tldw_chatbook.Widgets.Console.console_context_controls import (
+    build_console_context_control_state,
+)
+from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
 
 
 def test_console_settings_exclude_presentation_while_session_owns_identity() -> None:
@@ -1423,3 +1432,391 @@ def test_chat_defaults_still_apply_when_no_console_saved_defaults_exist():
 
     assert settings.temperature == 0.6
     assert settings.top_p == 0.9
+
+
+class _SettingsCloseHarness(App[None]):
+    CSS = """
+    ConsoleSettingsModal { align: center middle; }
+    ConsoleSettingsModal #console-settings-modal { width: 100; height: 36; }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.results: list[object] = []
+        self.notices: list[str] = []
+
+    def capture(self, result: object) -> None:
+        self.results.append(result)
+
+    def notify(self, message: str, **_kwargs: object) -> None:
+        self.notices.append(message)
+
+
+def _settings_close_memory(
+    summary: str = "Original generated memory",
+) -> ConsoleMemoryRecord:
+    return ConsoleMemoryRecord(
+        memory_id="memory-1",
+        conversation_id="conversation-1",
+        boundary_message_id="message-4",
+        captured_leaf_message_id="message-8",
+        lineage_json='["message-1", "message-4", "message-8"]',
+        summary_text=summary,
+        provider="llama_cpp",
+        model="model-a",
+        prompt_id="console.rewind_summarize",
+        prompt_revision=2,
+        prompt_digest="prompt-digest",
+        selected_units_json='["message-1", "message-4"]',
+        summarized_prefix_digest="prefix-digest",
+        input_tokens=12_000,
+        output_tokens=700,
+        before_tokens=52_000,
+        after_tokens=24_000,
+        created_at="2026-08-14T12:00:00+00:00",
+    )
+
+
+def _settings_close_modal(
+    *,
+    reset_current_memory=None,
+    undo_current_memory_reset=None,
+    compact_now=None,
+    summary: str = "Original generated memory",
+) -> ConsoleSettingsModal:
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        max_tokens=4_000,
+    )
+    estimate = ConsoleSettingsContextEstimate(
+        used_tokens=42_000,
+        token_limit=100_000,
+        label="42,000 / 100,000 tokens",
+    )
+    return ConsoleSettingsModal(
+        settings=settings,
+        app_config={"api_settings": {"llama_cpp": {}}},
+        providers_models={"llama_cpp": ["model-a"]},
+        context_estimate=estimate,
+        context_state=build_console_context_control_state(
+            settings=settings,
+            estimate=estimate,
+            active_memory=_settings_close_memory(summary),
+        ),
+        can_save=True,
+        focus_context=True,
+        reset_current_memory=reset_current_memory,
+        undo_current_memory_reset=undo_current_memory_reset,
+        compact_now=compact_now,
+    )
+
+
+async def _request_settings_close(pilot, source: str) -> None:
+    if source == "visible-cancel":
+        await pilot.click("#console-settings-cancel")
+    elif source == "escape":
+        await pilot.press("escape")
+    else:
+        await pilot.click(offset=(0, 0))
+    await pilot.pause()
+
+
+@pytest.mark.parametrize("source", ["visible-cancel", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_settings_memory_reset_close_sources_show_one_three_choice_guard(
+    source: str,
+) -> None:
+    app = _SettingsCloseHarness()
+    reset_calls = 0
+
+    def reset_current() -> tuple[str, int]:
+        nonlocal reset_calls
+        reset_calls += 1
+        return "memory-1", 2
+
+    modal = _settings_close_modal(reset_current_memory=reset_current)
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(modal, callback=app.capture)
+        modal.query_one("#console-context-reset-current", Button).press()
+        await pilot.pause()
+        await _request_settings_close(pilot, source)
+
+        guard = modal.query_one("#console-settings-close-guard", Vertical)
+        assert guard.display
+        assert (
+            str(modal.query_one("#console-settings-close-undo", Button).label)
+            == "Undo and close"
+        )
+        assert (
+            str(modal.query_one("#console-settings-close-keep", Button).label)
+            == "Keep reset and close"
+        )
+        assert (
+            str(modal.query_one("#console-settings-close-return", Button).label)
+            == "Return"
+        )
+        assert modal.query_one("#console-settings-close-undo", Button).display
+        assert modal.query_one("#console-settings-close-keep", Button).display
+        assert not modal.query_one("#console-settings-close-anyway", Button).display
+        assert app.screen is modal
+        assert app.results == []
+
+        await pilot.press("escape")
+        await pilot.click(offset=(0, 0))
+        await pilot.pause()
+        assert len(modal.query("#console-settings-close-guard")) == 1
+        assert guard.display
+        assert modal.focused is modal.query_one("#console-settings-close-undo", Button)
+        assert reset_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_settings_memory_reset_undo_and_close_uses_optimistic_undo() -> None:
+    app = _SettingsCloseHarness()
+    undo_calls: list[tuple[str, int]] = []
+
+    def undo_current(memory_id: str, revision: int) -> bool:
+        undo_calls.append((memory_id, revision))
+        return True
+
+    modal = _settings_close_modal(
+        reset_current_memory=lambda: ("memory-1", 2),
+        undo_current_memory_reset=undo_current,
+    )
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(modal, callback=app.capture)
+        modal.query_one("#console-context-reset-current", Button).press()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.click("#console-settings-close-undo")
+        await pilot.pause()
+
+        assert undo_calls == [("memory-1", 2)]
+        assert app.results == [None]
+
+
+@pytest.mark.asyncio
+async def test_settings_memory_reset_expired_undo_keeps_guard_and_recovery_copy() -> (
+    None
+):
+    app = _SettingsCloseHarness()
+    modal = _settings_close_modal(
+        reset_current_memory=lambda: ("memory-1", 2),
+        undo_current_memory_reset=lambda _memory_id, _revision: False,
+    )
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(modal, callback=app.capture)
+        modal.query_one("#console-context-reset-current", Button).press()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.click("#console-settings-close-undo")
+        await pilot.pause()
+
+        recovery = "Undo expired because conversation memory changed."
+        assert modal.query_one("#console-settings-close-guard", Vertical).display
+        assert recovery in str(
+            modal.query_one("#console-settings-close-message", Static).renderable
+        )
+        assert recovery in str(
+            modal.query_one("#console-context-action-status", Static).renderable
+        )
+        assert modal._memory_reset_token == ("memory-1", 2)
+        assert app.results == []
+
+
+@pytest.mark.asyncio
+async def test_settings_memory_reset_keep_close_clears_local_undo_opportunity() -> None:
+    app = _SettingsCloseHarness()
+    modal = _settings_close_modal(
+        reset_current_memory=lambda: ("memory-1", 2),
+        undo_current_memory_reset=lambda _memory_id, _revision: True,
+    )
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(modal, callback=app.capture)
+        modal.query_one("#console-context-reset-current", Button).press()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.click("#console-settings-close-keep")
+        await pilot.pause()
+
+        assert modal._memory_reset_token is None
+        assert app.results == [None]
+
+
+@pytest.mark.asyncio
+async def test_settings_memory_reset_return_restores_focus_to_undo() -> None:
+    app = _SettingsCloseHarness()
+    modal = _settings_close_modal(
+        reset_current_memory=lambda: ("memory-1", 2),
+        undo_current_memory_reset=lambda _memory_id, _revision: True,
+    )
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(modal, callback=app.capture)
+        modal.query_one("#console-context-reset-current", Button).press()
+        await pilot.pause()
+        undo = modal.query_one("#console-context-undo-reset", Button)
+        undo.focus()
+        await pilot.press("escape")
+        await pilot.click("#console-settings-close-return")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not modal.query_one("#console-settings-close-guard", Vertical).display
+        assert modal.focused is undo
+        assert modal._memory_reset_token == ("memory-1", 2)
+        assert app.results == []
+
+
+@pytest.mark.parametrize("source", ["visible-cancel", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_settings_active_compaction_close_sources_show_acknowledgement(
+    source: str,
+) -> None:
+    app = _SettingsCloseHarness()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def compact_now() -> tuple[bool, str]:
+        entered.set()
+        await release.wait()
+        return True, "Compaction complete."
+
+    modal = _settings_close_modal(compact_now=compact_now)
+    try:
+        async with app.run_test(size=(120, 42)) as pilot:
+            await app.push_screen(modal, callback=app.capture)
+            modal.query_one("#console-context-compact-now", Button).press()
+            await pilot.pause()
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            await _request_settings_close(pilot, source)
+
+            assert modal.query_one("#console-settings-close-guard", Vertical).display
+            assert not modal.query_one("#console-settings-close-undo", Button).display
+            assert not modal.query_one("#console-settings-close-keep", Button).display
+            assert (
+                str(modal.query_one("#console-settings-close-anyway", Button).label)
+                == "Close anyway"
+            )
+            assert modal.query_one("#console-settings-close-anyway", Button).display
+            assert (
+                str(modal.query_one("#console-settings-close-return", Button).label)
+                == "Return"
+            )
+            await pilot.press("escape")
+            await pilot.click(offset=(0, 0))
+            await pilot.pause()
+            assert len(modal.query("#console-settings-close-guard")) == 1
+            assert modal.focused is modal.query_one(
+                "#console-settings-close-anyway", Button
+            )
+            assert app.results == []
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_settings_active_compaction_return_preserves_progress_and_focus() -> None:
+    app = _SettingsCloseHarness()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def compact_now() -> tuple[bool, str]:
+        entered.set()
+        await release.wait()
+        return True, "Compaction complete."
+
+    modal = _settings_close_modal(compact_now=compact_now)
+    try:
+        async with app.run_test(size=(120, 42)) as pilot:
+            await app.push_screen(modal, callback=app.capture)
+            modal.query_one("#console-context-compact-now", Button).press()
+            await pilot.pause()
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            focus = modal.query_one("#console-context-budget-mode", Select)
+            focus.focus()
+            await pilot.press("escape")
+            await pilot.click("#console-settings-close-return")
+            await pilot.pause()
+            await pilot.pause()
+
+            status = str(
+                modal.query_one("#console-context-action-status", Static).renderable
+            )
+            assert "Compacting" in status
+            assert modal.query_one("#console-context-compact-now", Button).disabled
+            assert modal.focused is focus
+            assert app.screen is modal
+            assert app.results == []
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_settings_active_compaction_close_anyway_keeps_provider_work_running_and_reopens_fresh() -> (
+    None
+):
+    app = _SettingsCloseHarness()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    provider_cancelled = False
+
+    async def compact_now() -> tuple[bool, str]:
+        nonlocal provider_cancelled
+        entered.set()
+        try:
+            await release.wait()
+            return True, "Compaction complete."
+        except asyncio.CancelledError:
+            provider_cancelled = True
+            raise
+        finally:
+            finished.set()
+
+    modal = _settings_close_modal(compact_now=compact_now)
+    try:
+        async with app.run_test(size=(120, 42)) as pilot:
+            await app.push_screen(modal, callback=app.capture)
+            modal.query_one("#console-context-compact-now", Button).press()
+            await pilot.pause()
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            await pilot.press("escape")
+            await pilot.click("#console-settings-close-anyway")
+            await pilot.pause()
+
+            assert app.results == [None]
+            assert modal._compaction_wait_worker is None
+            assert not provider_cancelled
+            assert not finished.is_set()
+            assert app.notices == [
+                "Provider work may continue and may still be billed."
+            ]
+            assert all("cancel" not in notice.lower() for notice in app.notices)
+
+            release.set()
+            await asyncio.wait_for(finished.wait(), timeout=1)
+            assert not provider_cancelled
+
+            reopened = _settings_close_modal(
+                compact_now=lambda: compact_now(),
+                summary="Fresh durable memory after compaction",
+            )
+            await app.push_screen(reopened)
+            await pilot.pause()
+
+            assert reopened is app.screen
+            assert reopened is not modal
+            assert reopened._memory_reset_token is None
+            assert (
+                reopened.query_one("#console-context-compact-now", Button).disabled
+                is False
+            )
+            assert "Fresh durable memory after compaction" in str(
+                reopened.query_one("#console-settings-memory-review", Static).renderable
+            )
+            assert "Compacting" not in str(
+                reopened.query_one("#console-context-action-status", Static).renderable
+            )
+    finally:
+        release.set()

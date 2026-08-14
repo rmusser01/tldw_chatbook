@@ -15,12 +15,15 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    ConsoleSettingsContextEstimate,
+)
 from tldw_chatbook.Prompt_Management.prompt_variables import PromptVariableApplication
 from tldw_chatbook.UI.Screens.change_review_screen import (
     ChangeReviewScreen,
@@ -88,6 +91,11 @@ from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
 )
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
+from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    ConsoleSettingsInput,
+    ConsoleSettingsModal,
+    _settings_screen_region,
+)
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     ScopeListPage,
     TagCount,
@@ -827,6 +835,17 @@ def test_task5_prompt_workbench_transition_table_is_complete_and_adopted() -> No
     ] == ["request_safe_cancel"]
 
 
+def test_task6_settings_close_contract_is_adopted() -> None:
+    assert issubclass(ConsoleSettingsModal, SafeModalDismissMixin)
+    assert ConsoleSettingsModal.SAFE_MODAL_CONTENT == "#console-settings-modal"
+    assert [
+        action
+        for binding in ConsoleSettingsModal.BINDINGS
+        for key, action in [_binding_key_action(binding)]
+        if key == "escape"
+    ] == ["request_safe_cancel"]
+
+
 class _Task2Harness(App[None]):
     CSS = """
     Screen { align: center middle; }
@@ -838,6 +857,102 @@ class _Task2Harness(App[None]):
     def __init__(self) -> None:
         super().__init__()
         self.results: list[object] = []
+
+
+class _SettingsMROHarness(App[None]):
+    CSS = """
+    ConsoleSettingsModal { align: center middle; }
+    ConsoleSettingsModal #console-settings-modal { width: 100; height: 90%; }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.results: list[object] = []
+
+    def compose(self) -> ComposeResult:
+        yield Input(id="settings-dismiss-opener")
+
+
+def _settings_mro_modal() -> ConsoleSettingsModal:
+    return ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app_config={"api_settings": {"llama_cpp": {}}},
+        providers_models={
+            "llama_cpp": ["model-a"],
+            "local_llamacpp": ["local-model"],
+        },
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+    )
+
+
+@pytest.mark.parametrize("source", ["visible-cancel", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_settings_clean_close_sources_restore_opener_focus(source: str) -> None:
+    app = _SettingsMROHarness()
+    modal = _settings_mro_modal()
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        host_screen = app.screen
+        opener = app.query_one("#settings-dismiss-opener", Input)
+        opener.focus()
+        await pilot.pause()
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        if source == "visible-cancel":
+            await pilot.click("#console-settings-cancel")
+        elif source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.results == [None]
+        assert app.screen is host_screen
+        assert app.focused is opener
+
+
+@pytest.mark.asyncio
+async def test_settings_redirected_select_click_uses_real_mro_dispatch() -> None:
+    app = _SettingsMROHarness()
+    modal = _settings_mro_modal()
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        focused_input = modal.query_one(
+            "#console-settings-temperature", ConsoleSettingsInput
+        )
+        provider_select = modal.query_one("#console-settings-provider", Select)
+        focused_input.focus()
+        await pilot.pause()
+        provider_region = _settings_screen_region(provider_select)
+        content_region = modal.query_one("#console-settings-modal", Vertical).region
+        assert content_region.contains(provider_region.right - 1, provider_region.y), (
+            content_region,
+            provider_region,
+        )
+        click = events.Click(
+            modal,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=1,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=provider_region.right - 1,
+            screen_y=provider_region.y,
+        )
+
+        await modal._dispatch_message(click)
+        await pilot.pause()
+
+        assert provider_select.expanded
+        assert app.screen is modal
+        assert app.results == []
 
 
 @dataclass(frozen=True)
