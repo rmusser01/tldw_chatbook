@@ -4,7 +4,7 @@ title: Harden Moonshot Kimi and Z.ai GLM as first-class hosted providers
 status: Done
 assignee: []
 created_date: '2026-08-12 20:45'
-updated_date: '2026-08-13 22:10'
+updated_date: '2026-08-14 00:27'
 labels: []
 dependencies:
   - TASK-15675
@@ -55,6 +55,10 @@ Bring the existing Moonshot AI and Z.ai integrations up to the same first-class 
 6. Update user documentation, add default-skipped isolated live-test gates, run
    only the focused provider-related verification authorized for this task,
    self-review each acceptance criterion, and record observed evidence.
+7. Post-merge review correction: translate the hosted transport's private base
+   URL validation exception into its documented redacted public error contract,
+   align Z.ai's adapter-only retry-delay fallback with canonical Console/config
+   policy, and prove both through focused regressions before re-closing the task.
 
 Detailed plan:
 `Docs/superpowers/plans/2026-08-12-kimi-zai-hosted-chat-completions-implementation.md`
@@ -101,4 +105,18 @@ needed.
   execution and required only tests related to touched files or functionality.
   No full-repository or broad-directory result is claimed. The exact focused
   commands and this deviation are retained in the implementation plan/evidence.
+- Post-merge review correction: Qodo's two late PR #1612 findings were reproduced
+  and fixed in follow-up PR #1614. The shared hosted transport now converts its
+  private base-URL validation exception into a context-free, redacted
+  `ChatProviderError`, and Z.ai's absent-setting retry fallback is `5.0` seconds,
+  matching canonical Console/config policy without changing explicit precedence.
+  Both original review threads were replied to with the exact correction commit
+  and resolved.
+- Follow-up evidence: the two regressions failed before production edits and then
+  passed; the complete hosted Chat and Z.ai modules passed 124 tests outside the
+  localhost socket sandbox; four exact hosted catalog checks passed. Ruff lint
+  and format, MyPy for both production modules, compileall, diff checks, and an
+  independent code review were green. No broad suite was run under the user's
+  related-test-only restriction. ADR-063 remains the governing decision; no new
+  ADR was required.
 <!-- SECTION:NOTES:END -->

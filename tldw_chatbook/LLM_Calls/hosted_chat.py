@@ -451,7 +451,16 @@ def owned_json_post(
     """
     if route not in {"chat/completions", "responses"}:
         raise _transport_error(config.provider, "request route is invalid")
-    base_url = normalize_hosted_chat_base_url(config.base_url, default=config.base_url)
+    try:
+        base_url = normalize_hosted_chat_base_url(
+            config.base_url,
+            default=config.base_url,
+        )
+    except HostedChatBaseURLValidationError:
+        raise _transport_error(
+            config.provider,
+            "transport configuration is invalid",
+        ) from None
     if (
         not isinstance(config.provider, str)
         or not config.provider
