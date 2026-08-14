@@ -2350,8 +2350,8 @@ class ConsoleChatController:
                     return True
             except Exception as exc:  # noqa: BLE001 -- a UI timer must never crash on a read
                 logger.debug(
-                    "fleet unsettled check failed for a session; treated as idle",
-                    exception_type=type(exc).__name__,
+                    "fleet unsettled check failed for a session; treated as idle (exception_type={})",
+                    type(exc).__name__,
                 )
         return False
 
@@ -9299,8 +9299,8 @@ class ConsoleChatController:
                     return
             except Exception as exc:  # noqa: BLE001 -- money over memory: keep the source
                 logger.debug(
-                    "has_unsettled_children raised; recording re-attach source anyway",
-                    exception_type=type(exc).__name__,
+                    "has_unsettled_children raised; recording re-attach source anyway (exception_type={})",
+                    type(exc).__name__,
                 )
         self._fleet_usage_reattach_sources[assistant_message_id] = (
             stream_signals,
@@ -9391,8 +9391,8 @@ class ConsoleChatController:
             self._reattach_fleet_usage(event)
         except Exception as exc:  # noqa: BLE001 -- a dropped fold is a missing figure, not a broken run
             logger.warning(
-                "fleet usage re-attach failed",
-                exception_type=type(exc).__name__,
+                "fleet usage re-attach failed (exception_type={})",
+                type(exc).__name__,
             )
 
     def _reattach_fleet_usage(self, event: Any) -> None:

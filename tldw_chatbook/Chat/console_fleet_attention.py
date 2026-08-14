@@ -60,8 +60,8 @@ def bump_fleet_unseen_revision(app: Any) -> None:
         )
     except Exception as exc:  # noqa: BLE001 -- a broken app double must not break a settle
         logger.debug(
-            "fleet unseen revision bump failed",
-            exception_type=type(exc).__name__,
+            "fleet unseen revision bump failed (exception_type={})",
+            type(exc).__name__,
         )
 
 
@@ -82,8 +82,8 @@ def fleet_unseen_conversation_ids(app: Any) -> frozenset[str]:
         return frozenset(service.list_marked_conversation_ids(service.FLEET_UNSEEN))
     except Exception as exc:  # noqa: BLE001
         logger.debug(
-            "fleet unseen mark listing failed",
-            exception_type=type(exc).__name__,
+            "fleet unseen mark listing failed (exception_type={})",
+            type(exc).__name__,
         )
         return frozenset()
 
@@ -112,8 +112,8 @@ def clear_fleet_unseen_completion(app: Any, conversation_id: str) -> bool:
         service.clear_mark(conversation_id, service.FLEET_UNSEEN)
     except Exception as exc:  # noqa: BLE001 -- a failed clear leaves a stale badge, not a crash
         logger.warning(
-            "fleet unseen mark clear failed",
-            exception_type=type(exc).__name__,
+            "fleet unseen mark clear failed (exception_type={})",
+            type(exc).__name__,
         )
         return False
     bump_fleet_unseen_revision(app)
@@ -289,8 +289,8 @@ class ConsoleFleetAttentionConsumer:
             service.set_mark(conversation_id, service.FLEET_UNSEEN)
         except Exception as exc:  # noqa: BLE001 -- a lost mark is a missing badge, not a broken settle
             logger.warning(
-                "fleet unseen mark write failed",
-                exception_type=type(exc).__name__,
+                "fleet unseen mark write failed (exception_type={})",
+                type(exc).__name__,
             )
 
     # -- app-loop half -------------------------------------------------------
@@ -316,8 +316,8 @@ class ConsoleFleetAttentionConsumer:
                 self._stage_deep_link(conversation_id, session_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "fleet completion announce failed",
-                exception_type=type(exc).__name__,
+                "fleet completion announce failed (exception_type={})",
+                type(exc).__name__,
             )
 
     def _conversation_title(self, conversation_id: str) -> str:
@@ -332,8 +332,8 @@ class ConsoleFleetAttentionConsumer:
                     return title
             except Exception as exc:  # noqa: BLE001
                 logger.debug(
-                    "fleet toast title lookup failed",
-                    exception_type=type(exc).__name__,
+                    "fleet toast title lookup failed (exception_type={})",
+                    type(exc).__name__,
                 )
         # An unpersisted session has no DB row; if a Console screen is up,
         # its store still knows the tab title.
@@ -351,8 +351,8 @@ class ConsoleFleetAttentionConsumer:
                             return title
             except Exception as exc:  # noqa: BLE001
                 logger.debug(
-                    "fleet toast session-title fallback failed",
-                    exception_type=type(exc).__name__,
+                    "fleet toast session-title fallback failed (exception_type={})",
+                    type(exc).__name__,
                 )
         return "an unsaved Console chat"
 

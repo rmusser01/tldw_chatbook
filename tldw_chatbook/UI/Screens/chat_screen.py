@@ -14977,8 +14977,8 @@ class ChatScreen(BaseAppScreen):
                 wake.retry_soon()
         except Exception as exc:  # noqa: BLE001 -- a failed claim must never break a mount
             logger.warning(
-                "console fleet wake mount-claim failed",
-                exception_type=type(exc).__name__,
+                "console fleet wake mount-claim failed (exception_type={})",
+                type(exc).__name__,
             )
 
     def _console_wake_user_priority(self, session_id: str) -> bool:
@@ -16751,8 +16751,8 @@ class ChatScreen(BaseAppScreen):
             return bool(checker()) if callable(checker) else False
         except Exception as exc:  # noqa: BLE001 -- a timer predicate must never raise
             logger.debug(
-                "fleet survivor check failed",
-                exception_type=type(exc).__name__,
+                "fleet survivor check failed (exception_type={})",
+                type(exc).__name__,
             )
             return False
 

@@ -2056,8 +2056,8 @@ class AgentService:
                             self._on_child_settled(child_run_id, status)
                         except Exception as exc:  # noqa: BLE001
                             logger.warning(
-                                "on_child_settled consumer raised",
-                                exception_type=type(exc).__name__,
+                                "on_child_settled consumer raised (exception_type={})",
+                                type(exc).__name__,
                             )
 
             thread = threading.Thread(

@@ -1185,8 +1185,8 @@ class FleetDrainFanout:
                 consumer(event)
             except Exception as exc:  # noqa: BLE001 -- one consumer never starves the rest
                 logger.warning(
-                    "fleet drain consumer raised",
-                    exception_type=type(exc).__name__,
+                    "fleet drain consumer raised (exception_type={})",
+                    type(exc).__name__,
                 )
 
 

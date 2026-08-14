@@ -416,8 +416,8 @@ class ConsoleFleetWakeCoordinator:
             self.retry_soon()
         except Exception as exc:  # noqa: BLE001 -- never raise into the fan-out
             logger.warning(
-                "fleet wake drain intake failed",
-                exception_type=type(exc).__name__,
+                "fleet wake drain intake failed (exception_type={})",
+                type(exc).__name__,
             )
 
     # -- scheduling -----------------------------------------------------------
@@ -477,8 +477,8 @@ class ConsoleFleetWakeCoordinator:
                 return
         except Exception as exc:  # noqa: BLE001 -- a broken gate defers, never fires
             logger.debug(
-                "wake send gate raised; deferring",
-                exception_type=type(exc).__name__,
+                "wake send gate raised; deferring (exception_type={})",
+                type(exc).__name__,
             )
             return
         probe = getattr(controller, "wake_user_priority_probe", None)
@@ -488,8 +488,8 @@ class ConsoleFleetWakeCoordinator:
                     return  # user wins ties
             except Exception as exc:  # noqa: BLE001 -- user wins on uncertainty too
                 logger.debug(
-                    "wake user-priority probe raised; deferring",
-                    exception_type=type(exc).__name__,
+                    "wake user-priority probe raised; deferring (exception_type={})",
+                    type(exc).__name__,
                 )
                 return
         rows = self._rows_for(conversation_id, bucket)
@@ -563,8 +563,8 @@ class ConsoleFleetWakeCoordinator:
             accepted = bool(getattr(result, "accepted", False))
         except Exception as exc:  # noqa: BLE001 -- a failed wake is a retry, not a crash
             logger.warning(
-                "wake delivery failed",
-                exception_type=type(exc).__name__,
+                "wake delivery failed (exception_type={})",
+                type(exc).__name__,
             )
         finally:
             self._delivering = None
@@ -577,8 +577,8 @@ class ConsoleFleetWakeCoordinator:
                 except Exception as exc:  # noqa: BLE001 -- a lost stamp risks one
                     # re-announce at a later claim, never a lost result.
                     logger.warning(
-                        "wake delivery ledger stamp failed",
-                        exception_type=type(exc).__name__,
+                        "wake delivery ledger stamp failed (exception_type={})",
+                        type(exc).__name__,
                     )
             with self._registry_lock:
                 bucket = self._pending.get(conversation_id)
@@ -669,8 +669,8 @@ class ConsoleFleetWakeCoordinator:
             marked = service.list_marked_conversation_ids(service.FLEET_UNSEEN)
         except Exception as exc:  # noqa: BLE001 -- a claim must never break a mount
             logger.warning(
-                "wake mark listing failed",
-                exception_type=type(exc).__name__,
+                "wake mark listing failed (exception_type={})",
+                type(exc).__name__,
             )
             return 0
         seeded = 0
@@ -679,8 +679,8 @@ class ConsoleFleetWakeCoordinator:
                 rows = undelivered(conversation_id)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "wake ledger read failed",
-                    exception_type=type(exc).__name__,
+                    "wake ledger read failed (exception_type={})",
+                    type(exc).__name__,
                 )
                 continue
             if not rows:
@@ -709,8 +709,8 @@ class ConsoleFleetWakeCoordinator:
                     return session.id
         except Exception as exc:  # noqa: BLE001
             logger.debug(
-                "wake session resolution failed",
-                exception_type=type(exc).__name__,
+                "wake session resolution failed (exception_type={})",
+                type(exc).__name__,
             )
         return None
 
