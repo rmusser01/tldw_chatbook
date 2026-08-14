@@ -7301,7 +7301,7 @@ class ChatScreen(BaseAppScreen):
             )
             return
         try:
-            store.update_message_content(row_id, spoken)
+            store.finalize_deferred_user_message_content(row_id, spoken)
         except Exception:  # noqa: BLE001 - transcript upkeep is never fatal
             logger.opt(exception=True).warning(
                 "Console realtime: could not write the input transcript"
@@ -7377,7 +7377,7 @@ class ChatScreen(BaseAppScreen):
             return
         if not existing:
             try:
-                store.update_message_content(
+                store.finalize_deferred_user_message_content(
                     row_id, CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
                 )
             except Exception:  # noqa: BLE001 - transcript upkeep is never fatal

@@ -2987,6 +2987,42 @@ class ConsoleChatStore:
             )
         return self._snapshot(message)
 
+    def finalize_deferred_user_message_content(
+        self, message_id: str, content: str
+    ) -> ConsoleChatMessage:
+        """Fill a blank user turn without invalidating replies already beneath it.
+
+        Realtime input transcription can finish after the assistant reply has
+        started. That is delayed completion of the original user turn, not an
+        edit: descendants created while transcription was pending remain valid.
+
+        Args:
+            message_id: Native id of the initially blank user message.
+            content: Final non-empty transcript text.
+
+        Raises:
+            ValueError: If the content or message is outside this narrow
+                deferred-user-turn contract.
+        """
+        if type(content) is not str or not content.strip():
+            raise ValueError("Deferred user message content must be non-empty text.")
+        message = self._message_or_raise(message_id)
+        if (
+            message.role is not ConsoleMessageRole.USER
+            or message.content
+            or message.attachments
+            or message.persisted_message_id is not None
+        ):
+            raise ValueError("Message is not a deferred blank user turn.")
+        session_id = self._message_session_index[message.id]
+        message.content = content
+        self._bump_message_speech_revision(message.id)
+        self._bump_payload_revision(session_id)
+        if self._message_is_on_active_path(message.id):
+            self._bump_conversation_context_epoch(session_id)
+        self._persist_pending_message_if_ready(message)
+        return self._snapshot(message)
+
     def _purge_descendants_invalidated_by_edit(
         self,
         session_id: str,
