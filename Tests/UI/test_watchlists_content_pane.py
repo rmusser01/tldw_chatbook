@@ -131,6 +131,41 @@ async def test_content_pane_shows_placeholder_with_no_item():
         await pilot.pause()
         placeholder = app.query_one("#content-empty", Static)
         assert str(placeholder.renderable) == "Select an item to read it."
+        assert not app.query("#content-body-scroll"), (
+            "the empty-state path stays a direct placeholder rather than an empty scroller"
+        )
+
+
+@pytest.mark.asyncio
+async def test_open_content_wraps_only_the_body_in_a_vertical_scroll():
+    from textual.containers import VerticalScroll
+    from textual.widgets import Static
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    class _PaneHost(ConsolidatedCSSApp):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {
+                "title": "Scrollable article",
+                "source_name": "Feed",
+                "content": "first\n\nlast",
+                "content_kind": "article",
+                "content_format": "text",
+            }
+            yield pane
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        pane = app.query_one(ContentPane)
+        actions = app.query_one("#content-actions")
+        body_scroll = app.query_one("#content-body-scroll", VerticalScroll)
+        body = app.query_one("#content-body", Static)
+        footer = app.query_one("#content-footer")
+
+        assert list(pane.children) == [actions, body_scroll, footer]
+        assert list(body_scroll.children) == [body]
 
 
 def test_change_renders_percent_type_and_diff_lines():
@@ -1592,10 +1627,7 @@ async def test_a_persisted_body_reaches_the_reader_end_to_end():
 
 @pytest.mark.asyncio
 async def test_the_mark_unread_button_is_compact():
-    """A default `Button` is three rows tall (border, label, border), and
-    CONTENT has about nine usable rows -- the same third of the pane the
-    tooltip fix reclaimed, spent again on chrome.
-    """
+    """Reader actions stay in the established one-row chrome budget."""
     from textual.app import App
     from textual.widgets import Button
 

@@ -11,7 +11,7 @@ from typing import Any
 from rich.console import Group, RenderableType
 from rich.markdown import Markdown
 from rich.text import Text
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
@@ -311,11 +311,10 @@ class OpenInBrowserRequested(Message):
 class ExpandReaderRequested(Message):
     """Posted when the reader asks for (or gives back) the whole centre stack.
 
-    TASK-2307 AC#2 (UAT F27). CONTENT is about nine rows on a 52-row terminal
-    and the only ways to enlarge it -- `z` on the sibling regions, `Z` on this
-    one -- are keyboard gestures that require focus to already be inside the
-    region and are advertised nowhere on screen. A reader that cannot say how
-    to make itself readable is the defect; this is the visible affordance.
+    TASK-2307 AC#2 (UAT F27). The reader is bounded in the ordinary centre
+    stack, and the only keyboard ways to enlarge it -- `z` on the sibling
+    regions, `Z` on this one -- require focus to already be inside the region.
+    This is the visible affordance for the same existing layout action.
 
     Carries no payload: the screen owns `region_layout` and this pane must not
     hold a second opinion about it (see `ContentPane.expanded`).
@@ -342,7 +341,7 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
     #:
     #: Seeded by `WatchlistsCollectionsScreen._build_content_pane` from the
     #: live `RegionLayout` and never written here: the layout has exactly one
-    #: owner, and a pane that guessed would show `Restore` over a nine-row
+    #: owner, and a pane that guessed would show `Restore` over a bounded
     #: reader the moment the two drifted. A plain reactive, not
     #: `recompose=True`: `watch_expanded` relabels the one button in place,
     #: which is the whole visible difference (task-15461).
@@ -408,8 +407,9 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
             `#content-mark-unread-button`, `#content-expand-button`
             (TASK-2307) and, on a `change`-kind item only, the
             `#content-full-page-button`/`#content-previous-snapshot-button`
-            pair (TASK-1494) -- followed by a `#content-body` `Static`
-            holding `render_for(self.item)`.
+            pair (TASK-1494) -- followed by `#content-body-scroll`, which
+            contains the existing `#content-body` `Static`, and the fixed
+            `#content-footer` action strip.
         """
         if self.item is None:
             yield Static("Select an item to read it.", id="content-empty")
@@ -418,21 +418,18 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
         # `_mark_item_read_on_open`); this button is the deliberate way
         # back. `_GLOBAL_STATUS_NOTE` states the scope on the tooltip
         # (fix round 1, Important) rather than as a permanent line in the
-        # body: a permanent `Static` here measured 3 of CONTENT's 8 visible
-        # rows (max-height 12, minus the border and heading), leaving the
-        # actual article only 4 of 14 rows -- the note earned its point
-        # once, not on every single line of every item read afterward.
+        # body: before the bounded body scroller, a permanent `Static` here
+        # consumed a material share of the reader. The note earns its point
+        # once, not on every line of every item read afterward.
         # `compact=True` (whole-branch review, Minor): a default `Button` is
-        # three rows tall (top border, label, bottom border) and CONTENT has
-        # only about nine usable ones -- the same third of the pane the
-        # tooltip fix above just reclaimed, spent again on a button's chrome.
+        # three rows tall (top border, label, bottom border); the established
+        # one-row reader chrome keeps those rows available for the article.
         #
         # TASK-2307: the buttons share ONE `.destination-filter-strip` row
         # (`height: 1`, the same chrome every toolbar on this screen uses)
         # rather than stacking. A `change` item previously spent three of the
-        # pane's nine rows on three stacked buttons; it now spends one, which
-        # is a straight win for the row budget F27 is about -- and it is what
-        # makes room for the expand affordance to be free.
+        # reader on three stacked buttons; it now spends one, which preserves
+        # the body budget and makes room for the expand affordance.
         with Horizontal(id="content-actions", classes="destination-filter-strip"):
             yield Button(
                 "Mark unread",
@@ -513,7 +510,8 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
                     compact=True,
                     tooltip="Open the page as it was before this change.",
                 )
-        yield Static(render_for(self.item), id="content-body")
+        with VerticalScroll(id="content-body-scroll"):
+            yield Static(render_for(self.item), id="content-body")
         # TASK-3072 plan task 9: the position footer. "N of M" is seeded and
         # pushed by the screen (`position` above -- the pane holds no list
         # state); Next Unread posts the pane's existing message, so the one

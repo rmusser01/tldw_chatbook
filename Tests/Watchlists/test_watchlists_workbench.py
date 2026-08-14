@@ -4,6 +4,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Button, Static
 
 from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
+from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
     REGION_TITLES,
@@ -58,11 +59,13 @@ class _ReadGeometryApp(App):
         *,
         read_mode: bool = True,
         layout: RegionLayout = RegionLayout(),
+        content_lines: int | None = 30,
     ) -> None:
         super().__init__()
         self.item_count = item_count
         self.read_mode = read_mode
         self.initial_layout = layout
+        self.content_lines = content_lines
 
     def _items_pane(self) -> Vertical:
         pane = ArticleListPane(id="watchlists-items-pane")
@@ -78,6 +81,23 @@ class _ReadGeometryApp(App):
             classes="destination-workbench-pane",
         )
 
+    def _content_pane(self) -> ContentPane:
+        pane = ContentPane(id="watchlists-content-pane")
+        if self.content_lines is not None:
+            pane.item = {
+                "id": "local:watchlist_item:reader",
+                "item_id": "reader",
+                "title": "Geometry article",
+                "source_name": "Geometry Feed",
+                "content_kind": "article",
+                "content_format": "text",
+                "content": "\n\n".join(
+                    f"paragraph-{row:02d}" for row in range(self.content_lines)
+                ),
+            }
+            pane.position = "1 of 1"
+        return pane
+
     def compose(self) -> ComposeResult:
         classes = "watchlists-read-mode" if self.read_mode else ""
         yield WatchlistsWorkbench(
@@ -85,10 +105,7 @@ class _ReadGeometryApp(App):
             content={
                 Region.LEFT_RAIL: lambda: Static("fixed-left", id="left-probe"),
                 Region.ITEMS: self._items_pane,
-                Region.CONTENT: lambda: Vertical(
-                    *[Static(f"content-{row:02d}") for row in range(30)],
-                    id="watchlists-content-pane",
-                ),
+                Region.CONTENT: self._content_pane,
                 Region.RIGHT_RAIL: lambda: Static("fixed-right", id="right-probe"),
             },
             hidden=(frozenset() if self.read_mode else frozenset({Region.CONTENT})),
@@ -213,7 +230,9 @@ async def test_outer_centre_reaches_content_without_moving_either_rail(size):
         assert (left.region, right.region) == rail_regions
         assert content.region.intersection(centre.content_region).height > 0
         screenshot = app.export_screenshot()
-        assert "Content" in screenshot and "content-00" in screenshot
+        assert "paragraph-" in screenshot, (
+            "the centre end must paint the reachable portion of Content"
+        )
 
 
 @pytest.mark.asyncio
@@ -588,110 +607,177 @@ async def test_a_soloed_centre_region_is_marked_for_css():
             )
 
 
+@pytest.mark.parametrize(
+    ("content_lines", "expected"),
+    [(None, "floor"), (1, "floor"), (8, "natural"), (80, "cap")],
+)
+@pytest.mark.parametrize("size", [(120, 36), (180, 70), (180, 120)])
 @pytest.mark.asyncio
-async def test_content_height_is_capped_and_scrollable_when_content_overflows():
-    """`.watchlists-region-content` is the one capped region left (FEEDS is
-    gone, task-2513): `height: auto` + `max-height: 12` + `overflow-y: auto`
-    in `_watchlists.tcss`, so the reader grows to fit small content, stops at
-    the cap, and scrolls past it rather than either clipping silently or
-    displacing ITEMS.
-
-    Unlike this file's other tests, this one loads the REAL production
-    stylesheet (`CSS_PATH`) -- a bare `App` with no CSS at all would never
-    exercise `max-height`/`overflow-y`, so the assertions below would be
-    vacuous against the pre-fix code as much as the post-fix code.
-    """
-    from pathlib import Path
-
-    from textual.containers import Vertical
-    from textual.widgets import Static
-
-    css_path = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
-
-    def overflowing_reader() -> Vertical:
-        # 40 rows: far more than any reasonable cap, standing in for a long
-        # article opened in the reader.
-        body = Vertical(
-            *[Static(f"paragraph-{i:02d}") for i in range(40)],
-            id="content-overflow-probe",
-        )
-        # Mirrors the production companion fix on `#watchlists-content-pane`
-        # in `_watchlists.tcss`: a bare `Vertical` defaults to
-        # `height: 1fr`, which is circular inside CONTENT's `height: auto`
-        # region -- it must size to its own content instead.
-        body.styles.height = "auto"
-        return body
-
-    class _App(App):
-        CSS_PATH = css_path
-
-        def compose(self) -> ComposeResult:
-            yield WatchlistsWorkbench(
-                RegionLayout(),
-                content={Region.CONTENT: overflowing_reader},
-                id="wl-workbench",
-            )
-
-    app = _App()
-    async with app.run_test(size=(100, 40)) as pilot:
+async def test_content_region_grows_from_twenty_rows_to_a_fifty_row_cap(
+    content_lines, expected, size
+):
+    """Exercise the production pane, title, actions, footer, and stylesheet."""
+    app = _ReadGeometryApp(0, content_lines=content_lines)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
         content = app.query_one("#wl-region-content")
-        items = app.query_one("#wl-region-items")
 
-        assert content.region.height <= 12, (
-            f"CONTENT should stop growing at the cap once its content "
-            f"overflows it: {content.region}"
-        )
-        assert items.region.height > content.region.height, (
-            f"ITEMS must stay the taller reading area even when CONTENT's "
-            f"content would otherwise dwarf it: items={items.region} "
-            f"content={content.region}"
-        )
+        assert 20 <= content.region.height <= 50, content.region
+        if expected == "floor":
+            assert content.region.height == 20, content.region
+        elif expected == "natural":
+            assert 20 < content.region.height < 50, content.region
+        else:
+            assert content.region.height == 50, content.region
 
-        # Confirm it SCROLLS rather than clips: all 40 supplied rows must
-        # be reachable, not silently cut off past the cap.
-        def painted_rows() -> list[str]:
-            strips = content.screen._compositor.render_strips()
-            region = content.region
+
+@pytest.mark.parametrize("size", [(120, 36), (180, 70), (180, 120)])
+@pytest.mark.asyncio
+async def test_long_content_body_scrolls_without_moving_fixed_chrome_or_rails(size):
+    app = _ReadGeometryApp(50, content_lines=80)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        centre = app.query_one("#wl-centre", VerticalScroll)
+        content = app.query_one("#wl-region-content")
+        body_scroll = app.query_one("#content-body-scroll", VerticalScroll)
+        actions = app.query_one("#content-actions")
+        footer = app.query_one("#content-footer")
+        left = app.query_one("#wl-region-left_rail")
+        right = app.query_one("#wl-region-right_rail")
+
+        assert content.region.height == 50
+        assert body_scroll.region.height == 45
+        assert body_scroll.max_scroll_y > 0
+
+        centre.scroll_to_widget(content, animate=False)
+        await pilot.pause()
+        centre_scroll = centre.scroll_y
+        rail_regions = (left.region, right.region)
+        chrome_regions = (actions.region, footer.region)
+
+        body_scroll.scroll_end(animate=False)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert body_scroll.scroll_y == body_scroll.max_scroll_y
+        assert centre.scroll_y == centre_scroll
+        assert (left.region, right.region) == rail_regions
+        assert (actions.region, footer.region) == chrome_regions
+
+        # The body reached its own end without moving the outer document.
+        # Now deliberately move the outer document far enough to paint that
+        # end on compact terminals whose viewport is shorter than CONTENT.
+        body_position = body_scroll.scroll_y
+        centre.scroll_end(animate=False)
+        await pilot.pause()
+        assert body_scroll.scroll_y == body_position
+
+        strips = app.screen._compositor.render_strips()
+        visible_body = "\n".join(
+            "".join(segment.text for segment in strips[y])[
+                body_scroll.region.x : body_scroll.region.right
+            ]
+            for y in range(max(body_scroll.region.y, 0), min(body_scroll.region.bottom, size[1]))
+        )
+        assert "paragraph-79" in visible_body, visible_body
+
+        # Scrolling the outer document must not reset the article position.
+        centre.scroll_home(animate=False)
+        await pilot.pause()
+        centre.scroll_end(animate=False)
+        await pilot.pause()
+        assert body_scroll.scroll_y == body_position
+
+
+@pytest.mark.asyncio
+async def test_content_actions_footer_and_border_stay_painted_at_body_extremes():
+    app = _ReadGeometryApp(50, content_lines=80)
+    async with app.run_test(size=(180, 120)) as pilot:
+        await pilot.pause()
+        centre = app.query_one("#wl-centre", VerticalScroll)
+        content = app.query_one("#wl-region-content")
+        body_scroll = app.query_one("#content-body-scroll", VerticalScroll)
+        centre.scroll_end(animate=False)
+        await pilot.pause()
+
+        def painted_content() -> list[str]:
+            strips = app.screen._compositor.render_strips()
             return [
                 "".join(segment.text for segment in strips[y])[
-                    region.x : region.x + region.width
+                    content.region.x : content.region.right
                 ]
-                for y in range(region.y, region.y + region.height)
+                for y in range(content.region.y, content.region.bottom)
             ]
 
-        rows = painted_rows()
-        assert any("paragraph-00" in row for row in rows), (
-            f"expected the first supplied row on screen initially: {rows!r}"
-        )
-        # Fix round 3, Finding 2: the region owns the border AND the scroll,
-        # so the box must stay closed at both scroll extremes. When the pane
-        # inside owned the border instead, the border rows were part of the
-        # scrolled content — at scroll top the bottom edge was off-screen and
-        # at scroll end the top edge was.
-        assert rows[0].startswith("╭") and rows[0].endswith("╮"), rows[0]
-        assert rows[-1].startswith("╰") and rows[-1].endswith("╯"), rows[-1]
+        for scroll_to_end in (False, True):
+            if scroll_to_end:
+                body_scroll.scroll_end(animate=False)
+            else:
+                body_scroll.scroll_home(animate=False)
+            await pilot.pause()
 
-        content.scroll_end(animate=False)
+            rows = painted_content()
+            rendered = "\n".join(rows)
+            assert "Mark unread" in rendered
+            assert "Next unread" in rendered
+            assert rows[0].startswith("╭") and rows[0].endswith("╮"), rows[0]
+            assert rows[-1].startswith("╰") and rows[-1].endswith("╯"), rows[-1]
+
+
+@pytest.mark.asyncio
+async def test_content_focus_order_and_keyboard_scroll_follow_visual_order():
+    app = _ReadGeometryApp(0, content_lines=80)
+    async with app.run_test(size=(180, 80)) as pilot:
+        await pilot.pause()
+        body_scroll = app.query_one("#content-body-scroll", VerticalScroll)
+        first_action = app.query_one("#content-mark-unread-button")
+        footer_action = app.query_one("#content-next-unread-button")
+        focus_chain = app.screen.focus_chain
+
+        assert focus_chain.index(first_action) < focus_chain.index(body_scroll)
+        assert focus_chain.index(body_scroll) < focus_chain.index(footer_action)
+
+        body_scroll.focus()
+        await pilot.press("end")
+        await pilot.pause()
+        assert body_scroll.has_focus
+        assert body_scroll.max_scroll_y - body_scroll.scroll_y < 0.1
+
+
+@pytest.mark.asyncio
+async def test_solo_content_lifts_caps_and_restore_preserves_reader_state():
+    app = _ReadGeometryApp(0, content_lines=80)
+    async with app.run_test(size=(180, 90)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(WatchlistsWorkbench)
+        pane = app.query_one(ContentPane)
+        body_scroll = app.query_one("#content-body-scroll", VerticalScroll)
+
+        assert app.query_one("#wl-region-content").region.height == 50
+        assert body_scroll.region.height == 45
+        body_scroll.focus()
+        body_scroll.scroll_to(y=3, animate=False)
+        await pilot.pause()
+
+        workbench.region_layout = RegionLayout().solo(Region.CONTENT)
         await pilot.pause()
         await pilot.pause()
 
-        rows = painted_rows()
-        assert any("paragraph-39" in row for row in rows), (
-            f"the last supplied row should be reachable by scrolling, not "
-            f"lost past the cap: {rows!r}"
-        )
-        assert rows[0].startswith("╭") and rows[0].endswith("╮"), (
-            f"scrolling must not carry the region's own top border away: {rows[0]!r}"
-        )
-        assert rows[-1].startswith("╰") and rows[-1].endswith("╯"), (
-            f"scrolling must not carry the region's own bottom border away: "
-            f"{rows[-1]!r}"
-        )
+        assert app.query_one("#wl-region-content").region.height > 50
+        assert app.query_one(ContentPane) is pane
+        assert app.query_one("#content-body-scroll", VerticalScroll) is body_scroll
+        assert body_scroll.region.height > 45
+        assert body_scroll.has_focus and body_scroll.scroll_y == 3
+
+        workbench.region_layout = RegionLayout()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.query_one("#wl-region-content").region.height == 50
+        assert app.query_one(ContentPane) is pane
+        assert app.query_one("#content-body-scroll", VerticalScroll) is body_scroll
+        assert body_scroll.region.height == 45
+        assert body_scroll.has_focus and body_scroll.scroll_y == 3
 
 
 # --- `refresh_region_content` ---------------------------------------------

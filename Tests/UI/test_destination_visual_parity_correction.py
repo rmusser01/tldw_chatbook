@@ -1203,6 +1203,7 @@ async def test_watchlists_centre_regions_stack_vertically_in_order():
         header = screen.query_one("#wl-centre-status")
         items = screen.query_one("#wl-region-items")
         content = screen.query_one("#wl-region-content")
+        centre = screen.query_one("#wl-centre")
 
         assert header.region.y < items.region.y < content.region.y, (
             f"centre regions are not stacked top-to-bottom: "
@@ -1215,13 +1216,21 @@ async def test_watchlists_centre_regions_stack_vertically_in_order():
         ):
             assert pane.region.width > 0, f"{selector} has no width"
             assert pane.region.height > 0, f"{selector} has no height"
-            _assert_visible_in_viewport(pane, height=42, context=selector)
+            assert 0 <= pane.region.x < 160, selector
+            assert pane.region.right <= 160, selector
 
         # No two centre regions may overlap.
         for top, bottom in ((header, items), (items, content)):
             assert top.region.y + top.region.height <= bottom.region.y, (
                 f"centre regions overlap: {top.region} vs {bottom.region}"
             )
+
+        # Compact terminals intentionally show the stack through the outer
+        # centre viewport instead of shrinking either region below its floor.
+        assert centre.max_scroll_y > 0
+        centre.scroll_end(animate=False)
+        await pilot.pause()
+        assert content.region.intersection(centre.content_region).height > 0
 
 
 @pytest.mark.asyncio
@@ -1261,12 +1270,10 @@ async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport()
             "#wl-region-content",
             "#wl-header-right_rail",
         ):
-            _assert_visible_in_viewport(
-                screen.query_one(selector),
-                height=42,
-                context=selector,
-                viewport_width=160,
-            )
+            widget = screen.query_one(selector)
+            assert 0 <= widget.region.x < 160, selector
+            assert widget.region.right <= 160, selector
+            assert widget.region.height > 0, selector
 
         left_header = screen.query_one("#wl-header-left_rail")
         right_header = screen.query_one("#wl-header-right_rail")
@@ -1277,19 +1284,16 @@ async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport()
         assert right_header.region.x + right_header.region.width <= 160, (
             f"right rail header fell outside the viewport: {right_header.region}"
         )
+        centre = screen.query_one("#wl-centre")
+        content = screen.query_one("#wl-region-content")
+        centre.scroll_end(animate=False)
+        await pilot.pause()
+        assert content.region.intersection(centre.content_region).height > 0
 
 
 @pytest.mark.asyncio
-async def test_watchlists_items_region_is_taller_than_content_region_when_idle():
-    """Reader-first geometry (task-2513): with nothing open in the reader,
-    CONTENT idles at its structural floor (border 2 + the generic "Content"
-    heading 1 + the one-line placeholder 1 = 4 rows, via `height: auto` +
-    `max-height: 12` on `.watchlists-region-content` in `_watchlists.tcss`)
-    while ITEMS -- the `2fr` region hosting the items table -- takes
-    everything the centre header and CONTENT leave. The list is the main
-    reading area; the reader only grows once an item is open. (FEEDS, the
-    other small region this used to be compared against, is gone.)
-    """
+async def test_watchlists_read_regions_keep_their_idle_floors():
+    """The outer centre scroll owns compact layouts; neither region is crushed."""
     app = _build_test_app()
     host = _visual_destination_harness(app, "watchlists_collections")
 
@@ -1308,14 +1312,9 @@ async def test_watchlists_items_region_is_taller_than_content_region_when_idle()
         items = screen.query_one("#wl-region-items")
         content = screen.query_one("#wl-region-content")
 
-        assert content.region.height == 4, (
-            f"CONTENT's idle floor (border 2 + heading 1 + placeholder 1) "
-            f"should not depend on terminal height: content={content.region}"
-        )
-        assert items.region.height > content.region.height, (
-            f"ITEMS should stay the taller reading area while the reader "
-            f"idles: items={items.region} content={content.region}"
-        )
+        assert items.region.height >= 10, items.region
+        assert content.region.height == 20, content.region
+        assert screen.query_one("#wl-centre").max_scroll_y > 0
 
 
 @pytest.mark.parametrize("size", [(160, 42), (235, 52)])
@@ -1401,8 +1400,12 @@ async def test_watchlists_every_region_draws_exactly_one_round_border():
         await pilot.pause()
 
         # 1. Every region draws its own box, and draws it `round`.
+        centre = screen.query_one("#wl-centre")
         for region in Region:
             widget = screen.query_one(f"#wl-region-{region.value}")
+            if region in (Region.ITEMS, Region.CONTENT):
+                centre.scroll_to_widget(widget, animate=False)
+                await pilot.pause()
             rows = _composited_rows(widget)
             assert rows[0].startswith("╭") and rows[0].endswith("╮"), (
                 f"{region.value} has no round top border: {rows[0]!r}"
@@ -1418,7 +1421,11 @@ async def test_watchlists_every_region_draws_exactly_one_round_border():
             "watchlists-detail-pane",
             "watchlists-inspector-pane",
         ):
-            rows = _composited_rows(screen.query_one(f"#{pane_id}"))
+            pane = screen.query_one(f"#{pane_id}")
+            if pane_id == "watchlists-detail-pane":
+                centre.scroll_to_widget(pane, animate=False)
+                await pilot.pause()
+            rows = _composited_rows(pane)
             edges = (rows[0][0], rows[0][-1], rows[-1][0], rows[-1][-1])
             assert not any(ch in _ROUND_CORNERS + _SQUARE_CORNERS for ch in edges), (
                 f"#{pane_id} still draws its own frame inside the region's: "
@@ -1514,7 +1521,7 @@ async def test_watchlists_soloed_centre_region_fills_the_centre(size):
     Solo (`action_solo_region` -> `RegionLayout.solo`) collapses the other
     centre region to a one-line header. CONTENT is the only capped region
     left (FEEDS, whose solo first exposed this, is gone), so a soloed
-    CONTENT would stay pinned at `max-height: 12` while the collapsed
+    CONTENT would stay pinned at `max-height: 50` while the collapsed
     header took one row -- the same degenerate view FEEDS once produced.
     `_region_widget` adds `.watchlists-region-sole-centre` for exactly that
     state and the stylesheet lifts the cap there.
