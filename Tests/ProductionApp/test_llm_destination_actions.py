@@ -12,7 +12,7 @@ import sys
 import textwrap
 import threading
 import time
-from types import SimpleNamespace
+from types import ModuleType
 
 import pytest
 from textual.widgets import Button, Input, RichLog, TextArea
@@ -1326,10 +1326,12 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
             self.title = title
 
     monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    picker_module = ModuleType("textual_fspicker")
+    picker_module.FileOpen = Picker
     monkeypatch.setitem(
         sys.modules,
         "textual_fspicker",
-        SimpleNamespace(FileOpen=Picker),
+        picker_module,
     )
     app = TldwCli()
     app.app_config["_first_run"] = False
@@ -1356,10 +1358,11 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
 
             cache_root = tmp_path / "provider-cache" / "hub"
             cache_root.mkdir(parents=True)
+            assert transformers_events.hf_constants is not None
             monkeypatch.setattr(
-                transformers_events,
-                "hf_constants",
-                SimpleNamespace(HF_HUB_CACHE=str(cache_root)),
+                transformers_events.hf_constants,
+                "HF_HUB_CACHE",
+                str(cache_root),
             )
             await window.on_button_pressed(Button.Pressed(browse_button))
             assert pushed[-1][0].location == str(cache_root)
@@ -1368,18 +1371,18 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
             cache_parent.mkdir()
             missing_cache = cache_parent / "missing-hub"
             monkeypatch.setattr(
-                transformers_events,
-                "hf_constants",
-                SimpleNamespace(HF_HUB_CACHE=str(missing_cache)),
+                transformers_events.hf_constants,
+                "HF_HUB_CACHE",
+                str(missing_cache),
             )
             await window.on_button_pressed(Button.Pressed(browse_button))
             assert pushed[-1][0].location == str(cache_parent)
 
             missing_cache = tmp_path / "missing-cache-parent" / "hub"
             monkeypatch.setattr(
-                transformers_events,
-                "hf_constants",
-                SimpleNamespace(HF_HUB_CACHE=str(missing_cache)),
+                transformers_events.hf_constants,
+                "HF_HUB_CACHE",
+                str(missing_cache),
             )
             await window.on_button_pressed(Button.Pressed(browse_button))
             picker, callback = pushed[-1]
