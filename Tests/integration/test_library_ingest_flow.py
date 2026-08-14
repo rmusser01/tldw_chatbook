@@ -37,6 +37,22 @@ def _preflight_result(**overrides):
     return PreflightResult(**defaults)
 
 
+def _force_missing_required_features(monkeypatch, *groups: str) -> None:
+    """Make capability-sensitive integration cases independent of installed extras."""
+    from tldw_chatbook.Library import ingest_capabilities
+
+    missing = {
+        feature
+        for group in groups
+        for feature in ingest_capabilities.get_capabilities(group).required_features
+    }
+    monkeypatch.setattr(
+        ingest_capabilities,
+        "_is_installed",
+        lambda feature: feature not in missing,
+    )
+
+
 @pytest_asyncio.fixture
 async def library_screen(tmp_path):
     """Provide a mounted LibraryScreen with ingest seams isolated."""
@@ -236,6 +252,13 @@ def test_options_persist_to_config(monkeypatch):
                 "analyze": False,
                 "chunk": True,
                 "chunk_size": 1024,
+                "overwrite_existing": False,
+                "custom_prompt": "",
+                "system_prompt": "",
+                "generate_embeddings": True,
+                "keep_original_file": False,
+                "chunk_overlap": 100,
+                "encoding": "auto",
             },
             # (task-3303 xhigh review round 2, F11) Every NEW snapshot
             # carries the ebook chunk-method explicitly (scheme identity):
@@ -361,13 +384,13 @@ async def test_unsupported_file_not_retryable(library_screen, tmp_path):
 
 @pytest.mark.asyncio
 async def test_forecast_counts_equal_the_real_receipt_for_a_mixed_folder(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
     """(task-14820 AC#3) GOVERNANCE: the forecast is measured against what
     the pipeline actually does, not against the other line on screen.
 
-    A mixed folder is staged on an install with no pdf/ebook/OCR backends
-    (this venv), the forecast is computed from the REAL pre-flight, and
+    A mixed folder is staged with pdf/ebook/OCR capabilities forced missing,
+    the forecast is computed from the REAL pre-flight, and
     the same folder is then run through the REAL submit path -- real
     ``submit_library_ingest_job``, real ``run_parse_job``, real
     ``persist_parsed_media``, real ``MediaDatabase`` (only the process
@@ -379,10 +402,6 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_mixed_folder(
     the pdf/epub/png files as imports even though the pre-flight had
     already warned that their required tooling was absent.
     """
-    from tldw_chatbook.Library.ingest_capabilities import (
-        get_capabilities,
-        _is_installed,
-    )
     from tldw_chatbook.Library.ingest_preflight import analyze_path
     from tldw_chatbook.Library.library_ingest_state import (
         build_ingest_forecast,
@@ -395,19 +414,7 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_mixed_folder(
         _wait_for_runner_idle,
     )
 
-    # The bug lives in the absence of optional backends; if a future venv
-    # installs them the fixture no longer exercises it, so say so loudly
-    # rather than passing vacuously.
-    for group in ("pdf", "ebook", "image"):
-        missing = [
-            feature
-            for feature in get_capabilities(group).required_features
-            if not _is_installed(feature)
-        ]
-        assert missing, (
-            f"{group} tooling is installed in this environment; this "
-            "governance fixture cannot exercise the tooling forecast"
-        )
+    _force_missing_required_features(monkeypatch, "pdf", "ebook", "image")
 
     folder = tmp_path / "mixed"
     folder.mkdir()
@@ -664,10 +671,6 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
     ``transport.submitted``, and its fate is decided entirely by code this
     test runs for real.
     """
-    from tldw_chatbook.Library.ingest_capabilities import (
-        get_capabilities,
-        _is_installed,
-    )
     from tldw_chatbook.Library.ingest_preflight import analyze_path
     from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
     from tldw_chatbook.Library.library_ingest_state import (
@@ -683,17 +686,9 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
         _make_db,
     )
 
-    # The .mp3 below only re-pins the FIRST divergence while this machine
-    # lacks the audio extra; say so loudly rather than passing vacuously.
-    missing_audio = [
-        feature
-        for feature in get_capabilities("audio_video").required_features
-        if not _is_installed(feature)
-    ]
-    assert missing_audio, (
-        "audio tooling is installed here; this fixture cannot show that a "
-        "LOCAL gap no longer condemns a SERVER run"
-    )
+    # The .mp3 below re-pins the first divergence under a deterministic local
+    # capability gap, even when the developer venv has the audio extra.
+    _force_missing_required_features(monkeypatch, "audio_video")
 
     folder = tmp_path / "mixed-server"
     folder.mkdir()
@@ -880,13 +875,14 @@ async def test_server_mode_start_creates_no_job_for_a_selection_the_server_refus
 
 @pytest.mark.asyncio
 async def test_the_same_folder_still_imports_on_this_machine(
-    library_screen, tmp_path
+    library_screen, tmp_path, monkeypatch
 ):
     """(task-14911 AC#2) Guard, through the same real pre-flight: the gate
     is a fact about the TARGET, not about the files. Locally these images
     are ordinary import candidates, so Start stays live and the submit
     reaches the queue."""
     screen, pilot = library_screen
+    _force_missing_required_features(monkeypatch, "image")
     folder = tmp_path / "shots-local"
     folder.mkdir()
     (folder / "one.png").write_bytes(b"\x89PNG not really a png")
@@ -906,8 +902,8 @@ async def test_the_same_folder_still_imports_on_this_machine(
     assert state.start_enabled is True
     assert state.selection_has_nothing_importable is False
 
-    # The local press takes the CONSENT route (this venv has no OCR
-    # backend, so the image import is at risk) -- not the refusal route.
+    # The local press takes the CONSENT route (the fixture forces OCR
+    # unavailable, so the image import is at risk) -- not the refusal route.
     screen._submit_library_ingest_form()
     await pilot.pause()
     consent = screen._library_ingest_start_consent
