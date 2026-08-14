@@ -1,5 +1,5 @@
 ---
-id: TASK-16222
+id: TASK-16308
 title: Restore remote GGUF managed acquisition after local-import guard
 status: Done
 assignee:
