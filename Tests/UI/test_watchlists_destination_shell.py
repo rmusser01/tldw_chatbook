@@ -24,6 +24,9 @@ from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_backend_controller import (
     WatchlistsBackendController,
 )
+from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
+    WatchlistsWorkbench,
+)
 
 
 def _settings_without_splash(section, key=None, default=None):
@@ -1522,6 +1525,48 @@ async def test_clicking_a_tab_switches_the_active_section():
         await pilot.click("#wl-tab-runs")
         await pilot.pause()
         assert screen.active_section == "runs"
+
+
+@pytest.mark.asyncio
+async def test_read_mode_class_is_set_before_each_section_layout_swap():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        workbench = screen.query_one(WatchlistsWorkbench)
+        left = screen.query_one("#wl-region-left_rail")
+        right = screen.query_one("#wl-region-right_rail")
+
+        assert screen.active_section == "items"
+        assert workbench.has_class("watchlists-read-mode")
+
+        observed: list[tuple[str, bool]] = []
+        apply_section_view = workbench.apply_section_view
+
+        async def record_mode_before_layout(**kwargs):
+            observed.append(
+                (
+                    screen.active_section,
+                    workbench.has_class("watchlists-read-mode"),
+                )
+            )
+            await apply_section_view(**kwargs)
+
+        workbench.apply_section_view = record_mode_before_layout
+
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+        assert observed[-1] == ("sources", False)
+        assert not workbench.has_class("watchlists-read-mode")
+
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+        assert observed[-1] == ("items", True)
+        assert workbench.has_class("watchlists-read-mode")
+        assert screen.query_one(WatchlistsWorkbench) is workbench
+        assert screen.query_one("#wl-region-left_rail") is left
+        assert screen.query_one("#wl-region-right_rail") is right
 
 
 @pytest.mark.asyncio

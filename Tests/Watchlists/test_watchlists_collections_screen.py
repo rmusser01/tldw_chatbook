@@ -2692,7 +2692,7 @@ async def test_slash_types_literally_once_the_search_box_has_focus():
 
 @pytest.mark.asyncio
 async def test_a_search_reaches_beyond_the_first_page():
-    """The corpus-wide path: an item past the newest-100 page still surfaces."""
+    """The corpus-wide path: an item past the newest-50 page still surfaces."""
     from textual.widgets import Input
 
     app = _build_test_app()
@@ -2705,7 +2705,7 @@ async def test_a_search_reaches_beyond_the_first_page():
             name="ArXiv", type="rss", source="https://a.example/f"
         )
         # 105 items, newest-first by created_at; the unique-token item is the
-        # OLDEST, so the default page (limit 100) cannot contain it.
+        # OLDEST, so the default page (limit 50) cannot contain it.
         for index in range(105):
             day = 1 + index // 24
             hour = index % 24
@@ -2717,7 +2717,7 @@ async def test_a_search_reaches_beyond_the_first_page():
         await screen._load_items()
         pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
-        assert len(pane.displayed_items()) == 100, "precondition: page is capped"
+        assert len(pane.displayed_items()) == 50, "precondition: page is capped"
         assert all(
             "zzqtoken" not in str(item.get("title")) for item in pane.displayed_items()
         ), "precondition: the oldest item fell off the page"
