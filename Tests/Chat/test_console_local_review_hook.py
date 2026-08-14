@@ -4,6 +4,7 @@ The hook tests mirror build_mcp_review_hook's discipline: clear-first
 stamps, ONE approval round trip per batch, verdicts only ever "proceed".
 """
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -17,7 +18,11 @@ from tldw_chatbook.Chat.console_chat_controller import (
     build_combined_review_hook,
     build_local_review_hook,
 )
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
+from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 ASK = EffectiveToolState(state="ask", origin="global_default")
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
@@ -301,10 +306,164 @@ def test_compose_local_provider_eligible(monkeypatch, tmp_path):
         "local:web_search",
         "local:web_fetch",
         "local:web_crawl",
+        "local:watchlists_search_items",
+        "local:watchlists_get_item",
     } <= catalog_ids
     # resolve_state is the same payload source the MCP gate uses.
     gate = local_provider.pending_gate_for("fs_list", {"path": "."})
     assert gate is not None and gate.server_key == "local:__local__"
+
+
+def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per_call(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    profile = tmp_path / "profile" / "config.toml"
+    profile.parent.mkdir()
+    profile.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+
+    class AppDatabase:
+        def __init__(self):
+            self.searches = 0
+
+        def assert_agent_read_ready(self):
+            return None
+
+        def search_items_for_agent(self, **_kwargs):
+            self.searches += 1
+            return {"items": [], "has_more": False, "snapshot_max_item_id": 0}
+
+        def get_source_collection_memberships(self, _source_ids):
+            return {}
+
+    database = AppDatabase()
+    app = SimpleNamespace(
+        unified_mcp_service=_FakeService(state=ALLOW),
+        subscriptions_db=database,
+    )
+    controller = _bare_controller(app)
+    provider, hook = controller._compose_local_provider()
+    watchlists_service = provider._specs["watchlists_search_items"].handler.__self__
+    assert watchlists_service._db_resolver() is database
+
+    monkeypatch.setattr(
+        controller_mod.asyncio,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("sync Watchlists handlers must not create an event loop")
+        ),
+    )
+
+    assert callable(hook)
+    local_result = provider.invoke("local:watchlists_search_items", {})
+    assert json.loads(local_result.content)["status"] == "ok"
+    assert database.searches == 1
+
+    RuntimeSourceStateStore(default_runtime_policy_path()).save(
+        RuntimeSourceState(active_source="server")
+    )
+    server_result = provider.invoke("local:watchlists_search_items", {})
+    assert json.loads(server_result.content) == {
+        "status": "unsupported",
+        "retryable": False,
+        "message": (
+            "server Watchlists search is not supported; switch Watchlists to Local "
+            "before retrying"
+        ),
+    }
+    assert database.searches == 1
+
+
+def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    profile = tmp_path / "profile" / "config.toml"
+    profile.parent.mkdir()
+    profile.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    policy_store = RuntimeSourceStateStore(default_runtime_policy_path())
+    policy_store.save(RuntimeSourceState())
+
+    database = SubscriptionsDB(tmp_path / "subscriptions.db")
+    try:
+        source_id = database.add_subscription(
+            name="Evidence feed",
+            type="rss",
+            source="https://example.test/feed?token=private",
+        )
+        with database.transaction() as conn:
+            collection_id = conn.execute(
+                "INSERT INTO watchlists (name) VALUES ('Evidence collection')"
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO watchlist_sources (watchlist_id, subscription_id) "
+                "VALUES (?, ?)",
+                (collection_id, source_id),
+            )
+            item_id = conn.execute(
+                """
+                INSERT INTO subscription_items (
+                    subscription_id, url, title, content, status, is_flagged,
+                    published_date
+                ) VALUES (?, ?, ?, ?, 'reviewed', 1, ?)
+                """,
+                (
+                    source_id,
+                    "https://example.test/item?secret=value",
+                    "Read-only evidence",
+                    "needle body",
+                    "2026-08-14T12:00:00Z",
+                ),
+            ).lastrowid
+
+        def snapshot():
+            tables = (
+                "schema_version",
+                "subscriptions",
+                "subscription_items",
+                "watchlists",
+                "watchlist_sources",
+            )
+            return {
+                table: [
+                    tuple(row)
+                    for row in database.conn.execute(f"SELECT * FROM {table}")
+                ]
+                for table in tables
+            }
+
+        before_database = snapshot()
+        before_policy = policy_store.path.read_bytes()
+        controller = _bare_controller(
+            SimpleNamespace(
+                unified_mcp_service=_FakeService(state=ALLOW),
+                subscriptions_db=database,
+            )
+        )
+        provider, _hook = controller._compose_local_provider()
+
+        search = provider.invoke("local:watchlists_search_items", {"query": "needle"})
+        detail = provider.invoke(
+            "local:watchlists_get_item",
+            {"item_id": f"local:watchlist_item:{item_id}"},
+        )
+
+        assert json.loads(search.content)["status"] == "ok"
+        assert json.loads(detail.content)["status"] == "ok"
+        assert snapshot() == before_database
+        assert policy_store.path.read_bytes() == before_policy
+    finally:
+        database.close()
 
 
 def test_compose_local_provider_empty_workspace_root_uses_cwd(monkeypatch, tmp_path):

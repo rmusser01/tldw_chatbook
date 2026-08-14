@@ -36,19 +36,58 @@ JSON parameters, handler); ``MCP/server.py`` stages them on the gateway when
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from typing import Any, Callable, NamedTuple
 
 from loguru import logger
 
 from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.config import get_subscriptions_db_path
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.MCP.permission_store import resolve_effective_state
+from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
+from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
 
 EXTERNAL_NO_CALLBACK_REFUSAL = (
     "tool requires operator approval (permission state is 'ask' and external "
     "MCP clients cannot approve); an operator must grant 'allow' for this "
     "tool in the Console or permission store"
 )
+
+
+class _LazyWatchlistsDBResolver:
+    """Open and retain one external-MCP read-only Watchlists database."""
+
+    def __init__(self) -> None:
+        self._database: SubscriptionsDB | None = None
+        self._lock = threading.Lock()
+
+    def __call__(self) -> SubscriptionsDB:
+        database = self._database
+        if database is not None:
+            return database
+
+        with self._lock:
+            database = self._database
+            if database is not None:
+                return database
+
+            candidate: SubscriptionsDB | None = None
+            try:
+                candidate = SubscriptionsDB(get_subscriptions_db_path(), read_only=True)
+                candidate.assert_agent_read_ready()
+            except Exception:
+                if candidate is not None:
+                    try:
+                        candidate.close()
+                    except Exception:  # noqa: BLE001 -- preserve readiness failure
+                        pass
+                raise
+
+            self._database = candidate
+            return candidate
 
 
 def build_server_local_provider(
@@ -93,12 +132,19 @@ def build_server_local_provider(
         except Exception:  # noqa: BLE001 -- provider maps the fixed failure safely
             raise RuntimeError("permission state unavailable") from None
 
+    watchlists_service = WatchlistsToolService(
+        db_resolver=_LazyWatchlistsDBResolver(),
+        runtime_source_loader=lambda: RuntimeSourceStateStore(
+            default_runtime_policy_path()
+        ).load(),
+    )
     return LocalToolProvider(
         workspace_root=Path(workspace_root).resolve(),
         resolve_state=_resolve_state,
         kill_switch=_kill_switch,
         approval_callback=None,
         no_callback_refusal=EXTERNAL_NO_CALLBACK_REFUSAL,
+        watchlists_service=watchlists_service,
     )
 
 
