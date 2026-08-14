@@ -113,6 +113,71 @@ def test_create_and_list_nested_folders(repository: LocalNoteFolderRepository) -
     assert plans.normalized_path == "/work/plans"
 
 
+def test_create_folder_accepts_a_deterministic_caller_id(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder_id = "00000000-0000-5000-8000-000000000001"
+
+    folder = repository.create_folder(
+        name="Imported", parent_id=None, folder_id=folder_id
+    )
+
+    assert folder.folder_id == folder_id
+
+
+@pytest.mark.parametrize("folder_id", ["", 7, False])
+def test_create_folder_rejects_malformed_caller_id_without_mutation(
+    repository: LocalNoteFolderRepository, folder_id: object
+) -> None:
+    before = _folder_rows(repository)
+
+    with pytest.raises(FolderValidationError) as caught:
+        repository.create_folder(
+            name="Private input",
+            parent_id=None,
+            folder_id=folder_id,  # type: ignore[arg-type]
+        )
+
+    assert _folder_rows(repository) == before
+    assert "Private input" not in str(caught.value)
+
+
+def test_create_folder_without_caller_id_retains_uuid_behavior(
+    repository: LocalNoteFolderRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generated = uuid.UUID("00000000-0000-4000-8000-000000000009")
+    monkeypatch.setattr(folder_repository_module.uuid, "uuid4", lambda: generated)
+
+    folder = repository.create_folder(name="Generated", parent_id=None)
+
+    assert folder.folder_id == str(generated)
+
+
+def test_get_folder_by_path_uses_normalized_exact_segments(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    cafe = repository.create_folder(name="Café", parent_id=None)
+    ideas = repository.create_folder(name="Ideas", parent_id=cafe.folder_id)
+    repository.create_folder(name="Ideas Archive", parent_id=cafe.folder_id)
+
+    assert repository.get_folder_by_path(("Cafe\u0301", "ideas")) == ideas
+    assert repository.get_folder_by_path(("Cafe\u0301",)) == cafe
+    assert repository.get_folder_by_path(("Cafe\u0301", "idea")) is None
+    assert repository.get_folder_by_path(("Cafe\u0301", "ideas", "later")) is None
+
+
+def test_get_folder_by_path_excludes_deleted_folders(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    deleted = repository.create_folder(name="Deleted", parent_id=None)
+    repository.db.get_connection().execute(
+        "UPDATE note_folders SET deleted = 1 WHERE id = ?", (deleted.folder_id,)
+    )
+    repository.db.get_connection().commit()
+
+    assert repository.get_folder_by_path(("deleted",)) is None
+
+
 def test_create_rejects_unicode_equivalent_active_path(
     repository: LocalNoteFolderRepository,
 ) -> None:

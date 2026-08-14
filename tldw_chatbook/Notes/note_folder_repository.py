@@ -38,6 +38,7 @@ _MEMBERSHIP_ID_INSERT_ATTEMPTS = 3
 _TREE_SEARCH_NOTE_LIMIT = 250
 _TREE_SEARCH_FOLDER_LIMIT = 500
 _TREE_SEARCH_MEMBERSHIP_LIMIT = 1000
+_FOLDER_PATH_SEGMENT_LIMIT = 64
 _MEMBERSHIP_COLUMNS = (
     "id, folder_id, note_id, ownership, owner_id, owner_active, version"
 )
@@ -52,12 +53,19 @@ class LocalNoteFolderRepository:
             raise TypeError("db must be a CharactersRAGDB instance")
         self.db = db
 
-    def create_folder(self, *, name: str, parent_id: str | None) -> NoteFolder:
+    def create_folder(
+        self,
+        *,
+        name: str,
+        parent_id: str | None,
+        folder_id: str | None = None,
+    ) -> NoteFolder:
         """Create an active folder beneath an active parent.
 
         Args:
             name: User-visible name for the new folder.
             parent_id: Active parent folder identifier, or None for a root.
+            folder_id: Optional caller-owned opaque identifier.
 
         Returns:
             The newly created folder.
@@ -67,8 +75,9 @@ class LocalNoteFolderRepository:
             FolderValidationError: If the name or parent cannot be used.
             FolderConflictError: If database contention prevents the mutation.
         """
+        selected_folder_id = str(uuid.uuid4()) if folder_id is None else folder_id
+        _validate_folder_id(selected_folder_id, field="folder_id")
         normalized = normalize_folder_name(name)
-        folder_id = str(uuid.uuid4())
         now = _utc_timestamp()
         normalized_path: str | None = None
 
@@ -102,7 +111,7 @@ class LocalNoteFolderRepository:
                     ) VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
                     """,
                     (
-                        folder_id,
+                        selected_folder_id,
                         parent_id,
                         normalized.display,
                         normalized.key,
@@ -114,7 +123,7 @@ class LocalNoteFolderRepository:
                 )
                 inserted = cursor.execute(
                     f"SELECT {_FOLDER_COLUMNS} FROM note_folders WHERE id = ?",
-                    (folder_id,),
+                    (selected_folder_id,),
                 ).fetchone()
                 if inserted is None:  # pragma: no cover - SQLite guarantees this
                     raise FolderValidationError("Created folder could not be read.")
@@ -134,6 +143,41 @@ class LocalNoteFolderRepository:
             _raise_mutation_operational_error(exc)
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
+
+    def get_folder_by_path(self, folder_segments: Iterable[str]) -> NoteFolder | None:
+        """Return one active folder by an exact normalized segment path."""
+        if isinstance(folder_segments, (str, bytes)):
+            raise FolderValidationError(
+                "folder_segments must be a collection of path segments."
+            )
+        try:
+            iterator = iter(folder_segments)
+        except TypeError as exc:
+            raise FolderValidationError(
+                "folder_segments must be a collection of path segments."
+            ) from exc
+
+        normalized_path = ""
+        count = 0
+        for count, segment in enumerate(iterator, start=1):
+            if count > _FOLDER_PATH_SEGMENT_LIMIT:
+                raise FolderValidationError(
+                    "folder_segments exceeds the allowed range."
+                )
+            normalized = normalize_folder_name(segment)
+            normalized_path = join_normalized_folder_path(
+                normalized_path, normalized.key
+            )
+        if count == 0:
+            raise FolderValidationError("folder_segments must identify a folder.")
+
+        with self.db.transaction() as cursor:
+            row = cursor.execute(
+                f"SELECT {_FOLDER_COLUMNS} FROM note_folders "
+                "WHERE normalized_path = ? AND deleted = 0",
+                (normalized_path,),
+            ).fetchone()
+        return _folder_from_row(row) if row is not None else None
 
     def get_folder(
         self, folder_id: str, *, include_deleted: bool = False
