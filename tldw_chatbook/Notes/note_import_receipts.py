@@ -147,6 +147,7 @@ class ImportEffectRecord:
     observed_version: int | None
     reason_code: str | None
     retryable: bool
+    folder_path_digest: str | None = field(default=None, repr=False)
 
     def __repr__(self) -> str:
         return (
@@ -838,7 +839,7 @@ class NoteImportReceiptRepository:
                 """
                 SELECT effect_id, item_id, payload_index, effect_kind, state,
                        target_note_id, NULL, expected_version, observed_version,
-                       reason_code, retryable
+                       reason_code, retryable, NULL
                 FROM import_payload_effects WHERE session_id = ? ORDER BY rowid
                 """,
                 (session_id,),
@@ -847,7 +848,8 @@ class NoteImportReceiptRepository:
             rows = connection.execute(
                 """
                 SELECT effect_id, NULL, NULL, effect_kind, state, NULL,
-                       target_folder_id, NULL, NULL, reason_code, retryable
+                       target_folder_id, NULL, NULL, reason_code, retryable,
+                       path_digest
                 FROM import_folder_effects WHERE session_id = ? ORDER BY folder_ordinal
                 """,
                 (session_id,),
@@ -857,7 +859,7 @@ class NoteImportReceiptRepository:
                 """
                 SELECT effect_id, item_id, payload_index, effect_kind, state,
                        target_note_id, target_folder_id, NULL, NULL,
-                       reason_code, retryable
+                       reason_code, retryable, folder_path_digest
                 FROM import_membership_effects WHERE session_id = ? ORDER BY rowid
                 """,
                 (session_id,),
@@ -878,6 +880,7 @@ class NoteImportReceiptRepository:
                 observed_version=row[8],
                 reason_code=row[9],
                 retryable=bool(row[10]),
+                folder_path_digest=row[11],
             )
             for row in rows
         )
@@ -912,7 +915,7 @@ class NoteImportReceiptRepository:
                     "The requested session transition is not allowed."
                 )
             if state is ImportSessionState.COMPLETED:
-                self._validate_completion(connection, session_id)
+                self._validate_completion(connection, session_id, approval_id)
             connection.execute(
                 """
                 UPDATE import_sessions SET state = ?, reason_code = ?, updated_at = ?
@@ -933,6 +936,7 @@ class NoteImportReceiptRepository:
     def _validate_completion(
         connection: sqlite3.Connection,
         session_id: str,
+        approval_id: str,
     ) -> None:
         invalid_items = connection.execute(
             """
@@ -959,6 +963,26 @@ class NoteImportReceiptRepository:
         if invalid_items or unapplied_effects:
             raise ImportReceiptTransitionError(
                 "A session can complete only after every approved outcome and effect."
+            )
+        snapshot = NoteImportReceiptRepository._load_snapshot(connection, approval_id)
+        counts, _retryable = NoteImportReceiptRepository._derive_receipt_counts(
+            snapshot
+        )
+        if (
+            counts[ImportItemOutcome.PENDING]
+            or counts[ImportItemOutcome.FAILED]
+            or sum(
+                counts[outcome]
+                for outcome in (
+                    ImportItemOutcome.IMPORTED,
+                    ImportItemOutcome.UPDATED,
+                    ImportItemOutcome.SKIPPED,
+                )
+            )
+            != snapshot.total
+        ):
+            raise ImportReceiptTransitionError(
+                "A session can complete only with successful durable note units."
             )
 
     def transition_item(
@@ -1086,6 +1110,7 @@ class NoteImportReceiptRepository:
             for transition in effects:
                 self._update_effect(connection, session_id, transition, timestamp)
             snapshot = self._load_snapshot(connection, approval_id)
+            self._validate_reconciliation_authority(snapshot)
             connection.commit()
             return snapshot
         except Exception:
@@ -1137,10 +1162,7 @@ class NoteImportReceiptRepository:
                 )
             action = ImportAction(row[1])
             allowed_outcomes = {
-                ImportAction.SKIP: {
-                    ImportItemOutcome.SKIPPED,
-                    ImportItemOutcome.FAILED,
-                },
+                ImportAction.SKIP: {ImportItemOutcome.SKIPPED},
                 ImportAction.CREATE_NEW: {
                     ImportItemOutcome.IMPORTED,
                     ImportItemOutcome.FAILED,
@@ -1154,6 +1176,11 @@ class NoteImportReceiptRepository:
                 raise ImportReceiptTransitionError(
                     "The requested item outcome does not match its approved action."
                 )
+            if action is ImportAction.SKIP and (
+                transition.target_note_id is not None
+                or transition.observed_version is not None
+            ):
+                raise ValueError("Skip outcomes cannot bind reconciliation metadata.")
             _assert_compatible_authority(row[2], transition.target_note_id)
             _assert_compatible_authority(row[3], transition.observed_version)
 
@@ -1432,6 +1459,17 @@ class NoteImportReceiptRepository:
                 raise ImportReceiptTransitionError(
                     "Only retryable failed rows may be reset."
                 )
+            if table in {_PAYLOAD_TABLE, _MEMBERSHIP_TABLE}:
+                parent_outcome = self._select_parent_item_outcome(
+                    connection,
+                    table=table,
+                    session_id=session_id,
+                    effect_id=key_value,
+                )
+                if parent_outcome is not ImportItemOutcome.PENDING:
+                    raise ImportReceiptTransitionError(
+                        "The parent item must be reset before its retryable effect."
+                    )
             self._update_retryable_row(
                 connection,
                 table=table,
@@ -1446,6 +1484,40 @@ class NoteImportReceiptRepository:
             raise
         finally:
             connection.close()
+
+    @staticmethod
+    def _select_parent_item_outcome(
+        connection: sqlite3.Connection,
+        *,
+        table: str,
+        session_id: str,
+        effect_id: str,
+    ) -> ImportItemOutcome:
+        if table == _PAYLOAD_TABLE:
+            row = connection.execute(
+                """
+                SELECT item.outcome FROM import_payload_effects AS effect
+                JOIN import_items AS item
+                  ON item.session_id = effect.session_id
+                 AND item.item_id = effect.item_id
+                WHERE effect.session_id = ? AND effect.effect_id = ?
+                """,
+                (session_id, effect_id),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                """
+                SELECT item.outcome FROM import_membership_effects AS effect
+                JOIN import_items AS item
+                  ON item.session_id = effect.session_id
+                 AND item.item_id = effect.item_id
+                WHERE effect.session_id = ? AND effect.effect_id = ?
+                """,
+                (session_id, effect_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError("Import receipt parent item was not found.")
+        return ImportItemOutcome(row[0])
 
     @staticmethod
     def _select_retryable_row(
@@ -1500,7 +1572,8 @@ class NoteImportReceiptRepository:
             connection.execute(
                 """
                 UPDATE import_items
-                SET outcome = ?, reason_code = ?, retryable = ?, updated_at = ?
+                SET outcome = ?, reason_code = ?, retryable = ?, updated_at = ?,
+                    observed_version = NULL
                 WHERE session_id = ? AND item_id = ?
                 """,
                 parameters,
@@ -1509,7 +1582,8 @@ class NoteImportReceiptRepository:
             connection.execute(
                 """
                 UPDATE import_payload_effects
-                SET state = ?, reason_code = ?, retryable = ?, updated_at = ?
+                SET state = ?, reason_code = ?, retryable = ?, updated_at = ?,
+                    observed_version = NULL
                 WHERE session_id = ? AND effect_id = ?
                 """,
                 parameters,
@@ -1562,18 +1636,383 @@ class NoteImportReceiptRepository:
             connection.close()
 
     @staticmethod
+    def _validate_create_note_identities(snapshot: ImportSessionSnapshot) -> None:
+        create_item_ids = {
+            item.item_id
+            for item in snapshot.items
+            if item.selected_action is ImportAction.CREATE_NEW
+        }
+        payloads: dict[tuple[str, int], ImportEffectRecord] = {}
+        target_note_ids: list[str] = []
+        for effect in snapshot.payload_effects:
+            if effect.item_id not in create_item_ids or effect.payload_index is None:
+                continue
+            key = (effect.item_id, effect.payload_index)
+            payloads[key] = effect
+            if effect.target_note_id is not None:
+                target_note_ids.append(effect.target_note_id)
+        if len(target_note_ids) != len(set(target_note_ids)):
+            raise ImportReceiptConflictError(
+                "Create payload note identities must be unique per note unit."
+            )
+        update_target_note_ids = {
+            item.target_note_id
+            for item in snapshot.items
+            if item.selected_action is ImportAction.UPDATE_EXISTING
+            and item.target_note_id is not None
+        }
+        if any(
+            target_note_id in update_target_note_ids
+            for target_note_id in target_note_ids
+        ):
+            raise ImportReceiptConflictError(
+                "Create payload note identities must be unique per note unit."
+            )
+        for effect in snapshot.membership_effects:
+            if (
+                effect.item_id not in create_item_ids
+                or effect.payload_index is None
+                or effect.target_note_id is None
+            ):
+                continue
+            payload = payloads.get((effect.item_id, effect.payload_index))
+            if payload is None or payload.target_note_id is None:
+                raise ImportReceiptConflictError(
+                    "A Create membership cannot bind before its payload target."
+                )
+            if effect.target_note_id != payload.target_note_id:
+                raise ImportReceiptConflictError(
+                    "A Create membership note identity conflicts with its payload."
+                )
+            if (
+                effect.state is ImportEffectState.APPLIED
+                and payload.state is not ImportEffectState.APPLIED
+            ):
+                raise ImportReceiptConflictError(
+                    "An applied Create membership requires an applied payload."
+                )
+
+    @staticmethod
+    def _validate_update_reconciliation(snapshot: ImportSessionSnapshot) -> None:
+        update_items = {
+            item.item_id: item
+            for item in snapshot.items
+            if item.selected_action is ImportAction.UPDATE_EXISTING
+        }
+        payloads_by_item: dict[str, list[ImportEffectRecord]] = {
+            item_id: [] for item_id in update_items
+        }
+        memberships_by_item: dict[str, list[ImportEffectRecord]] = {
+            item_id: [] for item_id in update_items
+        }
+        for effect in snapshot.payload_effects:
+            if effect.item_id in payloads_by_item:
+                payloads_by_item[effect.item_id].append(effect)
+        for effect in snapshot.membership_effects:
+            if effect.item_id not in memberships_by_item:
+                continue
+            item = update_items[effect.item_id]
+            if (
+                effect.target_note_id is not None
+                and effect.target_note_id != item.target_note_id
+            ):
+                raise ImportReceiptConflictError(
+                    "An Update membership conflicts with its approved target."
+                )
+            memberships_by_item[effect.item_id].append(effect)
+
+        for item_id, item in update_items.items():
+            payloads = payloads_by_item[item_id]
+            for effect in payloads:
+                if (
+                    effect.target_note_id is not None
+                    and effect.target_note_id != item.target_note_id
+                ):
+                    raise ImportReceiptConflictError(
+                        "An Update payload conflicts with its approved target."
+                    )
+            if item.outcome is not ImportItemOutcome.UPDATED:
+                continue
+            if item.observed_version is None:
+                raise ImportReceiptTransitionError(
+                    "A terminal Update requires a final item observation."
+                )
+            if (
+                item.expected_version is None
+                or item.observed_version < item.expected_version
+            ):
+                raise ImportReceiptConflictError(
+                    "The final Update observation precedes its expected version."
+                )
+            required_effects = (*payloads, *memberships_by_item[item_id])
+            if not required_effects or any(
+                effect.state is not ImportEffectState.APPLIED
+                for effect in required_effects
+            ):
+                raise ImportReceiptTransitionError(
+                    "A terminal Update requires every approved effect to be applied."
+                )
+            if payloads and any(
+                effect.observed_version != item.observed_version for effect in payloads
+            ):
+                raise ImportReceiptConflictError(
+                    "The final Update observation conflicts with its payload observation."
+                )
+
+    @staticmethod
+    def _validate_folder_identities(snapshot: ImportSessionSnapshot) -> None:
+        folders_by_path: dict[str, ImportEffectRecord] = {}
+        target_paths: dict[str, str] = {}
+        for effect in snapshot.folder_effects:
+            if effect.folder_path_digest is None:
+                raise ImportReceiptError(
+                    "A durable folder effect has inconsistent path authority."
+                )
+            if effect.folder_path_digest in folders_by_path:
+                raise ImportReceiptError(
+                    "Durable folder effects have duplicate path authority."
+                )
+            folders_by_path[effect.folder_path_digest] = effect
+            if effect.target_folder_id is None:
+                continue
+            previous_path = target_paths.setdefault(
+                effect.target_folder_id,
+                effect.folder_path_digest,
+            )
+            if previous_path != effect.folder_path_digest:
+                raise ImportReceiptConflictError(
+                    "Distinct approved folder paths require distinct folder identities."
+                )
+
+        for effect in snapshot.membership_effects:
+            if (
+                effect.folder_path_digest is None
+                or effect.folder_path_digest not in folders_by_path
+            ):
+                raise ImportReceiptError(
+                    "A durable membership has inconsistent folder-path authority."
+                )
+            folder = folders_by_path[effect.folder_path_digest]
+            if (
+                effect.state is ImportEffectState.APPLIED
+                and folder.state is not ImportEffectState.APPLIED
+            ):
+                raise ImportReceiptConflictError(
+                    "An applied membership requires its applied folder authority."
+                )
+            if effect.target_folder_id is not None:
+                if folder.target_folder_id is None:
+                    raise ImportReceiptConflictError(
+                        "A membership folder identity requires a known folder binding."
+                    )
+                if effect.target_folder_id != folder.target_folder_id:
+                    raise ImportReceiptConflictError(
+                        "A membership folder identity conflicts with its approved path."
+                    )
+            elif effect.state is ImportEffectState.APPLIED:
+                raise ImportReceiptConflictError(
+                    "An applied membership requires its applied folder authority."
+                )
+
+    @staticmethod
+    def _validate_reconciliation_authority(snapshot: ImportSessionSnapshot) -> None:
+        NoteImportReceiptRepository._validate_create_note_identities(snapshot)
+        NoteImportReceiptRepository._validate_update_reconciliation(snapshot)
+        NoteImportReceiptRepository._validate_folder_identities(snapshot)
+
+    @staticmethod
+    def _classify_required_effects(
+        required_effects: tuple[ImportEffectRecord, ...],
+        *,
+        success_outcome: ImportItemOutcome,
+        item: ImportItemRecord,
+        include_item_retryable: bool,
+    ) -> tuple[ImportItemOutcome, bool]:
+        failed_effects = tuple(
+            effect
+            for effect in required_effects
+            if effect.state is ImportEffectState.FAILED
+        )
+        if failed_effects:
+            retryable = any(effect.retryable for effect in failed_effects) or (
+                include_item_retryable
+                and item.outcome is ImportItemOutcome.FAILED
+                and item.retryable
+            )
+            return ImportItemOutcome.FAILED, retryable
+        if required_effects and all(
+            effect.state is ImportEffectState.APPLIED for effect in required_effects
+        ):
+            return success_outcome, False
+        return ImportItemOutcome.PENDING, False
+
+    @staticmethod
+    def _validate_terminal_item_summary(
+        item: ImportItemRecord,
+        unit_outcomes: tuple[ImportItemOutcome, ...],
+        *,
+        success_outcome: ImportItemOutcome,
+        unit_retryable: bool,
+    ) -> None:
+        if item.outcome is ImportItemOutcome.PENDING:
+            return
+        consistent = False
+        if item.outcome is success_outcome:
+            consistent = all(outcome is success_outcome for outcome in unit_outcomes)
+        elif item.outcome is ImportItemOutcome.FAILED:
+            consistent = (
+                ImportItemOutcome.FAILED in unit_outcomes
+                and ImportItemOutcome.PENDING not in unit_outcomes
+                and item.retryable is unit_retryable
+            )
+        if not consistent:
+            raise ImportReceiptError(
+                "The terminal item summary is inconsistent with durable effects."
+            )
+
+    @staticmethod
+    def _derive_receipt_counts(
+        snapshot: ImportSessionSnapshot,
+    ) -> tuple[dict[ImportItemOutcome, int], int]:
+        NoteImportReceiptRepository._validate_reconciliation_authority(snapshot)
+        counts = {outcome: 0 for outcome in ImportItemOutcome}
+        retryable_count = 0
+        items_by_id = {item.item_id: item for item in snapshot.items}
+        payloads_by_item: dict[str, list[ImportEffectRecord]] = {
+            item_id: [] for item_id in items_by_id
+        }
+        memberships_by_item: dict[str, list[ImportEffectRecord]] = {
+            item_id: [] for item_id in items_by_id
+        }
+        for effect in snapshot.payload_effects:
+            if effect.item_id not in payloads_by_item:
+                raise ImportReceiptError(
+                    "A durable payload effect has inconsistent item authority."
+                )
+            payloads_by_item[effect.item_id].append(effect)
+        for effect in snapshot.membership_effects:
+            if effect.item_id not in memberships_by_item:
+                raise ImportReceiptError(
+                    "A durable membership effect has inconsistent item authority."
+                )
+            memberships_by_item[effect.item_id].append(effect)
+
+        for item in snapshot.items:
+            payloads = payloads_by_item[item.item_id]
+            memberships = memberships_by_item[item.item_id]
+            unit_results: list[tuple[ImportItemOutcome, bool]] = []
+            success_outcome: ImportItemOutcome
+            if item.selected_action is ImportAction.SKIP:
+                if item.outcome_count != 1 or payloads or memberships:
+                    raise ImportReceiptError(
+                        "A durable Skip item has inconsistent mutation effects."
+                    )
+                success_outcome = ImportItemOutcome.SKIPPED
+                outcome = (
+                    ImportItemOutcome.SKIPPED
+                    if item.outcome is ImportItemOutcome.SKIPPED
+                    else ImportItemOutcome.PENDING
+                )
+                unit_results.append((outcome, False))
+            elif item.selected_action is ImportAction.CREATE_NEW:
+                success_outcome = ImportItemOutcome.IMPORTED
+                payload_by_index = {effect.payload_index: effect for effect in payloads}
+                expected_indexes = set(range(item.outcome_count))
+                if (
+                    len(payload_by_index) != len(payloads)
+                    or set(payload_by_index) != expected_indexes
+                    or any(effect.effect_kind != "create_note" for effect in payloads)
+                ):
+                    raise ImportReceiptError(
+                        "A durable Create item has inconsistent payload effects."
+                    )
+                memberships_by_index: dict[int, list[ImportEffectRecord]] = {
+                    index: [] for index in expected_indexes
+                }
+                for effect in memberships:
+                    if effect.payload_index not in memberships_by_index:
+                        raise ImportReceiptError(
+                            "A durable membership effect has an inconsistent payload."
+                        )
+                    memberships_by_index[effect.payload_index].append(effect)
+                for payload_index in range(item.outcome_count):
+                    payload = payload_by_index[payload_index]
+                    required = (
+                        payload,
+                        *memberships_by_index[payload_index],
+                    )
+                    unit_results.append(
+                        NoteImportReceiptRepository._classify_required_effects(
+                            required,
+                            success_outcome=success_outcome,
+                            item=item,
+                            include_item_retryable=False,
+                        )
+                    )
+            else:
+                success_outcome = ImportItemOutcome.UPDATED
+                if (
+                    item.outcome_count != 1
+                    or len(payloads) > 1
+                    or any(
+                        effect.payload_index != 0
+                        or effect.effect_kind != "replace_content"
+                        for effect in payloads
+                    )
+                    or any(effect.payload_index != 0 for effect in memberships)
+                ):
+                    raise ImportReceiptError(
+                        "A durable Update item has inconsistent mutation effects."
+                    )
+                required = (*payloads, *memberships)
+                if required:
+                    unit_results.append(
+                        NoteImportReceiptRepository._classify_required_effects(
+                            required,
+                            success_outcome=success_outcome,
+                            item=item,
+                            include_item_retryable=True,
+                        )
+                    )
+                elif item.outcome is ImportItemOutcome.UPDATED:
+                    unit_results.append((success_outcome, False))
+                elif item.outcome is ImportItemOutcome.FAILED:
+                    unit_results.append((ImportItemOutcome.FAILED, item.retryable))
+                else:
+                    unit_results.append((ImportItemOutcome.PENDING, False))
+
+            unit_outcomes = tuple(outcome for outcome, _retryable in unit_results)
+            NoteImportReceiptRepository._validate_terminal_item_summary(
+                item,
+                unit_outcomes,
+                success_outcome=success_outcome,
+                unit_retryable=any(
+                    retryable
+                    for outcome, retryable in unit_results
+                    if outcome is ImportItemOutcome.FAILED
+                ),
+            )
+            for outcome, retryable in unit_results:
+                counts[outcome] += 1
+                retryable_count += int(
+                    outcome is ImportItemOutcome.FAILED and retryable
+                )
+
+        if sum(item.outcome_count for item in snapshot.items) != snapshot.total:
+            raise ImportReceiptError(
+                "The durable session total is inconsistent with approved work."
+            )
+        return counts, retryable_count
+
+    @staticmethod
     def _build_receipt(
         snapshot: ImportSessionSnapshot,
         payload_digests: tuple[str, ...],
     ) -> ImportExecutionReceipt:
-        counts = {outcome: 0 for outcome in ImportItemOutcome}
-        for item in snapshot.items:
-            counts[item.outcome] += item.outcome_count
-        completed = sum(
-            item.outcome_count
-            for item in snapshot.items
-            if item.outcome is not ImportItemOutcome.PENDING
+        counts, retryable_count = NoteImportReceiptRepository._derive_receipt_counts(
+            snapshot
         )
+        completed = snapshot.total - counts[ImportItemOutcome.PENDING]
         failed_items = [
             item for item in snapshot.items if item.outcome is ImportItemOutcome.FAILED
         ]
@@ -1592,6 +2031,16 @@ class NoteImportReceiptRepository:
                 ),
                 None,
             )
+        if reason_code is None:
+            reason_code = next(
+                (
+                    effect.reason_code
+                    for effect in effects
+                    if effect.state is ImportEffectState.FAILED
+                    and effect.reason_code is not None
+                ),
+                None,
+            )
         return ImportExecutionReceipt(
             approval_id=snapshot.approval_id,
             state=snapshot.state,
@@ -1601,9 +2050,7 @@ class NoteImportReceiptRepository:
             updated=counts[ImportItemOutcome.UPDATED],
             skipped=counts[ImportItemOutcome.SKIPPED],
             failed=counts[ImportItemOutcome.FAILED],
-            retryable=sum(
-                item.outcome_count for item in failed_items if item.retryable
-            ),
+            retryable=retryable_count,
             reason_code=reason_code,
             _note_ids=tuple(
                 dict.fromkeys(
