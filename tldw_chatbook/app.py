@@ -5382,6 +5382,7 @@ class TldwCli(
         # Track startup timing
         self._startup_start_time = time.perf_counter()
         self._startup_phases = {}
+        self.server_credential_store_unavailable_reason: str | None = None
 
         # Tab switching optimization
         self._initialized_tabs = set()  # Track which tabs have been initialized
@@ -5833,8 +5834,15 @@ class TldwCli(
         self.unified_mcp_target_store.upsert_legacy_config_target(self.app_config)
         try:
             self.server_credential_store = build_default_server_credential_store()
+            self.server_credential_store_unavailable_reason = None
         except CredentialStoreUnavailable as exc:
             self.server_credential_store = UnavailableServerCredentialStore(str(exc))
+            self.server_credential_store_unavailable_reason = str(exc)
+            logger.warning(
+                "No secure OS credential store available; server tokens will "
+                "remain config-only (reason={}).",
+                str(exc),
+            )
         self.server_context_provider = RuntimeServerContextProvider(
             runtime_context=self.runtime_policy,
             target_store=self.unified_mcp_target_store,
