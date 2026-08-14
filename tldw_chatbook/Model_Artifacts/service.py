@@ -308,6 +308,30 @@ def _take_attached_removal_cleanup_owner(
     return owner
 
 
+def _compose_removal_cleanup_owners(
+    owner: ArtifactRemovalAuthority | None,
+    additional: ArtifactRemovalAuthority | None,
+) -> ArtifactRemovalAuthority | None:
+    if additional is None:
+        return owner
+    if owner is None:
+        return additional
+    owner._absorb_cleanup_owner(additional)
+    return owner
+
+
+def _take_direct_removal_cleanup_owner(
+    error: BaseException,
+) -> ArtifactRemovalAuthority | None:
+    owner: ArtifactRemovalAuthority | None = None
+    if isinstance(error, ArtifactRemovalCleanupError):
+        owner = ArtifactRemovalCleanupError.take_cleanup_owner(error)
+    return _compose_removal_cleanup_owners(
+        owner,
+        _take_attached_removal_cleanup_owner(error),
+    )
+
+
 def _absorb_attached_removal_cleanup_owner(
     owner: ArtifactRemovalAuthority,
     error: BaseException,
@@ -340,11 +364,16 @@ def _sanitize_removal_exception(error: BaseException) -> BaseException:
     """
 
     if isinstance(error, BaseExceptionGroup):
-        children = tuple(
-            _sanitize_removal_exception(child) for child in error.exceptions
-        )
+        cleanup_owner = _take_direct_removal_cleanup_owner(error)
+        children: list[BaseException] = []
+        for child in error.exceptions:
+            bounded_child = _sanitize_removal_exception(child)
+            cleanup_owner = _compose_removal_cleanup_owners(
+                cleanup_owner,
+                _take_direct_removal_cleanup_owner(bounded_child),
+            )
+            children.append(bounded_child)
         bounded = BaseExceptionGroup("artifact removal control group", children)
-        cleanup_owner = _take_attached_removal_cleanup_owner(error)
         if cleanup_owner is not None:
             setattr(bounded, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, cleanup_owner)
         error.__traceback__ = None
@@ -1423,10 +1452,7 @@ def take_artifact_removal_cleanup_owner(
 ) -> ArtifactRemovalAuthority | None:
     """Take exact removal cleanup ownership from one bounded failure/control."""
 
-    if isinstance(error, ArtifactRemovalCleanupError):
-        owner = error.take_cleanup_owner()
-        return owner if isinstance(owner, ArtifactRemovalAuthority) else None
-    return _take_attached_removal_cleanup_owner(error)
+    return _take_direct_removal_cleanup_owner(error)
 
 
 class ModelArtifactService:

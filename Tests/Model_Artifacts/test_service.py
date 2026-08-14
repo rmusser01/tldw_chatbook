@@ -60,6 +60,20 @@ class HostileCleanupControl(BaseException):
         self.method_called = True
 
 
+class HostileRemovalCleanupError(service_module.ArtifactRemovalCleanupError):
+    """Carrier subclass whose override must not intercept nominal extraction."""
+
+    def __init__(
+        self,
+        cleanup_owner: service_module.ArtifactRemovalAuthority,
+    ) -> None:
+        self.method_called = False
+        super().__init__(cleanup_owner)
+
+    def take_cleanup_owner(self) -> None:
+        self.method_called = True
+
+
 REMOVAL_CONTROL_TYPES = (
     KeyboardInterrupt,
     SystemExit,
@@ -971,6 +985,151 @@ def test_acquire_setup_bounds_base_exception_group_and_exit_children(
     assert exits == [23, None, 1, 1, 1]
 
 
+def test_group_sanitizer_composes_child_and_root_cleanup_owners(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, first_item, _source, _target = installed_artifact(tmp_path / "first")
+    second, second_item, _source, _target = installed_artifact(tmp_path / "second")
+    trigger, trigger_item, _source, _target = installed_artifact(tmp_path / "trigger")
+    first_contender = service_module.ModelArtifactService(
+        tmp_path / "first" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    second_contender = service_module.ModelArtifactService(
+        tmp_path / "second" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_GROUP_ROOT_CHILD:{tmp_path}:pid={os.getpid()}:owner"
+    first_owner = first.acquire_removal_authority(first_item.reference)
+    second_owner = second.acquire_removal_authority(second_item.reference)
+    first_owner._make_cleanup_only()
+    second_owner._make_cleanup_only()
+    child = KeyboardInterrupt(private)
+    setattr(child, "_artifact_removal_cleanup_owner", first_owner)
+    signal = BaseExceptionGroup(private, [child])
+    setattr(signal, "_artifact_removal_cleanup_owner", second_owner)
+    real_acquire = service_module.ArtifactOperationLease.acquire
+
+    def interrupt_trigger_target(lease: object) -> object:
+        if (
+            lease._lock_root == trigger._locks_path
+            and lease.key == trigger_item.reference.lease_key()
+        ):
+            raise signal
+        return real_acquire(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        interrupt_trigger_target,
+    )
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        trigger.acquire_removal_authority(trigger_item.reference)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        real_acquire,
+    )
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert service_module.take_artifact_removal_cleanup_owner(caught.value) is None
+    bounded_child = caught.value.exceptions[0]
+    assert service_module.take_artifact_removal_cleanup_owner(bounded_child) is None
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    cleanup_owner.close()
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_group_sanitizer_composes_control_and_carrier_child_owners(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, first_item, _source, _target = installed_artifact(tmp_path / "first")
+    second, second_item, _source, _target = installed_artifact(tmp_path / "second")
+    trigger, trigger_item, _source, _target = installed_artifact(tmp_path / "trigger")
+    first_contender = service_module.ModelArtifactService(
+        tmp_path / "first" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    second_contender = service_module.ModelArtifactService(
+        tmp_path / "second" / "store",
+        lease_timeout_seconds=0.01,
+    )
+    private = f"PRIVATE_GROUP_CARRIERS:{tmp_path}:pid={os.getpid()}:owner"
+    first_owner = first.acquire_removal_authority(first_item.reference)
+    second_owner = second.acquire_removal_authority(second_item.reference)
+    first_owner._make_cleanup_only()
+    cancelled = asyncio.CancelledError(private)
+    setattr(cancelled, "_artifact_removal_cleanup_owner", first_owner)
+    carrier = service_module.ArtifactRemovalCleanupError(second_owner)
+    signal = BaseExceptionGroup(private, [cancelled, carrier])
+    real_acquire = service_module.ArtifactOperationLease.acquire
+
+    def interrupt_trigger_target(lease: object) -> object:
+        if (
+            lease._lock_root == trigger._locks_path
+            and lease.key == trigger_item.reference.lease_key()
+        ):
+            raise signal
+        return real_acquire(lease)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        interrupt_trigger_target,
+    )
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        trigger.acquire_removal_authority(trigger_item.reference)
+
+    monkeypatch.setattr(
+        service_module.ArtifactOperationLease,
+        "acquire",
+        real_acquire,
+    )
+    assert private not in removal_exception_graph_text(caught.value)
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    assert service_module.take_artifact_removal_cleanup_owner(caught.value) is None
+    assert service_module.take_artifact_removal_cleanup_owner(cancelled) is None
+    assert service_module.take_artifact_removal_cleanup_owner(carrier) is None
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
+    )
+    cleanup_owner.close()
+    assert (
+        first_contender.probe_removal_availability(first_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+    assert (
+        second_contender.probe_removal_availability(second_item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
 @pytest.mark.parametrize(
     "method_name",
     ("probe_removal_availability", "acquire_removal_authority"),
@@ -1642,6 +1801,33 @@ def test_hostile_control_method_cannot_hide_attached_cleanup_owner(
         service_module.ArtifactOperationLease,
         "release",
         real_release,
+    )
+    cleanup_owner.close()
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.AVAILABLE
+    )
+
+
+def test_hostile_cleanup_carrier_override_cannot_hide_nominal_owner(
+    tmp_path: Path,
+) -> None:
+    service, item, _source, _target = installed_artifact(tmp_path)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    authority = service.acquire_removal_authority(item.reference)
+    error = HostileRemovalCleanupError(authority)
+
+    cleanup_owner = service_module.take_artifact_removal_cleanup_owner(error)
+
+    assert cleanup_owner is authority
+    assert error.method_called is False
+    assert service_module.take_artifact_removal_cleanup_owner(error) is None
+    assert (
+        contender.probe_removal_availability(item.reference)
+        is service_module.ArtifactRemovalAvailability.BUSY
     )
     cleanup_owner.close()
     assert (
