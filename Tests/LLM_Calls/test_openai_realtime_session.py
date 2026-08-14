@@ -39,6 +39,9 @@ from tldw_chatbook.LLM_Calls.realtime.protocol import (
     RealtimeSessionConfig,
 )
 
+# Every case uses this module's in-process WebSocket server on 127.0.0.1.
+pytestmark = pytest.mark.allow_network
+
 
 _WIRE_STEP_TIMEOUT_SECONDS = 30
 _SCRIPT_COMPLETION_TIMEOUT_SECONDS = 30
@@ -343,7 +346,7 @@ async def test_append_audio_from_foreign_thread_is_delivered(fake_server):
     """`append_audio` is called from the future mic-tap recorder thread, not
     the session's own event loop thread -- must marshal via
     `loop.call_soon_threadsafe` and still be delivered in order."""
-    expected = b"\xAA\xBB" * 240
+    expected = b"\xaa\xbb" * 240
     session, scripted = await _connect_and_handshake(
         fake_server,
         [("expect", lambda e: e.get("type") == "input_audio_buffer.append")],
@@ -491,9 +494,7 @@ async def test_input_transcript_completed_without_usage_does_not_fire_transcript
 async def test_speech_started_fires_during_active_response(fake_server):
     speech_calls = {"n": 0}
     callbacks = RealtimeCallbacks(
-        on_speech_started=lambda: speech_calls.__setitem__(
-            "n", speech_calls["n"] + 1
-        )
+        on_speech_started=lambda: speech_calls.__setitem__("n", speech_calls["n"] + 1)
     )
     _, scripted = await _connect_and_handshake(
         fake_server,
@@ -724,9 +725,7 @@ async def test_response_done_failed_routes_to_error_and_still_fires_reply_done(
                     "type": "response.done",
                     "response": {
                         "status": "failed",
-                        "status_details": {
-                            "error": {"message": "rate limit exceeded"}
-                        },
+                        "status_details": {"error": {"message": "rate limit exceeded"}},
                     },
                 },
             ),
@@ -743,7 +742,9 @@ async def test_response_done_failed_routes_to_error_and_still_fires_reply_done(
 
 async def test_server_close_fires_on_closed_with_reason(fake_server):
     closed_reasons: list[str] = []
-    callbacks = RealtimeCallbacks(on_closed=lambda reason: closed_reasons.append(reason))
+    callbacks = RealtimeCallbacks(
+        on_closed=lambda reason: closed_reasons.append(reason)
+    )
     _, scripted = await _connect_and_handshake(
         fake_server,
         [("close", {"code": 1001, "reason": "server-shutdown"})],
@@ -1108,7 +1109,9 @@ def test_safe_invoke_isolates_exceptions_from_on_error_itself_and_as_reporter():
         raise RuntimeError("on_error exploded")
 
     session._callbacks.on_error = _raise_on_error
-    session._safe_invoke(session._callbacks.on_error, RuntimeError("boom"), op="on_error")
+    session._safe_invoke(
+        session._callbacks.on_error, RuntimeError("boom"), op="on_error"
+    )
 
     def _raise_on_ready() -> None:
         raise RuntimeError("on_ready exploded")
