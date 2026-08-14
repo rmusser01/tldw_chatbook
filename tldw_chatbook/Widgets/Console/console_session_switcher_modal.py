@@ -136,7 +136,7 @@ class ConsoleSessionSwitcherModal(
             )
             yield Button("Cancel", id="console-switcher-cancel")
 
-    async def on_mount(self) -> None:
+    async def on_mount(self) -> None:  # type: ignore[override]
         """Focus the search input and populate the initial (unfiltered) results."""
         self.query_one("#console-switcher-query", Input).focus()
         await self._refresh_results("")

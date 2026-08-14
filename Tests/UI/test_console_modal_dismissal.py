@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+import importlib
 import inspect
+from pathlib import Path
 from types import MethodType
 from typing import Any
 
@@ -96,6 +99,7 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsModal,
     _settings_screen_region,
 )
+from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     ScopeListPage,
     TagCount,
@@ -171,6 +175,24 @@ class _Task5TransitionContract:
     result: object
     callback_count: int
     focus_postcondition: str
+
+
+@dataclass(frozen=True)
+class _ExceptionalConsoleModalContract:
+    modal_type: type[ModalScreen[Any]]
+    content_selector: str
+    cancel_result: object
+    opener: str
+    pre_cancel_hook: str | None
+    guard: str
+    focus_postcondition: str
+
+
+@dataclass(frozen=True)
+class _ModalLaunchEdge:
+    owner: str | type[Screen[Any]]
+    launched: tuple[type[Screen[Any]], ...]
+    source_paths: tuple[str, ...]
 
 
 _RESTORE_OPENER = "restore opener or Console composer fallback"
@@ -685,10 +707,176 @@ TASK5_PROMPTS_TRANSITIONS = (
 )
 
 
+TASK567_MODAL_CONTRACTS = (
+    _ExceptionalConsoleModalContract(
+        ConsolePromptsModal,
+        "#console-prompts-modal",
+        None,
+        "Console prompt workbench action",
+        None,
+        "dirty-state and active-improvement guards",
+        _RESTORE_OPENER,
+    ),
+    _ExceptionalConsoleModalContract(
+        ConsoleSettingsModal,
+        "#console-settings-modal",
+        None,
+        "Console Settings action",
+        None,
+        "memory-reset and active-compaction close guards",
+        _RESTORE_OPENER,
+    ),
+    _ExceptionalConsoleModalContract(
+        ConsoleVideoCapacityModal,
+        "#video-capacity-dialog",
+        "discard after explicit confirmation only",
+        "Console generated-video capacity resolver",
+        None,
+        "staged-artifact discard confirmation",
+        _RESTORE_OPENER,
+    ),
+)
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_CONSOLE_ROOT = "Console"
+_CONSOLE_ROOT_SOURCE_PATHS = (
+    "tldw_chatbook/UI/Screens/chat_screen.py",
+    *tuple(
+        str(path.relative_to(_REPO_ROOT))
+        for path in sorted(
+            (_REPO_ROOT / "tldw_chatbook/UI/Console_Modules").glob("*.py")
+        )
+    ),
+)
+_CONSOLE_DIRECT_MODAL_TYPES = tuple(
+    contract.modal_type
+    for contract in (*TASK2_MODAL_CONTRACTS, *TASK3_MODAL_CONTRACTS)
+    if contract.modal_type is not ConsoleWorkspaceRenameModal
+) + tuple(contract.modal_type for contract in TASK567_MODAL_CONTRACTS)
+_DIRECT_SHARED_MODAL_TYPES = tuple(
+    contract.modal_type
+    for contract in TASK4_MODAL_CONTRACTS
+    if contract.modal_type is not ChangeRevertConfirmModal
+)
+CONSOLE_MODAL_LAUNCH_EDGES = (
+    _ModalLaunchEdge(
+        _CONSOLE_ROOT,
+        (*_CONSOLE_DIRECT_MODAL_TYPES, *_DIRECT_SHARED_MODAL_TYPES, ChangeReviewScreen),
+        _CONSOLE_ROOT_SOURCE_PATHS,
+    ),
+    _ModalLaunchEdge(
+        ConsoleWorkspaceSwitcherModal,
+        (ConsoleWorkspaceRenameModal,),
+        ("tldw_chatbook/UI/Console_Modules/workspace.py",),
+    ),
+    _ModalLaunchEdge(
+        ConsolePromptQueueModal,
+        (CancelConfirmationDialog,),
+        ("tldw_chatbook/Widgets/Console/console_prompt_queue_modal.py",),
+    ),
+    _ModalLaunchEdge(
+        ConsoleVideoCapacityModal,
+        (CancelConfirmationDialog,),
+        ("tldw_chatbook/Widgets/Console/console_video_capacity_modal.py",),
+    ),
+    _ModalLaunchEdge(
+        ChangeReviewScreen,
+        (ChangeRevertConfirmModal,),
+        ("tldw_chatbook/UI/Screens/change_review_screen.py",),
+    ),
+)
+
+
+def _discover_console_modal_types() -> set[type[ModalScreen[Any]]]:
+    """Discover Console modal classes by AST class inventory and runtime MRO."""
+    discovered: set[type[ModalScreen[Any]]] = set()
+    console_root = _REPO_ROOT / "tldw_chatbook/Widgets/Console"
+    for source_path in sorted(console_root.glob("*.py")):
+        module_name = ".".join(
+            source_path.relative_to(_REPO_ROOT).with_suffix("").parts
+        )
+        module = importlib.import_module(module_name)
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=source_path)
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            runtime_type = getattr(module, node.name, None)
+            if (
+                inspect.isclass(runtime_type)
+                and runtime_type.__module__ == module_name
+                and issubclass(runtime_type, ModalScreen)
+            ):
+                discovered.add(runtime_type)
+    return discovered
+
+
+def _constructed_type_names(source_paths: tuple[str, ...]) -> set[str]:
+    names: set[str] = set()
+    for relative_path in source_paths:
+        source_path = _REPO_ROOT / relative_path
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=source_path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Name):
+                names.add(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                names.add(node.func.attr)
+    return names
+
+
 def _binding_key_action(binding: object) -> tuple[str, str]:
     if isinstance(binding, Binding):
         return binding.key, binding.action
     return binding[0], binding[1]  # type: ignore[index,return-value]
+
+
+def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -> None:
+    console_contract_types = {
+        contract.modal_type
+        for contract in (
+            *TASK2_MODAL_CONTRACTS,
+            *TASK3_MODAL_CONTRACTS,
+            *TASK567_MODAL_CONTRACTS,
+        )
+    }
+    discovered_console_types = _discover_console_modal_types()
+
+    assert len(discovered_console_types) == 27
+    assert discovered_console_types == console_contract_types
+
+    edges_by_owner = {edge.owner: edge for edge in CONSOLE_MODAL_LAUNCH_EDGES}
+    reachable: set[str | type[Screen[Any]]] = {_CONSOLE_ROOT}
+    frontier: list[str | type[Screen[Any]]] = [_CONSOLE_ROOT]
+    while frontier:
+        owner = frontier.pop()
+        edge = edges_by_owner.get(owner)
+        if edge is None:
+            continue
+        constructed_names = _constructed_type_names(edge.source_paths)
+        assert {launched.__name__ for launched in edge.launched} <= constructed_names
+        for launched in edge.launched:
+            if launched not in reachable:
+                reachable.add(launched)
+                frontier.append(launched)
+
+    reachable_modal_types = {
+        node
+        for node in reachable
+        if inspect.isclass(node) and issubclass(node, ModalScreen)
+    }
+    all_contract_types = console_contract_types | {
+        contract.modal_type for contract in TASK4_MODAL_CONTRACTS
+    }
+    assert reachable_modal_types == all_contract_types
+    assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
+    assert CancelConfirmationDialog in reachable_modal_types
+    assert ChangeRevertConfirmModal in reachable_modal_types
+
+    assert issubclass(ConsoleSetupModal, Vertical)
+    assert not issubclass(ConsoleSetupModal, ModalScreen)
+    assert ConsoleSetupModal not in reachable
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
@@ -2043,6 +2231,36 @@ async def test_real_click_dispatch_keeps_descendant_and_inside_geometry_open():
         content = modal.query_one("#modal-test-content", Vertical)
         inside_blank_point = (content.region.right - 2, content.region.bottom - 1)
         await pilot.click(offset=inside_blank_point)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert results == []
+
+
+@pytest.mark.parametrize("button", [2, 3], ids=["middle", "secondary"])
+@pytest.mark.asyncio
+async def test_real_non_primary_backdrop_dispatch_keeps_modal_open(button: int):
+    app = _ModalHarness()
+    results: list[bool | None] = []
+    modal = _SafeTestModal()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _mount_modal(app, pilot, modal, results)
+        event = events.Click(
+            modal,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=button,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=0,
+            screen_y=0,
+        )
+
+        await modal._dispatch_message(event)
         await pilot.pause()
 
         assert app.screen is modal

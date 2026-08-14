@@ -205,7 +205,7 @@ class ConsoleStylePickerModal(
             # text is untrusted; see module docstring.
             yield Static(DETAIL_EMPTY_COPY, id=DETAIL_STATIC_ID, markup=False)
 
-    async def on_mount(self) -> None:
+    async def on_mount(self) -> None:  # type: ignore[override]
         self._focus_filter_input()
         await self._apply_filter(self._initial_query)
 

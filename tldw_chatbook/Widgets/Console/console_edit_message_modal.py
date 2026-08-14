@@ -140,7 +140,9 @@ class ConsoleEditMessageModal(
                         variant="primary",
                     )
 
-    def on_mount(self, event: events.Mount) -> None:
+    # Textual supplies the event while composing MRO message handlers, so this
+    # event-shaped handler is not an OO override of the mixin hook.
+    def on_mount(self, event: events.Mount) -> None:  # type: ignore[override]
         # Event time shares the clock domain of Key.time — the stale-key
         # guard compares against it (TASK-360).
         self._opened_at = event.time

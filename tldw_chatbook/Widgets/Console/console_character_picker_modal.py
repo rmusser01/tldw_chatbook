@@ -187,7 +187,9 @@ class ConsoleCharacterPickerModal(
                 markup=False,
             )
 
-    async def on_mount(self) -> None:
+    # Textual 8 composes same-named sync/async MRO message handlers; this is not
+    # an ordinary OO override of the mixin hook.
+    async def on_mount(self) -> None:  # type: ignore[override]
         self.query_one("#console-character-picker-query", Input).focus()
         await self._refresh_results("")
 

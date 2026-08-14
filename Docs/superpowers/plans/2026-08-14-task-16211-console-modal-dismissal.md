@@ -57,7 +57,7 @@
 - Create: `tldw_chatbook/Widgets/modal_dismissal.py`
 - Create: `Tests/UI/test_console_modal_dismissal.py`
 
-- [ ] **Step 1: Write pure classifier RED tests**
+- [x] **Step 1: Write pure classifier RED tests**
 
 Add tests for primary outside, primary inside by DOM ancestry, primary inside by geometry, non-primary outside, and unknown provenance. Use a small fake content widget/region rather than constructing impossible coordinate-less Textual `Click` events.
 
@@ -76,7 +76,7 @@ def test_classify_modal_backdrop(...):
     assert is_modal_backdrop_click(...) is expected
 ```
 
-- [ ] **Step 2: Run the classifier tests RED**
+- [x] **Step 2: Run the classifier tests RED**
 
 Run:
 
@@ -86,7 +86,7 @@ Run:
 
 Expected: collection/import failure because `modal_dismissal` does not exist.
 
-- [ ] **Step 3: Implement the pure classifier**
+- [x] **Step 3: Implement the pure classifier**
 
 Implement a small function with no Textual screen-stack behavior:
 
@@ -106,7 +106,7 @@ def is_modal_backdrop_click(
     )
 ```
 
-- [ ] **Step 4: Write mounted RED tests for single-shot cancellation**
+- [x] **Step 4: Write mounted RED tests for single-shot cancellation**
 
 Create a tiny `ModalScreen[bool | None]` using the mixin and an async cancellation gate. Assert:
 
@@ -119,7 +119,7 @@ Create a tiny `ModalScreen[bool | None]` using the mixin and an async cancellati
 - the opener's previously focused widget is restored;
 - if the opener widget is removed, a screen exposing `_focus_console_composer_if_needed(force=True)` receives the fallback call.
 
-- [ ] **Step 5: Run the mounted tests RED**
+- [x] **Step 5: Run the mounted tests RED**
 
 Run:
 
@@ -129,7 +129,7 @@ Run:
 
 Expected: failures because `SafeModalDismissMixin` is absent.
 
-- [ ] **Step 6: Implement `SafeModalDismissMixin` minimally**
+- [x] **Step 6: Implement `SafeModalDismissMixin` minimally**
 
 The implementation must expose these override seams and no registry/framework magic:
 
@@ -181,7 +181,7 @@ Record opener focus on mount without retaining it beyond modal lifetime. Restore
 it after refresh if still mounted; otherwise call the optional Console composer
 focus method on the revealed screen.
 
-- [ ] **Step 7: Run Task 1 GREEN and static checks**
+- [x] **Step 7: Run Task 1 GREEN and static checks**
 
 Run:
 
@@ -193,7 +193,7 @@ Run:
 
 Expected: all pass.
 
-- [ ] **Step 8: Commit the primitive**
+- [x] **Step 8: Commit the primitive**
 
 ```bash
 git add tldw_chatbook/Widgets/modal_dismissal.py Tests/UI/test_console_modal_dismissal.py
@@ -228,7 +228,7 @@ git commit -m "feat(ui): add safe modal dismissal boundary"
 - Test: `Tests/UI/test_console_skill_picker.py`
 - Test: `Tests/Chat/test_console_style_picker.py`
 
-- [ ] **Step 1: Add a RED contract table for these 12 types**
+- [x] **Step 1: Add a RED contract table for these 12 types**
 
 Each row contains `modal_type`, `content_selector`, `cancel_result`, `opener`,
 `pre_cancel_hook`, `guard`, and `focus_postcondition`. Assert mixin inheritance,
@@ -242,7 +242,7 @@ ConsoleStylePickerModal -> _cancel_search_debounce
 all other Task 2 rows -> no explicit pre-cancel hook
 ```
 
-- [ ] **Step 2: Add representative mounted RED tests**
+- [x] **Step 2: Add representative mounted RED tests**
 
 Mount at least one `None` result, one typed picker, and Image Viewer. Assert primary backdrop matches visible Cancel, inside clicks stay open, and Image Viewer invokes dismissal once despite its click-anywhere contract.
 
@@ -250,7 +250,7 @@ For Character, Citation Sources, and Style Picker, arm the real timer/request
 generation state before each of visible Cancel, Escape, and backdrop. Assert
 all three paths perform the exact cleanup once before dismissal.
 
-- [ ] **Step 3: Run Task 2 tests RED**
+- [x] **Step 3: Run Task 2 tests RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -266,7 +266,7 @@ all three paths perform the exact cleanup once before dismissal.
 
 Expected: new mixin/contract assertions fail.
 
-- [ ] **Step 4: Apply the mechanical adoption**
+- [x] **Step 4: Apply the mechanical adoption**
 
 For each class:
 
@@ -286,11 +286,11 @@ Do not replace Character, Citation Sources, or Style Picker cancellation with
 the mixin default: their debounce/request invalidation is part of the existing
 safe Cancel contract.
 
-- [ ] **Step 5: Run Task 2 GREEN**
+- [x] **Step 5: Run Task 2 GREEN**
 
 Run the Step 3 command again. Expected: all pass.
 
-- [ ] **Step 6: Commit Task 2**
+- [x] **Step 6: Commit Task 2**
 
 ```bash
 git add tldw_chatbook/Widgets/Console Tests/UI/test_console_modal_dismissal.py Tests/UI/test_console_image_viewer.py
@@ -324,7 +324,7 @@ git commit -m "feat(console): dismiss ordinary modal surfaces safely"
 - Test: `Tests/UI/test_console_system_prompt.py`
 - Test: `Tests/UI/test_prompt_variables_dialog.py`
 
-- [ ] **Step 1: Extend the RED contract table with these 11 files / 12 classes**
+- [x] **Step 1: Extend the RED contract table with these 11 files / 12 classes**
 
 Include both `ConsoleWorkspaceSwitcherModal` and
 `ConsoleWorkspaceRenameModal`. Use their exact existing outer IDs. Record
@@ -332,14 +332,14 @@ Include both `ConsoleWorkspaceSwitcherModal` and
 all other Task 3 rows have no explicit cleanup hook. Assert typed success
 results remain outside the generic cancel path.
 
-- [ ] **Step 2: Add RED exact-once MRO tests**
+- [x] **Step 2: Add RED exact-once MRO tests**
 
 For Composer Menu and RAG Settings, dispatch a real mounted `events.Click` through Textual rather than calling one handler directly. Count the result callback once. Add a Settings-adjacent regression fixture proving the mixin pattern does not suppress unrelated click handlers.
 
 Arm Session Switcher's real debounce timer and prove visible Cancel, Escape,
 and backdrop each stop it once before dismissing.
 
-- [ ] **Step 3: Run focused RED tests**
+- [x] **Step 3: Run focused RED tests**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -355,7 +355,7 @@ and backdrop each stop it once before dismissing.
 
 Expected: contract/backdrop tests fail before adoption.
 
-- [ ] **Step 4: Apply mechanical adoption and remove duplicate backdrop branches**
+- [x] **Step 4: Apply mechanical adoption and remove duplicate backdrop branches**
 
 Use selectors: `#console-composer-menu`, `#console-edit-message-modal`, `#console-generate-image-modal`, `#console-rag-settings`, `#console-rename-session-modal`, `#console-rewind-modal`, `#console-save-as-modal`, `#console-switcher-modal`, `#console-system-prompt-modal`, `#console-workspace-switcher-modal`, `#console-workspace-rename-modal`, and `#prompt-variables-dialog`.
 
@@ -365,7 +365,7 @@ Override Session Switcher's `_perform_safe_cancel` to call the existing
 `_cancel_query_debounce` helper before `dismiss_safe_once(None)`; do not route
 it through the default hook.
 
-- [ ] **Step 5: Run Task 3 GREEN and commit**
+- [x] **Step 5: Run Task 3 GREEN and commit**
 
 Run the Step 3 command, then:
 
@@ -396,7 +396,7 @@ git commit -m "feat(console): unify form modal cancellation"
 - Test: `Tests/UI/test_change_review_screen.py`
 - Test: `Tests/Media_Playback/test_player_screen.py`
 
-- [ ] **Step 1: Write RED shared-result and transitive inventory tests**
+- [x] **Step 1: Write RED shared-result and transitive inventory tests**
 
 Assert:
 
@@ -408,7 +408,7 @@ Assert:
 - clicks on each open file-picker sub-surface remain inside;
 - Video Player's whole screen is content, Escape runs the same stop/cleanup path as `q`, and frame/status/hint clicks are not backdrop.
 
-- [ ] **Step 2: Run shared tests RED**
+- [x] **Step 2: Run shared tests RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -422,7 +422,7 @@ Assert:
 
 Expected: missing Escape/backdrop behavior fails.
 
-- [ ] **Step 3: Add stable content boundaries and typed cancel overrides**
+- [x] **Step 3: Add stable content boundaries and typed cancel overrides**
 
 Add IDs to currently bare outer wrappers: `#dictionary-picker-dialog`, `#world-book-picker-dialog`, `#confirmation-dialog`, `#cancel-confirmation-dialog`, and `#enhanced-file-dialog`. Use `#workbench-help-panel` and `#change-revert-confirm` as-is. Mark Video Player as full-screen content so it has no synthetic backdrop.
 
@@ -442,7 +442,7 @@ dialog's existing `dismiss` override, so recent-location persistence remains
 intact while focus restoration, top-screen verification, and terminal
 single-shot behavior are enforced.
 
-- [ ] **Step 4: Run shared tests GREEN and commit**
+- [x] **Step 4: Run shared tests GREEN and commit**
 
 Run Step 2, then:
 
@@ -465,7 +465,7 @@ git commit -m "feat(console): cancel shared modal components safely"
 - Test: `Tests/UI/test_console_prompts_modal.py`
 - Test: `Tests/UI/test_console_modal_dismissal.py`
 
-- [ ] **Step 1: Write the transition-matrix RED tests**
+- [x] **Step 1: Write the transition-matrix RED tests**
 
 Cover clean root, clean nested mode, dirty edit, dirty recipe, guard visible, active improvement, cancelling improvement, and expanded descendant control. For every row assert gesture, visible state, result, callback count, and focused widget.
 
@@ -479,7 +479,7 @@ guard visible + backdrop -> remain guarded
 active improvement -> existing cancellation behavior, once
 ```
 
-- [ ] **Step 2: Run Workbench tests RED**
+- [x] **Step 2: Run Workbench tests RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/UI/test_console_prompts_modal.py Tests/UI/test_console_modal_dismissal.py -k prompts
@@ -487,13 +487,13 @@ active improvement -> existing cancellation behavior, once
 
 Expected: current Escape performs Back and guard Escape lacks focus restoration.
 
-- [ ] **Step 3: Implement the minimal Workbench overrides**
+- [x] **Step 3: Implement the minimal Workbench overrides**
 
 Inherit the mixin, set `SAFE_MODAL_CONTENT = "#console-prompts-modal"`, route clean Escape/backdrop to the existing Close request, and route dirty requests to the existing guard. Refactor guard Escape to call the same helper as visible Keep Editing so focus restoration is not duplicated.
 
 Do not change the visible Back button or improvement transaction semantics.
 
-- [ ] **Step 4: Run Workbench tests GREEN and commit**
+- [x] **Step 4: Run Workbench tests GREEN and commit**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/UI/test_console_prompts_modal.py Tests/UI/test_console_modal_dismissal.py -k prompts
@@ -512,7 +512,7 @@ git commit -m "fix(console): guard Prompt Workbench dismissal"
 - Test: `Tests/Chat/test_console_session_settings.py`
 - Test: `Tests/UI/test_console_modal_dismissal.py`
 
-- [ ] **Step 1: Write reset-token guard RED tests**
+- [x] **Step 1: Write reset-token guard RED tests**
 
 After `_reset_current_branch_memory`, request close from visible Cancel, Escape, and backdrop. Assert the same three-choice guard appears:
 
@@ -522,15 +522,15 @@ After `_reset_current_branch_memory`, request close from visible Cancel, Escape,
 - expired Undo leaves the guard open with the existing recovery message;
 - repeated close gestures never stack guards.
 
-- [ ] **Step 2: Write active-compaction RED tests**
+- [x] **Step 2: Write active-compaction RED tests**
 
 Gate `_compact_now` with an `asyncio.Event`, request close, and assert the two-choice acknowledgement. Return preserves progress/focus. Close anyway dismisses the modal, reports that work may continue/be billed, and never reports provider cancellation. Reopening Settings obtains fresh controller state rather than the abandoned widget state.
 
-- [ ] **Step 3: Add MRO regression RED tests**
+- [x] **Step 3: Add MRO regression RED tests**
 
 Keep the existing redirected Textual-Web `Select` click cases green while adding backdrop handling. Dispatch the real event through the mounted modal, not one method directly.
 
-- [ ] **Step 4: Run Settings tests RED**
+- [x] **Step 4: Run Settings tests RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/Chat/test_console_session_settings.py Tests/UI/test_console_modal_dismissal.py -k 'settings or memory_reset or compaction or redirected'
@@ -538,7 +538,7 @@ Keep the existing redirected Textual-Web `Select` click cases green while adding
 
 Expected: current direct `dismiss(None)` strands the token and closes during work.
 
-- [ ] **Step 5: Implement one in-modal close guard**
+- [x] **Step 5: Implement one in-modal close guard**
 
 Inherit the mixin and set `SAFE_MODAL_CONTENT = "#console-settings-modal"`. Add a hidden overlay region inside the modal rather than a new `ModalScreen`, with mode `reset` or `compaction` and these action IDs:
 
@@ -551,7 +551,7 @@ Inherit the mixin and set `SAFE_MODAL_CONTENT = "#console-settings-modal"`. Add 
 
 Route visible Cancel, Escape, and backdrop through `_request_settings_close`. Keep Save and Save as default behavior unchanged. Store the focused widget before showing the guard and restore it on Return. Close anyway cancels only the modal-owned wait/worker and emits truthful status/notification copy; it must not claim the provider request was cancelled.
 
-- [ ] **Step 6: Run Settings tests GREEN and commit**
+- [x] **Step 6: Run Settings tests GREEN and commit**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/Chat/test_console_session_settings.py Tests/UI/test_console_modal_dismissal.py -k 'settings or memory_reset or compaction or redirected'
@@ -570,7 +570,7 @@ git commit -m "fix(console): guard Settings close side effects"
 - Test: `Tests/Chat/test_console_video_capacity.py`
 - Test: `Tests/UI/test_console_modal_dismissal.py`
 
-- [ ] **Step 1: Replace the unsafe Escape oracle with RED guard tests**
+- [x] **Step 1: Replace the unsafe Escape oracle with RED guard tests**
 
 Remove the old expectation that Escape returns `"discard"`. Mount the production resolver with a real `PendingVideoArtifact`; Escape and backdrop must push one `CancelConfirmationDialog` while the stream remains open and owned.
 
@@ -582,7 +582,7 @@ Assert:
 - Keep/Retry and Save to disk are unchanged;
 - navigation/unmount still closes the artifact once.
 
-- [ ] **Step 2: Run capacity tests RED**
+- [x] **Step 2: Run capacity tests RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/Chat/test_console_video_capacity.py Tests/UI/test_console_modal_dismissal.py -k 'capacity or staged_artifact'
@@ -590,13 +590,13 @@ Assert:
 
 Expected: Escape immediately discards before the fix.
 
-- [ ] **Step 3: Implement guarded capacity cancellation**
+- [x] **Step 3: Implement guarded capacity cancellation**
 
 Inherit the mixin, set `SAFE_MODAL_CONTENT = "#video-capacity-dialog"`, and replace `action_discard` as the Escape target. `_perform_safe_cancel` pushes one `CancelConfirmationDialog` with explicit generated-video copy. Its `False` result refocuses `#video-capacity-save` for over-capacity and `#video-capacity-keep` for store failure; `True` calls `dismiss_safe_once("discard")`.
 
 Do not map `None`, backdrop, or guard cancellation to any terminal `CapacityAction`.
 
-- [ ] **Step 4: Run capacity tests GREEN and commit**
+- [x] **Step 4: Run capacity tests GREEN and commit**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/Chat/test_console_video_capacity.py Tests/UI/test_console_modal_dismissal.py -k 'capacity or staged_artifact'
@@ -616,15 +616,15 @@ git commit -m "fix(console): confirm generated video discard"
 - Modify: `backlog/tasks/task-16211 - Make-all-Console-modals-dismiss-safely-with-Escape-or-backdrop-click.md`
 - Modify if incident-backed: `backlog/docs/lessons-testing-evidence.md`
 
-- [ ] **Step 1: Make the inventory assertion exhaustive**
+- [x] **Step 1: Make the inventory assertion exhaustive**
 
 Use Python runtime/AST inspection, not an anchored regex, to discover all 27 `ModalScreen` types under `Widgets/Console`. Compare them with the explicit contract rows. Walk the explicit direct and nested launch edges to a fixed point and require both enhanced file dialog variants, `CancelConfirmationDialog`, and `ChangeRevertConfirmModal`. Assert `ConsoleSetupModal` is excluded because it is an embedded `Vertical`, not a screen.
 
-- [ ] **Step 2: Add final click-through and focus integration tests**
+- [x] **Step 2: Add final click-through and focus integration tests**
 
 Use explicitly dispatched button-2/3 events for non-primary coverage. Exercise rapid primary clicks through normal Textual dispatch, count callbacks, and prove the revealed screen receives no action. Verify prior focus restoration and Console composer fallback. Keep full-screen Video Player cells inside.
 
-- [ ] **Step 3: Run only the related-file verification matrix**
+- [x] **Step 3: Run only the related-file verification matrix**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -647,7 +647,7 @@ Use explicitly dispatched button-2/3 events for non-primary coverage. Exercise r
 
 Expected: all pass. Do not run full test directories or the full repository suite.
 
-- [ ] **Step 4: Run targeted static verification**
+- [x] **Step 4: Run targeted static verification**
 
 ```bash
 ../../.venv/bin/ruff check \
@@ -698,7 +698,7 @@ pre-task result for any failing command, compare it with the final result, and
 fix every new or changed-line diagnostic. New files and previously clean files
 must pass outright; do not reformat unrelated legacy code.
 
-- [ ] **Step 5: Perform the required mutation proofs**
+- [x] **Step 5: Perform the required mutation proofs**
 
 Temporarily and separately:
 
@@ -709,15 +709,36 @@ Temporarily and separately:
 
 Run each named discriminating test and require RED. Restore immediately and rerun GREEN.
 
-- [ ] **Step 6: Self-review against all nine acceptance criteria**
+- [x] **Step 6: Self-review against all nine acceptance criteria**
 
 Audit the staged diff for accidental result changes, missing launch edges, MRO double handlers, unsafe destructive defaults, focus gaps, and unrelated formatting churn. Update the task plan only if implementation deviated.
 
-- [ ] **Step 7: Complete Backlog hygiene**
+- [x] **Step 7: Complete Backlog hygiene**
 
 Check all acceptance criteria, add concise Implementation Notes with the exact related-file evidence and ADR-031 amendment, and set TASK-16211 to Done through the Backlog CLI. Add a lessons entry only if implementation produces incident-backed knowledge not already captured by the design/ADR.
 
-- [ ] **Step 8: Commit closeout**
+**Task 8 closeout evidence (2026-08-14):**
+
+- Runtime plus AST discovery found exactly 27 `Widgets/Console` `ModalScreen`
+  classes, matched them to explicit contract rows, and walked the direct/nested
+  launch graph to all 36 contracted modal types. Both enhanced file variants,
+  `CancelConfirmationDialog`, and `ChangeRevertConfirmModal` were reached;
+  `ConsoleSetupModal` was proven to be an excluded `Vertical`.
+- The exact 15-file matrix passed 614 tests. Focused final Textual MRO/lifecycle
+  coverage passed 29 tests.
+- Ruff check, compileall, and `git diff --check` passed. Ruff format reported
+  the same 25 legacy files at archived base `733f03d2d` and final. MyPy improved
+  from 26 errors in 7 base files to 24 errors in 6 final files; no new or
+  changed-line diagnostic remains.
+- The outside-backdrop branch, pending latch, top-screen check, and
+  `False`-confirmation result each produced the named RED failure separately,
+  then passed GREEN after immediate restoration.
+- All nine acceptance criteria were reviewed against the inventory, typed
+  result/callback, guard, MRO, focus, click-through, and video-player evidence.
+  No new lessons entry was added because the observed Textual MRO behavior is
+  already covered in `backlog/docs/lessons-testing-evidence.md`.
+
+- [x] **Step 8: Commit closeout**
 
 ```bash
 git add Docs/superpowers/plans/2026-08-14-task-16211-console-modal-dismissal.md \

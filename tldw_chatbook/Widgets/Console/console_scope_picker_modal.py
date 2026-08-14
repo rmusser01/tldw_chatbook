@@ -387,7 +387,7 @@ class ConsoleScopePickerModal(SafeModalDismissMixin, ModalScreen[None]):
                 yield Button("Clear scope", id=CLEAR_SCOPE_BTN_ID, compact=True)
                 yield Button("Cancel", id=CANCEL_BTN_ID, compact=True)
 
-    async def on_mount(self) -> None:
+    async def on_mount(self) -> None:  # type: ignore[override]
         self._sync_tab_buttons()
         self._sync_view_buttons()
         # Selected view needs no lister I/O -- render synchronously so it's

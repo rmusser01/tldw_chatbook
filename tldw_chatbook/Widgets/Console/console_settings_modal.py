@@ -1165,7 +1165,9 @@ class ConsoleSettingsModal(
         self._show_settings_view("context")
         self.query_one("#console-context-budget-mode", Select).focus()
 
-    def on_click(self, event: events.Click) -> None:
+    # Textual 8 composes same-named sync/async MRO message handlers; this is not
+    # an ordinary OO override of the mixin hook.
+    def on_click(self, event: events.Click) -> None:  # type: ignore[override]
         """Recover select clicks redirected through focused Textual Web inputs.
 
         Args:

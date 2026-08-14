@@ -94,7 +94,7 @@ class ConsoleImageViewerModal(SafeModalDismissMixin, ModalScreen[None]):
                 "Esc / click to close", id="console-image-viewer-hint", markup=False
             )
 
-    async def on_mount(self) -> None:
+    async def on_mount(self) -> None:  # type: ignore[override]
         body = self.query_one("#console-image-viewer-body", Container)
         widget = self._build_full_size_widget()
         # Inline styles, not CSS: the app-tier stylesheet bundle outranks a
