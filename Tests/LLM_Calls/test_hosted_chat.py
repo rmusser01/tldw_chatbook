@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
 import time
+import traceback
 from typing import Any
 
 import pytest
@@ -741,6 +742,30 @@ def test_transport_config_repr_hides_api_key() -> None:
     assert config == _transport_config(
         "https://api.example/v1", api_key="DIFFERENT-KEY"
     )
+
+
+def test_owned_json_post_maps_invalid_base_url_to_redacted_transport_error() -> None:
+    base_url = "https://user:RAW-URL-CANARY@example.com/v1"
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        owned_json_post(
+            config=_transport_config(base_url),
+            route="chat/completions",
+            payload={},
+            streaming=False,
+        )
+
+    assert type(exc_info.value) is ChatProviderError
+    assert exc_info.value.__suppress_context__ is True
+    rendered = "".join(
+        traceback.format_exception(
+            exc_info.type,
+            exc_info.value,
+            exc_info.tb,
+        )
+    )
+    assert base_url not in rendered
+    assert "RAW-URL-CANARY" not in rendered
 
 
 @pytest.mark.allow_network

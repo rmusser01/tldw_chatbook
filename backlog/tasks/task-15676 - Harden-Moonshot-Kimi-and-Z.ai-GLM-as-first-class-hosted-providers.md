@@ -1,10 +1,10 @@
 ---
 id: TASK-15676
 title: Harden Moonshot Kimi and Z.ai GLM as first-class hosted providers
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-08-12 20:45'
-updated_date: '2026-08-13 22:10'
+updated_date: '2026-08-14 00:19'
 labels: []
 dependencies:
   - TASK-15675
@@ -55,6 +55,10 @@ Bring the existing Moonshot AI and Z.ai integrations up to the same first-class 
 6. Update user documentation, add default-skipped isolated live-test gates, run
    only the focused provider-related verification authorized for this task,
    self-review each acceptance criterion, and record observed evidence.
+7. Post-merge review correction: translate the hosted transport's private base
+   URL validation exception into its documented redacted public error contract,
+   align Z.ai's adapter-only retry-delay fallback with canonical Console/config
+   policy, and prove both through focused regressions before re-closing the task.
 
 Detailed plan:
 `Docs/superpowers/plans/2026-08-12-kimi-zai-hosted-chat-completions-implementation.md`

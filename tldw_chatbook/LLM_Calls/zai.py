@@ -216,7 +216,7 @@ def resolve_zai_request(
         base_url=_resolve_base_url(explicit_base_url, settings),
         timeout=_positive_number(transport_settings, "timeout", 90.0),
         retries=_nonnegative_integer(transport_settings, "retries", 3),
-        retry_delay=_nonnegative_number(transport_settings, "retry_delay", 1.0),
+        retry_delay=_nonnegative_number(transport_settings, "retry_delay", 5.0),
         streaming=_resolve_streaming(settings),
     )
 
