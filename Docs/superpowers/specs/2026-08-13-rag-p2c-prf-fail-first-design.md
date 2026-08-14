@@ -51,8 +51,34 @@ Where that CAN pay on this corpus, and where it structurally cannot:
 A harness-side probe (`Tests/RAG_Eval/harness/` — the fixture_probe /
 sweep idiom; gated, RAG_EVAL=1) implementing the SIMPLEST honest PRF:
 
-- First pass: the leg the profile would run (four-seam plain for the
-  plain cells; the engine keyword leg where relevant), top-k as shipped.
+- **Step 0 — the fireability census (review addition; run FIRST, it is
+  one command):** for each of the 22 failing queries, does the shipped
+  first pass return ANY rows? The four-seam builder is AND-strict across
+  terms (verified: `build_fts_match_query` = AND of plural/singular
+  OR-groups), so a paraphrase query's first pass plausibly returns zero
+  rows — and a zero-row first pass feeds PRF NOTHING, structurally. If
+  fireability < 5/22 on the shipped first pass, ONE pre-registered
+  variant is licensed: the first pass run in an OR-of-content-terms form
+  FOR FEEDBACK ONLY (users would still see the shipped results; the
+  wider pass exists only to select pseudo-relevant documents — classic
+  PRF on a candidate set). No other variant is licensed; if BOTH
+  fireability regimes null, the arc records the null. Pre-registering
+  this now is what keeps it from being post-hoc scope creep later.
+- **Row-content fact the probe must design around (verified at review):
+  four-seam media and conversation rows carry NO document text** — their
+  snippets are labels ("Matched media · {type}", "Matched conversation ·
+  N messages"); only note and prompt rows carry real text. Term
+  derivation therefore requires a content fetch for the top-M fed rows
+  via the existing read APIs (one read per fed row — priced and
+  reported), or the feed is silently biased toward notes/prompts. The
+  probe fetches; the price rides the report.
+- First pass: the leg the profile would run — composed at the DB-level
+  call sites the four-seam service itself uses (the seams build a MATCH
+  string via `build_fts_match_query` and hand it to
+  `db.search_*_by_content`-family functions, so the probe can hand its
+  own expression AT THE SAME CALL SITES and stay on the product's SQL;
+  the 15400 probe-fidelity lesson — measure the form the engine would
+  actually run).
 - Term derivation, pre-registered: top-N terms by TF over the top-M
   first-pass documents (N=8, M=5 to start — swept over a SMALL
   pre-registered grid {N: 4/8/16, M: 3/5/10} only if the base point
@@ -68,18 +94,26 @@ sweep idiom; gated, RAG_EVAL=1) implementing the SIMPLEST honest PRF:
 - Measured, per query in the target population (the 22 plain-failing +
   the 3 negation as guard + the 7 negatives as junk-guard): target
   reached (rank), rows returned, junk delta on negatives/negation.
-  Plus the OLD-QUERIES guard: the 13 plain-keyword queries currently at
-  1.000 must not lose their targets to expansion-term dilution (the
-  15700 lost-column discipline: report gains AND losses by query id).
+  Plus the OLD-QUERIES guard: **every plain query currently hitting its
+  target — derived from a fresh baseline pass at probe time, NOT a
+  hardcoded list** (review correction: plain keyword recall is 0.844,
+  not 1.000, and the scoped category's 7/7 plain hits are in the guard
+  population too) — must not lose its target to expansion-term dilution
+  (the 15700 lost-column discipline: gains AND losses by query id).
 
 ### Pre-registered admission bar (Phase B exists only if met)
 
 - ≥5 of the 22 plain-failing queries reach their target in the second
   pass's top-10, AND
-- zero of the 13 plain-keyword hits lost, AND
-- zero new rows on negatives (the plain negative contract is zero rows —
-  PRF firing on a negative means the first pass fed it junk; that is a
-  fail), AND
+- zero currently-hitting plain queries (any category) lose their
+  target, AND
+- zero new rows on negatives. **Honesty note (review): under the
+  shipped AND-strict first pass this guard is STRUCTURAL — negatives
+  return zero rows, so PRF cannot fire on them and the guard cannot
+  bind; it becomes a REAL guard only under the OR-feedback variant,
+  which is exactly when it matters. Report it as structural-vs-live
+  accordingly (a guard that cannot bind is a property of the first-pass
+  shape, not evidence of safety).** AND
 - the negation guard: no negation query's row set grows with
   assertion-side junk (measured, reported; expected to bind).
 - A result below the bar in every grid point = THE NULL: recorded in the
