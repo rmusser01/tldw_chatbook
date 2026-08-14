@@ -45,6 +45,13 @@ from tldw_chatbook.Notes.note_import_plan_models import (
 )
 
 _REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
+_FILE_SHARE_READ = 0x00000001
+_FILE_SHARE_WRITE = 0x00000002
+
+
+def _native_windows_share_mode(*, directory: bool) -> int:
+    """Allow directory mutation, but deny writes to an opened source file."""
+    return _FILE_SHARE_READ | (_FILE_SHARE_WRITE if directory else 0)
 
 
 class WindowsReadOnlyFilesystem(Protocol):
@@ -173,8 +180,6 @@ class NativeWindowsReadOnlyFilesystem:
 
         generic_read = 0x80000000
         file_read_attributes = 0x00000080
-        file_share_read = 0x00000001
-        file_share_write = 0x00000002
         open_existing = 3
         file_flag_open_reparse_point = 0x00200000
         file_flag_backup_semantics = 0x02000000
@@ -188,7 +193,7 @@ class NativeWindowsReadOnlyFilesystem:
         handle = create_file(
             os.fspath(path),
             desired_access,
-            file_share_read | file_share_write,
+            _native_windows_share_mode(directory=directory),
             None,
             open_existing,
             open_flags,
@@ -870,7 +875,9 @@ def _stable_path_handle_identity_matches(
 ) -> bool:
     """Compare shared fields; Windows pathname ctime is creation time."""
     return (
-        path_identity.device == handle_metadata.st_dev
+        path_identity.inode != 0
+        and handle_metadata.st_ino != 0
+        and path_identity.device == handle_metadata.st_dev
         and path_identity.inode == handle_metadata.st_ino
         and path_identity.mode == handle_metadata.st_mode
         and path_identity.size == handle_metadata.st_size

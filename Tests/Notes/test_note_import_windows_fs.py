@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import stat
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Self
@@ -56,6 +57,7 @@ class FakeWindowsFilesystem:
         self.fail_open_file = False
         self.scandir_exception: BaseException | None = None
         self.read_exception: BaseException | None = None
+        self.path_stat_overrides: dict[str, dict[str, int]] = {}
         self.handle_stat_overrides: dict[str, dict[str, int]] = {}
         self.open_error = False
         self.fstat_identity_mismatch = False
@@ -73,6 +75,9 @@ class FakeWindowsFilesystem:
 
     def override_handle_stat(self, path: Path, **fields: int) -> None:
         self.handle_stat_overrides[self._key(path)] = fields
+
+    def override_path_stat(self, path: Path, **fields: int) -> None:
+        self.path_stat_overrides[self._key(path)] = fields
 
     def _directory_chain(self, path: Path, *, include_leaf: bool) -> tuple[Path, ...]:
         absolute = self.absolute(path)
@@ -95,19 +100,21 @@ class FakeWindowsFilesystem:
         return Path(os.path.abspath(os.fspath(path)))
 
     def lstat(self, path: Path) -> os.stat_result | SimpleNamespace:
-        if self._key(path) in self.lstat_error_paths:
+        key = self._key(path)
+        if key in self.lstat_error_paths:
             raise OSError(f"PRIVATE WINDOWS PATH {path}")
         metadata = os.lstat(path)
-        if self._key(path) not in self.reparse_paths:
+        overrides = self.path_stat_overrides.get(key, {})
+        if key not in self.reparse_paths and not overrides:
             return metadata
         return SimpleNamespace(
-            st_dev=metadata.st_dev,
-            st_ino=metadata.st_ino,
-            st_mode=metadata.st_mode,
-            st_size=metadata.st_size,
-            st_mtime_ns=metadata.st_mtime_ns,
-            st_ctime_ns=metadata.st_ctime_ns,
-            st_file_attributes=_REPARSE_ATTRIBUTE,
+            st_dev=overrides.get("st_dev", metadata.st_dev),
+            st_ino=overrides.get("st_ino", metadata.st_ino),
+            st_mode=overrides.get("st_mode", metadata.st_mode),
+            st_size=overrides.get("st_size", metadata.st_size),
+            st_mtime_ns=overrides.get("st_mtime_ns", metadata.st_mtime_ns),
+            st_ctime_ns=overrides.get("st_ctime_ns", metadata.st_ctime_ns),
+            st_file_attributes=(_REPARSE_ATTRIBUTE if key in self.reparse_paths else 0),
         )
 
     def scandir(self, path: Path) -> object:
@@ -462,6 +469,84 @@ def test_windows_adapter_rejects_nested_directory_path_handle_mismatch(
     )
 
 
+@pytest.mark.parametrize(
+    "selection_kind",
+    ["selected_file", "selected_root", "nested_directory"],
+)
+def test_windows_adapter_rejects_zero_inode_path_handle_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    selection_kind: str,
+) -> None:
+    root = tmp_path / "Project"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+    source = nested / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    selected = source if selection_kind == "selected_file" else root
+    target = {
+        "selected_file": source,
+        "selected_root": root,
+        "nested_directory": nested,
+    }[selection_kind]
+    filesystem = FakeWindowsFilesystem()
+    filesystem.override_path_stat(target, st_ino=0)
+    filesystem.override_handle_stat(target, st_ino=0)
+    _force_windows_adapter(monkeypatch, filesystem)
+
+    if selection_kind == "nested_directory":
+        discovery = discover_import_sources([selected], _bounds())
+        assert discovery.candidates == ()
+        assert tuple(failure.reason_code for failure in discovery.failures) == (
+            "nested_unavailable",
+        )
+    else:
+        with pytest.raises(ImportSelectionError) as raised:
+            discover_import_sources([selected], _bounds())
+        assert raised.value.reason_code == "selection_changed"
+
+
+def test_windows_adapter_rejects_zero_inode_on_reread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    filesystem = FakeWindowsFilesystem()
+    _force_windows_adapter(monkeypatch, filesystem)
+    discovery = discover_import_sources([source], _bounds())
+    candidate = replace(
+        discovery.candidates[0],
+        identity=replace(discovery.candidates[0].identity, inode=0),
+    )
+    filesystem.override_path_stat(source, st_ino=0)
+    filesystem.override_handle_stat(source, st_ino=0)
+
+    with pytest.raises(VerifiedSourceReadError) as raised:
+        read_discovered_source(candidate, _bounds())
+
+    assert raised.value.reason_code == "source_changed"
+    assert filesystem.read_calls == 0
+
+
+def test_windows_adapter_accepts_matching_zero_device_with_nonzero_inode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    assert os.lstat(source).st_ino != 0
+    filesystem = FakeWindowsFilesystem()
+    filesystem.override_path_stat(source, st_dev=0)
+    filesystem.override_handle_stat(source, st_dev=0)
+    _force_windows_adapter(monkeypatch, filesystem)
+
+    discovery = discover_import_sources([source], _bounds())
+    content = read_discovered_source(discovery.candidates[0], _bounds())
+
+    assert content == b"Body"
+
+
 def test_windows_adapter_closes_partial_directory_pins_on_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -799,6 +884,26 @@ def test_production_windows_filesystem_is_native_only_on_windows() -> None:
     assert isinstance(note_import_windows_fs.OS_WINDOWS_FILESYSTEM, expected_type)
 
 
+@pytest.mark.parametrize(
+    ("directory", "expected_share_mode"),
+    [(False, 0x00000001), (True, 0x00000001 | 0x00000002)],
+)
+def test_native_windows_share_mode_is_scoped_by_handle_kind(
+    directory: bool,
+    expected_share_mode: int,
+) -> None:
+    share_mode_builder = getattr(
+        note_import_windows_fs,
+        "_native_windows_share_mode",
+        None,
+    )
+
+    assert share_mode_builder is not None
+    share_mode = share_mode_builder(directory=directory)
+    assert share_mode == expected_share_mode
+    assert share_mode & 0x00000004 == 0
+
+
 @pytest.mark.skipif(
     os.name != "nt" or not hasattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT"),
     reason="requires native Windows reparse metadata",
@@ -854,3 +959,22 @@ def test_native_windows_directory_pin_denies_validation_scan_rename(
     assert tuple(
         candidate.source.display_path for candidate in discovery.candidates
     ) == ("Project/inside.md",)
+
+
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="requires native Windows sharing semantics",
+)
+def test_native_windows_source_handle_denies_concurrent_writer(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    filesystem = note_import_windows_fs.NativeWindowsReadOnlyFilesystem()
+    descriptor = filesystem.open_file_no_reparse(source)
+    try:
+        with pytest.raises(OSError):
+            writer = os.open(source, os.O_WRONLY | getattr(os, "O_BINARY", 0))
+            os.close(writer)
+    finally:
+        filesystem.close(descriptor)
