@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import ipaddress
 import json
+import logging
+import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from tldw_chatbook.DB.Subscriptions_DB import (
     SubscriptionsDBReadError,
     SubscriptionsDBUnavailableError,
 )
+from tldw_chatbook.Subscriptions.html_text import readable_body_text
 
 _SEARCH_KEYS = frozenset(
     {"query", "collection", "source", "statuses", "since", "limit", "cursor"}
@@ -42,6 +50,30 @@ _CANONICAL_ITEM_RE = re.compile(r"local:watchlist_item:(?P<id>[1-9][0-9]*)\Z")
 _COMPOSITE_ID_RE = re.compile(r"[^:\s]+:(?:subscription|watchlist|watchlist_item):.*\Z")
 _CANDIDATE_LIMIT = 10
 _MAX_SQLITE_ROW_ID = 2**63 - 1
+_MAX_RESULT_BYTES = 30 * 1024
+_TRUNCATION_SUFFIX = "…[truncated]"
+_MAX_TITLE_BYTES = 1_024
+_MAX_AUTHOR_BYTES = 512
+_MAX_NAME_BYTES = 512
+_MAX_URL_BYTES = 1_024
+_MAX_SNIPPET_BYTES = 4_096
+_MAX_CHANGE_SUMMARY_BYTES = 8_192
+_PUBLIC_EXECUTION_ERROR = "Watchlists tool execution error"
+_CURSOR_VERSION = 1
+_CURSOR_KEYS = frozenset(
+    {
+        "version",
+        "as_of",
+        "snapshot_max_item_id",
+        "last_effective_date",
+        "last_effective_date_is_null",
+        "last_item_id",
+        "filter_fingerprint",
+    }
+)
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+_SQLITE_DATETIME_RE = re.compile(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?\Z")
+_LOGGER = logging.getLogger(__name__)
 
 
 class _InvalidArgument(ValueError):
@@ -56,6 +88,16 @@ class _SearchRequest:
     statuses: tuple[str, ...] | None
     since: str | None
     limit: int
+    cursor: _Cursor | None
+
+
+@dataclass(frozen=True, slots=True)
+class _Cursor:
+    as_of: str
+    snapshot_max_item_id: int
+    last_effective_date: str | None
+    last_item_id: int
+    filter_fingerprint: str
 
 
 class WatchlistsToolService:
@@ -88,9 +130,15 @@ class WatchlistsToolService:
             JSON text containing a structured domain outcome.
         """
         try:
-            request = self._validate_search(arguments)
+            return self._search_items(arguments)
         except _InvalidArgument as exc:
             return self._outcome("invalid_argument", str(exc), retryable=False)
+        except Exception as exc:
+            self._raise_unexpected(exc)
+
+    def _search_items(self, arguments: object) -> str:
+        """Execute a validated search while preserving expected outcomes."""
+        request = self._validate_search(arguments)
 
         if self._runtime_source() == "server":
             return self._outcome(
@@ -110,45 +158,101 @@ class WatchlistsToolService:
         if outcome is not None:
             return outcome
 
-        as_of = self._format_utc(self._clock())
+        collection_id = int(collection["id"]) if collection is not None else None
+        source_id = int(source["id"]) if source is not None else None
+        fingerprint = self._filter_fingerprint(
+            query=request.query,
+            collection_id=collection_id,
+            source_id=source_id,
+            statuses=request.statuses,
+            since=request.since,
+        )
+        if (
+            request.cursor is not None
+            and request.cursor.filter_fingerprint != fingerprint
+        ):
+            raise _InvalidArgument("cursor does not match the search filters")
+
+        as_of = (
+            request.cursor.as_of
+            if request.cursor is not None
+            else self._format_utc(self._clock())
+        )
         page = database.search_items_for_agent(
             query=request.query,
-            subscription_id=int(source["id"]) if source is not None else None,
-            watchlist_id=(int(collection["id"]) if collection is not None else None),
+            subscription_id=source_id,
+            watchlist_id=collection_id,
             statuses=request.statuses,
             since=request.since,
             limit=request.limit,
+            snapshot_max_item_id=(
+                request.cursor.snapshot_max_item_id
+                if request.cursor is not None
+                else None
+            ),
+            after_effective_date=(
+                request.cursor.last_effective_date
+                if request.cursor is not None
+                else None
+            ),
+            after_item_id=(
+                request.cursor.last_item_id if request.cursor is not None else None
+            ),
         )
         rows = page["items"]
         memberships = database.get_source_collection_memberships(
             [int(row["subscription_id"]) for row in rows]
         )
-        items = [
-            self._shape_search_item(
+        scope = {
+            "collection": self._shape_collection(collection),
+            "source": self._shape_selected_source(source),
+        }
+        items: list[dict[str, Any]] = []
+        final_payload = self._search_response(
+            request=request,
+            as_of=as_of,
+            snapshot_max_item_id=int(page["snapshot_max_item_id"]),
+            scope=scope,
+            items=items,
+            has_more=False,
+            next_cursor=None,
+        )
+        for index, row in enumerate(rows):
+            candidate = self._shape_search_item(
                 row,
                 memberships[int(row["subscription_id"])],
+                request.query,
             )
-            for row in rows
-        ]
-        return self._json(
-            {
-                "status": "ok",
-                "query_mode": (
-                    "literal_full_text" if request.query is not None else "browse"
-                ),
-                "ordering": _ORDERING,
-                "as_of": as_of,
-                "snapshot_max_item_id": page["snapshot_max_item_id"],
-                "returned_count": len(items),
-                "has_more": bool(page["has_more"]),
-                "next_cursor": None,
-                "scope": {
-                    "collection": self._shape_collection(collection),
-                    "source": self._shape_selected_source(source),
-                },
-                "items": items,
-            }
-        )
+            candidate_items = [*items, candidate]
+            has_more = bool(page["has_more"]) or index < len(rows) - 1
+            next_cursor = (
+                self._encode_cursor(
+                    as_of=as_of,
+                    snapshot_max_item_id=int(page["snapshot_max_item_id"]),
+                    last_effective_date=row["effective_date"],
+                    last_item_id=int(row["id"]),
+                    filter_fingerprint=fingerprint,
+                )
+                if has_more
+                else None
+            )
+            candidate_payload = self._search_response(
+                request=request,
+                as_of=as_of,
+                snapshot_max_item_id=int(page["snapshot_max_item_id"]),
+                scope=scope,
+                items=candidate_items,
+                has_more=has_more,
+                next_cursor=next_cursor,
+            )
+            if self._json_size(candidate_payload) > _MAX_RESULT_BYTES:
+                break
+            items = candidate_items
+            final_payload = candidate_payload
+
+        if rows and not items:
+            raise RuntimeError("bounded Watchlists item did not fit")
+        return self._json(final_payload)
 
     def get_item(self, arguments: object) -> str:
         """Return authoritative detail for one canonical Watchlists item ID.
@@ -160,9 +264,15 @@ class WatchlistsToolService:
             JSON text containing a structured domain outcome.
         """
         try:
-            item_id = self._validate_detail(arguments)
+            return self._get_item(arguments)
         except _InvalidArgument as exc:
             return self._outcome("invalid_argument", str(exc), retryable=False)
+        except Exception as exc:
+            self._raise_unexpected(exc)
+
+    def _get_item(self, arguments: object) -> str:
+        """Execute one validated detail read with bounded evidence."""
+        item_id = self._validate_detail(arguments)
 
         if self._runtime_source() == "server":
             return self._outcome(
@@ -182,11 +292,40 @@ class WatchlistsToolService:
             [int(row["subscription_id"])]
         )[int(row["subscription_id"])]
         item = self._shape_item_metadata(row, membership)
-        item["evidence"] = {
-            "content_is_untrusted": True,
-            "content": row["content"],
-        }
-        return self._json({"status": "ok", "item": item})
+        if row["content"] is not None:
+            item["evidence"] = {
+                "content_is_untrusted": True,
+                "content": readable_body_text(row["content"]),
+                "content_normalized": True,
+                "content_truncated": False,
+            }
+            return self._fit_detail_content(item)
+        if row["diff_summary"] is not None:
+            summary, summary_truncated = self._bounded_text(
+                row["diff_summary"], _MAX_CHANGE_SUMMARY_BYTES
+            )
+            percentage, percentage_invalid = self._finite_number(
+                row["change_percentage"]
+            )
+            item["evidence"] = {
+                "content_is_untrusted": True,
+                "change_summary": summary,
+                "change_summary_truncated": summary_truncated,
+                "change_type": row["change_type"],
+                "change_percentage": percentage,
+                "change_percentage_invalid": percentage_invalid,
+            }
+        else:
+            item["evidence"] = {
+                "content_is_untrusted": True,
+                "content": None,
+                "content_normalized": True,
+                "content_truncated": False,
+            }
+        response = self._json({"status": "ok", "item": item})
+        if len(response.encode("utf-8")) > _MAX_RESULT_BYTES:
+            raise RuntimeError("bounded Watchlists detail did not fit")
+        return response
 
     @staticmethod
     def _validate_search(arguments: object) -> _SearchRequest:
@@ -213,7 +352,7 @@ class WatchlistsToolService:
             values.get("since"), supplied="since" in values
         )
         limit = WatchlistsToolService._validate_limit(values.get("limit", 10))
-        WatchlistsToolService._validate_cursor(
+        cursor = WatchlistsToolService._validate_cursor(
             values.get("cursor"), supplied="cursor" in values
         )
         return _SearchRequest(
@@ -223,6 +362,7 @@ class WatchlistsToolService:
             statuses=statuses,
             since=since,
             limit=limit,
+            cursor=cursor,
         )
 
     @staticmethod
@@ -332,13 +472,133 @@ class WatchlistsToolService:
         return value
 
     @staticmethod
-    def _validate_cursor(value: object, *, supplied: bool) -> None:
+    def _validate_cursor(value: object, *, supplied: bool) -> _Cursor | None:
         if not supplied:
-            return
-        if type(value) is not str:
-            raise _InvalidArgument("cursor must be a string")
-        if value.strip():
-            raise _InvalidArgument("cursor support is unavailable until pagination")
+            return None
+        if type(value) is not str or not value or len(value) > 2_048:
+            raise _InvalidArgument("cursor is invalid")
+        if re.fullmatch(r"[A-Za-z0-9_-]+", value) is None:
+            raise _InvalidArgument("cursor is invalid")
+        try:
+            padding = b"=" * (-len(value) % 4)
+            raw = base64.b64decode(
+                value.encode() + padding, altchars=b"-_", validate=True
+            )
+            payload = json.loads(
+                raw.decode("utf-8"),
+                object_pairs_hook=WatchlistsToolService._unique_json_object,
+            )
+        except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            raise _InvalidArgument("cursor is invalid") from None
+        if type(payload) is not dict or set(payload) != _CURSOR_KEYS:
+            raise _InvalidArgument("cursor is invalid")
+        if payload["version"] != _CURSOR_VERSION or type(payload["version"]) is not int:
+            raise _InvalidArgument("cursor is invalid")
+
+        as_of = payload["as_of"]
+        if type(as_of) is not str or _RFC3339_RE.fullmatch(as_of) is None:
+            raise _InvalidArgument("cursor is invalid")
+        try:
+            parsed_as_of = datetime.fromisoformat(as_of.upper().replace("Z", "+00:00"))
+        except ValueError:
+            raise _InvalidArgument("cursor is invalid") from None
+        if WatchlistsToolService._format_utc(parsed_as_of) != as_of:
+            raise _InvalidArgument("cursor is invalid")
+
+        snapshot_max_item_id = payload["snapshot_max_item_id"]
+        last_item_id = payload["last_item_id"]
+        if (
+            type(snapshot_max_item_id) is not int
+            or not 1 <= snapshot_max_item_id <= _MAX_SQLITE_ROW_ID
+            or type(last_item_id) is not int
+            or not 1 <= last_item_id <= snapshot_max_item_id
+        ):
+            raise _InvalidArgument("cursor is invalid")
+
+        null_state = payload["last_effective_date_is_null"]
+        last_effective_date = payload["last_effective_date"]
+        if type(null_state) is not bool or null_state is not (
+            last_effective_date is None
+        ):
+            raise _InvalidArgument("cursor is invalid")
+        if last_effective_date is not None:
+            if (
+                type(last_effective_date) is not str
+                or _SQLITE_DATETIME_RE.fullmatch(last_effective_date) is None
+            ):
+                raise _InvalidArgument("cursor is invalid")
+            try:
+                datetime.fromisoformat(last_effective_date)
+            except ValueError:
+                raise _InvalidArgument("cursor is invalid") from None
+
+        fingerprint = payload["filter_fingerprint"]
+        if type(fingerprint) is not str or _SHA256_RE.fullmatch(fingerprint) is None:
+            raise _InvalidArgument("cursor is invalid")
+        return _Cursor(
+            as_of=as_of,
+            snapshot_max_item_id=snapshot_max_item_id,
+            last_effective_date=last_effective_date,
+            last_item_id=last_item_id,
+            filter_fingerprint=fingerprint,
+        )
+
+    @staticmethod
+    def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate cursor key")
+            result[key] = value
+        return result
+
+    @staticmethod
+    def _filter_fingerprint(
+        *,
+        query: str | None,
+        collection_id: int | None,
+        source_id: int | None,
+        statuses: tuple[str, ...] | None,
+        since: str | None,
+        ordering: str = _ORDERING,
+    ) -> str:
+        normalized = {
+            "query": query,
+            "collection_id": collection_id,
+            "source_id": source_id,
+            "statuses": sorted(set(statuses or ())),
+            "since": since,
+            "ordering": ordering,
+        }
+        encoded = json.dumps(
+            normalized,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _encode_cursor(
+        *,
+        as_of: str,
+        snapshot_max_item_id: int,
+        last_effective_date: str | None,
+        last_item_id: int,
+        filter_fingerprint: str,
+    ) -> str:
+        payload = {
+            "version": _CURSOR_VERSION,
+            "as_of": as_of,
+            "snapshot_max_item_id": snapshot_max_item_id,
+            "last_effective_date": last_effective_date,
+            "last_effective_date_is_null": last_effective_date is None,
+            "last_item_id": last_item_id,
+            "filter_fingerprint": filter_fingerprint,
+        }
+        raw = WatchlistsToolService._json(payload).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
     def _runtime_source(self) -> str:
         state = self._runtime_source_loader()
@@ -364,8 +624,6 @@ class WatchlistsToolService:
         except (SubscriptionsDBUnavailableError, FileNotFoundError, ImportError):
             return None, self._feature_unavailable(retryable=False)
         except SubscriptionsDBReadError:
-            return None, self._feature_unavailable(retryable=True)
-        except Exception:  # noqa: BLE001 - resolver failures are scrubbed outcomes
             return None, self._feature_unavailable(retryable=True)
 
         if database is None:
@@ -414,24 +672,38 @@ class WatchlistsToolService:
 
     @staticmethod
     def _shape_candidate(field: str, row: Mapping[str, Any]) -> dict[str, Any]:
+        name, name_truncated = WatchlistsToolService._bounded_text(
+            row["name"], _MAX_NAME_BYTES
+        )
         if field == "source":
+            url, url_redacted, url_truncated = WatchlistsToolService._sanitize_url(
+                row["source"]
+            )
             return {
                 "id": f"local:subscription:{row['id']}",
-                "name": row["name"],
-                "url": row["source"],
+                "name": name,
+                "name_truncated": name_truncated,
+                "url": url,
+                "url_redacted": url_redacted,
+                "url_truncated": url_truncated,
             }
         return {
             "id": f"local:watchlist:{row['id']}",
-            "name": row["name"],
+            "name": name,
+            "name_truncated": name_truncated,
         }
 
     @staticmethod
     def _shape_collection(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
         if row is None:
             return None
+        name, name_truncated = WatchlistsToolService._bounded_text(
+            row["name"], _MAX_NAME_BYTES
+        )
         return {
             "id": f"local:watchlist:{row['id']}",
-            "name": row["name"],
+            "name": name,
+            "name_truncated": name_truncated,
         }
 
     @staticmethod
@@ -440,11 +712,20 @@ class WatchlistsToolService:
     ) -> dict[str, Any] | None:
         if row is None:
             return None
+        name, name_truncated = WatchlistsToolService._bounded_text(
+            row["name"], _MAX_NAME_BYTES
+        )
+        url, url_redacted, url_truncated = WatchlistsToolService._sanitize_url(
+            row["source"]
+        )
         return {
             "id": f"local:subscription:{row['id']}",
-            "name": row["name"],
+            "name": name,
+            "name_truncated": name_truncated,
             "type": row["type"],
-            "url": row["source"],
+            "url": url,
+            "url_redacted": url_redacted,
+            "url_truncated": url_truncated,
             "is_active": bool(row["is_active"]),
             "is_paused": bool(row["is_paused"]),
             "created_at": row["created_at"],
@@ -457,21 +738,45 @@ class WatchlistsToolService:
     def _shape_item_metadata(
         row: Mapping[str, Any], membership: Mapping[str, Any]
     ) -> dict[str, Any]:
+        title, title_truncated = WatchlistsToolService._bounded_text(
+            row["title"], _MAX_TITLE_BYTES
+        )
+        author, author_truncated = WatchlistsToolService._bounded_text(
+            row["author"], _MAX_AUTHOR_BYTES
+        )
+        item_url, item_url_redacted, item_url_truncated = (
+            WatchlistsToolService._sanitize_url(row["url"])
+        )
+        source_name, source_name_truncated = WatchlistsToolService._bounded_text(
+            row["subscription_name"], _MAX_NAME_BYTES
+        )
+        source_url, source_url_redacted, source_url_truncated = (
+            WatchlistsToolService._sanitize_url(row["subscription_source"])
+        )
         return {
             "id": f"local:watchlist_item:{row['id']}",
-            "title": row["title"],
-            "url": row["url"],
-            "author": row["author"],
+            "title": title,
+            "title_truncated": title_truncated,
+            "url": item_url,
+            "url_redacted": item_url_redacted,
+            "url_truncated": item_url_truncated,
+            "author": author,
+            "author_truncated": author_truncated,
             "status": row["status"],
             "effective_date": row["effective_date"],
             "published_date": row["published_date"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            "content_format": row["content_format"],
+            "content_kind": row["content_kind"],
             "source": {
                 "id": f"local:subscription:{row['subscription_id']}",
-                "name": row["subscription_name"],
+                "name": source_name,
+                "name_truncated": source_name_truncated,
                 "type": row["subscription_type"],
-                "url": row["subscription_source"],
+                "url": source_url,
+                "url_redacted": source_url_redacted,
+                "url_truncated": source_url_truncated,
                 "is_active": bool(row["subscription_is_active"]),
                 "is_paused": bool(row["subscription_is_paused"]),
             },
@@ -484,14 +789,190 @@ class WatchlistsToolService:
 
     @staticmethod
     def _shape_search_item(
-        row: Mapping[str, Any], membership: Mapping[str, Any]
+        row: Mapping[str, Any], membership: Mapping[str, Any], query: str | None
     ) -> dict[str, Any]:
         item = WatchlistsToolService._shape_item_metadata(row, membership)
+        snippet, snippet_truncated = WatchlistsToolService._search_excerpt(row, query)
         item["evidence"] = {
             "content_is_untrusted": True,
-            "snippet": row["content_match_context"],
+            "snippet": snippet,
+            "snippet_truncated": snippet_truncated,
         }
         return item
+
+    @staticmethod
+    def _search_response(
+        *,
+        request: _SearchRequest,
+        as_of: str,
+        snapshot_max_item_id: int,
+        scope: dict[str, Any],
+        items: list[dict[str, Any]],
+        has_more: bool,
+        next_cursor: str | None,
+    ) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "query_mode": (
+                "literal_full_text" if request.query is not None else "browse"
+            ),
+            "ordering": _ORDERING,
+            "as_of": as_of,
+            "snapshot_max_item_id": snapshot_max_item_id,
+            "returned_count": len(items),
+            "has_more": has_more,
+            "next_cursor": next_cursor,
+            "scope": scope,
+            "items": items,
+        }
+
+    @staticmethod
+    def _bounded_text(value: object, maximum_bytes: int) -> tuple[str | None, bool]:
+        if value is None:
+            return None, False
+        text = str(value)
+        encoded = text.encode("utf-8")
+        if len(encoded) <= maximum_bytes:
+            return text, False
+        suffix_bytes = _TRUNCATION_SUFFIX.encode("utf-8")
+        prefix = encoded[: maximum_bytes - len(suffix_bytes)]
+        return prefix.decode("utf-8", errors="ignore") + _TRUNCATION_SUFFIX, True
+
+    @staticmethod
+    def _sanitize_url(value: object) -> tuple[str | None, bool, bool]:
+        if value is None:
+            return None, False, False
+        if not isinstance(value, str) or not value:
+            return None, True, False
+        if re.search(r"[\x00-\x20\x7f-\x9f]", value):
+            return None, True, False
+        try:
+            parsed = urlsplit(value)
+            hostname = parsed.hostname
+            port = parsed.port
+            if parsed.scheme.casefold() not in {"http", "https"} or not hostname:
+                return None, True, False
+            if any(
+                character.isspace() or ord(character) < 0x20 for character in hostname
+            ):
+                return None, True, False
+            ascii_hostname = hostname.encode("idna").decode("ascii")
+            if ":" in ascii_hostname:
+                ipaddress.IPv6Address(ascii_hostname)
+                ascii_hostname = f"[{ascii_hostname}]"
+            else:
+                labels = ascii_hostname.rstrip(".").split(".")
+                if not labels or any(
+                    not label
+                    or len(label) > 63
+                    or re.fullmatch(r"[A-Za-z0-9-]+", label) is None
+                    or label.startswith("-")
+                    or label.endswith("-")
+                    for label in labels
+                ):
+                    return None, True, False
+            netloc = ascii_hostname if port is None else f"{ascii_hostname}:{port}"
+            sanitized = urlunsplit(
+                (parsed.scheme.casefold(), netloc, parsed.path, "", "")
+            )
+        except (UnicodeError, ValueError):
+            return None, True, False
+        bounded, truncated = WatchlistsToolService._bounded_text(
+            sanitized, _MAX_URL_BYTES
+        )
+        return bounded, sanitized != value or truncated, truncated
+
+    @staticmethod
+    def _search_excerpt(
+        row: Mapping[str, Any], query: str | None
+    ) -> tuple[str | None, bool]:
+        if query is None:
+            return WatchlistsToolService._bounded_text(
+                row["content_match_context"], _MAX_SNIPPET_BYTES
+            )
+        needles = [query, *query.split()]
+        for field in ("title", "author", "content_match_context"):
+            value = row[field]
+            if value is None:
+                continue
+            text = str(value)
+            lowered = text.casefold()
+            for needle in needles:
+                index = lowered.find(needle.casefold())
+                if index >= 0:
+                    return WatchlistsToolService._centered_excerpt(
+                        text, index, len(needle)
+                    )
+        return WatchlistsToolService._bounded_text(
+            row["content_match_context"], _MAX_SNIPPET_BYTES
+        )
+
+    @staticmethod
+    def _centered_excerpt(
+        text: str, match_index: int, match_length: int
+    ) -> tuple[str, bool]:
+        maximum_chars = _MAX_SNIPPET_BYTES // 4
+        if len(text.encode("utf-8")) <= _MAX_SNIPPET_BYTES:
+            return text, False
+        half_window = max(1, (maximum_chars - match_length) // 2)
+        start = max(0, match_index - half_window)
+        end = min(len(text), match_index + match_length + half_window)
+        excerpt = text[start:end]
+        if start:
+            excerpt = "…" + excerpt
+        if end < len(text):
+            excerpt += _TRUNCATION_SUFFIX
+        bounded, _ = WatchlistsToolService._bounded_text(excerpt, _MAX_SNIPPET_BYTES)
+        return bounded or "", True
+
+    @staticmethod
+    def _finite_number(value: object) -> tuple[int | float | None, bool]:
+        if value is None:
+            return None, False
+        if type(value) not in {int, float} or not math.isfinite(float(value)):
+            return None, True
+        return value, False
+
+    @staticmethod
+    def _fit_detail_content(item: dict[str, Any]) -> str:
+        payload = {"status": "ok", "item": item}
+        rendered = WatchlistsToolService._json(payload)
+        if len(rendered.encode("utf-8")) <= _MAX_RESULT_BYTES:
+            return rendered
+
+        evidence = item["evidence"]
+        content = evidence["content"]
+        if not isinstance(content, str):
+            raise RuntimeError("invalid detail content contract")
+        evidence["content_truncated"] = True
+        low = 0
+        high = len(content)
+        fitted: str | None = None
+        while low <= high:
+            middle = (low + high) // 2
+            evidence["content"] = content[:middle] + _TRUNCATION_SUFFIX
+            candidate = WatchlistsToolService._json(payload)
+            if len(candidate.encode("utf-8")) <= _MAX_RESULT_BYTES:
+                fitted = candidate
+                low = middle + 1
+            else:
+                high = middle - 1
+        if fitted is None:
+            raise RuntimeError("bounded Watchlists detail did not fit")
+        return fitted
+
+    @staticmethod
+    def _json_size(payload: object) -> int:
+        return len(WatchlistsToolService._json(payload).encode("utf-8"))
+
+    @staticmethod
+    def _raise_unexpected(exc: Exception) -> None:
+        category = re.sub(r"[^A-Za-z0-9_.-]", "_", type(exc).__name__)[:64]
+        _LOGGER.error(
+            "Watchlists tool execution failed category=%s",
+            category or "Exception",
+        )
+        raise RuntimeError(_PUBLIC_EXECUTION_ERROR) from None
 
     @staticmethod
     def _feature_unavailable(*, retryable: bool) -> str:
