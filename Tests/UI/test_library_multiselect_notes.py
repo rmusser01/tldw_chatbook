@@ -33,7 +33,6 @@ def _fake(select_mode):
     return SimpleNamespace(
         _library_notes_select_mode=select_mode,
         _library_notes_row_selection=RowSelection("notes"),
-        _library_notes_mutation_in_flight=False,
         _selected_note_id="",
         _library_note_dirty=False,
         _refreshed=0,
