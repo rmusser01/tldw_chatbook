@@ -17,6 +17,7 @@ from textual.widgets import (
     Checkbox,
     Collapsible,
     Input,
+    OptionList,
     Select,
     SelectionList,
     Static,
@@ -1937,7 +1938,7 @@ async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Active server profile: Loading Settings details" in text
+        assert "Server connection: Loading Settings details" in text
 
 
 @pytest.mark.asyncio
@@ -2263,7 +2264,7 @@ def test_settings_status_language_agrees_with_home_console_and_library_contracts
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_renders_server_sync_workspace_handoff_contracts():
+async def test_settings_overview_renders_server_sync_workspace_contracts_in_diagnostics():
     class FakeWorkspaceRegistry:
         def get_active_workspace(self):
             return WorkspaceRecord(
@@ -2296,20 +2297,21 @@ async def test_settings_overview_renders_server_sync_workspace_handoff_contracts
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_settings_text(
-            screen, pilot, "Active server profile: Main Server"
+            screen, pilot, "Server connection: Main Server"
         )
         text = _visible_text(screen)
 
-        assert "Server, sync, workspace, and handoff" in text
-        assert "Active server profile: Main Server (server-main)" in text
-        assert "Local/server authority: server; Settings is read-only" in text
+        assert "Advanced / Diagnostics" in text
+        assert "Server connection: Main Server (server-main)" in text
+        assert "Active source: server; Settings is read-only" in text
         assert "Collections: dry-run only" in text
         assert "Workspaces: dry-run only" in text
         assert "Research (research); authority local-only; sync not-configured" in text
         assert LIBRARY_WORKSPACE_VISIBILITY_COPY in text
-        assert (
-            "ACP handoff readiness: ACP session ready: Ticket triage (running)" in text
-        )
+        assert "Conversation updates: copy/reference/" in text
+        assert "Console staging is limited to the active workspace" in text
+        assert "ACP session ready: Ticket triage (running)" in text
+        assert "handoff" not in text.lower()
 
 
 def test_settings_ownership_record_falls_back_without_crashing():
@@ -2551,6 +2553,67 @@ async def test_settings_overview_leads_with_readiness_before_manual_sync():
         assert _first_index("Config path") < _first_index("Manual sync")
         assert _first_index("Privacy") < _first_index("Manual sync")
         assert _first_index("Manual sync") < _first_index("Where changes happen")
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_renders_primary_user_tasks_before_diagnostics():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        card = screen.query_one("#settings-overview-card")
+        primary = card.query_one("#settings-overview-primary")
+        rows = list(primary.query(".settings-detail-row"))
+
+        assert [row.id for row in rows] == [
+            "settings-overview-configuration",
+            "settings-overview-last-connection-test",
+            "settings-overview-storage-privacy",
+            "settings-overview-sync",
+        ]
+        assert "handoff" not in " ".join(
+            str(row.renderable).lower() for row in rows
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_picker_search_keeps_draft_endpoint_and_api_key():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        endpoint.value = "https://draft.example/v1"
+        api_key.value = "draft-provider-key"
+        await pilot.pause()
+
+        search = screen.query_one("#settings-provider-search", Input)
+        search.value = "openai"
+        await pilot.pause()
+
+        assert screen.query_one("#settings-provider-endpoint-value", Input) is endpoint
+        assert screen.query_one("#settings-provider-api-key", Input) is api_key
+        assert endpoint.value == "https://draft.example/v1"
+        assert api_key.value == "draft-provider-key"
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        headings = [
+            picker.get_option_at_index(index)
+            for index in range(picker.option_count)
+            if str(picker.get_option_at_index(index).id or "").startswith(
+                "provider-picker-group-"
+            )
+        ]
+        assert headings
+        assert all(option.disabled for option in headings)
 
 
 @pytest.mark.asyncio
@@ -9300,10 +9363,10 @@ async def test_settings_overview_front_door_is_four_status_rows_with_open_afford
         screen = _active_destination_screen(host)
 
         for row_id in (
-            "#settings-overview-provider-readiness",
-            "#settings-overview-storage",
-            "#settings-overview-privacy",
-            "#settings-overview-sync-summary",
+            "#settings-overview-configuration",
+            "#settings-overview-last-connection-test",
+            "#settings-overview-storage-privacy",
+            "#settings-overview-sync",
         ):
             assert screen.query_one(row_id, Static)
 

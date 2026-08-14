@@ -37,12 +37,14 @@ from textual.widgets import (
     Collapsible,
     Input,
     Markdown,
+    OptionList,
     Rule,
     Select,
     SelectionList,
     Static,
     TextArea,
 )
+from textual.widgets.option_list import Option
 
 from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN, get_app_version
 
@@ -178,6 +180,12 @@ from .settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
     SettingsEndpointProbePurpose,
     probe_settings_endpoint,
+)
+from .settings_provider_view_model import (
+    ProviderPickerGroup,
+    SettingsOverviewPresentation,
+    build_provider_picker_groups,
+    build_settings_overview,
 )
 from .settings_config_models import (
     SettingsCategoryId,
@@ -405,6 +413,23 @@ PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
 PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
 # task-180/191: provider display names + grouping now come from the shared
 # catalog module (imported at the top) so Settings and Console match.
+
+
+class _SettingsProviderPickerOption(Option):
+    """A selectable provider/action row or a disabled group heading."""
+
+    def __init__(
+        self,
+        prompt: Text,
+        *,
+        option_id: str,
+        provider_id: str | None = None,
+        action: str | None = None,
+        heading: bool = False,
+    ) -> None:
+        super().__init__(prompt, id=option_id, disabled=heading)
+        self.provider_id = provider_id
+        self.action = action
 
 MODEL_DISCOVERY_IDLE_COPY = "Discover models from configured endpoint"
 MODEL_DISCOVERY_EMPTY_COPY = (
@@ -8917,6 +8942,96 @@ class SettingsScreen(BaseAppScreen):
         options.append((PROVIDER_MANUAL_SELECT_LABEL, PROVIDER_MANUAL_SELECT_VALUE))
         return options
 
+    def _provider_picker_groups(
+        self, query: str = ""
+    ) -> tuple[ProviderPickerGroup, ...]:
+        provider = str(
+            self._provider_display_setting_values().get("provider") or ""
+        )
+        return build_provider_picker_groups(
+            self._provider_catalog_entries(), provider, query
+        )
+
+    def _provider_picker_options(
+        self, groups: tuple[ProviderPickerGroup, ...]
+    ) -> list[Option]:
+        options: list[Option] = []
+        for group in groups:
+            options.append(
+                _SettingsProviderPickerOption(
+                    Text(group.label, style="bold"),
+                    option_id=f"provider-picker-group-{group.group_id}",
+                    heading=True,
+                )
+            )
+            options.extend(
+                _SettingsProviderPickerOption(
+                    Text(option.label),
+                    option_id=f"provider-picker-{group.group_id}-{index}",
+                    provider_id=option.provider_id,
+                    action=option.action,
+                )
+                for index, option in enumerate(group.options)
+            )
+        return options
+
+    @staticmethod
+    def _provider_picker_has_catalog_matches(
+        groups: tuple[ProviderPickerGroup, ...],
+    ) -> bool:
+        return any(group.group_id in {"cloud", "local", "custom"} for group in groups)
+
+    def _provider_picker_query(self) -> str:
+        try:
+            return self.query_one("#settings-provider-search", Input).value
+        except QueryError:
+            return ""
+
+    def _refresh_provider_picker(self, query: str | None = None) -> None:
+        try:
+            picker = self.query_one("#settings-provider-picker", OptionList)
+            status = self.query_one("#settings-provider-search-status", Static)
+        except QueryError:
+            return
+        search_query = self._provider_picker_query() if query is None else query
+        groups = self._provider_picker_groups(search_query)
+        picker.clear_options()
+        picker.add_options(self._provider_picker_options(groups))
+
+        current_provider = str(
+            self._provider_setting_values_mapping().get("provider") or ""
+        )
+        first_selectable: int | None = None
+        selected_index: int | None = None
+        for index in range(picker.option_count):
+            option = picker.get_option_at_index(index)
+            if option.disabled:
+                continue
+            if first_selectable is None:
+                first_selectable = index
+            option_provider = getattr(option, "provider_id", None)
+            if option_provider is not None and provider_config_key(
+                option_provider
+            ) == provider_config_key(current_provider):
+                selected_index = index
+                break
+        picker.highlighted = (
+            selected_index if selected_index is not None else first_selectable
+        )
+
+        normalized_query = search_query.strip()
+        if normalized_query and not self._provider_picker_has_catalog_matches(groups):
+            status.update(
+                f'No catalog providers match "{normalized_query}". '
+                "Enter a provider ID to use a custom provider."
+            )
+        elif any(group.group_id == "saved" for group in groups):
+            status.update(
+                "The saved provider is not in the catalog; it remains available."
+            )
+        else:
+            status.update("Choose a provider or enter a provider ID.")
+
     def _provider_select_value_for_provider(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
         if provider_key in self._provider_catalog_keys():
@@ -9009,6 +9124,7 @@ class SettingsScreen(BaseAppScreen):
             )
         finally:
             self._syncing_provider_manual = False
+        self._refresh_provider_picker()
 
     def _sync_provider_api_mode_widget(self, provider: str) -> None:
         """Show QwenCloud's mode selector and hide it for every other provider."""
@@ -11152,7 +11268,17 @@ class SettingsScreen(BaseAppScreen):
     def _compose_server_sync_handoff_rows(self) -> ComposeResult:
         """Yield the server/sync/workspace/handoff detail rows."""
         for label, value in self.server_sync_workspace_handoff_rows:
-            yield self._detail_row(label, value)
+            if label in {
+                "Active server profile",
+                "Local/server authority",
+                "Handoff policy",
+                "ACP handoff readiness",
+            }:
+                continue
+            yield self._detail_row(
+                self._overview_user_language(label),
+                self._overview_user_language(value),
+            )
 
     def watch_manual_sync_rows(self) -> None:
         """Repaint the sync rows in place (task-15475)."""
@@ -11181,6 +11307,12 @@ class SettingsScreen(BaseAppScreen):
             "#settings-overview-sync-summary",
             f"Sync: {_fold_long_tokens(self._overview_sync_summary())}",
         )
+        presentation = self._settings_overview_presentation()
+        for row in presentation.advanced_rows:
+            self._set_static_text(
+                f"#settings-overview-{row.key.replace('_', '-')}",
+                f"{row.label}: {_fold_long_tokens(row.value)}",
+            )
         for region_id in (
             "#settings-overview-manual-sync-rows",
             "#settings-overview-handoff-rows",
@@ -11191,72 +11323,112 @@ class SettingsScreen(BaseAppScreen):
                 continue
             region.refresh(recompose=True)
 
+    @staticmethod
+    def _overview_user_language(value: object) -> str:
+        return re.sub(r"handoff", "transfer", str(value), flags=re.IGNORECASE)
+
+    def _settings_overview_presentation(self) -> SettingsOverviewPresentation:
+        resolved = self._resolve_provider_model_for_settings()
+        provider = self._provider_display_name(str(resolved.provider or ""))
+        model = str(resolved.model or "not selected")
+        source_rows = dict(self.server_sync_workspace_handoff_rows)
+        conversation_updates = "; ".join(
+            value
+            for value in (
+                source_rows.get("Handoff policy", ""),
+                source_rows.get("ACP handoff readiness", ""),
+            )
+            if value
+        )
+        return build_settings_overview(
+            {
+                "configuration": (
+                    f"{provider or 'Not selected'} / {model}; Status: "
+                    f"{self._provider_readiness_label().removeprefix('Provider readiness: ')}"
+                ),
+                "last_connection_test": self._provider_test_result,
+                "storage_privacy": (
+                    f"Config path: {self._config_path_overview_value()}; "
+                    "Privacy: local config by default; secret-looking diagnostics "
+                    "are redacted"
+                ),
+                "sync": self._overview_sync_summary(),
+                "runtime_ownership": source_rows.get(
+                    "Local/server authority", "Not available"
+                ),
+                "server_binding": source_rows.get(
+                    "Active server profile", "Not available"
+                ),
+                "handoff": self._overview_user_language(
+                    conversation_updates or "No conversation update is pending"
+                ),
+            }
+        )
+
     def _render_overview_detail(self) -> ComposeResult:
-        # task-1369: the landing card leads with four primary status rows,
-        # each with an Open-category affordance (the sync row carries the
-        # manual sync controls instead). The server/sync/handoff detail and
-        # the ownership summary stay one collapsed disclosure away.
+        presentation = self._settings_overview_presentation()
         yield Static("Overview", classes="destination-section settings-column-title")
         with Vertical(id="settings-overview-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.OVERVIEW)
             yield Static("Status", classes="destination-section")
-            yield self._detail_row(
-                "Active",
-                self._provider_readiness_label().removeprefix("Provider readiness: "),
-                identifier="settings-overview-provider-readiness",
-            )
-            with Horizontal(classes="settings-action-row"):
-                yield Button(
-                    "Open Providers & Models",
-                    id="settings-overview-open-providers-models",
-                    classes="settings-overview-open-category",
-                    tooltip="Open the Providers & Models category.",
-                )
-            yield self._detail_row(
-                "Config path",
-                self._config_path_overview_value(),
-                identifier="settings-overview-storage",
-            )
-            with Horizontal(classes="settings-action-row"):
-                yield Button(
-                    "Open Storage",
-                    id="settings-overview-open-storage",
-                    classes="settings-overview-open-category",
-                    tooltip="Open the Storage category.",
-                )
-            yield self._detail_row(
-                "Privacy",
-                "local config by default; secret-looking diagnostics are redacted",
-                identifier="settings-overview-privacy",
-            )
-            with Horizontal(classes="settings-action-row"):
-                yield Button(
-                    "Open Privacy & Security",
-                    id="settings-overview-open-privacy-security",
-                    classes="settings-overview-open-category",
-                    tooltip="Open the Privacy & Security category.",
-                )
-            yield self._detail_row(
-                "Sync",
-                self._overview_sync_summary(),
-                identifier="settings-overview-sync-summary",
-            )
-            with Horizontal(classes="settings-action-row"):
-                yield Button(
-                    "Preview manual sync",
-                    id="settings-manual-sync-preview",
-                    tooltip="Show pending Notes/Chat changes without mutating the server.",
-                )
-                yield Button(
-                    "Run manual sync",
-                    id="settings-manual-sync-run",
-                    tooltip="Apply the previewed Notes/Chat changes to the server.",
-                )
+            with Vertical(id="settings-overview-primary"):
+                for row in presentation.primary_rows:
+                    yield self._detail_row(
+                        row.label,
+                        row.value,
+                        identifier=f"settings-overview-{row.key.replace('_', '-')}",
+                    )
+                    if row.key == "configuration":
+                        with Horizontal(classes="settings-action-row"):
+                            yield Button(
+                                "Open Providers & Models",
+                                id="settings-overview-open-providers-models",
+                                classes="settings-overview-open-category",
+                                tooltip="Open the Providers & Models category.",
+                            )
+                    elif row.key == "storage_privacy":
+                        with Horizontal(classes="settings-action-row"):
+                            yield Button(
+                                "Open Storage",
+                                id="settings-overview-open-storage",
+                                classes="settings-overview-open-category",
+                                tooltip="Open the Storage category.",
+                            )
+                            yield Button(
+                                "Open Privacy & Security",
+                                id="settings-overview-open-privacy-security",
+                                classes="settings-overview-open-category",
+                                tooltip="Open the Privacy & Security category.",
+                            )
+                    elif row.key == "sync":
+                        with Horizontal(classes="settings-action-row"):
+                            yield Button(
+                                "Preview manual sync",
+                                id="settings-manual-sync-preview",
+                                tooltip=(
+                                    "Show pending Notes/Chat changes without "
+                                    "mutating the server."
+                                ),
+                            )
+                            yield Button(
+                                "Run manual sync",
+                                id="settings-manual-sync-run",
+                                tooltip=(
+                                    "Apply the previewed Notes/Chat changes to "
+                                    "the server."
+                                ),
+                            )
             with Collapsible(
-                title="Server, sync, workspace, and handoff",
+                title="Advanced / Diagnostics",
                 collapsed=self._overview_sync_details_collapsed,
                 id="settings-overview-sync-details",
             ):
+                for row in presentation.advanced_rows:
+                    yield self._detail_row(
+                        row.label,
+                        row.value,
+                        identifier=f"settings-overview-{row.key.replace('_', '-')}",
+                    )
                 yield Static("Manual sync", classes="destination-section")
                 yield Static(
                     "Preview pending Notes/Chat changes before anything is sent to a server.",
@@ -11319,8 +11491,26 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-provider-connect-title",
                 classes="destination-section",
             )
-            with Horizontal(classes="settings-input-row settings-select-row"):
+            with Vertical(id="settings-provider-picker-block"):
                 yield Static("Provider", classes="settings-input-label")
+                yield Input(
+                    id="settings-provider-search",
+                    placeholder="Search providers by name or ID",
+                )
+                yield OptionList(
+                    *self._provider_picker_options(self._provider_picker_groups()),
+                    id="settings-provider-picker",
+                    compact=True,
+                )
+                yield Static(
+                    "Choose a provider or enter a provider ID.",
+                    id="settings-provider-search-status",
+                    classes="settings-help-copy",
+                    markup=False,
+                )
+            with Horizontal(
+                classes="settings-input-row settings-provider-manual-hidden"
+            ):
                 yield Select(
                     self._provider_select_options(),
                     value=self._provider_select_value_for_provider(provider),
@@ -17813,6 +18003,40 @@ class SettingsScreen(BaseAppScreen):
         self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Input.Changed, "#settings-provider-search")
+    def handle_provider_search_changed(self, event: Input.Changed) -> None:
+        """Refresh only picker rows so provider connection drafts remain mounted."""
+
+        event.stop()
+        self._refresh_provider_picker(event.value)
+
+    @on(OptionList.OptionSelected, "#settings-provider-picker")
+    def handle_provider_picker_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        event.stop()
+        option = event.option
+        action = getattr(option, "action", None)
+        provider_id = getattr(option, "provider_id", None)
+        try:
+            selector = self.query_one("#settings-provider-value", Select)
+        except QueryError:
+            return
+        if action == "enter_provider_id":
+            if selector.value != PROVIDER_MANUAL_SELECT_VALUE:
+                selector.value = PROVIDER_MANUAL_SELECT_VALUE
+            else:
+                current_provider = str(
+                    self._provider_setting_values_mapping().get("provider") or ""
+                )
+                self._sync_provider_manual_widget(current_provider)
+            self.call_after_refresh(
+                self.query_one("#settings-provider-manual-value", Input).focus
+            )
+            return
+        if provider_id is not None:
+            selector.value = provider_id
 
     @on(Select.Changed, "#settings-provider-value")
     def handle_provider_value_changed(self, event: Select.Changed) -> None:
