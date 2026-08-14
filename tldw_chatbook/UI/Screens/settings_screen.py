@@ -69,6 +69,7 @@ from ...Chat.provider_readiness import get_provider_readiness, provider_config_k
 from ...Chat.provider_setup_persistence import (
     ProviderSetupDraft,
     build_provider_setup_mutation,
+    canonical_provider_key,
     persist_provider_settings_atomic,
     provider_setup_draft_identity,
     resolve_remembered_provider_model,
@@ -9037,10 +9038,23 @@ class SettingsScreen(BaseAppScreen):
             status.update("Choose a provider or enter a supported provider alias.")
 
     def _provider_select_value_for_provider(self, provider: str) -> str:
-        provider_key = provider_config_key(provider)
-        if provider_key in self._provider_catalog_keys():
-            return provider_key
+        catalog_keys = self._provider_catalog_keys()
+        for candidate in (provider, provider_config_key(provider)):
+            try:
+                provider_key = canonical_provider_key(candidate)
+            except ValueError:
+                continue
+            if provider_key in catalog_keys:
+                return provider_key
         return PROVIDER_MANUAL_SELECT_VALUE
+
+    def _clear_provider_suppression_queues(self) -> None:
+        """Discard widget-scoped programmatic echoes before widget replacement."""
+
+        self._provider_endpoint_suppress_queue.clear()
+        self._provider_credential_env_var_suppress_queue.clear()
+        self._provider_api_key_suppress_queue.clear()
+        self._provider_context_window_suppress_queue.clear()
 
     def _provider_catalog_model_default(self, provider: str) -> str:
         providers_models = getattr(self.app_instance, "providers_models", None)
@@ -15705,7 +15719,7 @@ class SettingsScreen(BaseAppScreen):
                 return
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._active_settings_field_id = None
-            self._provider_api_key_suppress_queue.clear()
+            self._clear_provider_suppression_queues()
         # Task 3 (541 v2 UX AC3): the remembered "last-expanded RAG group"
         # scope must not leak into a later LIBRARY_RAG visit -- e.g. leaving
         # with "Chunking" expanded and coming back to a freshly recomposed
@@ -15828,6 +15842,7 @@ class SettingsScreen(BaseAppScreen):
         screen-level `refresh(recompose=True)` still destroys the rail button
         the intent names.
         """
+        self._clear_provider_suppression_queues()
         await super().recompose()
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
             self._refresh_provider_picker()

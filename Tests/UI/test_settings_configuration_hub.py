@@ -84,6 +84,13 @@ DUMMY_REDACTION_ENV_VALUE = "redaction-fixture-env-value"
 DUMMY_REDACTION_CONFIG_VALUE = "redaction-fixture-config-value"
 DUMMY_REDACTION_SERVER_VALUE = "redaction-fixture-server-value"
 
+PERSISTED_PROVIDER_ALIASES = (
+    ("llama.cpp", "llama_cpp"),
+    ("Hugging Face", "huggingface"),
+    ("Custom OpenAI", "custom"),
+    ("custom-openai-api", "custom"),
+)
+
 
 def _capture_provider_settings_mutations(monkeypatch):
     calls = []
@@ -2932,11 +2939,84 @@ async def test_settings_provider_picker_supported_manual_alias_uses_catalog_life
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_picker_current_alias_preserves_connection_drafts():
+@pytest.mark.parametrize("alias, canonical_provider", PERSISTED_PROVIDER_ALIASES)
+async def test_settings_provider_picker_persistence_alias_uses_catalog_lifecycle(
+    alias,
+    canonical_provider,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
         "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen._show_provider_manual_editor("OpenAI")
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+
+        manual.value = alias
+        await pilot.pause()
+
+        assert host._exception is None
+        assert (
+            screen.query_one("#settings-provider-value", Select).value
+            == canonical_provider
+        )
+        assert (
+            screen._provider_setting_values_mapping()["provider"]
+            == canonical_provider
+        )
+        assert manual.value == ""
+        assert manual.disabled is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alias, canonical_provider", PERSISTED_PROVIDER_ALIASES)
+async def test_settings_provider_picker_persistence_alias_saves_canonical_provider(
+    monkeypatch,
+    alias,
+    canonical_provider,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen._show_provider_manual_editor("OpenAI")
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+
+        manual.value = alias
+        await pilot.pause()
+        await pilot.click("#settings-save-category")
+        await pilot.pause()
+
+        assert host._exception is None
+
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["chat_defaults"]["provider"] == canonical_provider
+    assert app.app_config["chat_defaults"]["provider"] == canonical_provider
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alias, canonical_provider", PERSISTED_PROVIDER_ALIASES)
+async def test_settings_provider_picker_current_alias_preserves_connection_drafts(
+    alias,
+    canonical_provider,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": canonical_provider,
+        "model": "saved-model",
     }
     host = DestinationHarness(app, "settings")
 
@@ -2949,14 +3029,19 @@ async def test_settings_provider_picker_current_alias_preserves_connection_draft
         api_key.value = "draft-provider-key"
         await pilot.pause()
 
-        screen._show_provider_manual_editor("OpenAI")
+        screen._show_provider_manual_editor(canonical_provider)
         manual = screen.query_one("#settings-provider-manual-value", Input)
-        manual.value = "OPENAI"
+        manual.value = alias
         await pilot.pause()
 
-        assert screen._provider_setting_values_mapping()["provider"] == "OpenAI"
+        assert (
+            screen._provider_setting_values_mapping()["provider"]
+            == canonical_provider
+        )
         assert endpoint.value == "https://draft.example/v1"
         assert api_key.value == "draft-provider-key"
+        assert manual.value == ""
+        assert manual.disabled is True
 
 
 @pytest.mark.asyncio
@@ -5826,6 +5911,69 @@ async def test_settings_provider_navigation_context_uses_one_presentation_identi
         assert not screen._category_has_unsaved_changes(
             SettingsCategoryId.PROVIDERS_MODELS
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lifecycle", ["category_departure", "recompose"])
+async def test_settings_provider_route_echoes_do_not_survive_widget_lifecycle(
+    lifecycle,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:8080/v1",
+            "api_key_env_var": "LLAMA_CPP_API_KEY",
+        },
+        "huggingface": {
+            "api_url": "https://huggingface.example/v1/route-target",
+            "api_key_env_var": "HUGGINGFACE_ROUTE_TARGET_API_KEY",
+        },
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        target_endpoint = "https://huggingface.example/v1/route-target"
+        target_env = "HUGGINGFACE_ROUTE_TARGET_API_KEY"
+        screen._navigation_provider = "huggingface"
+        screen._navigation_model = "meta-llama/route-target"
+
+        screen._apply_navigation_provider_context(
+            "huggingface",
+            "meta-llama/route-target",
+        )
+
+        assert screen._provider_endpoint_suppress_queue == [target_endpoint]
+        assert screen._provider_credential_env_var_suppress_queue == [target_env]
+        screen._clear_navigation_provider_context()
+        if lifecycle == "category_departure":
+            screen._select_category(SettingsCategoryId.OVERVIEW.value)
+            await pilot.pause()
+            screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+            await pilot.pause()
+        else:
+            await screen.recompose()
+            await pilot.pause()
+
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        credential_env = screen.query_one(
+            "#settings-provider-credential-env-var", Input
+        )
+        endpoint.value = target_endpoint
+        credential_env.value = target_env
+        await pilot.pause()
+
+        draft = screen._provider_draft()
+        assert draft is not None
+        assert draft.values["endpoint"] == target_endpoint
+        assert draft.values["credential_env_var"] == target_env
+        assert endpoint.value == target_endpoint
+        assert credential_env.value == target_env
+        assert screen.query_one("#settings-save-category", Button).disabled is False
+        assert screen._provider_endpoint_suppress_queue == []
+        assert screen._provider_credential_env_var_suppress_queue == []
 
 
 @pytest.mark.asyncio
