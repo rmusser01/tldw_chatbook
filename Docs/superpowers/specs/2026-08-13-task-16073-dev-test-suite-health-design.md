@@ -43,27 +43,57 @@ unrelated code.
 Immediately before the baseline:
 
 1. Fetch `origin` and rebase the task branch onto the newest `origin/dev`.
-2. Record the exact commit SHA, Python version, pytest version, platform, dependency
-   lock metadata, and test command.
+2. Record the exact commit SHA, Python executable and version, pytest version,
+   platform, hashes of dependency declarations/locks, and a sorted `pip freeze --all`
+   hash.
 3. Verify the worktree is clean.
-4. Create one task-owned scratch root containing `HOME`, `XDG_CONFIG_HOME`,
-   `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `TLDW_CONFIG_PATH`, temporary files, and reports.
+4. Create one permission-restricted task-owned scratch root containing `HOME`,
+   `USERPROFILE`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`,
+   `TLDW_CONFIG_PATH`, `TLDW_TEST_CONFIG_ROOT`, temporary files, and a scratch
+   `[paths].data_dir`. Set `TLDW_TEST_MODE=1`.
 5. Fingerprint relevant real profile/config paths before and after the run and require
    byte-identical results. Existing repository network-blocking fixtures remain active.
+6. Start from a sanitized environment: unset ambient `PYTEST_ADDOPTS`, pytest plugin
+   injection/xdist variables, live-test gates, and credential/key/token variables. Use
+   `python -m pytest` from the recorded virtual environment and an explicit, recorded
+   locale and `PATH`; never inherit arbitrary pytest selectors from the caller.
 
-The complete baseline command uses verbose node streaming plus JUnit output. Verbose
-streaming means an interrupted run still names every node reached; JUnit provides the
-complete machine-readable failure set when the run finishes. Shell pipe status must be
-preserved, and stdout/stderr must be written under the ignored task evidence root.
+### Checkpointed complete-suite pipeline
 
-Conceptually:
+The complete suite is not one pytest process. A task-owned standard-library harness:
 
-```text
-pytest -vv --tb=short --junitxml=<evidence>/baseline/junit.xml
-```
+1. Runs frozen collection with `python -m pytest --collect-only`, records every exact
+   node ID, and hashes the ordered manifest.
+2. Slices that manifest into disjoint bounded chunks whose command lines stay below
+   platform argument limits and whose expected duration is below 20 minutes.
+3. Runs chunks serially with `-vv --tb=short`, a distinct immutable JUnit/log/outcome
+   path, a bounded process deadline, and no fail-fast option.
+4. Uses a small task-owned pytest evidence plugin to write exact `report.nodeid`, phase,
+   and outcome records plus the session exit status. The harness/plugin source and
+   self-test results are hashed into the evidence manifest.
+5. Writes a complete marker only after the chunk's actual node/outcome set matches its
+   expected slice exactly. Exit 0 or 1 may be complete; collection/internal/interruption
+   exits are incomplete.
+6. On an incomplete or timed-out multi-node chunk, recursively splits and reruns only
+   its uncovered nodes. A timed-out single-node child is terminated, recorded with one
+   task-owned `timeout` terminal outcome plus command/deadline/process evidence, and
+   becomes an explicit baseline failure category; it is never silently dropped.
+7. Resumes by skipping only chunks whose command, source/environment generation,
+   expected-node hash, outcome hash, exit status, and complete marker all verify.
 
-The precise environment and command are recorded verbatim in a manifest. Source and
-tests remain frozen for the entire baseline run.
+The coverage verifier must prove that every collected node has exactly one terminal
+outcome. All final-generation pytest processes must exit normally. In the red baseline
+only, an exact single-node timeout is a complete *failure outcome* when the harness
+records its bounded termination evidence; it is not a green or normal child exit.
+Missing, duplicate, corrupt, multi-node timeout, or uncollected nodes keep the pipeline
+incomplete. Before the real sweep, negative harness self-tests inject a missing node,
+duplicate node, corrupt report, unowned timeout, and false complete marker and require
+the verifier to reject each one.
+
+The normalized pytest arguments and sanitized environment are recorded verbatim.
+Per-phase output directories and per-chunk node slices differ by design; equality means
+all other normalized pytest arguments and environment values are identical. Source and
+tests remain frozen for an entire pipeline generation.
 
 ## Failure inventory and classification
 
@@ -75,27 +105,32 @@ The JUnit failure/error set is authoritative. Each node receives one of these la
   and the test or fixture still models a retired contract.
 - **Order/isolation defect:** the node passes alone but fails in its original module or
   suite order because state, workers, files, environment, or monkeypatching leak.
-- **Flake/race:** identical isolated repetitions alternate outcomes without source
-  changes.
+- **Flake/race:** the identical isolated node or original triggering sequence alternates
+  outcomes without source changes.
 - **Environment harness defect:** the test assumes unavailable network, port, process,
   clock, filesystem, or optional-runtime behavior that its own harness should control.
-- **Expected optional absence:** only when an existing product contract explicitly
-  makes the capability optional. This may use the repository's established skip
-  mechanism, but TASK-16073 must not invent a new skip to hide a failure.
 
 Classification evidence is bounded but substantive:
 
 - Run the exact node alone.
 - Run its containing file or smallest state-sharing suite.
 - For an intermittent node, loop the identical node enough times to reproduce the
-  failure rather than accepting one green rerun.
+  failure rather than accepting one green rerun; retain the smallest original sequence
+  and repetition count that reproduced it.
 - For order-dependent failures, preserve the smallest preceding sequence that triggers
   the failure and prove the leak is gone.
 - Compare identical commands and exact failure sets; never compare counts from different
   invocations.
 
+“Stale test contract” is valid only with a cited authority that predates the baseline:
+an accepted task, canonical ADR, maintained user/developer documentation, or explicit
+owner decision. Current production behavior is not its own authority. An ambiguous
+contract pauses that cluster for an owner decision instead of rewriting the test.
+
 If several nodes share a root cause, they form one repair cluster. Unrelated clusters
-remain separate commits inside the single requested PR.
+remain separate commits inside the single requested PR. A sanitized committed inventory
+maps every baseline node to its category, authority/evidence, repair commit, and final
+verification; it contains no raw traceback bodies or private paths.
 
 ## Repair rules
 
@@ -107,6 +142,11 @@ Every production or test change follows RED-GREEN:
 4. Run the regression, its affected suite, and a mutation/non-vacuity probe where the
    fix adds a guard or concurrency boundary.
 5. Commit one coherent repair cluster.
+
+An intermittent repair must repeatedly pass the original triggering node/sequence for
+at least the number of attempts that reproduced the baseline failure, with a minimum of
+20 attempts for a low-rate flake. One isolated pass and one green complete sweep are not
+sufficient evidence.
 
 Product code changes are allowed only when the test exposes a real product defect.
 Fixture repairs must use real signatures and production-shaped payloads. Wait-based UI
@@ -136,10 +176,14 @@ During repair:
 - Privacy scans assert that reports and diagnostics contain no credentials, synthetic
   secret sentinels, real profile paths, or private user data.
 
-Final verification uses the same pinned environment and the byte-identical complete
-pytest command used for the baseline. The candidate is frozen during the run. Success
-requires zero unexpected failures or errors; expected skips must be unchanged or
-individually justified by a pre-existing optional-capability contract.
+Final verification uses the same checkpointed pipeline, normalized pytest arguments,
+and environment contract used for the baseline. It re-collects on the frozen candidate:
+every baseline node must remain present, every added regression is included, and every
+collected node receives exactly one terminal outcome. Removing or renaming a baseline
+node requires explicit user scope amendment; a mapping note is not enough. Success
+requires zero failures or errors and an unchanged skip/xfail/deselect/not-collected set.
+No baseline failure/error may transition to a non-executed outcome without an explicit
+user-approved spec/AC amendment.
 
 After final suite success, run cumulative diff review, Ruff/formatter/type/compile
 checks for touched files, applicable CSS/generated checks, and independent correctness,
@@ -149,20 +193,27 @@ invalidates affected and final-suite evidence and requires rerunning it.
 ## Pull-request workflow
 
 - The branch is based on the newest `origin/dev` before the baseline and rebased again
-  immediately before opening the PR.
+  immediately before opening the PR. Every rebase starts a new pipeline generation:
+  refresh the environment/package fingerprint, re-collect, add any new red nodes to the
+  inventory, and run the complete checkpointed pipeline on the exact ready-PR head SHA.
 - Open one ready PR against `dev` with the pinned baseline and final JUnit summaries,
   failure-cluster table, exact test commands, static results, and known limitations.
 - Address CI and reviewer/Qodo comments with focused regressions and separate commits.
+  Every source/test-changing review or CI fix invalidates final evidence and requires
+  affected checks plus the complete pipeline on the new head.
 - Rebase onto the latest `dev` again after review fixes, rerun affected checks and the
   final complete suite, then merge only when all required checks and threads are clear.
 
 ## Privacy and evidence retention
 
-Raw logs and JUnit reports stay under ignored `.superpowers/sdd/` evidence. They may
-contain synthetic fixture content and repository-relative node paths but must not
+Permission-restricted raw logs, JUnit reports, harness files, and manifests stay above
+all disposable worktrees under the main repository's ignored `.superpowers/sdd/`
+evidence root through PR merge and worktree cleanup. Baseline, repair, and final phases
+use distinct immutable directories; no command overwrites earlier evidence. Artifacts
+may contain synthetic fixture content and repository-relative node paths but must not
 contain credentials, real user bodies, real profile/config contents, or private home
-paths. The committed task notes record hashes, counts, commands, classifications, and
-durations rather than copying raw traces.
+paths. The committed sanitized inventory and task notes record hashes, counts,
+commands, classifications, and durations rather than raw traces.
 
 ## ADR decision
 
@@ -174,4 +225,3 @@ Reason: this task restores existing product and test contracts and does not intr
 new storage, service, security, dependency, or long-lived UX boundary. If classification
 reveals that such a decision is necessary, that cluster stops until this design and an
 ADR are amended before implementation.
-
