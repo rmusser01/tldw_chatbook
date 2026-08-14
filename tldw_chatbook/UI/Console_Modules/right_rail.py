@@ -229,8 +229,7 @@ class ConsoleInspectorRail(Vertical):
                     self._settings_summary_state,
                     id="console-settings-summary",
                     classes=(
-                        "console-inspector-session-settings"
-                        " console-settings-summary"
+                        "console-inspector-session-settings console-settings-summary"
                     ),
                 )
                 settings_summary.styles.width = "100%"
