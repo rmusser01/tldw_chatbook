@@ -1303,20 +1303,42 @@ class _TrackedSafeFileOpen(EnhancedFileOpen):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.safe_dismiss_results: list[object] = []
+        self.dismiss_results: list[object] = []
+        self.persisted_last_directories: list[Path | None] = []
 
     def dismiss_safe_once(self, result: object) -> bool:
         self.safe_dismiss_results.append(result)
         return super().dismiss_safe_once(result)
+
+    def dismiss(self, result: object) -> None:
+        self.dismiss_results.append(result)
+        super().dismiss(result)
+
+    def _persist_recent_and_last_directory(
+        self, last_directory: Path | None
+    ) -> None:
+        self.persisted_last_directories.append(last_directory)
 
 
 class _TrackedSafeFileSave(EnhancedFileSave):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.safe_dismiss_results: list[object] = []
+        self.dismiss_results: list[object] = []
+        self.persisted_last_directories: list[Path | None] = []
 
     def dismiss_safe_once(self, result: object) -> bool:
         self.safe_dismiss_results.append(result)
         return super().dismiss_safe_once(result)
+
+    def dismiss(self, result: object) -> None:
+        self.dismiss_results.append(result)
+        super().dismiss(result)
+
+    def _persist_recent_and_last_directory(
+        self, last_directory: Path | None
+    ) -> None:
+        self.persisted_last_directories.append(last_directory)
 
 
 def _safe_dialog(dialog_type, tmp_path, context: str):
@@ -1357,6 +1379,8 @@ async def test_file_dialog_terminal_cancel_sources_use_safe_dismiss_once(
     assert app._result_seen
     assert app._result is None
     assert dialog.safe_dismiss_results == [None]
+    assert dialog.dismiss_results == [None]
+    assert dialog.persisted_last_directories == [tmp_path]
 
 
 @pytest.mark.asyncio
