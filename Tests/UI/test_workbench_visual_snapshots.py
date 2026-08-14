@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from textual.containers import Horizontal
 from textual.widgets import Button, OptionList, Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -177,6 +178,12 @@ def _painted_region_rows(screen, region) -> list[str]:
     ]
 
 
+def _painted_center_row(screen, region) -> str:
+    """Return the direct compositor row through the center of a control."""
+    strip = list(screen._compositor.render_strips())[region.center.y]
+    return strip.crop(region.x, region.right).text.strip()
+
+
 def _rendered_svg_text(svg: str) -> str:
     """Join rendered SVG text nodes without admitting screenshot metadata."""
     joined = "".join(re.findall(r"<text[^>]*>([^<]*)</text>", svg))
@@ -311,9 +318,21 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
 
 
 @pytest.mark.parametrize("size", ((140, 42), (160, 45)))
+@pytest.mark.parametrize(
+    ("target_state", "context_open", "inspector_open"),
+    (
+        ("context-open-inspector-collapsed", True, False),
+        ("both-open", True, True),
+        ("context-collapsed-inspector-open", False, True),
+        ("both-collapsed", False, False),
+    ),
+)
 @pytest.mark.asyncio
 async def test_task_16001_console_directional_rail_buttons_visual_sweep(
     size: tuple[int, int],
+    target_state: str,
+    context_open: bool,
+    inspector_open: bool,
 ) -> None:
     app = _build_test_app(configured_default="home")
     _mark_console_onboarding_complete(app)
@@ -323,184 +342,156 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
             _configure_native_ready_console(app)
             await _open_console(app, pilot)
 
-            if not app.screen.query_one("#console-left-rail").display:
-                assert await pilot.click("#console-context-rail-open")
-                await pilot.pause(0.3)
-            if app.screen.query_one("#console-right-rail").display:
-                assert await pilot.click("#console-inspector-rail-collapse")
-                await pilot.pause(0.3)
-            await pilot.pause(0.5)
+            async def drive_rail(
+                *,
+                rail_selector: str,
+                open_selector: str,
+                collapse_selector: str,
+                target_open: bool,
+            ) -> None:
+                if bool(app.screen.query_one(rail_selector).display) == target_open:
+                    return
+                selector = open_selector if target_open else collapse_selector
+                button = app.screen.query_one(selector, Button)
+                assert button.display is True
+                assert await pilot.click(button)
+                await _wait_until(
+                    pilot,
+                    lambda: (
+                        bool(app.screen.query_one(rail_selector).display) == target_open
+                    ),
+                    context=f"{rail_selector} target state {target_open}",
+                )
+                await pilot.pause(0.2)
 
-            def assert_transcript_access() -> None:
-                transcript = app.screen.query_one("#console-transcript-region")
-                assert transcript.region.width > 0
-
-            def assert_open_rail(
+            def assert_control_preconditions(
                 *,
                 rail_selector: str,
                 handle_selector: str,
                 button_selector: str,
-                title_selector: str,
-                label: str,
-                tooltip: str,
-            ) -> Button:
-                screen = app.screen
-                rail = screen.query_one(rail_selector)
-                handle = screen.query_one(handle_selector)
-                button = screen.query_one(button_selector, Button)
-                header = button.parent
-
-                assert rail.display is True
-                assert handle.display is False
-                assert header is not None
-                assert list(header.children) == [button]
-                assert not screen.query(title_selector)
-                assert str(button.label) == label
-                assert button.tooltip == tooltip
-                assert rail.content_region.contains_region(header.region)
-                assert header.content_region.contains_region(button.region)
-                assert button.region.width == header.content_region.width
-                assert button.region.height == header.content_region.height == 1
-                assert _painted_region_rows(screen, button.region) == [label]
-                return button
-
-            def assert_collapsed_rail(
-                *,
-                rail_selector: str,
-                handle_selector: str,
-                button_selector: str,
-                label: str,
-                tooltip: str,
+                open_state: bool,
                 handle_width: int,
                 content_width: int,
-            ) -> Button:
+            ) -> tuple[Button, Horizontal | None]:
                 screen = app.screen
                 workspace = screen.query_one("#console-workspace-grid")
                 rail = screen.query_one(rail_selector)
                 handle = screen.query_one(handle_selector)
                 button = screen.query_one(button_selector, Button)
 
-                assert rail.display is False
-                assert handle.display is True
-                assert str(button.label) == label
-                assert button.tooltip == tooltip
-                assert workspace.content_region.contains_region(handle.region)
-                assert handle.region.width == handle_width
-                assert handle.content_region.width == content_width
-                assert handle.content_region.contains_region(button.region)
-                assert _painted_region_rows(screen, button.region) == [label]
-                return button
+                assert rail.display is open_state
+                assert handle.display is (not open_state)
+                owner = rail if open_state else handle
+                assert workspace.content_region.contains_region(owner.region)
+                assert owner.region.width > 0
+                assert button.region.width > 0
 
-            def export_state_evidence(state: str, labels: tuple[str, str]) -> None:
-                svg = app.export_screenshot(
-                    title=f"TASK-16001 Directional Rails {state} {size[0]}x{size[1]}",
-                    simplify=True,
+                header = button.parent if open_state else None
+                if open_state:
+                    assert rail.region.width >= 18
+                    assert isinstance(header, Horizontal)
+                    assert rail.content_region.contains_region(header.region)
+                    assert header.region.height == 1
+                    assert header.content_region.contains_region(button.region)
+                    assert button.region.height == 1
+                else:
+                    assert handle.region.width == handle_width
+                    assert handle.content_region.width == content_width
+                    assert handle.content_region.contains_region(button.region)
+                assert len(_painted_region_rows(screen, button.region)) == 1
+                return button, header
+
+            await drive_rail(
+                rail_selector="#console-left-rail",
+                open_selector="#console-context-rail-open",
+                collapse_selector="#console-context-rail-collapse",
+                target_open=context_open,
+            )
+            await drive_rail(
+                rail_selector="#console-right-rail",
+                open_selector="#console-inspector-rail-open",
+                collapse_selector="#console-inspector-rail-collapse",
+                target_open=inspector_open,
+            )
+            await pilot.pause(0.5)
+
+            context_selector = (
+                "#console-context-rail-collapse"
+                if context_open
+                else "#console-context-rail-open"
+            )
+            inspector_selector = (
+                "#console-inspector-rail-collapse"
+                if inspector_open
+                else "#console-inspector-rail-open"
+            )
+            context_button, context_header = assert_control_preconditions(
+                rail_selector="#console-left-rail",
+                handle_selector="#console-context-rail-handle",
+                button_selector=context_selector,
+                open_state=context_open,
+                handle_width=13,
+                content_width=11,
+            )
+            inspector_button, inspector_header = assert_control_preconditions(
+                rail_selector="#console-right-rail",
+                handle_selector="#console-inspector-rail-handle",
+                button_selector=inspector_selector,
+                open_state=inspector_open,
+                handle_width=11,
+                content_width=9,
+            )
+            transcript = app.screen.query_one("#console-transcript-region")
+            assert transcript.region.width > 0
+
+            svg = app.export_screenshot(
+                title=(
+                    f"TASK-16001 Directional Rails {target_state} {size[0]}x{size[1]}"
+                ),
+                simplify=True,
+            )
+            _assert_svg_healthy(svg)
+            rendered_text = _rendered_svg_text(svg)
+            assert rendered_text.strip()
+            assert "Console" in rendered_text
+
+            context_label = "<---------|Context" if context_open else "Context->"
+            inspector_label = "Inspect|--------->" if inspector_open else "<-Inspect"
+            context_tooltip = (
+                "Collapse Console context rail" if context_open else "Open Context rail"
+            )
+            inspector_tooltip = (
+                "Collapse Inspector rail" if inspector_open else "Open Inspector rail"
+            )
+
+            assert (
+                str(context_button.label),
+                str(inspector_button.label),
+            ) == (context_label, inspector_label)
+            assert (
+                _painted_center_row(app.screen, context_button.region),
+                _painted_center_row(app.screen, inspector_button.region),
+            ) == (context_label, inspector_label)
+            assert context_button.tooltip == context_tooltip
+            assert inspector_button.tooltip == inspector_tooltip
+
+            if context_open:
+                assert context_header is not None
+                assert not app.screen.query("#console-context-rail-title")
+                assert list(context_header.children) == [context_button]
+                assert (
+                    context_button.region.width == context_header.content_region.width
                 )
-                _assert_svg_healthy(svg)
-                rendered_text = _rendered_svg_text(svg)
-                for label in labels:
-                    assert label in rendered_text
-
-            context_collapse = assert_open_rail(
-                rail_selector="#console-left-rail",
-                handle_selector="#console-context-rail-handle",
-                button_selector="#console-context-rail-collapse",
-                title_selector="#console-context-rail-title",
-                label="<---------|Context",
-                tooltip="Collapse Console context rail",
-            )
-            inspector_open = assert_collapsed_rail(
-                rail_selector="#console-right-rail",
-                handle_selector="#console-inspector-rail-handle",
-                button_selector="#console-inspector-rail-open",
-                label="<-Inspect",
-                tooltip="Open Inspector rail",
-                handle_width=11,
-                content_width=9,
-            )
-            assert_transcript_access()
-            export_state_evidence(
-                "context-open-inspector-collapsed",
-                ("<---------|Context", "<-Inspect"),
-            )
-
-            assert await pilot.click(inspector_open)
-            await pilot.pause(0.3)
-            context_collapse = assert_open_rail(
-                rail_selector="#console-left-rail",
-                handle_selector="#console-context-rail-handle",
-                button_selector="#console-context-rail-collapse",
-                title_selector="#console-context-rail-title",
-                label="<---------|Context",
-                tooltip="Collapse Console context rail",
-            )
-            inspector_collapse = assert_open_rail(
-                rail_selector="#console-right-rail",
-                handle_selector="#console-inspector-rail-handle",
-                button_selector="#console-inspector-rail-collapse",
-                title_selector="#console-inspector-rail-title",
-                label="Inspect|--------->",
-                tooltip="Collapse Inspector rail",
-            )
-            assert_transcript_access()
-            export_state_evidence(
-                "both-open",
-                ("<---------|Context", "Inspect|--------->"),
-            )
-
-            assert await pilot.click(
-                context_collapse,
-                offset=(context_collapse.region.width - 2, 0),
-            )
-            await pilot.pause(0.3)
-            assert_collapsed_rail(
-                rail_selector="#console-left-rail",
-                handle_selector="#console-context-rail-handle",
-                button_selector="#console-context-rail-open",
-                label="Context->",
-                tooltip="Open Context rail",
-                handle_width=13,
-                content_width=11,
-            )
-            inspector_collapse = assert_open_rail(
-                rail_selector="#console-right-rail",
-                handle_selector="#console-inspector-rail-handle",
-                button_selector="#console-inspector-rail-collapse",
-                title_selector="#console-inspector-rail-title",
-                label="Inspect|--------->",
-                tooltip="Collapse Inspector rail",
-            )
-            assert_transcript_access()
-            export_state_evidence(
-                "context-collapsed-inspector-open",
-                ("Context->", "Inspect|--------->"),
-            )
-
-            assert await pilot.click(inspector_collapse, offset=(1, 0))
-            await pilot.pause(0.3)
-            assert_collapsed_rail(
-                rail_selector="#console-left-rail",
-                handle_selector="#console-context-rail-handle",
-                button_selector="#console-context-rail-open",
-                label="Context->",
-                tooltip="Open Context rail",
-                handle_width=13,
-                content_width=11,
-            )
-            assert_collapsed_rail(
-                rail_selector="#console-right-rail",
-                handle_selector="#console-inspector-rail-handle",
-                button_selector="#console-inspector-rail-open",
-                label="<-Inspect",
-                tooltip="Open Inspector rail",
-                handle_width=11,
-                content_width=9,
-            )
-            assert_transcript_access()
-            export_state_evidence(
-                "both-collapsed",
-                ("Context->", "<-Inspect"),
-            )
+            if inspector_open:
+                assert inspector_header is not None
+                assert not app.screen.query("#console-inspector-rail-title")
+                assert list(inspector_header.children) == [inspector_button]
+                assert (
+                    inspector_button.region.width
+                    == inspector_header.content_region.width
+                )
+            assert context_label in rendered_text
+            assert inspector_label in rendered_text
 
 
 @pytest.mark.asyncio
