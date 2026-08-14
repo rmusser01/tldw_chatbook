@@ -5236,6 +5236,17 @@ class ChatScreen(BaseAppScreen):
         self._console_chat_controller.wake_user_priority_probe = (
             self._console_wake_user_priority
         )
+        # task-15971: the delivery COMMIT's visibility probe -- a wake
+        # completing while this conversation is not displayed-and-active
+        # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
+        # learns an off-view delivery landed).
+        # task-15971: the delivery COMMIT's visibility probe -- a wake
+        # completing while this conversation is not displayed-and-active
+        # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
+        # learns an off-view delivery landed).
+        self._console_chat_controller.wake_conversation_in_view = (
+            self._console_wake_conversation_in_view
+        )
         self._sync_console_chat_core_state()
         return self._console_chat_controller
 
@@ -14766,6 +14777,20 @@ class ChatScreen(BaseAppScreen):
         (``_on_console_composer_draft_changed``'s poke) and on every
         terminal run-state transition.
 
+        task-15970: "the Console composer" means the one the user can
+        actually TYPE into. This screen can outlive its display (a
+        navigation issued while a pushed screen sat above it pops the
+        MODAL off the stack and leaves this screen resident-but-hidden --
+        the residue arc's live ``mounted=True`` state), and the live bug
+        was exactly this probe reading the hidden screen's own empty
+        composer while the user held a typed draft in the DISPLAYED
+        screen's: the wake fired straight through it, twice. When the
+        displayed screen is a different Console screen, ITS composer is
+        the user's hands; this screen's own composer is the fallback
+        (nobody can type into any composer while e.g. Library is
+        displayed, and a stale non-empty draft deferring is the probe's
+        conservative direction).
+
         Args:
             session_id: The session the wake would fire into (unused by
                 the any-session rule; part of the probe contract).
@@ -14773,10 +14798,81 @@ class ChatScreen(BaseAppScreen):
         Returns:
             Whether the user currently holds a sending claim.
         """
-        composer = self._console_composer_or_none()
+        composer = self._console_wake_probe_composer()
         if composer is None:
             return False
         return bool(composer.draft_text().strip())
+
+    def _console_wake_probe_composer(self) -> ConsoleComposerBar | None:
+        """The composer the user's keystrokes actually reach (task-15970).
+
+        The displayed screen's composer when the displayed screen is a
+        (different) Console screen; this screen's own otherwise.
+        Duck-typed on ``_console_composer_or_none`` rather than an
+        ``isinstance`` so screen doubles keep working. ``self.app`` is
+        resolved defensively: the coordinator calls this probe from a
+        bare loop callback whose context may lack ``active_app`` (the
+        task-15862 ContextVar lesson) -- ``DOMNode.app`` then walks
+        ``_parent`` to the App, and a screen with no reachable App simply
+        falls back to its own composer.
+        """
+        displayed: Any | None
+        try:
+            displayed = self.app.screen
+        except Exception:  # noqa: BLE001 -- no reachable app: own composer
+            displayed = None
+        if displayed is not None and displayed is not self:
+            resolve = getattr(displayed, "_console_composer_or_none", None)
+            if callable(resolve):
+                try:
+                    composer = resolve()
+                except Exception:  # noqa: BLE001 -- a broken foreign screen
+                    composer = None
+                if composer is not None:
+                    return composer
+        return self._console_composer_or_none()
+
+    def _console_screen_displayed(self) -> bool:
+        """Whether THIS screen is the one the user is looking at.
+
+        task-15971: this screen can be mounted-but-hidden (resident in
+        the stack below the displayed screen), and "viewing" semantics --
+        the sync tick's view-clear, the delivery commit's in-view probe
+        -- must mean DISPLAYED, not merely mounted. A screen whose App is
+        unreachable (hand-built test fixtures that never mounted) reports
+        True, preserving those harnesses' historical behaviour; the
+        hidden-resident case this exists for always has a reachable App.
+        """
+        try:
+            return self.app.screen is self
+        except Exception:  # noqa: BLE001 -- no reachable app: fixtures
+            return True
+
+    def _console_wake_conversation_in_view(
+        self, conversation_id: str, session_id: str
+    ) -> bool:
+        """Delivery-commit visibility probe (task-15971).
+
+        True only when this screen is the DISPLAYED one and the wake's
+        session is the ACTIVE session -- i.e. the user actually watched
+        the result land. Anything else (Library displayed, a resident
+        hidden Console, a non-active session tab) is off-view: the
+        coordinator leaves the FLEET_UNSEEN mark set so the ◈ badge
+        points at the delivered result until the user views it.
+
+        Args:
+            conversation_id: The delivered conversation (unused: the
+                active-session comparison already scopes the view).
+            session_id: The session the wake turn ran in.
+
+        Returns:
+            Whether the delivery landed in the user's view.
+        """
+        if not self._console_screen_displayed():
+            return False
+        store = getattr(self, "_console_chat_store", None)
+        active = getattr(store, "active_session_id", None)
+        return active is not None and active == session_id
 
     def _poke_console_wake_retry(self) -> None:
         """Retry a staged auto-wake (task-15864 AC#2: session-open trigger).
@@ -16278,9 +16374,16 @@ class ChatScreen(BaseAppScreen):
                 wake_owed = callable(has_pending) and bool(
                     has_pending(active_conversation_id)
                 )
+                # task-15971: viewing means DISPLAYED. This screen can be
+                # resident-but-hidden (the stack-leak nav state the
+                # residue arc live-instrumented), and its sync tick kept
+                # running during Library display -- "view"-clearing a
+                # mark the user never saw. A hidden screen's tick must
+                # leave the mark for the screen the user is actually on.
                 if (
                     active_conversation_id in unseen_ids
                     and not wake_owed
+                    and self._console_screen_displayed()
                     and clear_fleet_unseen_completion(
                         self.app_instance, active_conversation_id
                     )

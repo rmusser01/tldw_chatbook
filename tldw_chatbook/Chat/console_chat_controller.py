@@ -1528,6 +1528,19 @@ class ConsoleChatController:
         #: and is retried on the next trigger. ``None`` = no probe wired
         #: (headless/tests): no user claim to lose to.
         self.wake_user_priority_probe: Callable[[str], bool] | None = None
+        #: task-15971: screen-wired ``(conversation_id, session_id) ->
+        #: bool`` probe the delivery COMMIT consults -- True only while
+        #: this conversation is actually being viewed (the screen is the
+        #: DISPLAYED one and the session is the active one). A wake that
+        #: completes off-view leaves the FLEET_UNSEEN mark set so the ◈
+        #: badge points at the delivered result (the coordinator's design
+        #: ruling: off-screen delivery is intended for a mounted-but-
+        #: hidden Console; the user must still LEARN of it). ``None`` =
+        #: unwired (controller doubles): the historical clear-on-delivery
+        #: stands.
+        self.wake_conversation_in_view: (
+            Callable[[str, str], bool] | None
+        ) = None
         self._register_fleet_wake(agent_bridge)
         #: task-2154.16 (FB-05): UI-thread callback invoked DIRECTLY (same
         #: main-loop guarantee as ``notify_run_outcome`` above) from

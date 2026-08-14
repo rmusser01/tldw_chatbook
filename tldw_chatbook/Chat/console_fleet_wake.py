@@ -106,6 +106,7 @@ from tldw_chatbook.Agents.agent_service import (
 from tldw_chatbook.Agents.run_log import _setting
 from tldw_chatbook.Chat.console_fleet_attention import (
     clear_fleet_unseen_completion,
+    set_fleet_unseen_completion,
 )
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only
@@ -582,8 +583,53 @@ class ConsoleFleetWakeCoordinator:
                         self._pending.pop(conversation_id, None)
                 nothing_undelivered = conversation_id not in self._pending
             if nothing_undelivered and self._app is not None:
-                clear_fleet_unseen_completion(self._app, conversation_id)
+                # task-15971 (the coordinator's design ruling): the mark's
+                # fate at commit depends on whether the user WATCHED the
+                # delivery. In view -> the result is seen; clear through
+                # the named seam as always. Off view (a mounted-but-hidden
+                # Console delivering, or a non-active session tab) -> the
+                # delivery is real but unseen; the mark is SET so the ◈
+                # badge points at the delivered result until the user
+                # views it (view-clear then applies normally -- nothing
+                # is pending any more).
+                if self._conversation_in_view(conversation_id, session_id):
+                    clear_fleet_unseen_completion(self._app, conversation_id)
+                else:
+                    set_fleet_unseen_completion(self._app, conversation_id)
         self.retry_soon()
+
+    def _conversation_in_view(
+        self, conversation_id: str, session_id: str
+    ) -> bool:
+        """Whether the delivered conversation is actually being viewed.
+
+        Consults the screen-wired ``wake_conversation_in_view`` probe
+        (task-15971). Unwired (controller doubles, the pre-screen rig)
+        keeps the historical clear-on-delivery; a RAISING probe reports
+        not-in-view -- fail toward the badge: a kept mark on a viewed
+        conversation self-heals on the next displayed sync tick, while a
+        cleared mark on an unviewed delivery is the live silent-delivery
+        failure this exists to prevent.
+
+        Args:
+            conversation_id: The delivered conversation.
+            session_id: The session the wake turn ran in.
+
+        Returns:
+            True when the user watched the delivery (or no probe is
+            wired); False when it landed off-view or visibility is
+            uncertain.
+        """
+        probe = getattr(self._controller, "wake_conversation_in_view", None)
+        if not callable(probe):
+            return True
+        try:
+            return bool(probe(conversation_id, session_id))
+        except Exception:  # noqa: BLE001 -- uncertainty keeps the badge
+            logger.opt(exception=True).debug(
+                "wake view probe raised; keeping the unseen mark"
+            )
+            return False
 
     # -- mount claim ----------------------------------------------------------
 

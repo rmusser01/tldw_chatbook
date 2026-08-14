@@ -401,13 +401,22 @@ first's genuinely-running rows.
   survivor billed after its turn — that remainder is recorded nowhere
   durable — and the plain-text conversation export contains no token
   figures at all.
-- The supervisor never acts while no Console screen is mounted. A
-  finished background sub-agent wakes its supervisor and notifies you
+- The supervisor can act while you are on another screen — deliberately.
+  A finished background sub-agent wakes its supervisor and notifies you
   from any screen (see
   [When a background sub-agent finishes — auto-wake](#when-a-background-sub-agent-finishes--auto-wake)),
-  but the wake turn itself only runs inside Console — a completion that
-  lands while you're elsewhere is recorded and delivered when Console
-  next mounts, never acted on invisibly in the background.
+  and if a live Console still exists — including one you navigated away
+  from — the wake turn fires immediately rather than waiting for you to
+  come back: acting on results without a human keystroke is what
+  auto-wake is for. You always learn of it: the toast fires the moment
+  the sub-agent finishes, and a wake that delivers while you're not
+  viewing that conversation leaves the `◈` marker set on it until you
+  view the delivered result. Only when no Console exists at all — before
+  the first Console open after a restart — is the completion staged
+  durably and delivered when Console next opens. *(This paragraph
+  previously promised the wake was "never acted on invisibly in the
+  background" while you were elsewhere; corrected 2026-08-14 — the wake
+  does act, and the `◈` marker is the guarantee you find out.)*
 
 **Turning it off.** Set `[agents] subagents_outlive_turn = false` in
 `config.toml`: sub-agents are then settled at the end of the turn that
@@ -431,8 +440,10 @@ What you see, wherever you are:
   "finished".
 - **The `◈` marker** on that conversation's tab and sidebar row (see
   [Background & parked runs](#background--parked-runs)). It is durable —
-  restart-proof — and clears when you view that conversation or once a
-  wake has delivered everything that was owed.
+  restart-proof — and clears when you view that conversation. A wake
+  that delivers while you're watching that conversation clears it too;
+  a wake that delivers while you're anywhere else leaves it set, so the
+  marker always points you at a result you haven't seen yet.
 - **In the transcript**, a System-class notice row — never a message
   from you. The notice is machine-origin and says so in its own text: it
   opens "[Background sub-agent completion — automated notice]" and
@@ -711,4 +722,21 @@ misleading "finish provider setup" composer state — the delivery itself
 was always correct and durable); one deferred wake's notice labeled a
 `done` child "running"; and after a restart the staged wake's `◈` badge
 did not render on the sidebar row, with delivery waiting on the next
-retry trigger rather than on opening the conversation.)*
+retry trigger rather than on opening the conversation.) The off-view
+delivery contract (the honest-limits correction above and the `◈`
+clear-semantics rewrite) verified @ 9144b235e — 2026-08-14
+(wake-integrity arc, tasks 15970/15971: driven live against a real
+Anthropic model on an isolated scratch profile. Confirmed by pane and by
+both databases: a draft typed with real keys DURING the spawning turn
+held a due wake back for the full ~90 seconds it existed (child `done`
+with a NULL `wake_delivered_at` stamp throughout) and clearing the draft
+delivered it within ~2 seconds; a completion landing while the
+conversation was not in view was DELIVERED immediately (stamped while a
+palette covered Console and another session tab was active) and left the
+`◈` marker set on the conversation's tab, which cleared — mark row gone —
+the moment the conversation was activated and viewed; and restart staging
+still held: SIGKILL with a wake owed left mark + NULL stamp in place, the
+relaunch rendered `◈` on the sidebar row before the conversation was
+opened, and one click on that row delivered the owed wake exactly once,
+stamped ~2s later. Every one of the five sub-agent runs in the session's
+ledger ended stamped exactly once.)*

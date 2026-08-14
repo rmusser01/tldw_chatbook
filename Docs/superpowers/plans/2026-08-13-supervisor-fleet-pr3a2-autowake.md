@@ -197,6 +197,16 @@ one missing guard.
   (2026-08-13: all five driven live against real Anthropic on an isolated
   scratch profile — see the sdd task-7 report for panes, DB stamps, and the
   three UI-layer findings filed as follow-ups.)
+  *(Scenario 2 corrected 2026-08-14, wake-integrity arc, per the
+  coordinator's design ruling for task-15971: on current dev a Chat screen
+  can stay RESIDENT on nav-away — a navigation issued while a pushed
+  screen sits above Chat pops the modal, not Chat — and the resident
+  screen's controller delivers the wake OFF-SCREEN immediately. That is
+  now the intended behavior: the user learns of it via the settle toast
+  plus the `FLEET_UNSEEN` `◈` mark, which an off-view delivery leaves SET
+  until the conversation is viewed. Staging-and-claim-at-next-mount, as
+  scenario 2 verified it, remains the contract only for a genuinely
+  unmounted Console: restart / first boot.)*
 - [x] Ledger + PR body: the headless limit stated plainly. (Ledger written;
   PR body is the coordinator's step — the headless limit text is staged in
   the task-7 report.)

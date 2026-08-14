@@ -114,6 +114,41 @@ def clear_fleet_unseen_completion(app: Any, conversation_id: str) -> bool:
     return True
 
 
+def set_fleet_unseen_completion(app: Any, conversation_id: str) -> bool:
+    """Set one conversation's unseen-completion mark (the named set seam).
+
+    task-15971: the set-side sibling of :func:`clear_fleet_unseen_completion`.
+    Its one production caller beyond the attention consumer's settle-time
+    write: Task 5's delivery commit, when a wake turn completes while its
+    conversation is NOT in view (the coordinator's design ruling -- a
+    mounted-but-hidden Console delivers immediately, and the ◈ badge is
+    how the user learns the result landed). Idempotent (the marks upsert),
+    and bumps the badge revision so screen caches repaint.
+
+    Args:
+        app: The application object holding the marks service.
+        conversation_id: The conversation to mark.
+
+    Returns:
+        True when the mark was written; False when the service is
+        unavailable or the write failed (a lost mark is a missing badge,
+        never a broken delivery).
+    """
+    service = getattr(app, "conversation_local_marks_service", None)
+    if service is None or not str(conversation_id or "").strip():
+        return False
+    try:
+        service.set_mark(conversation_id, service.FLEET_UNSEEN)
+    except Exception:  # noqa: BLE001 -- a lost mark is a missing badge, not a crash
+        logger.opt(exception=True).warning(
+            "fleet unseen mark set failed for conversation {conversation_id}",
+            conversation_id=conversation_id,
+        )
+        return False
+    bump_fleet_unseen_revision(app)
+    return True
+
+
 def fleet_completion_toast_copy(
     title: str, statuses: list[str]
 ) -> tuple[str, str]:
