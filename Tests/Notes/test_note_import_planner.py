@@ -1,5 +1,6 @@
 """Contract tests for one-time Database Notes import planning."""
 
+import csv
 import os
 from collections import Counter
 from dataclasses import FrozenInstanceError
@@ -12,6 +13,7 @@ import pytest
 
 from tldw_chatbook.Notes import (
     note_import_discovery,
+    note_import_parsers,
     note_import_plan_models,
     note_import_planner,
 )
@@ -52,6 +54,87 @@ def _payload() -> ParsedNotePayload:
         keywords=["project", "draft"],
         template_name="Meeting",
     )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "limit_name"),
+    [
+        ("title", "MAX_IMPORT_TITLE_LENGTH"),
+        ("template_name", "MAX_IMPORT_TEMPLATE_NAME_LENGTH"),
+        ("keyword", "MAX_IMPORT_KEYWORD_LENGTH"),
+    ],
+)
+def test_parsed_note_payload_enforces_public_scalar_limits(
+    field_name: str,
+    limit_name: str,
+) -> None:
+    limit = getattr(note_import_plan_models, limit_name)
+    values: dict[str, object] = {
+        "title": "T" * limit if field_name == "title" else "Title",
+        "content": "Body",
+        "keywords": ("K" * limit,) if field_name == "keyword" else (),
+        "template_name": "M" * limit if field_name == "template_name" else None,
+    }
+
+    payload = ParsedNotePayload(**values)  # type: ignore[arg-type]
+
+    if field_name == "title":
+        accepted_value = payload.title
+    elif field_name == "template_name":
+        accepted_value = payload.template_name
+    else:
+        accepted_value = payload.keywords[0]
+    assert accepted_value is not None
+    assert len(accepted_value) == limit
+
+    if field_name == "keyword":
+        values["keywords"] = ("K" * (limit + 1),)
+    elif field_name == "title":
+        values["title"] = "T" * (limit + 1)
+    else:
+        values["template_name"] = "M" * (limit + 1)
+    with pytest.raises(ValueError, match="safety ceiling"):
+        ParsedNotePayload(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("title", ""),
+        ("title", " \t\n"),
+        ("content", ""),
+        ("content", " \t\n"),
+    ],
+)
+def test_parsed_note_payload_rejects_blank_required_text(
+    field_name: str,
+    value: str,
+) -> None:
+    values = {"title": "Title", "content": "Body"}
+    values[field_name] = value
+
+    with pytest.raises(ValueError, match="non-blank"):
+        ParsedNotePayload(**values)
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        "Folder",
+        b"Folder",
+        ("Folder",),
+        (b"Folder",),
+    ],
+)
+def test_parsed_import_batch_rejects_text_in_folder_path_collections(
+    paths: object,
+) -> None:
+    with pytest.raises(TypeError, match="collection, not text"):
+        note_import_planner.ParsedImportBatch(
+            parsed=(),
+            issues=(),
+            proposed_folder_paths=paths,  # type: ignore[arg-type]
+        )
 
 
 def _new_item(**overrides: object) -> ImportPreviewItem:
@@ -2197,6 +2280,77 @@ def test_csv_uses_recognized_columns_and_rejects_invalid_rows_atomically(
     assert len(batch.issues) == 1
     assert batch.issues[0].classification is ImportClassification.FAILED
     assert batch.issues[0].reason_code == "invalid_content"
+
+
+def test_csv_content_field_above_stdlib_default_parses_within_file_bounds(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "large-field.csv"
+    content = "B" * 131_073
+    source.write_text(f"title,content\nOne,{content}\n", encoding="utf-8")
+    bounds = _discovery_bounds(max_file_bytes=200_000, max_total_bytes=300_000)
+    original_limit = csv.field_size_limit()
+    csv.field_size_limit(131_072)
+    try:
+        batch = _parse_selection(
+            [source],
+            bounds=bounds,
+            destination=("Imported",),
+        )
+    finally:
+        csv.field_size_limit(original_limit)
+
+    assert batch.issues == ()
+    assert batch.parsed[0].payloads[0].content == content
+
+
+@pytest.mark.parametrize("valid_csv", [True, False])
+def test_csv_field_limit_is_restored_after_success_and_parser_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_csv: bool,
+) -> None:
+    source = tmp_path / "field-limit.csv"
+    field = "B" * 2_048
+    if valid_csv:
+        source.write_text(f"title,content\nOne,{field}\n", encoding="utf-8")
+    else:
+        source.write_text(f'title,content\nOne,"{field}', encoding="utf-8")
+    bounds = _discovery_bounds(max_file_bytes=10_000, max_total_bytes=20_000)
+    real_field_size_limit = csv.field_size_limit
+    process_limit = real_field_size_limit()
+    real_field_size_limit(1_024)
+    calls: list[int] = []
+
+    def tracking_field_size_limit(new_limit: int | None = None) -> int:
+        if new_limit is None:
+            return real_field_size_limit()
+        calls.append(new_limit)
+        return real_field_size_limit(new_limit)
+
+    monkeypatch.setattr(
+        note_import_parsers.csv,
+        "field_size_limit",
+        tracking_field_size_limit,
+    )
+    try:
+        batch = _parse_selection(
+            [source],
+            bounds=bounds,
+            destination=("Imported",),
+        )
+        restored_limit = real_field_size_limit()
+    finally:
+        real_field_size_limit(process_limit)
+
+    assert calls == [bounds.max_file_bytes, 1_024]
+    assert restored_limit == 1_024
+    if valid_csv:
+        assert batch.issues == ()
+        assert batch.parsed[0].payloads[0].content == field
+    else:
+        assert batch.parsed == ()
+        assert batch.issues[0].reason_code == "invalid_content"
 
 
 def test_csv_falls_back_to_first_two_distinct_columns(tmp_path: Path) -> None:

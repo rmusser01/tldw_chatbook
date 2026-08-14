@@ -5,9 +5,11 @@ from __future__ import annotations
 import csv
 import io
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from threading import RLock
 from typing import Any
 from unicodedata import normalize
 
@@ -25,6 +27,7 @@ from tldw_chatbook.Notes.note_import_discovery import (
     read_discovered_source,
 )
 from tldw_chatbook.Notes.note_import_plan_models import (
+    MAX_IMPORT_FILE_BYTES,
     MAX_IMPORT_KEYWORD_LENGTH,
     MAX_IMPORT_REASON_LENGTH,
     MAX_IMPORT_TEMPLATE_NAME_LENGTH,
@@ -46,6 +49,11 @@ _KEYWORD_ALIASES = ("keywords", "tags")
 _CSV_RESERVED_HEADERS = frozenset(
     (*_TITLE_ALIASES, *_CONTENT_ALIASES, *_KEYWORD_ALIASES, "template")
 )
+
+# ``csv.field_size_limit`` is process-global. Every CSV parse in this module holds
+# this lock while raising and restoring the limit so overlapping imports cannot
+# restore one another's value out of order.
+_CSV_FIELD_SIZE_LIMIT_LOCK = RLock()
 
 
 _MESSAGES = {
@@ -195,7 +203,25 @@ class ParsedImportBatch:
     def __post_init__(self) -> None:
         parsed = tuple(self.parsed)
         issues = tuple(self.issues)
-        paths = tuple(tuple(path) for path in self.proposed_folder_paths)
+        if isinstance(self.proposed_folder_paths, (str, bytes)):
+            raise TypeError("proposed_folder_paths must be a collection, not text.")
+        try:
+            raw_paths = tuple(self.proposed_folder_paths)
+        except TypeError as error:
+            raise ValueError("proposed_folder_paths must be a collection.") from error
+        paths_list: list[tuple[str, ...]] = []
+        for path in raw_paths:
+            if isinstance(path, (str, bytes)):
+                raise TypeError(
+                    "Each proposed folder path must be a collection, not text."
+                )
+            try:
+                paths_list.append(tuple(path))
+            except TypeError as error:
+                raise ValueError(
+                    "Each proposed folder path must be a collection."
+                ) from error
+        paths = tuple(paths_list)
         if not all(isinstance(item, ParsedImportSource) for item in parsed):
             raise ValueError("parsed must contain parsed sources.")
         if not all(isinstance(issue, ImportParseIssue) for issue in issues):
@@ -467,51 +493,66 @@ def _keywords(value: Any, bounds: ImportBounds) -> tuple[str, ...]:
     return keywords
 
 
+@contextmanager
+def _bounded_csv_field_size_limit(bounds: ImportBounds) -> Iterator[None]:
+    """Temporarily align CSV's global field limit with bounded source bytes."""
+    with _CSV_FIELD_SIZE_LIMIT_LOCK:
+        previous_limit = csv.field_size_limit()
+        bounded_limit = min(bounds.max_file_bytes, MAX_IMPORT_FILE_BYTES)
+        parse_limit = max(previous_limit, bounded_limit)
+        csv.field_size_limit(parse_limit)
+        try:
+            yield
+        finally:
+            csv.field_size_limit(previous_limit)
+
+
 def _csv_payloads(text: str, bounds: ImportBounds) -> tuple[ParsedNotePayload, ...]:
-    reader = csv.reader(io.StringIO(text), strict=True)
-    try:
-        headers = next(reader)
-    except StopIteration as error:
-        raise _ParseFailure("empty_structured_source") from error
-    normalized_headers = tuple(
-        normalize("NFKC", header.strip()).casefold() for header in headers
-    )
-    if (
-        len(headers) < 2
-        or any(not header for header in normalized_headers)
-        or len(set(normalized_headers)) != len(normalized_headers)
-    ):
-        raise _ParseFailure("invalid_content")
-
-    title_index = _role_header_index(normalized_headers, _TITLE_ALIASES)
-    content_index = _role_header_index(normalized_headers, _CONTENT_ALIASES)
-    keyword_index = _role_header_index(normalized_headers, _KEYWORD_ALIASES)
-    if title_index is None and content_index is None:
-        title_index, content_index = 0, 1
-    elif title_index is None:
-        title_index = _fallback_header_index(normalized_headers)
-    elif content_index is None:
-        content_index = _fallback_header_index(normalized_headers)
-    template_index = _first_header(normalized_headers, ("template",))
-
-    payloads: list[ParsedNotePayload] = []
-    for row in reader:
-        if len(payloads) >= bounds.max_notes_per_file:
-            raise _ParseFailure("too_many_notes")
-        if len(row) != len(headers) or not any(cell for cell in row):
+    with _bounded_csv_field_size_limit(bounds):
+        reader = csv.reader(io.StringIO(text), strict=True)
+        try:
+            headers = next(reader)
+        except StopIteration as error:
+            raise _ParseFailure("empty_structured_source") from error
+        normalized_headers = tuple(
+            normalize("NFKC", header.strip()).casefold() for header in headers
+        )
+        if (
+            len(headers) < 2
+            or any(not header for header in normalized_headers)
+            or len(set(normalized_headers)) != len(normalized_headers)
+        ):
             raise _ParseFailure("invalid_content")
-        mapping: dict[str, Any] = {
-            "title": row[title_index],
-            "content": row[content_index],
-        }
-        if keyword_index is not None:
-            mapping["keywords"] = row[keyword_index]
-        if template_index is not None:
-            mapping["template"] = row[template_index] or None
-        payloads.append(_payload_from_mapping(mapping, bounds))
-    if not payloads:
-        raise _ParseFailure("empty_structured_source")
-    return tuple(payloads)
+
+        title_index = _role_header_index(normalized_headers, _TITLE_ALIASES)
+        content_index = _role_header_index(normalized_headers, _CONTENT_ALIASES)
+        keyword_index = _role_header_index(normalized_headers, _KEYWORD_ALIASES)
+        if title_index is None and content_index is None:
+            title_index, content_index = 0, 1
+        elif title_index is None:
+            title_index = _fallback_header_index(normalized_headers)
+        elif content_index is None:
+            content_index = _fallback_header_index(normalized_headers)
+        template_index = _first_header(normalized_headers, ("template",))
+
+        payloads: list[ParsedNotePayload] = []
+        for row in reader:
+            if len(payloads) >= bounds.max_notes_per_file:
+                raise _ParseFailure("too_many_notes")
+            if len(row) != len(headers) or not any(cell for cell in row):
+                raise _ParseFailure("invalid_content")
+            mapping: dict[str, Any] = {
+                "title": row[title_index],
+                "content": row[content_index],
+            }
+            if keyword_index is not None:
+                mapping["keywords"] = row[keyword_index]
+            if template_index is not None:
+                mapping["template"] = row[template_index] or None
+            payloads.append(_payload_from_mapping(mapping, bounds))
+        if not payloads:
+            raise _ParseFailure("empty_structured_source")
+        return tuple(payloads)
 
 
 def _first_header(headers: tuple[str, ...], names: tuple[str, ...]) -> int | None:

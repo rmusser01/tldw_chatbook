@@ -126,11 +126,22 @@ class ParsedNotePayload:
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not isinstance(self.content, str):
             raise TypeError("Parsed note title and content must be text.")
+        if not self.title.strip() or not self.content.strip():
+            raise ValueError("Parsed note title and content must be non-blank.")
+        if len(self.title) > MAX_IMPORT_TITLE_LENGTH:
+            raise ValueError("Parsed note title exceeds its absolute safety ceiling.")
         keywords = _as_tuple(self.keywords, field_name="keywords")
         if not all(isinstance(keyword, str) for keyword in keywords):
             raise ValueError("keywords must contain only text values.")
+        if any(len(keyword) > MAX_IMPORT_KEYWORD_LENGTH for keyword in keywords):
+            raise ValueError("A keyword exceeds its absolute safety ceiling.")
         if self.template_name is not None and not isinstance(self.template_name, str):
             raise ValueError("template_name must be text when provided.")
+        if (
+            self.template_name is not None
+            and len(self.template_name) > MAX_IMPORT_TEMPLATE_NAME_LENGTH
+        ):
+            raise ValueError("template_name exceeds its absolute safety ceiling.")
         object.__setattr__(self, "keywords", keywords)
 
 
