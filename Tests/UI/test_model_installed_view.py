@@ -159,13 +159,23 @@ def _unmanaged_inventory(source: Path):
     )
 
 
-async def _wait_until(pilot, predicate, *, attempts: int = 120) -> None:
-    """Pump Textual until a cross-thread observation becomes true."""
-    for _ in range(attempts):
-        if predicate():
-            return
-        await pilot.pause()
-    assert predicate()
+async def _wait_until(pilot, predicate, *, timeout_seconds: float = 10.0) -> None:
+    """Pump Textual until a cross-thread observation becomes true.
+
+    Args:
+        pilot: Mounted Textual test pilot used to process deferred work.
+        predicate: Zero-argument condition that signals completion.
+        timeout_seconds: Maximum wall-clock time to wait.
+
+    Raises:
+        AssertionError: If the condition does not settle before the timeout.
+    """
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            while not predicate():
+                await pilot.pause()
+    except TimeoutError:
+        assert predicate()
 
 
 def _rendered_static_text(view) -> str:
@@ -2034,6 +2044,7 @@ async def test_physical_cancel_sets_service_probe_and_preserves_source(
         finally:
             release_cancel.set()
         await _wait_until(pilot, lambda: not view._import_active)
+        await _wait_until(pilot, lambda: len(view.query(".model-import")) == 1)
 
         assert view._import_cancel_event is not None
         assert view._import_cancel_event.is_set() is True
