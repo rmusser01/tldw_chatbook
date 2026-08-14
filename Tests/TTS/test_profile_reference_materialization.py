@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import hashlib
 import os
 import stat
@@ -21,6 +20,11 @@ from tldw_chatbook.TTS.profile_reference_materialization import (
 from tldw_chatbook.TTS.profile_reference_types import (
     TTSCloneReference,
     TTSCloneReferenceSummary,
+)
+
+fcntl = pytest.importorskip(
+    "fcntl",
+    reason="POSIX profile-reference materialization contracts require fcntl",
 )
 
 _NOW = datetime(2026, 8, 10, tzinfo=UTC)

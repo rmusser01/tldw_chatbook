@@ -124,7 +124,11 @@ async def test_inline_consent_gates_start_when_pdf_deps_missing(
     # No modal, no job yet: the gate line carries the consent instead.
     assert screen.app.screen_stack[-1] is screen
     assert screen.app_instance.library_ingest_jobs.jobs() == ()
-    assert screen._library_ingest_start_confirm_armed is True
+    consent = screen._library_ingest_start_consent
+    assert consent is not None
+    assert consent.owed is True
+    assert consent.active_job_ids == ()
+    assert consent.tooling_affected_count > 0
 
     # Second press (a decision, not a double-click) submits for real.
     screen._library_ingest_start_confirm_armed_at -= 1.0
@@ -134,6 +138,48 @@ async def test_inline_consent_gates_start_when_pdf_deps_missing(
 
     jobs = screen.app_instance.library_ingest_jobs.jobs()
     assert [job.source_path for job in jobs] == [str(pdf)]
+
+
+@pytest.mark.asyncio
+async def test_real_screen_to_app_folder_member_change_rearms_without_queueing(
+    library_screen, tmp_path
+):
+    """The real second press cannot authorize a changed folder expansion."""
+    screen, pilot = library_screen
+    app = screen.app_instance
+    app.media_db = SimpleNamespace()
+    app._top_up_ingest_parse_pool = lambda: None
+    folder = tmp_path / "batch"
+    folder.mkdir()
+    first = folder / "a.txt"
+    matching = folder / "b.txt"
+    first.write_text("first")
+    matching.write_text("matching")
+    active = app.library_ingest_jobs.submit(source_path=str(matching))
+    form = screen._library_ingest_form
+    form.path = str(folder)
+    form.preflight = _preflight_result(
+        type_groups={"generic": [str(first), str(matching)]},
+        total_files=2,
+    )
+
+    screen._submit_library_ingest_form()
+    armed = screen._library_ingest_start_consent
+    assert armed is not None
+    (folder / "added.txt").write_text("added")
+    screen._library_ingest_start_confirm_armed_at -= 1.0
+    screen._submit_library_ingest_form()
+    await pilot.pause()
+
+    jobs = app.library_ingest_jobs.jobs()
+    assert [job.job_id for job in jobs] == [active.job_id]
+    rearmed = screen._library_ingest_start_consent
+    assert rearmed is not None
+    assert rearmed.candidate_changed is True
+    assert rearmed.admission_scope.candidate_count == 3
+    assert rearmed.admission_scope.candidate_digest != (
+        armed.admission_scope.candidate_digest
+    )
 
 
 def test_options_persist_to_config(monkeypatch):
@@ -864,7 +910,11 @@ async def test_the_same_folder_still_imports_on_this_machine(
     # backend, so the image import is at risk) -- not the refusal route.
     screen._submit_library_ingest_form()
     await pilot.pause()
-    assert screen._library_ingest_start_confirm_armed is True
+    consent = screen._library_ingest_start_consent
+    assert consent is not None
+    assert consent.owed is True
+    assert consent.active_job_ids == ()
+    assert consent.tooling_affected_count > 0
     screen._library_ingest_start_confirm_armed_at -= 1.0
     screen._submit_library_ingest_form()
     await pilot.pause()

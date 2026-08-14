@@ -3,10 +3,20 @@
 import os
 import subprocess
 import threading
+from types import SimpleNamespace
 
 import pytest
 
 from tldw_chatbook.Media_Playback import player_pipeline as pp
+
+
+_HAS_PROCESS_SUSPEND_SIGNALS = hasattr(pp.signal, "SIGSTOP") and hasattr(
+    pp.signal, "SIGCONT"
+)
+_requires_process_suspend_signals = pytest.mark.skipif(
+    not _HAS_PROCESS_SUSPEND_SIGNALS,
+    reason="POSIX process suspend/resume signals are unavailable",
+)
 
 
 # -- tools / probe -------------------------------------------------------------
@@ -335,6 +345,7 @@ def test_due_behind_and_stats(monkeypatch):
     assert pipeline.stats.position_seconds == 0.5
 
 
+@_requires_process_suspend_signals
 def test_pause_resume_signals(monkeypatch):
     killed: list[tuple[int, int]] = []
     monkeypatch.setattr(pp.os, "kill", lambda pid, sig: killed.append((pid, sig)))
@@ -344,6 +355,30 @@ def test_pause_resume_signals(monkeypatch):
     pipeline.pause()
     pipeline.resume()
     assert len(killed) == 4  # SIGSTOP x2 + SIGCONT x2
+    pipeline.stop()
+
+
+def test_pause_resume_without_process_signals_updates_clock_without_kill(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(pp.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(pp, "signal", SimpleNamespace())
+    monkeypatch.setattr(
+        pp.os,
+        "kill",
+        lambda *_args: pytest.fail("pause/resume must not signal without support"),
+    )
+    pipeline = pp.PlayerPipeline(
+        "silent.mp4", _probe(has_audio=False), spawn=_SpawnRecorder()
+    )
+    run = pipeline.start()
+
+    pipeline.pause()
+    assert run.pause_started == 100.0
+    now[0] = 103.0
+    pipeline.resume()
+
+    assert run.pause_started is None
+    assert run.paused_total == pytest.approx(3.0)
     pipeline.stop()
 
 
@@ -362,12 +397,13 @@ class _ObservedRLock:
         self._lock.release()
 
 
+@_requires_process_suspend_signals
 @pytest.mark.parametrize(
-    ("action", "expected_signal"),
-    [("pause", pp.signal.SIGSTOP), ("resume", pp.signal.SIGCONT)],
+    ("action", "signal_name"),
+    [("pause", "SIGSTOP"), ("resume", "SIGCONT")],
 )
 def test_pause_and_resume_signal_only_captured_run_during_restart(
-    monkeypatch, action, expected_signal
+    monkeypatch, action, signal_name
 ):
     clock_entered = threading.Event()
     release_clock = threading.Event()
@@ -413,6 +449,7 @@ def test_pause_and_resume_signal_only_captured_run_during_restart(
     assert not action_thread.is_alive() and not seek_thread.is_alive()
     assert errors == []
     assert replacement
+    expected_signal = getattr(pp.signal, signal_name)
     assert killed == [(spawn.calls[0].pid, expected_signal)]
 
 

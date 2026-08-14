@@ -61,13 +61,16 @@ a "replaced-on-transition" job is always safe to hand out to callers, too.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Iterable, Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 from loguru import logger
 
@@ -109,6 +112,210 @@ class IngestJobState(str, Enum):
     #: server-origin job reaches this today: the server reports it for a
     #: job the user cancelled.
     CANCELLED = "cancelled"
+
+
+ACTIVE_INGEST_STATES: frozenset[IngestJobState] = frozenset(
+    {
+        IngestJobState.QUEUED,
+        IngestJobState.PARSING,
+        IngestJobState.WRITING,
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveIngestSourceKey:
+    """Canonical identity for a source while it has active ingest work."""
+
+    origin: str
+    canonical_source: str
+
+
+def normalize_active_ingest_source(
+    source: str,
+    *,
+    origin: str,
+) -> ActiveIngestSourceKey:
+    """Return a conservative, lexical active-ingest identity for ``source``.
+
+    Local paths follow the host platform's case policy. HTTP(S) URLs normalize
+    only scheme, host, default port, absent path, and fragment.
+
+    Args:
+        source: Local path or HTTP(S) URL to identify.
+        origin: Ingest backend, either ``"local"`` or ``"server"``.
+
+    Returns:
+        Canonical source identity partitioned by backend origin.
+
+    Raises:
+        ValueError: If ``origin`` is unsupported, ``source`` is blank, or an
+            HTTP(S) source is malformed.
+    """
+    normalized_origin = str(origin).strip().lower()
+    if normalized_origin not in {"local", "server"}:
+        raise ValueError("origin must be 'local' or 'server'")
+    value = str(source).strip()
+    if not value:
+        raise ValueError("source must not be blank")
+
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() in {"http", "https"}:
+        canonical = _normalize_active_ingest_url(parsed)
+    else:
+        expanded = os.path.expanduser(value)
+        canonical = os.path.normcase(os.path.abspath(os.path.normpath(expanded)))
+    return ActiveIngestSourceKey(normalized_origin, canonical)
+
+
+def _normalize_active_ingest_url(parsed: Any) -> str:
+    """Render only the URL equivalences safe for source admission."""
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError("http(s) source requires a host")
+    rendered_host = f"[{host}]" if ":" in host else host
+    raw_userinfo = (
+        f"{parsed.netloc.rsplit('@', 1)[0]}@" if "@" in parsed.netloc else ""
+    )
+    port = parsed.port
+    if port is not None and not (
+        (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    ):
+        rendered_host = f"{rendered_host}:{port}"
+    return urlunsplit(
+        (scheme, f"{raw_userinfo}{rendered_host}", parsed.path or "/", parsed.query, "")
+    )
+
+
+def _active_source_key_or_none(
+    source: str,
+    *,
+    origin: str,
+) -> ActiveIngestSourceKey | None:
+    """Return an active-source key, treating malformed sources as non-matches."""
+    try:
+        return normalize_active_ingest_source(source, origin=origin)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+ACTIVE_INGEST_REF_LIMIT = 1000
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveIngestJobRef:
+    """Privacy-safe reference to an active ingest job."""
+
+    job_id: str
+    state: IngestJobState
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveIngestConsentScope:
+    """Privacy-safe identity of the exact admission snapshot consented to."""
+
+    origin: str
+    candidate_digest: str
+    candidate_count: int
+    active_job_ids: tuple[str, ...]
+    active_job_count: int
+    active_job_ids_complete: bool
+    active_source_count: int
+
+    def covers(self, current: "ActiveIngestConsentScope") -> bool:
+        """Return whether ``current`` is within this exact consent scope.
+
+        Args:
+            current: Authoritatively recomputed admission scope to validate.
+
+        Returns:
+            ``True`` when the candidate set is unchanged and every current
+            active job is covered by complete consent snapshots.
+        """
+        return (
+            self.origin == current.origin
+            and self.candidate_digest == current.candidate_digest
+            and self.candidate_count == current.candidate_count
+            and self.active_job_ids_complete
+            and current.active_job_ids_complete
+            and set(current.active_job_ids).issubset(self.active_job_ids)
+        )
+
+
+def build_active_ingest_consent_scope(
+    sources: Iterable[str],
+    *,
+    origin: str,
+    active_job_ids: Iterable[str] = (),
+    active_source_count: int = 0,
+) -> ActiveIngestConsentScope:
+    """Build an opaque deterministic identity for candidates and active jobs.
+
+    Args:
+        sources: Candidate local paths or HTTP(S) URLs.
+        origin: Ingest backend, either ``"local"`` or ``"server"``.
+        active_job_ids: Active job identifiers included in the snapshot.
+        active_source_count: Number of candidate sources with active matches.
+
+    Returns:
+        Privacy-safe scope containing candidate identity and bounded active-job
+        membership.
+    """
+    keys = sorted(
+        {
+            key
+            for source in sources
+            if (key := _active_source_key_or_none(source, origin=origin)) is not None
+        },
+        key=lambda key: (key.origin, key.canonical_source),
+    )
+    payload = json.dumps(
+        [(key.origin, key.canonical_source) for key in keys],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    normalized_origin = str(origin).strip().lower()
+    normalized_active_job_ids = tuple(
+        dict.fromkeys(str(job_id) for job_id in active_job_ids)
+    )
+    return ActiveIngestConsentScope(
+        origin=normalized_origin,
+        candidate_digest=hashlib.sha256(payload).hexdigest(),
+        candidate_count=len(keys),
+        active_job_ids=normalized_active_job_ids[:ACTIVE_INGEST_REF_LIMIT],
+        active_job_count=len(normalized_active_job_ids),
+        active_job_ids_complete=(
+            len(normalized_active_job_ids) <= ACTIVE_INGEST_REF_LIMIT
+        ),
+        active_source_count=max(0, int(active_source_count)),
+    )
+
+
+class ActiveIngestSubmissionRefused(RuntimeError):
+    """Raised when a submission matches active work without exposing paths."""
+
+    def __init__(
+        self,
+        matches: Iterable[ActiveIngestJobRef],
+        *,
+        consent_scope: ActiveIngestConsentScope | None = None,
+        candidate_changed: bool = False,
+    ) -> None:
+        materialized = tuple(matches)
+        self.match_count = len(materialized)
+        self.matches = materialized[:ACTIVE_INGEST_REF_LIMIT]
+        self.consent_scope = consent_scope
+        self.candidate_changed = bool(candidate_changed)
+        super().__init__(f"Active ingest admission refused ({self.match_count} matches).")
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(match_count={self.match_count}, "
+            f"candidate_changed={self.candidate_changed!r}, "
+            f"candidate_count={getattr(self.consent_scope, 'candidate_count', 0)!r}, "
+            f"states={tuple(ref.state.value for ref in self.matches)!r})"
+        )
 
 
 #: States a job never leaves. Kept as one definition so "is this finished?"
@@ -265,7 +472,9 @@ def _copy_job(job: LibraryIngestJob) -> LibraryIngestJob:
 
     return replace(
         job,
+        ingest_options=deepcopy(job.ingest_options),
         progress=deepcopy(job.progress),
+        error_detail=deepcopy(job.error_detail),
         stt_failure_provenance=deepcopy(job.stt_failure_provenance),
         retry_source_failure_provenance=deepcopy(
             job.retry_source_failure_provenance
@@ -1184,6 +1393,39 @@ class LibraryIngestJobRegistry:
         return removed
 
     # -- reads -----------------------------------------------------
+
+    def find_active_source_matches(
+        self,
+        sources: Iterable[str],
+        *,
+        origin: str,
+    ) -> tuple[LibraryIngestJob, ...]:
+        """Return visible active jobs matching any supplied source.
+
+        Results retain the registry's internal insertion order and are fresh
+        copies, preserving the registry's copy-on-read contract.
+        """
+        keys = {
+            key
+            for source in sources
+            if (key := _active_source_key_or_none(source, origin=origin)) is not None
+        }
+        if not keys:
+            return ()
+        matches: list[LibraryIngestJob] = []
+        for job in self._jobs:
+            if (
+                job.superseded
+                or job.dismissed
+                or job.state not in ACTIVE_INGEST_STATES
+            ):
+                continue
+            job_key = _active_source_key_or_none(
+                job.source_path, origin=job.origin
+            )
+            if job_key in keys:
+                matches.append(_copy_job(job))
+        return tuple(matches)
 
     def jobs(self) -> tuple[LibraryIngestJob, ...]:
         """Return an immutable, newest-first snapshot of all visible jobs.

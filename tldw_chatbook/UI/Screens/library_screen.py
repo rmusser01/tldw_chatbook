@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import inspect
+import json
 import re
 import threading
 import time
@@ -103,9 +104,14 @@ from ...Widgets.Library.library_ingest_canvas import (
     ingest_scope_label,
 )
 from ...Library.library_ingest_jobs import (
+    ACTIVE_INGEST_STATES,
+    ActiveIngestConsentScope,
+    ActiveIngestSubmissionRefused,
     IngestJobState,
     LibraryIngestJob,
+    build_active_ingest_consent_scope,
     count_duplicate_done_jobs,
+    normalize_active_ingest_source,
 )
 from ...Library.library_ingest_state import (
     validate_ingest_option_value,
@@ -113,6 +119,7 @@ from ...Library.library_ingest_state import (
     LibraryIngestCanvasState,
     LibraryIngestFormState,
     LibraryIngestLastSubmission,
+    active_ingest_start_confirm_line,
     build_ingest_forecast,
     build_library_ingest_state,
     clamp_chunk_size,
@@ -642,6 +649,42 @@ LIBRARY_CANVAS_KIND_NOTES = "notes"
 LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS = frozenset(
     {LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE}
 )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _LibraryIngestStartConsent:
+    """Immutable identity of the submission a second Start may authorize."""
+
+    fingerprint: str
+    admission_scope: ActiveIngestConsentScope
+    tooling_affected_count: int
+    is_folder: bool
+    request_fingerprint: str = ""
+    consent_context_fingerprint: str = ""
+    authoritative_refusal: bool = False
+    candidate_changed: bool = False
+
+    @property
+    def active_job_ids(self) -> tuple[str, ...]:
+        return self.admission_scope.active_job_ids
+
+    @property
+    def active_source_count(self) -> int:
+        return self.admission_scope.active_source_count
+
+    @property
+    def owed(self) -> bool:
+        return bool(
+            self.active_job_ids
+            or self.tooling_affected_count
+            or self.candidate_changed
+        )
+
+    @property
+    def allows_active_duplicate(self) -> bool:
+        return bool(
+            self.active_job_ids and self.admission_scope.active_job_ids_complete
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -3335,6 +3378,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_external_submit_scope_id: str | None = None
         self._library_external_submit_worker: Worker | None = None
         self._library_external_submit_backend: str | None = None
+        self._library_external_submit_consent: _LibraryIngestStartConsent | None = None
         self._library_external_submit_busy: bool = False
         self._library_external_submit_status: str = ""
         self._library_model_install_progress_label: str = ""
@@ -3358,16 +3402,12 @@ class LibraryScreen(BaseAppScreen):
         # clears; any registry mutation disarms.
         self._library_ingest_clear_finished_armed: bool = False
         self._library_ingest_clear_finished_armed_at: float = 0.0
-        # (task-3314) Two-press inline Start consent, mirroring the
-        # Clear-finished carrier: first Start with active tooling warnings
-        # arms (the gate line becomes the confirm copy), the second press
-        # submits. ``_warnings`` snapshots what the consent was armed
-        # against so a fresh pre-flight carrying DIFFERENT warnings
-        # disarms, while the Enter-in-path re-trigger landing an identical
-        # forecast does not steal the pending confirm.
-        self._library_ingest_start_confirm_armed: bool = False
+        # Two-press inline Start consent for tooling risk and active-source
+        # duplicates. The immutable request fingerprint is the sole armed
+        # carrier, so lifecycle repaint tokens cannot steal consent and a
+        # changed source/options/backend/membership cannot inherit it.
+        self._library_ingest_start_consent: _LibraryIngestStartConsent | None = None
         self._library_ingest_start_confirm_armed_at: float = 0.0
-        self._library_ingest_start_confirm_warnings: list[dict] = []
         # (task-3313) Session-scoped snapshot of the last submitted batch,
         # captured at submit time before the form auto-clears; feeds the
         # "Retry this batch" affordance. Deliberately NOT persisted (the
@@ -11841,6 +11881,22 @@ class LibraryScreen(BaseAppScreen):
         """
         if not self.is_mounted:
             return
+        armed = getattr(self, "_library_ingest_start_consent", None)
+        if armed is not None:
+            submitted_source = self._library_ingest_form.path.strip()
+            pending = self._current_library_ingest_start_consent(
+                submitted_source
+            )
+            # Lifecycle tokens are deliberately absent from the
+            # fingerprint. Only a different set of active jobs invalidates
+            # what the user armed against on a registry tick.
+            if (
+                pending.active_job_ids != armed.active_job_ids
+                and not self._authoritative_library_ingest_consent_is_current(
+                    armed, pending
+                )
+            ):
+                self._disarm_library_ingest_start_confirm()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
             self._update_library_ingest_dynamic_regions()
             shortcuts = self._library_ingest_shortcuts_for_current_state()
@@ -12386,6 +12442,20 @@ class LibraryScreen(BaseAppScreen):
             analysis_unready_hint = resolve_ingest_analysis_provider(
                 getattr(self.app_instance, "app_config", None)
             ).hint
+        consent = getattr(self, "_library_ingest_start_consent", None)
+        start_confirm_line = ""
+        if consent is not None and consent.active_job_ids:
+            start_confirm_line = (
+                active_ingest_start_confirm_line(
+                    active_source_count=consent.active_source_count,
+                    is_folder=consent.is_folder,
+                    tooling_affected_count=consent.tooling_affected_count,
+                )
+                if consent.active_source_count
+                else "Import active. Start again to queue a duplicate."
+            )
+        elif consent is not None and consent.candidate_changed:
+            start_confirm_line = "Selection changed. Start again to queue."
         return build_library_ingest_state(
             jobs,
             form=form,
@@ -12403,9 +12473,8 @@ class LibraryScreen(BaseAppScreen):
             # suites build this screen via ``object.__new__`` and seed only
             # the fields they exercise (the Clear-finished armed_at read
             # below in the queue handler set this precedent).
-            start_confirm_armed=getattr(
-                self, "_library_ingest_start_confirm_armed", False
-            ),
+            start_confirm_armed=consent is not None,
+            start_confirm_line=start_confirm_line,
             last_submission_available=(
                 getattr(self, "_library_ingest_last_submission", None)
                 is not None
@@ -17429,7 +17498,7 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
             return
-        if self._library_ingest_start_confirm_armed:
+        if self._library_ingest_start_consent is not None:
             # (task-3314 AC#4) Esc is the consent "no": drop the pending
             # two-press confirm and STAY on the canvas -- the user asked
             # to back out of the confirm, not out of the form. A second
@@ -22893,21 +22962,33 @@ class LibraryScreen(BaseAppScreen):
         """Track the ingest title text as the user types it (state only)."""
         event.stop()
         self._invalidate_library_external_submission()
+        changed = event.value != self._library_ingest_form.title
         self._library_ingest_form.title = event.value
+        if changed and self._library_ingest_start_consent is not None:
+            self._disarm_library_ingest_start_confirm()
+            self._update_library_ingest_gate(self._build_library_ingest_state())
 
     @on(Input.Changed, "#library-ingest-author")
     def handle_library_ingest_author_changed(self, event: Input.Changed) -> None:
         """Track the ingest author text as the user types it (state only)."""
         event.stop()
         self._invalidate_library_external_submission()
+        changed = event.value != self._library_ingest_form.author
         self._library_ingest_form.author = event.value
+        if changed and self._library_ingest_start_consent is not None:
+            self._disarm_library_ingest_start_confirm()
+            self._update_library_ingest_gate(self._build_library_ingest_state())
 
     @on(Input.Changed, "#library-ingest-keywords")
     def handle_library_ingest_keywords_changed(self, event: Input.Changed) -> None:
         """Track the ingest keywords text as the user types it (state only)."""
         event.stop()
         self._invalidate_library_external_submission()
+        changed = event.value != self._library_ingest_form.keywords
         self._library_ingest_form.keywords = event.value
+        if changed and self._library_ingest_start_consent is not None:
+            self._disarm_library_ingest_start_confirm()
+            self._update_library_ingest_gate(self._build_library_ingest_state())
 
     @on(Button.Pressed, "#library-ingest-backend-switch")
     def handle_library_ingest_backend_switch(self, event: Button.Pressed) -> None:
@@ -22923,6 +23004,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._invalidate_library_external_submission()
+        self._disarm_library_ingest_start_confirm()
         resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
         current = resolve_backend() if callable(resolve_backend) else "local"
         target = "local" if current == "server" else "server"
@@ -23377,6 +23459,7 @@ class LibraryScreen(BaseAppScreen):
             if selected_path is None:
                 return
             self._invalidate_library_external_submission()
+            self._disarm_library_ingest_start_confirm()
             self._library_ingest_form.type_options.setdefault(event.group, {})[
                 event.name
             ] = str(selected_path)
@@ -23696,6 +23779,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_external_submit_worker = None
         self._library_external_submit_scope_id = None
         self._library_external_submit_backend = None
+        self._library_external_submit_consent = None
         if scope_id:
             try:
                 self.app_instance._ensure_parakeet_source_service().release_scope(
@@ -23921,19 +24005,19 @@ class LibraryScreen(BaseAppScreen):
         """
         if generation != self._library_ingest_preflight_generation:
             return
-        # (task-3314) A fresh forecast carrying DIFFERENT warnings
-        # invalidates a pending Start consent (the Clear-finished "the
-        # queue you armed against changed" rule). An IDENTICAL warnings
-        # set keeps it -- the Enter-in-path re-trigger lands an equal
-        # forecast between the two presses, and stealing the consent there
-        # would make Enter,Enter unable to ever submit.
-        if self._library_ingest_start_confirm_armed and (
-            list(result.warnings)
-            != self._library_ingest_start_confirm_warnings
-        ):
-            self._disarm_library_ingest_start_confirm()
         self._library_ingest_form.preflight = result
         self._library_ingest_form.preflight_checking = False
+        # Re-evaluate the complete request identity after a fresh result.
+        # An identical refresh keeps consent; changed warnings or candidate
+        # membership revoke it. This preview uses only the captured result.
+        armed = getattr(self, "_library_ingest_start_consent", None)
+        if armed is not None:
+            submitted_source = self._library_ingest_form.path.strip()
+            pending = self._current_library_ingest_start_consent(
+                submitted_source
+            )
+            if pending.fingerprint != armed.fingerprint:
+                self._disarm_library_ingest_start_confirm()
         # (task-2042) In-place for the same reason as the trigger: the
         # result can land while the user is typing or mid-click.
         self._update_library_ingest_dynamic_regions()
@@ -24030,17 +24114,169 @@ class LibraryScreen(BaseAppScreen):
     _START_CONFIRM_DEAD_ZONE_SECONDS = 0.3
 
     def _disarm_library_ingest_start_confirm(self) -> None:
-        """Drop a pending two-press Start consent (task-3314).
+        """Drop a pending two-press Start consent.
 
-        Called wherever the forecast the consent was armed against stops
-        being current: a genuine path edit, a fresh pre-flight result with
-        different warnings, pre-flight invalidation (submit/Clear/reset),
-        rail-switch hygiene, an option edit, Esc, and path-field blur.
-        State only -- callers that can re-render do so themselves (the
-        gate updater owns the line).
+        Called wherever the request the consent was armed against changes:
+        source, form/options, backend, active-job membership, warning set,
+        pre-flight invalidation, rail reset, or Escape. Focus movement and
+        an identical pre-flight refresh deliberately preserve it.
         """
-        self._library_ingest_start_confirm_armed = False
-        self._library_ingest_start_confirm_warnings = []
+        self._library_ingest_start_consent = None
+
+    def _current_library_ingest_start_consent(
+        self,
+        submitted_source: str,
+        gate_state: LibraryIngestCanvasState | None = None,
+    ) -> _LibraryIngestStartConsent:
+        """Snapshot the exact request and active membership awaiting consent.
+
+        Candidate paths come only from the staged source or the already-captured
+        pre-flight result. This method never scans a directory or touches the
+        filesystem.
+        """
+        form = self._library_ingest_form
+        resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
+        resolved_backend = resolve_backend() if callable(resolve_backend) else "local"
+        backend = "server" if resolved_backend == "server" else "local"
+        resolved_gate_state = gate_state or self._build_library_ingest_state()
+        forecast = getattr(resolved_gate_state, "forecast", None)
+        if forecast is None:
+            forecast = build_ingest_forecast(
+                form.preflight,
+                targets_server=backend == "server",
+            )
+        tooling_affected_count = int(
+            getattr(forecast, "consent_affected", 0) or 0
+        )
+
+        candidates: list[str] = []
+        if form.preflight is not None:
+            for paths in form.preflight.type_groups.values():
+                candidates.extend(str(path) for path in paths)
+
+        def normalized(source: str):
+            try:
+                return normalize_active_ingest_source(source, origin=backend)
+            except (TypeError, ValueError, OSError):
+                return None
+
+        submitted_key = normalized(submitted_source)
+        candidate_keys = {
+            key for candidate in candidates if (key := normalized(candidate)) is not None
+        }
+        is_folder = bool(
+            candidates
+            and submitted_key is not None
+            and submitted_key not in candidate_keys
+        )
+        preview_sources = candidates if is_folder else [submitted_source]
+        registry = self._library_ingest_registry()
+        find_matches = getattr(registry, "find_active_source_matches", None)
+        matches = (
+            find_matches(preview_sources, origin=backend)
+            if callable(find_matches)
+            else ()
+        )
+        active_job_ids = tuple(job.job_id for job in matches)
+        matched_source_keys = {
+            key
+            for job in matches
+            if (key := normalized(job.source_path)) is not None
+        }
+        request_payload = {
+            "source": submitted_source,
+            "backend": backend,
+            "title": self._safe_text(form.title, max_length=300),
+            "author": self._safe_text(form.author, max_length=200),
+            "keywords": parse_keywords(form.keywords),
+            "options": self._build_ingest_options_snapshot(),
+            "warnings": form.preflight.warnings if form.preflight else [],
+        }
+        admission_scope = build_active_ingest_consent_scope(
+            preview_sources,
+            origin=backend,
+            active_job_ids=active_job_ids,
+            active_source_count=len(matched_source_keys),
+        )
+        request_fingerprint = json.dumps(
+            request_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            default=str,
+        )
+        fingerprint_payload = {
+            **request_payload,
+            "candidate_digest": admission_scope.candidate_digest,
+            "candidate_count": admission_scope.candidate_count,
+            "tooling_affected_count": tooling_affected_count,
+            "active_job_ids": admission_scope.active_job_ids,
+            "active_job_count": admission_scope.active_job_count,
+            "active_job_ids_complete": admission_scope.active_job_ids_complete,
+        }
+        consent_context_payload = {
+            key: value
+            for key, value in fingerprint_payload.items()
+            if key
+            not in {
+                "active_job_ids",
+                "active_job_count",
+                "active_job_ids_complete",
+            }
+        }
+        consent_context_fingerprint = json.dumps(
+            consent_context_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            default=str,
+        )
+        fingerprint = json.dumps(
+            fingerprint_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            default=str,
+        )
+        return _LibraryIngestStartConsent(
+            fingerprint=fingerprint,
+            admission_scope=admission_scope,
+            tooling_affected_count=tooling_affected_count,
+            is_folder=is_folder,
+            request_fingerprint=request_fingerprint,
+            consent_context_fingerprint=consent_context_fingerprint,
+        )
+
+    def _authoritative_library_ingest_consent_is_current(
+        self,
+        armed: _LibraryIngestStartConsent,
+        pending: _LibraryIngestStartConsent,
+    ) -> bool:
+        """Validate only the bounded refusal IDs without re-scanning sources."""
+        if (
+            not armed.authoritative_refusal
+            or armed.consent_context_fingerprint
+            != pending.consent_context_fingerprint
+        ):
+            return False
+        if armed.candidate_changed and not armed.active_job_ids:
+            return True
+        if pending.active_job_ids not in ((), armed.active_job_ids):
+            return False
+        registry = self._library_ingest_registry()
+        get_job = getattr(registry, "get_job", None)
+        if not callable(get_job):
+            return False
+        for job_id in armed.active_job_ids:
+            job = get_job(job_id)
+            if (
+                job is None
+                or job.superseded
+                or job.dismissed
+                or job.state not in ACTIVE_INGEST_STATES
+            ):
+                return False
+        return bool(armed.active_job_ids)
 
     def _submit_library_ingest_form(self) -> None:
         """Validate the ingest form and submit a new Library ingest job.
@@ -24089,59 +24325,55 @@ class LibraryScreen(BaseAppScreen):
             if reason:
                 self._notify_library_ingest_warning(reason)
             return
-        # (xhigh review round) Consent is owed for what the FORECAST puts
-        # at risk, not for the bare presence of a tooling warning. A
-        # server import reads the same local warnings and stakes nothing
-        # on them, so keying off ``preflight.warnings`` demanded a second
-        # press for a confirm line that had no reason to state -- and the
-        # gate line, which derives its copy from this same
-        # ``consent_affected``, would have rendered the plain line while
-        # the screen waited for a consent the user could not see it
-        # wanted. One predicate for both.
-        consent_forecast = build_ingest_forecast(
-            form.preflight,
-            targets_server=(
-                getattr(gate_state, "ingest_backend", "local") == "server"
-            ),
+        pending = self._current_library_ingest_start_consent(
+            submitted_source, gate_state
         )
-        consent_owed = bool(
-            form.preflight is not None
-            and form.preflight.warnings
-            and consent_forecast is not None
-            and consent_forecast.consent_affected
-        )
-        if consent_owed:
-            # (task-3314) Mirrors the queue's Clear-finished two-press
-            # mechanism (task-2015/2160): arm in place, never submit on
-            # the arming press.
-            if not self._library_ingest_start_confirm_armed:
-                self._library_ingest_start_confirm_armed = True
+        armed = self._library_ingest_start_consent
+        if (
+            armed is not None
+            and self._authoritative_library_ingest_consent_is_current(
+                armed, pending
+            )
+        ):
+            pending = armed
+        if pending.owed:
+            if armed is None or armed.fingerprint != pending.fingerprint:
+                self._library_ingest_start_consent = pending
                 self._library_ingest_start_confirm_armed_at = time.monotonic()
-                self._library_ingest_start_confirm_warnings = [
-                    dict(warning) for warning in form.preflight.warnings
-                ]
-                # Arming changes ONLY the gate line, in place -- the same
-                # no-recompose discipline the armed Clear-finished label
-                # uses, so the confirm appears under the finger/caret that
-                # armed it without disturbing layout or focus.
                 self._update_library_ingest_gate(
                     self._build_library_ingest_state()
                 )
                 return
-            armed_at = getattr(
-                self, "_library_ingest_start_confirm_armed_at", 0.0
-            )
             if (
-                time.monotonic() - armed_at
+                time.monotonic() - self._library_ingest_start_confirm_armed_at
                 < self._START_CONFIRM_DEAD_ZONE_SECONDS
             ):
-                # A press inside the dead zone is the arming gesture
-                # repeating, not consent -- ignore it (stays armed).
                 return
+            duplicate_consent = (
+                armed.admission_scope
+                if armed.allows_active_duplicate or armed.candidate_changed
+                else None
+            )
+            confirmed_consent = armed if duplicate_consent is not None else None
             self._disarm_library_ingest_start_confirm()
-        self._do_submit_ingest(submitted_source)
+        else:
+            duplicate_consent = None
+            confirmed_consent = None
+            if armed is not None:
+                self._disarm_library_ingest_start_confirm()
+        self._do_submit_ingest(
+            submitted_source,
+            active_duplicate_consent=duplicate_consent,
+            confirmed_consent=confirmed_consent,
+        )
 
-    def _do_submit_ingest(self, submitted_source: str) -> None:
+    def _do_submit_ingest(
+        self,
+        submitted_source: str,
+        *,
+        active_duplicate_consent: ActiveIngestConsentScope | None = None,
+        confirmed_consent: _LibraryIngestStartConsent | None = None,
+    ) -> None:
         """Perform the actual Library ingest job submission."""
         submit = getattr(self.app_instance, "submit_library_ingest_job", None)
         if not callable(submit):
@@ -24158,6 +24390,7 @@ class LibraryScreen(BaseAppScreen):
             perform_analysis=form.analyze,
             chunk_enabled=form.chunk,
             chunk_size=clamp_chunk_size(form.chunk_size),
+            active_duplicate_consent=active_duplicate_consent,
         )
         audio_options = snapshot.get("audio_video", {})
         resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
@@ -24187,6 +24420,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_external_submit_generation = generation
             self._library_external_submit_scope_id = scope_id
             self._library_external_submit_backend = captured_backend
+            self._library_external_submit_consent = confirmed_consent
             self._set_library_external_status(
                 "Verifying external Parakeet model directory…",
                 busy=True,
@@ -24325,6 +24559,7 @@ class LibraryScreen(BaseAppScreen):
         if error is not None or prepared is None:
             self._library_external_submit_scope_id = None
             self._library_external_submit_backend = None
+            self._library_external_submit_consent = None
             self.app_instance._ensure_parakeet_source_service().release_scope(scope_id)
             self._clear_library_external_vad_progress()
             if error == "vad_failed":
@@ -24384,6 +24619,48 @@ class LibraryScreen(BaseAppScreen):
                 ),
             )
             return
+        confirmed_consent = getattr(
+            self, "_library_external_submit_consent", None
+        )
+        if confirmed_consent is not None:
+            submitted_source = str(submit_kwargs.get("source_path") or "")
+            pending = self._current_library_ingest_start_consent(submitted_source)
+            request_changed = (
+                pending.consent_context_fingerprint
+                != confirmed_consent.consent_context_fingerprint
+            )
+            authoritative_current = (
+                self._authoritative_library_ingest_consent_is_current(
+                    confirmed_consent, pending
+                )
+            )
+            membership_changed = (
+                pending.active_job_ids != confirmed_consent.active_job_ids
+                and not authoritative_current
+            )
+            replacement_active = bool(pending.active_job_ids)
+            if request_changed or (membership_changed and replacement_active):
+                self.app_instance._ensure_parakeet_source_service().release_scope(
+                    scope_id
+                )
+                self._library_external_submit_scope_id = None
+                self._library_external_submit_backend = None
+                self._library_external_submit_consent = None
+                self._clear_library_external_vad_progress()
+                self._set_library_external_status("", busy=False)
+                self._library_ingest_start_consent = pending if pending.owed else None
+                if pending.owed:
+                    self._library_ingest_start_confirm_armed_at = time.monotonic()
+                self._update_library_ingest_gate(
+                    self._build_library_ingest_state()
+                )
+                return
+            if membership_changed:
+                # The confirmed match finished while preparation ran and no
+                # replacement is visible. Tooling was part of the same
+                # consent, so proceed under the ordinary authoritative guard.
+                submit_kwargs["active_duplicate_consent"] = None
+        self._library_external_submit_consent = None
         self._set_library_external_status("Queueing import…", busy=True)
         self._enqueue_library_ingest_snapshot(
             submit_kwargs,
@@ -24540,6 +24817,65 @@ class LibraryScreen(BaseAppScreen):
         submit = self.app_instance.submit_library_ingest_job
         try:
             submit(**submit_kwargs)
+        except ActiveIngestSubmissionRefused as refusal:
+            current_job_ids = (
+                {job.job_id for job in registry.jobs()}
+                if registry is not None
+                else set()
+            )
+            if scope_id and current_job_ids == prior_job_ids:
+                self.app_instance._ensure_parakeet_source_service().release_scope(
+                    scope_id
+                )
+            self._library_external_submit_worker = None
+            self._library_external_submit_scope_id = None
+            self._library_external_submit_backend = None
+            self._library_external_submit_consent = None
+            self._clear_library_external_vad_progress()
+            self._set_library_external_status("", busy=False)
+
+            submitted_source = str(submit_kwargs.get("source_path") or "")
+            pending = self._current_library_ingest_start_consent(submitted_source)
+            refused_scope = refusal.consent_scope
+            if refused_scope is None:
+                # The authoritative guard can win a race after the preview.
+                # Retain only stable IDs; a preview that cannot reconstruct
+                # sources gets the safe generic duplicate copy.
+                refused_scope = build_active_ingest_consent_scope(
+                    [submitted_source],
+                    origin=pending.admission_scope.origin,
+                    active_job_ids=(ref.job_id for ref in refusal.matches),
+                    active_source_count=0,
+                )
+            payload = {
+                "request": pending.request_fingerprint,
+                "candidate_digest": refused_scope.candidate_digest,
+                "candidate_count": refused_scope.candidate_count,
+                "tooling_affected_count": pending.tooling_affected_count,
+                "active_job_ids": refused_scope.active_job_ids,
+                "active_job_count": refused_scope.active_job_count,
+                "active_job_ids_complete": refused_scope.active_job_ids_complete,
+            }
+            pending = _LibraryIngestStartConsent(
+                fingerprint=json.dumps(
+                    payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                admission_scope=refused_scope,
+                tooling_affected_count=pending.tooling_affected_count,
+                is_folder=refused_scope.candidate_count > 1,
+                request_fingerprint=pending.request_fingerprint,
+                consent_context_fingerprint=pending.consent_context_fingerprint,
+                authoritative_refusal=True,
+                candidate_changed=refusal.candidate_changed,
+            )
+            self._library_ingest_start_consent = pending
+            self._library_ingest_start_confirm_armed_at = time.monotonic()
+            self._update_library_ingest_gate(self._build_library_ingest_state())
+            return
         except Exception as exc:
             current_job_ids = (
                 {job.job_id for job in registry.jobs()}
@@ -24557,6 +24893,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_external_submit_worker = None
             self._library_external_submit_scope_id = None
             self._library_external_submit_backend = None
+            self._library_external_submit_consent = None
             self._clear_library_external_vad_progress()
             self._set_library_external_status(
                 "Queueing failed. Correct the form and retry.",
@@ -24571,6 +24908,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_external_submit_worker = None
             self._library_external_submit_scope_id = None
             self._library_external_submit_backend = None
+            self._library_external_submit_consent = None
             self._clear_library_external_vad_progress()
             self._set_library_external_status("", busy=False)
         # One batched write. Saving key-by-key re-read and re-parsed the whole
@@ -25215,6 +25553,9 @@ class LibraryScreen(BaseAppScreen):
         if not button_id.startswith("opt-") or not button_id.endswith("-reset"):
             return
         self._invalidate_library_external_submission()
+        # Reset mutates the same options snapshot the pending Start
+        # fingerprint covers, so revoke consent before changing the form.
+        self._disarm_library_ingest_start_confirm()
         # opt-{group}-reset -> {group}
         group = button_id[4:-6]
         form = self._library_ingest_form

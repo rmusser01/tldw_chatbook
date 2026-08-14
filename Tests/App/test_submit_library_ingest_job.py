@@ -16,10 +16,14 @@ from textual.app import App
 
 from tldw_chatbook.Library.ingest_capabilities import get_capabilities
 from tldw_chatbook.Library.library_ingest_jobs import (
+    ActiveIngestConsentScope,
+    ActiveIngestJobRef,
+    ActiveIngestSubmissionRefused,
     DEFAULT_CHUNK_SIZE,
     IngestJobState,
     LibraryIngestJob,
     LibraryIngestJobRegistry,
+    build_active_ingest_consent_scope,
 )
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef
@@ -861,6 +865,7 @@ def _make_job(
     perform_analysis: bool = False,
     chunk_enabled: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
+    origin: str = "local",
 ) -> LibraryIngestJob:
     """Build a minimal LibraryIngestJob for _ingest_job_options tests."""
     return LibraryIngestJob(
@@ -870,6 +875,7 @@ def _make_job(
         chunk_enabled=chunk_enabled,
         chunk_size=chunk_size,
         ingest_options=ingest_options or {},
+        origin=origin,
     )
 
 
@@ -2207,6 +2213,323 @@ class TestIngestDoneProgress:
             payload={"analysis_skipped_reason": "whatever"},
         )
         assert progress["message"].startswith(INGEST_DUPLICATE_PROGRESS_PREFIX)
+
+
+def test_submit_refuses_active_local_duplicate_before_second_append(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _minimal_app(media_db="present")
+    source = tmp_path / "a.txt"
+    source.write_text("body")
+    first = app.submit_library_ingest_job(source_path=str(source))
+    before_ids = [job.job_id for job in app.library_ingest_jobs.jobs()]
+    allocate_job_id = MagicMock(
+        wraps=app.library_ingest_jobs._allocate_job_id  # noqa: SLF001
+    )
+    monkeypatch.setattr(
+        app.library_ingest_jobs,
+        "_allocate_job_id",
+        allocate_job_id,
+    )
+
+    with pytest.raises(ActiveIngestSubmissionRefused) as caught:
+        app.submit_library_ingest_job(source_path=str(source))
+
+    assert [job.job_id for job in app.library_ingest_jobs.jobs()] == before_ids
+    allocate_job_id.assert_not_called()
+    assert caught.value.matches == (
+        ActiveIngestJobRef(first.job_id, first.state),
+    )
+
+
+def test_terminal_local_job_does_not_block_reingestion(tmp_path: Path) -> None:
+    app = _minimal_app(media_db="present")
+    source = tmp_path / "a.txt"
+    source.write_text("body")
+    first = app.submit_library_ingest_job(source_path=str(source))
+    app.library_ingest_jobs.mark_parsing(first.job_id)
+    app.library_ingest_jobs.mark_writing(first.job_id)
+    app.library_ingest_jobs.mark_done(first.job_id, media_id=1)
+
+    second = app.submit_library_ingest_job(source_path=str(source))
+
+    assert second.job_id != first.job_id
+
+
+def test_local_active_job_does_not_block_server_submission(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _minimal_app(media_db="present")
+    source = tmp_path / "a.txt"
+    source.write_text("body")
+    app.submit_library_ingest_job(source_path=str(source))
+    monkeypatch.setattr(app, "_resolve_ingest_backend", lambda: "server")
+    remote = MagicMock(return_value=_make_job(origin="server"))
+    monkeypatch.setattr(app, "_submit_server_ingest_job", remote)
+
+    app.submit_library_ingest_job(source_path=str(source))
+
+    remote.assert_called_once()
+
+
+def test_submit_refuses_active_server_duplicate_before_remote_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _minimal_app(media_db="present")
+    source = tmp_path / "a.txt"
+    source.write_text("body")
+    monkeypatch.setattr(app, "_resolve_ingest_backend", lambda: "server")
+    active = app.library_ingest_jobs.submit(
+        source_path=str(source), origin="server"
+    )
+    remote = MagicMock()
+    monkeypatch.setattr(app, "_submit_server_ingest_job", remote)
+
+    with pytest.raises(ActiveIngestSubmissionRefused) as caught:
+        app.submit_library_ingest_job(source_path=str(source))
+
+    assert caught.value.matches == (
+        ActiveIngestJobRef(active.job_id, IngestJobState.QUEUED),
+    )
+    remote.assert_not_called()
+
+
+def test_folder_refusal_occurs_before_any_admitted_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _minimal_app(media_db="present")
+    folder = tmp_path / "batch"
+    folder.mkdir()
+    first = folder / "first.txt"
+    matching = folder / "matching.txt"
+    first.write_text("first")
+    matching.write_text("matching")
+    app.submit_library_ingest_job(source_path=str(matching))
+    admitted = MagicMock()
+    monkeypatch.setattr(app, "_submit_library_ingest_job_admitted", admitted)
+    uuid4 = MagicMock()
+    monkeypatch.setattr(app_module.uuid, "uuid4", uuid4)
+    app._parakeet_submitting_scope_ids = {"existing-scope"}
+    sync_scopes = MagicMock()
+    monkeypatch.setattr(app, "_sync_parakeet_source_scopes", sync_scopes)
+
+    with pytest.raises(ActiveIngestSubmissionRefused):
+        app.submit_library_ingest_job(
+            source_path=str(folder),
+            ingest_options={
+                "audio_video": {
+                    "transcription_external_scope_id": "refused-scope",
+                }
+            },
+        )
+
+    admitted.assert_not_called()
+    uuid4.assert_not_called()
+    assert app._parakeet_submitting_scope_ids == {"existing-scope"}
+    sync_scopes.assert_not_called()
+
+
+def test_confirmed_folder_routes_every_member_once_without_reentry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _minimal_app(media_db="present")
+    folder = tmp_path / "batch"
+    folder.mkdir()
+    paths = [folder / "a.txt", folder / "b.txt"]
+    for path in paths:
+        path.write_text(path.stem)
+    active = app.library_ingest_jobs.submit(source_path=str(paths[1]))
+    consent_scope = build_active_ingest_consent_scope(
+        [str(path) for path in paths],
+        origin="local",
+        active_job_ids=(active.job_id,),
+        active_source_count=1,
+    )
+    resolve_backend = MagicMock(wraps=app._resolve_ingest_backend)
+    expand_source = MagicMock(wraps=app._expand_library_ingest_source)
+    monkeypatch.setattr(app, "_resolve_ingest_backend", resolve_backend)
+    monkeypatch.setattr(app, "_expand_library_ingest_source", expand_source)
+    original = app._submit_library_ingest_job_admitted
+    admitted_calls = []
+
+    def record(**kwargs: Any) -> LibraryIngestJob:
+        admitted_calls.append((kwargs["source_path"], kwargs["batch_id"]))
+        return original(**kwargs)
+
+    monkeypatch.setattr(app, "_submit_library_ingest_job_admitted", record)
+
+    app.submit_library_ingest_job(
+        source_path=str(folder), active_duplicate_consent=consent_scope
+    )
+
+    resolve_backend.assert_called_once_with()
+    expand_source.assert_called_once_with(str(folder))
+    assert [source for source, _batch_id in admitted_calls] == [
+        str(path) for path in paths
+    ]
+    batch_ids = {batch_id for _source, batch_id in admitted_calls}
+    assert len(batch_ids) == 1
+    assert None not in batch_ids
+
+    admitted_count = len(admitted_calls)
+    with pytest.raises(ActiveIngestSubmissionRefused):
+        app.submit_library_ingest_job(source_path=str(folder))
+
+    assert resolve_backend.call_count == 2
+    assert expand_source.call_count == 2
+    assert len(admitted_calls) == admitted_count
+
+
+@pytest.mark.parametrize("mutation", ["added", "removed", "changed"])
+def test_folder_candidate_mutation_refuses_stale_consent_before_any_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    app = _minimal_app(media_db="present")
+    folder = tmp_path / "batch"
+    folder.mkdir()
+    paths = [folder / "a.txt", folder / "b.txt"]
+    for path in paths:
+        path.write_text(path.stem)
+    active = app.library_ingest_jobs.submit(source_path=str(paths[1]))
+    consent_scope = build_active_ingest_consent_scope(
+        [str(path) for path in paths],
+        origin="local",
+        active_job_ids=(active.job_id,),
+        active_source_count=1,
+    )
+    if mutation == "added":
+        (folder / "c.txt").write_text("c")
+    elif mutation == "removed":
+        paths[0].unlink()
+    else:
+        paths[0].rename(folder / "renamed.txt")
+    admitted = MagicMock()
+    monkeypatch.setattr(app, "_submit_library_ingest_job_admitted", admitted)
+
+    with pytest.raises(ActiveIngestSubmissionRefused) as caught:
+        app.submit_library_ingest_job(
+            source_path=str(folder),
+            active_duplicate_consent=consent_scope,
+        )
+
+    assert caught.value.candidate_changed is True
+    assert isinstance(caught.value.consent_scope, ActiveIngestConsentScope)
+    assert caught.value.consent_scope != consent_scope
+    admitted.assert_not_called()
+
+
+def test_new_active_match_absent_from_consent_refuses_before_any_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _minimal_app(media_db="present")
+    folder = tmp_path / "batch"
+    folder.mkdir()
+    paths = [folder / "a.txt", folder / "b.txt"]
+    for path in paths:
+        path.write_text(path.stem)
+    first = app.library_ingest_jobs.submit(source_path=str(paths[0]))
+    consent_scope = build_active_ingest_consent_scope(
+        [str(path) for path in paths],
+        origin="local",
+        active_job_ids=(first.job_id,),
+        active_source_count=1,
+    )
+    second = app.library_ingest_jobs.submit(source_path=str(paths[1]))
+    admitted = MagicMock()
+    monkeypatch.setattr(app, "_submit_library_ingest_job_admitted", admitted)
+
+    with pytest.raises(ActiveIngestSubmissionRefused) as caught:
+        app.submit_library_ingest_job(
+            source_path=str(folder),
+            active_duplicate_consent=consent_scope,
+        )
+
+    assert caught.value.candidate_changed is False
+    assert caught.value.consent_scope.active_job_ids == (
+        first.job_id,
+        second.job_id,
+    )
+    admitted.assert_not_called()
+
+
+def test_consent_scope_allows_matching_job_to_finish_before_second_press(
+    tmp_path: Path,
+) -> None:
+    app = _minimal_app(media_db="present")
+    source = tmp_path / "a.txt"
+    source.write_text("body")
+    active = app.library_ingest_jobs.submit(source_path=str(source))
+    consent_scope = build_active_ingest_consent_scope(
+        [str(source)],
+        origin="local",
+        active_job_ids=(active.job_id,),
+        active_source_count=1,
+    )
+    app.library_ingest_jobs.mark_parsing(active.job_id)
+    app.library_ingest_jobs.mark_writing(active.job_id)
+    app.library_ingest_jobs.mark_done(active.job_id, media_id=1)
+
+    submitted = app.submit_library_ingest_job(
+        source_path=str(source),
+        active_duplicate_consent=consent_scope,
+    )
+
+    assert submitted.job_id != active.job_id
+
+
+def test_direct_refusal_is_privacy_safe_and_starts_no_work(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _minimal_app(media_db="present")
+    source = tmp_path / "private-name.txt"
+    source.write_text("secret")
+    active = app.submit_library_ingest_job(
+        source_path=str(source),
+        title="Private title",
+        author="Private author",
+        keywords=("private-keyword",),
+        ingest_options={"generic": {"custom_prompt": "private-prompt"}},
+    )
+    app.library_ingest_jobs.update_progress(
+        active.job_id,
+        progress={"message": "Private progress"},
+    )
+    top_up = MagicMock()
+    monkeypatch.setattr(app, "_top_up_ingest_parse_pool", top_up)
+
+    with pytest.raises(ActiveIngestSubmissionRefused) as caught:
+        app.submit_library_ingest_job(
+            source_path=str(source),
+            title="Private title",
+            author="Private author",
+            keywords=("private-keyword",),
+            ingest_options={"generic": {"custom_prompt": "private-prompt"}},
+        )
+
+    rendered = (
+        f"{caught.value!s} {caught.value!r} "
+        f"{caught.value.args!r} {caught.value.matches!r} "
+        f"{caught.value.match_count!r}"
+    )
+    for secret in (
+        str(source),
+        "Private title",
+        "Private author",
+        "private-keyword",
+        "private-prompt",
+        "Private progress",
+    ):
+        assert secret not in rendered
+    top_up.assert_not_called()
 
 
 class TestSubmitLibraryIngestJob:

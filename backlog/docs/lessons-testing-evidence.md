@@ -4047,3 +4047,21 @@ snapshot and stayed wrong until the next write. Two lessons with teeth:
   ran, and the natural repro needed a tight cross-thread hammer. When a change introduces a
   read-cache whose writers live on other threads, a probe of this shape is part of the
   evidence bar — green functional tests alone said this cache was fine.
+---
+
+## Consent must bind every independently mutable authority input (TASK-208, 2026-08-13)
+
+**Incident.** TASK-208's first reviewed duplicate override fingerprinted the
+folder path, form options, warning text, and previewed active job IDs. The app
+correctly re-expanded the folder at submission time, but the Boolean override
+then bypassed every match in that new expansion. A newly added member, a newly
+active job absent from preflight, or an unchanged warning sentence with a larger
+affected-file count could therefore ride stale consent.
+
+**What to do.** For two-step consent, enumerate every input that can change
+between arming and use, including derived cardinalities that do not alter copy.
+Carry a privacy-safe identity of the exact consented set across the authority
+boundary and compare it only after authoritative recomputation. An override must
+cover every current match; bounded identity material must record truncation and
+fail closed. Test mutations between the two user actions through at least one
+real UI-to-authority path, not only each boundary in isolation.

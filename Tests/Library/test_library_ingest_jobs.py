@@ -5,11 +5,270 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
+import pytest
 
+from tldw_chatbook.Library import library_ingest_jobs
 from tldw_chatbook.Library.library_ingest_jobs import (
+    ACTIVE_INGEST_REF_LIMIT,
+    ActiveIngestConsentScope,
+    ActiveIngestJobRef,
+    ActiveIngestSubmissionRefused,
     IngestJobState,
+    LibraryIngestJob,
     LibraryIngestJobRegistry,
+    build_active_ingest_consent_scope,
+    normalize_active_ingest_source,
 )
+
+
+def test_active_source_key_normalizes_relative_dot_segments_and_case(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        library_ingest_jobs.os.path,
+        "normcase",
+        lambda value: value.replace("/", "\\").lower(),
+    )
+
+    relative = normalize_active_ingest_source(
+        ".\\Folder\\..\\Folder\\NOTE.txt", origin="local"
+    )
+    absolute = normalize_active_ingest_source(
+        str(tmp_path / "folder" / "note.TXT"), origin="local"
+    )
+
+    assert relative == absolute
+    assert relative.origin == "local"
+
+
+def test_active_source_key_preserves_case_when_platform_normcase_does(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(library_ingest_jobs.os.path, "normcase", lambda value: value)
+
+    upper = normalize_active_ingest_source("Note.txt", origin="local")
+    lower = normalize_active_ingest_source("note.txt", origin="local")
+
+    assert upper != lower
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("HTTPS://Example.COM", "https://example.com/"),
+        ("http://example.com:80/a#one", "http://EXAMPLE.com/a#two"),
+        ("https://example.com:443/a?q=1", "https://example.com/a?q=1"),
+    ],
+)
+def test_active_source_key_normalizes_only_safe_url_equivalences(left, right):
+    assert normalize_active_ingest_source(
+        left, origin="server"
+    ) == normalize_active_ingest_source(right, origin="server")
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("https://example.com/A", "https://example.com/a"),
+        ("https://example.com/a?x=1&y=2", "https://example.com/a?y=2&x=1"),
+        ("https://example.com/a%2Fb", "https://example.com/a/b"),
+        ("https://example.com:444/a", "https://example.com/a"),
+    ],
+)
+def test_active_source_key_preserves_meaningful_url_distinctions(left, right):
+    assert normalize_active_ingest_source(
+        left, origin="server"
+    ) != normalize_active_ingest_source(right, origin="server")
+
+
+def test_find_active_source_matches_filters_state_origin_and_visibility(tmp_path):
+    registry = LibraryIngestJobRegistry()
+    source = str(tmp_path / "a.txt")
+    queued = registry.submit(source_path=source, origin="local")
+    parsing = registry.submit(source_path=source, origin="local")
+    registry.mark_parsing(parsing.job_id)
+    writing = registry.submit(source_path=source, origin="local")
+    registry.mark_parsing(writing.job_id)
+    registry.mark_writing(writing.job_id)
+    terminal = registry.submit(source_path=source, origin="local")
+    registry.mark_parsing(terminal.job_id)
+    registry.mark_writing(terminal.job_id)
+    registry.mark_done(terminal.job_id, media_id=1)
+    registry.submit(source_path=source, origin="server")
+
+    matches = registry.find_active_source_matches([source], origin="local")
+
+    assert [job.job_id for job in matches] == [
+        queued.job_id,
+        parsing.job_id,
+        writing.job_id,
+    ]
+    matches[0].source_path = "mutated"
+    assert registry.get_job(queued.job_id).source_path == source
+
+
+def test_find_active_source_matches_deduplicates_candidate_keys(tmp_path):
+    registry = LibraryIngestJobRegistry()
+    source = str(tmp_path / "a.txt")
+    job = registry.submit(source_path=source)
+
+    matches = registry.find_active_source_matches(
+        [source, str(tmp_path / "." / "a.txt")], origin="local"
+    )
+
+    assert [item.job_id for item in matches] == [job.job_id]
+
+
+def test_active_consent_scope_is_order_stable_and_candidate_mutation_sensitive(
+    tmp_path,
+):
+    first = str(tmp_path / "a.txt")
+    second = str(tmp_path / "b.txt")
+    active_ids = ("ingest-job-1",)
+
+    original = build_active_ingest_consent_scope(
+        [first, second],
+        origin="local",
+        active_job_ids=active_ids,
+        active_source_count=1,
+    )
+    reordered = build_active_ingest_consent_scope(
+        [second, first],
+        origin="local",
+        active_job_ids=active_ids,
+        active_source_count=1,
+    )
+    added = build_active_ingest_consent_scope(
+        [first, second, str(tmp_path / "c.txt")],
+        origin="local",
+        active_job_ids=active_ids,
+        active_source_count=1,
+    )
+    removed = build_active_ingest_consent_scope(
+        [first],
+        origin="local",
+        active_job_ids=active_ids,
+        active_source_count=1,
+    )
+    changed = build_active_ingest_consent_scope(
+        [first, str(tmp_path / "renamed.txt")],
+        origin="local",
+        active_job_ids=active_ids,
+        active_source_count=1,
+    )
+
+    assert original == reordered
+    assert original.covers(reordered) is True
+    assert original.covers(added) is False
+    assert original.covers(removed) is False
+    assert original.covers(changed) is False
+    assert isinstance(original, ActiveIngestConsentScope)
+
+
+def test_active_consent_scope_covers_only_current_active_ids_from_same_snapshot(
+    tmp_path,
+):
+    sources = [str(tmp_path / "a.txt"), str(tmp_path / "b.txt")]
+    armed = build_active_ingest_consent_scope(
+        sources,
+        origin="local",
+        active_job_ids=("ingest-job-1", "ingest-job-2"),
+        active_source_count=2,
+    )
+    lifecycle_shrink = build_active_ingest_consent_scope(
+        sources,
+        origin="local",
+        active_job_ids=("ingest-job-2",),
+        active_source_count=1,
+    )
+    newly_active = build_active_ingest_consent_scope(
+        sources,
+        origin="local",
+        active_job_ids=("ingest-job-1", "ingest-job-2", "ingest-job-3"),
+        active_source_count=2,
+    )
+
+    assert armed.covers(lifecycle_shrink) is True
+    assert armed.covers(newly_active) is False
+
+
+def test_active_consent_scope_fails_closed_when_active_ids_exceed_safe_limit(
+    tmp_path,
+):
+    source = str(tmp_path / "a.txt")
+    too_many_ids = tuple(
+        f"ingest-job-{index}" for index in range(ACTIVE_INGEST_REF_LIMIT + 1)
+    )
+    truncated = build_active_ingest_consent_scope(
+        [source],
+        origin="local",
+        active_job_ids=too_many_ids,
+        active_source_count=1,
+    )
+
+    assert len(truncated.active_job_ids) == ACTIVE_INGEST_REF_LIMIT
+    assert truncated.active_job_count == ACTIVE_INGEST_REF_LIMIT + 1
+    assert truncated.active_job_ids_complete is False
+    assert truncated.covers(truncated) is False
+
+
+def test_active_consent_scope_and_refusal_do_not_expose_candidate_paths(tmp_path):
+    private_source = str(tmp_path / "private-name.txt")
+    scope = build_active_ingest_consent_scope(
+        [private_source],
+        origin="local",
+        active_job_ids=("ingest-job-1",),
+        active_source_count=1,
+    )
+    refusal = ActiveIngestSubmissionRefused(
+        (ActiveIngestJobRef("ingest-job-1", IngestJobState.QUEUED),),
+        consent_scope=scope,
+    )
+
+    rendered = f"{scope!s} {scope!r} {refusal!s} {refusal!r}"
+    assert private_source not in rendered
+    assert refusal.consent_scope is scope
+    assert refusal.candidate_changed is False
+
+
+def test_find_active_source_matches_deeply_isolates_mutable_job_fields(tmp_path):
+    registry = LibraryIngestJobRegistry()
+    source = str(tmp_path / "a.txt")
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path=source,
+        ingest_options={"pdf": {"engine": "pymupdf"}},
+        error_detail={"diagnostic": {"code": "pending"}},
+    )
+    registry.restore([job], next_id=2)
+
+    match = registry.find_active_source_matches([source], origin="local")[0]
+    match.ingest_options["pdf"]["engine"] = "mutated"
+    match.error_detail["diagnostic"]["code"] = "mutated"
+
+    stored = registry.get_job(job.job_id)
+    assert stored.ingest_options == {"pdf": {"engine": "pymupdf"}}
+    assert stored.error_detail == {"diagnostic": {"code": "pending"}}
+
+
+def test_active_ingest_refusal_exposes_only_bounded_safe_refs():
+    refs = tuple(
+        ActiveIngestJobRef(f"ingest-job-{index}", IngestJobState.QUEUED)
+        for index in range(ACTIVE_INGEST_REF_LIMIT + 2)
+    )
+    refusal = ActiveIngestSubmissionRefused(refs)
+
+    assert len(refusal.matches) == ACTIVE_INGEST_REF_LIMIT
+    assert "ingest-job-1" not in str(refusal)
+    assert "source_path" not in repr(refusal)
+    assert set(vars(refusal)) == {
+        "candidate_changed",
+        "consent_scope",
+        "matches",
+        "match_count",
+    }
 
 
 def test_submit_assigns_sequential_ids_and_queued_state() -> None:

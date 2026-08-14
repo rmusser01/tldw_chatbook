@@ -218,11 +218,16 @@ from tldw_chatbook.Library.web_clip_request import (
     is_web_clip_source,
 )
 from tldw_chatbook.Library.library_ingest_jobs import (
+    ActiveIngestConsentScope,
+    ActiveIngestJobRef,
+    ActiveIngestSubmissionRefused,
     DEFAULT_CHUNK_SIZE,
     INGEST_DUPLICATE_PROGRESS_PREFIX,
     IngestJobState,
     LibraryIngestJob,
     LibraryIngestJobRegistry,
+    build_active_ingest_consent_scope,
+    normalize_active_ingest_source,
 )
 from tldw_chatbook.Library.library_local_rag_search_service import (
     LibraryLocalRagSearchService,
@@ -2196,6 +2201,7 @@ class LibraryIngestQueueMixin:
         chunk_enabled: bool = False,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         batch_id: str | None = None,
+        active_duplicate_consent: ActiveIngestConsentScope | None = None,
     ) -> LibraryIngestJob:
         """Submit a new Library ingest job and top up the parse pool.
 
@@ -2219,6 +2225,8 @@ class LibraryIngestQueueMixin:
             perform_analysis: Whether to run post-ingest analysis.
             chunk_enabled: Whether to chunk the ingested content.
             chunk_size: Requested chunk size when ``chunk_enabled``.
+            active_duplicate_consent: Exact candidate and active-membership scope
+                captured by an explicitly confirmed submission.
 
         Returns:
             The newly created job: ``QUEUED`` normally, or immediately
@@ -2227,7 +2235,45 @@ class LibraryIngestQueueMixin:
             so each file gets its own queue row, its own outcome and its own
             retry -- one unsupported file no longer fails its siblings.
         """
+        backend = self._resolve_ingest_backend()
         expanded = self._expand_library_ingest_source(source_path)
+        sources = tuple(expanded) if expanded is not None else (source_path,)
+        matches = self.library_ingest_jobs.find_active_source_matches(
+            sources, origin=backend
+        )
+        matched_source_keys = set()
+        for job in matches:
+            try:
+                matched_source_keys.add(
+                    normalize_active_ingest_source(job.source_path, origin=backend)
+                )
+            except (TypeError, ValueError, OSError):
+                continue
+        current_consent = build_active_ingest_consent_scope(
+            sources,
+            origin=backend,
+            active_job_ids=(job.job_id for job in matches),
+            active_source_count=len(matched_source_keys),
+        )
+        candidates_changed = active_duplicate_consent is not None and (
+            active_duplicate_consent.origin != current_consent.origin
+            or active_duplicate_consent.candidate_digest
+            != current_consent.candidate_digest
+            or active_duplicate_consent.candidate_count
+            != current_consent.candidate_count
+        )
+        matches_covered = (
+            active_duplicate_consent is not None
+            and active_duplicate_consent.covers(current_consent)
+        )
+        if candidates_changed or (matches and not matches_covered):
+            raise ActiveIngestSubmissionRefused(
+                (ActiveIngestJobRef(job.job_id, job.state) for job in matches),
+                consent_scope=current_consent,
+                candidate_changed=candidates_changed,
+            )
+
+        normalized_options = ingest_options or {}
         if expanded is not None:
             if not expanded:
                 empty_job = self.library_ingest_jobs.submit(
@@ -2239,7 +2285,7 @@ class LibraryIngestQueueMixin:
                     chunk_enabled=chunk_enabled,
                     chunk_size=chunk_size,
                     detected_type="",
-                    ingest_options=ingest_options or {},
+                    ingest_options=normalized_options,
                 )
                 failed = self.library_ingest_jobs.mark_failed(
                     empty_job.job_id,
@@ -2251,7 +2297,7 @@ class LibraryIngestQueueMixin:
             # so the queue can group this run's rows under one header and
             # the tally can answer "what did THIS run just do".
             folder_batch_id = f"local-{uuid.uuid4().hex[:12]}"
-            audio_options = (ingest_options or {}).get("audio_video", {})
+            audio_options = normalized_options.get("audio_video", {})
             scope_id = (
                 str(audio_options.get("transcription_external_scope_id") or "").strip()
                 if isinstance(audio_options, dict)
@@ -2264,9 +2310,9 @@ class LibraryIngestQueueMixin:
                 submitting_scopes.add(scope_id)
             try:
                 for expanded_path in expanded:
-                    job = self.submit_library_ingest_job(
+                    job = self._submit_library_ingest_job_admitted(
                         source_path=expanded_path,
-                        ingest_options=ingest_options,
+                        ingest_options=normalized_options,
                         batch_id=folder_batch_id,
                         # Title is per-file (the ingest form clears it on submit
                         # for exactly this reason), so a folder's files each take
@@ -2279,6 +2325,7 @@ class LibraryIngestQueueMixin:
                         perform_analysis=perform_analysis,
                         chunk_enabled=chunk_enabled,
                         chunk_size=chunk_size,
+                        backend=backend,
                     )
                     if first_job is None:
                         first_job = job
@@ -2290,7 +2337,35 @@ class LibraryIngestQueueMixin:
             assert first_job is not None
             return first_job
 
-        if self._resolve_ingest_backend() == "server":
+        return self._submit_library_ingest_job_admitted(
+            source_path=source_path,
+            ingest_options=normalized_options,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            chunk_enabled=chunk_enabled,
+            chunk_size=chunk_size,
+            batch_id=batch_id,
+            backend=backend,
+        )
+
+    def _submit_library_ingest_job_admitted(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any],
+        title: str,
+        author: str,
+        keywords: tuple[str, ...],
+        perform_analysis: bool,
+        chunk_enabled: bool,
+        chunk_size: int,
+        batch_id: str | None,
+        backend: str,
+    ) -> LibraryIngestJob:
+        """Route a source already admitted by ``submit_library_ingest_job``."""
+        if backend == "server":
             # A web page goes to the clipper, not the ingest-jobs API: that API
             # has no media type for one. A local ingest needs no such branch --
             # classify_ingest_source already routes an article through the
@@ -2302,13 +2377,39 @@ class LibraryIngestQueueMixin:
             )
             return submit_remote(
                 source_path=source_path,
-                ingest_options=ingest_options or {},
+                ingest_options=ingest_options,
                 title=title,
                 author=author,
                 keywords=keywords,
                 perform_analysis=perform_analysis,
             )
 
+        return self._submit_local_library_ingest_job(
+            source_path=source_path,
+            ingest_options=ingest_options,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            chunk_enabled=chunk_enabled,
+            chunk_size=chunk_size,
+            batch_id=batch_id,
+        )
+
+    def _submit_local_library_ingest_job(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any],
+        title: str,
+        author: str,
+        keywords: tuple[str, ...],
+        perform_analysis: bool,
+        chunk_enabled: bool,
+        chunk_size: int,
+        batch_id: str | None,
+    ) -> LibraryIngestJob:
+        """Append one admitted local source and top up the parse pool."""
         try:
             detected_type = classify_ingest_source(source_path) or ""
         except FileIngestionError:
@@ -2333,7 +2434,7 @@ class LibraryIngestQueueMixin:
             chunk_enabled=chunk_enabled,
             chunk_size=chunk_size,
             detected_type=detected_type,
-            ingest_options=ingest_options or {},
+            ingest_options=ingest_options,
             batch_id=batch_id,
         )
         if self.media_db is None:
