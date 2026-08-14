@@ -347,6 +347,27 @@ def test_load_tree_batch_loads_roots_and_unfiled_notes(
     assert page.next_offset is None
 
 
+def test_load_tree_batch_can_skip_exhausted_note_query(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    repository.create_folder(name="Work", parent_id=None)
+    note_id = repository.db.add_note("Unfiled", "Body")
+    assert note_id is not None
+    statements: list[str] = []
+    connection = repository.db.get_connection()
+    connection.set_trace_callback(statements.append)
+
+    page = repository.load_tree_batch(
+        expanded_folder_ids=(), note_limit=50, load_notes=False
+    )
+
+    connection.set_trace_callback(None)
+    assert page.notes == ()
+    assert page.total_notes == 0
+    assert page.next_offset is None
+    assert not any("AS CANDIDATE ORDER BY TITLE" in sql.upper() for sql in statements)
+
+
 def test_root_batch_reports_managed_descendants_without_expanding_them(
     repository: LocalNoteFolderRepository,
 ) -> None:

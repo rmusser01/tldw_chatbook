@@ -127,11 +127,20 @@ Evidence:
   managed state walks from managed memberships toward loaded ancestors. The
   returned path matches are also merged into list state by note ID so result
   counts, Select all, and checkbox state agree with the rendered tree.
-- The final post-review focused gate passes `279` tests, including repository,
+- Qodo's final review raised six findings. Google-style API documentation was
+  completed for the three named callables, search bounds now use named policy
+  constants, folder-only continuations skip exhausted note queries at both root
+  and expanded scopes, and managed-placement collapse now memoizes folder
+  ancestry instead of rescanning every membership pair. Regression tests cover
+  the query skip, membership continuation, repository/service flag propagation,
+  and bounded ancestry-walk cost.
+- The final post-Qodo focused gate passes `282` tests, including repository,
   normalized service, pure projection, screen orchestration, multiselect,
   dialogs/canvas, and the reviewed-diagnostic metadata gate. Focused fatal/error
-  Ruff checks, `compileall`, and `git diff --check` pass. A broader File Notes run
-  has one focus-confirmation failure reproduced unchanged on latest `dev`.
+  Ruff checks, `compileall`, and `git diff --check` pass. Five broader diagnostic
+  ledger failures reproduce identically on untouched latest `dev`; a broader
+  File Notes run likewise has one focus-confirmation failure reproduced unchanged
+  on latest `dev`.
 
 Trade-offs: this task intentionally exposes the already-landed local folder
 foundation. Server-backed folder capability and the import/sync setup flow stay

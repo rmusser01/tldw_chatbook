@@ -147,41 +147,60 @@ def _record_title(note: Mapping[str, object]) -> str:
     return str(note.get("title", "") or "Untitled")
 
 
-def _folder_is_ancestor(
-    ancestor_id: str,
-    descendant_id: str,
-    folders: Mapping[str, NoteFolder],
-) -> bool:
-    current = folders.get(descendant_id)
-    seen: set[str] = set()
-    while current is not None and current.parent_id is not None:
-        if current.parent_id == ancestor_id:
-            return True
-        if current.parent_id in seen:
-            return False
-        seen.add(current.parent_id)
-        current = folders.get(current.parent_id)
-    return False
-
-
 def _effective_memberships(
     memberships: tuple[NoteFolderMembership, ...],
     folders: Mapping[str, NoteFolder],
 ) -> tuple[NoteFolderMembership, ...]:
     """Collapse generated ancestor placements for the same note and owner."""
-    effective: list[NoteFolderMembership] = []
-    for candidate in memberships:
-        if candidate.ownership == "managed" and any(
-            other.membership_id != candidate.membership_id
-            and other.ownership == "managed"
-            and other.note_id == candidate.note_id
-            and other.owner_id == candidate.owner_id
-            and _folder_is_ancestor(candidate.folder_id, other.folder_id, folders)
-            for other in memberships
-        ):
+    managed_folders_by_owner: dict[tuple[str, str], set[str]] = {}
+    for membership in memberships:
+        if membership.ownership == "managed":
+            managed_folders_by_owner.setdefault(
+                (membership.note_id, membership.owner_id), set()
+            ).add(membership.folder_id)
+
+    managed_folder_ids = (
+        set().union(*managed_folders_by_owner.values())
+        if (managed_folders_by_owner)
+        else set()
+    )
+    ancestors_by_folder: dict[str, frozenset[str]] = {}
+    for folder_id in managed_folder_ids:
+        if folder_id in ancestors_by_folder:
             continue
-        effective.append(candidate)
-    return tuple(effective)
+        chain: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        current_id = folder_id
+        while current_id not in ancestors_by_folder:
+            if current_id in seen:
+                chain.clear()
+                ancestors_by_folder[folder_id] = frozenset()
+                break
+            seen.add(current_id)
+            current = folders.get(current_id)
+            if current is None or current.parent_id is None:
+                ancestors_by_folder[current_id] = frozenset()
+                break
+            chain.append((current_id, current.parent_id))
+            current_id = current.parent_id
+        ancestor_ids = ancestors_by_folder.get(current_id, frozenset())
+        for child_id, parent_id in reversed(chain):
+            ancestor_ids = ancestor_ids.union((parent_id,))
+            ancestors_by_folder[child_id] = ancestor_ids
+
+    shadowed_folders_by_owner: dict[tuple[str, str], set[str]] = {}
+    for owner_key, folder_ids in managed_folders_by_owner.items():
+        shadowed = shadowed_folders_by_owner.setdefault(owner_key, set())
+        for folder_id in folder_ids:
+            shadowed.update(ancestors_by_folder[folder_id].intersection(folder_ids))
+
+    return tuple(
+        membership
+        for membership in memberships
+        if membership.ownership != "managed"
+        or membership.folder_id
+        not in shadowed_folders_by_owner[(membership.note_id, membership.owner_id)]
+    )
 
 
 def _note_row(
@@ -244,7 +263,18 @@ def build_library_notes_tree(
     filter_text: str = "",
     matched_note_ids: frozenset[str] | None = None,
 ) -> LibraryNotesTreeProjection:
-    """Project bounded root/expanded batches into one lazy visible tree."""
+    """Project bounded root and expanded batches into one lazy visible tree.
+
+    Args:
+        root_page: Bounded root-folder and unfiled-note page.
+        expanded_page: Bounded children, memberships, and notes for expanded folders.
+        expanded_folder_ids: Folder identifiers whose immediate contents are visible.
+        filter_text: Optional case-insensitive folder/note filter.
+        matched_note_ids: Optional authoritative note IDs from bounded search.
+
+    Returns:
+        Visible placement-aware rows and the cursors needed to continue loading.
+    """
     query = filter_text.strip().casefold()
     folders = {
         folder.folder_id: folder

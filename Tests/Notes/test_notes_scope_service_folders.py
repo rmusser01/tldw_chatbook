@@ -53,6 +53,7 @@ class RecordingFolderRepository:
         folder_offset: int,
         membership_limit: int,
         membership_offset: int,
+        load_notes: bool,
     ) -> NoteFolderPage:
         self._record(
             (
@@ -64,6 +65,7 @@ class RecordingFolderRepository:
                 folder_offset,
                 membership_limit,
                 membership_offset,
+                load_notes,
             )
         )
         return _empty_page()
@@ -229,9 +231,10 @@ LOCAL_FOLDER_CASES = [
             "folder_offset": 10,
             "membership_limit": 60,
             "membership_offset": 30,
+            "load_notes": False,
         },
         "notes.list.local",
-        ("load_tree_batch", ("folder-1",), 100, 20, 40, 10, 60, 30),
+        ("load_tree_batch", ("folder-1",), 100, 20, 40, 10, 60, 30, False),
     ),
     (
         "load_note_folder_search",

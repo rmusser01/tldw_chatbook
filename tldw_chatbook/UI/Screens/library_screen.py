@@ -9512,6 +9512,7 @@ class LibraryScreen(BaseAppScreen):
                     expanded_folder_ids=(),
                     note_offset=root_note_cursor or 0,
                     folder_offset=root_folder_cursor or 0,
+                    load_notes=root_note_cursor is not None,
                     **common,
                 )
                 root_page = merge_note_folder_pages(root_page, incoming)
@@ -9560,6 +9561,10 @@ class LibraryScreen(BaseAppScreen):
                     note_offset=note_offset,
                     folder_offset=expanded_folder_cursor or 0,
                     membership_offset=expanded_membership_cursor or 0,
+                    load_notes=(
+                        continuing_memberships
+                        or expanded_note_cursor is not None
+                    ),
                     **common,
                 )
                 expanded_page = merge_note_folder_pages(expanded_page, incoming)
@@ -25519,7 +25524,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-notes-folder-new")
     def handle_library_notes_folder_new(self, event: Button.Pressed) -> None:
-        """Create a root folder or a child of the selected folder."""
+        """Create a root folder or a child of the selected folder.
+
+        Args:
+            event: Press event from the new-folder action button.
+        """
         event.stop()
         selected = self._selected_library_notes_tree_row()
         if selected is not None and selected.kind == "folder" and selected.protected:

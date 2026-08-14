@@ -389,6 +389,7 @@ async def test_membership_cursor_finishes_current_note_page_before_advancing_not
     fake._library_notes_tree_generation = 2
     await LibraryScreen._load_more_library_notes_tree(fake, generation=2)
     assert service.calls[-1]["note_offset"] == 0
+    assert service.calls[-1]["load_notes"] is True
     assert service.calls[-1]["membership_offset"] == 1
     assert {
         item.membership_id
@@ -404,6 +405,21 @@ async def test_membership_cursor_finishes_current_note_page_before_advancing_not
     assert service.calls[-1]["note_offset"] == 1
     assert service.calls[-1]["membership_offset"] == 0
     assert fake._library_notes_tree_membership_note_offset == 1
+
+
+@pytest.mark.asyncio
+async def test_folder_only_continuation_skips_exhausted_note_queries():
+    service = _PagingFolderService()
+    fake = _screen_fake(service)  # type: ignore[arg-type]
+    fake._library_notes_tree_root_page = _page(next_folder_offset=1)
+    fake._library_notes_tree_expanded_ids = {"ideas"}
+    fake._library_notes_tree_expanded_page = _page(next_folder_offset=1)
+    fake._library_notes_tree_generation = 2
+
+    await LibraryScreen._load_more_library_notes_tree(fake, generation=2)
+
+    assert len(service.calls) == 2
+    assert [call["load_notes"] for call in service.calls] == [False, False]
 
 
 @pytest.mark.asyncio

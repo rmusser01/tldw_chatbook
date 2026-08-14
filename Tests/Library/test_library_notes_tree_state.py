@@ -5,6 +5,7 @@ from __future__ import annotations
 from tldw_chatbook.Library.library_notes_tree_state import (
     UNFILED_PLACEMENT_ID,
     LibraryNotesTreeIdentity,
+    _effective_memberships,
     build_library_notes_tree,
     merge_note_folder_pages,
     reconcile_library_notes_tree_identity,
@@ -201,6 +202,44 @@ def test_generated_managed_ancestor_collapses_but_manual_duplicate_remains():
         "explicit-parent",
         "generated-child",
     }
+
+
+def test_managed_ancestor_collapse_walks_each_folder_chain_once():
+    class CountingFolders(dict[str, NoteFolder]):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.get_calls = 0
+
+        def get(self, key, default=None):
+            self.get_calls += 1
+            return super().get(key, default)
+
+    folder_count = 40
+    folders = CountingFolders(
+        {
+            f"folder-{index}": _folder(
+                f"folder-{index}",
+                f"folder-{index - 1}" if index else None,
+                "/" + "/".join(f"Folder {part}" for part in range(index + 1)),
+            )
+            for index in range(folder_count)
+        }
+    )
+    memberships = tuple(
+        _membership(
+            f"membership-{index}",
+            f"folder-{index}",
+            "note-1",
+            ownership="managed",
+            owner_id="sync-root",
+        )
+        for index in reversed(range(folder_count))
+    )
+
+    effective = _effective_memberships(memberships, folders)
+
+    assert [membership.folder_id for membership in effective] == ["folder-39"]
+    assert folders.get_calls <= folder_count * 2
 
 
 def test_managed_and_restored_without_owner_are_textually_distinct_and_protected():

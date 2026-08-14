@@ -130,7 +130,16 @@ class FolderPlacementId:
 
     @staticmethod
     def note(folder_id: str, note_id: str, membership_id: str | None = None) -> str:
-        """Return a folder/note identity, optionally for one exact membership."""
+        """Return a folder/note identity, optionally for one exact membership.
+
+        Args:
+            folder_id: Folder containing the note placement.
+            note_id: Note represented by the placement.
+            membership_id: Exact membership identity for duplicate placements.
+
+        Returns:
+            A URL-escaped, stable tree placement identifier.
+        """
         placement = f"note:{quote(folder_id, safe='')}:{quote(note_id, safe='')}"
         if membership_id is None:
             return placement

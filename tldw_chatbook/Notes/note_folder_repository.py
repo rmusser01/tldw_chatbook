@@ -35,6 +35,9 @@ _NOTE_COLUMNS = (
 _COLLISION_PREFLIGHT_CHUNK_SIZE = 400
 _MEMBERSHIP_QUERY_CHUNK_SIZE = 400
 _MEMBERSHIP_ID_INSERT_ATTEMPTS = 3
+_TREE_SEARCH_NOTE_LIMIT = 250
+_TREE_SEARCH_FOLDER_LIMIT = 500
+_TREE_SEARCH_MEMBERSHIP_LIMIT = 1000
 _MEMBERSHIP_COLUMNS = (
     "id, folder_id, note_id, ownership, owner_id, owner_active, version"
 )
@@ -203,8 +206,27 @@ class LocalNoteFolderRepository:
         folder_offset: int = 0,
         membership_limit: int = 1000,
         membership_offset: int = 0,
+        load_notes: bool = True,
     ) -> NoteFolderPage:
-        """Bulk-load roots or the immediate contents of expanded folders."""
+        """Bulk-load roots or the immediate contents of expanded folders.
+
+        Args:
+            expanded_folder_ids: Folders whose immediate contents should load.
+            note_limit: Maximum notes to return when note loading is enabled.
+            note_offset: Offset into the bounded note page.
+            folder_limit: Maximum child folders to return.
+            folder_offset: Offset into the bounded folder page.
+            membership_limit: Maximum memberships for the current note page.
+            membership_offset: Offset into the bounded membership page.
+            load_notes: Whether to query notes and their memberships. Disable this
+                when only an independent folder cursor remains.
+
+        Returns:
+            One bounded folder-tree page with independent continuation cursors.
+
+        Raises:
+            FolderValidationError: If a bound or flag is invalid.
+        """
         _validate_int_bound("note_limit", note_limit, minimum=1, maximum=1000)
         _validate_int_bound("note_offset", note_offset, minimum=0)
         _validate_int_bound("folder_limit", folder_limit, minimum=1, maximum=500)
@@ -213,6 +235,8 @@ class LocalNoteFolderRepository:
             "membership_limit", membership_limit, minimum=1, maximum=1000
         )
         _validate_int_bound("membership_offset", membership_offset, minimum=0)
+        if not isinstance(load_notes, bool):
+            raise FolderValidationError("load_notes must be a boolean.")
         expanded_ids = _normalize_folder_ids(expanded_folder_ids)
         with self.db.transaction() as cursor:
             if expanded_ids:
@@ -233,13 +257,17 @@ class LocalNoteFolderRepository:
                     "ORDER BY normalized_path, id LIMIT ? OFFSET ?",
                     (*expanded_ids, folder_limit, folder_offset),
                 ).fetchall()
-                note_rows = cursor.execute(
-                    f"SELECT candidate.*, COUNT(*) OVER() AS _total_notes FROM ("
-                    f"{note_candidates_sql}"
-                    ") AS candidate ORDER BY title COLLATE NOCASE, id "
-                    "LIMIT ? OFFSET ?",
-                    (*expanded_ids, note_limit, note_offset),
-                ).fetchall()
+                note_rows = (
+                    cursor.execute(
+                        f"SELECT candidate.*, COUNT(*) OVER() AS _total_notes FROM ("
+                        f"{note_candidates_sql}"
+                        ") AS candidate ORDER BY title COLLATE NOCASE, id "
+                        "LIMIT ? OFFSET ?",
+                        (*expanded_ids, note_limit, note_offset),
+                    ).fetchall()
+                    if load_notes
+                    else ()
+                )
             else:
                 folder_rows = cursor.execute(
                     f"SELECT {_FOLDER_COLUMNS}, COUNT(*) OVER() AS _total_folders "
@@ -247,20 +275,24 @@ class LocalNoteFolderRepository:
                     "ORDER BY normalized_path, id LIMIT ? OFFSET ?",
                     (folder_limit, folder_offset),
                 ).fetchall()
-                note_rows = cursor.execute(
-                    f"SELECT candidate.*, COUNT(*) OVER() AS _total_notes FROM ("
-                    f"SELECT n.{_NOTE_COLUMNS.replace(', ', ', n.')} "
-                    "FROM notes AS n WHERE n.deleted = 0 AND NOT EXISTS ("
-                    "SELECT 1 FROM note_folder_memberships AS m "
-                    "JOIN note_folders AS f "
-                    "ON f.id = m.folder_id AND f.deleted = 0 "
-                    "WHERE m.note_id = n.id AND m.deleted = 0 "
-                    "AND m.owner_active = 1"
-                    ")"
-                    ") AS candidate ORDER BY title COLLATE NOCASE, id "
-                    "LIMIT ? OFFSET ?",
-                    (note_limit, note_offset),
-                ).fetchall()
+                note_rows = (
+                    cursor.execute(
+                        f"SELECT candidate.*, COUNT(*) OVER() AS _total_notes FROM ("
+                        f"SELECT n.{_NOTE_COLUMNS.replace(', ', ', n.')} "
+                        "FROM notes AS n WHERE n.deleted = 0 AND NOT EXISTS ("
+                        "SELECT 1 FROM note_folder_memberships AS m "
+                        "JOIN note_folders AS f "
+                        "ON f.id = m.folder_id AND f.deleted = 0 "
+                        "WHERE m.note_id = n.id AND m.deleted = 0 "
+                        "AND m.owner_active = 1"
+                        ")"
+                        ") AS candidate ORDER BY title COLLATE NOCASE, id "
+                        "LIMIT ? OFFSET ?",
+                        (note_limit, note_offset),
+                    ).fetchall()
+                    if load_notes
+                    else ()
+                )
 
             page_note_ids = tuple(str(row["id"]) for row in note_rows)
             if expanded_ids and page_note_ids:
@@ -436,7 +468,7 @@ class LocalNoteFolderRepository:
     ) -> NoteFolderPage:
         """Load bounded content/path matches plus their complete breadcrumbs."""
         normalized_note_ids = _normalize_ids(note_ids, field="note_ids")
-        if len(normalized_note_ids) > 250:
+        if len(normalized_note_ids) > _TREE_SEARCH_NOTE_LIMIT:
             raise FolderValidationError("note_ids exceeds the allowed range.")
         normalized_folder_query = _normalize_folder_search_query(folder_query)
         if not normalized_note_ids and not normalized_folder_query:
@@ -460,19 +492,19 @@ class LocalNoteFolderRepository:
                     WHERE m.deleted = 0 AND f.deleted = 0 AND n.deleted = 0
                       AND instr(f.normalized_path, ?) > 0
                     ORDER BY m.note_id
-                    LIMIT 251
+                    LIMIT ?
                     """,
-                    (normalized_folder_query,),
+                    (normalized_folder_query, _TREE_SEARCH_NOTE_LIMIT + 1),
                 ).fetchall()
                 path_note_ids = tuple(str(row["note_id"]) for row in path_note_rows)
-                if len(path_note_ids) > 250:
+                if len(path_note_ids) > _TREE_SEARCH_NOTE_LIMIT:
                     raise FolderValidationError(
                         "Folder search has too many notes; narrow the search."
                     )
             selected_note_ids = tuple(
                 sorted({*normalized_note_ids, *path_note_ids})
             )
-            if len(selected_note_ids) > 250:
+            if len(selected_note_ids) > _TREE_SEARCH_NOTE_LIMIT:
                 raise FolderValidationError(
                     "Folder search has too many notes; narrow the search."
                 )
@@ -521,9 +553,9 @@ class LocalNoteFolderRepository:
                 JOIN ancestors ON ancestors.folder_id = note_folders.id
                 WHERE note_folders.deleted = 0
                 ORDER BY note_folders.normalized_path, note_folders.id
-                LIMIT 501
+                LIMIT ?
                 """,
-                tuple(membership_parameters),
+                (*membership_parameters, _TREE_SEARCH_FOLDER_LIMIT + 1),
             ).fetchall()
             membership_rows = cursor.execute(
                 f"""
@@ -533,9 +565,9 @@ class LocalNoteFolderRepository:
                 WHERE m.deleted = 0 AND f.deleted = 0
                   AND ({membership_match})
                 ORDER BY f.normalized_path, m.note_id, m.ownership, m.owner_id, m.id
-                LIMIT 1001
+                LIMIT ?
                 """,
-                tuple(membership_parameters),
+                (*membership_parameters, _TREE_SEARCH_MEMBERSHIP_LIMIT + 1),
             ).fetchall()
             selected_placeholders = _placeholders(len(selected_note_ids))
             note_rows = cursor.execute(
@@ -554,7 +586,10 @@ class LocalNoteFolderRepository:
                 """,
                 selected_note_ids,
             ).fetchall()
-            if len(folder_rows) > 500 or len(membership_rows) > 1000:
+            if (
+                len(folder_rows) > _TREE_SEARCH_FOLDER_LIMIT
+                or len(membership_rows) > _TREE_SEARCH_MEMBERSHIP_LIMIT
+            ):
                 raise FolderValidationError(
                     "Folder search has too many placements; narrow the search."
                 )
