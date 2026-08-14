@@ -13,8 +13,9 @@ labels:
 dependencies: []
 ---
 
-## Description (the why)
+## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 In a real terminal, the Console "Edit Message" modal renders its header,
 explanation, and editor — but the **Cancel / Save / Edit & resend** buttons
 never paint. The `#console-edit-message-actions` row's space is reserved
@@ -35,22 +36,20 @@ center hit-tests resolve to the modal. The shorter non-USER shape still paints
 its actions, although its full action region may overhang by one row. The
 regression therefore needs compositor-cell, containment, and hit-test evidence,
 not mounted/display geometry alone. Other Console modals remain unaffected.
+<!-- SECTION:DESCRIPTION:END -->
 
-## Acceptance Criteria (the what)
+## Acceptance Criteria
 
-- [ ] Cancel / Save / Edit & resend are visible in a real terminal (tmux
-      and a normal TTY) for both USER and non-USER targets of the modal.
+<!-- AC:BEGIN -->
+- [ ] Cancel / Save / Edit & resend are visible in a real terminal (tmux and a normal TTY) for both USER and non-USER targets of the modal.
 - [ ] Focus is visibly indicated when Tab reaches each button.
-- [ ] A regression check exists that would catch a live-terminal-only
-      disappearance (at minimum: a note in the test explaining why the
-      headless assertion is insufficient, plus a geometry assertion that
-      holds under the real stylesheet).
-- [ ] The User Guide quirk note in
-      `Docs/User_Guide/console/branching-and-rewind.md` is updated/removed
-      to match the fixed behavior.
+- [ ] A regression check exists that would catch a live-terminal-only disappearance (at minimum: a note in the test explaining why the headless assertion is insufficient, plus a geometry assertion that holds under the real stylesheet).
+- [ ] The User Guide quirk note in `Docs/User_Guide/console/branching-and-rewind.md` is updated/removed to match the fixed behavior.
+<!-- AC:END -->
 
-## Implementation Plan (the how)
+## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 ADR required: no
 
 ADR path: N/A
@@ -73,3 +72,4 @@ storage, ownership, interface, security, dependency, or long-lived UX boundary.
 
 Detailed execution plan:
 `Docs/superpowers/plans/2026-08-13-task-2703-console-edit-modal-paint.md`.
+<!-- SECTION:PLAN:END -->
