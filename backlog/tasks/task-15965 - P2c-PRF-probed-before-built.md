@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-14 00:21'
-updated_date: '2026-08-14 00:21'
+updated_date: '2026-08-14 01:15'
 labels:
   - rag
   - p2c
@@ -21,10 +21,10 @@ The first P2c FEATURE candidate (pseudo-relevance feedback) gets the same fail-f
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The fireability census over the 22 plain-failing queries runs FIRST, before any grid point, and its per-query rows-returned table is reported
-- [ ] #2 The pre-registered admission bar is applied mechanically in writing, line by line, against the measured numbers -- the verdict is computed, never argued
-- [ ] #3 Every guard population (currently-hitting plain queries, negation, negatives) is derived from a baseline pass at probe time, never hardcoded
-- [ ] #4 The probe report states gains AND losses by query id (the lost-column discipline)
+- [x] #1 The fireability census over the 22 plain-failing queries runs FIRST, before any grid point, and its per-query rows-returned table is reported
+- [x] #2 The pre-registered admission bar is applied mechanically in writing, line by line, against the measured numbers -- the verdict is computed, never argued
+- [x] #3 Every guard population (currently-hitting plain queries, negation, negatives) is derived from a baseline pass at probe time, never hardcoded
+- [x] #4 The probe report states gains AND losses by query id (the lost-column discipline)
 - [ ] #5 A below-bar result is recorded as the NULL beside the three retired P2c premises, with the next candidate's task filed carrying a pointer to the probe machinery
 - [ ] #6 An above-bar result ships PRF as plain-profile-only (off by default on hybrid/semantic), disclosed in the route-note vocabulary, priced in extra queries and wall-time, and stamped exactly once
 <!-- AC:END -->
@@ -41,3 +41,9 @@ Ledger: .superpowers/sdd/2026-08-13-rag-p2c-prf-fail-first/progress.md
 3. Task 3 (conditional): ADMIT -> build Phase B plain-profile-only through the four-seam seams, disclosed and priced. NULL -> record the fourth retired P2c premise in Tests/RAG_Eval/README.md and file the next candidate.
 4. Task 4 (ADMIT only): ONE re-stamp with the zero-movement proof on hybrid/semantic, live check, closure.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Task 2 (probe run) DONE — VERDICT NULL. Step 0 fireability: 0/22 on the SHIPPED four-seam AND-strict first pass (floor 5) -> the one licensed OR-feedback variant activated (18/22, feedback selection only, disclosed in every table). Base point N=8/M=5: 0/22 rescued, 10 of 21 hitters lost (all rank-1 today), 0 new negative docs, negation 0->30 rows +10 new docs on all 3. Bar: [1] FAIL [2] FAIL [3] PASS-but-structural [4] binds. Grid stopped at the base point by pre-registration (no signal = no sweep). Controls: an oracle feed puts the rescue CEILING at 8/22 (note 7/7, media 1/9, conversation 0/6 — the four-seam path's per-seam top_k with fixed seam order buries non-note targets), and a k=200 diagnosis shows 10 of 18 fired queries are UNMATCHED (the expansion never reaches the target) while 0 of 10 losses are unmatched (pure dilution, refuting the plural-widening hypothesis). Hitter population 21 reproduces baselines/plain.json exactly. Gated run: Tests/RAG_Eval/test_prf_probe_run.py; report .superpowers/sdd/2026-08-13-rag-p2c-prf-fail-first/task-2-report.md. Task 3 records the null; Task 4 skipped.
+<!-- SECTION:NOTES:END -->
