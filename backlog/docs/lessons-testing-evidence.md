@@ -4026,3 +4026,24 @@ already on the page, this prose was wrong because the refuting data had not
 been collected. Also sibling of "A property that holds 'by construction' holds
 for the COMPONENT": both are scope errors, one about composition, this one
 about which variable the measurement was actually of.
+
+## Complete invalidation coverage is not evidence a cache is race-free (task-15471, 2026-08-14)
+
+The starred-conversations cache added in task-15471 had provably complete invalidation
+coverage — every writer went through `set_mark`/`clear_mark` on the one app-owned service
+instance, and the suites were green. The review's interleaving probe still found it serving
+stale data in **103 of 300 naturally-scheduled rounds**: a cache-missing reader held its rows
+across the transaction COMMIT (a GIL-releasing sqlite call) and stored them AFTER a concurrent
+writer had invalidated — so the "invalidated" cache got repopulated with the pre-write
+snapshot and stayed wrong until the next write. Two lessons with teeth:
+
+- **Auditing who invalidates answers the wrong question.** The bug was populate-after-
+  invalidate *ordering*, which no amount of invalidation-coverage evidence touches. The fix
+  shape is a generation counter captured under the lock before the read and compared before
+  the store (store only if unchanged); a lost race then costs one skipped store, never a
+  stale entry.
+- **Only a dedicated interleaving probe surfaced it.** Unit suites exercise reader and writer
+  on one thread; the deterministic repro needed a reader paused at commit-exit while a writer
+  ran, and the natural repro needed a tight cross-thread hammer. When a change introduces a
+  read-cache whose writers live on other threads, a probe of this shape is part of the
+  evidence bar — green functional tests alone said this cache was fine.
