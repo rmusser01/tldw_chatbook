@@ -2413,5 +2413,3 @@ def test_models_rail_lists_surviving_destinations_without_a_downloader() -> None
     models_section = dict(MODELS_RAIL_SECTIONS)["Models"]
     keys = [key for key, _label in models_section]
     assert keys == ["curated", "installed", "external", "remote"]
-    assert "local-models" not in keys
-    assert "download-models" not in keys

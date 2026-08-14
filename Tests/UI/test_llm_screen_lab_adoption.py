@@ -54,11 +54,9 @@ async def _models_screen(pilot_app):
 def _app():
     """Build the test app.
 
-    No CSS bundle: every assertion here is behavioural (class membership,
-    reactive values, chip text), not rendered styling. Rail-row styling is
-    asserted in test_lab_workbench.py against a class-level CSS_PATH -- a
-    post-construction `app.CSS_PATH = ...` would silently do nothing, since
-    App.__init__ reads CSS_PATH once at construction.
+    ``_build_test_app`` constructs the real ``TldwCli``, so its class-level
+    ``CSS_PATH`` is loaded during ``App.__init__`` and the production bundle
+    applies to mounted compositor assertions.
     """
     return _build_test_app()
 
