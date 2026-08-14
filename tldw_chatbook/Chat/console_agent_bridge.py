@@ -1711,19 +1711,39 @@ class _StreamingModelAdapter:
         if native_calls:
             message["tool_calls"] = native_calls
         response: dict[str, Any] = {"choices": [{"message": message}]}
-        usage_payload = (
-            terminal_metadata.usage if terminal_metadata is not None else None
-        )
-        usage = _openai_usage_from_provider_call(
-            usage_payload,
-            provider=self._resolution.provider,
-            model=self._resolution.model or model or "",
-        )
-        if usage is None and call_signals is not None:
+        # Design decision (TASK-16270): usage accounting is pure
+        # observability. By the time this block runs, the provider turn has
+        # already streamed and completed successfully — a failure HERE is
+        # bookkeeping failing, not the model call failing, so it must never
+        # convert the finished turn into an error outcome (PR #1612 hoisted
+        # this accounting out of the signals-only guard, which made an
+        # accounting crash fatal to an otherwise-successful run). A genuine
+        # provider failure still classifies as an error: it raises from the
+        # streaming/consume path above, OUTSIDE this wrap. On failure the
+        # turn completes with the usage simply missing, and the cause is
+        # logged.
+        usage: dict[str, Any] | None = None
+        try:
+            usage_payload = (
+                terminal_metadata.usage if terminal_metadata is not None else None
+            )
             usage = _openai_usage_from_provider_call(
-                call_signals.usage_snapshot(),
+                usage_payload,
                 provider=self._resolution.provider,
                 model=self._resolution.model or model or "",
+            )
+            if usage is None and call_signals is not None:
+                usage = _openai_usage_from_provider_call(
+                    call_signals.usage_snapshot(),
+                    provider=self._resolution.provider,
+                    model=self._resolution.model or model or "",
+                )
+        except Exception as exc:  # noqa: BLE001 — observability is never fatal
+            usage = None
+            logger.opt(exception=True).warning(
+                "usage accounting failed after a successful provider turn; "
+                "completing the turn without usage: {!r}",
+                exc,
             )
         if usage is not None:
             response["usage"] = usage
