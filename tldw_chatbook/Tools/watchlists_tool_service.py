@@ -20,7 +20,10 @@ from tldw_chatbook.DB.Subscriptions_DB import (
     SubscriptionsDBReadError,
     SubscriptionsDBUnavailableError,
 )
-from tldw_chatbook.Subscriptions.html_text import readable_body_text
+from tldw_chatbook.Subscriptions.html_text import (
+    readable_body_text,
+    strip_control_characters,
+)
 
 _SEARCH_KEYS = frozenset(
     {"query", "collection", "source", "statuses", "since", "limit", "cursor"}
@@ -829,7 +832,7 @@ class WatchlistsToolService:
     def _bounded_text(value: object, maximum_bytes: int) -> tuple[str | None, bool]:
         if value is None:
             return None, False
-        text = str(value)
+        text = strip_control_characters(value)
         if WatchlistsToolService._json_size(text) <= maximum_bytes:
             return text, False
         low = 0
@@ -928,8 +931,11 @@ class WatchlistsToolService:
         text: str, match_index: int, match_length: int
     ) -> tuple[str, bool]:
         maximum_chars = _MAX_SNIPPET_BYTES // 4
-        if WatchlistsToolService._json_size(text) <= _MAX_SNIPPET_BYTES:
-            return text, False
+        bounded, truncated = WatchlistsToolService._bounded_text(
+            text, _MAX_SNIPPET_BYTES
+        )
+        if not truncated:
+            return bounded or "", False
         half_window = max(1, (maximum_chars - match_length) // 2)
         start = max(0, match_index - half_window)
         end = min(len(text), match_index + match_length + half_window)
