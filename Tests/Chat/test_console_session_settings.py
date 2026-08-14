@@ -1528,6 +1528,11 @@ async def _request_settings_close(pilot, source: str) -> None:
 async def test_settings_memory_reset_close_sources_show_one_three_choice_guard(
     source: str,
 ) -> None:
+    """Show one three-choice reset guard for every close source.
+
+    Args:
+        source: Visible control, Escape key, or backdrop dismissal source.
+    """
     app = _SettingsCloseHarness()
     reset_calls = 0
 

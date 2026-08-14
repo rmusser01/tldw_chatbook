@@ -308,6 +308,14 @@ async def test_generic_capacity_dismissal_guards_real_staged_artifact(
     cancel_guard_with: str,
     expected_focus: str,
 ) -> None:
+    """Retain a staged artifact until discard is explicitly confirmed.
+
+    Args:
+        reason: Capacity outcome presented by the modal.
+        request_source: Escape or backdrop dismissal source.
+        cancel_guard_with: Action used to cancel the nested discard guard.
+        expected_focus: Control that must regain focus after cancellation.
+    """
     from Tests.UI.app_factory import _build_test_app
 
     class TrackingChatScreen(ChatScreen):
