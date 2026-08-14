@@ -20,6 +20,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportPreviewItem,
     NoteImportPlan,
     ParsedNotePayload,
+    RootCollisionState,
 )
 
 MAX_IMPORT_REASON_CODE_LENGTH = 64
@@ -221,6 +222,8 @@ def _validate_note_import_plan_for_approval(plan: object) -> NoteImportPlan:
     if type(plan) is not NoteImportPlan:
         raise ImportApprovalError("plan must be a NoteImportPlan.")
     collision = plan.root_collision
+    if collision is not None and type(collision) is not RootCollisionState:
+        raise ImportApprovalError("plan must contain a validated root collision state.")
     if collision is not None and collision.collides and collision.choice is None:
         raise ImportApprovalError(
             "Every colliding import root must be explicitly resolved before approval."
@@ -238,16 +241,22 @@ def _create_approved_note_import_plan(
         approval_id,
         approval_boundary=True,
     )
-    plan_digest = _private_plan_digest(validated_plan)
-    approved = object.__new__(ApprovedNoteImportPlan)
-    object.__setattr__(approved, "approval_id", validated_approval_id)
-    object.__setattr__(approved, "plan", validated_plan)
-    object.__setattr__(
-        approved,
-        "_ApprovedNoteImportPlan__plan_digest",
-        plan_digest,
-    )
-    return approved
+    try:
+        plan_digest = _private_plan_digest(validated_plan)
+        approved = object.__new__(ApprovedNoteImportPlan)
+        object.__setattr__(approved, "approval_id", validated_approval_id)
+        object.__setattr__(approved, "plan", validated_plan)
+        object.__setattr__(
+            approved,
+            "_ApprovedNoteImportPlan__plan_digest",
+            plan_digest,
+        )
+        return approved
+    except Exception:  # noqa: BLE001 - private canonicalization boundary
+        sanitized_error = ImportApprovalError(
+            "The import plan could not be validated safely for approval."
+        )
+    raise sanitized_error from None
 
 
 def approve_note_import_plan(
@@ -268,19 +277,11 @@ def approve_note_import_plan(
         ImportApprovalError: If the plan, approval identifier, or root collision
             is not safe to execute.
     """
-    try:
-        resolved_approval_id = str(uuid4()) if approval_id is None else approval_id
-        return _create_approved_note_import_plan(
-            plan,
-            resolved_approval_id,
-        )
-    except ImportApprovalError:
-        raise
-    except Exception:  # noqa: BLE001 - public privacy boundary sanitizes internals
-        sanitized_error = ImportApprovalError(
-            "The import plan could not be validated safely for approval."
-        )
-    raise sanitized_error from None
+    resolved_approval_id = str(uuid4()) if approval_id is None else approval_id
+    return _create_approved_note_import_plan(
+        plan,
+        resolved_approval_id,
+    )
 
 
 def _validate_reason_code(reason_code: object) -> str | None:
@@ -338,7 +339,7 @@ def _copy_private_collection(
     validator: Callable[[str], bool],
 ) -> tuple[str, ...]:
     """Copy and validate private values without disclosing them in errors."""
-    if isinstance(values, (str, bytes)):
+    if issubclass(type(values), (str, bytes)):
         raise TypeError("Private receipt data must be a collection.")
     copied: tuple[object, ...] | None
     try:

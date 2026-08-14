@@ -277,6 +277,53 @@ def test_approval_sanitizes_unexpected_private_plan_digest_failures() -> None:
     assert caught.value.__context__ is None
 
 
+def test_approval_sanitizes_import_approval_errors_from_digest_construction() -> None:
+    digest_origin_secret = "DIGEST_SECRET from raw ImportApprovalError"
+    concrete_path_type = type(Path("/"))
+
+    class HostileSourcePath(concrete_path_type):  # type: ignore[misc,valid-type]
+        def __str__(self) -> str:
+            raise ImportApprovalError(digest_origin_secret)
+
+    source_path = HostileSourcePath("/private/user/Project/hostile.json")
+    plan = _plan(item=_item(source_path=source_path))
+
+    with pytest.raises(ImportApprovalError, match="validated safely") as caught:
+        approve_note_import_plan(plan, approval_id=_APPROVAL_ID)
+
+    assert digest_origin_secret not in str(caught.value)
+    assert "raw ImportApprovalError" not in str(caught.value)
+    assert "/private/user" not in str(caught.value)
+    assert caught.value.__context__ is None
+
+
+def test_approval_rejects_a_hostile_collision_subclass_before_attribute_dispatch() -> (
+    None
+):
+    class HostileCollision(RootCollisionState):
+        __slots__ = ("_hostile",)
+
+        def __getattribute__(self, name: str) -> object:
+            if name == "collides":
+                try:
+                    hostile = object.__getattribute__(self, "_hostile")
+                except AttributeError:
+                    hostile = False
+                if hostile:
+                    raise RuntimeError(_HOSTILE_TEXT_SECRET)
+            return super().__getattribute__(name)
+
+    collision = HostileCollision(proposed_label="Project", collides=False)
+    object.__setattr__(collision, "_hostile", True)
+    plan = _plan(root_collision=collision)
+
+    with pytest.raises(ImportApprovalError, match="collision state") as caught:
+        approve_note_import_plan(plan, approval_id=_APPROVAL_ID)
+
+    assert _HOSTILE_TEXT_SECRET not in str(caught.value)
+    assert caught.value.__context__ is None
+
+
 def test_plan_digest_is_deterministic_for_the_same_authority() -> None:
     first = approve_note_import_plan(_plan(), approval_id=_APPROVAL_ID)
     second = approve_note_import_plan(_plan(), approval_id=_APPROVAL_ID)
@@ -462,6 +509,23 @@ def test_private_collection_iterator_errors_are_sanitized() -> None:
 
     assert _SECRET_BODY not in str(caught.value)
     assert "_note_ids" not in str(caught.value)
+
+
+def test_private_collection_type_dispatch_and_iterator_errors_are_sanitized() -> None:
+    class HostilePrivateValues:
+        @property
+        def __class__(self) -> type[object]:
+            raise RuntimeError(_HOSTILE_TEXT_SECRET)
+
+        def __iter__(self) -> object:
+            raise RuntimeError(_HOSTILE_TEXT_SECRET)
+
+    with pytest.raises(ValueError, match="private collection") as caught:
+        _receipt(_note_ids=HostilePrivateValues())
+
+    assert _HOSTILE_TEXT_SECRET not in str(caught.value)
+    assert "_note_ids" not in str(caught.value)
+    assert caught.value.__context__ is None
 
 
 def test_private_receipt_ids_require_exact_builtin_strings() -> None:
