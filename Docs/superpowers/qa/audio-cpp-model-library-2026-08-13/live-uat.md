@@ -84,9 +84,13 @@ Date: 2026-08-14
 ## Release gate
 
 UAT is **PARTIAL**. The clean isolated Guided return and Save now pass. Do not
-mark TASK-13207 Done until a later user-owned run either supplies advanced
-`server.json` options with explicit eSpeak library and data locations or uses a
-truly path-free Guided package, produces a human-audible sample, and the
-17-file matrix receives a fresh unrestricted all-green run. The current evidence
-must not be read as a prerequisite-complete compatibility test, audible
-generation success, or a host-matrix pass.
+mark TASK-13207 Done. A later user-owned advanced `server.json` run with explicit
+eSpeak library and data locations may diagnose Inflect and provide compatibility
+evidence for criterion #1, but it does not exercise the returned Guided
+package/configuration path and cannot close criterion #7. Criterion #7 requires
+a truly path-free Guided package to complete install → exact-root return → Save
+→ sample generation, unless explicit-path support is deliberately admitted to
+Guided scope in a separate change. The 17-file matrix also requires a fresh
+unrestricted all-green run. The current evidence must not be read as a
+prerequisite-complete compatibility test, audible generation success, or a
+host-matrix pass.

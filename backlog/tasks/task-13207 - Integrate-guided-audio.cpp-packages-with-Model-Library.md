@@ -88,8 +88,13 @@ Executable TDD plan: Docs/superpowers/plans/2026-08-13-audio-cpp-model-library-i
   validated. The retained safe output did not identify the server diagnostic
   cause; loader failure remains a possibility, not a compatibility conclusion.
   This was not a prerequisite-complete compatibility test, and audible playback
-  is not claimed. The release gate remains a later user-owned run with explicit
-  advanced eSpeak library/data options or a truly path-free Guided package.
+  is not claimed. A later user-owned advanced run with explicit eSpeak
+  library/data options may diagnose Inflect and provide criterion #1
+  compatibility evidence, but it cannot close criterion #7 because it bypasses
+  the returned Guided package/configuration path. Criterion #7 requires a truly
+  path-free Guided package to complete install → exact-root return → Save →
+  sample generation, unless explicit-path support is deliberately admitted to
+  Guided scope in a separate change.
 - Corrected the asynchronous UI tests to wait for the exact mounted/composed
   controls they exercise. Deterministic CSS verification now rebuilds to a
   temporary file and ignores only the generated timestamp rather than invoking
@@ -99,6 +104,6 @@ Executable TDD plan: Docs/superpowers/plans/2026-08-13-audio-cpp-model-library-i
   start by the runner approval-usage limit, so no fresh host all-green total is
   claimed.
 - Criteria #2–#6 and #8 have fresh automated and live evidence. Status remains
-  **In Progress**; criteria #1 and #7 remain unchecked until the exact
-  compatibility/audible-generation release gate is satisfied.
+  **In Progress**; criteria #1 and #7 remain unchecked under the distinct
+  compatibility and Guided generation gates above.
 <!-- SECTION:NOTES:END -->
