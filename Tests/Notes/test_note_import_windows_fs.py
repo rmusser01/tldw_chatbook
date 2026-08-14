@@ -56,6 +56,7 @@ class FakeWindowsFilesystem:
         self.fail_open_file = False
         self.scandir_exception: BaseException | None = None
         self.read_exception: BaseException | None = None
+        self.handle_stat_overrides: dict[str, dict[str, int]] = {}
         self.open_error = False
         self.fstat_identity_mismatch = False
         self.before_open: Callable[[Path], None] | None = None
@@ -69,6 +70,9 @@ class FakeWindowsFilesystem:
 
     def mark_reparse(self, path: Path) -> None:
         self.reparse_paths.add(self._key(path))
+
+    def override_handle_stat(self, path: Path, **fields: int) -> None:
+        self.handle_stat_overrides[self._key(path)] = fields
 
     def _directory_chain(self, path: Path, *, include_leaf: bool) -> tuple[Path, ...]:
         absolute = self.absolute(path)
@@ -165,17 +169,23 @@ class FakeWindowsFilesystem:
 
     def fstat(self, descriptor: int) -> os.stat_result | SimpleNamespace:
         if descriptor in self.live_pins:
-            return self.lstat(self.live_pins[descriptor])
-        metadata = os.fstat(descriptor)
-        if not self.fstat_identity_mismatch:
+            path = self.live_pins[descriptor]
+            metadata = self.lstat(path)
+        else:
+            path = self.open_file_paths[descriptor]
+            metadata = os.fstat(descriptor)
+        overrides = dict(self.handle_stat_overrides.get(self._key(path), {}))
+        if self.fstat_identity_mismatch:
+            overrides["st_ino"] = metadata.st_ino + 1
+        if not overrides:
             return metadata
         return SimpleNamespace(
-            st_dev=metadata.st_dev,
-            st_ino=metadata.st_ino + 1,
-            st_mode=metadata.st_mode,
-            st_size=metadata.st_size,
-            st_mtime_ns=metadata.st_mtime_ns,
-            st_ctime_ns=metadata.st_ctime_ns,
+            st_dev=overrides.get("st_dev", metadata.st_dev),
+            st_ino=overrides.get("st_ino", metadata.st_ino),
+            st_mode=overrides.get("st_mode", metadata.st_mode),
+            st_size=overrides.get("st_size", metadata.st_size),
+            st_mtime_ns=overrides.get("st_mtime_ns", metadata.st_mtime_ns),
+            st_ctime_ns=overrides.get("st_ctime_ns", metadata.st_ctime_ns),
         )
 
     def read(self, descriptor: int, count: int) -> bytes:
@@ -327,6 +337,129 @@ def test_windows_adapter_keeps_all_ancestor_pins_live_for_scan_and_read(
     assert filesystem.pin_calls > 0
     assert filesystem.live_pins == {}
     assert len(filesystem.closed_pins) == filesystem.pin_calls
+
+
+@pytest.mark.parametrize("selection_kind", ["file", "root", "nested_directory"])
+def test_windows_adapter_accepts_path_handle_changed_ns_difference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    selection_kind: str,
+) -> None:
+    root = tmp_path / "Project"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+    source = nested / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    selected = source if selection_kind == "file" else root
+    overridden = {
+        "file": source,
+        "root": root,
+        "nested_directory": nested,
+    }[selection_kind]
+    metadata = os.lstat(overridden)
+    filesystem = FakeWindowsFilesystem()
+    filesystem.override_handle_stat(
+        overridden,
+        st_ctime_ns=metadata.st_ctime_ns + 1,
+    )
+    _force_windows_adapter(monkeypatch, filesystem)
+
+    discovery = discover_import_sources([selected], _bounds())
+    contents = tuple(
+        read_discovered_source(candidate, _bounds())
+        for candidate in discovery.candidates
+    )
+
+    assert contents == (b"Body",)
+
+
+def test_windows_adapter_rejects_changed_ns_mutation_between_handle_stats(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    metadata = os.lstat(source)
+    filesystem = FakeWindowsFilesystem()
+    filesystem.override_handle_stat(
+        source,
+        st_ctime_ns=metadata.st_ctime_ns + 1,
+    )
+    _force_windows_adapter(monkeypatch, filesystem)
+    discovery = discover_import_sources([source], _bounds())
+
+    filesystem.after_first_read = lambda: filesystem.override_handle_stat(
+        source,
+        st_ctime_ns=metadata.st_ctime_ns + 2,
+    )
+
+    with pytest.raises(VerifiedSourceReadError) as raised:
+        read_discovered_source(discovery.candidates[0], _bounds())
+
+    assert raised.value.reason_code == "source_changed"
+    assert filesystem.read_calls >= 1
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["st_dev", "st_ino", "type", "st_mode", "st_size", "st_mtime_ns"],
+)
+@pytest.mark.parametrize("check_phase", ["selected_root", "reread_file"])
+def test_windows_adapter_rejects_stable_path_handle_identity_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    check_phase: str,
+) -> None:
+    root = tmp_path / "Project"
+    root.mkdir()
+    source = root / "note.md"
+    source.write_text("Body", encoding="utf-8")
+    target = root if check_phase == "selected_root" else source
+    metadata = os.lstat(target)
+    if field == "type":
+        mismatched = stat.S_IFREG if stat.S_ISDIR(metadata.st_mode) else stat.S_IFDIR
+        override = {"st_mode": mismatched | stat.S_IMODE(metadata.st_mode)}
+    elif field == "st_mode":
+        override = {field: metadata.st_mode ^ stat.S_IXUSR}
+    else:
+        override = {field: getattr(metadata, field) + 1}
+    filesystem = FakeWindowsFilesystem()
+    _force_windows_adapter(monkeypatch, filesystem)
+
+    if check_phase == "selected_root":
+        filesystem.override_handle_stat(target, **override)
+        with pytest.raises(ImportSelectionError) as raised:
+            discover_import_sources([root], _bounds())
+        assert raised.value.reason_code == "selection_changed"
+    else:
+        discovery = discover_import_sources([source], _bounds())
+        filesystem.override_handle_stat(target, **override)
+        with pytest.raises(VerifiedSourceReadError) as raised:
+            read_discovered_source(discovery.candidates[0], _bounds())
+        assert raised.value.reason_code == "source_changed"
+        assert filesystem.read_calls == 0
+
+
+def test_windows_adapter_rejects_nested_directory_path_handle_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "Project"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+    (nested / "note.md").write_text("Body", encoding="utf-8")
+    metadata = os.lstat(nested)
+    filesystem = FakeWindowsFilesystem()
+    filesystem.override_handle_stat(nested, st_ino=metadata.st_ino + 1)
+    _force_windows_adapter(monkeypatch, filesystem)
+
+    discovery = discover_import_sources([root], _bounds())
+
+    assert discovery.candidates == ()
+    assert tuple(failure.reason_code for failure in discovery.failures) == (
+        "nested_unavailable",
+    )
 
 
 def test_windows_adapter_closes_partial_directory_pins_on_failure(

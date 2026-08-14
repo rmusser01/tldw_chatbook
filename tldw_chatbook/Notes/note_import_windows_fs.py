@@ -356,7 +356,7 @@ def read_discovered_source(
             filesystem,
         ):
             before_open = filesystem.lstat(path)
-            if not _file_identity_matches(candidate.identity, before_open):
+            if not _strict_file_identity_matches(candidate.identity, before_open):
                 raise VerifiedSourceReadError("source_changed")
 
             descriptor: int | None = None
@@ -365,8 +365,12 @@ def read_discovered_source(
                 descriptor = filesystem.open_file_no_reparse(path)
                 filesystem.set_inheritable(descriptor, False)
                 opened_metadata = filesystem.fstat(descriptor)
-                if not _file_identity_matches(candidate.identity, opened_metadata):
+                if not _path_file_identity_matches_handle(
+                    candidate.identity,
+                    opened_metadata,
+                ):
                     raise VerifiedSourceReadError("source_changed")
+                opened_identity = _identity_from_stat(opened_metadata)
 
                 while True:
                     chunk = filesystem.read(
@@ -388,8 +392,14 @@ def read_discovered_source(
                 )
                 if (
                     len(content) != candidate.size_bytes
-                    or not _file_identity_matches(candidate.identity, after_read)
-                    or not _file_identity_matches(candidate.identity, after_path)
+                    or not _strict_file_identity_matches(
+                        opened_identity,
+                        after_read,
+                    )
+                    or not _strict_file_identity_matches(
+                        candidate.identity,
+                        after_path,
+                    )
                 ):
                     raise VerifiedSourceReadError("source_changed")
             finally:
@@ -425,17 +435,26 @@ def _inspect_selected_path(
         for component in (None, *components[:-1]):
             if component is not None:
                 current_path /= component
+            path_metadata = filesystem.lstat(current_path)
+            if _is_reparse(path_metadata):
+                _reject(bounds, "selected_symlink")
+            if not stat.S_ISDIR(path_metadata.st_mode):
+                _reject(bounds, "selection_not_regular")
             pin = filesystem.pin_directory_no_reparse(current_path)
             directory_pins.append(pin)
-            metadata = filesystem.fstat(pin)
-            if _is_reparse(metadata):
+            handle_metadata = filesystem.fstat(pin)
+            if _is_reparse(handle_metadata):
                 _reject(bounds, "selected_symlink")
-            if not stat.S_ISDIR(metadata.st_mode):
-                _reject(bounds, "selection_not_regular")
-            parent_identities.append(_identity_from_stat(metadata))
+            path_identity = _identity_from_stat(path_metadata)
+            if not _path_directory_identity_matches_handle(
+                path_identity,
+                handle_metadata,
+            ):
+                _reject(bounds, "selection_changed")
+            parent_identities.append(path_identity)
 
         if not components:
-            metadata = filesystem.fstat(directory_pins[-1])
+            metadata = path_metadata
             parent_identities.pop()
         else:
             leaf_path = current_path / components[-1]
@@ -450,11 +469,14 @@ def _inspect_selected_path(
                 opened_metadata = filesystem.fstat(leaf_descriptor)
                 if _is_reparse(opened_metadata):
                     _reject(bounds, "selected_symlink")
-                if _identity_from_stat(metadata) != _identity_from_stat(
-                    opened_metadata
-                ):
+                path_identity = _identity_from_stat(metadata)
+                matches_handle = (
+                    _path_directory_identity_matches_handle
+                    if stat.S_ISDIR(metadata.st_mode)
+                    else _path_file_identity_matches_handle
+                )
+                if not matches_handle(path_identity, opened_metadata):
                     _reject(bounds, "selection_changed")
-                metadata = opened_metadata
         if _is_reparse(metadata):
             _reject(bounds, "selected_symlink")
         result = _SelectedPath(
@@ -737,7 +759,7 @@ def _pinned_directory_chain(
         for index, expected_identity in enumerate(expected_identities):
             descriptor = filesystem.pin_directory_no_reparse(current_path)
             descriptors.append(descriptor)
-            if not _directory_identity_matches(
+            if not _path_directory_identity_matches_handle(
                 expected_identity,
                 filesystem.fstat(descriptor),
             ):
@@ -777,7 +799,7 @@ def _require_directory_chain(
         raise _DirectoryChanged
     current_path = anchor
     for index, expected_identity in enumerate(expected_identities):
-        if not _directory_identity_matches(
+        if not _strict_directory_identity_matches(
             expected_identity,
             filesystem.lstat(current_path),
         ):
@@ -797,7 +819,10 @@ def _identity_from_stat(metadata: Any) -> SourceIdentity:
     )
 
 
-def _directory_identity_matches(identity: SourceIdentity, metadata: Any) -> bool:
+def _strict_directory_identity_matches(
+    identity: SourceIdentity,
+    metadata: Any,
+) -> bool:
     return (
         stat.S_ISDIR(metadata.st_mode)
         and not _is_reparse(metadata)
@@ -805,11 +830,51 @@ def _directory_identity_matches(identity: SourceIdentity, metadata: Any) -> bool
     )
 
 
-def _file_identity_matches(identity: SourceIdentity, metadata: Any) -> bool:
+def _strict_file_identity_matches(identity: SourceIdentity, metadata: Any) -> bool:
     return (
         stat.S_ISREG(metadata.st_mode)
         and not _is_reparse(metadata)
         and identity == _identity_from_stat(metadata)
+    )
+
+
+def _path_directory_identity_matches_handle(
+    path_identity: SourceIdentity,
+    handle_metadata: Any,
+) -> bool:
+    """Match a pathname directory identity to its opened Windows handle."""
+    return (
+        stat.S_ISDIR(path_identity.mode)
+        and stat.S_ISDIR(handle_metadata.st_mode)
+        and not _is_reparse(handle_metadata)
+        and _stable_path_handle_identity_matches(path_identity, handle_metadata)
+    )
+
+
+def _path_file_identity_matches_handle(
+    path_identity: SourceIdentity,
+    handle_metadata: Any,
+) -> bool:
+    """Match a pathname file identity to its opened Windows handle."""
+    return (
+        stat.S_ISREG(path_identity.mode)
+        and stat.S_ISREG(handle_metadata.st_mode)
+        and not _is_reparse(handle_metadata)
+        and _stable_path_handle_identity_matches(path_identity, handle_metadata)
+    )
+
+
+def _stable_path_handle_identity_matches(
+    path_identity: SourceIdentity,
+    handle_metadata: Any,
+) -> bool:
+    """Compare shared fields; Windows pathname ctime is creation time."""
+    return (
+        path_identity.device == handle_metadata.st_dev
+        and path_identity.inode == handle_metadata.st_ino
+        and path_identity.mode == handle_metadata.st_mode
+        and path_identity.size == handle_metadata.st_size
+        and path_identity.modified_ns == handle_metadata.st_mtime_ns
     )
 
 
