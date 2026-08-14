@@ -932,38 +932,43 @@ def _walk_modal_launch_graph(
     while frontier:
         owner = frontier.pop()
         edge = edges_by_owner.get(owner)
-        if edge is None:
-            assert inspect.isclass(owner) and issubclass(owner, Screen)
-            source_paths = source_paths_by_owner.get(owner)
-            if source_paths is None:
+        actual: set[type[ModalScreen[Any]]] = set()
+        if inspect.isclass(owner) and issubclass(owner, Screen):
+            defining_paths = source_paths_by_owner.get(owner)
+            if defining_paths is None:
                 source_file = inspect.getsourcefile(owner)
                 assert source_file is not None
-                source_paths = (str(Path(source_file).relative_to(_REPO_ROOT)),)
-            declared: tuple[type[Screen[Any]], ...] = ()
-            included_functions = None
-            included_classes = {owner.__name__}
-        else:
-            source_paths = edge.source_paths
-            declared = edge.launched
-            included_functions = (
-                set(edge.source_functions) if edge.source_functions else None
+                defining_paths = (str(Path(source_file).relative_to(_REPO_ROOT)),)
+            actual.update(
+                _constructed_modal_types(
+                    defining_paths,
+                    source_overrides=source_overrides,
+                    included_classes={owner.__name__},
+                )
             )
-            included_classes = None
 
-        nested_functions = {
-            function
-            for other_edge in edges
-            if other_edge is not edge
-            and set(other_edge.source_paths) & set(source_paths)
-            for function in (other_edge.source_functions or ())
-        }
-        actual = _constructed_modal_types(
-            source_paths,
-            source_overrides=source_overrides,
-            included_functions=included_functions,
-            included_classes=included_classes,
-            excluded_functions=nested_functions,
-        )
+        if edge is None:
+            assert inspect.isclass(owner) and issubclass(owner, Screen)
+            declared: tuple[type[Screen[Any]], ...] = ()
+        else:
+            declared = edge.launched
+            nested_functions = {
+                function
+                for other_edge in edges
+                if other_edge is not edge
+                and set(other_edge.source_paths) & set(edge.source_paths)
+                for function in (other_edge.source_functions or ())
+            }
+            actual.update(
+                _constructed_modal_types(
+                    edge.source_paths,
+                    source_overrides=source_overrides,
+                    included_functions=(
+                        set(edge.source_functions) if edge.source_functions else None
+                    ),
+                    excluded_functions=nested_functions,
+                )
+            )
         expected = {
             launched
             for launched in declared
@@ -1042,6 +1047,10 @@ class _SyntheticRowlessOwner(Screen[None]):
     pass
 
 
+class _SyntheticDeclaredOwner(Screen[None]):
+    pass
+
+
 def test_launch_inventory_scans_reachable_owners_without_declared_rows() -> None:
     root_path = "synthetic_root.py"
     rowless_path = "synthetic_rowless_owner.py"
@@ -1068,6 +1077,45 @@ class _SyntheticRowlessOwner:
             edges,
             source_overrides=sources,
             owner_source_paths={_SyntheticRowlessOwner: (rowless_path,)},
+        )
+
+
+def test_launch_inventory_unions_declared_helpers_with_owner_class_body() -> None:
+    root_path = "synthetic_declared_root.py"
+    helper_path = "synthetic_declared_helper.py"
+    owner_path = "synthetic_declared_owner.py"
+    edges = (
+        _ModalLaunchEdge(
+            "SyntheticRoot",
+            (_SyntheticDeclaredOwner,),
+            (root_path,),
+        ),
+        _ModalLaunchEdge(
+            _SyntheticDeclaredOwner,
+            (ConsoleCostModal,),
+            (helper_path,),
+        ),
+    )
+    sources = {
+        root_path: "",
+        helper_path: """
+from tldw_chatbook.Widgets.Console.console_cost_modal import ConsoleCostModal as Expected
+Expected([], None)
+""",
+        owner_path: """
+class _SyntheticDeclaredOwner:
+    def launch_nested(self):
+        from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal as Extra
+        Extra(run_id='extra', log_text='extra')
+""",
+    }
+
+    with pytest.raises(AssertionError, match="ConsoleRunLogModal"):
+        _walk_modal_launch_graph(
+            "SyntheticRoot",
+            edges,
+            source_overrides=sources,
+            owner_source_paths={_SyntheticDeclaredOwner: (owner_path,)},
         )
 
 

@@ -757,8 +757,14 @@ Check all acceptance criteria, add concise Implementation Notes with the exact r
   screen, treating owners without a declared edge as an explicit zero-launch
   contract. A synthetic reachable rowless owner constructing an aliased nested
   modal proved the inventory fails instead of silently skipping it.
+- Every reachable screen's class-scoped defining-body scan is now unioned with
+  its explicit helper/controller source scans before exact comparison. A
+  synthetic owner with a valid declared helper edge and an undeclared aliased
+  modal in its own class body produced RED before the union and GREEN after it;
+  set union prevents duplicate constructors from changing the result.
 - Cumulative-review verification stayed bounded to the owned high-risk files:
-  17 focused correction tests and the complete two-file matrix of 216 tests
+  the final correction set passed 18 tests and the complete two-file matrix of
+  217 tests
   passed. Ruff check/format, compileall, and `git diff --check` passed; targeted
   MyPy retained only the same two untouched baseline diagnostics.
 
