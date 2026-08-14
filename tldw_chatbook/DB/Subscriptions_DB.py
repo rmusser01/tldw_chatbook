@@ -107,6 +107,13 @@ class RateLimitError(SubscriptionError):
     pass
 
 
+class SubscriptionsDBUnavailableError(SubscriptionError):
+    """Fixed failure for an unavailable agent-readable Watchlists database."""
+
+    def __init__(self) -> None:
+        super().__init__("Watchlists database is unavailable")
+
+
 # --- Database Class ---
 #: The one definition of `site_configs`. Applied by
 #: `SubscriptionsDB._initialize_schema`, which owns the table, and by
@@ -180,16 +187,70 @@ class SubscriptionsDB(BaseDB):
 
     _CURRENT_SCHEMA_VERSION = 1
 
-    def __init__(self, db_path: Union[str, Path], client_id: str = "default"):
+    _AGENT_READ_REQUIRED_COLUMNS = {
+        "subscriptions": frozenset(
+            {
+                "id",
+                "name",
+                "type",
+                "source",
+                "is_active",
+                "is_paused",
+                "last_checked",
+                "last_successful_check",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        "subscription_items": frozenset(
+            {
+                "id",
+                "subscription_id",
+                "url",
+                "title",
+                "content",
+                "published_date",
+                "author",
+                "status",
+                "diff_summary",
+                "change_percentage",
+                "change_type",
+                "canonical_url",
+                "created_at",
+                "updated_at",
+                "content_format",
+                "content_kind",
+                "effective_date",
+            }
+        ),
+        "watchlists": frozenset({"id", "name"}),
+        "watchlist_sources": frozenset({"watchlist_id", "subscription_id"}),
+    }
+
+    def __init__(
+        self,
+        db_path: Union[str, Path],
+        client_id: str = "default",
+        *,
+        read_only: bool = False,
+    ):
         """
         Initialize the Subscriptions database.
 
         Args:
             db_path: Path to the SQLite database file or ':memory:'
             client_id: Client identifier for multi-client support
+            read_only: Open an existing database without initializing schema
         """
         self._local = threading.local()
-        super().__init__(db_path, client_id)
+        self._read_only = read_only
+        super().__init__(db_path, client_id, initialize_schema=not read_only)
+        if read_only:
+            try:
+                self.conn
+            except Exception:
+                self.close()
+                raise SubscriptionsDBUnavailableError() from None
 
     def _get_connection(self) -> sqlite3.Connection:
         """Return a connection with foreign-key enforcement enabled.
@@ -201,6 +262,22 @@ class SubscriptionsDB(BaseDB):
         deleted. Matches ``ChaChaNotes_DB`` and ``Client_Media_DB_v2``, which
         each enable it per connection.
         """
+        if self._read_only:
+            conn = connect_private_sqlite(
+                "db.subscriptions.agent_read",
+                self.db_path_str,
+                read_only=True,
+                must_exist=True,
+            )
+            conn.row_factory = sqlite3.Row
+            try:
+                conn.execute("PRAGMA foreign_keys = ON;")
+                conn.execute("PRAGMA query_only = ON;")
+            except Exception:
+                conn.close()
+                raise
+            return conn
+
         conn = super()._get_connection()
         conn.execute("PRAGMA foreign_keys = ON;")
         if not self.is_memory_db:
@@ -214,6 +291,31 @@ class SubscriptionsDB(BaseDB):
         # so every connection this DB opens needs it, not just the first.
         conn.execute("PRAGMA synchronous = NORMAL;")
         return conn
+
+    def assert_agent_read_ready(self) -> None:
+        """Require the exact core schema used by Watchlists agent reads.
+
+        FTS tables are deliberately not part of readiness. Search checks FTS
+        coverage separately and falls back to literal ``LIKE`` when the index
+        is absent or incomplete.
+
+        Raises:
+            SubscriptionsDBUnavailableError: If a required table or column is
+                unavailable. The fixed message contains no SQL, path, or
+                stored value.
+        """
+        try:
+            conn = self.conn
+            for table, required_columns in self._AGENT_READ_REQUIRED_COLUMNS.items():
+                columns = {
+                    row[1] for row in conn.execute(f"PRAGMA table_xinfo({table})")
+                }
+                if not required_columns <= columns:
+                    raise SubscriptionsDBUnavailableError()
+        except SubscriptionsDBUnavailableError:
+            raise
+        except Exception:
+            raise SubscriptionsDBUnavailableError() from None
 
     def _initialize_schema(self):
         """Initialize the database schema.
