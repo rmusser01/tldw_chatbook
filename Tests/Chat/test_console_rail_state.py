@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+import pytest
+
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleInspectorState,
     ConsoleStagedContextState,
@@ -14,7 +16,10 @@ from tldw_chatbook.Chat.console_rail_state import (
     build_console_rail_preference_key,
     build_console_rail_state,
     coerce_console_rail_preferences,
+    console_context_reveal_preferences,
     console_rail_left_open_explicit,
+    console_rail_width_band,
+    resolve_console_rail_priority,
     serialize_console_rail_preferences,
 )
 
@@ -665,27 +670,91 @@ def test_console_rail_left_open_explicit_marker_helper():
     assert console_rail_left_open_explicit("bad") is False
     assert console_rail_left_open_explicit({}) is False
     assert console_rail_left_open_explicit({"left_open": True}) is False
-    assert (
-        console_rail_left_open_explicit({"left_open_explicit": True}) is True
-    )
-    assert (
-        console_rail_left_open_explicit({"left_open_explicit": "true"}) is True
-    )
-    assert (
-        console_rail_left_open_explicit({"left_open_explicit": 0}) is False
-    )
+    assert console_rail_left_open_explicit({"left_open_explicit": True}) is True
+    assert console_rail_left_open_explicit({"left_open_explicit": "true"}) is True
+    assert console_rail_left_open_explicit({"left_open_explicit": 0}) is False
 
 
-def test_console_rail_width_band_buckets():
-    from tldw_chatbook.Chat.console_rail_state import console_rail_width_band
+@pytest.mark.parametrize(
+    ("width", "expected_left", "expected_right", "expected_override"),
+    [
+        (99, True, True, True),
+        (100, False, True, True),
+        (149, False, True, True),
+        (150, True, True, False),
+    ],
+)
+def test_console_rail_priority_resolves_two_open_rails(
+    width: int,
+    expected_left: bool,
+    expected_right: bool,
+    expected_override: bool,
+):
+    key = build_console_rail_preference_key(workspace_id="workspace-1")
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={
+            "left_open": True,
+            "left_open_explicit": True,
+            "right_open": True,
+        },
+        available_columns=width,
+    )
 
-    assert console_rail_width_band(None) == "standard"
-    assert console_rail_width_band(60) == "single-pane"
-    assert console_rail_width_band(83) == "single-pane"
-    assert console_rail_width_band(84) == "narrow"
-    assert console_rail_width_band(99) == "narrow"
-    assert console_rail_width_band(100) == "standard"
-    assert console_rail_width_band(160) == "standard"
+    resolved = resolve_console_rail_priority(state, width)
+
+    assert resolved.left_open is expected_left
+    assert resolved.right_open is expected_right
+    assert resolved.preferred_left_open is True
+    assert resolved.right_compact_override is expected_override
+    assert resolved.compact_override is expected_override
+
+
+@pytest.mark.parametrize(
+    ("width", "right_open", "expected"),
+    [
+        (99, True, {"left_open": True}),
+        (100, True, {"left_open": True, "right_open": False}),
+        (149, True, {"left_open": True, "right_open": False}),
+        (150, True, {"left_open": True}),
+        (120, False, {"left_open": True}),
+    ],
+)
+def test_console_context_reveal_preferences_switches_from_effective_inspector(
+    width: int,
+    right_open: bool,
+    expected: dict[str, bool],
+):
+    key = build_console_rail_preference_key(workspace_id="workspace-1")
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"left_open": False, "right_open": right_open},
+        available_columns=width,
+    )
+
+    assert console_context_reveal_preferences(state, width) == expected
+
+
+@pytest.mark.parametrize(
+    ("width", "expected"),
+    [
+        (None, "standard"),
+        (60, "single-pane"),
+        (83, "single-pane"),
+        (84, "narrow"),
+        (99, "narrow"),
+        (100, "compact-before-auto-open"),
+        (117, "compact-before-auto-open"),
+        (118, "compact-auto-open"),
+        (128, "compact-auto-open"),
+        (129, "compact-after-auto-open"),
+        (149, "compact-after-auto-open"),
+        (150, "standard"),
+        (160, "standard"),
+    ],
+)
+def test_console_rail_width_band_buckets(width: int | None, expected: str):
+    assert console_rail_width_band(width) == expected
 
 
 def test_console_rail_state_wide_default_layout_unchanged():

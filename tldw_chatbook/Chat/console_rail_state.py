@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 from typing import Any
 
@@ -305,12 +305,8 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
         left_open=_coerce_bool(raw.get("left_open"), defaults.left_open),
         right_open=_coerce_bool(raw.get("right_open"), defaults.right_open),
         session_open=session_open,
-        workspace_open=_coerce_bool(
-            raw.get("workspace_open"), session_open
-        ),
-        conversations_open=_coerce_bool(
-            raw.get("conversations_open"), session_open
-        ),
+        workspace_open=_coerce_bool(raw.get("workspace_open"), session_open),
+        conversations_open=_coerce_bool(raw.get("conversations_open"), session_open),
         model_open=_coerce_bool(raw.get("model_open"), defaults.model_open),
         details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
         agent_open=_coerce_bool(raw.get("agent_open"), defaults.agent_open),
@@ -526,6 +522,63 @@ def build_console_inspector_rail_badge(
     return ""
 
 
+def _inspector_priority_width(available_columns: int | None) -> bool:
+    return (
+        available_columns is not None
+        and CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS
+        <= available_columns
+        < CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS
+    )
+
+
+def resolve_console_rail_priority(
+    rail_state: ConsoleRailState,
+    available_columns: int | None,
+) -> ConsoleRailState:
+    """Give Inspector effective priority when both compact rails are open.
+
+    Args:
+        rail_state: Effective rail state before compact priority resolution.
+        available_columns: Current terminal width, when known.
+
+    Returns:
+        The original state outside the priority conflict, or an immutable copy
+        with Context collapsed and Inspector granted compact override authority.
+    """
+    if not (
+        _inspector_priority_width(available_columns)
+        and rail_state.left_open
+        and rail_state.right_open
+    ):
+        return rail_state
+    return replace(
+        rail_state,
+        left_open=False,
+        right_compact_override=True,
+        compact_override=True,
+    )
+
+
+def console_context_reveal_preferences(
+    rail_state: ConsoleRailState,
+    available_columns: int | None,
+) -> dict[str, bool]:
+    """Return minimal preference updates needed to reveal Context.
+
+    Args:
+        rail_state: Current effective rail state.
+        available_columns: Current terminal width, when known.
+
+    Returns:
+        Context's open preference and, only during an effective compact
+        Inspector conflict, Inspector's closed preference.
+    """
+    changes = {"left_open": True}
+    if _inspector_priority_width(available_columns) and rail_state.right_open:
+        changes["right_open"] = False
+    return changes
+
+
 def console_rail_width_band(available_columns: int | None) -> str:
     """Bucket a terminal width into the Console workspace layout band.
 
@@ -536,9 +589,8 @@ def console_rail_width_band(available_columns: int | None) -> str:
         available_columns: Current terminal width, when known.
 
     Returns:
-        ``"single-pane"`` below ``CONSOLE_SINGLE_PANE_COLUMNS``, ``"narrow"``
-        below ``CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS``, otherwise
-        ``"standard"`` (also the fallback when the width is unknown).
+        A stable resize-deduplication key separating the single-pane, narrow,
+        compact auto-open boundary, and standard-width bands.
     """
     if available_columns is None:
         return "standard"
@@ -546,6 +598,12 @@ def console_rail_width_band(available_columns: int | None) -> str:
         return "single-pane"
     if available_columns < CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS:
         return "narrow"
+    if available_columns < 118:
+        return "compact-before-auto-open"
+    if available_columns < 129:
+        return "compact-auto-open"
+    if available_columns < CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS:
+        return "compact-after-auto-open"
     return "standard"
 
 
