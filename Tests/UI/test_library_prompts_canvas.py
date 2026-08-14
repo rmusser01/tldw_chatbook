@@ -8091,7 +8091,9 @@ async def test_library_prompt_compatibility_editor_discard_returns_to_current_li
                 break
 
         assert screen._library_prompts_view == "list"
-        assert browse_calls == [(scope_before, None)]
+        assert browse_calls == [
+            (scope_before, f"library-prompt-row-{prompt_id}")
+        ]
         assert refresh_calls == 1
         row = screen.query_one(f"#library-prompt-row-{prompt_id}", Button)
         for _ in range(100):

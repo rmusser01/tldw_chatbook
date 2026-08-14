@@ -21436,10 +21436,16 @@ class LibraryScreen(BaseAppScreen):
             or not self._library_prompt_dirty
         ):
             return
+        prompt_id = self._selected_prompt_id
+        focus_identity = (
+            f"library-prompt-row-{prompt_id}"
+            if type(prompt_id) is int and prompt_id > 0
+            else None
+        )
         self._reset_library_prompt_editor_state()
         self._request_library_prompts_browse(
             self._library_prompt_browse_controller.scope,
-            focus_identity=None,
+            focus_identity=focus_identity,
         )
         self._refresh_local_source_snapshot()
         self._arm_library_list_entry_focus()
