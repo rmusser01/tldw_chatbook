@@ -344,6 +344,7 @@ def test_article_list_highlight_selects_requested_row():
     pane = SimpleNamespace(
         items=list(ITEM_ROWS),
         selected_item=None,
+        _suppressed_highlight_item_id=None,
         query_one=lambda *a, **k: SimpleNamespace(has_focus=True),
     )
     pane.select_item_by_id = MethodType(ArticleListPane.select_item_by_id, pane)
