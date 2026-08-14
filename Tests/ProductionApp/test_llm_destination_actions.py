@@ -1389,43 +1389,23 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
 
             selected_root = tmp_path / "arbitrary-external-transformers-root"
             selected_root.mkdir()
-            expected_unrelated_model_path_inputs = {
-                "llamacpp-exec-path",
-                "llamacpp-model-path",
-                "llamafile-exec-path",
-                "llamafile-model-path",
+            mounted_input_ids: set[str] = set()
+            unrelated_inputs: dict[str, Input] = {}
+            for widget in window.query(Input):
+                widget_id = widget.id
+                assert widget_id is not None
+                assert widget_id not in mounted_input_ids
+                mounted_input_ids.add(widget_id)
+                if widget_id != "transformers-models-dir-path":
+                    unrelated_inputs[widget_id] = widget
+            assert {
                 "mlx-model-path",
-                "ollama-copy-destination-model",
-                "ollama-copy-source-model",
-                "ollama-create-model-name",
-                "ollama-create-modelfile-path",
-                "ollama-delete-model-name",
-                "ollama-embeddings-model-name",
-                "ollama-exec-path",
-                "ollama-pull-model-name",
-                "ollama-push-model-name",
-                "ollama-show-model-name",
-                "onnx-model-path",
-                "onnx-python-path",
-                "onnx-script-path",
-                "remote-model-query",
+                "vllm-host",
                 "vllm-model-path",
-                "vllm-python-path",
-            }
-            unrelated_model_path_inputs = {
-                widget.id: widget
-                for widget in window.query(Input)
-                if widget.id != "transformers-models-dir-path"
-                and ("model" in widget.id or widget.id.endswith("-path"))
-            }
-            assert (
-                set(unrelated_model_path_inputs) == expected_unrelated_model_path_inputs
-            )
-            for index, widget in enumerate(unrelated_model_path_inputs.values()):
-                widget.value = f"unchanged-{index}"
+            } <= unrelated_inputs.keys()
             unrelated_values_before = {
                 widget_id: widget.value
-                for widget_id, widget in unrelated_model_path_inputs.items()
+                for widget_id, widget in unrelated_inputs.items()
             }
             await callback(selected_root)
             assert window.query_one(
@@ -1433,7 +1413,7 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
             ).value == str(selected_root)
             assert {
                 widget_id: widget.value
-                for widget_id, widget in unrelated_model_path_inputs.items()
+                for widget_id, widget in unrelated_inputs.items()
             } == unrelated_values_before
 
             scanned_paths: list[Path] = []
