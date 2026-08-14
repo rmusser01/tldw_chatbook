@@ -1636,6 +1636,58 @@ async def test_failed_route_cleanup_retries_after_foreign_request_claim_settles(
 
 
 @pytest.mark.asyncio
+async def test_failed_route_cleanup_preserves_value_identical_newer_successor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A value-identical successor is foreign when its store revision is newer."""
+
+    from textual.widgets import Button
+
+    from Tests.UI.test_destination_shells import (
+        DestinationHarness,
+        _active_destination_screen,
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    app_instance = _build_test_app()
+    host = DestinationHarness(app_instance, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _wait_for_selector(
+            screen, pilot, "#settings-speech-tts-panel", timeout=8.0
+        )
+        snapshot = screen.query_one(SpeechTTSSettingsPanel).draft_snapshot()
+
+        def fail_after_successor(_message: object) -> bool:
+            staged = getattr(
+                app_instance,
+                "_audio_cpp_settings_model_library_request",
+            )
+            app_instance.pending_handoffs.stage(
+                HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST,
+                staged,
+            )
+            return False
+
+        with monkeypatch.context() as scoped:
+            scoped.setattr(screen, "post_message", fail_after_successor)
+            assert screen.stage_audio_cpp_model_library_request(snapshot) is False
+        successor = app_instance.pending_handoffs.claim(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST
+        )
+
+        assert successor is not None
+        assert successor.value.draft_revision == snapshot.draft_revision
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("unrelated_first", (True, False))
 async def test_model_library_leave_bypass_is_fifo_route_exclusive(
     unrelated_first: bool,
@@ -1970,6 +2022,141 @@ async def test_mounted_return_is_stale_after_edits_in_every_draft_family(
 
 
 @pytest.mark.asyncio
+async def test_foreign_result_preserves_expected_request_for_later_exact_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A foreign token is terminal only for its result, not our request."""
+
+    from textual.widgets import Button
+
+    from Tests.UI.test_destination_shells import (
+        DestinationHarness,
+        _active_destination_screen,
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    app_instance = _build_test_app()
+    host = DestinationHarness(app_instance, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _wait_for_selector(
+            screen, pilot, "#settings-speech-tts-panel", timeout=8.0
+        )
+        panel = screen.query_one(SpeechTTSSettingsPanel)
+        before = panel.draft_snapshot()
+        expected = AudioCppModelLibraryRequest("ours", before.draft_revision)
+        setattr(app_instance, "_audio_cpp_settings_model_library_request", expected)
+        foreign = AudioCppModelLibraryResult(
+            token="foreign",
+            draft_revision=expected.draft_revision,
+            artifact_id="audio-cpp-supertonic-3-orig",
+            revision="a" * 40,
+            variant="orig",
+            canonical_root=str(tmp_path.resolve()),
+        )
+        app_instance.pending_handoffs.stage(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT,
+            foreign,
+        )
+
+        screen._consume_audio_cpp_model_library_result()
+
+        assert (
+            getattr(app_instance, "_audio_cpp_settings_model_library_request")
+            is expected
+        )
+        assert panel.draft_snapshot() == before
+        reviewed: list[AudioCppModelLibraryResult] = []
+
+        def review_exact(claim, result, *_args):
+            reviewed.append(result)
+            assert app_instance.pending_handoffs.acknowledge(claim)
+
+        monkeypatch.setattr(
+            screen,
+            "_review_audio_cpp_model_library_result",
+            review_exact,
+        )
+        exact = replace(foreign, token=expected.token)
+        app_instance.pending_handoffs.stage(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT,
+            exact,
+        )
+        screen._consume_audio_cpp_model_library_result()
+
+        assert reviewed == [exact]
+
+
+@pytest.mark.asyncio
+async def test_same_token_revision_mismatch_terminally_clears_expected_request(
+    tmp_path: Path,
+) -> None:
+    """A stale revision for our token settles that exact request."""
+
+    from textual.widgets import Button
+
+    from Tests.UI.test_destination_shells import (
+        DestinationHarness,
+        _active_destination_screen,
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    app_instance = _build_test_app()
+    host = DestinationHarness(app_instance, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _wait_for_selector(
+            screen, pilot, "#settings-speech-tts-panel", timeout=8.0
+        )
+        panel = screen.query_one(SpeechTTSSettingsPanel)
+        before = panel.draft_snapshot()
+        expected = AudioCppModelLibraryRequest("ours", before.draft_revision)
+        setattr(app_instance, "_audio_cpp_settings_model_library_request", expected)
+        stale = AudioCppModelLibraryResult(
+            token=expected.token,
+            draft_revision=expected.draft_revision + 1,
+            artifact_id="audio-cpp-supertonic-3-orig",
+            revision="a" * 40,
+            variant="orig",
+            canonical_root=str(tmp_path.resolve()),
+        )
+        app_instance.pending_handoffs.stage(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT,
+            stale,
+        )
+
+        screen._consume_audio_cpp_model_library_result()
+
+        assert not hasattr(
+            app_instance,
+            "_audio_cpp_settings_model_library_request",
+        )
+        assert panel.draft_snapshot() == before
+        assert panel.result_text == "Installed, not added to this changed draft"
+        assert (
+            app_instance.pending_handoffs.claim(
+                HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
+            )
+            is None
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "transaction_failure",
     (
@@ -1978,7 +2165,22 @@ async def test_mounted_return_is_stale_after_edits_in_every_draft_family(
         "merge_raise",
         "merge_interrupt",
         "merge_generator_exit",
+        "lease_acquire",
+        "lease_enter",
         "lease_exit",
+        "handle_root",
+        "handle_closure",
+        "handle_path",
+        "scan_raise",
+        "scan_generator_exit",
+        "scan_partial",
+        "scan_cancelled",
+        "scan_zero",
+        "scan_many_discoveries",
+        "scan_many_candidates",
+        "scan_malformed",
+        "preack_edit",
+        "preack_unmount",
         "duplicate",
     ),
 )
@@ -1993,7 +2195,7 @@ async def test_transaction_failure_rolls_back_and_requeues_exact_result(
 
     from types import SimpleNamespace
 
-    from textual.widgets import Button, Select
+    from textual.widgets import Button, Input, Select
 
     from Tests.UI.test_destination_shells import (
         DestinationHarness,
@@ -2080,6 +2282,276 @@ async def test_transaction_failure_rolls_back_and_requeues_exact_result(
             HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
         )
         assert claim is not None
+
+        worker_failures = {
+            "lease_acquire",
+            "lease_enter",
+            "handle_root",
+            "handle_closure",
+            "handle_path",
+            "scan_raise",
+            "scan_generator_exit",
+            "scan_partial",
+            "scan_cancelled",
+            "scan_zero",
+            "scan_many_discoveries",
+            "scan_many_candidates",
+            "scan_malformed",
+        }
+        if transaction_failure in worker_failures:
+            from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+            from tldw_chatbook.TTS.audio_cpp_package_scanner import (
+                AudioCppScanOutcome,
+            )
+
+            reference = ArtifactRef(
+                identity.artifact_id,
+                identity.revision,
+                identity.variant,
+            )
+            handle_root = (
+                ArtifactRef("audio-cpp-foreign", identity.revision, identity.variant)
+                if transaction_failure == "handle_root"
+                else reference
+            )
+            handle_closure = (
+                (reference, reference)
+                if transaction_failure == "handle_closure"
+                else (reference,)
+            )
+            handle_path = (
+                root / "foreign" if transaction_failure == "handle_path" else root
+            )
+            lease_state = {"active": False, "released": False}
+
+            class FailureLease:
+                handle = SimpleNamespace(
+                    root=handle_root,
+                    closure=handle_closure,
+                    paths=((reference, handle_path),),
+                )
+
+                def __enter__(self):
+                    if transaction_failure == "lease_enter":
+                        raise RuntimeError("private-lease-enter-canary")
+                    lease_state["active"] = True
+                    return self
+
+                def __exit__(self, *_args: object) -> None:
+                    lease_state["active"] = False
+                    lease_state["released"] = True
+
+            def acquire(_reference: object) -> FailureLease:
+                if transaction_failure == "lease_acquire":
+                    raise RuntimeError("private-lease-acquire-canary")
+                return FailureLease()
+
+            worker_scan = scan_audio_cpp_package_root(
+                root,
+                request_revision=result.draft_revision,
+                expected_managed_artifact=identity,
+                expected_canonical_root=str(root),
+            )
+            if transaction_failure == "scan_partial":
+                worker_scan = replace(
+                    worker_scan,
+                    outcome=AudioCppScanOutcome.PARTIAL,
+                )
+            elif transaction_failure == "scan_cancelled":
+                worker_scan = replace(
+                    worker_scan,
+                    outcome=AudioCppScanOutcome.CANCELLED,
+                )
+            elif transaction_failure == "scan_zero":
+                worker_scan = replace(worker_scan, discoveries=())
+            elif transaction_failure == "scan_many_discoveries":
+                worker_scan = replace(
+                    worker_scan,
+                    discoveries=worker_scan.discoveries * 2,
+                )
+            elif transaction_failure == "scan_many_candidates":
+                discovery = worker_scan.discoveries[0]
+                match = replace(
+                    discovery.match,
+                    candidates=discovery.match.candidates * 2,
+                )
+                worker_scan = replace(
+                    worker_scan,
+                    discoveries=(replace(discovery, match=match),),
+                )
+
+            scanner = MagicMock(return_value=worker_scan)
+            if transaction_failure == "scan_raise":
+                scanner.side_effect = RuntimeError("private-scanner-canary")
+            elif transaction_failure == "scan_generator_exit":
+                scanner.side_effect = GeneratorExit("private-scanner-control")
+            elif transaction_failure == "scan_malformed":
+                scanner.return_value = object()
+            monkeypatch.setattr(
+                settings_module,
+                "managed_service",
+                lambda: SimpleNamespace(acquire_installed_root=acquire),
+            )
+            monkeypatch.setattr(
+                settings_module,
+                "scan_audio_cpp_package_root",
+                scanner,
+            )
+            monkeypatch.setattr(
+                host,
+                "call_from_thread",
+                lambda callback, *args: callback(*args),
+            )
+
+            def invoke() -> None:
+                SettingsScreen._review_audio_cpp_model_library_result.__wrapped__(
+                    screen,
+                    claim,
+                    result,
+                    panel,
+                    before,
+                    panel.result_text,
+                    request,
+                )
+
+            if transaction_failure == "scan_generator_exit":
+                with pytest.raises(GeneratorExit):
+                    invoke()
+            else:
+                invoke()
+            replay = app_instance.pending_handoffs.claim(
+                HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
+            )
+
+            assert panel.draft_snapshot() == before
+            assert replay is not None and replay.value == result
+            assert scanner.call_count <= 1
+            assert not lease_state["active"]
+            if transaction_failure not in {"lease_acquire", "lease_enter"}:
+                assert lease_state["released"]
+            assert screen._audio_cpp_result_cleanup is None
+            return
+
+        if transaction_failure == "preack_edit":
+            merged = screen._merge_and_ack_audio_cpp_model_library_result(
+                claim,
+                result,
+                package,
+                False,
+            )
+            await pilot.pause()
+            screen.query_one("#settings-speech-speed", Input).value = "1.77"
+            await pilot.pause()
+            settled = screen._ack_merged_audio_cpp_model_library_result(
+                claim,
+                panel,
+                before,
+                panel.result_text,
+                request,
+                result,
+                merged,
+            )
+            await pilot.pause()
+            replay = app_instance.pending_handoffs.claim(
+                HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
+            )
+
+            assert settled is False
+            assert panel.draft_snapshot() == before
+            assert replay is not None and replay.value == result
+            return
+
+        if transaction_failure == "preack_unmount":
+            from textual.css.query import NoMatches
+            from textual.screen import Screen
+
+            from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+            saved = screen.save_state()
+            merged = screen._merge_and_ack_audio_cpp_model_library_result(
+                claim,
+                result,
+                package,
+                False,
+            )
+            await host.switch_screen(Screen())
+            settled = screen._ack_merged_audio_cpp_model_library_result(
+                claim,
+                panel,
+                before,
+                panel.result_text,
+                request,
+                result,
+                merged,
+            )
+            assert settled is False
+            assert app_instance.pending_handoffs.has_pending(
+                HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
+            )
+            await pilot.pause()
+
+            reference = ArtifactRef(
+                identity.artifact_id,
+                identity.revision,
+                identity.variant,
+            )
+            worker_scan = scan_audio_cpp_package_root(
+                root,
+                request_revision=result.draft_revision,
+                expected_managed_artifact=identity,
+                expected_canonical_root=str(root),
+            )
+
+            class RetryLease:
+                handle = SimpleNamespace(
+                    root=reference,
+                    closure=(reference,),
+                    paths=((reference, root),),
+                )
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args: object) -> None:
+                    return None
+
+            monkeypatch.setattr(
+                settings_module,
+                "managed_service",
+                lambda: SimpleNamespace(
+                    acquire_installed_root=lambda _reference: RetryLease()
+                ),
+            )
+            monkeypatch.setattr(
+                settings_module,
+                "scan_audio_cpp_package_root",
+                lambda *_args, **_kwargs: worker_scan,
+            )
+            replacement = SettingsScreen(app_instance)
+            replacement.restore_state(saved)
+            await host.switch_screen(replacement)
+            await _wait_for_selector(
+                replacement,
+                pilot,
+                "#settings-speech-tts-panel",
+                timeout=8.0,
+            )
+
+            def retried() -> bool:
+                try:
+                    restored_panel = replacement.query_one(SpeechTTSSettingsPanel)
+                except NoMatches:
+                    return False
+                return len(restored_panel._audio_cpp_guided_packages()) == 1
+
+            assert await _wait_for(retried, pilot)
+            assert (
+                app_instance.pending_handoffs.claim(
+                    HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
+                )
+                is None
+            )
+            return
 
         if transaction_failure == "lease_exit":
             from tldw_chatbook.Model_Artifacts.service import ArtifactRef
@@ -2273,7 +2745,7 @@ async def test_result_cleanup_retries_after_one_owner_failure(
             def fail_once(value: object) -> bool:
                 nonlocal attempts
                 attempts += 1
-                if attempts == 1:
+                if attempts <= 2:
                     raise RuntimeError("private-release-once")
                 return real(value)
 
@@ -2289,12 +2761,23 @@ async def test_result_cleanup_retries_after_one_owner_failure(
             )
         assert screen._audio_cpp_result_cleanup is not None
 
-        screen.on_unmount()
+        if failure == "release":
+            panel.state.defaults.speed = 77.0
+            edited = panel.draft_snapshot()
+            assert screen.stage_audio_cpp_model_library_request(edited) is False
+            with pytest.raises(RuntimeError):
+                screen._retry_audio_cpp_result_cleanup()
+            assert panel.draft_snapshot() == edited
+            screen._retry_audio_cpp_result_cleanup()
+            assert panel.draft_snapshot() == edited
+        else:
+            screen.on_unmount()
         replay = app_instance.pending_handoffs.claim(
             HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
         )
 
-        assert panel.draft_snapshot() == before
+        if failure == "restore":
+            assert panel.draft_snapshot() == before
         assert replay is not None and replay.value == result
         assert screen._audio_cpp_result_cleanup is None
 

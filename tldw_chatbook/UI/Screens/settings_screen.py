@@ -342,6 +342,7 @@ class _AudioCppResultCleanup:
     before: SpeechTTSPanelDraftSnapshot | None
     before_result_text: str | None
     expected: AudioCppModelLibraryRequest
+    restore_complete: bool = False
 
 
 def _theme_save_target() -> Path:
@@ -2333,9 +2334,9 @@ class SettingsScreen(BaseAppScreen):
         ] = []
         self._audio_cpp_result_cancellation = threading.Event()
         self._audio_cpp_result_cleanup: _AudioCppResultCleanup | None = None
-        self._audio_cpp_staged_request_cleanup: AudioCppModelLibraryRequest | None = (
-            None
-        )
+        self._audio_cpp_staged_request_cleanup: (
+            tuple[AudioCppModelLibraryRequest, int] | None
+        ) = None
         #: (display_name, profile_id) choices for the "Default voice profile"
         #: picker. `None` means the profile store hasn't answered yet (the
         #: default) OR answered with failure -- `_speech_tts_profile_choices_
@@ -15813,9 +15814,11 @@ class SettingsScreen(BaseAppScreen):
         except (QueryError, TypeError, ValueError):
             store.release(claim)
             return
+        if result.token != expected.token:
+            self._acknowledge_foreign_audio_cpp_model_library_result(claim)
+            return
         if (
-            result.token != expected.token
-            or result.draft_revision != expected.draft_revision
+            result.draft_revision != expected.draft_revision
             or current.draft_revision != expected.draft_revision
         ):
             self._acknowledge_stale_audio_cpp_model_library_result(
@@ -15893,14 +15896,14 @@ class SettingsScreen(BaseAppScreen):
                 ):
                     raise ValueError("managed package review mismatch")
                 package = candidates[0].accept(managed_artifact=identity)
-                settled = self.app.call_from_thread(
+                merged = self.app.call_from_thread(
                     self._merge_and_ack_audio_cpp_model_library_result,
                     claim,
                     result,
                     package,
                     False,
                 )
-                if not settled:
+                if type(merged) is not SpeechTTSPanelDraftSnapshot:
                     return
             settled = self.app.call_from_thread(
                 self._ack_merged_audio_cpp_model_library_result,
@@ -15909,6 +15912,8 @@ class SettingsScreen(BaseAppScreen):
                 before,
                 before_result_text,
                 expected,
+                result,
+                merged,
             )
             if not settled:
                 return
@@ -15970,7 +15975,7 @@ class SettingsScreen(BaseAppScreen):
         result: AudioCppModelLibraryResult,
         package: object,
         acknowledge: bool = True,
-    ) -> bool:
+    ) -> bool | SpeechTTSPanelDraftSnapshot:
         """Merge on the owner thread while the worker still holds its lease."""
 
         store = getattr(self.app_instance, "pending_handoffs", None)
@@ -16072,7 +16077,7 @@ class SettingsScreen(BaseAppScreen):
             ):
                 raise
             return False
-        return True
+        return True if acknowledge else self._speech_tts_draft_snapshot
 
     def _ack_merged_audio_cpp_model_library_result(
         self,
@@ -16081,11 +16086,37 @@ class SettingsScreen(BaseAppScreen):
         before: SpeechTTSPanelDraftSnapshot,
         before_result_text: str,
         expected: AudioCppModelLibraryRequest,
+        result: AudioCppModelLibraryResult,
+        merged: object,
     ) -> bool:
         """Acknowledge only after the merge lease has exited successfully."""
 
         store = getattr(self.app_instance, "pending_handoffs", None)
-        if type(store) is not PendingHandoffStore:
+        current_expected = getattr(
+            self.app_instance,
+            "_audio_cpp_settings_model_library_request",
+            None,
+        )
+        try:
+            current_panel = self.query_one(SpeechTTSSettingsPanel)
+            current = current_panel.draft_snapshot()
+        except (QueryError, TypeError, ValueError):
+            current_panel = None
+            current = None
+        if (
+            type(store) is not PendingHandoffStore
+            or type(expected) is not AudioCppModelLibraryRequest
+            or type(result) is not AudioCppModelLibraryResult
+            or not self.is_mounted
+            or current_panel is not panel
+            or type(merged) is not SpeechTTSPanelDraftSnapshot
+            or current != merged
+            or merged.draft_revision != result.draft_revision + 1
+            or self._speech_tts_draft_snapshot != merged
+            or result.token != expected.token
+            or result.draft_revision != expected.draft_revision
+            or current_expected is not expected
+        ):
             self._rollback_and_release_audio_cpp_model_library_result(
                 claim,
                 panel,
@@ -16094,10 +16125,7 @@ class SettingsScreen(BaseAppScreen):
                 expected,
             )
             return False
-        if hasattr(
-            self.app_instance,
-            "_audio_cpp_settings_model_library_request",
-        ):
+        if current_expected is expected:
             delattr(
                 self.app_instance,
                 "_audio_cpp_settings_model_library_request",
@@ -16128,6 +16156,47 @@ class SettingsScreen(BaseAppScreen):
             return False
         return True
 
+    def _acknowledge_foreign_audio_cpp_model_library_result(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+    ) -> bool:
+        """Settle one foreign result without touching this screen's request."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return False
+        store = cast(PendingHandoffStore, store)
+        error: BaseException | None = None
+        try:
+            if store.acknowledge(claim):
+                return True
+        except BaseException as caught:
+            error = caught
+        try:
+            store.release(claim)
+        except BaseException as cleanup_error:
+            if isinstance(
+                cleanup_error,
+                (
+                    asyncio.CancelledError,
+                    GeneratorExit,
+                    KeyboardInterrupt,
+                    SystemExit,
+                ),
+            ):
+                raise
+        if isinstance(
+            error,
+            (
+                asyncio.CancelledError,
+                GeneratorExit,
+                KeyboardInterrupt,
+                SystemExit,
+            ),
+        ):
+            raise error
+        return False
+
     def _acknowledge_stale_audio_cpp_model_library_result(
         self,
         claim: HandoffClaim[AudioCppModelLibraryResult],
@@ -16147,9 +16216,13 @@ class SettingsScreen(BaseAppScreen):
                 "Installed, not added to this changed draft",
                 severity="warning",
             )
-            if hasattr(
-                self.app_instance,
-                "_audio_cpp_settings_model_library_request",
+            if (
+                getattr(
+                    self.app_instance,
+                    "_audio_cpp_settings_model_library_request",
+                    None,
+                )
+                is expected
             ):
                 delattr(
                     self.app_instance,
@@ -16212,22 +16285,35 @@ class SettingsScreen(BaseAppScreen):
         cleanup = self._audio_cpp_result_cleanup
         if cleanup is None:
             return
-        if cleanup.panel is not None and cleanup.before is not None:
-            cleanup.panel.restore_draft_snapshot(
-                cleanup.before,
-                result_text=cleanup.before_result_text,
+        if not cleanup.restore_complete:
+            if (
+                cleanup.panel is not None
+                and cleanup.panel.is_mounted
+                and cleanup.before is not None
+            ):
+                cleanup.panel.restore_draft_snapshot(
+                    cleanup.before,
+                    result_text=cleanup.before_result_text,
+                )
+            if cleanup.before is not None:
+                self._speech_tts_draft_snapshot = cleanup.before
+                self._speech_tts_draft_state = copy.deepcopy(cleanup.before.state)
+                self._speech_tts_original_state = copy.deepcopy(
+                    cleanup.before.original_state
+                )
+                self._speech_tts_configure_provider = cleanup.before.configure_provider
+            current_expected = getattr(
+                self.app_instance,
+                "_audio_cpp_settings_model_library_request",
+                None,
             )
-            self._speech_tts_draft_snapshot = cleanup.before
-            self._speech_tts_draft_state = copy.deepcopy(cleanup.before.state)
-            self._speech_tts_original_state = copy.deepcopy(
-                cleanup.before.original_state
-            )
-            self._speech_tts_configure_provider = cleanup.before.configure_provider
-        setattr(
-            self.app_instance,
-            "_audio_cpp_settings_model_library_request",
-            cleanup.expected,
-        )
+            if current_expected is None or current_expected is cleanup.expected:
+                setattr(
+                    self.app_instance,
+                    "_audio_cpp_settings_model_library_request",
+                    cleanup.expected,
+                )
+            cleanup.restore_complete = True
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             raise _AudioCppResultTransactionError(
@@ -16245,7 +16331,10 @@ class SettingsScreen(BaseAppScreen):
     ) -> bool:
         """Stage one exact request and navigate without resolving the draft."""
 
-        if type(snapshot) is not SpeechTTSPanelDraftSnapshot:
+        if (
+            type(snapshot) is not SpeechTTSPanelDraftSnapshot
+            or self._audio_cpp_result_cleanup is not None
+        ):
             return False
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
@@ -16256,7 +16345,10 @@ class SettingsScreen(BaseAppScreen):
                 token=uuid4().hex,
                 draft_revision=snapshot.draft_revision,
             )
-            store.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
+            staged_store_revision = store.stage(
+                HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST,
+                request,
+            )
         except BaseException as error:
             if isinstance(
                 error,
@@ -16301,7 +16393,10 @@ class SettingsScreen(BaseAppScreen):
                     self.app_instance,
                     "_audio_cpp_settings_model_library_request",
                 )
-            self._audio_cpp_staged_request_cleanup = request
+            self._audio_cpp_staged_request_cleanup = (
+                request,
+                staged_store_revision,
+            )
             try:
                 self._retry_audio_cpp_staged_request_cleanup()
             except BaseException as cleanup_error:
@@ -16331,9 +16426,10 @@ class SettingsScreen(BaseAppScreen):
     def _retry_audio_cpp_staged_request_cleanup(self) -> None:
         """Settle only this screen's failed staged request when claimable."""
 
-        request = self._audio_cpp_staged_request_cleanup
-        if request is None:
+        cleanup = self._audio_cpp_staged_request_cleanup
+        if cleanup is None:
             return
+        request, staged_store_revision = cleanup
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             raise _AudioCppResultTransactionError(
@@ -16343,7 +16439,7 @@ class SettingsScreen(BaseAppScreen):
         claim = store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST)
         if claim is None:
             return
-        if claim.value == request:
+        if claim.revision == staged_store_revision and claim.value == request:
             if not store.acknowledge(claim):
                 raise _AudioCppResultTransactionError(
                     "audio.cpp request claim could not be acknowledged"
