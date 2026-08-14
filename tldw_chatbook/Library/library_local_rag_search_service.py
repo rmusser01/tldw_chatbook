@@ -36,6 +36,12 @@ from tldw_chatbook.Library.library_rag_state import (
 # parallel raw literal.
 from tldw_chatbook.RAG_Search.pipeline_functions_simple import SCOPE_DIAGNOSTICS_KEY
 
+# The engine's own rank-fair round-robin, imported rather than re-implemented
+# (TASK-16071): the four-seam keyword merge has exactly the problem this
+# primitive exists for -- several per-source rankings whose raw scores are not
+# comparable. See the rule written at the merge site in `_search_keyword`.
+from tldw_chatbook.RAG_Search.fusion import interleave_rankings
+
 # The shared factory is the single process-wide RAG service constructor
 # (task-247): resolving through it guarantees Library RAG Answer queries read
 # the exact vector store / collection / embedding model that ingestion-time
@@ -446,10 +452,64 @@ class LibraryLocalRagSearchService:
                 diagnostics=diagnostics,
             )
 
-        rows: list[dict[str, Any]] = []
-        for source_type in _KNOWN_KEYWORD_SOURCE_TYPES:
-            if source_type in outcomes:
-                rows.extend(outcomes[source_type][1])
+        # THE MERGE RULE (TASK-16071): rank-fair round-robin, NOT
+        # concatenation in seam order.
+        #
+        # Each seam above ran its own query under its own `limit=top_k`, and
+        # every row builder sets `"score": None` on purpose -- raw FTS5
+        # scores from four different tables are not comparable, so a
+        # cross-seam SCORE merge is unavailable here (the engine rejected one
+        # for the same reason). What IS comparable is RANK POSITION, and this
+        # is the engine's own primitive for exactly that situation
+        # (`interleave_rankings`, used by its keyword leg since the fusion
+        # cluster): position 0 of each seam, then position 1, and so on.
+        #
+        # Why it matters, measured. Concatenating in `_KNOWN_KEYWORD_SOURCE_
+        # TYPES` order made a row's cross-seam position a function of its
+        # SOURCE TYPE and of how many rows the earlier seams happened to
+        # return -- never of how well it matched -- so any pass matching
+        # `top_k` notes buried every media, conversation and prompt hit
+        # behind them, and every downstream cut (the evidence list, RAG
+        # Answer's budget, a harness's doc-level k) cut exactly there.
+        # TASK-16071's worked examples: kw-quillon-mast's media target landed
+        # at merged position 14 behind 13 notes, and conversation targets at
+        # 19-21 -- displacement, not non-match (all were present at a deeper
+        # k). Prompts, iterated last, were the most buried of the four.
+        #
+        # Order WITHIN one position is still `_KNOWN_KEYWORD_SOURCE_TYPES`
+        # order: at equal rank there is genuinely no signal to choose on, so
+        # the seam order breaks the tie. That is a pinned convention, not a
+        # relevance claim (`Tests/Library/test_library_keyword_cross_seam.py`).
+        #
+        # NO TIERING, deliberately. TASK-15700's tiered merge exists because
+        # the ENGINE's keyword leg mixes primary matches with widened
+        # FALLBACK constructions, and a fallback row must fill positions
+        # rather than displace a primary one. This path has no such split:
+        # every seam builds its MATCH with `build_fts_match_query` and
+        # nothing else, so all four rankings are all-primary and this is the
+        # pre-15700 all-primary interleave, which 15700 proved correct for
+        # that regime. If this path ever gains fallback forms, the 15700 tier
+        # design applies here too.
+        #
+        # Dedup across seams is structurally vacuous -- the seams are
+        # disjoint by source type -- but the primitive needs a key, and
+        # `(provenance.source_type, source_id)` is the row identity every
+        # builder already stamps (`_note_row` and friends).
+        #
+        # NO TRUNCATION is added: a four-seam query has always been able to
+        # return up to `4 * top_k` rows and the cut belongs to the consumers.
+        # This change is ORDER only.
+        rows: list[dict[str, Any]] = interleave_rankings(
+            [
+                outcomes[source_type][1]
+                for source_type in _KNOWN_KEYWORD_SOURCE_TYPES
+                if source_type in outcomes
+            ],
+            key=lambda row: (
+                (row.get("provenance") or {}).get("source_type"),
+                row.get("source_id"),
+            ),
+        )
 
         if is_scoped and not rows:
             item_count = _scope_item_count(scope, source_types)

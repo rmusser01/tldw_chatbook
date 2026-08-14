@@ -3,9 +3,10 @@ id: TASK-16071
 title: >-
   Plain four-seam path: no cross-seam ranking + per-seam top_k buries non-note
   targets under widened queries
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-14 01:52'
+updated_date: '2026-08-14 02:39'
 labels:
   - rag
   - library
@@ -98,7 +99,6 @@ probe's verbatim output:
 `RAG_EVAL=1 .venv/bin/python -m pytest Tests/RAG_Eval/test_prf_probe_run.py -s -q`.
 <!-- SECTION:DESCRIPTION:END -->
 
-
 ### Worked examples (from the probe's own printed table, so AC#1 is writable from this file alone)
 
 - `kw-quillon-mast` -> `media-quillon-antenna`: media-seam rank 1, merged position 14 under the narrow selector (13 notes ahead of it by seam order alone).
@@ -114,3 +114,17 @@ probe's verbatim output:
 - [ ] #3 Any shipped change keeps every currently-hitting golden query's target in the plain top-10 (the lost-column discipline: zero regressions by query id, reported per id, not as an average)
 - [ ] #4 If the decision is to keep the fixed-order concatenation, the reason and its price are written into the module beside the merge, so the next reader finds the measurement instead of re-deriving it
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Spec: Docs/superpowers/specs/2026-08-14-rag-four-seam-cross-ranking-design.md
+Plan: Docs/superpowers/plans/2026-08-14-rag-four-seam-cross-ranking.md
+Ledger: .superpowers/sdd/2026-08-14-rag-four-seam-cross-ranking/progress.md
+
+1. Venv (pinned recipe) + import provenance; measure the two plain-keyword misses BEFORE the fix (gated harness, RAG_EVAL=1) and record the mechanism (seam-burial vs genuine) — this decides the recall prediction.
+2. Verify display-side consumption of row order (evidence panel) and enumerate any visible Search-mode consequence as a disclosed change.
+3. RED-first pins in Tests/Library/test_library_keyword_cross_seam.py: displacement, rank-fairness, single-seam byte-identity, no-truncation, prompts-seam participation.
+4. Replace the fixed-order rows.extend merge (library_local_rag_search_service.py:449-452) with interleave_rankings from RAG_Search/fusion.py keyed on (provenance.source_type, source_id); write the rule at the site citing the 16071 worked examples; no-tiering comment with the 15700 pointer; NO truncation added.
+5. Gated re-measure + zero-movement proof + the PRF oracle control re-run (Task 2); User Guide/doc stamp + close-out (Task 3).
+<!-- SECTION:PLAN:END -->
