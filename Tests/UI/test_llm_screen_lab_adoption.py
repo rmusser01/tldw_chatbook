@@ -1712,6 +1712,12 @@ async def test_models_lab_insufficient_space_cancel_is_inline_and_never_provisio
             "Package install could not access local state. Select Retry install.",
         ),
         (
+            "PRIVATE conflict at /Users/example/model",
+            False,
+            "LOCAL_STATE",
+            "Package install found conflicting or invalid local state. Review or Repair the local model store before installing again.",
+        ),
+        (
             "PRIVATE blocked source https://secret.example/model",
             False,
             "SOURCE_BLOCKED",
@@ -1744,6 +1750,8 @@ def test_audio_cpp_transfer_failures_map_to_bounded_inline_recovery(
     assert "secret.example" not in message
     if code_name in {"LOCAL_STATE", "SOURCE_BLOCKED"}:
         assert "download" not in message.casefold()
+    if code_name == "LOCAL_STATE" and not retryable:
+        assert "Retry" not in message
 
 
 def test_ambiguous_transfer_text_cannot_promote_a_typed_recovery_claim() -> None:

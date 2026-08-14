@@ -577,8 +577,16 @@ class CuratedView(Widget):
             ),
             Static(f"Recipe: {projection.recipe}", markup=False),
             Static(f"Compatibility: {projection.compatibility}", markup=False),
-            Static(f"Configured: {projection.configured}", markup=False),
-            Static(f"Running: {projection.running}", markup=False),
+            Static(
+                f"Configured: {projection.configured}",
+                classes="audio-cpp-configured",
+                markup=False,
+            ),
+            Static(
+                f"Running: {projection.running}",
+                classes="audio-cpp-running",
+                markup=False,
+            ),
             Static(f"Speech tasks: {projection.speech_tasks}", markup=False),
             Static(
                 f"Required package files: {projection.required_files}", markup=False
@@ -739,11 +747,8 @@ class CuratedView(Widget):
         )
         if rows != self._rows:
             self._rows = rows
-            self.refresh(recompose=True)
-            if locator is not None:
-                self.call_after_refresh(self.restore_focus, locator)
-        else:
-            self.refresh()
+            self._update_audio_cpp_observation_facts()
+        self.refresh()
         self.call_after_refresh(
             self._start_audio_cpp_observation,
             self._observation_generation,
@@ -820,9 +825,32 @@ class CuratedView(Widget):
         if focused is not None and self in focused.ancestors_with_self:
             locator = self.focus_locator(focused) or locator
         self._rows = rows
-        await self.recompose()
+        self._update_audio_cpp_observation_facts()
+        self.refresh()
         if locator is not None:
             self.restore_focus(locator)
+
+    def _update_audio_cpp_observation_facts(self) -> None:
+        """Update the two observed facts without replacing row actions."""
+
+        projections = {
+            row.descriptor.reference: row.audio_cpp
+            for row in self._rows
+            if row.audio_cpp is not None
+        }
+        for widget in self.query(".audio-cpp-model-row"):
+            projection = projections.get(getattr(widget, "reference", None))
+            if projection is None:
+                continue
+            try:
+                widget.query_one(".audio-cpp-configured", Static).update(
+                    f"Configured: {projection.configured}"
+                )
+                widget.query_one(".audio-cpp-running", Static).update(
+                    f"Running: {projection.running}"
+                )
+            except NoMatches:
+                continue
 
     def _restore_refresh_focus(self) -> None:
         """Return keyboard focus to the remounted Refresh button."""

@@ -398,6 +398,71 @@ async def test_install_click_posts_install_requested_with_the_resolved_service_a
         assert refreshed_button.disabled is True
 
 
+@pytest.mark.asyncio
+async def test_install_press_during_observation_refresh_is_not_swallowed(
+    tmp_path: Path,
+) -> None:
+    """Refreshing evidence cannot unmount an enabled Install before delivery."""
+    import asyncio
+
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        audio_cpp_curated_entries,
+    )
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
+    )
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    registry = CuratedRegistry()
+    registry.register(descriptor, sources=sources)
+    refresh_entered = asyncio.Event()
+    release_refresh = asyncio.Event()
+    calls = 0
+
+    async def observe(references):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            refresh_entered.set()
+            await release_refresh.wait()
+        return AudioCppModelLibraryObservationSnapshot(
+            (AudioCppArtifactRemovalEvidence(references[0]),)
+        )
+
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+        observation_provider=observe,
+    )
+    view.set_consumer_filter("audio_cpp")
+
+    class _CapturingApp(_StyledViewApp):
+        def __init__(self) -> None:
+            self.requests: list[CuratedView.InstallRequested] = []
+            super().__init__(view)
+
+        @on(CuratedView.InstallRequested)
+        def _capture(self, event: CuratedView.InstallRequested) -> None:
+            self.requests.append(event)
+
+    app = _CapturingApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: calls == 1, pilot=pilot)
+        install = view.query_one(".curated-install", Button)
+        assert install.disabled is False
+
+        view.refresh_observations()
+        assert install.is_attached
+        install.press()
+
+        assert await _wait_until(refresh_entered.is_set, pilot=pilot)
+        assert await _wait_until(lambda: len(app.requests) == 1, pilot=pilot)
+        assert app.requests[0].reference == descriptor.reference
+        release_refresh.set()
+
+
 # ---------------------------------------------------------------------------
 # Render-only outcomes: cancel_pending_install() / finish_install().
 #
@@ -1127,7 +1192,7 @@ async def test_delayed_bulk_observation_restores_curated_semantic_focus(
     tmp_path: Path,
     role: str,
 ) -> None:
-    """Evidence recomposition preserves id-less Install and disclosure focus."""
+    """Evidence refresh preserves the focused id-less row control in place."""
     from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
     from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
         AudioCppArtifactRemovalEvidence,
@@ -1172,7 +1237,7 @@ async def test_delayed_bulk_observation_restores_curated_semantic_focus(
         assert await _wait_until(
             lambda: "Configured: Saved Settings" in _all_text(app), pilot=pilot
         )
-        assert target is not app.focused
+        assert target is app.focused
         assert (
             view.query_one(".curated-install", Button).has_focus
             if role == "install"

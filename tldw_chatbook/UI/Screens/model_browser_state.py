@@ -335,6 +335,11 @@ def install_failure_message(exc: BaseException, *, model_label: str) -> str:
                 "install when connectivity returns."
             )
         if exc.code is TransferFailureCode.LOCAL_STATE:
+            if not exc.retryable:
+                return (
+                    "Package install found conflicting or invalid local state. "
+                    "Review or Repair the local model store before installing again."
+                )
             return "Package install could not access local state. Select Retry install."
         if exc.code is TransferFailureCode.SOURCE_BLOCKED:
             return (
