@@ -9434,9 +9434,7 @@ class LibraryScreen(BaseAppScreen):
             matched_note_ids=(
                 frozenset(
                     note_id
-                    for record in (
-                        getattr(self, "_library_notes_filter_records", None) or ()
-                    )
+                    for record in root_page.notes
                     if (note_id := self._source_record_id(record))
                 )
                 if filter_text.strip() and search_page is not None
@@ -15335,6 +15333,7 @@ class LibraryScreen(BaseAppScreen):
                         for record in filtered_records
                         if (note_id := self._source_record_id(record))
                     ),
+                    folder_query=query,
                     user_id=getattr(self.app_instance, "notes_user_id", None)
                     or "default_user",
                 )
@@ -15343,6 +15342,18 @@ class LibraryScreen(BaseAppScreen):
                 # flat search capability. Keep their loaded tree available
                 # instead of replacing it with an artificial empty page.
                 search_page = None
+            if search_page is not None:
+                seen_note_ids = {
+                    note_id
+                    for record in filtered_records
+                    if (note_id := self._source_record_id(record))
+                }
+                for record in search_page.notes:
+                    note_id = self._source_record_id(record)
+                    if not note_id or note_id in seen_note_ids:
+                        continue
+                    filtered_records.append(record)
+                    seen_note_ids.add(note_id)
         except Exception:
             logger.opt(exception=True).warning("Library notes filter failed.")
             return

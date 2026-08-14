@@ -118,6 +118,20 @@ Evidence:
   branch and untouched `dev` at the first 40×20 resize. Baseline comparison
   establishes that it is pre-existing; all source-transition cases affected by
   this work pass, so the branch introduces no File Notes regression.
+- The final `dev` rebase review added authoritative managed-folder metadata and
+  repository mutation guards, exact collapsed-branch search pages, tree-aware
+  selection reconciliation, and a legacy-search fallback that cannot retain a
+  prior query's records. Independent review then found and drove fixes for
+  path-only folder searches and repeated descendant traversal in managed-state
+  lookup: path matches now union bounded placements with content matches, and
+  managed state walks from managed memberships toward loaded ancestors. The
+  returned path matches are also merged into list state by note ID so result
+  counts, Select all, and checkbox state agree with the rendered tree.
+- The final post-review focused gate passes `279` tests, including repository,
+  normalized service, pure projection, screen orchestration, multiselect,
+  dialogs/canvas, and the reviewed-diagnostic metadata gate. Focused fatal/error
+  Ruff checks, `compileall`, and `git diff --check` pass. A broader File Notes run
+  has one focus-confirmation failure reproduced unchanged on latest `dev`.
 
 Trade-offs: this task intentionally exposes the already-landed local folder
 foundation. Server-backed folder capability and the import/sync setup flow stay

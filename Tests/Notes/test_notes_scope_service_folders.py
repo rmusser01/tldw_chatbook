@@ -68,8 +68,10 @@ class RecordingFolderRepository:
         )
         return _empty_page()
 
-    def load_tree_search(self, *, note_ids: tuple[str, ...]) -> NoteFolderPage:
-        self._record(("load_tree_search", note_ids))
+    def load_tree_search(
+        self, *, note_ids: tuple[str, ...], folder_query: str
+    ) -> NoteFolderPage:
+        self._record(("load_tree_search", note_ids, folder_query))
         return _empty_page()
 
     def create_folder(self, *, name: str, parent_id: str | None) -> NoteFolder:
@@ -233,9 +235,9 @@ LOCAL_FOLDER_CASES = [
     ),
     (
         "load_note_folder_search",
-        {"note_ids": ("note-1", "note-2")},
+        {"note_ids": ("note-1", "note-2"), "folder_query": "work"},
         "notes.list.local",
-        ("load_tree_search", ("note-1", "note-2")),
+        ("load_tree_search", ("note-1", "note-2"), "work"),
     ),
     (
         "create_note_folder",

@@ -180,6 +180,49 @@ async def test_filter_loads_placements_for_matches_outside_expanded_branches(
 
 
 @pytest.mark.asyncio
+async def test_filter_reveals_collapsed_note_from_folder_path_match(monkeypatch):
+    parent = _folder("work", None, "/Work")
+    child = _folder("project", "work", "/Work/Project")
+    search_page = _page(
+        folders=(parent, child),
+        memberships=(_membership("m1", "project", "n1"),),
+        notes=({"id": "n1", "title": "Unrelated title"},),
+        unfiled_note_ids=(),
+    )
+
+    class _PathSearchService:
+        async def search_notes(self, **kwargs):
+            return ()
+
+        async def load_note_folder_search(self, **kwargs):
+            assert kwargs["folder_query"] == "work / project"
+            return search_page
+
+    fake = _screen_fake(_PathSearchService())  # type: ignore[arg-type]
+    fake._library_notes_filter = "work / project"
+    fake._library_notes_filter_records = None
+    fake._library_notes_tree_search_page = None
+    fake._source_record_id = lambda record: record["id"]
+    fake._focus_library_notes_filter_input = lambda: None
+    fake._run_library_service_call = lambda method, **kwargs: method(**kwargs)
+    fake._library_notes_tree_root_page = _page(folders=(parent,))
+    fake._library_notes_tree_expanded_page = _page()
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
+        lambda *args, **kwargs: None,
+    )
+
+    await LibraryScreen._run_library_notes_filter(fake, "work / project")
+
+    assert [record["id"] for record in fake._library_notes_filter_records] == ["n1"]
+    projection = LibraryScreen._build_library_notes_tree_projection(fake)
+    assert projection is not None
+    assert [row.breadcrumb for row in projection.rows if row.kind == "note"] == [
+        "Work / Project / Unrelated title"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_filter_without_folder_search_capability_keeps_loaded_tree(
     monkeypatch,
 ):

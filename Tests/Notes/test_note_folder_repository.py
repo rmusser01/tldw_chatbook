@@ -368,6 +368,35 @@ def test_root_batch_reports_managed_descendants_without_expanding_them(
     assert page.inactive_managed_folder_ids == ()
 
 
+def test_managed_folder_lookup_walks_from_memberships_to_ancestors(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    root = repository.create_folder(name="Work", parent_id=None)
+    child = repository.create_folder(name="Project", parent_id=root.folder_id)
+    note_id = repository.db.add_note("Plan", "Body")
+    assert note_id is not None
+    _attach_membership(
+        repository,
+        folder_id=child.folder_id,
+        note_id=note_id,
+        ownership="managed",
+        owner_id="sync-root",
+    )
+    statements: list[str] = []
+    connection = repository.db.get_connection()
+    connection.set_trace_callback(statements.append)
+
+    repository.load_tree_batch(expanded_folder_ids=(), note_limit=50)
+
+    connection.set_trace_callback(None)
+    managed_query = next(
+        statement for statement in statements if "managed_ancestors" in statement
+    )
+    assert "SELECT DISTINCT membership.folder_id" in managed_query
+    assert "JOIN managed_ancestors" in managed_query
+    assert "JOIN subtree" not in managed_query
+
+
 def test_search_batch_loads_matching_note_placements_and_all_ancestors(
     repository: LocalNoteFolderRepository,
 ) -> None:
@@ -382,6 +411,31 @@ def test_search_batch_loads_matching_note_placements_and_all_ancestors(
     )
 
     page = repository.load_tree_search(note_ids=(note_id,))
+
+    assert {folder.folder_id for folder in page.folders} == {
+        root.folder_id,
+        child.folder_id,
+    }
+    assert [membership.membership_id for membership in page.memberships] == [
+        membership_id
+    ]
+    assert [note["id"] for note in page.notes] == [note_id]
+
+
+def test_search_batch_loads_collapsed_placements_matching_folder_path(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    root = repository.create_folder(name="Work", parent_id=None)
+    child = repository.create_folder(name="Project", parent_id=root.folder_id)
+    note_id = repository.db.add_note("Unrelated title", "No content match")
+    assert note_id is not None
+    membership_id = _attach_membership(
+        repository,
+        folder_id=child.folder_id,
+        note_id=note_id,
+    )
+
+    page = repository.load_tree_search(note_ids=(), folder_query="work / project")
 
     assert {folder.folder_id for folder in page.folders} == {
         root.folder_id,
@@ -500,7 +554,7 @@ def test_load_tree_batch_bulk_loads_expanded_folders_and_inactive_owner_rows(
     # One additional constant-shape recursive query carries authoritative
     # managed-folder ownership through collapsed and paginated branches.
     assert sum("FROM note_folders" in statement for statement in selects) == 2
-    assert sum("FROM note_folder_memberships" in statement for statement in selects) == 1
+    assert sum("FROM note_folder_memberships" in statement for statement in selects) == 2
     # The membership query repeats the bounded note-page CTE so it never binds
     # every returned note ID and remains compatible with SQLite's 999-variable cap.
     assert sum("FROM notes AS n" in statement for statement in selects) == 2

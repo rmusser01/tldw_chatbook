@@ -313,6 +313,7 @@ class NotesScopeService:
         *,
         scope: ScopeType | str,
         note_ids: Sequence[str],
+        folder_query: str = "",
         user_id: str | None = None,
     ) -> NoteFolderPage:
         """Load matching placements and ancestors for a bounded note search."""
@@ -322,6 +323,7 @@ class NotesScopeService:
         return await self._run_folder_repository(
             repository.load_tree_search,
             note_ids=tuple(note_ids),
+            folder_query=folder_query,
         )
 
     async def rename_note_folder(

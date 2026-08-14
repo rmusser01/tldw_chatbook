@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import unicodedata
 import uuid
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
@@ -430,12 +431,15 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
-    def load_tree_search(self, *, note_ids: Iterable[str]) -> NoteFolderPage:
-        """Load bounded search-note placements plus their complete breadcrumbs."""
+    def load_tree_search(
+        self, *, note_ids: Iterable[str], folder_query: str = ""
+    ) -> NoteFolderPage:
+        """Load bounded content/path matches plus their complete breadcrumbs."""
         normalized_note_ids = _normalize_ids(note_ids, field="note_ids")
         if len(normalized_note_ids) > 250:
             raise FolderValidationError("note_ids exceeds the allowed range.")
-        if not normalized_note_ids:
+        normalized_folder_query = _normalize_folder_search_query(folder_query)
+        if not normalized_note_ids and not normalized_folder_query:
             return NoteFolderPage(
                 folders=(),
                 memberships=(),
@@ -444,16 +448,68 @@ class LocalNoteFolderRepository:
                 total_notes=0,
                 next_offset=None,
             )
-        placeholders = _placeholders(len(normalized_note_ids))
         with self.db.transaction() as cursor:
+            path_note_ids: tuple[str, ...] = ()
+            if normalized_folder_query:
+                path_note_rows = cursor.execute(
+                    """
+                    SELECT DISTINCT m.note_id
+                    FROM note_folder_memberships AS m
+                    JOIN note_folders AS f ON f.id = m.folder_id
+                    JOIN notes AS n ON n.id = m.note_id
+                    WHERE m.deleted = 0 AND f.deleted = 0 AND n.deleted = 0
+                      AND instr(f.normalized_path, ?) > 0
+                    ORDER BY m.note_id
+                    LIMIT 251
+                    """,
+                    (normalized_folder_query,),
+                ).fetchall()
+                path_note_ids = tuple(str(row["note_id"]) for row in path_note_rows)
+                if len(path_note_ids) > 250:
+                    raise FolderValidationError(
+                        "Folder search has too many notes; narrow the search."
+                    )
+            selected_note_ids = tuple(
+                sorted({*normalized_note_ids, *path_note_ids})
+            )
+            if len(selected_note_ids) > 250:
+                raise FolderValidationError(
+                    "Folder search has too many notes; narrow the search."
+                )
+            if not selected_note_ids:
+                return NoteFolderPage(
+                    folders=(),
+                    memberships=(),
+                    notes=(),
+                    total_folders=0,
+                    total_notes=0,
+                    next_offset=None,
+                )
+
+            membership_predicates: list[str] = []
+            membership_parameters: list[str] = []
+            if normalized_note_ids:
+                content_placeholders = _placeholders(len(normalized_note_ids))
+                membership_predicates.append(
+                    f"m.note_id IN ({content_placeholders})"
+                )
+                membership_parameters.extend(normalized_note_ids)
+            if normalized_folder_query:
+                membership_predicates.append("instr(f.normalized_path, ?) > 0")
+                membership_parameters.append(normalized_folder_query)
+            membership_match = " OR ".join(membership_predicates)
+
             folder_rows = cursor.execute(
                 f"""
-                WITH RECURSIVE ancestors(folder_id) AS (
+                WITH RECURSIVE matched_folders(folder_id) AS (
                     SELECT DISTINCT m.folder_id
                     FROM note_folder_memberships AS m
                     JOIN note_folders AS f ON f.id = m.folder_id
                     WHERE m.deleted = 0 AND f.deleted = 0
-                      AND m.note_id IN ({placeholders})
+                      AND ({membership_match})
+                ),
+                ancestors(folder_id) AS (
+                    SELECT folder_id FROM matched_folders
                     UNION
                     SELECT f.parent_id
                     FROM note_folders AS f
@@ -467,7 +523,7 @@ class LocalNoteFolderRepository:
                 ORDER BY note_folders.normalized_path, note_folders.id
                 LIMIT 501
                 """,
-                normalized_note_ids,
+                tuple(membership_parameters),
             ).fetchall()
             membership_rows = cursor.execute(
                 f"""
@@ -475,12 +531,13 @@ class LocalNoteFolderRepository:
                 FROM note_folder_memberships AS m
                 JOIN note_folders AS f ON f.id = m.folder_id
                 WHERE m.deleted = 0 AND f.deleted = 0
-                  AND m.note_id IN ({placeholders})
+                  AND ({membership_match})
                 ORDER BY f.normalized_path, m.note_id, m.ownership, m.owner_id, m.id
                 LIMIT 1001
                 """,
-                normalized_note_ids,
+                tuple(membership_parameters),
             ).fetchall()
+            selected_placeholders = _placeholders(len(selected_note_ids))
             note_rows = cursor.execute(
                 f"""
                 SELECT n.{_NOTE_COLUMNS.replace(', ', ', n.')},
@@ -492,10 +549,10 @@ class LocalNoteFolderRepository:
                              AND f.deleted = 0 AND m.owner_active = 1
                        ) AS _unfiled
                 FROM notes AS n
-                WHERE n.deleted = 0 AND n.id IN ({placeholders})
+                WHERE n.deleted = 0 AND n.id IN ({selected_placeholders})
                 ORDER BY n.title COLLATE NOCASE, n.id
                 """,
-                normalized_note_ids,
+                selected_note_ids,
             ).fetchall()
             if len(folder_rows) > 500 or len(membership_rows) > 1000:
                 raise FolderValidationError(
@@ -1625,27 +1682,40 @@ def _load_managed_folder_rows(
     placeholders = _placeholders(len(normalized_folder_ids))
     return cursor.execute(
         f"""
-        WITH RECURSIVE subtree(target_id, folder_id) AS (
-            SELECT id, id
-            FROM note_folders
-            WHERE deleted = 0 AND id IN ({placeholders})
+        WITH RECURSIVE managed_ancestors(folder_id, owner_active) AS (
+            SELECT DISTINCT membership.folder_id, membership.owner_active
+            FROM note_folder_memberships AS membership
+            JOIN note_folders AS folder ON folder.id = membership.folder_id
+            WHERE membership.deleted = 0
+              AND membership.ownership = 'managed'
+              AND folder.deleted = 0
             UNION
-            SELECT subtree.target_id, child.id
-            FROM note_folders AS child
-            JOIN subtree ON child.parent_id = subtree.folder_id
-            WHERE child.deleted = 0
+            SELECT folder.parent_id, managed_ancestors.owner_active
+            FROM note_folders AS folder
+            JOIN managed_ancestors ON managed_ancestors.folder_id = folder.id
+            WHERE folder.deleted = 0 AND folder.parent_id IS NOT NULL
         )
-        SELECT subtree.target_id AS folder_id,
-               MIN(membership.owner_active) AS owner_active
-        FROM subtree
-        JOIN note_folder_memberships AS membership
-          ON membership.folder_id = subtree.folder_id
-        WHERE membership.deleted = 0 AND membership.ownership = 'managed'
-        GROUP BY subtree.target_id
-        ORDER BY subtree.target_id
+        SELECT folder_id, MIN(owner_active) AS owner_active
+        FROM managed_ancestors
+        WHERE folder_id IN ({placeholders})
+        GROUP BY folder_id
+        ORDER BY folder_id
         """,
         normalized_folder_ids,
     ).fetchall()
+
+
+def _normalize_folder_search_query(query: str) -> str:
+    """Normalize a bounded user breadcrumb query for stored path matching."""
+    if not isinstance(query, str):
+        raise FolderValidationError("folder_query must be text.")
+    display = query.strip()
+    if not display:
+        return ""
+    if len(display) > 200 or "\x00" in display:
+        raise FolderValidationError("folder_query exceeds the allowed range.")
+    normalized = unicodedata.normalize("NFKC", display).casefold()
+    return "/".join(part.strip() for part in normalized.split("/"))
 
 
 def _folder_from_row(row: sqlite3.Row) -> NoteFolder:
