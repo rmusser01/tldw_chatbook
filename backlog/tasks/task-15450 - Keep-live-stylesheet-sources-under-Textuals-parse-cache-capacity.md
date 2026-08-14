@@ -1,7 +1,7 @@
 ---
 id: TASK-15450
 title: Keep live stylesheet sources under Textual's parse-cache capacity
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-11 12:05'
 updated_date: '2026-08-14 00:38'
