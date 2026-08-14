@@ -1,7 +1,7 @@
 ---
 id: TASK-15790
 title: 'Sweep inventory: file-notes arcs left ~35 Library tests behind'
-status: To Do
+status: Done
 assignee: []
 labels:
   - test-health
@@ -37,7 +37,7 @@ test only after the product behaviour is confirmed intended.
 - [x] The StopIteration pair is attributed (real bug vs test artifact) with evidence, before any contract is updated
 - [x] Each cluster is attributed to its causing commit
 - [x] Genuine product breaks are fixed rather than absorbed into expectations (one found and fixed: the skills trust-panel ordering)
-- [ ] The listed modules pass whole on dev
+- [x] The listed modules pass whole on dev
 
 ## Implementation Notes (batch 1)
 
@@ -114,7 +114,30 @@ explicit navigator choice, made while narrow, keeps winning.
 
 `test_library_file_notes_workspace.py` whole: 88/88.
 
-## Remainder (open)
+## Implementation Notes (batch 3 -- the shell six; module now 586/586)
 
-- `test_library_shell.py` x6 (current-dev set: metadata placeholders, reset
-  to defaults, note sync-routes focus, recompose/fifty-cycles baseline, +2).
+All six were stale contracts against deliberate arcs, each attributed:
+
+- metadata placeholders: 6a607b692 moved "(optional)" into PERSISTENT labels
+  (placeholders vanish on typing and cannot carry field identity);
+  placeholders are guidance now. Test asserts both halves of the new
+  contract.
+- reset-to-defaults: the collapsed-title receipt rule shows a field only
+  when CHANGED from default -- asserting "Chunk size: 1000" after a reset
+  contradicted the rule the panel ships. Test asserts the receipt's absence.
+- worker-group baseline: 4d4dceebc consolidated create/delete onto one
+  "library_note_mutation" group.
+- delete-receipt count: the sectioned rail (Inspector parity) does not mount
+  Browse rows in the immersive notes stage; the test exits the stage the way
+  a user does (Escape) before reading the count.
+- undo interlock: rows may not RENDER during an in-flight undo -- structural
+  refusal is a stronger form of the same claim; when a row renders, pressing
+  it must still be a no-op.
+- sync-routes focus: traced -- the back-press supersedes the navigation
+  generation and the CANCEL is the contract (identity discarded, no restore
+  runs); the old `library-notes-filter` pin was Textual's incidental
+  nearest-focusable after the sync panel unmounted, changed legitimately by
+  the sectioned rail. The pin is relaxed to "a live focusable, not a
+  stranded sync widget"; where the shell chooses to put focus belongs to the
+  rail arc's own tests. (Left open as a UX question for that arc: after
+  backing out of notes sync, focus lands on the rail's Details toggle.)
