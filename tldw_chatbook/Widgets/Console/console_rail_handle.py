@@ -89,6 +89,7 @@ class ConsoleRailHandle(DestinationRailHandle):
                 child.styles.height = "1fr"
                 child.styles.min_height = 0
                 child.styles.max_height = "100%"
+                child.styles.line_pad = 0
             yield child
 
     def _display_label(self) -> str:
@@ -97,7 +98,7 @@ class ConsoleRailHandle(DestinationRailHandle):
             return self._stack_vertical_label(self.label)
         if self.side != "right":
             return self.label
-        return "Inspect" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
+        return "Inspect->" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
 
     def _display_badge(self) -> str:
         """Return badge copy that fits the collapsed inspector affordance."""
