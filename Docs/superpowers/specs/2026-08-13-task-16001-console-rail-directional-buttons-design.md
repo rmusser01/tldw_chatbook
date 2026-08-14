@@ -96,7 +96,7 @@ Keep the change in the three Console-owned presentation sites:
 
 1. `ConsoleRailHandle` owns the two canonical horizontal collapsed labels.
 2. `ConsoleLeftRail.compose()` owns the Context full-width collapse Button.
-3. `ConsoleRightRail.compose()` owns the Inspector full-width collapse Button.
+3. `ConsoleInspectorRail.compose()` owns the Inspector full-width collapse Button.
 
 Do not change `DestinationRailHandle`, shared disclosure glyph constants,
 Console rail-state persistence, screen handlers, rail bodies, section headers,
@@ -140,7 +140,9 @@ Focused tests must prove:
    wrapping, clipping, extra row, transcript loss, or responsive-policy drift.
 6. Existing F6 focus-tour, compact-access, rail open/collapse, settings-driven
    vertical labels, Inspector badge, terminal-frame, and CSS-bundle integrity
-   tests remain green.
+   tests remain green. TASK-15783 keeps its geometry/frame/badge contract and
+   test provenance while updating only its two collapsed Inspector copy
+   assertions from the superseded `Inspect->` to `<-Inspect`.
 7. Ruff lint/format, duplicate-task-ID, and diff checks pass. Per user
    instruction, do not run the full repository test suite.
 
