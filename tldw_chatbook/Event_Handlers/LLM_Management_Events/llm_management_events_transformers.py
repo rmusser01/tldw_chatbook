@@ -10,15 +10,9 @@ from rich.text import Text
 from textual.widgets import Button, Input, RichLog
 from tldw_chatbook.Utils.input_validation import sanitize_string as sanitize_input
 
-# For listing local models, you might need to interact with huggingface_hub or scan directories
 try:
     from huggingface_hub import constants as hf_constants
-
-    # from huggingface_hub import list_models, model_info as hf_model_info # For online search
-    # from huggingface_hub.utils import GatedRepoError, RepositoryNotFoundError
-    HUGGINGFACE_HUB_AVAILABLE = True
 except ImportError:
-    HUGGINGFACE_HUB_AVAILABLE = False
     hf_constants = None  # type: ignore
 
 if TYPE_CHECKING:
@@ -155,10 +149,7 @@ async def handle_transformers_browse_models_dir_button_pressed(
     logger.debug("Transformers browse models directory button pressed.")
 
     try:
-        from textual_fspicker import (
-            FileOpen,
-            Filters,  # noqa: F401
-        )  # Ensure it's imported for runtime
+        from textual_fspicker import FileOpen
     except ImportError:
         app.notify(
             "File picker utility (textual-fspicker) not available.", severity="error"
@@ -167,7 +158,7 @@ async def handle_transformers_browse_models_dir_button_pressed(
         return
 
     default_loc_str = str(Path.home())
-    if HUGGINGFACE_HUB_AVAILABLE and hf_constants:
+    if hf_constants is not None:
         try:
             # Use HF_HOME if set, otherwise default cache.
             # hf_constants.HF_HUB_CACHE points to the 'hub' subdir, e.g., ~/.cache/huggingface/hub

@@ -1330,8 +1330,6 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
         "textual_fspicker",
         SimpleNamespace(FileOpen=Picker, Filters=object),
     )
-    monkeypatch.setattr(transformers_events, "HUGGINGFACE_HUB_AVAILABLE", True)
-
     app = TldwCli()
     app.app_config["_first_run"] = False
     app.app_config.setdefault("first_run", {})["setup_completed"] = True
