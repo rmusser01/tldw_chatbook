@@ -114,6 +114,40 @@ class AudioCppManagedLeaseHold:
     release_requested: bool = False
     acquisition_error: BaseException | None = field(default=None, repr=False)
     cleanup_control_error: BaseException | None = field(default=None, repr=False)
+    publication_adopted: bool = False
+
+
+@dataclass(eq=False, slots=True)
+class AudioCppManagedLeasePublication:
+    """Process-local transfer of one exact hold into TTS publication."""
+
+    owner: AudioCppModelInstallOwner
+    hold: AudioCppManagedLeaseHold
+
+    def adopt(self) -> None:
+        """Mark the service as the hold's definitive lifecycle owner."""
+
+        if self.hold not in self.owner._lease_holds:
+            raise RuntimeError("audio.cpp model publication lease is unavailable")
+        self.hold.publication_adopted = True
+
+    async def release(self) -> None:
+        """Request and join one exact cleanup attempt.
+
+        Raises:
+            RuntimeError: If exact handle cleanup remains incomplete.
+            BaseException: If cleanup reports interpreter control flow.
+        """
+
+        self.owner.request_lease_release(self.hold)
+        await self.owner.wait_lease_hold(self.hold)
+        if self.hold in self.owner._lease_holds:
+            raise RuntimeError("audio.cpp model publication cleanup failed")
+
+    def abandon(self) -> None:
+        """Return an unadopted transfer to app-owned cleanup."""
+
+        self.owner.request_lease_release(self.hold)
 
 
 class AudioCppModelInstallOwner:
@@ -223,6 +257,26 @@ class AudioCppModelInstallOwner:
         hold.release_requested = True
         if hold.acquisition_task.done():
             self._start_hold_cleanup(hold)
+
+    def transfer_lease_hold_to_publication(
+        self,
+        hold: AudioCppManagedLeaseHold,
+    ) -> AudioCppManagedLeasePublication:
+        """Create an opaque process-local publication transfer.
+
+        Args:
+            hold: The exact acquired Settings hold to transfer.
+
+        Returns:
+            A single-use service adoption and release operation.
+
+        Raises:
+            RuntimeError: If the hold is not actively owned.
+        """
+
+        if hold not in self._lease_holds or hold.release_requested:
+            raise RuntimeError("audio.cpp model lease hold is unavailable")
+        return AudioCppManagedLeasePublication(self, hold)
 
     def retry_cleanup(self) -> None:
         """Start one bounded retry when retained cleanup is idle."""
@@ -372,10 +426,15 @@ class AudioCppModelInstallOwner:
                     return_exceptions=True,
                 )
             )
-        for hold in tuple(self._lease_holds):
+        owned_holds = tuple(
+            hold
+            for hold in self._lease_holds
+            if not hold.publication_adopted or hold.release_requested
+        )
+        for hold in owned_holds:
             self.request_lease_release(hold)
-        if self._lease_holds:
+        if owned_holds:
             self.retry_cleanup()
             await self.wait_until_idle()
-        if self._lease_holds:
+        if any(hold in self._lease_holds for hold in owned_holds):
             raise RuntimeError("audio.cpp model cleanup failed")

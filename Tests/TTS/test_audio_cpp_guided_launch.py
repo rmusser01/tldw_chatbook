@@ -325,6 +325,192 @@ async def test_local_launch_does_not_construct_managed_artifact_service(
 
 
 @pytest.mark.asyncio
+async def test_managed_service_factory_failure_is_off_loop_stable_and_cleans_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Post-artifact service construction is contained by artifact ownership."""
+
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    root = tmp_path / "models" / "managed-supertonic"
+    _write_gguf(root, "supertonic-3-orig.gguf")
+    accepted = _accept(root, "supertonic_3_orig", "managed-narrator").model_copy(
+        update={"managed_artifact": _managed_identity()}
+    )
+    main_thread = threading.get_ident()
+    factory_threads: list[int] = []
+
+    def failed_factory() -> object:
+        factory_threads.append(threading.get_ident())
+        raise RuntimeError("PRIVATE_SERVICE_FACTORY_CANARY")
+
+    monkeypatch.setattr(launch_module, "managed_service", failed_factory)
+    artifact_root = tmp_path / "runtime-service-failure"
+
+    with pytest.raises(launch_module.AudioCppGuidedLaunchError) as caught:
+        await launch_module.materialize_audio_cpp_guided_launch(
+            _settings(_binary(tmp_path), [accepted]),
+            artifact_root=artifact_root,
+            port_selector=lambda: 54_333,
+            system="darwin",
+            architecture="arm64",
+        )
+
+    assert caught.value.code == "package_changed"
+    assert "PRIVATE" not in str(caught.value)
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
+    assert factory_threads and factory_threads[0] != main_thread
+    assert tuple(artifact_root.iterdir()) == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control_type", (SystemExit, GeneratorExit, KeyboardInterrupt))
+async def test_managed_activate_control_flow_preserves_exact_signal_and_cleans(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    control_type: type[BaseException],
+) -> None:
+    """Managed activation cannot translate interpreter control into validation."""
+
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    root = tmp_path / "models" / "managed-supertonic"
+    _write_gguf(root, "supertonic-3-orig.gguf")
+    accepted = _accept(root, "supertonic_3_orig", "managed-narrator").model_copy(
+        update={"managed_artifact": _managed_identity()}
+    )
+    signal = control_type("PRIVATE_CONTROL_CANARY")
+
+    class Service:
+        def activate(self, _reference: object) -> None:
+            raise signal
+
+        def acquire(self, _reference: object) -> object:
+            raise AssertionError("acquire must not run after activation control flow")
+
+    monkeypatch.setattr(launch_module, "managed_service", Service)
+    artifact_root = tmp_path / f"runtime-{control_type.__name__}"
+    real_rmdir = launch_module.os.rmdir
+    rmdir_calls = 0
+
+    def fail_first_cleanup(*args: object, **kwargs: object) -> None:
+        nonlocal rmdir_calls
+        rmdir_calls += 1
+        if rmdir_calls == 1:
+            raise OSError("PRIVATE_CONTROL_CLEANUP_CANARY")
+        real_rmdir(*args, **kwargs)
+
+    monkeypatch.setattr(launch_module.os, "rmdir", fail_first_cleanup)
+
+    with pytest.raises(control_type) as caught:
+        await launch_module.materialize_audio_cpp_guided_launch(
+            _settings(_binary(tmp_path), [accepted]),
+            artifact_root=artifact_root,
+            port_selector=lambda: 54_334,
+            system="darwin",
+            architecture="arm64",
+        )
+
+    assert caught.value is signal
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
+    cleanup_owner = launch_module.take_audio_cpp_guided_cleanup_owner(caught.value)
+    assert cleanup_owner is not None
+    cleanup_owner.cleanup()
+    assert rmdir_calls == 2
+    assert tuple(artifact_root.iterdir()) == ()
+
+
+@pytest.mark.asyncio
+async def test_managed_service_factory_cancellation_is_shielded_and_cleans_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation joins off-loop service construction before final cleanup."""
+
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    root = tmp_path / "models" / "managed-supertonic"
+    _write_gguf(root, "supertonic-3-orig.gguf")
+    accepted = _accept(root, "supertonic_3_orig", "managed-narrator").model_copy(
+        update={"managed_artifact": _managed_identity()}
+    )
+    factory_started = threading.Event()
+    allow_factory = threading.Event()
+
+    class Service:
+        def activate(self, _reference: object) -> None:
+            raise AssertionError("activation must not follow cancelled construction")
+
+    def factory() -> object:
+        factory_started.set()
+        assert allow_factory.wait(2)
+        return Service()
+
+    monkeypatch.setattr(launch_module, "managed_service", factory)
+    artifact_root = tmp_path / "runtime-cancel-service"
+    task = asyncio.create_task(
+        launch_module.materialize_audio_cpp_guided_launch(
+            _settings(_binary(tmp_path), [accepted]),
+            artifact_root=artifact_root,
+            port_selector=lambda: 54_335,
+            system="darwin",
+            architecture="arm64",
+        )
+    )
+    assert await asyncio.to_thread(factory_started.wait, 2)
+
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    allow_factory.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert tuple(artifact_root.iterdir()) == ()
+
+
+@pytest.mark.asyncio
+async def test_post_acquisition_launch_construction_failure_releases_exact_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Final snapshot construction remains inside generated-artifact ownership."""
+
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    root = tmp_path / "models" / "managed-supertonic"
+    _write_gguf(root, "supertonic-3-orig.gguf")
+    accepted = _accept(root, "supertonic_3_orig", "managed-narrator").model_copy(
+        update={"managed_artifact": _managed_identity()}
+    )
+    service = _ManagedServiceSpy(root)
+    monkeypatch.setattr(launch_module, "managed_service", lambda: service)
+
+    def fail_snapshot(**_kwargs: object) -> object:
+        raise RuntimeError("PRIVATE_FINAL_SNAPSHOT_CANARY")
+
+    monkeypatch.setattr(launch_module, "AudioCppManagedLaunchConfig", fail_snapshot)
+    artifact_root = tmp_path / "runtime-final-construction"
+
+    with pytest.raises(launch_module.AudioCppGuidedLaunchError) as caught:
+        await launch_module.materialize_audio_cpp_guided_launch(
+            _settings(_binary(tmp_path), [accepted]),
+            artifact_root=artifact_root,
+            port_selector=lambda: 54_337,
+            system="darwin",
+            architecture="arm64",
+        )
+
+    assert caught.value.code == "package_changed"
+    assert "PRIVATE" not in str(caught.value)
+    assert service.leases[0].close_calls == 1
+    assert tuple(artifact_root.iterdir()) == ()
+
+
+@pytest.mark.asyncio
 async def test_generated_cleanup_retries_before_releasing_managed_lease(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -367,6 +553,72 @@ async def test_generated_cleanup_retries_before_releasing_managed_lease(
     artifact.cleanup()
     assert service.leases[0].close_calls == 1
     assert not launch.working_directory.exists()
+
+
+@pytest.mark.asyncio
+async def test_real_store_removal_stays_blocked_until_generated_cleanup_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A live real-store lease survives failed config cleanup exactly."""
+
+    from Tests.Model_Artifacts.test_service import (
+        install_descriptor_payload,
+        single_file_descriptor,
+    )
+    from tldw_chatbook.Model_Artifacts import (
+        ArtifactInUseError,
+        ArtifactRef,
+        ArtifactRole,
+        ModelArtifactService,
+    )
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    content = b"real-managed-payload"
+    reference = ArtifactRef("audio-cpp-real-contention", "a" * 40, "f16")
+    descriptor = single_file_descriptor(reference, ArtifactRole.ROOT, content)
+    service = ModelArtifactService(
+        tmp_path / "artifact-store",
+        lease_timeout_seconds=0.02,
+    )
+    install_descriptor_payload(service, tmp_path, descriptor, content)
+    service.activate(reference)
+    leased = service.acquire(reference)
+
+    local_root = tmp_path / "local-model"
+    _write_gguf(local_root, "supertonic-3-orig.gguf")
+    launch = await launch_module.materialize_audio_cpp_guided_launch(
+        _settings(
+            _binary(tmp_path),
+            [_accept(local_root, "supertonic_3_orig", "local-narrator")],
+        ),
+        artifact_root=tmp_path / "runtime-real-contention",
+        port_selector=lambda: 54_336,
+        system="darwin",
+        architecture="arm64",
+    )
+    artifact = launch.generated_artifact
+    assert artifact is not None
+    artifact.retain_managed_handle(leased)
+    real_rmdir = launch_module.os.rmdir
+    fail_cleanup = True
+
+    def controlled_rmdir(*args: object, **kwargs: object) -> None:
+        if fail_cleanup:
+            raise OSError("PRIVATE_REAL_STORE_CLEANUP")
+        real_rmdir(*args, **kwargs)
+
+    monkeypatch.setattr(launch_module.os, "rmdir", controlled_rmdir)
+
+    with pytest.raises(launch_module.AudioCppGuidedLaunchError):
+        artifact.cleanup()
+    with pytest.raises(ArtifactInUseError):
+        service.delete(reference)
+
+    fail_cleanup = False
+    artifact.cleanup()
+    service.delete(reference)
+    assert not service.artifact_path(reference).exists()
 
 
 @pytest.mark.asyncio

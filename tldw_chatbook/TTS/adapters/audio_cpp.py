@@ -43,6 +43,7 @@ from tldw_chatbook.TTS.audio_cpp_guided_launch import (
     AudioCppGeneratedLaunchArtifact,
     AudioCppGuidedLaunchError,
     materialize_audio_cpp_guided_launch,
+    take_audio_cpp_guided_cleanup_owner,
 )
 from tldw_chatbook.TTS.audio_cpp_contract import (
     AudioCppContractError,
@@ -1584,11 +1585,14 @@ class AudioCppAdapter:
                     else:
                         guided_failure = _MANAGED_CONFIGURATION_INVALID
                 except asyncio.CancelledError as error:
-                    take_cleanup_owner = getattr(error, "take_cleanup_owner", None)
-                    if callable(take_cleanup_owner):
-                        cleanup_owner = take_cleanup_owner()
-                        if cleanup_owner is not None:
-                            self._pending_guided_cleanup = cleanup_owner
+                    cleanup_owner = take_audio_cpp_guided_cleanup_owner(error)
+                    if cleanup_owner is not None:
+                        self._pending_guided_cleanup = cleanup_owner
+                    raise
+                except BaseException as error:
+                    cleanup_owner = take_audio_cpp_guided_cleanup_owner(error)
+                    if cleanup_owner is not None:
+                        self._pending_guided_cleanup = cleanup_owner
                     raise
                 if guided_failure is not None:
                     raise self._operation_error(

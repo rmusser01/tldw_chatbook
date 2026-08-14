@@ -103,21 +103,6 @@ class AudioCppGuidedLaunchError(ValueError):
         return owner
 
 
-class _AudioCppGuidedLaunchCancelled(asyncio.CancelledError):
-    """Cancellation carrying the only reachable failed-cleanup owner."""
-
-    def __init__(self, owner: AudioCppGeneratedLaunchArtifact) -> None:
-        super().__init__()
-        self._owner: AudioCppGeneratedLaunchArtifact | None = owner
-
-    def take_cleanup_owner(self) -> AudioCppGeneratedLaunchArtifact | None:
-        """Transfer the retained owner exactly once."""
-
-        owner = self._owner
-        self._owner = None
-        return owner
-
-
 class AudioCppGeneratedLaunchArtifact:
     """Descriptor-bound ownership of one generated configuration directory."""
 
@@ -765,6 +750,79 @@ async def _cleanup_succeeded(artifact: AudioCppGeneratedLaunchArtifact) -> bool:
     return True
 
 
+_CLEANUP_OWNER_ATTRIBUTE = "_audio_cpp_generated_cleanup_owner"
+
+
+def take_audio_cpp_guided_cleanup_owner(
+    error: BaseException,
+) -> AudioCppGeneratedLaunchArtifact | None:
+    """Take an exact cleanup owner attached to preserved control flow.
+
+    Args:
+        error: The original exception object re-raised by materialization.
+
+    Returns:
+        The retained artifact owner, or ``None`` when cleanup succeeded.
+    """
+
+    take_owner = getattr(error, "take_cleanup_owner", None)
+    if callable(take_owner):
+        return cast(AudioCppGeneratedLaunchArtifact | None, take_owner())
+    owner = getattr(error, _CLEANUP_OWNER_ATTRIBUTE, None)
+    if not isinstance(owner, AudioCppGeneratedLaunchArtifact):
+        return None
+    setattr(error, _CLEANUP_OWNER_ATTRIBUTE, None)
+    return owner
+
+
+def _raise_control_after_cleanup(
+    error: BaseException,
+    artifact: AudioCppGeneratedLaunchArtifact,
+) -> None:
+    """Synchronously clean or attach ownership before bare control re-raise."""
+
+    try:
+        artifact.cleanup()
+    except BaseException:
+        setattr(error, _CLEANUP_OWNER_ATTRIBUTE, artifact)
+    error.__traceback__ = None
+    error.__context__ = None
+    error.__cause__ = None
+    raise error from None
+
+
+def _managed_service_outcome() -> tuple[object | None, BaseException | None]:
+    try:
+        return managed_service(), None
+    except BaseException as error:
+        return None, error
+
+
+def _managed_acquire_outcome(
+    service: object,
+    reference: ArtifactRef,
+) -> tuple[LeasedArtifactHandle | None, BaseException | None]:
+    try:
+        activate = getattr(service, "activate")
+        acquire = getattr(service, "acquire")
+        activate(reference)
+        return acquire(reference), None
+    except BaseException as error:
+        return None, error
+
+
+async def _raise_guided_failure_after_cleanup(
+    artifact: AudioCppGeneratedLaunchArtifact,
+    code: AudioCppGuidedLaunchErrorCode,
+) -> None:
+    if not await _cleanup_succeeded(artifact):
+        raise AudioCppGuidedLaunchError(
+            "artifact_cleanup_failed",
+            cleanup_owner=artifact,
+        ) from None
+    raise AudioCppGuidedLaunchError(code) from None
+
+
 async def materialize_audio_cpp_guided_launch(
     settings: AudioCppSettingsConfig,
     *,
@@ -843,51 +901,81 @@ async def materialize_audio_cpp_guided_launch(
     )
     try:
         artifact = await asyncio.shield(artifact_task)
-    except asyncio.CancelledError:
+    except asyncio.CancelledError as error:
         artifact = await asyncio.shield(artifact_task)
         if artifact is not None and not await _cleanup_succeeded(artifact):
-            raise _AudioCppGuidedLaunchCancelled(artifact) from None
+            setattr(error, _CLEANUP_OWNER_ATTRIBUTE, artifact)
         raise
     if artifact is None:
         raise AudioCppGuidedLaunchError("artifact_create_failed") from None
 
     managed_failure = False
     cancellation: asyncio.CancelledError | None = None
-    managed_packages = tuple(
-        (accepted, recipe, reference)
-        for accepted, recipe in zip(
-            settings.guided_packages,
-            exact_recipes,
-            strict=True,
+    try:
+        managed_packages = tuple(
+            (accepted, recipe, reference)
+            for accepted, recipe in zip(
+                settings.guided_packages,
+                exact_recipes,
+                strict=True,
+            )
+            if (reference := _managed_reference(accepted)) is not None
         )
-        if (reference := _managed_reference(accepted)) is not None
-    )
+    except BaseException as error:
+        if not isinstance(error, Exception):
+            _raise_control_after_cleanup(error, artifact)
+        await _raise_guided_failure_after_cleanup(artifact, "package_changed")
     if managed_packages:
-        service = managed_service()
-
-        def activate_and_acquire(reference: ArtifactRef) -> LeasedArtifactHandle:
-            service.activate(reference)
-            return service.acquire(reference)
-
+        service_work = asyncio.to_thread(_managed_service_outcome)
+        try:
+            service_task = asyncio.create_task(service_work)
+        except BaseException as error:
+            service_work.close()
+            if not isinstance(error, Exception):
+                _raise_control_after_cleanup(error, artifact)
+            await _raise_guided_failure_after_cleanup(artifact, "package_changed")
+        try:
+            service, service_error = await asyncio.shield(service_task)
+        except asyncio.CancelledError as error:
+            service, service_error = await asyncio.shield(service_task)
+            if service_error is not None and not isinstance(service_error, Exception):
+                _raise_control_after_cleanup(service_error, artifact)
+            if not await _cleanup_succeeded(artifact):
+                setattr(error, _CLEANUP_OWNER_ATTRIBUTE, artifact)
+            raise
+        if service_error is not None:
+            if not isinstance(service_error, Exception):
+                _raise_control_after_cleanup(service_error, artifact)
+            await _raise_guided_failure_after_cleanup(artifact, "package_changed")
+        assert service is not None
         for accepted, recipe, reference in managed_packages:
-            acquire_task = asyncio.create_task(
-                asyncio.to_thread(activate_and_acquire, reference)
+            acquire_work = asyncio.to_thread(
+                _managed_acquire_outcome,
+                service,
+                reference,
             )
             try:
-                leased = await asyncio.shield(acquire_task)
-            except asyncio.CancelledError as error:
-                cancellation = error
-                try:
-                    leased = await asyncio.shield(acquire_task)
-                except BaseException:
-                    managed_failure = True
-                    break
-            except BaseException:
+                acquire_task = asyncio.create_task(acquire_work)
+            except BaseException as error:
+                acquire_work.close()
+                if not isinstance(error, Exception):
+                    _raise_control_after_cleanup(error, artifact)
                 managed_failure = True
                 break
-            artifact.retain_managed_handle(leased)
-            canonical_root = _managed_root(leased, reference)
             try:
+                leased, acquire_error = await asyncio.shield(acquire_task)
+            except asyncio.CancelledError as error:
+                cancellation = error
+                leased, acquire_error = await asyncio.shield(acquire_task)
+            if acquire_error is not None:
+                if not isinstance(acquire_error, Exception):
+                    _raise_control_after_cleanup(acquire_error, artifact)
+                managed_failure = True
+                break
+            try:
+                assert leased is not None
+                artifact.retain_managed_handle(leased)
+                canonical_root = _managed_root(leased, reference)
                 matches = canonical_root is not None and await _scan_matches_accepted(
                     accepted,
                     recipe,
@@ -895,6 +983,11 @@ async def materialize_audio_cpp_guided_launch(
                 )
             except asyncio.CancelledError as error:
                 cancellation = error
+                break
+            except BaseException as error:
+                if not isinstance(error, Exception):
+                    _raise_control_after_cleanup(error, artifact)
+                managed_failure = True
                 break
             if not matches:
                 managed_failure = True
@@ -904,48 +997,50 @@ async def materialize_audio_cpp_guided_launch(
 
     if cancellation is not None:
         if not await _cleanup_succeeded(artifact):
-            raise _AudioCppGuidedLaunchCancelled(artifact) from None
+            setattr(cancellation, _CLEANUP_OWNER_ATTRIBUTE, artifact)
         raise cancellation
     if managed_failure:
-        if not await _cleanup_succeeded(artifact):
-            raise AudioCppGuidedLaunchError(
-                "artifact_cleanup_failed",
-                cleanup_owner=artifact,
-            ) from None
-        raise AudioCppGuidedLaunchError("package_changed") from None
+        await _raise_guided_failure_after_cleanup(artifact, "package_changed")
 
-    expected_models = tuple(
-        AudioCppExpectedModel(
-            model_id=accepted.public_model_id,
-            family=accepted.projection.family,
-            task=accepted.projection.task,
-            mode=accepted.projection.mode,
-            speech_capabilities=cast(
-                tuple[Literal["tts", "clone"], ...],
-                tuple(
-                    capability
-                    for capability in recipe.capabilities
-                    if capability in {"tts", "clone"}
+    try:
+        expected_models = tuple(
+            AudioCppExpectedModel(
+                model_id=accepted.public_model_id,
+                family=accepted.projection.family,
+                task=accepted.projection.task,
+                mode=accepted.projection.mode,
+                speech_capabilities=cast(
+                    tuple[Literal["tts", "clone"], ...],
+                    tuple(
+                        capability
+                        for capability in recipe.capabilities
+                        if capability in {"tts", "clone"}
+                    ),
                 ),
+            )
+            for accepted, recipe in zip(
+                settings.guided_packages,
+                exact_recipes,
+                strict=True,
+            )
+        )
+        return AudioCppManagedLaunchConfig(
+            binary_path=binary,
+            server_json_path=artifact.server_json_path,
+            working_directory=artifact.server_json_path.parent,
+            base_url=f"http://127.0.0.1:{port}",
+            startup_timeout_seconds=settings.managed_startup_timeout_seconds,
+            health_check_interval_seconds=(
+                settings.managed_health_check_interval_seconds
             ),
+            termination_grace_seconds=settings.managed_termination_grace_seconds,
+            expected_models=expected_models,
+            generated_artifact=artifact,
         )
-        for accepted, recipe in zip(
-            settings.guided_packages,
-            exact_recipes,
-            strict=True,
-        )
-    )
-    return AudioCppManagedLaunchConfig(
-        binary_path=binary,
-        server_json_path=artifact.server_json_path,
-        working_directory=artifact.server_json_path.parent,
-        base_url=f"http://127.0.0.1:{port}",
-        startup_timeout_seconds=settings.managed_startup_timeout_seconds,
-        health_check_interval_seconds=(settings.managed_health_check_interval_seconds),
-        termination_grace_seconds=settings.managed_termination_grace_seconds,
-        expected_models=expected_models,
-        generated_artifact=artifact,
-    )
+    except BaseException as error:
+        if not isinstance(error, Exception):
+            _raise_control_after_cleanup(error, artifact)
+        await _raise_guided_failure_after_cleanup(artifact, "package_changed")
 
 
 __all__ = (
@@ -955,4 +1050,5 @@ __all__ = (
     "materialize_audio_cpp_guided_launch",
     "revalidate_audio_cpp_guided_packages",
     "select_audio_cpp_guided_backend",
+    "take_audio_cpp_guided_cleanup_owner",
 )

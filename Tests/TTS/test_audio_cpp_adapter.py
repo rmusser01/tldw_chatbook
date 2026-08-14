@@ -4169,6 +4169,54 @@ async def test_guided_materialization_cleanup_owner_seals_launch_until_close_ret
 
 
 @pytest.mark.asyncio
+async def test_guided_control_flow_transfers_cleanup_owner_before_exact_reraise(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The adapter retains failed cleanup without translating control flow."""
+
+    class ControlSignal(BaseException):
+        pass
+
+    class Owner:
+        def __init__(self) -> None:
+            self.cleanup_calls = 0
+
+        def cleanup(self) -> None:
+            self.cleanup_calls += 1
+
+    signal = ControlSignal("PRIVATE_CONTROL_GRAPH")
+    owner = Owner()
+
+    async def fail_materialization(_settings: object) -> None:
+        raise signal
+
+    monkeypatch.setattr(
+        audio_cpp_module,
+        "materialize_audio_cpp_guided_launch",
+        fail_materialization,
+    )
+    monkeypatch.setattr(
+        audio_cpp_module,
+        "take_audio_cpp_guided_cleanup_owner",
+        lambda error: owner if error is signal else None,
+    )
+    adapter = AudioCppAdapter(
+        _managed_config(tmp_path),
+        supervisor=_StubSupervisor(),
+        guided_settings=_guided_settings(tmp_path),
+    )
+
+    with pytest.raises(ControlSignal) as caught:
+        await adapter.get_catalog(refresh=True)
+    assert caught.value is signal
+    assert adapter._pending_guided_cleanup is owner
+
+    await adapter.close()
+    assert owner.cleanup_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_managed_a_to_b_retirement_reuses_supervisor_for_new_generation(
     tmp_path: Path,
 ) -> None:

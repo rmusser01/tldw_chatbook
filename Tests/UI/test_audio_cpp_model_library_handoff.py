@@ -268,6 +268,12 @@ async def test_guided_save_holds_before_after_managed_union_without_activation(
         assert all(active.values())
         assert close_calls == {}
         assert acquire_calls == sorted(active)
+        save_event = app.events[0]
+        assert panel._managed_lease_hold is None
+        assert save_event.publication_lease is not None
+
+        save_event.publication_lease.adopt()
+        await save_event.publication_lease.release()
 
         panel.receive_stts_settings_save_result(
             STTSSettingsSaveResult(
@@ -283,6 +289,58 @@ async def test_guided_save_holds_before_after_managed_union_without_activation(
 
         assert not any(active.values())
         assert set(close_calls.values()) == {1}
+
+
+def test_save_post_failure_abandons_transferred_publication_hold() -> None:
+    """A synchronous event handoff failure returns the token to app cleanup."""
+
+    from types import SimpleNamespace
+
+    from tldw_chatbook.TTS.TTS_Generation import TTSPreferencesSnapshot
+    from tldw_chatbook.UI.Screens.settings_speech_tts import (
+        GlobalSpeechTTSSaveProposal,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    abandoned = 0
+
+    class Publication:
+        def abandon(self) -> None:
+            nonlocal abandoned
+            abandoned += 1
+
+    publication = Publication()
+    panel = SimpleNamespace(
+        _latest_request_id=7,
+        is_mounted=True,
+        _set_result=lambda *_args, **_kwargs: None,
+        _transfer_managed_refs_to_publication=lambda: publication,
+        app=SimpleNamespace(
+            post_message=lambda _event: (_ for _ in ()).throw(
+                RuntimeError("PRIVATE_POST_CANARY")
+            )
+        ),
+    )
+    proposal = GlobalSpeechTTSSaveProposal(
+        settings={},
+        delete_setting_keys=(),
+        preferences=TTSPreferencesSnapshot(
+            provider_id="audio_cpp",
+            model_mode="first_available",
+            model_id=None,
+            voice_mode="server_default",
+            voice_id=None,
+            response_format="wav",
+            speed=1.0,
+        ),
+        changed_provider_ids=("audio_cpp",),
+    )
+
+    with pytest.raises(RuntimeError, match="PRIVATE_POST_CANARY"):
+        SpeechTTSSettingsPanel._post_settings_save(panel, 7, proposal)
+    assert abandoned == 1
 
 
 @pytest.mark.asyncio

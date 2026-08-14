@@ -18,7 +18,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from tldw_chatbook.TTS._async_lifecycle import (
@@ -569,6 +569,16 @@ class TTSSettingsPublicationTicket:
     completion: asyncio.Task[TTSSettingsPublication]
 
 
+class TTSSettingsPublicationLease(Protocol):
+    """Process-local exact lease transferred into one settings publication."""
+
+    def adopt(self) -> None:
+        """Accept definitive ownership before the publication task starts."""
+
+    async def release(self) -> None:
+        """Release or retain exact cleanup authority for a later retry."""
+
+
 def _sanitized_shutdown_error(*failures: BaseException) -> RuntimeError:
     failure_types = ", ".join(sorted({type(failure).__name__ for failure in failures}))
     return RuntimeError(f"TTS shutdown cleanup failed ({failure_types})")
@@ -1114,6 +1124,7 @@ class TTSService:
         self._settings_publication_tasks: set[asyncio.Task[TTSSettingsPublication]] = (
             set()
         )
+        self._settings_publication_leases: set[TTSSettingsPublicationLease] = set()
         self._native_capability_observations: dict[
             str,
             TTSNativeCapabilityObservation,
@@ -3002,6 +3013,7 @@ class TTSService:
         *,
         foreground_timeout_seconds: float = (_TTS_SETTINGS_FOREGROUND_TIMEOUT_SECONDS),
         publish_preferences: bool = True,
+        publication_lease: TTSSettingsPublicationLease | None = None,
     ) -> TTSSettingsPublicationTicket:
         """Start one retained settings persistence and runtime publication.
 
@@ -3013,6 +3025,8 @@ class TTSService:
             persistence: Blocking atomic persistence operation.
             foreground_timeout_seconds: Maximum foreground wait for provider
                 handoffs after persistence succeeds.
+            publication_lease: Optional process-local lease already acquired
+                across the before/after managed artifact union.
 
         Returns:
             A service-owned ticket with bounded foreground and final views.
@@ -3032,6 +3046,11 @@ class TTSService:
             raise TypeError("persistence must be callable")
         if type(publish_preferences) is not bool:
             raise TypeError("publish_preferences must be a boolean")
+        if publication_lease is not None and (
+            not callable(getattr(publication_lease, "adopt", None))
+            or not callable(getattr(publication_lease, "release", None))
+        ):
+            raise TypeError("publication_lease must support adopt and release")
         if (
             isinstance(foreground_timeout_seconds, bool)
             or not isinstance(foreground_timeout_seconds, (int, float))
@@ -3062,8 +3081,11 @@ class TTSService:
         foreground: asyncio.Future[TTSSettingsPublication] = (
             asyncio.get_running_loop().create_future()
         )
+        if publication_lease is not None:
+            publication_lease.adopt()
+            self._settings_publication_leases.add(publication_lease)
         completion = asyncio.create_task(
-            self._run_preferences_publication(
+            self._run_owned_preferences_publication(
                 generation=generation,
                 preferences=preferences,
                 provider_configs=copied_configs,
@@ -3071,6 +3093,7 @@ class TTSService:
                 foreground_timeout_seconds=float(foreground_timeout_seconds),
                 foreground=foreground,
                 publish_preferences=publish_preferences,
+                publication_lease=publication_lease,
             ),
             name=f"tts_settings_publication_{generation}",
         )
@@ -3082,6 +3105,39 @@ class TTSService:
             foreground=foreground,
             completion=completion,
         )
+
+    async def _run_owned_preferences_publication(
+        self,
+        *,
+        generation: int,
+        preferences: TTSPreferencesSnapshot,
+        provider_configs: Mapping[str, Mapping[str, Any]],
+        persistence: Callable[[], TTSSettingsPersistenceOutcome],
+        foreground_timeout_seconds: float,
+        foreground: asyncio.Future[TTSSettingsPublication],
+        publish_preferences: bool,
+        publication_lease: TTSSettingsPublicationLease | None,
+    ) -> TTSSettingsPublication:
+        """Run publication and release its transferred exact lease last."""
+
+        try:
+            return await self._run_preferences_publication(
+                generation=generation,
+                preferences=preferences,
+                provider_configs=provider_configs,
+                persistence=persistence,
+                foreground_timeout_seconds=foreground_timeout_seconds,
+                foreground=foreground,
+                publish_preferences=publish_preferences,
+            )
+        finally:
+            if publication_lease is not None:
+                try:
+                    await publication_lease.release()
+                except Exception:
+                    pass
+                else:
+                    self._settings_publication_leases.discard(publication_lease)
 
     async def _run_preferences_publication(
         self,
@@ -3673,6 +3729,13 @@ class TTSService:
                 *late_operation_tasks,
                 return_exceptions=True,
             )
+            for publication_lease in tuple(self._settings_publication_leases):
+                try:
+                    await publication_lease.release()
+                except BaseException as error:
+                    failures.append(error)
+                else:
+                    self._settings_publication_leases.discard(publication_lease)
             # A still-executing operation may later produce the primary failure.
             # Its joined resource error remains available to that cleanup path and
             # must not be promoted ahead of the unfinished execution.

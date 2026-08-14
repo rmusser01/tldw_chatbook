@@ -79,6 +79,7 @@ from tldw_chatbook.Third_Party.textual_fspicker import (
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
     AudioCppManagedLeaseHold,
+    AudioCppManagedLeasePublication,
     AudioCppModelInstallOwner,
 )
 from tldw_chatbook.UI.Lab_Modules.lab_speech_status import (
@@ -1850,6 +1851,21 @@ class SpeechTTSSettingsPanel(Vertical):
         owner.request_lease_release(hold)
         self._managed_lease_hold = None
         return True
+
+    def _transfer_managed_refs_to_publication(
+        self,
+    ) -> AudioCppManagedLeasePublication | None:
+        """Move the current exact hold into the app/service publication lane."""
+
+        hold = self._managed_lease_hold
+        if hold is None:
+            return None
+        owner = self._managed_cleanup_owner()
+        if owner is None:
+            raise RuntimeError("audio.cpp model cleanup owner is unavailable")
+        publication = owner.transfer_lease_hold_to_publication(hold)
+        self._managed_lease_hold = None
+        return publication
 
     @staticmethod
     def _audio_cpp_safe_package_name(package: AudioCppAcceptedPackage) -> str:
@@ -3933,8 +3949,9 @@ class SpeechTTSSettingsPanel(Vertical):
             "Saving global Speech & TTS settings locally…",
             severity="information",
         )
-        self.app.post_message(
-            STTSSettingsSaveEvent(
+        publication_lease = self._transfer_managed_refs_to_publication()
+        try:
+            event = STTSSettingsSaveEvent(
                 proposal.settings,
                 delete_setting_keys=proposal.delete_setting_keys,
                 preferences=proposal.preferences,
@@ -3943,8 +3960,13 @@ class SpeechTTSSettingsPanel(Vertical):
                 commit_defaults_after_handoff=(
                     self._pending_commit_defaults_after_handoff
                 ),
+                publication_lease=publication_lease,
             )
-        )
+            self.app.post_message(event)
+        except BaseException:
+            if publication_lease is not None:
+                publication_lease.abandon()
+            raise
 
     async def _revalidate_guided_save(
         self,

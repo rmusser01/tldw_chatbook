@@ -551,6 +551,7 @@ class AudioCppSupervisor:
         self._blocked_cleanup_failure: AudioCppProcessFailure | None = None
         self._diagnostics = _AudioCppDiagnosticRing()
         self._generation: _ProcessGeneration | None = None
+        self._pre_spawn_launch: AudioCppManagedLaunchConfig | None = None
         self._startup_task: asyncio.Task[AudioCppReadyEndpoint] | None = None
         self._stop_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
@@ -681,6 +682,7 @@ class AudioCppSupervisor:
                 self._state = "starting"
                 self._observation_version += 1
                 epoch = self._lifecycle_epoch
+                self._pre_spawn_launch = launch
                 startup_task = asyncio.create_task(
                     self._start_generation(
                         launch,
@@ -734,7 +736,11 @@ class AudioCppSupervisor:
     ) -> None:
         """Stop only the accepted exact owned generation and join cleanup."""
         async with self._lock:
-            if self._blocked_cleanup_failure is not None and self._generation is None:
+            if (
+                self._blocked_cleanup_failure is not None
+                and self._generation is None
+                and self._pre_spawn_launch is None
+            ):
                 raise _operation_error(self._blocked_cleanup_failure)
             self._adopt_cleanup_deadline_locked(
                 self._generation,
@@ -924,6 +930,7 @@ class AudioCppSupervisor:
                     process_exited=asyncio.Event(),
                 )
                 self._generation = record
+                self._pre_spawn_launch = None
                 record.stdout_drain = asyncio.create_task(
                     self._drain_output(record, "stdout", owned.process.stdout)
                 )
@@ -1073,7 +1080,11 @@ class AudioCppSupervisor:
             raise
         finally:
             if record is None:
-                if not await self._cleanup_launch_artifact(launch):
+                artifact_succeeded = await self._cleanup_launch_artifact(launch)
+                async with self._lock:
+                    if self._pre_spawn_launch is launch and artifact_succeeded:
+                        self._pre_spawn_launch = None
+                if not artifact_succeeded:
                     await self._publish_cleanup_failure(None)
             current = asyncio.current_task()
             async with self._lock:
@@ -1701,6 +1712,7 @@ class AudioCppSupervisor:
 
             async with self._lock:
                 record = self._generation
+                pre_spawn_launch = self._pre_spawn_launch
                 if record is not None:
                     record.expected_exit = True
                     record.terminal_state = "stopped"
@@ -1728,6 +1740,21 @@ class AudioCppSupervisor:
                         raise _operation_error(failure) from None
                 else:
                     await self._terminate_and_join(record)
+            elif pre_spawn_launch is not None:
+                artifact_succeeded = await self._cleanup_launch_artifact(
+                    pre_spawn_launch
+                )
+                async with self._lock:
+                    if (
+                        self._pre_spawn_launch is pre_spawn_launch
+                        and artifact_succeeded
+                    ):
+                        self._pre_spawn_launch = None
+                        self._blocked_cleanup_failure = None
+                        self._last_failure = None
+                if not artifact_succeeded:
+                    failure = await self._publish_cleanup_failure(None)
+                    raise _operation_error(failure) from None
 
             async with self._lock:
                 if self._generation is None:
@@ -1755,6 +1782,7 @@ class AudioCppSupervisor:
                     self._last_failure = None
                     self._blocked_cleanup_failure = None
                     self._generation = None
+                    self._pre_spawn_launch = None
                     self._startup_task = None
                     self._stop_task = None
                     self._state = "stopped"
