@@ -59,6 +59,7 @@ import multiprocessing
 import multiprocessing.connection
 import queue
 import random
+import re
 import sqlite3
 import subprocess
 import sys
@@ -11317,6 +11318,17 @@ def _is_source_tree(package_root: Path) -> bool:
     return (package_root.parent / "pyproject.toml").is_file()
 
 
+#: A class-level ``BUNDLED_CSS`` / ``BUNDLED_SCREEN_CSS`` *assignment*, which is
+#: what makes a module an input to the generated stylesheets. Anchored on the
+#: assignment rather than matching the bare name anywhere in the file: four
+#: package modules -- including this one, via ``_generated_css_is_stale``'s own
+#: docstring -- discuss the marker while declaring nothing, and a plain substring
+#: test made every edit to any of them rebuild the CSS on the next boot, quietly
+#: rewriting the committed bundle's ``Generated:`` timestamp. A module that has
+#: just *gained* a declaration is still caught: a declaration is an assignment.
+_BUNDLED_CSS_DECLARATION_RE = re.compile(r"^\s*BUNDLED_(?:SCREEN_)?CSS\s*[:=]", re.M)
+
+
 def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
     """Return whether the generated stylesheets need rebuilding, and why.
 
@@ -11378,10 +11390,12 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
             if module.stat().st_mtime > oldest:
                 return True, f"CSS module {module.name} is newer than the build"
 
-    # Both markers: BUNDLED_SCREEN_CSS is not a substring of BUNDLED_CSS.
-    markers = (widget_css.WIDGET_ATTR, widget_css.SCREEN_ATTR)
+    skip = {"__pycache__", *widget_css.EXCLUDED_DIRS}
     for dirpath, dirnames, filenames in os.walk(package_root):
-        dirnames[:] = [name for name in dirnames if name != "__pycache__"]
+        # Match the builder's own view of what an input is: `iter_blocks` skips
+        # these directories, so a vendored file mentioning the marker must not
+        # trigger a rebuild that would then ignore it.
+        dirnames[:] = [name for name in dirnames if name not in skip]
         for filename in filenames:
             if not filename.endswith(".py"):
                 continue
@@ -11393,7 +11407,7 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
                     text = handle.read()
             except OSError:
                 continue  # vanished mid-walk; not our problem to report
-            if any(marker in text for marker in markers):
+            if _BUNDLED_CSS_DECLARATION_RE.search(text):
                 return True, f"{filename} carries widget CSS newer than the build"
 
     return False, ""

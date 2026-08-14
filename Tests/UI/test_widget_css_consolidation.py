@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -415,3 +416,54 @@ async def test_selection_dialog_opens_without_a_stylesheet_error(
     )
     if raised is not None and "clear" not in str(raised):
         raise raised
+
+
+def test_staleness_check_counts_declarations_not_mentions():
+    """A module that only *mentions* the marker is not a stylesheet input.
+
+    The boot-time staleness check reads Python modules to decide whether the
+    generated sheets need rebuilding. Testing for the bare marker anywhere in
+    the file was wrong in a way that bit immediately: four package modules
+    discuss ``BUNDLED_CSS`` while declaring none -- including ``app.py``, which
+    tripped the check via the checking function's *own docstring*. Every edit to
+    any of them then re-ran the build subprocess on the next source-tree boot and
+    rewrote the committed bundle's ``Generated:`` timestamp -- committed-bundle
+    churn, which is the exact class of problem the CSS guard exists to prevent.
+
+    The check must therefore agree with the builder about what an input is: the
+    same set of modules ``iter_blocks`` collects from, no more and no less.
+    """
+    from tldw_chatbook.app import _BUNDLED_CSS_DECLARATION_RE
+
+    assert _BUNDLED_CSS_DECLARATION_RE.search('    BUNDLED_CSS = """\n')
+    assert _BUNDLED_CSS_DECLARATION_RE.search('    BUNDLED_SCREEN_CSS = """\n')
+    assert _BUNDLED_CSS_DECLARATION_RE.search("    BUNDLED_CSS: str = ''\n")
+    assert not _BUNDLED_CSS_DECLARATION_RE.search(
+        "# the class-level BUNDLED_CSS / BUNDLED_SCREEN_CSS literals\n"
+        "markers = (widget_css.WIDGET_ATTR, widget_css.SCREEN_ATTR)\n"
+    )
+
+    declaring = {
+        block.module
+        for attr in (widget_css.WIDGET_ATTR, widget_css.SCREEN_ATTR)
+        for block in widget_css.iter_blocks(_PACKAGE_ROOT, attr)
+    }
+    matched = set()
+    skip = {"__pycache__", *widget_css.EXCLUDED_DIRS}
+    for dirpath, dirnames, filenames in os.walk(_PACKAGE_ROOT):
+        # Same exclusions as the staleness walk: a vendored module mentioning
+        # the marker must not trigger a rebuild the builder then ignores.
+        dirnames[:] = [name for name in dirnames if name not in skip]
+        for filename in filenames:
+            if not filename.endswith(".py"):
+                continue
+            path = Path(dirpath) / filename
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if _BUNDLED_CSS_DECLARATION_RE.search(text):
+                matched.add(path.relative_to(_PACKAGE_ROOT).as_posix())
+
+    assert matched == declaring, (
+        "the staleness check and the builder disagree about which modules are "
+        f"stylesheet inputs.\n  only the check sees: {sorted(matched - declaring)}"
+        f"\n  only the builder sees: {sorted(declaring - matched)}"
+    )
