@@ -47,6 +47,7 @@ from .service import (
     ArtifactRef,
     ArtifactRemovalAuthority,
     ArtifactRemovalAvailability,
+    ArtifactRemovalCleanupError,
     ArtifactRole,
     ArtifactStateError,
     InstalledArtifact,
@@ -58,6 +59,7 @@ from .service import (
     ProvenanceClass,
     ReconcileReport,
     closure_fingerprint,
+    take_artifact_removal_cleanup_owner,
 )
 
 # Names resolved lazily from .acquisition / .fetch -- see module docstring.
@@ -144,6 +146,7 @@ __all__ = [
     "ArtifactRef",
     "ArtifactRemovalAuthority",
     "ArtifactRemovalAvailability",
+    "ArtifactRemovalCleanupError",
     "ArtifactRole",
     "ArtifactSourceMap",
     "ArtifactStateError",
@@ -169,4 +172,5 @@ __all__ = [
     "TransferError",
     "closure_fingerprint",
     "stream_fetch",
+    "take_artifact_removal_cleanup_owner",
 ]

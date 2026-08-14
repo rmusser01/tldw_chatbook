@@ -291,6 +291,67 @@ class ArtifactRemovalAvailability(str, Enum):
     BUSY = "busy"
 
 
+_REMOVAL_CLEANUP_OWNER_ATTRIBUTE = "_artifact_removal_cleanup_owner"
+_REMOVAL_CONTROL_TYPES = (KeyboardInterrupt, SystemExit, GeneratorExit)
+
+
+def _is_removal_control(error: BaseException) -> bool:
+    return isinstance(error, _REMOVAL_CONTROL_TYPES)
+
+
+def _sanitize_removal_exception(error: BaseException) -> None:
+    """Remove private values and exception links from a retained exception."""
+
+    error.args = ()
+    if isinstance(error, SystemExit):
+        error.code = None
+    error.__traceback__ = None
+    error.__context__ = None
+    error.__cause__ = None
+    if hasattr(error, "__notes__"):
+        error.__notes__ = []
+
+
+def _raise_removal_control(
+    control: BaseException,
+    *,
+    cleanup_owner: ArtifactRemovalAuthority | None = None,
+    ordinary_failure: bool = False,
+) -> None:
+    """Re-raise one exact sanitized control object with optional ownership."""
+
+    _sanitize_removal_exception(control)
+    if ordinary_failure:
+        control.add_note("artifact removal also encountered an ordinary failure")
+    if cleanup_owner is not None:
+        setattr(control, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, cleanup_owner)
+    raise control from None
+
+
+def _release_removal_leases_best_effort(
+    leases: tuple[ArtifactOperationLease | None, ...],
+) -> tuple[BaseException | None, bool]:
+    """Release every supplied lease, preferring the first control failure."""
+
+    control: BaseException | None = None
+    ordinary_failure = False
+    for lease in leases:
+        if lease is None:
+            continue
+        try:
+            lease.release()
+        except BaseException as error:
+            if _is_removal_control(error):
+                if control is None:
+                    control = error
+                else:
+                    _sanitize_removal_exception(error)
+            else:
+                ordinary_failure = True
+                _sanitize_removal_exception(error)
+    return control, ordinary_failure
+
+
 class ArtifactRole(str, Enum):
     """An artifact's position in a dependency closure."""
 
@@ -1134,9 +1195,9 @@ class ArtifactRemovalAuthority:
         self,
         service: ModelArtifactService,
         reference: ArtifactRef,
-        target_identity: _NodeIdentity,
         lifecycle_lease: ArtifactOperationLease,
         target_lease: ArtifactOperationLease,
+        target_identity: _NodeIdentity | None = None,
     ) -> None:
         self._service = service
         self._reference = reference
@@ -1150,6 +1211,8 @@ class ArtifactRemovalAuthority:
 
         if self._target_lease is None or self._lifecycle_lease is None:
             raise ArtifactStateError("removal authority is closed")
+        if self._target_identity is None:
+            raise ArtifactStateError("removal authority is cleanup-only")
         if self._committed:
             raise ArtifactStateError("removal authority already committed")
         self._service._revalidate_removal_target(
@@ -1159,17 +1222,42 @@ class ArtifactRemovalAuthority:
         self._service._delete_under_leases(self._reference)
         self._committed = True
 
+    def _admit_target(self, target_identity: _NodeIdentity) -> None:
+        """Make this close-only owner commit-capable after exact target pinning."""
+
+        if self._target_identity is not None:
+            raise ArtifactStateError("removal authority target is already pinned")
+        self._target_identity = target_identity
+
     def close(self) -> None:
         """Release target then lifecycle authority, retaining failures for retry."""
 
-        target_lease = self._target_lease
-        if target_lease is not None:
-            target_lease.release()
-            self._target_lease = None
-        lifecycle_lease = self._lifecycle_lease
-        if lifecycle_lease is not None:
-            lifecycle_lease.release()
-            self._lifecycle_lease = None
+        control: BaseException | None = None
+        ordinary_after_control = False
+        for attribute in ("_target_lease", "_lifecycle_lease"):
+            lease = getattr(self, attribute)
+            if lease is None:
+                continue
+            try:
+                lease.release()
+            except BaseException as error:
+                if not _is_removal_control(error):
+                    if control is None:
+                        raise
+                    ordinary_after_control = True
+                    _sanitize_removal_exception(error)
+                    continue
+                if control is None:
+                    control = error
+                else:
+                    _sanitize_removal_exception(error)
+                continue
+            setattr(self, attribute, None)
+        if control is not None:
+            _raise_removal_control(
+                control,
+                ordinary_failure=ordinary_after_control,
+            )
 
     def __enter__(self) -> Self:
         """Return this already acquired authority."""
@@ -1186,14 +1274,68 @@ class ArtifactRemovalAuthority:
     ) -> None:
         """Close while preserving body control flow over cleanup failure."""
 
+        cleanup_error: BaseException | None = None
         try:
             self.close()
-        except BaseException as cleanup_error:
-            if exc is None:
-                raise
-            exc.add_note(f"removal authority lease cleanup failed: {cleanup_error!r}")
-            for note in getattr(cleanup_error, "__notes__", ()):
-                exc.add_note(note)
+        except BaseException as error:
+            cleanup_error = error
+        if cleanup_error is None:
+            return
+        if exc is not None and _is_removal_control(exc):
+            _sanitize_removal_exception(cleanup_error)
+            _raise_removal_control(
+                exc,
+                cleanup_owner=self,
+                ordinary_failure=not _is_removal_control(cleanup_error),
+            )
+        if _is_removal_control(cleanup_error):
+            if exc is not None:
+                _sanitize_removal_exception(exc)
+            _raise_removal_control(
+                cleanup_error,
+                cleanup_owner=self,
+                ordinary_failure=exc is not None,
+            )
+        _sanitize_removal_exception(cleanup_error)
+        if exc is not None:
+            _sanitize_removal_exception(exc)
+        failure = ArtifactRemovalCleanupError(self)
+        if exc is not None:
+            failure.add_note("artifact removal commit also failed")
+        raise failure from None
+
+
+class ArtifactRemovalCleanupError(ArtifactStateError):
+    """Bounded failure carrying exact retryable removal cleanup ownership."""
+
+    __slots__ = ("_cleanup_owner",)
+
+    def __init__(self, cleanup_owner: ArtifactRemovalAuthority) -> None:
+        self._cleanup_owner: ArtifactRemovalAuthority | None = cleanup_owner
+        super().__init__("artifact removal cleanup is incomplete")
+
+    def take_cleanup_owner(self) -> ArtifactRemovalAuthority | None:
+        """Transfer retained cleanup ownership exactly once."""
+
+        owner = self._cleanup_owner
+        self._cleanup_owner = None
+        return owner
+
+
+def take_artifact_removal_cleanup_owner(
+    error: BaseException,
+) -> ArtifactRemovalAuthority | None:
+    """Take exact removal cleanup ownership from one bounded failure/control."""
+
+    take_owner = getattr(error, "take_cleanup_owner", None)
+    if callable(take_owner):
+        owner = take_owner()
+        return owner if isinstance(owner, ArtifactRemovalAuthority) else None
+    owner = getattr(error, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, None)
+    if not isinstance(owner, ArtifactRemovalAuthority):
+        return None
+    setattr(error, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, None)
+    return owner
 
 
 class ModelArtifactService:
@@ -1342,8 +1484,8 @@ class ModelArtifactService:
             raise TypeError("reference must be an ArtifactRef")
         lifecycle_lease: ArtifactOperationLease | None = None
         target_lease: ArtifactOperationLease | None = None
-        result = ArtifactRemovalAvailability.AVAILABLE
         primary_error: BaseException | None = None
+        timed_out = False
         try:
             self._assert_managed_path(self._locks_path)
             lifecycle_lease = ArtifactOperationLease(
@@ -1362,42 +1504,41 @@ class ModelArtifactService:
             )
             target_lease.acquire()
         except ArtifactLeaseTimeoutError:
-            result = ArtifactRemovalAvailability.BUSY
+            timed_out = True
         except BaseException as error:
             primary_error = error
-        finally:
-            cleanup_error: BaseException | None = None
-            for lease in (target_lease, lifecycle_lease):
-                if lease is None:
-                    continue
-                try:
-                    lease.release()
-                except BaseException as error:
-                    if cleanup_error is None:
-                        cleanup_error = error
-                    else:
-                        cleanup_error.add_note(
-                            f"additional removal probe cleanup failure: {error!r}"
-                        )
-            if cleanup_error is not None:
-                if primary_error is None:
-                    raise ArtifactStateError(
-                        "artifact removal probe cleanup failed"
-                    ) from cleanup_error
-                primary_error.add_note(
-                    f"artifact removal probe cleanup failed: {cleanup_error!r}"
-                )
+        cleanup_control, cleanup_failed = _release_removal_leases_best_effort(
+            (target_lease, lifecycle_lease)
+        )
+        if primary_error is not None and _is_removal_control(primary_error):
+            if cleanup_control is not None:
+                _sanitize_removal_exception(cleanup_control)
+            _raise_removal_control(
+                primary_error,
+                ordinary_failure=cleanup_failed,
+            )
+        if cleanup_control is not None:
+            if primary_error is not None:
+                _sanitize_removal_exception(primary_error)
+            _raise_removal_control(
+                cleanup_control,
+                ordinary_failure=primary_error is not None
+                or timed_out
+                or cleanup_failed,
+            )
         if primary_error is not None:
-            if isinstance(primary_error, ArtifactLeaseError):
-                raise ArtifactStateError("artifact removal probe failed") from (
-                    primary_error
-                )
-            if isinstance(primary_error, OSError):
-                raise ArtifactStateError("artifact removal probe failed") from (
-                    primary_error
-                )
-            raise primary_error
-        return result
+            _sanitize_removal_exception(primary_error)
+            failure = ArtifactStateError("artifact removal probe failed")
+            if cleanup_failed:
+                failure.add_note("artifact removal lease cleanup also failed")
+            raise failure from None
+        if cleanup_failed:
+            raise ArtifactStateError("artifact removal probe cleanup failed") from None
+        return (
+            ArtifactRemovalAvailability.BUSY
+            if timed_out
+            else ArtifactRemovalAvailability.AVAILABLE
+        )
 
     def acquire_removal_authority(
         self,
@@ -1409,6 +1550,7 @@ class ModelArtifactService:
             raise TypeError("reference must be an ArtifactRef")
         lifecycle_lease: ArtifactOperationLease | None = None
         target_lease: ArtifactOperationLease | None = None
+        primary_error: BaseException | None = None
         try:
             self._assert_managed_path(self._locks_path)
             lifecycle_lease = ArtifactOperationLease(
@@ -1426,35 +1568,98 @@ class ModelArtifactService:
                 timeout_seconds=self._lease_timeout_seconds,
             )
             target_lease.acquire()
-            target_identity = self._removal_target_identity(reference)
-            return ArtifactRemovalAuthority(
-                self,
-                reference,
-                target_identity,
-                lifecycle_lease,
-                target_lease,
-            )
         except BaseException as error:
-            try:
-                if target_lease is not None:
-                    target_lease.release()
-                if lifecycle_lease is not None:
-                    lifecycle_lease.release()
-            except BaseException as cleanup_error:
-                error.add_note(
-                    f"removal authority acquisition cleanup failed: {cleanup_error!r}"
+            primary_error = error
+        if primary_error is not None:
+            cleanup_control, cleanup_failed = _release_removal_leases_best_effort(
+                (target_lease, lifecycle_lease)
+            )
+            if _is_removal_control(primary_error):
+                if cleanup_control is not None:
+                    _sanitize_removal_exception(cleanup_control)
+                _raise_removal_control(
+                    primary_error,
+                    ordinary_failure=cleanup_failed,
                 )
-            if isinstance(error, ArtifactLeaseTimeoutError):
+            if cleanup_control is not None:
+                _sanitize_removal_exception(primary_error)
+                _raise_removal_control(
+                    cleanup_control,
+                    ordinary_failure=True,
+                )
+            if isinstance(primary_error, ArtifactLeaseTimeoutError):
+                _sanitize_removal_exception(primary_error)
                 raise ArtifactInUseError(
                     "artifact is in use and cannot be deleted"
-                ) from error
-            if isinstance(error, ArtifactLeaseError):
-                raise ArtifactStateError(
+                ) from None
+            if isinstance(primary_error, ArtifactLeaseError):
+                _sanitize_removal_exception(primary_error)
+                failure = ArtifactStateError(
                     "failed to acquire or release artifact deletion leases"
-                ) from error
-            if isinstance(error, OSError):
-                raise ArtifactStateError("artifact removal authority failed") from error
-            raise
+                )
+                if cleanup_failed:
+                    failure.add_note("artifact removal lease cleanup also failed")
+                raise failure from None
+            _sanitize_removal_exception(primary_error)
+            failure = ArtifactStateError("artifact removal authority failed")
+            if cleanup_failed:
+                failure.add_note("artifact removal lease cleanup also failed")
+            raise failure from None
+
+        assert lifecycle_lease is not None
+        assert target_lease is not None
+        authority = ArtifactRemovalAuthority(
+            self,
+            reference,
+            lifecycle_lease,
+            target_lease,
+        )
+        target_error: BaseException | None = None
+        target_identity: _NodeIdentity | None = None
+        try:
+            target_identity = self._removal_target_identity(reference)
+        except BaseException as error:
+            target_error = error
+        if target_error is None:
+            assert target_identity is not None
+            authority._admit_target(target_identity)
+            return authority
+
+        cleanup_error: BaseException | None = None
+        try:
+            authority.close()
+        except BaseException as error:
+            cleanup_error = error
+        if _is_removal_control(target_error):
+            if cleanup_error is not None:
+                _sanitize_removal_exception(cleanup_error)
+            _raise_removal_control(
+                target_error,
+                cleanup_owner=authority if cleanup_error is not None else None,
+                ordinary_failure=(
+                    cleanup_error is not None and not _is_removal_control(cleanup_error)
+                ),
+            )
+        if cleanup_error is not None and _is_removal_control(cleanup_error):
+            _sanitize_removal_exception(target_error)
+            _raise_removal_control(
+                cleanup_error,
+                cleanup_owner=authority,
+                ordinary_failure=True,
+            )
+        if cleanup_error is not None:
+            _sanitize_removal_exception(target_error)
+            _sanitize_removal_exception(cleanup_error)
+            failure = ArtifactRemovalCleanupError(authority)
+            failure.add_note("artifact removal target setup also failed")
+            raise failure from None
+        if type(target_error) is ArtifactStateError and target_error.args == (
+            "installed artifact does not exist",
+        ):
+            _sanitize_removal_exception(target_error)
+            raise ArtifactStateError("installed artifact does not exist") from None
+        _sanitize_removal_exception(target_error)
+        raise ArtifactStateError("artifact removal authority failed") from None
 
     def reconcile(self) -> ReconcileReport:
         """Verify installed roots and reconcile derived state explicitly."""
