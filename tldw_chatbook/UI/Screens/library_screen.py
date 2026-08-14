@@ -2916,8 +2916,6 @@ class LibraryScreen(BaseAppScreen):
         # starts, and the next then rebuilds from state that is by then
         # settled.
         self._library_rag_panel_refresh_lock = asyncio.Lock()
-        # Superseded workers cannot stop admitted to_thread retrievals.
-        self._library_rag_search_execution_lock = asyncio.Lock()
         # (task-2075 D5) Cache of the last `library_rag_scope_shows_recovery`
         # result actually mirrored into the DOM, read by
         # `_sync_library_rag_scope_toggle_and_run_gate_widgets` to change-gate
@@ -5694,11 +5692,13 @@ class LibraryScreen(BaseAppScreen):
         preferences, and search history are deliberately excluded here: they
         are already persisted elsewhere (the app-owned ingest job registry and
         the CLI config, respectively) and re-seeding them from this in-memory
-        dict would fight those owners. The RAG results tuple (and its paired
-        retrieval status / recovery state, set together by
-        ``_apply_library_rag_search_outcome``) are safe to carry verbatim
-        because their rows are frozen dataclasses -- copies are taken below
-        only to avoid aliasing a live mutable set with the stashed dict.
+        dict would fight those owners.
+
+        The RAG results tuple and settled retrieval/recovery state are safe to
+        carry because their rows are frozen dataclasses. A transient
+        ``searching`` value may be snapshotted while admitted work drains, but
+        ``restore_state`` normalizes it because a fresh screen owns no matching
+        worker.
 
         The media type cycle, notes sort/filter, selected prompt id, and
         conversations query are view/selection state. The Prompt browse scope
@@ -5830,8 +5830,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_selected_result_id = str(
             state.get("library_rag_selected_result_id") or ""
         )
-        self._library_rag_retrieval_status = str(
+        restored_retrieval_status = str(
             state.get("library_rag_retrieval_status") or ""
+        )
+        self._library_rag_retrieval_status = (
+            "" if restored_retrieval_status == "searching"
+            else restored_retrieval_status
         )
         recovery_state = state.get("library_rag_recovery_state")
         self._library_rag_recovery_state = (
@@ -30736,13 +30740,13 @@ class LibraryScreen(BaseAppScreen):
     async def _execute_library_rag_search(
         self, request: LibraryRagSearchRequest
     ) -> None:
-        """Serialize retrieval admission and retain repeated cancellation.
+        """Serialize Library admission across screens and retain cancellation.
 
-        Canceled workers drain admitted retrievals under the lock, then
-        re-raise before outcome application so stale work cannot overlap or
-        apply after a newer request.
+        The app-lifetime Library-only lock prevents fresh screens from
+        overlapping admitted calls. Canceled workers drain admitted retrievals
+        under that lock, then re-raise before stale outcomes can apply.
         """
-        async with self._library_rag_search_execution_lock:
+        async with self.app_instance.library_rag_search_execution_lock():
             retrieval_task = asyncio.create_task(
                 run_library_rag_search(self.app_instance, request)
             )
