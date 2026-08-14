@@ -182,6 +182,7 @@ from tldw_chatbook.Chat.console_live_work import (
 from tldw_chatbook.Chat.console_image_edit_operations import (
     ImageEditOperationRegistry,
 )
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
@@ -5407,6 +5408,15 @@ class TldwCli(
         self.app_config = load_settings()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
+        # task-15860 (headless wake, Task 1): the Console runtime -- chat
+        # store, provider gateway, agent bridge, chat controller -- is
+        # constructed by the APP, not by `ChatScreen`. Screens are never
+        # cached (`_create_navigation_screen`), so anything that must
+        # eventually outlive a navigation cannot be built on one. Task 1 is
+        # a PURE ownership move: `ChatScreen.on_unmount` still disposes this
+        # (`dispose_console_runtime`), so a second Console visit still gets
+        # a brand-new store/gateway/bridge/controller, exactly as before.
+        self.console_runtime: ConsoleRuntime | None = ConsoleRuntime(self)
         self.generated_video_store = _build_generated_video_store()
         # TASK-13157: snapshot any TOML parse failure `load_settings()` just
         # hit -- captured here (mirroring `_instance_lock_status` below, the

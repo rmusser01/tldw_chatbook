@@ -488,45 +488,31 @@ class ConsoleAgentController:
         ChaChaNotes DB to key the sibling ``AgentRunsDB`` file off of (e.g. an
         in-memory test harness) -- callers use the provider-direct Console
         stream in that case regardless of the config gate.
+
+        task-15860 Task 1 (pure ownership move): the bridge, its
+        ``AgentRunsDB`` and the ``register_fleet_attention`` fan-out
+        registration that must sit next to construction are now built by
+        the app-owned ``ConsoleRuntime`` (``Chat/console_runtime.py``).
+        This method keeps its name -- three test files replace it on the
+        screen instance, see this module's docstring -- and its caching.
+        The store and gateway go over as CALLABLES so the runtime can keep
+        the original ordering: the durable-DB probe still runs before
+        either of them is touched.
         """
         if self._console_agent_bridge is not None:
             return self._console_agent_bridge
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        db_path = getattr(db, "db_path", None) if db is not None else None
-        if not db_path or str(db_path) == ":memory:":
-            self._console_agent_bridge = None
-            return None
-        from pathlib import Path
+        from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
 
-        from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
-        runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
-        # TASK-1971 (Agent Change Review): the tracker is None when git is
-        # absent -- the bridge then skips tracking entirely, and runs behave
-        # exactly as before the feature existed (spec gating decision).
-        from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
-
-        change_tracker = ChangeTurnTracker()
-        self._console_agent_bridge = ConsoleAgentBridge(
-            agent_runs_db=runs_db,
-            store=self._ensure_console_chat_store(),
-            provider_gateway=self._ensure_console_provider_gateway(),
+        self._console_agent_bridge = ensure_console_runtime(
+            self.app_instance, view=self._screen
+        ).ensure_agent_bridge(
+            store_factory=self._ensure_console_chat_store,
+            provider_gateway_factory=self._ensure_console_provider_gateway,
             skills_service=getattr(self.app_instance, "skills_scope_service", None),
-            native_tools_enabled=self._console_native_tool_calls_enabled,
-            change_tracker=change_tracker if change_tracker.available else None,
+            native_tools_enabled_factory=(
+                lambda: self._console_native_tool_calls_enabled
+            ),
         )
-        # PR3a-2 Task 4: the survivor-completion attention consumer (durable
-        # unseen mark + app-wide toast + deep link), registered NEXT TO
-        # bridge construction per `FleetDrainFanout.register`'s contract.
-        # Captures the APP object only -- never this screen -- because the
-        # bridge (and its registered consumers) outlives the screen whenever
-        # a survivor is still running at teardown.
-        from tldw_chatbook.Chat.console_fleet_attention import (
-            register_fleet_attention,
-        )
-
-        register_fleet_attention(self._console_agent_bridge, self.app_instance)
         return self._console_agent_bridge
 
     def _console_agent_section_lines(self) -> tuple[str, str, str]:

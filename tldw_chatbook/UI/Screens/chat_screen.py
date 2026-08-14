@@ -86,9 +86,9 @@ from ..Console_Modules.session import (
     _has_selected_text,
     _is_empty_select_value,
 )
-from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
+from ...Chat.console_runtime import dispose_console_runtime, ensure_console_runtime
 from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
 )
@@ -266,7 +266,6 @@ from ...Chat.console_chat_store import (
 )
 from ...Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
-    ConsoleProviderGateway,
     normalize_llamacpp_base_url,
 )
 from ...Chat.console_provider_endpoints import first_configured_endpoint
@@ -5105,32 +5104,19 @@ class ChatScreen(BaseAppScreen):
         return effective_settings, readiness
 
     def _ensure_console_chat_store(self) -> ConsoleChatStore:
-        """Return the native Console chat store, creating it lazily."""
+        """Return the native Console chat store, creating it lazily.
+
+        task-15860 Task 1 (pure ownership move): CONSTRUCTED by the
+        app-owned `ConsoleRuntime` (`Chat/console_runtime.py`, whose
+        docstring states what Task 1 deliberately does not change). Name,
+        laziness, return type and patchability are unchanged, and the
+        runtime is disposed at `on_unmount`, so a second Console visit
+        still gets a fresh store.
+        """
         if self._console_chat_store is None:
-            persistence = None
-            db = getattr(self.app_instance, "chachanotes_db", None)
-            if db is not None:
-                citation_repository = getattr(
-                    self.app_instance,
-                    "citation_trace_repository",
-                    None,
-                )
-                if (
-                    citation_repository is not None
-                    and getattr(citation_repository, "db", None) is not db
-                ):
-                    citation_repository = None
-                persistence = ChatPersistenceService(
-                    db,
-                    workspace_registry=getattr(
-                        self.app_instance,
-                        "workspace_registry_service",
-                        None,
-                    ),
-                    citation_repository=citation_repository,
-                )
-            self._console_chat_store = ConsoleChatStore(
-                persistence=persistence,
+            self._console_chat_store = ensure_console_runtime(
+                self.app_instance, view=self
+            ).ensure_chat_store(
                 workspace_context=self._workspace._current_console_workspace_context(),
                 on_scope_flushed=self._on_console_scope_flushed,
             )
@@ -5420,19 +5406,19 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _ensure_console_provider_gateway(self) -> Any:
-        """Return the native Console provider gateway with a test injection seam."""
+        """Return the native Console provider gateway with a test injection seam.
+
+        task-15860 Task 1: constructed by the app-owned `ConsoleRuntime`,
+        which also reads the app's `console_provider_gateway_factory`
+        injection seam. Name, laziness and behaviour are unchanged.
+        """
         if self._console_provider_gateway is None:
-            factory = getattr(
-                self.app_instance, "console_provider_gateway_factory", None
-            )
-            self._console_provider_gateway = (
-                factory()
-                if callable(factory)
-                else ConsoleProviderGateway(
-                    # Fresh-config source: the gateway re-resolves readiness at
-                    # send time and must see Settings saves made after boot.
-                    config_provider=self._provider_readiness_app_config,
-                )
+            self._console_provider_gateway = ensure_console_runtime(
+                self.app_instance, view=self
+            ).ensure_provider_gateway(
+                # Fresh-config source: the gateway re-resolves readiness at
+                # send time and must see Settings saves made after boot.
+                config_provider=self._provider_readiness_app_config,
             )
         return self._console_provider_gateway
 
@@ -5490,10 +5476,19 @@ class ChatScreen(BaseAppScreen):
         return LibraryToolProvider(service)
 
     def _ensure_console_chat_controller(self) -> ConsoleChatController:
-        """Return the native Console chat controller with fresh selection state."""
+        """Return the native Console chat controller with fresh selection state.
+
+        task-15860 Task 1: CONSTRUCTED by the app-owned `ConsoleRuntime`,
+        same keyword arguments in the same order. Everything below the
+        construction block -- the UI hook wiring, the wake coordinator's
+        `wire(app=...)`, the core-state sync -- still runs here on every
+        call; rebinding those hooks for a viewless turn is Task 4.
+        """
         if self._console_chat_controller is None:
             selection = self._build_console_provider_selection()
-            self._console_chat_controller = ConsoleChatController(
+            self._console_chat_controller = ensure_console_runtime(
+                self.app_instance, view=self
+            ).ensure_chat_controller(
                 store=self._ensure_console_chat_store(),
                 provider_gateway=self._ensure_console_provider_gateway(),
                 provider=selection.provider,
@@ -15465,6 +15460,15 @@ class ChatScreen(BaseAppScreen):
                 await result
         self._console_provider_gateway = None
         self._console_chat_controller = None
+        # task-15860 Task 1: the runtime moved to the app, its LIFETIME did
+        # not. Disposing here -- AFTER the fleet-teardown notice, the
+        # `controller.shutdown()` and the gateway close above, in that same
+        # order -- is what keeps "a second Console visit gets a brand-new
+        # store/gateway/bridge/controller" true; Task 2 removes this call.
+        # `view=self` so an already-superseded screen (both are briefly
+        # alive when a navigation lands back on Console) cannot tear down
+        # the runtime its successor is using.
+        dispose_console_runtime(self.app_instance, view=self)
         super().on_unmount()
 
     async def _record_console_fleet_teardown(self, controller: Any) -> None:
