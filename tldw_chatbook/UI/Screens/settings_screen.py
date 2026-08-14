@@ -16705,6 +16705,13 @@ class SettingsScreen(BaseAppScreen):
                 "audio.cpp request store is unavailable"
             )
         store = cast(PendingHandoffStore, store)
+        if store.discard_pending_exact(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST,
+            staged_store_revision,
+            request,
+        ):
+            self._audio_cpp_staged_request_cleanup = None
+            return
         claim = store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST)
         if claim is None:
             return

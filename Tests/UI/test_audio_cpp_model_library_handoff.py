@@ -1672,10 +1672,9 @@ async def test_failed_route_cleanup_retries_after_foreign_request_claim_settles(
         with monkeypatch.context() as scoped:
             scoped.setattr(screen, "post_message", lambda _message: False)
             assert screen.stage_audio_cpp_model_library_request(snapshot) is False
-        assert screen._audio_cpp_staged_request_cleanup is not None
+        assert screen._audio_cpp_staged_request_cleanup is None
+        screen.on_unmount()
         assert app_instance.pending_handoffs.acknowledge(foreign_claim)
-
-        screen._retry_audio_cpp_staged_request_cleanup()
 
         assert screen._audio_cpp_staged_request_cleanup is None
         assert (

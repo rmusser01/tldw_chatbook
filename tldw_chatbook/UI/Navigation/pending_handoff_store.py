@@ -207,6 +207,24 @@ class PendingHandoffStore:
             slot.pending = None
             return slot.revision
 
+    def discard_pending_exact(
+        self,
+        channel: HandoffChannel,
+        revision: int,
+        value: Any,
+    ) -> bool:
+        """Discard only one exact pending slot, even while another claim is active."""
+
+        self._assert_owner_thread()
+        if type(revision) is not int or revision < 1:
+            raise ValueError("handoff revision must be a positive exact integer")
+        slot = self._slot_for(channel)
+        normalized = self._detached_value(channel, value)
+        if slot.pending != (revision, normalized):
+            return False
+        slot.pending = None
+        return True
+
     def claim(self, channel: HandoffChannel) -> HandoffClaim[Any] | None:
         """Claim the pending value when no other consumer is in flight."""
         self._assert_owner_thread()
