@@ -29,6 +29,8 @@ from tldw_chatbook.Agents.local_tool_provider import (  # noqa: E402
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
 )
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB  # noqa: E402
+import tldw_chatbook.MCP.local_server_tools as local_server_tools  # noqa: E402
 from tldw_chatbook.MCP.local_server_tools import (  # noqa: E402
     EXTERNAL_NO_CALLBACK_REFUSAL,
     LocalToolRegistration,
@@ -635,7 +637,7 @@ async def test_real_provider_schemas_compile_for_every_public_profile(
         registration.name: copy.deepcopy(registration.parameters)
         for registration in registrations
     }
-    assert len(expected_schemas) == 15
+    assert len(expected_schemas) == 17
     assert all("$schema" not in schema for schema in expected_schemas.values())
     runtime = _runtime_with_builtins()
     runtime.register_local_tools(registrations)
@@ -1039,6 +1041,232 @@ async def test_blocking_local_handler_runs_off_event_loop() -> None:
 
     assert await call_task == "done"
     await heartbeat_task
+
+
+@pytest.mark.asyncio
+async def test_real_watchlists_provider_preserves_structured_domain_outcomes(
+    monkeypatch, tmp_path
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    db_path = tmp_path / "subscriptions.db"
+    mutable = SubscriptionsDB(db_path)
+    mutable.close()
+    source = {"value": "local"}
+
+    class RuntimeStore:
+        def __init__(self, _path):
+            pass
+
+        def load(self):
+            return source["value"]
+
+    monkeypatch.setattr(
+        local_server_tools, "get_subscriptions_db_path", lambda: db_path
+    )
+    monkeypatch.setattr(local_server_tools, "RuntimeSourceStateStore", RuntimeStore)
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    provider = build_server_local_provider(workspace, store)
+    _grant_local_tool(store, provider, "watchlists_search_items")
+    _grant_local_tool(store, provider, "watchlists_get_item")
+    runtime = _runtime_with_builtins()
+    runtime.register_local_tools(_local_agent_tool_registrations(provider))
+    runtime.finalize()
+
+    calls = [
+        ("watchlists_search_items", {"limit": True}, "invalid_argument"),
+        (
+            "watchlists_get_item",
+            {"item_id": "local:watchlist_item:999"},
+            "not_found",
+        ),
+    ]
+    for name, arguments, status in calls:
+        expected = provider.invoke(f"local:{name}", arguments)
+        actual = await runtime.call_tool(name, arguments, _context())
+        assert actual == expected.content
+        assert json.loads(actual)["status"] == status
+
+    source["value"] = "server"
+    arguments = {}
+    expected = provider.invoke("local:watchlists_search_items", arguments)
+    actual = await runtime.call_tool("watchlists_search_items", arguments, _context())
+    assert actual == expected.content
+    assert json.loads(actual)["status"] == "unsupported"
+
+    source["value"] = "local"
+    missing_store = MCPPermissionStore(tmp_path / "missing-permissions.json")
+    missing_provider = build_server_local_provider(workspace, missing_store)
+    _grant_local_tool(missing_store, missing_provider, "watchlists_search_items")
+    monkeypatch.setattr(
+        local_server_tools,
+        "get_subscriptions_db_path",
+        lambda: tmp_path / "does-not-exist.db",
+    )
+    missing_runtime = _runtime_with_builtins()
+    missing_runtime.register_local_tools(
+        _local_agent_tool_registrations(missing_provider)
+    )
+    missing_runtime.finalize()
+    expected = missing_provider.invoke("local:watchlists_search_items", {})
+    actual = await missing_runtime.call_tool("watchlists_search_items", {}, _context())
+    assert actual == expected.content
+    assert json.loads(actual)["status"] == "feature_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_real_watchlists_gateway_permission_failures_precede_storage(
+    monkeypatch, tmp_path
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    path_calls = 0
+
+    def resolve_path():
+        nonlocal path_calls
+        path_calls += 1
+        raise AssertionError("permission failures must precede storage")
+
+    monkeypatch.setattr(local_server_tools, "get_subscriptions_db_path", resolve_path)
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    provider = build_server_local_provider(workspace, store)
+    runtime = _runtime_with_builtins()
+    runtime.register_local_tools(_local_agent_tool_registrations(provider))
+    runtime.finalize()
+
+    with pytest.raises(GatewayToolExecutionError) as ask_error:
+        await runtime.call_tool("watchlists_search_items", {}, _context())
+    assert ask_error.value.reason_code == "operator_approval_required"
+    assert path_calls == 0
+
+    hub = provider.hub_tool_for("watchlists_search_items")
+    store.set_tool_state(hub.server_key, hub.name, "deny")
+    with pytest.raises(GatewayToolExecutionError) as deny_error:
+        await runtime.call_tool("watchlists_search_items", {}, _context())
+    assert deny_error.value.reason_code == "tool_permission_denied"
+    assert path_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_real_watchlists_provider_scrubs_unexpected_failures(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sentinel = "SENTINEL /private/db.sqlite API_KEY=secret"
+
+    class RuntimeStore:
+        def __init__(self, _path):
+            pass
+
+        def load(self):
+            return "local"
+
+    def fail_database(*_args, **_kwargs):
+        raise RuntimeError(sentinel)
+
+    monkeypatch.setattr(
+        local_server_tools, "get_subscriptions_db_path", lambda: tmp_path / "db.sqlite"
+    )
+    monkeypatch.setattr(local_server_tools, "RuntimeSourceStateStore", RuntimeStore)
+    monkeypatch.setattr(local_server_tools, "SubscriptionsDB", fail_database)
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    provider = build_server_local_provider(workspace, store)
+    _grant_local_tool(store, provider, "watchlists_search_items")
+    runtime = _runtime_with_builtins()
+    runtime.register_local_tools(_local_agent_tool_registrations(provider))
+    runtime.finalize()
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)))
+
+    try:
+        with pytest.raises(GatewayToolExecutionError) as exc_info:
+            await runtime.call_tool("watchlists_search_items", {}, _context())
+    finally:
+        logger.remove(sink_id)
+
+    assert exc_info.value.reason_code == "local_tool_failed"
+    assert exc_info.value.public_message == "Local tool execution failed."
+    captured = capsys.readouterr()
+    assert sentinel not in str(exc_info.value)
+    assert sentinel not in captured.out
+    assert sentinel not in captured.err
+    assert all(sentinel not in record for record in records)
+
+
+@pytest.mark.asyncio
+async def test_real_watchlists_database_resolution_runs_off_event_loop(
+    monkeypatch, tmp_path
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    entered = threading.Event()
+    release = threading.Event()
+
+    class RuntimeStore:
+        def __init__(self, _path):
+            pass
+
+        def load(self):
+            return "local"
+
+    class BlockingDatabase:
+        def __init__(self):
+            self.readiness_calls = 0
+
+        def assert_agent_read_ready(self):
+            self.readiness_calls += 1
+            if self.readiness_calls == 1:
+                entered.set()
+                assert release.wait(timeout=2)
+
+        def search_items_for_agent(self, **_kwargs):
+            return {"items": [], "has_more": False, "snapshot_max_item_id": 0}
+
+        def get_source_collection_memberships(self, _source_ids):
+            return {}
+
+        def close(self):
+            return None
+
+    database = BlockingDatabase()
+    monkeypatch.setattr(
+        local_server_tools, "get_subscriptions_db_path", lambda: tmp_path / "db.sqlite"
+    )
+    monkeypatch.setattr(local_server_tools, "RuntimeSourceStateStore", RuntimeStore)
+    monkeypatch.setattr(
+        local_server_tools,
+        "SubscriptionsDB",
+        lambda *_args, **_kwargs: database,
+    )
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    provider = build_server_local_provider(workspace, store)
+    _grant_local_tool(store, provider, "watchlists_search_items")
+    runtime = _runtime_with_builtins()
+    runtime.register_local_tools(_local_agent_tool_registrations(provider))
+    runtime.finalize()
+    heartbeat = 0
+
+    async def beat() -> None:
+        nonlocal heartbeat
+        while not release.is_set():
+            heartbeat += 1
+            await asyncio.sleep(0)
+
+    heartbeat_task = asyncio.create_task(beat())
+    call_task = asyncio.create_task(
+        runtime.call_tool("watchlists_search_items", {}, _context())
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        await asyncio.sleep(0.02)
+        assert heartbeat > 1
+    finally:
+        release.set()
+
+    result = await call_task
+    await heartbeat_task
+    assert json.loads(result)["status"] == "ok"
 
 
 def _grant_local_tool(

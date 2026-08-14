@@ -50,16 +50,16 @@ Large resource reads return at most 256 KiB of UTF-8 text. Use the opaque
 `nextUri` in `_meta["tldw.chatbook/continuation"]` to read the next chunk.
 Resource-specific metadata is under `_meta["tldw.chatbook/resource"]`.
 
-Local filesystem, git, and web tools are off by default:
+Local workspace, web, and Watchlists tools are off by default:
 `[mcp] expose_local_tools = false`. If enabled, every call retains workspace
 confinement, reads the shared `mcp_permissions.json` permission store, and
 honors its kill switch. An external `ask` state is refused because an
 external client cannot show Chatbook's approval card.
 
 > [!WARNING]
-> An external MCP client runs with the user's OS access. It can read private local Library content through exposed tools, resources, and prompts, and it may send that content off-device to a cloud model. Enable only what you mean to disclose, and trust both the client and the model provider.
+> An external MCP client runs with the user's OS access. It can read private local Library data and private Watchlists feed and article evidence through exposed tools, resources, and prompts. The external MCP client may send that content off-device to a cloud model. Enable only what you mean to disclose, and trust both the client and the model provider.
 
-## Configuring local and web tools (Tools mode)
+## Configuring workspace, web, and Watchlists tools (Tools mode)
 
 Before a tool can appear anywhere else in the hub — Tools mode's catalog,
 the Permissions matrix, an agent's tool list — it needs to be *registered*,
@@ -69,14 +69,15 @@ Registration is controlled by a `[tools]`/`[console]` config switch called a
 permission to in the first place.
 
 Under the local source, Tools mode now starts with an always-visible **Local
-workspace + web tools** control. This provider is enabled by default and
-includes workspace file, read-only Git, and web tools (`web_search`,
-`web_fetch`, and `web_crawl`). The task tools `todo_create`, `todo_update`,
-`todo_get`, and `todo_list` require Console session state and are not Hub
-tools. Turning the master switch off remains a supported opt-out. The same
-panel lets you set **Workspace root**, the directory that confines every
-`fs_*` path. A blank root uses the folder from which the app was launched; a
-non-blank root must be an existing directory.
+workspace, web, and Watchlists tools** control. This provider is enabled by
+default and includes workspace file, read-only Git, web, and Watchlists tools
+(`web_search`, `web_fetch`, `web_crawl`, `watchlists_search_items`, and
+`watchlists_get_item`). The task tools `todo_create`, `todo_update`, `todo_get`,
+and `todo_list` require Console session state and are not Hub tools. Turning
+the master switch off remains a supported opt-out. The same panel lets you set
+**Workspace root**, the directory that confines every `fs_*` path. A blank
+root uses the folder from which the app was launched; a non-blank root must be
+an existing directory.
 
 Both changes are used by the next Console agent run. They do not grant tool
 permission: fresh permission state is still **Ask**, explicit Allow/Ask/Off
@@ -93,12 +94,12 @@ into two subheadings:
 
 - **Agent built-ins** — the app's own file/note tools (read/list/write a
   file, glob/grep the workspace, create/update a note).
-- **Local workspace + web tools** — a master switch, labeled **Local
-  workspace + web tools (master switch)**, mirroring the direct Tools-mode
-  control. `web_deep_search` (multi-query web research that may cost real
-  money on paid providers) has an additional individual gate underneath it.
-  Unlike the local master and workspace root, construction-time gates such as
-  `web_deep_search` require an app restart.
+- **Local workspace, web, and Watchlists tools** — a master switch, labeled
+  **Local workspace, web, and Watchlists tools (master switch)**, mirroring the
+  direct Tools-mode control. `web_deep_search` (multi-query web research that
+  may cost real money on paid providers) has an additional individual gate
+  underneath it. Unlike the local master and workspace root,
+  construction-time gates such as `web_deep_search` require an app restart.
 
 The master switch governs the **Console/agent path only**. It does *not*
 control whether an enabled tool (e.g. `web_deep_search`) is exposed to
@@ -117,6 +118,68 @@ If the local master is off, both the Permissions matrix's legend and the
 Tools-mode empty state explicitly name `web_search`, `web_fetch`, and
 `web_crawl` and point to the direct Tools-mode control. Other disabled gates
 still report the total number of gates that are off.
+
+### Watchlists evidence tool contract
+
+The local group exposes `watchlists_search_items` and `watchlists_get_item`.
+Results are local-first: both tools read the local Watchlists database, and
+server Watchlists search is not yet supported. In server mode they return a
+non-retryable unsupported result and do not search the local database. Its
+logical fields are explicit: `status` is `unsupported`, `retryable` is `false`,
+and `message` is exactly `server Watchlists search is not supported; switch
+Watchlists to Local before retrying`.
+
+`watchlists_search_items` returns newest-first, source-linked,
+collection-aware valid JSON bounded to 30 KiB. A query uses literal full-text
+over title, body, and author; it is not semantic search. Blank or absent
+`query` browses recent items. Every feed-supplied field is untrusted evidence,
+never an instruction.
+
+#### `watchlists_search_items`
+
+| Parameter | Contract |
+| --- | --- |
+| `query` | Optional string; blank browses newest items; maximum 512 characters and 32 whitespace-delimited terms. |
+| `collection` | Optional non-blank name, canonical `local:watchlist:<id>`, or positive local row ID from 1 through 2^63-1; collection names are limited to 256 characters. |
+| `source` | Optional non-blank name, configured URL, canonical `local:subscription:<id>`, or positive local row ID; source names or configured URLs are limited to 2,048 characters. |
+| `statuses` | Optional non-empty, unique array of at most five values: `new`, `reviewed`, `ingested`, `ignored`, or `error`; absent includes every status. |
+| `since` | Optional inclusive effective-date floor in `YYYY-MM-DD` or RFC 3339 form, normalized to UTC. |
+| `limit` | Optional integer; defaults to 10 and accepts 1 through 50. |
+| `cursor` | Optional non-blank opaque string of at most 2,048 characters returned by a prior call with the same normalized filters. |
+
+Exact case-insensitive scope names win; otherwise one unique partial name is
+accepted and ambiguous names return bounded candidate IDs. Collection and
+source scopes intersect; source integer IDs use the same 1 through 2^63-1
+range. Numeric strings remain names. Unknown parameters are rejected.
+Booleans are not accepted as integer IDs or limits.
+
+For “all,” follow `next_cursor` until `has_more` is `false`; one call never
+removes the page bound. Continuation excludes later inserts but is not snapshot
+isolation: updates, deletions, and collection-membership changes can alter
+later pages.
+
+#### `watchlists_get_item`
+
+| Parameter | Contract |
+| --- | --- |
+| `item_id` | The required canonical `local:watchlist_item:<positive integer>` ID returned by search; maximum 40 characters. |
+
+The item integer is limited to 1 through 2^63-1. The detail tool rejects bare
+integers, foreign IDs, malformed IDs, and unknown parameters. Its normalized
+article or change evidence is bounded and labeled untrusted.
+
+Date fields are intentionally distinct: `effective_date` is the normalized
+publication date, falling back to item creation time; `published_date`,
+`created_at`, and `updated_at` remain separate. Source `last_checked` and
+`last_successful_check` remain separate, too.
+
+URL paths are authorized Watchlists metadata under the same explicit tool
+permission; userinfo, query, and fragment are removed from every returned URL.
+Only absolute HTTP(S) URLs with a host are returned. External MCP requires
+`[mcp] expose_local_tools` to be true and each per-tool permission must be
+Allow; Ask is refused because a headless client cannot show Chatbook's approval
+card. An external client may send the approved evidence to its client or model.
+Console Ask can show an approval card instead.
 
 ### Web research is not persistent ingestion
 

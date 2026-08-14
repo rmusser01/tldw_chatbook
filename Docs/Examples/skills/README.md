@@ -12,7 +12,7 @@ searches multiple angles with `web_search`, fetches primary sources with
 
 ### Requirements
 
-- Local workspace + web tools enabled in **MCP → Tools**. This is the shipped
+- Local workspace, web, and Watchlists tools enabled in **MCP → Tools**. This is the shipped
   default; an explicit `[console] local_tools_enabled = false` opts out.
 - Web tools default to the permission store's global `ask` state — expect an
   approval prompt the first time the skill searches or fetches (approve for
@@ -45,3 +45,9 @@ restricted to a narrower set.
 
 Imported skills are trust-scanned before use (ADR-009). Once installed, ask
 the agent to "research <question>" or invoke the skill explicitly.
+
+Watchlists-aware skill authors should use the exact
+`watchlists_search_items`/`watchlists_get_item` inventory and permission
+boundary recorded in [TASK-16222](../../../backlog/tasks/task-16222%20-%20Expose-local-Watchlists-search-tools-to-Console-and-MCP.md),
+[ADR-030](../../../backlog/decisions/030-local-library-agent-tool-boundary.md),
+and amended [ADR-032](../../../backlog/decisions/032-local-agent-tool-permission-boundary.md).

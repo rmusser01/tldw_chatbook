@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -147,7 +147,7 @@ async def test_local_tool_controls_render_with_bundled_css_at_100x30():
             "".join(segment.text for segment in strip)
             for strip in app.screen._compositor.render_strips()
         )
-        assert "Local workspace + web tools" in rendered
+        assert "Local workspace, web, and Watchlists tools" in rendered
         assert "Save root" in rendered
         assert "C:/workspace/notes" in rendered
         assert app.query_one("#mcp-tools-filter-text", Input).region.height > 0
@@ -875,26 +875,34 @@ async def test_state_column_cells_carry_semantic_color_by_effective_state():
             _tool(server_key="local:docs", server_label="docs", name="unresolved"),
         ]
         states = {
-            ("local:docs", "allowed"): EffectiveToolState(state="allow", origin="tool_override"),
-            ("local:docs", "asked"): EffectiveToolState(state="ask", origin="global_default"),
-            ("local:docs", "denied"): EffectiveToolState(state="deny", origin="tool_override"),
+            ("local:docs", "allowed"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            ),
+            ("local:docs", "asked"): EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+            ("local:docs", "denied"): EffectiveToolState(
+                state="deny", origin="tool_override"
+            ),
         }
         await canvas.update_tools(tools, empty_diagnosis=None, states=states)
         await pilot.pause()
 
         table = app.query_one("#mcp-tools-table", DataTable)
-        rows_by_tool = {
-            _row_texts(table, i)[0]: i for i in range(table.row_count)
-        }
-        assert table.get_cell_at((rows_by_tool["allowed"], 1)).style == state_text(
-            "Allow •", "ready"
-        ).style
-        assert table.get_cell_at((rows_by_tool["asked"], 1)).style == state_text(
-            "Ask", "warning"
-        ).style
-        assert table.get_cell_at((rows_by_tool["denied"], 1)).style == state_text(
-            "Off •", "error"
-        ).style
-        assert table.get_cell_at((rows_by_tool["unresolved"], 1)).style == state_text(
-            "—", "muted"
-        ).style
+        rows_by_tool = {_row_texts(table, i)[0]: i for i in range(table.row_count)}
+        assert (
+            table.get_cell_at((rows_by_tool["allowed"], 1)).style
+            == state_text("Allow •", "ready").style
+        )
+        assert (
+            table.get_cell_at((rows_by_tool["asked"], 1)).style
+            == state_text("Ask", "warning").style
+        )
+        assert (
+            table.get_cell_at((rows_by_tool["denied"], 1)).style
+            == state_text("Off •", "error").style
+        )
+        assert (
+            table.get_cell_at((rows_by_tool["unresolved"], 1)).style
+            == state_text("—", "muted").style
+        )

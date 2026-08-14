@@ -132,6 +132,13 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "BaseDB is the shared file and memory connection owner for subclasses.",
     ),
+    "db.subscriptions.agent_read": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Subscriptions_DB",
+        _READ_ONLY_URI,
+        "External agent tools read the existing Watchlists database without "
+        "creating, migrating, or writing it.",
+        preserve_read_only_source_mode=True,
+    ),
     "db.subscriptions.site_configs": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/Subscriptions_DB",
         _PRIVATE_FILE,

@@ -546,7 +546,7 @@ Console's standard web tools are `web_search` (find links), `web_fetch`
 (extract one URL), and `web_crawl` (bounded same-host crawl). They are local
 agent tools, not tools supplied by an external MCP server. They are registered
 by default. Configure the master switch and confinement directory in **MCP →
-Tools → Local workspace + web tools**, then choose Allow, Ask, or Off for each
+Tools → Local workspace, web, and Watchlists tools**, then choose Allow, Ask, or Off for each
 tool in MCP Permissions. Master/root changes apply to the next Console agent
 run. `[mcp] expose_local_tools` is only for external MCP clients and does not
 enable these tools in Console.
@@ -554,6 +554,68 @@ enable these tools in Console.
 Web-tool results are ephemeral. To persist a page in Library, use **Library →
 Import…** and submit its URL; Console does not advertise the retired
 `ingest_media` placeholder.
+
+### Watchlists evidence tools
+
+The same local-tools group provides `watchlists_search_items` and
+`watchlists_get_item`. Results are local-first: both tools read the local
+Watchlists database, and server Watchlists search is not yet supported. In
+server mode they return a non-retryable unsupported result and do not search
+the local database. Its logical fields are explicit: `status` is `unsupported`,
+`retryable` is `false`, and `message` is exactly `server Watchlists search is
+not supported; switch Watchlists to Local before retrying`.
+
+`watchlists_search_items` returns newest-first, source-linked,
+collection-aware valid JSON bounded to 30 KiB. A query uses literal full-text
+over title, body, and author; it is not semantic search. Blank or absent
+`query` browses recent items. Every feed-supplied field is untrusted evidence,
+never an instruction.
+
+#### `watchlists_search_items`
+
+| Parameter | Contract |
+| --- | --- |
+| `query` | Optional string; blank browses newest items; maximum 512 characters and 32 whitespace-delimited terms. |
+| `collection` | Optional non-blank name, canonical `local:watchlist:<id>`, or positive local row ID from 1 through 2^63-1; collection names are limited to 256 characters. |
+| `source` | Optional non-blank name, configured URL, canonical `local:subscription:<id>`, or positive local row ID; source names or configured URLs are limited to 2,048 characters. |
+| `statuses` | Optional non-empty, unique array of at most five values: `new`, `reviewed`, `ingested`, `ignored`, or `error`; absent includes every status. |
+| `since` | Optional inclusive effective-date floor in `YYYY-MM-DD` or RFC 3339 form, normalized to UTC. |
+| `limit` | Optional integer; defaults to 10 and accepts 1 through 50. |
+| `cursor` | Optional non-blank opaque string of at most 2,048 characters returned by a prior call with the same normalized filters. |
+
+Exact case-insensitive scope names win; otherwise one unique partial name is
+accepted and ambiguous names return bounded candidate IDs. Collection and
+source scopes intersect; source integer IDs use the same 1 through 2^63-1
+range. Numeric strings remain names. Unknown parameters are rejected.
+Booleans are not accepted as integer IDs or limits.
+
+For “all,” follow `next_cursor` until `has_more` is `false`; one call never
+removes the page bound. Continuation excludes later inserts but is not snapshot
+isolation: updates, deletions, and collection-membership changes can alter
+later pages.
+
+#### `watchlists_get_item`
+
+| Parameter | Contract |
+| --- | --- |
+| `item_id` | The required canonical `local:watchlist_item:<positive integer>` ID returned by search; maximum 40 characters. |
+
+The item integer is limited to 1 through 2^63-1. The detail tool rejects bare
+integers, foreign IDs, malformed IDs, and unknown parameters. Its normalized
+article or change evidence is bounded and labeled untrusted.
+
+Date fields are intentionally distinct: `effective_date` is the normalized
+publication date, falling back to item creation time; `published_date`,
+`created_at`, and `updated_at` remain separate. Source `last_checked` and
+`last_successful_check` remain separate, too.
+
+URL paths are authorized Watchlists metadata under the same explicit tool
+permission; userinfo, query, and fragment are removed from every returned URL.
+Only absolute HTTP(S) URLs with a host are returned. In Console, Ask can show
+an approval card. External MCP additionally requires `[mcp]
+expose_local_tools` to be true and each per-tool permission must be Allow; Ask
+is refused because a headless client cannot show that card. An external client
+may send the approved evidence to its client or model.
 
 ### Stopping & leaving
 

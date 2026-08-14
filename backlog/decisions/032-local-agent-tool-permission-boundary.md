@@ -2,7 +2,10 @@
 
 Status: Accepted
 Date: 2026-08-05
-Related Task: [TASK-2819 - Local agent tools phase 1: plumbing + fs_list pilot](../tasks/task-2819%20-%20Local-agent-tools-phase-1-plumbing-fs_list-pilot.md)
+Related Tasks:
+
+- [TASK-2819 - Local agent tools phase 1: plumbing + fs_list pilot](../tasks/task-2819%20-%20Local-agent-tools-phase-1-plumbing-fs_list-pilot.md)
+- [TASK-16222 - Expose local Watchlists search tools to Console and MCP](../tasks/task-16222%20-%20Expose-local-Watchlists-search-tools-to-Console-and-MCP.md)
 Supersedes: N/A
 
 ## Decision
@@ -109,6 +112,49 @@ changes, and the new string asserts no configuration state and no
 Test Tool panel and Advanced runner already share for the identical
 condition).
 
+**Addendum (TASK-16222, 2026-08-14): private local-domain reads share the
+synthetic local principal.** Read-only `watchlists_*` tools may expose local
+feed/source metadata and bounded article evidence through the same
+`LocalToolProvider`, `local:__local__` permission principal, kill switch,
+definition-hash guard, and optional external MCP exposure established above.
+Their names follow ADR-030's domain-prefix precedent. Registration is not
+authorization: fresh/missing permission remains `ask`; external MCP cannot
+satisfy `ask` and requires an operator-recorded tool-level Allow.
+
+This is a privacy-boundary expansion, not merely another workspace helper.
+Watchlists rows can contain private monitoring targets, source names, URLs,
+queries, and complete third-party article text. The accepted trade-off is to
+reuse one synthetic principal and audit trail instead of adding a second local
+permission store/provider. To keep that trade-off visible, UI, config-template,
+and user-guide copy must no longer describe the master catalog switch or tool
+group only as “Local workspace + web tools”; it must explicitly include local
+Watchlists evidence. Each Watchlists tool remains separately configurable in
+the permission store, so the shared master switch does not collapse per-tool
+consent.
+
+Expected Watchlists domain outcomes (invalid input, disambiguation, not found,
+local-only unsupported mode, feature unavailable) travel as bounded structured
+tool content rather than new gateway error pass-throughs. Permission failures
+retain the pinned fail-closed errors above. Article fields are labeled and
+delimited as untrusted evidence, but that label is not claimed to guarantee
+model obedience. Output is field-allowlisted; URL userinfo, complete queries,
+and fragments are removed without guessing which key names are sensitive; only
+absolute HTTP(S) links with a host are emitted; unexpected exception messages
+are scrubbed before reaching the model. Preserved URL paths remain disclosed
+Watchlists metadata under the same explicit tool permission and are not claimed
+to be credential-free.
+
+The in-app Console reuses the application's already-initialized
+`SubscriptionsDB`. Standalone external MCP instead opens an existing database
+through the registered private-SQLite read-only URI path, with schema
+initialization and migration disabled. A read-tagged external call must never
+create the subscriptions database file, write its schema or rows, or run
+migrations as an incidental side effect; normal profile-path resolution may
+still ensure the private parent directory. A missing or old schema returns
+feature unavailable until the normal application owns initialization. No
+Watchlists domain mutation, server-data access, semantic index, or threat score
+is authorized by this addendum.
+
 All path-taking tools confine to a configurable `[console] workspace_root`
 (default: the app cwd at startup), coerced and templated following the
 `collapse_large_pastes` precedent in `config.py`. Hidden path components are
@@ -181,6 +227,8 @@ root confinement with hidden components explicitly allowed under it.
 
 - [TASK-2819](../tasks/task-2819%20-%20Local-agent-tools-phase-1-plumbing-fs_list-pilot.md)
 - [TASK-1354](../tasks/task-1354%20-%20Complete-web_search-and-web_fetch-Console-and-MCP-exposure.md)
+- [TASK-16222](../tasks/task-16222%20-%20Expose-local-Watchlists-search-tools-to-Console-and-MCP.md)
 - [Design specification](../../Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md)
+- [Watchlists agent search tools design](../../Docs/superpowers/specs/2026-08-14-watchlists-agent-search-tools-design.md)
 - [Implementation plan](../../Docs/superpowers/plans/2026-08-04-local-agent-tools-phase1.md)
 - [ADR-030: Direct Local Library Tool Boundary for Console and MCP](030-local-library-agent-tool-boundary.md)
