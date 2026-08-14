@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import hashlib
 import io
@@ -24,6 +25,19 @@ TREE_URL = (
     f"https://huggingface.co/api/models/{REPOSITORY}/tree/{COMMIT}"
     "?recursive=true&expand=true"
 )
+
+
+def _manifest_refresh_docstring(function_name: str) -> str:
+    script_path = (
+        Path(__file__).parents[2] / "scripts" / "refresh_audio_cpp_artifact_manifest.py"
+    )
+    module = ast.parse(script_path.read_text(encoding="utf-8"))
+    functions = {
+        node.name: node
+        for node in module.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    return ast.get_docstring(functions[function_name]) or ""
 
 
 def _valid_manifest() -> dict[str, Any]:
@@ -1141,3 +1155,68 @@ def test_refresh_command_runs_directly_without_network_for_empty_manifest(
         "commit": COMMIT,
         "packages": [],
     }
+
+
+@pytest.mark.parametrize(
+    ("function_name", "requires_raises"),
+    [
+        ("validate_commit", True),
+        ("refresh_manifest_bytes", True),
+        ("main", True),
+    ],
+)
+def test_public_manifest_refresh_functions_use_google_style_docstrings(
+    function_name: str,
+    requires_raises: bool,
+) -> None:
+    docstring = _manifest_refresh_docstring(function_name)
+
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
+    if requires_raises:
+        assert "Raises:" in docstring
+
+
+def test_manifest_docstring_contract_does_not_mutate_import_state() -> None:
+    before_path = tuple(sys.path)
+    sentinel = object()
+    before_module = sys.modules.get("audio_cpp_artifact_catalog", sentinel)
+
+    _manifest_refresh_docstring("validate_commit")
+
+    assert tuple(sys.path) == before_path
+    assert sys.modules.get("audio_cpp_artifact_catalog", sentinel) is before_module
+
+
+def test_refresh_command_writes_exact_bytes_to_explicit_output_without_site_packages(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).parents[2]
+    payload = {"repository": REPOSITORY, "commit": COMMIT, "packages": []}
+    manifest_path = _write_manifest(tmp_path, payload)
+    output_path = tmp_path / "nested" / "refreshed-manifest.json"
+    output_path.parent.mkdir()
+    expected_bytes = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            "scripts/refresh_audio_cpp_artifact_manifest.py",
+            "--commit",
+            COMMIT,
+            "--manifest",
+            str(manifest_path),
+            "--output",
+            str(output_path),
+        ],
+        cwd=repository_root,
+        check=False,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+    assert result.stdout == b""
+    assert output_path.read_bytes() == expected_bytes

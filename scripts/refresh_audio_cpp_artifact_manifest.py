@@ -44,7 +44,17 @@ UrlOpen = Callable[[urllib.request.Request], BinaryIO]
 
 
 def validate_commit(commit: str) -> str:
-    """Require an explicit immutable Hugging Face commit."""
+    """Require an explicit immutable Hugging Face commit.
+
+    Args:
+        commit: Candidate Hugging Face Git revision.
+
+    Returns:
+        The validated lowercase 40-character commit.
+
+    Raises:
+        ValueError: The revision is not an exact lowercase Git commit.
+    """
 
     if _COMMIT_RE.fullmatch(commit) is None:
         raise ValueError("commit must be exactly 40 lowercase hexadecimal characters")
@@ -299,7 +309,21 @@ def refresh_manifest_bytes(
     *,
     urlopen: UrlOpen = urllib.request.urlopen,
 ) -> bytes:
-    """Refresh integrity facts while retaining reviewed mappings and licenses."""
+    """Refresh integrity facts while retaining reviewed mappings and licenses.
+
+    Args:
+        manifest_path: Existing reviewed manifest to refresh.
+        commit: Exact immutable Hugging Face commit to query.
+        urlopen: Bounded HTTP opener used for source evidence.
+
+    Returns:
+        Deterministic UTF-8 JSON bytes for the refreshed manifest.
+
+    Raises:
+        OSError: The manifest or remote source evidence cannot be read.
+        TypeError: Manifest or source facts have an invalid type.
+        ValueError: Manifest or source facts violate the bounded contract.
+    """
 
     commit = validate_commit(commit)
     current = load_audio_cpp_artifact_source_manifest(
@@ -360,7 +384,23 @@ def refresh_manifest_bytes(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the explicit-revision maintainer refresh command."""
+    """Run the explicit-revision maintainer refresh command.
+
+    ``--manifest`` and ``--output`` are explicit trusted-maintainer paths.
+    The output path intentionally permits an arbitrary destination; this
+    dependency-free command does not impose an application confinement root.
+
+    Args:
+        argv: Optional command arguments; defaults to ``sys.argv``.
+
+    Returns:
+        Zero after writing the refreshed manifest successfully.
+
+    Raises:
+        OSError: Standard output or the explicit output destination cannot be
+            written.
+        SystemExit: Argument parsing or manifest refresh fails.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--commit", required=True)

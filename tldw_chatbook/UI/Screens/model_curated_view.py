@@ -74,7 +74,19 @@ def model_library_focus_locator(
     action_class: str,
     action_role: str,
 ) -> ModelLibraryFocusLocator | None:
-    """Identify one header or exact-ref model-library control."""
+    """Identify one header or exact-ref model-library control.
+
+    Args:
+        view: Model Library view containing the candidate control.
+        widget: Candidate focused widget.
+        row_selector: Selector for rows carrying exact artifact references.
+        action_class: Class identifying the row action to remember.
+        action_role: Semantic role assigned to that row action.
+
+    Returns:
+        A widget ID, an exact-reference role tuple, or ``None`` when the
+        widget has no restorable Model Library role.
+    """
 
     if widget.id:
         return widget.id
@@ -103,7 +115,18 @@ def restore_model_library_focus(
     action_role: str,
     action_selector: str,
 ) -> None:
-    """Restore one header or exact-ref control after a pane change."""
+    """Restore one header or exact-ref control after a pane change.
+
+    Args:
+        view: Model Library view containing the replacement controls.
+        locator: Previously captured widget ID or exact-reference role.
+        row_selector: Selector for rows carrying exact artifact references.
+        action_role: Semantic role identifying the row action.
+        action_selector: Selector for that row action.
+
+    Returns:
+        None.
+    """
 
     if isinstance(locator, str):
         try:
@@ -142,7 +165,17 @@ def project_audio_cpp_observation(
     reference: ArtifactRef,
     evidence: AudioCppArtifactRemovalEvidence,
 ) -> AudioCppPackageProjection:
-    """Apply only exact-reference Settings and live-supervisor evidence."""
+    """Apply only exact-reference Settings and live-supervisor evidence.
+
+    Args:
+        projection: Existing package projection to update.
+        reference: Exact artifact reference expected by the projection.
+        evidence: Settings and runtime observation to apply.
+
+    Returns:
+        The updated projection, or the original projection when the evidence
+        belongs to another artifact reference.
+    """
 
     if evidence.reference != reference:
         return projection
@@ -168,7 +201,14 @@ def project_audio_cpp_observation(
 def clear_audio_cpp_observation(
     projection: AudioCppPackageProjection,
 ) -> AudioCppPackageProjection:
-    """Discard prior-generation Settings/runtime claims while refreshing."""
+    """Discard prior-generation Settings/runtime claims while refreshing.
+
+    Args:
+        projection: Existing package projection.
+
+    Returns:
+        A projection with Configured and Running facts reset to unknown.
+    """
 
     return replace(
         projection,
@@ -180,7 +220,14 @@ def clear_audio_cpp_observation(
 def audio_cpp_package_projection(
     descriptor: ArtifactDescriptor,
 ) -> AudioCppPackageProjection | None:
-    """Join a reviewed audio.cpp descriptor to its frozen recipe facts."""
+    """Join a reviewed audio.cpp descriptor to its frozen recipe facts.
+
+    Args:
+        descriptor: Curated or installed artifact descriptor to project.
+
+    Returns:
+        Truthful audio.cpp package facts, or ``None`` for another consumer.
+    """
 
     if descriptor.consumer != "audio_cpp":
         return None
