@@ -604,11 +604,16 @@ class NoteImportReceiptRepository:
                 item.selected_action,
                 len(item.payloads),
             )
+            update_match = (
+                item.match
+                if item.selected_action is ImportAction.UPDATE_EXISTING
+                else None
+            )
             expected_version = (
-                item.match.note_version if item.match is not None else None
+                update_match.note_version if update_match is not None else None
             )
             target_note_id = _validate_optional_id(
-                item.match.note_id if item.match is not None else None,
+                update_match.note_id if update_match is not None else None,
                 field_name="target_note_id",
             )
             connection.execute(
@@ -1110,7 +1115,7 @@ class NoteImportReceiptRepository:
             for transition in effects:
                 self._update_effect(connection, session_id, transition, timestamp)
             snapshot = self._load_snapshot(connection, approval_id)
-            self._validate_reconciliation_authority(snapshot)
+            self._derive_receipt_counts(snapshot)
             connection.commit()
             return snapshot
         except Exception:
@@ -1181,6 +1186,13 @@ class NoteImportReceiptRepository:
                 or transition.observed_version is not None
             ):
                 raise ValueError("Skip outcomes cannot bind reconciliation metadata.")
+            if action is ImportAction.CREATE_NEW and (
+                transition.target_note_id is not None
+                or transition.observed_version is not None
+            ):
+                raise ValueError(
+                    "Create item summaries cannot bind reconciliation metadata."
+                )
             _assert_compatible_authority(row[2], transition.target_note_id)
             _assert_compatible_authority(row[3], transition.observed_version)
 
@@ -1637,16 +1649,30 @@ class NoteImportReceiptRepository:
 
     @staticmethod
     def _validate_create_note_identities(snapshot: ImportSessionSnapshot) -> None:
-        create_item_ids = {
-            item.item_id
+        create_items = tuple(
+            item
             for item in snapshot.items
             if item.selected_action is ImportAction.CREATE_NEW
-        }
+        )
+        for item in create_items:
+            if (
+                item.target_note_id is not None
+                or item.expected_version is not None
+                or item.observed_version is not None
+            ):
+                raise ImportReceiptConflictError(
+                    "A Create item summary cannot bind reconciliation metadata."
+                )
+        create_item_ids = {item.item_id for item in create_items}
         payloads: dict[tuple[str, int], ImportEffectRecord] = {}
         target_note_ids: list[str] = []
         for effect in snapshot.payload_effects:
             if effect.item_id not in create_item_ids or effect.payload_index is None:
                 continue
+            if effect.expected_version is not None:
+                raise ImportReceiptConflictError(
+                    "A Create payload cannot bind expected version authority."
+                )
             key = (effect.item_id, effect.payload_index)
             payloads[key] = effect
             if effect.target_note_id is not None:
@@ -1724,6 +1750,10 @@ class NoteImportReceiptRepository:
         for item_id, item in update_items.items():
             payloads = payloads_by_item[item_id]
             for effect in payloads:
+                if effect.expected_version != item.expected_version:
+                    raise ImportReceiptConflictError(
+                        "Update payload expected version authority conflicts with its item."
+                    )
                 if (
                     effect.target_note_id is not None
                     and effect.target_note_id != item.target_note_id
@@ -1731,18 +1761,20 @@ class NoteImportReceiptRepository:
                     raise ImportReceiptConflictError(
                         "An Update payload conflicts with its approved target."
                     )
+                if effect.state is ImportEffectState.APPLIED:
+                    if effect.expected_version is None:
+                        raise ImportReceiptConflictError(
+                            "An applied replace payload requires expected version authority."
+                        )
+                    if effect.observed_version != effect.expected_version + 1:
+                        raise ImportReceiptConflictError(
+                            "An applied replace payload must observe exactly one version advance."
+                        )
             if item.outcome is not ImportItemOutcome.UPDATED:
                 continue
             if item.observed_version is None:
                 raise ImportReceiptTransitionError(
                     "A terminal Update requires a final item observation."
-                )
-            if (
-                item.expected_version is None
-                or item.observed_version < item.expected_version
-            ):
-                raise ImportReceiptConflictError(
-                    "The final Update observation precedes its expected version."
                 )
             required_effects = (*payloads, *memberships_by_item[item_id])
             if not required_effects or any(
@@ -1752,11 +1784,21 @@ class NoteImportReceiptRepository:
                 raise ImportReceiptTransitionError(
                     "A terminal Update requires every approved effect to be applied."
                 )
-            if payloads and any(
-                effect.observed_version != item.observed_version for effect in payloads
-            ):
+            if item.expected_version is None:
                 raise ImportReceiptConflictError(
-                    "The final Update observation conflicts with its payload observation."
+                    "A terminal Update requires expected version authority."
+                )
+            if payloads:
+                successful_version = item.expected_version + 1
+                if item.observed_version != successful_version or any(
+                    effect.observed_version != successful_version for effect in payloads
+                ):
+                    raise ImportReceiptConflictError(
+                        "A replace-content Update must observe exactly one version advance."
+                    )
+            elif item.observed_version != item.expected_version:
+                raise ImportReceiptConflictError(
+                    "A membership-only Update observation must exactly match its expected version."
                 )
 
     @staticmethod
@@ -2063,7 +2105,8 @@ class NoteImportReceiptRepository:
                         *(
                             item.target_note_id
                             for item in snapshot.items
-                            if item.target_note_id is not None
+                            if item.selected_action is ImportAction.UPDATE_EXISTING
+                            and item.target_note_id is not None
                         ),
                     )
                 )

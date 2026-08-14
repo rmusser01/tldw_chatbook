@@ -546,6 +546,308 @@ def test_multi_payload_receipt_preserves_partial_success_failure_and_note_ids(
     )
 
 
+@pytest.mark.parametrize(
+    ("outcome", "reason_code", "retryable", "target_note_id", "observed_version"),
+    [
+        (ImportItemOutcome.IMPORTED, None, False, "spurious-note", None),
+        (ImportItemOutcome.IMPORTED, None, False, None, 1),
+        (ImportItemOutcome.FAILED, "database_busy", True, "spurious-note", 1),
+    ],
+)
+def test_create_item_summary_rejects_note_reconciliation_metadata_atomically(
+    tmp_path: Path,
+    outcome: ImportItemOutcome,
+    reason_code: str | None,
+    retryable: bool,
+    target_note_id: str | None,
+    observed_version: int | None,
+) -> None:
+    item = _create_item_with_payloads(payload_count=1)
+    repository = _repository(tmp_path)
+    repository.begin(_approved_for_item(item), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+
+    with pytest.raises(ValueError, match="Create item summaries"):
+        repository.transition_item(
+            _APPROVAL_ID,
+            item.item_id,
+            outcome,
+            reason_code=reason_code,
+            retryable=retryable,
+            target_note_id=target_note_id,
+            observed_version=observed_version,
+        )
+
+    reopened = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID).items[0]
+    assert reopened.outcome is ImportItemOutcome.PENDING
+    assert reopened.target_note_id is None
+    assert reopened.observed_version is None
+
+
+def test_create_item_metadata_rejection_rolls_back_mixed_effect_batch(
+    tmp_path: Path,
+) -> None:
+    item = _create_item_with_payloads(payload_count=1)
+    repository = _repository(tmp_path)
+    repository.begin(_approved_for_item(item), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    payload = snapshot.payload_effects[0]
+
+    with pytest.raises(ValueError, match="Create item summaries"):
+        repository.transition_batch(
+            _APPROVAL_ID,
+            item_transitions=(
+                ItemTransition(
+                    item_id=item.item_id,
+                    outcome=ImportItemOutcome.IMPORTED,
+                    target_note_id="spurious-item-note",
+                    observed_version=1,
+                ),
+            ),
+            effect_transitions=(
+                EffectTransition(
+                    table=payload.table,
+                    effect_id=payload.effect_id,
+                    state=ImportEffectState.APPLIED,
+                    target_note_id="durable-payload-note",
+                    observed_version=1,
+                ),
+            ),
+        )
+
+    reopened = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID)
+    assert reopened.items[0].outcome is ImportItemOutcome.PENDING
+    assert reopened.items[0].target_note_id is None
+    assert reopened.payload_effects[0].state is ImportEffectState.PENDING
+    assert reopened.payload_effects[0].target_note_id is None
+
+
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    [
+        ("item_reconciliation", "Create item summary"),
+        ("item_expected", "Create item summary"),
+        ("payload_expected", "Create payload"),
+    ],
+)
+def test_reducer_rejects_corrupt_create_metadata_after_reopen(
+    tmp_path: Path,
+    corruption: str,
+    message: str,
+) -> None:
+    item = _create_item_with_payloads(payload_count=1)
+    repository = _repository(tmp_path)
+    repository.begin(_approved_for_item(item), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    repository.transition_batch(
+        _APPROVAL_ID,
+        item_transitions=(
+            ItemTransition(
+                item_id=item.item_id,
+                outcome=ImportItemOutcome.IMPORTED,
+            ),
+        ),
+        effect_transitions=tuple(
+            _applied_transition(effect) for effect in snapshot.folder_effects
+        )
+        + (
+            EffectTransition(
+                table=snapshot.payload_effects[0].table,
+                effect_id=snapshot.payload_effects[0].effect_id,
+                state=ImportEffectState.APPLIED,
+                target_note_id="durable-payload-note",
+                observed_version=1,
+            ),
+            _applied_transition(
+                snapshot.membership_effects[0],
+                note_id="durable-payload-note",
+            ),
+        ),
+    )
+    database = tmp_path / "notes-sync.sqlite3"
+    with sqlite3.connect(database) as connection:
+        if corruption == "item_reconciliation":
+            connection.execute(
+                """
+                UPDATE import_items SET target_note_id = ?, observed_version = ?
+                WHERE session_id = ?
+                """,
+                ("spurious-item-note", 99, snapshot.session_id),
+            )
+        elif corruption == "item_expected":
+            connection.execute(
+                "UPDATE import_items SET expected_version = 7 WHERE session_id = ?",
+                (snapshot.session_id,),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE import_payload_effects SET expected_version = 7
+                WHERE session_id = ?
+                """,
+                (snapshot.session_id,),
+            )
+
+    reopened_repository = _repository(tmp_path)
+    with pytest.raises(ImportReceiptConflictError, match=message):
+        reopened_repository.aggregate_receipt(_APPROVAL_ID)
+    with pytest.raises(ImportReceiptConflictError, match=message):
+        reopened_repository.transition_session(
+            _APPROVAL_ID,
+            ImportSessionState.COMPLETED,
+        )
+    assert (
+        _repository(tmp_path).load_session_snapshot(_APPROVAL_ID).state
+        is ImportSessionState.RUNNING
+    )
+
+
+@pytest.mark.parametrize(
+    ("classification", "match_kind"),
+    [
+        (ImportClassification.CHANGED_REPEAT, ImportMatchKind.EXACT),
+        (ImportClassification.UNCERTAIN_MATCH, ImportMatchKind.UNCERTAIN),
+    ],
+)
+def test_matched_create_plan_seeds_unbound_authority_and_imports_new_note(
+    tmp_path: Path,
+    classification: ImportClassification,
+    match_kind: ImportMatchKind,
+) -> None:
+    matched_create = replace(
+        _item(),
+        classification=classification,
+        selected_action=ImportAction.CREATE_NEW,
+        allowed_actions=(
+            (
+                ImportAction.SKIP,
+                ImportAction.CREATE_NEW,
+                ImportAction.UPDATE_EXISTING,
+            )
+            if classification is ImportClassification.CHANGED_REPEAT
+            else (ImportAction.SKIP, ImportAction.CREATE_NEW)
+        ),
+        match=ImportMatch(
+            kind=match_kind,
+            note_id="matched-existing-note",
+            note_version=7,
+        ),
+        replace_content=False,
+    )
+    repository = _repository(tmp_path)
+    repository.begin(_approved_for_item(matched_create), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+
+    assert (snapshot.items[0].target_note_id, snapshot.items[0].expected_version) == (
+        None,
+        None,
+    )
+    assert (
+        snapshot.payload_effects[0].target_note_id,
+        snapshot.payload_effects[0].expected_version,
+    ) == (None, None)
+    assert snapshot.membership_effects[0].target_note_id is None
+
+    repository.transition_batch(
+        _APPROVAL_ID,
+        item_transitions=(
+            ItemTransition(
+                item_id=matched_create.item_id,
+                outcome=ImportItemOutcome.IMPORTED,
+            ),
+        ),
+        effect_transitions=tuple(
+            _applied_transition(effect) for effect in snapshot.folder_effects
+        )
+        + (
+            EffectTransition(
+                table=snapshot.payload_effects[0].table,
+                effect_id=snapshot.payload_effects[0].effect_id,
+                state=ImportEffectState.APPLIED,
+                target_note_id="newly-created-note",
+                observed_version=1,
+            ),
+            _applied_transition(
+                snapshot.membership_effects[0],
+                note_id="newly-created-note",
+            ),
+        ),
+    )
+
+    receipt = _repository(tmp_path).aggregate_receipt(_APPROVAL_ID)
+    assert (receipt.imported, receipt._note_ids) == (1, ("newly-created-note",))
+
+
+def test_transition_batch_rejects_terminal_create_with_pending_membership(
+    tmp_path: Path,
+) -> None:
+    item = _create_item_with_payloads(payload_count=1)
+    repository = _repository(tmp_path)
+    repository.begin(_approved_for_item(item), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    payload = snapshot.payload_effects[0]
+
+    with pytest.raises(ImportReceiptError, match="terminal item summary"):
+        repository.transition_batch(
+            _APPROVAL_ID,
+            item_transitions=(
+                ItemTransition(
+                    item_id=item.item_id,
+                    outcome=ImportItemOutcome.IMPORTED,
+                ),
+            ),
+            effect_transitions=(
+                EffectTransition(
+                    table=payload.table,
+                    effect_id=payload.effect_id,
+                    state=ImportEffectState.APPLIED,
+                    target_note_id="durable-payload-note",
+                    observed_version=1,
+                ),
+            ),
+        )
+
+    reopened = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID)
+    assert reopened.items[0].outcome is ImportItemOutcome.PENDING
+    assert reopened.payload_effects[0].state is ImportEffectState.PENDING
+    assert reopened.membership_effects[0].state is ImportEffectState.PENDING
+
+
+@pytest.mark.parametrize(
+    "child_state", [ImportEffectState.APPLIED, ImportEffectState.FAILED]
+)
+def test_transition_batch_allows_pending_parent_with_terminal_child_effect(
+    tmp_path: Path,
+    child_state: ImportEffectState,
+) -> None:
+    item = _create_item_with_payloads(payload_count=1)
+    repository = _repository(tmp_path)
+    repository.begin(_approved_for_item(item), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    payload = repository.load_session_snapshot(_APPROVAL_ID).payload_effects[0]
+    transition = EffectTransition(
+        table=payload.table,
+        effect_id=payload.effect_id,
+        state=child_state,
+        reason_code="database_busy"
+        if child_state is ImportEffectState.FAILED
+        else None,
+        retryable=child_state is ImportEffectState.FAILED,
+        target_note_id="durable-payload-note",
+        observed_version=1,
+    )
+
+    repository.transition_effects(_APPROVAL_ID, (transition,))
+
+    reopened = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID)
+    assert reopened.items[0].outcome is ImportItemOutcome.PENDING
+    assert reopened.payload_effects[0].state is child_state
+
+
 def test_multi_payload_retryable_count_is_derived_per_failed_note_unit(
     tmp_path: Path,
 ) -> None:
@@ -1239,7 +1541,7 @@ def test_membership_only_update_counts_one_updated_note_unit(tmp_path: Path) -> 
         item.item_id,
         ImportItemOutcome.UPDATED,
         target_note_id="opaque-note-7",
-        observed_version=8,
+        observed_version=7,
     )
     repository.transition_session(_APPROVAL_ID, ImportSessionState.COMPLETED)
 
@@ -1320,26 +1622,330 @@ def test_terminal_update_requires_a_final_item_observation(tmp_path: Path) -> No
     assert reopened.observed_version is None
 
 
-def test_membership_only_update_observation_cannot_precede_expected_version(
+@pytest.mark.parametrize("observed_version", [6, 8])
+def test_membership_only_update_observation_must_equal_expected_version(
     tmp_path: Path,
+    observed_version: int,
 ) -> None:
     item = replace(_item(), replace_content=False)
     repository = _repository(tmp_path)
     repository.begin(_approved_for_item(item), batch_size=25)
     repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    repository.transition_effects(
+        _APPROVAL_ID,
+        tuple(_applied_transition(effect) for effect in snapshot.folder_effects)
+        + (
+            _applied_transition(
+                snapshot.membership_effects[0],
+                note_id="opaque-note-7",
+            ),
+        ),
+    )
 
-    with pytest.raises(ImportReceiptConflictError, match="expected"):
+    with pytest.raises(ImportReceiptConflictError, match="exactly match"):
         repository.transition_item(
             _APPROVAL_ID,
             item.item_id,
             ImportItemOutcome.UPDATED,
             target_note_id="opaque-note-7",
-            observed_version=6,
+            observed_version=observed_version,
         )
 
     reopened = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID).items[0]
     assert reopened.outcome is ImportItemOutcome.PENDING
     assert reopened.observed_version is None
+
+
+@pytest.mark.parametrize("observed_version", [7, 9])
+def test_replace_update_observation_must_be_exactly_expected_plus_one(
+    tmp_path: Path,
+    observed_version: int,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    payload = snapshot.payload_effects[0]
+    membership = snapshot.membership_effects[0]
+
+    with pytest.raises(ImportReceiptConflictError, match="exactly one version"):
+        repository.transition_batch(
+            _APPROVAL_ID,
+            item_transitions=(
+                ItemTransition(
+                    item_id="item-1",
+                    outcome=ImportItemOutcome.UPDATED,
+                    target_note_id="opaque-note-7",
+                    observed_version=observed_version,
+                ),
+            ),
+            effect_transitions=tuple(
+                _applied_transition(effect) for effect in snapshot.folder_effects
+            )
+            + (
+                EffectTransition(
+                    table=payload.table,
+                    effect_id=payload.effect_id,
+                    state=ImportEffectState.APPLIED,
+                    target_note_id="opaque-note-7",
+                    observed_version=observed_version,
+                ),
+                _applied_transition(membership, note_id="opaque-note-7"),
+            ),
+        )
+
+    reopened = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID)
+    assert reopened.items[0].outcome is ImportItemOutcome.PENDING
+    assert reopened.items[0].observed_version is None
+    assert all(
+        effect.state is ImportEffectState.PENDING for effect in reopened.payload_effects
+    )
+    assert all(
+        effect.state is ImportEffectState.PENDING
+        for effect in reopened.membership_effects
+    )
+    assert all(
+        effect.state is ImportEffectState.PENDING for effect in reopened.folder_effects
+    )
+
+
+@pytest.mark.parametrize("observed_version", [7, 9])
+def test_replace_payload_first_rejects_non_successor_version_atomically(
+    tmp_path: Path,
+    observed_version: int,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    payload = repository.load_session_snapshot(_APPROVAL_ID).payload_effects[0]
+
+    with pytest.raises(ImportReceiptConflictError, match="exactly one version"):
+        repository.transition_effects(
+            _APPROVAL_ID,
+            (
+                EffectTransition(
+                    table=payload.table,
+                    effect_id=payload.effect_id,
+                    state=ImportEffectState.APPLIED,
+                    target_note_id="opaque-note-7",
+                    observed_version=observed_version,
+                ),
+            ),
+        )
+
+    reopened = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID)
+    assert reopened.items[0].outcome is ImportItemOutcome.PENDING
+    assert reopened.payload_effects[0].state is ImportEffectState.PENDING
+    assert reopened.payload_effects[0].observed_version is None
+
+
+def test_replace_payload_first_success_reopens_and_later_finalizes_item(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    repository.transition_effects(
+        _APPROVAL_ID,
+        (
+            EffectTransition(
+                table=snapshot.payload_effects[0].table,
+                effect_id=snapshot.payload_effects[0].effect_id,
+                state=ImportEffectState.APPLIED,
+                target_note_id="opaque-note-7",
+                observed_version=8,
+            ),
+        ),
+    )
+
+    reopened_repository = _repository(tmp_path)
+    pending_receipt = reopened_repository.aggregate_receipt(_APPROVAL_ID)
+    reopened = reopened_repository.load_session_snapshot(_APPROVAL_ID)
+    assert (pending_receipt.completed, pending_receipt.updated) == (0, 0)
+    assert reopened.items[0].outcome is ImportItemOutcome.PENDING
+    assert reopened.payload_effects[0].observed_version == 8
+
+    reopened_repository.transition_effects(
+        _APPROVAL_ID,
+        tuple(_applied_transition(effect) for effect in reopened.folder_effects)
+        + (
+            _applied_transition(
+                reopened.membership_effects[0],
+                note_id="opaque-note-7",
+            ),
+        ),
+    )
+    finalized = reopened_repository.transition_item(
+        _APPROVAL_ID,
+        "item-1",
+        ImportItemOutcome.UPDATED,
+        target_note_id="opaque-note-7",
+        observed_version=8,
+    )
+    assert (finalized.outcome, finalized.observed_version) == (
+        ImportItemOutcome.UPDATED,
+        8,
+    )
+
+
+def test_reducer_rejects_corrupt_pending_parent_replace_payload_version(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    repository.transition_effects(
+        _APPROVAL_ID,
+        (
+            EffectTransition(
+                table=snapshot.payload_effects[0].table,
+                effect_id=snapshot.payload_effects[0].effect_id,
+                state=ImportEffectState.APPLIED,
+                target_note_id="opaque-note-7",
+                observed_version=8,
+            ),
+        ),
+    )
+    database = tmp_path / "notes-sync.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE import_payload_effects SET observed_version = 9 WHERE session_id = ?",
+            (snapshot.session_id,),
+        )
+
+    reopened_repository = _repository(tmp_path)
+    with pytest.raises(ImportReceiptConflictError, match="exactly one version"):
+        reopened_repository.aggregate_receipt(_APPROVAL_ID)
+    reopened = reopened_repository.load_session_snapshot(_APPROVAL_ID)
+    assert reopened.items[0].outcome is ImportItemOutcome.PENDING
+    assert reopened.payload_effects[0].observed_version == 9
+
+
+def test_replace_payload_rejects_missing_expected_version_authority(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    database = tmp_path / "notes-sync.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE import_items SET expected_version = NULL WHERE session_id = ?",
+            (snapshot.session_id,),
+        )
+
+    with pytest.raises(ImportReceiptConflictError, match="expected version"):
+        repository.transition_effects(
+            _APPROVAL_ID,
+            (
+                EffectTransition(
+                    table=snapshot.payload_effects[0].table,
+                    effect_id=snapshot.payload_effects[0].effect_id,
+                    state=ImportEffectState.APPLIED,
+                    target_note_id="opaque-note-7",
+                    observed_version=8,
+                ),
+            ),
+        )
+
+    reopened = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID)
+    assert reopened.payload_effects[0].state is ImportEffectState.PENDING
+    assert reopened.payload_effects[0].observed_version is None
+
+
+@pytest.mark.parametrize("payload_expected_version", [6, 8])
+def test_replace_payload_rejects_divergent_expected_authority_atomically(
+    tmp_path: Path,
+    payload_expected_version: int,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    database = tmp_path / "notes-sync.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE import_payload_effects SET expected_version = ? WHERE session_id = ?",
+            (payload_expected_version, snapshot.session_id),
+        )
+
+    with pytest.raises(ImportReceiptConflictError, match="expected version authority"):
+        repository.transition_effects(
+            _APPROVAL_ID,
+            (
+                EffectTransition(
+                    table=snapshot.payload_effects[0].table,
+                    effect_id=snapshot.payload_effects[0].effect_id,
+                    state=ImportEffectState.APPLIED,
+                    target_note_id="opaque-note-7",
+                    observed_version=8,
+                ),
+            ),
+        )
+
+    reopened = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID)
+    assert reopened.payload_effects[0].state is ImportEffectState.PENDING
+    assert reopened.payload_effects[0].observed_version is None
+    assert reopened.payload_effects[0].expected_version == payload_expected_version
+
+
+def test_completion_reducer_rejects_corrupt_payload_expected_authority(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    repository.transition_batch(
+        _APPROVAL_ID,
+        item_transitions=(
+            ItemTransition(
+                item_id="item-1",
+                outcome=ImportItemOutcome.UPDATED,
+                target_note_id="opaque-note-7",
+                observed_version=8,
+            ),
+        ),
+        effect_transitions=tuple(
+            _applied_transition(effect) for effect in snapshot.folder_effects
+        )
+        + (
+            EffectTransition(
+                table=snapshot.payload_effects[0].table,
+                effect_id=snapshot.payload_effects[0].effect_id,
+                state=ImportEffectState.APPLIED,
+                target_note_id="opaque-note-7",
+                observed_version=8,
+            ),
+            _applied_transition(
+                snapshot.membership_effects[0],
+                note_id="opaque-note-7",
+            ),
+        ),
+    )
+    database = tmp_path / "notes-sync.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE import_payload_effects SET expected_version = 6 WHERE session_id = ?",
+            (snapshot.session_id,),
+        )
+
+    reopened_repository = _repository(tmp_path)
+    with pytest.raises(ImportReceiptConflictError, match="expected version authority"):
+        reopened_repository.aggregate_receipt(_APPROVAL_ID)
+    with pytest.raises(ImportReceiptConflictError, match="expected version authority"):
+        reopened_repository.transition_session(
+            _APPROVAL_ID,
+            ImportSessionState.COMPLETED,
+        )
+    assert (
+        _repository(tmp_path).load_session_snapshot(_APPROVAL_ID).state
+        is ImportSessionState.RUNNING
+    )
 
 
 def test_replace_update_item_observation_must_match_applied_payload(
@@ -1369,7 +1975,7 @@ def test_replace_update_item_observation_must_match_applied_payload(
         ),
     )
 
-    with pytest.raises(ImportReceiptConflictError, match="observation"):
+    with pytest.raises(ImportReceiptConflictError, match="exactly one version"):
         repository.transition_item(
             _APPROVAL_ID,
             "item-1",
@@ -1421,14 +2027,124 @@ def test_completion_reducer_rejects_corrupt_update_observation_atomically(
             (9, snapshot.session_id),
         )
 
-    with pytest.raises(ImportReceiptConflictError, match="observation"):
+    with pytest.raises(ImportReceiptConflictError, match="exactly one version"):
         repository.transition_session(_APPROVAL_ID, ImportSessionState.COMPLETED)
 
     reopened = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID)
     assert reopened.state is ImportSessionState.RUNNING
     assert reopened.items[0].observed_version == 9
-    with pytest.raises(ImportReceiptConflictError, match="observation"):
+    with pytest.raises(ImportReceiptConflictError, match="exactly one version"):
         repository.aggregate_receipt(_APPROVAL_ID)
+
+
+@pytest.mark.parametrize("corrupt_version", [7, 9])
+def test_replace_update_completion_rejects_non_successor_version_after_reopen(
+    tmp_path: Path,
+    corrupt_version: int,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    repository.transition_batch(
+        _APPROVAL_ID,
+        item_transitions=(
+            ItemTransition(
+                item_id="item-1",
+                outcome=ImportItemOutcome.UPDATED,
+                target_note_id="opaque-note-7",
+                observed_version=8,
+            ),
+        ),
+        effect_transitions=tuple(
+            _applied_transition(effect) for effect in snapshot.folder_effects
+        )
+        + (
+            EffectTransition(
+                table=snapshot.payload_effects[0].table,
+                effect_id=snapshot.payload_effects[0].effect_id,
+                state=ImportEffectState.APPLIED,
+                target_note_id="opaque-note-7",
+                observed_version=8,
+            ),
+            _applied_transition(
+                snapshot.membership_effects[0],
+                note_id="opaque-note-7",
+            ),
+        ),
+    )
+    database = tmp_path / "notes-sync.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE import_items SET observed_version = ? WHERE session_id = ?",
+            (corrupt_version, snapshot.session_id),
+        )
+        connection.execute(
+            "UPDATE import_payload_effects SET observed_version = ? WHERE session_id = ?",
+            (corrupt_version, snapshot.session_id),
+        )
+
+    reopened_repository = _repository(tmp_path)
+    with pytest.raises(ImportReceiptConflictError, match="exactly one version"):
+        reopened_repository.aggregate_receipt(_APPROVAL_ID)
+    with pytest.raises(ImportReceiptConflictError, match="exactly one version"):
+        reopened_repository.transition_session(
+            _APPROVAL_ID,
+            ImportSessionState.COMPLETED,
+        )
+    assert (
+        _repository(tmp_path).load_session_snapshot(_APPROVAL_ID).state
+        is ImportSessionState.RUNNING
+    )
+
+
+def test_membership_only_completion_rejects_later_version_after_reopen(
+    tmp_path: Path,
+) -> None:
+    item = replace(_item(), replace_content=False)
+    repository = _repository(tmp_path)
+    repository.begin(_approved_for_item(item), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    repository.transition_batch(
+        _APPROVAL_ID,
+        item_transitions=(
+            ItemTransition(
+                item_id=item.item_id,
+                outcome=ImportItemOutcome.UPDATED,
+                target_note_id="opaque-note-7",
+                observed_version=7,
+            ),
+        ),
+        effect_transitions=tuple(
+            _applied_transition(effect) for effect in snapshot.folder_effects
+        )
+        + (
+            _applied_transition(
+                snapshot.membership_effects[0],
+                note_id="opaque-note-7",
+            ),
+        ),
+    )
+    database = tmp_path / "notes-sync.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE import_items SET observed_version = 8 WHERE session_id = ?",
+            (snapshot.session_id,),
+        )
+
+    reopened_repository = _repository(tmp_path)
+    with pytest.raises(ImportReceiptConflictError, match="exactly match"):
+        reopened_repository.aggregate_receipt(_APPROVAL_ID)
+    with pytest.raises(ImportReceiptConflictError, match="exactly match"):
+        reopened_repository.transition_session(
+            _APPROVAL_ID,
+            ImportSessionState.COMPLETED,
+        )
+    assert (
+        _repository(tmp_path).load_session_snapshot(_APPROVAL_ID).state
+        is ImportSessionState.RUNNING
+    )
 
 
 def test_receipt_keeps_note_unit_pending_until_all_required_effects_apply(
@@ -1472,17 +2188,18 @@ def test_terminal_item_summary_inconsistent_with_effects_fails_closed(
         batch_size=25,
     )
     repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
-    repository.transition_item(
-        _APPROVAL_ID,
-        "multi-create",
-        ImportItemOutcome.FAILED,
-        reason_code="database_busy",
-        retryable=True,
-    )
-    repository.transition_session(_APPROVAL_ID, ImportSessionState.NEEDS_ATTENTION)
-
     with pytest.raises(ImportReceiptError, match="inconsistent"):
-        repository.aggregate_receipt(_APPROVAL_ID)
+        repository.transition_item(
+            _APPROVAL_ID,
+            "multi-create",
+            ImportItemOutcome.FAILED,
+            reason_code="database_busy",
+            retryable=True,
+        )
+
+    reopened = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID)
+    assert reopened.state is ImportSessionState.RUNNING
+    assert reopened.items[0].outcome is ImportItemOutcome.PENDING
 
 
 def test_exact_state_transition_allowlists_are_closed_and_immutable() -> None:
@@ -1896,6 +2613,8 @@ def test_item_retry_preserves_target_but_accepts_a_fresh_observed_version(
     repository = _repository(tmp_path)
     repository.begin(_approved(), batch_size=25)
     repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    initial_snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    payload = initial_snapshot.payload_effects[0]
 
     with pytest.raises(ImportReceiptConflictError):
         repository.transition_item(
@@ -1905,26 +2624,51 @@ def test_item_retry_preserves_target_but_accepts_a_fresh_observed_version(
             reason_code="version_conflict",
             retryable=True,
             target_note_id="substituted-note",
-            observed_version=8,
+            observed_version=7,
         )
     original = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID).items[0]
     assert original.target_note_id == "opaque-note-7"
     assert original.observed_version is None
     assert original.outcome is ImportItemOutcome.PENDING
 
-    failed = repository.transition_item(
+    failed_snapshot = repository.transition_batch(
         _APPROVAL_ID,
-        "item-1",
-        ImportItemOutcome.FAILED,
-        reason_code="database_busy",
-        retryable=True,
-        target_note_id="opaque-note-7",
-        observed_version=8,
+        item_transitions=(
+            ItemTransition(
+                item_id="item-1",
+                outcome=ImportItemOutcome.FAILED,
+                reason_code="database_busy",
+                retryable=True,
+                target_note_id="opaque-note-7",
+                observed_version=7,
+            ),
+        ),
+        effect_transitions=(
+            EffectTransition(
+                table=payload.table,
+                effect_id=payload.effect_id,
+                state=ImportEffectState.FAILED,
+                reason_code="database_busy",
+                retryable=True,
+                target_note_id="opaque-note-7",
+                observed_version=7,
+            ),
+        ),
     )
-    assert (failed.target_note_id, failed.observed_version) == ("opaque-note-7", 8)
+    failed = failed_snapshot.items[0]
+    assert (failed.target_note_id, failed.observed_version) == ("opaque-note-7", 7)
     repository.transition_session(_APPROVAL_ID, ImportSessionState.NEEDS_ATTENTION)
     reset = repository.reset_retryable_item(_APPROVAL_ID, item_id="item-1")
     assert (reset.target_note_id, reset.observed_version) == ("opaque-note-7", None)
+    reset_payload = repository.reset_retryable_effect(
+        _APPROVAL_ID,
+        table=payload.table,
+        effect_id=payload.effect_id,
+    )
+    assert (reset_payload.target_note_id, reset_payload.observed_version) == (
+        "opaque-note-7",
+        None,
+    )
     reopened = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID).items[0]
     assert (reopened.target_note_id, reopened.observed_version) == (
         "opaque-note-7",
@@ -1938,7 +2682,7 @@ def test_item_retry_preserves_target_but_accepts_a_fresh_observed_version(
             "item-1",
             ImportItemOutcome.UPDATED,
             target_note_id="substituted-note",
-            observed_version=9,
+            observed_version=8,
         )
     unchanged = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID).items[0]
     assert unchanged.outcome is ImportItemOutcome.PENDING
@@ -1956,7 +2700,7 @@ def test_item_retry_preserves_target_but_accepts_a_fresh_observed_version(
                 effect_id=retry_snapshot.payload_effects[0].effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
-                observed_version=9,
+                observed_version=8,
             ),
             _applied_transition(
                 retry_snapshot.membership_effects[0],
@@ -1969,11 +2713,11 @@ def test_item_retry_preserves_target_but_accepts_a_fresh_observed_version(
         "item-1",
         ImportItemOutcome.UPDATED,
         target_note_id="opaque-note-7",
-        observed_version=9,
+        observed_version=8,
     )
     assert (applied.target_note_id, applied.observed_version) == (
         "opaque-note-7",
-        9,
+        8,
     )
 
 
@@ -1993,7 +2737,7 @@ def test_item_owned_effect_retry_requires_parent_reset_first(
                 reason_code="database_busy",
                 retryable=True,
                 target_note_id="opaque-note-7",
-                observed_version=8,
+                observed_version=7,
             ),
         ),
         effect_transitions=(
@@ -2073,7 +2817,7 @@ def test_effect_bindings_survive_retry_and_mixed_conflict_rolls_back_after_reope
                 reason_code="database_busy",
                 retryable=True,
                 target_note_id="opaque-note-7",
-                observed_version=8,
+                observed_version=7,
             ),
             EffectTransition(
                 table=folder.table,
@@ -2133,7 +2877,7 @@ def test_effect_bindings_survive_retry_and_mixed_conflict_rolls_back_after_reope
                     item_id="item-1",
                     outcome=ImportItemOutcome.UPDATED,
                     target_note_id="opaque-note-7",
-                    observed_version=9,
+                    observed_version=8,
                 ),
             ),
             effect_transitions=(
@@ -2142,7 +2886,7 @@ def test_effect_bindings_survive_retry_and_mixed_conflict_rolls_back_after_reope
                     effect_id=payload.effect_id,
                     state=ImportEffectState.APPLIED,
                     target_note_id="opaque-note-7",
-                    observed_version=9,
+                    observed_version=8,
                 ),
                 EffectTransition(
                     table=folder.table,
@@ -2164,7 +2908,7 @@ def test_effect_bindings_survive_retry_and_mixed_conflict_rolls_back_after_reope
                 effect_id=payload.effect_id,
                 state=ImportEffectState.APPLIED,
                 target_note_id="opaque-note-7",
-                observed_version=9,
+                observed_version=8,
             ),
             EffectTransition(
                 table=folder.table,
@@ -2182,7 +2926,7 @@ def test_effect_bindings_survive_retry_and_mixed_conflict_rolls_back_after_reope
         ),
     )
     assert all(effect.state is ImportEffectState.APPLIED for effect in applied)
-    assert applied[0].observed_version == 9
+    assert applied[0].observed_version == 8
 
 
 @pytest.mark.parametrize(
