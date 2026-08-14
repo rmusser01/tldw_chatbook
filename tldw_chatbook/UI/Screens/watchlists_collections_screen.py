@@ -626,6 +626,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_has_next = False
         self._items_page_loading = False
         self._items_load_generation = 0
+        self._items_page_presentation_lock = asyncio.Lock()
+        self._items_inflight_page_load: tuple[
+            tuple[Any, ...], asyncio.Future[bool]
+        ] | None = None
         self._items_committed_page_key: tuple[Any, ...] | None = None
         self._selected_content_page_key: tuple[Any, ...] | None = None
         self._items_search_results_authoritative = False
@@ -8982,16 +8986,50 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         target_page_index: int | None = None,
         explicit_page_change: bool = False,
     ) -> bool:
-        notify = getattr(self.app_instance, "notify", None)
         target = max(
             0,
             self._items_page_index
             if target_page_index is None
             else target_page_index,
         )
+        target_key = self._items_page_key(target)
+        inflight = self._items_inflight_page_load
+        # Watchers and direct refreshes can request the same context together.
+        # Explicit navigation must remain free to supersede an older load.
+        if (
+            not explicit_page_change
+            and inflight is not None
+            and inflight[0] == target_key
+        ):
+            return await asyncio.shield(inflight[1])
+
+        completion = asyncio.get_running_loop().create_future()
+        self._items_inflight_page_load = (target_key, completion)
+        result = False
+        try:
+            result = await self._load_items_once(
+                target=target,
+                target_key=target_key,
+                explicit_page_change=explicit_page_change,
+            )
+            return result
+        finally:
+            if not completion.done():
+                completion.set_result(result)
+            if self._items_inflight_page_load == (target_key, completion):
+                self._items_inflight_page_load = None
+
+    async def _load_items_once(
+        self,
+        *,
+        target: int,
+        target_key: tuple[Any, ...],
+        explicit_page_change: bool,
+    ) -> bool:
+        """Fetch, present, and commit one page load owned by `_load_items`."""
+        notify = getattr(self.app_instance, "notify", None)
         self._items_load_generation += 1
         generation = self._items_load_generation
-        target_key = self._items_page_key(target)
         self._items_page_loading = True
         self._push_items_pager_state()
         try:
@@ -9020,17 +9058,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except asyncio.CancelledError:
             raise
         except Exception:
-            if (
-                generation != self._items_load_generation
-                or target_key != self._items_page_key(target)
-            ):
+            async with self._items_page_presentation_lock:
+                if (
+                    generation != self._items_load_generation
+                    or target_key != self._items_page_key(target)
+                ):
+                    return False
+                logger.opt(exception=True).debug("Failed to load watchlist items.")
+                self._items_page_loading = False
+                self._push_items_pager_state()
+                if callable(notify):
+                    notify("Failed to load watchlist items.", severity="error")
                 return False
-            logger.opt(exception=True).debug("Failed to load watchlist items.")
-            self._items_page_loading = False
-            self._push_items_pager_state()
-            if callable(notify):
-                notify("Failed to load watchlist items.", severity="error")
-            return False
 
         if (
             generation != self._items_load_generation
@@ -9043,23 +9082,61 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self._selected_content_page_key == target_key:
             rows = self._with_open_item(rows, max_items=_ITEMS_PAGE_SIZE)
 
-        self._loaded_items = rows
-        self._items_page_index = target
-        self._items_has_next = has_next
-        self._items_committed_page_key = target_key
-        self._items_search_results_authoritative = True
-        self._items_page_loading = False
-        self._push_items_pager_state()
-        if self._dom_is_live:
+        async with self._items_page_presentation_lock:
+            if (
+                generation != self._items_load_generation
+                or target_key != self._items_page_key(target)
+            ):
+                return False
+            prior_rows = self._loaded_items
+            pane: ArticleListPane | None = None
+            if self._dom_is_live:
+                try:
+                    pane = self.query_one(
+                        "#watchlists-items-pane", ArticleListPane
+                    )
+                except NoMatches:
+                    pass
             try:
-                pane = self.query_one("#watchlists-items-pane", ArticleListPane)
-            except NoMatches:
-                pass
-            else:
-                await pane.apply_page_items(
-                    rows,
-                    focus_first=explicit_page_change,
-                )
+                if pane is not None:
+                    await pane.apply_page_items(
+                        rows,
+                        focus_first=explicit_page_change,
+                    )
+            except asyncio.CancelledError:
+                if pane is not None:
+                    await pane.apply_page_items(prior_rows, focus_first=False)
+                raise
+            except Exception:
+                if pane is not None:
+                    await pane.apply_page_items(prior_rows, focus_first=False)
+                if (
+                    generation != self._items_load_generation
+                    or target_key != self._items_page_key(target)
+                ):
+                    return False
+                logger.opt(exception=True).debug("Failed to load watchlist items.")
+                self._items_page_loading = False
+                self._push_items_pager_state()
+                if callable(notify):
+                    notify("Failed to load watchlist items.", severity="error")
+                return False
+
+            if (
+                generation != self._items_load_generation
+                or target_key != self._items_page_key(target)
+            ):
+                if pane is not None:
+                    await pane.apply_page_items(prior_rows, focus_first=False)
+                return False
+
+            self._loaded_items = rows
+            self._items_page_index = target
+            self._items_has_next = has_next
+            self._items_committed_page_key = target_key
+            self._items_search_results_authoritative = True
+            self._items_page_loading = False
+            self._push_items_pager_state()
         return True
 
     @on(ItemSelected)

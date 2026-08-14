@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import DestinationHarness
@@ -134,7 +135,14 @@ async def test_next_commits_offset_fifty_only_after_success_and_keeps_content():
         assert content.item is open_item
 
         result.set_result(_items(100, 51))
-        await _wait_until(pilot, lambda: screen._items_page_index == 1)
+        await _wait_until(
+            pilot,
+            lambda: screen._items_page_index == 1
+            and not screen._items_page_loading
+            and {str(item["id"]) for item in pane.items}
+            == {str(index) for index in range(100, 150)},
+        )
+        await pilot.pause()
 
         controller.list_items.assert_awaited_once()
         assert controller.list_items.await_args.kwargs["offset"] == 50
@@ -149,6 +157,185 @@ async def test_next_commits_offset_fifty_only_after_success_and_keeps_content():
         assert str(open_item["id"]) not in {
             str(item["id"]) for item in screen._loaded_items
         }
+        assert {str(item["id"]) for item in pane.displayed_items()} == {
+            str(index) for index in range(100, 150)
+        }
+
+
+@pytest.mark.asyncio
+async def test_page_state_commits_only_after_mounted_rows_finish_applying(monkeypatch):
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(0, 51)
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items() is True
+        prior_rows = screen._loaded_items
+        prior_key = screen._items_committed_page_key
+        open_item = prior_rows[0]
+        screen._selected_content_item = open_item
+        screen._selected_content_page_key = prior_key
+        content = screen.query_one("#watchlists-content-pane", ContentPane)
+        content.item = open_item
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        original_apply = pane.apply_page_items
+        presentation_started = asyncio.Event()
+        release_presentation = asyncio.Event()
+
+        async def blocking_apply(items, *, focus_first=False):
+            presentation_started.set()
+            await release_presentation.wait()
+            await original_apply(items, focus_first=focus_first)
+
+        monkeypatch.setattr(pane, "apply_page_items", blocking_apply)
+        controller.list_items.return_value = _items(100, 51)
+        controller.list_items.reset_mock()
+        screen.post_message(NextItemsPageRequested())
+        await _wait_until(pilot, presentation_started.is_set)
+
+        assert screen._items_page_index == 0
+        assert screen._items_committed_page_key == prior_key
+        assert screen._loaded_items is prior_rows
+        assert pane.items is prior_rows
+        assert screen._items_page_loading is True
+        assert pane.page_loading is True
+        assert str(pane.query_one("#items-page-label", Static).renderable) == "Page 1"
+        assert pane.query_one("#items-page-previous", Button).disabled is True
+        assert pane.query_one("#items-page-next", Button).disabled is True
+        assert screen._selected_content_item is open_item
+        assert content.item is open_item
+
+        release_presentation.set()
+        await _wait_until(
+            pilot,
+            lambda: screen._items_page_index == 1
+            and not screen._items_page_loading
+            and {str(item["id"]) for item in pane.items}
+            == {str(index) for index in range(100, 150)},
+        )
+        await pilot.pause()
+
+        assert screen._items_committed_page_key == screen._items_page_key(1)
+        assert str(pane.query_one("#items-page-label", Static).renderable) == "Page 2"
+        assert pane.query_one("#items-page-previous", Button).disabled is False
+        assert pane.query_one("#items-page-next", Button).disabled is False
+        assert {str(item["id"]) for item in pane.displayed_items()} == {
+            str(index) for index in range(100, 150)
+        }
+        assert screen._selected_content_item is open_item
+        assert content.item is open_item
+
+
+@pytest.mark.asyncio
+async def test_cancelled_presentation_rolls_back_before_failed_successor(monkeypatch):
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(0, 51)
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items() is True
+        prior_rows = screen._loaded_items
+        prior_key = screen._items_committed_page_key
+        open_item = prior_rows[0]
+        screen._selected_content_item = open_item
+        screen._selected_content_page_key = prior_key
+        content = screen.query_one("#watchlists-content-pane", ContentPane)
+        content.item = open_item
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        original_apply = pane.apply_page_items
+        presentation_started = asyncio.Event()
+        never_release = asyncio.Event()
+
+        async def apply_then_block(items, *, focus_first=False):
+            await original_apply(items, focus_first=focus_first)
+            if str(items[0]["id"]) == "100":
+                presentation_started.set()
+                await never_release.wait()
+
+        monkeypatch.setattr(pane, "apply_page_items", apply_then_block)
+        calls = 0
+
+        async def page_then_failure(**kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                assert kwargs["offset"] == 50
+                return _items(100, 51)
+            raise RuntimeError("successor failed")
+
+        controller.list_items.reset_mock()
+        controller.list_items.side_effect = page_then_failure
+        screen.post_message(NextItemsPageRequested())
+        await _wait_until(pilot, presentation_started.is_set)
+        assert {str(item["id"]) for item in pane.items} == {
+            str(index) for index in range(100, 150)
+        }, "precondition: presentation mutated the mounted page before cancellation"
+
+        screen.run_worker(
+            screen._load_items(target_page_index=1, explicit_page_change=True),
+            exclusive=True,
+            group="wc_items",
+        )
+        await _wait_until(
+            pilot,
+            lambda: controller.list_items.await_count == 2
+            and not screen._items_page_loading
+            and pane.items is prior_rows,
+        )
+        await pilot.pause()
+
+        assert screen._items_page_index == 0
+        assert screen._items_committed_page_key == prior_key
+        assert screen._loaded_items is prior_rows
+        assert pane.items is prior_rows
+        assert {str(item["id"]) for item in pane.displayed_items()} == {
+            str(item["id"]) for item in prior_rows
+        }
+        assert screen._items_has_next is True
+        assert str(pane.query_one("#items-page-label", Static).renderable) == "Page 1"
+        assert pane.query_one("#items-page-previous", Button).disabled is True
+        assert pane.query_one("#items-page-next", Button).disabled is False
+        assert screen._selected_content_item is open_item
+        assert content.item is open_item
+
+
+@pytest.mark.asyncio
+async def test_presentation_failure_restores_prior_rows_and_page(monkeypatch):
+    controller = AsyncMock()
+    controller.list_items.return_value = _items(0, 51)
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._load_items() is True
+        prior_rows = screen._loaded_items
+        prior_key = screen._items_committed_page_key
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        original_apply = pane.apply_page_items
+
+        async def apply_then_fail(items, *, focus_first=False):
+            await original_apply(items, focus_first=focus_first)
+            if str(items[0]["id"]) == "100":
+                raise RuntimeError("row presentation failed")
+
+        monkeypatch.setattr(pane, "apply_page_items", apply_then_fail)
+        screen.app_instance.notify = Mock()
+        controller.list_items.return_value = _items(100, 51)
+        controller.list_items.reset_mock()
+        screen.post_message(NextItemsPageRequested())
+        await _wait_until(
+            pilot,
+            lambda: controller.list_items.await_count == 1
+            and not screen._items_page_loading
+            and pane.items is prior_rows,
+        )
+        await pilot.pause()
+
+        assert screen._items_page_index == 0
+        assert screen._items_committed_page_key == prior_key
+        assert screen._loaded_items is prior_rows
+        assert {str(item["id"]) for item in pane.displayed_items()} == {
+            str(item["id"]) for item in prior_rows
+        }
+        assert screen._items_has_next is True
+        assert str(pane.query_one("#items-page-label", Static).renderable) == "Page 1"
+        assert screen.app_instance.notify.called
 
 
 @pytest.mark.asyncio
