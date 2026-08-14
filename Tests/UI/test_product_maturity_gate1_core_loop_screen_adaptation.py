@@ -298,12 +298,12 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
         assert not seen_routes
 
         screen.query_one("#library-row-create-flashcards", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-study-handoff-detail")
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-canvas")
 
         assert _active_destination_screen(host) is screen
         assert (
             screen.query_one("#library-canvas")
-            in screen.query_one("#library-study-handoff-detail").ancestors
+            in screen.query_one("#library-study-handoff-canvas").ancestors
         )
         assert screen._library_selected_row_id == "create-flashcards"
         assert screen.query_one("#library-row-create-flashcards").has_class(

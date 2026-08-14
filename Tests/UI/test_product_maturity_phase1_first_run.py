@@ -424,7 +424,7 @@ async def _click_nav_destination(
         if _nav_button_is_clickable(app, button_id):
             app.screen.query_one(f"#{button_id}", Button).press()
             return
-        overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
+        overflow_hint = app.query_one("#nav-overflow-hint", Button)
         if not overflow_hint.display:
             # Nothing overflows: the button is already as reachable as it
             # will ever get, so press it and let the assertions speak.
@@ -432,6 +432,10 @@ async def _click_nav_destination(
             return
         overflow_hint.press()
         await pilot.pause(0.05)
+        if app.screen.__class__.__name__ == "NavOverflowMenu":
+            destination_id = button_id.removeprefix("nav-")
+            app.screen.query_one(f"#nav-overflow-{destination_id}", Button).press()
+            return
     raise AssertionError(
         f"#{button_id} never became clickable within {timeout_seconds:.1f}s"
     )
