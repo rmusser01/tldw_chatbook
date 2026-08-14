@@ -46,7 +46,11 @@ from tldw_chatbook.Subscriptions.db_offload import run_db_off_loop
 from tldw_chatbook.Subscriptions.local_watchlists_service import (
     LocalWatchlistsService,
 )
-from tldw_chatbook.Subscriptions.monitoring_engine import FeedMonitor
+from tldw_chatbook.Subscriptions.monitoring_engine import (
+    ContentExtractor,
+    FeedMonitor,
+    URLMonitor,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -352,6 +356,36 @@ async def test_the_feed_parse_runs_off_the_event_loop_thread(
     assert parse_threads, "the parser must have been called at all"
     assert parse_threads[0] != threading.get_ident(), (
         "the feed body parse must run under asyncio.to_thread, not inline on "
+        "the event loop"
+    )
+
+
+@pytest.mark.asyncio
+async def test_url_html_extraction_runs_off_the_event_loop(monkeypatch):
+    """URL HTML parsing must not block the event-loop thread."""
+    body = "<html><body><article>Hello <b>watchlist</b></article></body></html>"
+    _serve(monkeypatch, body, content_type="text/html")
+    real_extract = ContentExtractor.extract_text_from_html
+    extraction_threads: list[int] = []
+
+    def recording_extract(html, ignore_selectors=None):
+        extraction_threads.append(threading.get_ident())
+        return real_extract(html, ignore_selectors)
+
+    monkeypatch.setattr(ContentExtractor, "extract_text_from_html", recording_extract)
+    loop_thread = threading.get_ident()
+
+    content = await URLMonitor(SubscriptionsDB(":memory:", "test"))._fetch_url_content(
+        {
+            "source": "https://example.com/article",
+            "extraction_method": "auto",
+        }
+    )
+
+    assert content["text"] == "Hello watchlist"
+    assert extraction_threads, "the real HTML extractor must have run"
+    assert all(thread_id != loop_thread for thread_id in extraction_threads), (
+        "URL HTML extraction must run under asyncio.to_thread, not inline on "
         "the event loop"
     )
 

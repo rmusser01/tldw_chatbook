@@ -1515,8 +1515,10 @@ class URLMonitor:
 
         if extraction_method == "full" or extraction_method == "auto":
             # Extract text from HTML
-            text = ContentExtractor.extract_text_from_html(
-                response.text, ignore_selectors
+            text = await asyncio.to_thread(
+                ContentExtractor.extract_text_from_html,
+                response.text,
+                ignore_selectors,
             )
         else:
             # Raw content
