@@ -745,7 +745,7 @@ class TestMigrationBackfill:
                     "SELECT version FROM db_schema_version WHERE schema_name = ?",
                     ("rag_char_chat_schema",),
                 ).fetchone()["version"]
-                == 36
+                == migrated._CURRENT_SCHEMA_VERSION
             )
             assert [
                 tuple(row)
