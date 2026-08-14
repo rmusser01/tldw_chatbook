@@ -24,23 +24,9 @@ def _service_with(recorder):
         LazyLiveDictationService,
     )
 
-    service = LazyLiveDictationService.__new__(LazyLiveDictationService)
+    service = LazyLiveDictationService()
     service._audio_service = recorder
     service.state = DictationState.LISTENING
-    service.state_lock = __import__("threading").Lock()
-    service.stop_processing = __import__("threading").Event()
-    service.processing_thread = None
-    service.transcript_segments = []
-    service.current_transcript = ""
-    service.transcript_lock = __import__("threading").Lock()
-    service.audio_buffer = []
-    service.buffer_lock = __import__("threading").Lock()
-    service.start_time = None
-    service.streaming_transcriber = None
-    service.privacy_settings = {"auto_clear_buffer": True, "save_history": False}
-    service.on_state_change = None
-    service.on_error = None
-    service.on_final_transcript = None
     return service
 
 
@@ -120,7 +106,7 @@ def test_a_requested_pcm_bound_reaches_the_recorder(monkeypatch):
     """
     from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
 
-    built = _spy_recorder(monkeypatch)
+    _spy_recorder(monkeypatch)
     signals = []
     service = LazyLiveDictationService(
         max_buffer_bytes=2_880_000,

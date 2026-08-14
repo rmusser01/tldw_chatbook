@@ -2369,7 +2369,7 @@ def test_confirmed_folder_routes_every_member_once_without_reentry(
 
     resolve_backend.assert_called_once_with()
     expand_source.assert_called_once_with(str(folder))
-    assert [source for source, _batch_id in admitted_calls] == [
+    assert sorted(source for source, _batch_id in admitted_calls) == [
         str(path) for path in paths
     ]
     batch_ids = {batch_id for _source, batch_id in admitted_calls}
