@@ -34,25 +34,35 @@ Design
 
 Opting in
 ---------
-A test that genuinely needs a socket marks itself
-``@pytest.mark.allow_network`` (registered in ``pyproject.toml``). The
-``live`` marker — real paid external APIs, already gated behind
-``--run-live`` — is treated as an implicit opt-in.
+A test that owns a loopback listener marks itself
+``@pytest.mark.loopback_network``. That mode accepts only numeric IPv4
+``127.0.0.0/8`` and IPv6 ``::1`` destinations, so even DNS resolution stays
+outside the permitted boundary. Tests that genuinely need unrestricted
+sockets use ``@pytest.mark.allow_network``. The ``live`` marker — real paid
+external APIs, already gated behind ``--run-live`` — is an implicit
+unrestricted opt-in.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import socket
 import threading
+from enum import Enum
 from typing import Any
 
 __all__ = [
     "BlockedNetworkAccess",
+    "NetworkMode",
     "blocked_attempts",
     "drain_blocked_attempts",
     "install",
     "is_allowed",
+    "is_loopback_destination",
+    "is_loopback_only",
+    "resolve_mode",
     "set_allowed",
+    "set_mode",
 ]
 
 
@@ -66,12 +76,20 @@ class BlockedNetworkAccess(OSError):
     """
 
 
+class NetworkMode(str, Enum):
+    """Process-wide socket policy selected by the active pytest marker."""
+
+    BLOCKED = "blocked"
+    LOOPBACK_ONLY = "loopback-only"
+    ALLOW_ALL = "allow-all"
+
+
 #: ``(call, address)`` pairs recorded since the last drain. Consulted by the
 #: autouse fixture so a swallowed block still fails its test.
 _blocked_attempts: list[tuple[str, str]] = []
 
-#: Egress is denied unless a test explicitly opted in.
-_allowed = False
+#: Egress is denied unless a test explicitly selects a narrower or wider mode.
+_mode = NetworkMode.BLOCKED
 
 _installed = False
 
@@ -84,11 +102,40 @@ _real_socketpair = socket.socketpair
 _socketpair_state = threading.local()
 
 _INET_FAMILIES = frozenset({socket.AF_INET, socket.AF_INET6})
+_IPV4_LOOPBACK_NETWORK = ipaddress.ip_network("127.0.0.0/8")
+_IPV6_LOOPBACK_ADDRESS = ipaddress.IPv6Address("::1")
 
 
 def is_allowed() -> bool:
-    """Return whether network egress is currently permitted."""
-    return _allowed
+    """Return whether unrestricted network egress is currently permitted."""
+    return _mode is NetworkMode.ALLOW_ALL
+
+
+def is_loopback_only() -> bool:
+    """Return whether only numeric loopback destinations are permitted."""
+    return _mode is NetworkMode.LOOPBACK_ONLY
+
+
+def set_mode(mode: NetworkMode) -> None:
+    """Set the process-wide network policy."""
+    global _mode
+    if not isinstance(mode, NetworkMode):
+        raise TypeError("mode must be a NetworkMode")
+    _mode = mode
+
+
+def resolve_mode(*, allow_all: bool, loopback_only: bool) -> NetworkMode:
+    """Resolve marker flags to one unambiguous network policy."""
+    if allow_all and loopback_only:
+        raise ValueError(
+            "loopback_network conflicts with allow_network/live; select one "
+            "network policy"
+        )
+    if allow_all:
+        return NetworkMode.ALLOW_ALL
+    if loopback_only:
+        return NetworkMode.LOOPBACK_ONLY
+    return NetworkMode.BLOCKED
 
 
 def set_allowed(allowed: bool) -> None:
@@ -97,8 +144,7 @@ def set_allowed(allowed: bool) -> None:
     Args:
         allowed: ``True`` to let connections through (opt-in tests only).
     """
-    global _allowed
-    _allowed = bool(allowed)
+    set_mode(NetworkMode.ALLOW_ALL if allowed else NetworkMode.BLOCKED)
 
 
 def blocked_attempts() -> tuple[tuple[str, str], ...]:
@@ -134,15 +180,11 @@ def _deny(call: str, address: Any) -> BlockedNetworkAccess:
     _blocked_attempts.append((call, described))
     return BlockedNetworkAccess(
         f"network access blocked in tests: {call}({described}). "
-        "Tests must not touch a live endpoint — stub the client seam, or mark "
-        "the test @pytest.mark.allow_network if it genuinely needs a socket "
+        "Tests must not touch a live endpoint — stub the client seam, use "
+        "@pytest.mark.loopback_network for an owned numeric loopback listener, "
+        "or use @pytest.mark.allow_network for unrestricted sockets "
         "(see Tests/network_guard.py, task-15111)."
     )
-
-
-def _should_block(family: Any) -> bool:
-    """Return whether egress on this address family is guarded."""
-    return not (_allowed or _inside_socketpair()) and family in _INET_FAMILIES
 
 
 def _inside_socketpair() -> bool:
@@ -160,27 +202,77 @@ def _guarded_socketpair(*args: Any, **kwargs: Any):  # noqa: ANN401
         _socketpair_state.depth = prior_depth
 
 
-def _guarded_connect(self: socket.socket, address: Any):  # noqa: ANN401
-    if _should_block(self.family):
+def is_loopback_destination(family: Any, address: Any) -> bool:
+    """Classify a numeric destination without resolving a hostname."""
+    if family not in _INET_FAMILIES:
+        return False
+    if not isinstance(address, tuple) or len(address) < 2:
+        return False
+    host = address[0]
+    if not isinstance(host, str):
+        return False
+    try:
+        parsed = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if family == socket.AF_INET:
+        return (
+            isinstance(parsed, ipaddress.IPv4Address)
+            and parsed in _IPV4_LOOPBACK_NETWORK
+        )
+    return (
+        isinstance(parsed, ipaddress.IPv6Address)
+        and parsed == _IPV6_LOOPBACK_ADDRESS
+    )
+
+
+def _create_connection_is_loopback(address: Any) -> bool:
+    return is_loopback_destination(
+        socket.AF_INET, address
+    ) or is_loopback_destination(socket.AF_INET6, address)
+
+
+def _should_block(family: Any, address: Any) -> bool:
+    """Return whether this address-family destination violates the policy."""
+    if (
+        family not in _INET_FAMILIES
+        or _inside_socketpair()
+        or _mode is NetworkMode.ALLOW_ALL
+    ):
+        return False
+    if _mode is NetworkMode.LOOPBACK_ONLY:
+        return not is_loopback_destination(family, address)
+    return True
+
+
+def _guarded_connect(self: socket.socket, address: Any):
+    if _should_block(self.family, address):
         raise _deny("socket.connect", address)
     return _real_connect(self, address)
 
 
-def _guarded_connect_ex(self: socket.socket, address: Any):  # noqa: ANN401
-    if _should_block(self.family):
+def _guarded_connect_ex(self: socket.socket, address: Any):
+    if _should_block(self.family, address):
         raise _deny("socket.connect_ex", address)
     return _real_connect_ex(self, address)
 
 
-def _guarded_sendto(self: socket.socket, *args: Any, **kwargs: Any):  # noqa: ANN401
-    if _should_block(self.family):
+def _guarded_sendto(self: socket.socket, *args: Any, **kwargs: Any):
+    address = args[-1] if args else None
+    if _should_block(self.family, address):
         # sendto() is the one egress path that never calls connect().
-        raise _deny("socket.sendto", args[-1] if args else None)
+        raise _deny("socket.sendto", address)
     return _real_sendto(self, *args, **kwargs)
 
 
-def _guarded_create_connection(address: Any, *args: Any, **kwargs: Any):  # noqa: ANN401
-    if not _allowed and not _inside_socketpair():
+def _guarded_create_connection(address: Any, *args: Any, **kwargs: Any):
+    if not _inside_socketpair() and (
+        _mode is NetworkMode.BLOCKED
+        or (
+            _mode is NetworkMode.LOOPBACK_ONLY
+            and not _create_connection_is_loopback(address)
+        )
+    ):
         raise _deny("socket.create_connection", address)
     return _real_create_connection(address, *args, **kwargs)
 

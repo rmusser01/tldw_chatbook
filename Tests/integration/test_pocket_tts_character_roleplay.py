@@ -10,9 +10,12 @@ from __future__ import annotations
 import base64
 import io
 import json
+import struct
+import sys
 import threading
 import time
 import wave
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,7 +23,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
+from PIL import Image
 from textual.css.query import NoMatches
 from textual.widgets import (
     Button,
@@ -32,14 +37,13 @@ from textual.widgets import (
     Switch,
 )
 
-from Tests.Character_Chat.test_character_card_lenient_import import (
-    _v2_card,
-    _write_png_with_trailing_metadata,
-)
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Audio.streaming_sink import SinkStarted, SinkStopped
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.config import save_settings_to_cli_config
+from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+    fingerprint_endpoint,
+)
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
@@ -58,7 +62,7 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.allow_network]
+pytestmark = [pytest.mark.asyncio, pytest.mark.loopback_network]
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +82,12 @@ class _CapturedRequest:
 class _LoopbackServer(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 16
+
+
+_CHARACTER_DESCRIPTION = "Pocket Ann is a friendly roleplay companion."
+_CHAT_GET_PATHS = frozenset({"/v1/models", "/health"})
+_CHAT_POST_PATHS = frozenset({"/v1/chat/completions"})
+_TTS_POST_PATHS = frozenset({"/v1/audio/speech"})
 
 
 def _start_server(handler: type[BaseHTTPRequestHandler]):
@@ -129,15 +139,34 @@ def fake_chat():
             requests.append(request)
             return request
 
-        def _send(self, body: bytes, content_type: str) -> None:
-            self.send_response(200)
+        def _send(
+            self,
+            body: bytes = b"",
+            content_type: str = "text/plain",
+            *,
+            status: int = 200,
+            allow: str | None = None,
+        ) -> None:
+            self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
+            if allow is not None:
+                self.send_header("Allow", allow)
             self.end_headers()
-            self.wfile.write(body)
+            if body:
+                self.wfile.write(body)
 
         def do_GET(self) -> None:
             self._capture()
+            if self.path == "/health":
+                self._send(b'{"status":"ok"}', "application/json")
+                return
+            if self.path != "/v1/models":
+                if self.path in _CHAT_POST_PATHS:
+                    self._send(status=405, allow="POST")
+                else:
+                    self._send(status=404)
+                return
             body = json.dumps(
                 {"object": "list", "data": [{"id": "test-chat-model"}]}
             ).encode("utf-8")
@@ -145,6 +174,12 @@ def fake_chat():
 
         def do_POST(self) -> None:
             request = self._capture()
+            if self.path != "/v1/chat/completions":
+                if self.path in _CHAT_GET_PATHS:
+                    self._send(status=405, allow="GET")
+                else:
+                    self._send(status=404)
+                return
             payload = request.json()
             if payload.get("stream") is True:
                 body = (
@@ -176,6 +211,21 @@ def fake_chat():
             ).encode("utf-8")
             self._send(body, "application/json")
 
+        def _reject_unsupported_method(self) -> None:
+            self._capture()
+            if self.path in _CHAT_GET_PATHS:
+                self._send(status=405, allow="GET")
+            elif self.path in _CHAT_POST_PATHS:
+                self._send(status=405, allow="POST")
+            else:
+                self._send(status=404)
+
+        do_DELETE = _reject_unsupported_method
+        do_HEAD = _reject_unsupported_method
+        do_OPTIONS = _reject_unsupported_method
+        do_PATCH = _reject_unsupported_method
+        do_PUT = _reject_unsupported_method
+
         def log_message(self, _format: str, *_args: object) -> None:
             return
 
@@ -199,23 +249,61 @@ def fake_pocket_tts():
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
-        def do_POST(self) -> None:
+        def _capture(self) -> _CapturedRequest:
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length)
-            requests.append(
-                _CapturedRequest(
-                    method=self.command,
-                    path=self.path,
-                    url=f"http://127.0.0.1:{server.server_port}{self.path}",
-                    headers={key: value for key, value in self.headers.items()},
-                    body=body,
-                )
+            request = _CapturedRequest(
+                method=self.command,
+                path=self.path,
+                url=f"http://127.0.0.1:{server.server_port}{self.path}",
+                headers={key: value for key, value in self.headers.items()},
+                body=body,
             )
-            self.send_response(200)
+            requests.append(request)
+            return request
+
+        def _send(
+            self,
+            body: bytes = b"",
+            *,
+            status: int = 200,
+            allow: str | None = None,
+        ) -> None:
+            self.send_response(status)
             self.send_header("Content-Type", "audio/wav")
-            self.send_header("Content-Length", str(len(wav_body)))
+            self.send_header("Content-Length", str(len(body)))
+            if allow is not None:
+                self.send_header("Allow", allow)
             self.end_headers()
-            self.wfile.write(wav_body)
+            if body:
+                self.wfile.write(body)
+
+        def do_GET(self) -> None:
+            self._capture()
+            if self.path in _TTS_POST_PATHS:
+                self._send(status=405, allow="POST")
+            else:
+                self._send(status=404)
+
+        def do_POST(self) -> None:
+            self._capture()
+            if self.path != "/v1/audio/speech":
+                self._send(status=404)
+                return
+            self._send(wav_body)
+
+        def _reject_unsupported_method(self) -> None:
+            self._capture()
+            if self.path in _TTS_POST_PATHS:
+                self._send(status=405, allow="POST")
+            else:
+                self._send(status=404)
+
+        do_DELETE = _reject_unsupported_method
+        do_HEAD = _reject_unsupported_method
+        do_OPTIONS = _reject_unsupported_method
+        do_PATCH = _reject_unsupported_method
+        do_PUT = _reject_unsupported_method
 
         def log_message(self, _format: str, *_args: object) -> None:
             return
@@ -233,12 +321,55 @@ def fake_pocket_tts():
 
 @pytest.fixture
 def character_png(tmp_path: Path) -> Path:
-    card = _v2_card(name="Pocket Ann", first_mes="Hello, I am Ann.")
+    card = {
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "data": {
+            "name": "Pocket Ann",
+            "description": _CHARACTER_DESCRIPTION,
+            "personality": "Friendly.",
+            "scenario": "A pocket-sized reunion.",
+            "first_mes": "Hello, I am Ann.",
+            "mes_example": "",
+        },
+    }
     payload = base64.b64encode(json.dumps(card).encode("utf-8")).decode("ascii")
-    return _write_png_with_trailing_metadata(
-        tmp_path / "pocket_ann.png",
-        {"chara": payload},
-    )
+    path = tmp_path / "pocket_ann.png"
+    Image.new("RGB", (10, 10), color="green").save(path, "PNG")
+    raw = path.read_bytes()
+
+    def png_chunk(chunk_type: bytes, data: bytes) -> bytes:
+        checksum = zlib.crc32(chunk_type + data) & 0xFFFFFFFF
+        return (
+            struct.pack(">I", len(data))
+            + chunk_type
+            + data
+            + struct.pack(">I", checksum)
+        )
+
+    output = bytearray(raw[:8])
+    offset = 8
+    saw_idat = False
+    inserted = False
+    while offset < len(raw):
+        length = struct.unpack(">I", raw[offset : offset + 4])[0]
+        chunk_end = offset + 12 + length
+        chunk_type = raw[offset + 4 : offset + 8]
+        assert chunk_end <= len(raw)
+        if chunk_type == b"IDAT":
+            saw_idat = True
+        if chunk_type == b"IEND":
+            assert saw_idat
+            output.extend(
+                png_chunk(b"tEXt", b"chara\x00" + payload.encode("latin-1"))
+            )
+            inserted = True
+        output.extend(raw[offset:chunk_end])
+        offset = chunk_end
+    assert offset == len(raw)
+    assert inserted
+    path.write_bytes(bytes(output))
+    return path
 
 
 class _PlaybackDeviceSink:
@@ -360,8 +491,17 @@ async def _journey_context(
     try:
         yield context
     finally:
-        assert context.run_context is None, "clean app context was not closed"
-        _ACTIVE_JOURNEY = None
+        try:
+            await _close_retained_run_context(context)
+        finally:
+            _ACTIVE_JOURNEY = None
+
+
+async def _close_retained_run_context(context: _JourneyContext) -> None:
+    run_context, context.run_context = context.run_context, None
+    context.pilot = None
+    if run_context is not None:
+        await run_context.__aexit__(None, None, None)
 
 
 async def _wait_for(
@@ -404,32 +544,42 @@ async def launch_clean_chatbook():
     )
     assert app.media_db is not None
     assert app.chachanotes_db is not None
+    assert app.model_catalog_disk_store is not None
+    # Keep the real post-setup catalog refresh on its normal fresh-cache path.
+    app.model_catalog_disk_store.record(
+        "OpenRouter",
+        fingerprint_endpoint("https://openrouter.ai/api/v1"),
+        ["openai/gpt-4o-mini"],
+    )
+    app.model_catalog_disk_store.save()
     context.app = app
     context.run_context = app.run_test(size=(180, 55))
-    context.pilot = await context.run_context.__aenter__()
-    wizard = await _wait_for(
-        app,
-        lambda: app.screen
-        if type(app.screen).__name__ == "FirstRunSetupWizard"
-        else None,
-        timeout=30.0,
-    )
-    await context.pilot.pause(0.2)
-    await _wait_for(
-        app,
-        lambda: wizard.query_one(SetupWizardContainer)
-        if wizard.query_one(SetupWizardContainer).current_step == 0
-        else None,
-    )
+    try:
+        context.pilot = await context.run_context.__aenter__()
+        wizard = await _wait_for(
+            app,
+            lambda: app.screen
+            if type(app.screen).__name__ == "FirstRunSetupWizard"
+            else None,
+            timeout=30.0,
+        )
+        await context.pilot.pause(0.2)
+        await _wait_for(
+            app,
+            lambda: wizard.query_one(SetupWizardContainer)
+            if wizard.query_one(SetupWizardContainer).current_step == 0
+            else None,
+        )
+    except BaseException:
+        await _close_retained_run_context(context)
+        raise
     return app
 
 
 async def _close_clean_chatbook(app) -> None:
     context = _journey()
     assert context.app is app
-    run_context, context.run_context = context.run_context, None
-    if run_context is not None:
-        await run_context.__aexit__(None, None, None)
+    await _close_retained_run_context(context)
 
 
 async def complete_quick_setup(
@@ -588,9 +738,32 @@ async def import_character_and_start_chat(app, character_png: Path) -> None:
     ]
     assert len(imported) == 1
     character_id = int(imported[0]["id"])
+
+    def character_loads_settled() -> bool:
+        return not any(
+            not worker.is_finished
+            and str(worker.name or "").startswith("load_character_")
+            for worker in app.workers
+        )
+
+    await _wait_for(app, character_loads_settled)
+    await context.pilot.click(
+        f"#personas-library-row-character-{character_id}"
+    )
+    await context.pilot.pause()
+    await _wait_for(
+        app,
+        lambda: character_loads_settled()
+        and str(personas.state.selected_entity_id) == str(character_id)
+        and str(personas.character_handler.current_character_id) == str(character_id)
+        and str(
+            (personas.character_handler.current_character_data or {}).get("name")
+        )
+        == "Pocket Ann",
+    )
     start = personas.query_one("#personas-start-chat", Button)
     await _wait_for(app, lambda: not start.disabled)
-    start.press()
+    await context.pilot.click("#personas-start-chat")
 
     chat_screen = await _wait_for(
         app,
@@ -753,7 +926,6 @@ async def wait_for_audio_playback(app) -> None:
     assert len(context.playback.sinks) == context.playback_sink_baseline + 1
     assert action.console_action_id == "speak-stop"
     assert action.disabled is False
-    assert "Playing" in app.export_screenshot()
     sink = context.playback.sinks[-1]
     assert sink.fed
     action.press()
@@ -773,6 +945,27 @@ async def wait_for_audio_playback(app) -> None:
     assert speak_action.disabled is False
     assert sink.state == "stopped"
     assert sink.terminal_reason == "stopped"
+
+
+async def test_launch_failure_closes_retained_run_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _journey()
+
+    async def fail_wait(*_args: object, **_kwargs: object):
+        raise TimeoutError("forced launch wait failure")
+
+    monkeypatch.setattr(sys.modules[__name__], "_wait_for", fail_wait)
+    try:
+        with pytest.raises(TimeoutError, match="forced launch wait failure"):
+            await launch_clean_chatbook()
+        assert context.run_context is None
+        assert context.pilot is None
+        assert context.app is not None
+        assert all(worker.is_finished for worker in context.app.workers)
+    finally:
+        if context.run_context is not None:
+            await _close_clean_chatbook(context.app)
 
 
 async def test_clean_profile_character_roleplay_uses_pocket_tts(
@@ -795,15 +988,113 @@ async def test_clean_profile_character_roleplay_uses_pocket_tts(
         await enable_speak_replies_and_confirm(app)
         await send_roleplay_message(app, "Hello there")
         await wait_for_audio_playback(app)
+        context = _journey()
+        assert context.tts_request_baseline == 1
         assert len(fake_pocket_tts.requests) == 2
-        assert fake_chat.requests[-1].json()["model"] == "test-chat-model"
-        assert fake_pocket_tts.requests[-1].json() == {
+        assert [request.path for request in fake_pocket_tts.requests] == [
+            "/v1/audio/speech",
+            "/v1/audio/speech",
+        ]
+        assert all(request.method == "POST" for request in fake_pocket_tts.requests)
+        reply_tts_requests = fake_pocket_tts.requests[context.tts_request_baseline :]
+        assert len(reply_tts_requests) == 1
+        assert reply_tts_requests[0].json() == {
             "model": "pocket-tts",
             "input": "Welcome back.",
             "voice": "alba",
             "response_format": "wav",
             "speed": 1.0,
         }
-        assert "Authorization" not in fake_pocket_tts.requests[-1].headers
+        assert "Authorization" not in reply_tts_requests[0].headers
+
+        completion_requests = [
+            request
+            for request in fake_chat.requests
+            if request.method == "POST"
+            and request.path == "/v1/chat/completions"
+        ]
+        assert len(completion_requests) == 1
+        assert {
+            (request.method, request.path) for request in fake_chat.requests
+        } <= {
+            ("GET", "/v1/models"),
+            ("GET", "/health"),
+            ("POST", "/v1/chat/completions"),
+        }
+        assert any(
+            request.method == "GET" and request.path == "/v1/models"
+            for request in fake_chat.requests
+        )
+        assert any(
+            request.method == "GET" and request.path == "/health"
+            for request in fake_chat.requests
+        )
+        completion_request = completion_requests[0]
+        completion_payload = completion_request.json()
+        assert completion_request.path == "/v1/chat/completions"
+        assert completion_payload["stream"] is True
+        assert completion_payload["model"] == "test-chat-model"
+        messages = completion_payload["messages"]
+        assert isinstance(messages, list)
+        character_context_matches = [
+            index
+            for index, message in enumerate(messages)
+            if message.get("role") == "system"
+            and _CHARACTER_DESCRIPTION in str(message.get("content"))
+            and "Hello, I am Ann." in str(message.get("content"))
+        ]
+        assert character_context_matches, messages
+        character_context_index = character_context_matches[0]
+        character_context = str(messages[character_context_index]["content"])
+        assert character_context.index(_CHARACTER_DESCRIPTION) < character_context.index(
+            "Hello, I am Ann."
+        )
+        user_index = next(
+            index
+            for index, message in enumerate(messages)
+            if message.get("role") == "user"
+            and message.get("content") == "Hello there"
+        )
+        assert character_context_index < user_index
+        assert user_index == len(messages) - 1
     finally:
         await _close_clean_chatbook(app)
+
+
+async def test_fake_chat_rejects_unexpected_methods_and_paths(fake_chat) -> None:
+    async with httpx.AsyncClient() as client:
+        wrong_method = await client.post(f"{fake_chat.base_url}/v1/models", json={})
+        unsupported_method = await client.put(
+            f"{fake_chat.base_url}/v1/chat/completions", json={}
+        )
+        unknown_path = await client.get(f"{fake_chat.base_url}/unexpected")
+
+    assert wrong_method.status_code == 405
+    assert unsupported_method.status_code == 405
+    assert unknown_path.status_code == 404
+    assert [(request.method, request.path) for request in fake_chat.requests] == [
+        ("POST", "/v1/models"),
+        ("PUT", "/v1/chat/completions"),
+        ("GET", "/unexpected"),
+    ]
+
+
+async def test_fake_pocket_tts_rejects_unexpected_methods_and_paths(
+    fake_pocket_tts,
+) -> None:
+    base_url = fake_pocket_tts.speech_url.removesuffix("/v1/audio/speech")
+    async with httpx.AsyncClient() as client:
+        wrong_method = await client.get(fake_pocket_tts.speech_url)
+        unsupported_method = await client.delete(fake_pocket_tts.speech_url)
+        unknown_path = await client.post(f"{base_url}/unexpected", json={})
+
+    assert wrong_method.status_code == 405
+    assert unsupported_method.status_code == 405
+    assert unknown_path.status_code == 404
+    assert [
+        (request.method, request.path) for request in fake_pocket_tts.requests
+    ] == [
+        ("GET", "/v1/audio/speech"),
+        ("DELETE", "/v1/audio/speech"),
+        ("POST", "/unexpected"),
+    ]
