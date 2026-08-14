@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Accept Moonshot Kimi K3's bounded `system_fingerprint` and terminal choice-usage SSE shapes so the real Console native-tool continuation UAT completes instead of surfacing a synthetic 502.
+**Goal:** Accept Moonshot Kimi K3's bounded `system_fingerprint`, terminal choice usage, and identical trailing usage SSE shapes so the real Console native-tool continuation UAT completes instead of surfacing a synthetic 502.
 
-**Architecture:** Keep request construction, provider policy, AgentService, and Console unchanged. Correct the provider-neutral hosted streaming response allowlists, validate the optional fingerprint under the existing metadata cap, accept mapping-valued usage only on a terminal choice with no top-level usage, and prove the fix at both the pure parser and real Console-to-scripted-HTTP boundaries before the final paid UAT.
+**Architecture:** Keep request construction, provider policy, AgentService, and Console unchanged. Correct the provider-neutral hosted streaming response allowlists, validate the optional fingerprint under the existing metadata cap, accept mapping-valued usage only on a terminal choice with no same-event top-level usage, and accept a later top-level duplicate only when it is identical. Prove the fix at both the pure parser and real Console-to-scripted-HTTP boundaries before the final paid UAT.
 
 **Tech Stack:** Python 3.12, pytest, requests/SSE, Textual Console agent bridge, Loguru redaction tests, Backlog.md, GitHub CLI
 
@@ -14,7 +14,7 @@
 
 - Modify `tldw_chatbook/LLM_Calls/hosted_chat.py`: admit and bound the standard
   optional streaming `system_fingerprint` field and Moonshot's terminal
-  choice-level usage mapping.
+  choice-level usage mapping and identical trailing duplicate.
 - Modify `Tests/LLM_Calls/test_hosted_chat.py`: pin accepted, null, malformed,
   oversized, ambiguous, misplaced, and unknown strict-parser behavior.
 - Modify `Tests/Chat/test_kimi_zai_native_tools.py`: mirror Moonshot's live
@@ -234,16 +234,18 @@ git commit -m "fix(llm): accept Moonshot stream fingerprints"
 - [ ] **Step 1: Pin accepted and fail-closed choice usage RED cases**
 
 Add a terminal stream choice containing a mapping-valued `usage` field. Add
-controls proving non-mapping usage, usage before a finish reason, and simultaneous
-top-level plus choice usage all raise `HostedChatProtocolError`. Update only the
-Moonshot joined fixture to reproduce choice-level terminal usage; preserve Z.ai's
-existing trailing top-level usage event.
+controls proving non-mapping usage, usage before a finish reason, simultaneous
+top-level plus choice usage, and a later conflicting duplicate all raise
+`HostedChatProtocolError`. Update only the Moonshot joined fixture to reproduce
+terminal choice usage followed by the identical trailing top-level event;
+preserve Z.ai's existing single trailing top-level usage event.
 
 - [ ] **Step 2: Apply the minimal choice allowlist correction**
 
 Admit `usage` in the strict choice allowlist, require it to be a mapping, reject
-dual placement, and reuse the existing terminal-placement check. Do not coerce,
-merge, log, or persist provider usage data.
+same-event dual placement, reuse the existing terminal-placement check, and
+accept a later top-level mapping only when it equals the recorded usage. Do not
+coerce, merge, log, or persist provider usage data.
 
 - [ ] **Step 3: Verify GREEN and commit**
 

@@ -61,7 +61,7 @@ def _sse(events: Sequence[dict[str, Any]], *, done: bool = True) -> bytes:
 
 def _stream_usage(provider: str, usage: dict[str, int]) -> tuple[dict, list[dict]]:
     if provider == "moonshot":
-        return {"usage": usage}, []
+        return {"usage": usage}, [{"choices": [], "usage": usage}]
     return {}, [{"choices": [], "usage": usage}]
 
 

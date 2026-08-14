@@ -204,9 +204,12 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         if usage is not None and not isinstance(usage, Mapping):
             raise HostedChatProtocolError("Hosted Chat stream usage is malformed.")
         if not choices:
-            if self._finish_reason is None or usage is None or self._usage is not None:
+            if self._finish_reason is None or usage is None:
                 raise HostedChatProtocolError("Hosted Chat stream usage is misplaced.")
-            self._usage = deepcopy(dict(usage))
+            normalized_usage = deepcopy(dict(usage))
+            if self._usage is not None and self._usage != normalized_usage:
+                raise HostedChatProtocolError("Hosted Chat stream usage is malformed.")
+            self._usage = normalized_usage
             return deepcopy(dict(event))
         if self._finish_reason is not None:
             raise HostedChatProtocolError(

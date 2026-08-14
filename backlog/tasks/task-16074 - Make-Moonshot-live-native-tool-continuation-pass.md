@@ -23,7 +23,7 @@ Correct the post-merge Moonshot Kimi K3 integration defect found by paid UAT so 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 A doubly gated paid Moonshot Kimi K3 probe completes exactly one calculator call, continues with the tool result, and returns the required final marker.
-- [ ] #2 The exact Moonshot SSE fingerprint and terminal choice-usage shapes that triggered Chatbook's synthetic HTTP 502 errors are accepted under bounded, fail-closed validation and pinned by automated regressions at the real provider boundary.
+- [ ] #2 The exact Moonshot SSE fingerprint, terminal choice usage, and identical trailing usage duplicate that triggered Chatbook's synthetic HTTP 502 errors are accepted under bounded, fail-closed validation and pinned by automated regressions at the real provider boundary.
 - [ ] #3 Moonshot credentials and captured live/raw provider payloads remain absent from logs, tracebacks, fixtures, and committed files; regressions use only minimal synthetic SSE data.
 - [ ] #4 Focused Moonshot, hosted Chat, AgentService, and Console continuation regressions remain green without changing unrelated provider behavior.
 <!-- AC:END -->
@@ -31,10 +31,11 @@ Correct the post-merge Moonshot Kimi K3 integration defect found by paid UAT so 
 ## Implementation Plan
 
 1. Pin Moonshot's bounded `system_fingerprint` and terminal
-   `choices[0].usage` streaming shapes in the neutral hosted parser and joined
-   Console native-tool fixtures with strict RED tests.
+   `choices[0].usage` plus identical trailing usage streaming shapes in the
+   neutral hosted parser and joined Console native-tool fixtures with strict
+   RED tests.
 2. Apply the minimal provider-neutral streaming validation corrections and
-   prove malformed, ambiguous, misplaced, unknown, or oversized data still
+   prove malformed, conflicting, misplaced, unknown, or oversized data still
    fails closed.
 3. Run only focused hosted/Moonshot/AgentService/Console/privacy regressions,
    then the doubly gated paid Moonshot UAT.

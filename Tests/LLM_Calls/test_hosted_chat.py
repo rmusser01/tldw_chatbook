@@ -685,6 +685,68 @@ def test_hosted_chat_stream_accepts_terminal_choice_usage() -> None:
     assert stream.terminal_turn.usage == {"total_tokens": 3}
 
 
+def test_hosted_chat_stream_accepts_identical_trailing_usage_duplicate() -> None:
+    usage = {"total_tokens": 3}
+    records = iter(
+        [
+            SSERecord(
+                event=None,
+                data=json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": "done"},
+                                "finish_reason": "stop",
+                                "usage": usage,
+                            }
+                        ]
+                    }
+                ),
+            ),
+            SSERecord(
+                event=None,
+                data=json.dumps({"choices": [], "usage": usage}),
+            ),
+            SSERecord(event=None, data="[DONE]"),
+        ]
+    )
+    stream = HostedChatStream(records, finish_policy=_POLICY)
+
+    assert len(list(stream)) == 2
+    assert stream.terminal_turn.usage == usage
+
+
+def test_hosted_chat_stream_rejects_differing_trailing_usage_duplicate() -> None:
+    records = iter(
+        [
+            SSERecord(
+                event=None,
+                data=json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": "done"},
+                                "finish_reason": "stop",
+                                "usage": {"total_tokens": 3},
+                            }
+                        ]
+                    }
+                ),
+            ),
+            SSERecord(
+                event=None,
+                data=json.dumps({"choices": [], "usage": {"total_tokens": 4}}),
+            ),
+        ]
+    )
+    stream = HostedChatStream(records, finish_policy=_POLICY)
+
+    with pytest.raises(HostedChatProtocolError):
+        list(stream)
+
+
 @pytest.mark.parametrize(
     "choice_usage,top_level_usage,finish_reason",
     [
