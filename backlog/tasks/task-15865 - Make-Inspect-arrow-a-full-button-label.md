@@ -31,3 +31,20 @@ Make the collapsed Console Inspector affordance read as one obvious, full-width 
 <!-- SECTION:DESIGN:BEGIN -->
 Approved design: `Docs/superpowers/specs/2026-08-13-task-15865-inspector-arrow-button-design.md`.
 <!-- SECTION:DESIGN:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+
+ADR path: N/A
+
+Reason: this is a reversible display-copy refinement inside the existing Console rail presentation seam.
+
+1. Add RED component, mounted, arrow-end interaction, and six-state compositor expectations for the exact `Inspect-->` button.
+2. Change only the canonical horizontal Inspector display literal in `ConsoleRailHandle._display_label()`.
+3. Run directly related rail, compact-access, CSS-integrity, visual, static, and duplicate-task-ID checks; do not run the full repository suite per user instruction.
+4. Self-review, record fresh evidence, complete AC #1-5, and mark TASK-15865 Done only if every scoped gate is green.
+
+Detailed plan: `Docs/superpowers/plans/2026-08-13-task-15865-inspector-arrow-button.md`.
+<!-- SECTION:PLAN:END -->
