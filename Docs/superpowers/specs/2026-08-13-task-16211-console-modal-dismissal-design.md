@@ -48,7 +48,8 @@ Scope is defined by actual Console reachability, not by filenames alone.
 2. Shared modal components that Console opens directly, currently including
    contextual Workbench help, dictionary/world-book pickers, confirmation
    dialogs, video cost and capacity decisions, the video viewer, and
-   `EnhancedFileOpen` for attachments.
+   `EnhancedFileOpen` for attachments and `EnhancedFileSave` for generated
+   video export.
 3. Every transitively reachable modal launched from those screens, such as
    rename-from-session-switcher, prompt-queue cancellation, and change-revert
    confirmation, where only the top screen may be cancelled.
@@ -62,8 +63,9 @@ discovered under `Widgets/Console`, explicit shared modal types constructed by
 current `ChatScreen` launch paths, and nested modal launches from every screen
 already reached. The baseline includes 27 Console-owned modal types; shared
 Workbench help, dictionary/world-book pickers, confirmation dialogs, video
-viewer, and `EnhancedFileOpen`; and `ChangeRevertConfirmModal` reached through
-`ChangeReviewScreen`. `ConsoleSetupModal` remains the explicit non-screen
+viewer, `EnhancedFileOpen`, and `EnhancedFileSave`; and
+`ChangeRevertConfirmModal` reached through `ChangeReviewScreen`.
+`ConsoleSetupModal` remains the explicit non-screen
 exclusion.
 
 The inventory test asserts the complete current set. Every row records modal
@@ -83,7 +85,7 @@ Add one small reusable mixin at the widget boundary rather than a second
 an Escape request hook, and a terminal safe-cancel hook. The terminal hook
 defaults to `dismiss(None)` but may return another safe value, await an existing
 cancellation callback, or reveal a guard. Separate Escape routing is necessary
-for `EnhancedFileOpen` and Prompt Workbench, whose transient state must be
+for the enhanced file dialogs and Prompt Workbench, whose transient state must be
 handled before terminal cancellation.
 
 The shared behavior owns only two concerns:
@@ -94,18 +96,28 @@ The shared behavior owns only two concerns:
 It does not know how a particular modal saves, confirms, navigates, or guards
 dirty state.
 
-The shared layer is single-shot. It sets a cancellation-pending latch before
-any await, consumes repeated Escape/backdrop gestures while pending, and routes
-terminal closure through one `dismiss_once` operation. Immediately before
-dismissal it verifies that the modal is still mounted and is the app's active
-top screen. A stale callback must never pop a newer nested screen or invoke a
-cancel callback twice.
+The shared layer is single-shot. It tracks three separate states: a temporary
+cancellation-pending latch, a permanent cancel-side-effect commitment, and a
+permanent terminal-dismissal commitment. It sets the pending latch before any
+await and consumes repeated Escape/backdrop gestures while pending. An awaited
+callback is committed before invocation and can never run again, even if a
+nested screen makes the later dismissal stale. After that nested screen closes,
+a new request may retry only terminal dismissal. Immediately before dismissal
+the mixin verifies that the modal is still mounted and is the app's active top
+screen. A stale callback must never pop a newer nested screen or invoke a cancel
+callback twice.
 
 All pre-existing screen-level click handlers are either removed in favor of
 the mixin or made to delegate to it. This includes Composer Menu, RAG Settings,
 and Image Viewer; Console Settings' unrelated redirected-`Select` click
 recovery remains intact. Textual dispatches matching handlers across the MRO,
 so `event.stop()` alone is not an exact-once guarantee.
+
+The safe hook also preserves modal-owned cleanup that precedes current
+cancellation. The contract inventory records those pre-cancel hooks explicitly,
+including Character/Style/Session Switcher debounce cancellation and Citation
+Sources request-generation invalidation. The shared default is used only where
+the existing Cancel path has no such side effect.
 
 ### Backdrop classification
 
@@ -139,13 +151,17 @@ When a descendant transient overlay, such as an expanded `Select`, owns
 the modal. This preserves standard nested-control behavior and avoids throwing
 away a larger form merely to close a dropdown.
 
-`EnhancedFileOpen` already implements a deliberate, screen-owned Escape stack:
+`EnhancedFileOpen` and `EnhancedFileSave` already implement a deliberate,
+screen-owned Escape stack:
 path input, search, recent files, and bookmarks close in that order before the
 picker dismisses with `None`. That `action_smart_dismiss` contract remains
 unchanged. A primary backdrop click, by contrast, matches the picker's visible
 Cancel button and dismisses the whole picker with `None`; it does not merely
 peel one of those internal surfaces. Clicks on those surfaces still classify
-as inside the picker and never cancel it.
+as inside the picker and never cancel it. The terminal Escape branch, backdrop,
+and visible Cancel all use the shared single-shot/top-screen dismissal path;
+the existing file-dialog `dismiss` override still persists recent-location
+state.
 
 ### Modal-specific behavior
 
@@ -236,8 +252,8 @@ Focused Textual Pilot tests will prove:
   failed Undo remains guarded, and active compaction requires the separate
   Close anyway acknowledgement without claiming the provider call was
   cancelled;
-- `EnhancedFileOpen` preserves its overlay-first Escape stack while backdrop
-  cancellation returns `None` immediately;
+- `EnhancedFileOpen` and `EnhancedFileSave` preserve their overlay-first Escape
+  stack while backdrop cancellation returns `None` immediately;
 - generated-video capacity Escape/backdrop requests keep the staged artifact
   alive until explicit discard confirmation, and cancelling that guard returns
   to the choices;
@@ -249,7 +265,7 @@ Focused Textual Pilot tests will prove:
 - `VideoPlayerScreen` treats the whole player as content, adds Escape cleanup,
   and never classifies ordinary frame/status/hint cells as backdrop;
 - an explicit inventory of Console-reachable modal types participates in the
-  transitive contract, including `EnhancedFileOpen`,
+  transitive contract, including `EnhancedFileOpen`, `EnhancedFileSave`,
   `ConsoleVideoCapacityModal`, nested `CancelConfirmationDialog`, and
   `ChangeRevertConfirmModal`, while `ConsoleSetupModal` is explicitly excluded
   with its reason.
