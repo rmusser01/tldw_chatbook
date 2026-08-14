@@ -85,12 +85,36 @@ Green after batch 1: file_notes_git 148/148, git_push 60/60, export_receipt +
 multiselect 17/17, choice_strips + skills_canvas 230/230 (incl. the product
 fix), ingest_structural 22/22, prompts_canvas 280/280 (no change needed).
 
+## Implementation Notes (batch 2 -- the focus pair; BOTH were product bugs)
+
+The dca0594a5 suspicion was wrong -- that commit changed focus VISUALS only.
+Both failures were real product defects with different mechanisms:
+
+**1. The cancel-first confirmation focus NEVER worked.** Its feature test was
+born red at 1fbd46ec6 (verified by running it at that exact commit) and
+nobody saw, because the module never ran whole -- the born-red-test class
+again. Mechanism: `call_after_refresh(cancel.focus)` on the WORKSPACE widget
+waits for the workspace's own refresh, and `_update_controls` patches
+children in place, so that refresh never comes and the callback never fires
+(spy: same instance, mounted, focus still on the pressed button). Third
+variant of the never-firing-deferral family in one day (screen-vs-canvas in
+the skills panel, screen-vs-canvas in 15270's era, widget-vs-children here).
+Fix: `call_later` -- message-queue ordering, needs no repaint.
+
+**2. Wide->narrow hid the editor out from under its own focus.** Genuine
+regression, bisected (git bisect run, 6 steps) into 4202930d6's era; the
+test passed at its birth commit d642336e6. `_narrow_view` was only set to
+"editor" when a document was opened WHILE ALREADY NARROW, so opening on a
+wide terminal and then shrinking routed the narrow shell to the navigator --
+hiding the pane under the focused editor (Textual blurs a hidden widget's
+focus to None). User-visible: open a note, shrink the window, the note
+vanishes into the files list. Fix: on the wide->narrow TRANSITION with an
+open document, derive the view as "editor"; transition-only so Back's
+explicit navigator choice, made while narrow, keeps winning.
+
+`test_library_file_notes_workspace.py` whole: 88/88.
+
 ## Remainder (open)
 
-- `test_library_file_notes_workspace.py` x2 and `test_library_shell.py` x6:
-  both workspace failures are FOCUS assertions (cancel-first confirmation no
-  longer focuses Cancel; editor focus lost to NOWHERE at 40x20). dca0594a5
-  ("quiet focus and distill file actions") deliberately changed focus
-  behaviour, so each needs the deliberate-or-regression call made against
-  that commit's intent -- focus lost to nowhere is suspicious. Not batched
-  with the mechanical fixes above on purpose.
+- `test_library_shell.py` x6 (current-dev set: metadata placeholders, reset
+  to defaults, note sync-routes focus, recompose/fifty-cycles baseline, +2).
