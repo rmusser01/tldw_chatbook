@@ -4804,6 +4804,36 @@ def get_runtime_config_snapshot(
         )
 
 
+def run_if_runtime_config_generation_current(
+    expected_generation: int,
+    action: Callable[[], bool],
+) -> bool:
+    """Linearize a nonblocking action against runtime config publication.
+
+    Lock order is always ``config -> action-owned lock``. The supplied action
+    must be process-local and nonblocking; first-chat handoff acknowledgement
+    uses this to acquire only the pending-handoff lock. Pending handoff stage,
+    claim, and release paths never acquire the config lock, so there is no
+    reverse ``handoff -> config`` edge.
+
+    Args:
+        expected_generation: Runtime generation the caller validated.
+        action: Nonblocking action to execute while publication is fenced.
+
+    Returns:
+        ``True`` only when the generation matched and the action succeeded.
+    """
+
+    if type(expected_generation) is not int or expected_generation < 0:
+        raise ValueError("Expected config generation must be nonnegative")
+    if not callable(action):
+        raise TypeError("Config generation action must be callable")
+    with _config_file_lock():
+        if _CONFIG_GENERATION != expected_generation:
+            return False
+        return action() is True
+
+
 def _encryption_enabled(config_data: Mapping[str, Any]) -> bool:
     encryption = config_data.get("encryption", {})
     return isinstance(encryption, Mapping) and encryption.get("enabled", False) is True

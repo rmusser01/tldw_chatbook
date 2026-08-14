@@ -1,7 +1,8 @@
 """Pilot tests for the first-run setup wizard skeleton."""
 
 import json
-from dataclasses import replace
+from copy import deepcopy
+from dataclasses import fields, replace
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -82,6 +83,19 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     _provider_group_option_id,
     _provider_options,
 )
+
+
+def _first_chat_store_snapshot(store: ConsoleChatStore) -> list[dict[str, object]]:
+    snapshots = []
+    for session in store.sessions():
+        snapshot = {
+            item.name: deepcopy(getattr(session, item.name))
+            for item in fields(session)
+            if item.name != "rag_scope_holder"
+        }
+        snapshot["rag_scope_holder"] = deepcopy(session.rag_scope_holder.scope)
+        snapshots.append(snapshot)
+    return snapshots
 
 
 class _HostApp(App):
@@ -10487,7 +10501,10 @@ async def test_finalize_stages_exact_first_chat_after_successful_setup_mutation(
 
     pending = PendingHandoffStore()
     console = MagicMock()
-    console.prepare_console_first_chat_target.return_value = "session-exact"
+    console.eligible_console_first_chat_session_id.return_value = "session-exact"
+    console.prepare_console_first_chat_target.side_effect = AssertionError(
+        "the producer must not prepare or mutate Console"
+    )
     app_instance = MagicMock(
         app_config={},
         pending_handoffs=pending,
@@ -10518,11 +10535,8 @@ async def test_finalize_stages_exact_first_chat_after_successful_setup_mutation(
     await container._finalize(TAB_CHAT)
 
     container._complete_setup_locked.assert_awaited_once()
-    console.prepare_console_first_chat_target.assert_called_once_with(
-        provider="llama_cpp",
-        model="local-a",
-        config_revision=41,
-    )
+    console.prepare_console_first_chat_target.assert_not_called()
+    console.eligible_console_first_chat_session_id.assert_called_once_with()
     claim = pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
     assert claim is not None
     assert claim.value == ConsoleFirstChatIntent(
@@ -10533,6 +10547,136 @@ async def test_finalize_stages_exact_first_chat_after_successful_setup_mutation(
     container._dismiss_screen.assert_called_once_with(
         {"completed": True, "exit_route": TAB_CHAT}
     )
+
+
+def test_first_chat_stage_failure_leaves_mounted_console_byte_exact(monkeypatch):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    pending = PendingHandoffStore()
+    app_instance = MagicMock(
+        app_config={},
+        pending_handoffs=pending,
+        screen_stack=[],
+    )
+    console = ChatScreen(app_instance)
+    store = ConsoleChatStore()
+    console._console_chat_store = store
+    old_defaults = ConsoleSessionSettings(
+        provider="openai",
+        model="old-model",
+        source="derived",
+    )
+    session = store.create_session(
+        workspace_id="global",
+        settings=old_defaults,
+        canonical_settings_baseline=old_defaults,
+    )
+    app_instance.screen_stack = [console]
+    sessions_before = _first_chat_store_snapshot(store)
+    active_before = store.active_session_id
+    controls_before = (
+        console._console_control_provider,
+        console._console_control_model,
+        console._console_chat_controller,
+    )
+    monkeypatch.setattr(
+        wizard_module,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshot(
+            51,
+            {
+                "chat_defaults": {"provider": "openai", "model": "new-model"},
+                "api_settings": {"openai": {"model": "new-model"}},
+            },
+        ),
+    )
+
+    def fail_stage(*_args, **_kwargs):
+        raise RuntimeError("stage unavailable")
+
+    monkeypatch.setattr(pending, "stage", fail_stage)
+    monkeypatch.setattr(pending, "stage_reserved_console_first_chat", fail_stage)
+    container = SetupWizardContainer(app_instance)
+
+    assert container._stage_console_first_chat_handoff() is False
+    assert store.active_session_id == active_before == session.id
+    assert _first_chat_store_snapshot(store) == sessions_before
+    assert (
+        console._console_control_provider,
+        console._console_control_model,
+        console._console_chat_controller,
+    ) == controls_before
+    assert pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT) is None
+
+
+def test_generation_advance_after_stage_before_consume_never_mutates_console(
+    monkeypatch,
+):
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    pending = PendingHandoffStore()
+    app_instance = MagicMock(
+        app_config={},
+        pending_handoffs=pending,
+        screen_stack=[],
+    )
+    console = ChatScreen(app_instance)
+    store = ConsoleChatStore()
+    console._console_chat_store = store
+    old_defaults = ConsoleSessionSettings(
+        provider="openai",
+        model="old-model",
+        source="derived",
+    )
+    session = store.create_session(
+        workspace_id="global",
+        settings=old_defaults,
+        canonical_settings_baseline=old_defaults,
+    )
+    app_instance.screen_stack = [console]
+    sessions_before = _first_chat_store_snapshot(store)
+    current = [
+        RuntimeConfigSnapshot(
+            53,
+            {
+                "chat_defaults": {"provider": "openai", "model": "new-model"},
+                "api_settings": {"openai": {"model": "new-model"}},
+            },
+        )
+    ]
+    monkeypatch.setattr(
+        wizard_module,
+        "get_runtime_config_snapshot",
+        lambda: current[0],
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_runtime_config_snapshot",
+        lambda: current[0],
+    )
+    original_stage = pending.stage
+
+    def stage_then_publish(channel, intent):
+        revision = original_stage(channel, intent)
+        current[0] = RuntimeConfigSnapshot(54, current[0].values)
+        return revision
+
+    monkeypatch.setattr(pending, "stage", stage_then_publish)
+    container = SetupWizardContainer(app_instance)
+
+    assert container._stage_console_first_chat_handoff() is True
+    assert store.active_session_id == session.id
+    assert _first_chat_store_snapshot(store) == sessions_before
+    assert console.consume_pending_console_first_chat_intent() is False
+    assert store.active_session_id == session.id
+    assert _first_chat_store_snapshot(store) == sessions_before
+    claim = pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert claim is not None
+    assert claim.value.config_revision == 53
+    assert pending.release(claim) is True
 
 
 @pytest.mark.asyncio
@@ -10597,7 +10741,7 @@ async def test_finalize_reserves_future_target_only_without_console_owner(
 
 
 @pytest.mark.asyncio
-async def test_finalize_keeps_wizard_open_when_mounted_console_refuses_target(
+async def test_finalize_reserves_future_target_when_mounted_console_is_ineligible(
     monkeypatch,
 ):
     import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
@@ -10605,7 +10749,7 @@ async def test_finalize_keeps_wizard_open_when_mounted_console_refuses_target(
 
     pending = PendingHandoffStore()
     console = MagicMock()
-    console.prepare_console_first_chat_target.return_value = None
+    console.eligible_console_first_chat_session_id.return_value = None
     app_instance = MagicMock(
         app_config={},
         pending_handoffs=pending,
@@ -10631,9 +10775,16 @@ async def test_finalize_keeps_wizard_open_when_mounted_console_refuses_target(
 
     await container._finalize(TAB_CHAT)
 
-    assert pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT) is None
-    container._show_first_chat_handoff_error.assert_called_once()
-    container._dismiss_screen.assert_not_called()
+    claim = pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert claim is not None
+    assert pending.claim_reserves_new_console_session(claim) is True
+    assert claim.value.provider == "openai"
+    assert claim.value.model == "model-a"
+    assert pending.release(claim) is True
+    container._show_first_chat_handoff_error.assert_not_called()
+    container._dismiss_screen.assert_called_once_with(
+        {"completed": True, "exit_route": TAB_CHAT}
+    )
 
 
 @pytest.mark.asyncio

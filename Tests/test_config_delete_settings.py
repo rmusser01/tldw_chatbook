@@ -933,6 +933,62 @@ def test_settings_locked_snapshot_precondition_observes_authoritative_config(
     assert "stale-model" not in config_path.read_text(encoding="utf-8")
 
 
+def test_runtime_generation_guard_linearizes_nonblocking_handoff_ack(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+        ConsoleFirstChatIntent,
+        HandoffChannel,
+        PendingHandoffStore,
+    )
+
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 71)
+    pending = PendingHandoffStore()
+    pending.stage_reserved_console_first_chat(
+        ConsoleFirstChatIntent("future-session", "openai", "model-a", 71)
+    )
+    claim = pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert claim is not None
+    writer_attempting = threading.Event()
+    writer_published = threading.Event()
+
+    def publish_generation() -> None:
+        writer_attempting.set()
+        with config_module._config_file_lock():
+            config_module._CONFIG_GENERATION += 1
+            writer_published.set()
+
+    writer = threading.Thread(target=publish_generation)
+
+    def acknowledge() -> bool:
+        writer.start()
+        assert writer_attempting.wait(timeout=1)
+        assert writer_published.is_set() is False
+        return pending.acknowledge_current(claim)
+
+    assert config_module.run_if_runtime_config_generation_current(
+        71,
+        acknowledge,
+    ) is True
+    writer.join(timeout=1)
+
+    assert writer.is_alive() is False
+    assert writer_published.is_set() is True
+    assert config_module._CONFIG_GENERATION == 72
+    assert pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT) is None
+
+
+def test_runtime_generation_guard_skips_ack_after_publication(monkeypatch) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 82)
+    acknowledged = []
+
+    assert config_module.run_if_runtime_config_generation_current(
+        81,
+        lambda: acknowledged.append(True) or True,
+    ) is False
+    assert acknowledged == []
+
+
 @pytest.mark.parametrize("serialized", [False, True])
 def test_whole_config_replacement_preserves_revisioned_owned_section(
     tmp_path: Path,

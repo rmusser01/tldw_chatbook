@@ -39,6 +39,8 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
+from copy import deepcopy
+from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -61,12 +63,19 @@ from Tests.UI.test_product_maturity_phase1_first_run import (
     _prepare_clean_environment,
     _test_cli_setting,
 )
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    ConsoleFirstChatIntent,
+    HandoffChannel,
+)
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     SETUP_COMPLETED_KEY,
     SETUP_DRAFT_KEYS,
@@ -175,6 +184,54 @@ def _persist_complete_custom_provider_setup() -> None:
             },
         }
     )
+
+
+def _live_first_chat_session_snapshot(
+    session: ConsoleChatSession,
+) -> dict[str, object]:
+    snapshot = {
+        item.name: deepcopy(getattr(session, item.name))
+        for item in fields(ConsoleChatSession)
+        if item.name != "rag_scope_holder"
+    }
+    snapshot["rag_scope_holder"] = deepcopy(session.rag_scope_holder.scope)
+    return snapshot
+
+
+def _live_console_projection(console: ChatScreen) -> dict[str, object]:
+    store = console._ensure_console_chat_store()
+    composer = console.query_one("#console-native-composer")
+    return {
+        "active_session_id": store.active_session_id,
+        "sessions": tuple(
+            _live_first_chat_session_snapshot(session)
+            for session in store.sessions()
+        ),
+        "provider_label": str(
+            console.query_one("#console-provider-label", Static).renderable
+        ),
+        "model_label": str(
+            console.query_one("#console-model-label", Static).renderable
+        ),
+        "tabs": tuple(
+            (
+                str(tab.id),
+                str(getattr(tab, "label", "")),
+                tuple(sorted(tab.classes)),
+            )
+            for tab in console.query(".console-session-tab")
+        ),
+        "composer_draft": composer.draft_text(),
+    }
+
+
+def _pending_first_chat(app) -> ConsoleFirstChatIntent | None:
+    claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    if claim is None:
+        return None
+    value = claim.value
+    app.pending_handoffs.release(claim)
+    return value if isinstance(value, ConsoleFirstChatIntent) else None
 
 
 async def _open_settings_diagnostics(pilot) -> None:
@@ -1602,6 +1659,46 @@ async def _walk_rerun_quick_track_to_summary(pilot, wizard_screen) -> "SetupWiza
     return container
 
 
+async def _open_rerun_wizard_over_console(app, pilot) -> tuple[ChatScreen, object]:
+    await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
+    console = app.screen
+    app.push_screen(
+        FirstRunSetupWizard(app, rerun=True),
+        app.handle_first_run_wizard_result,
+    )
+    await _wait_until(
+        pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+    )
+    wizard_screen = app.screen
+    await pilot.pause(0.2)
+    await _walk_rerun_quick_track_to_summary(pilot, wizard_screen)
+    await _wait_until(
+        pilot,
+        lambda: str(
+            wizard_screen.query_one("#setup-exit-chat", Button).label
+        )
+        == "Start chatting",
+    )
+    return console, wizard_screen
+
+
+async def _seed_live_console_user_draft(console: ChatScreen, pilot):
+    store = console._ensure_console_chat_store()
+    user = store.create_session(
+        title="Preserved user work",
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="preserved-user-model",
+            source="user",
+        ),
+    )
+    store.set_session_draft(user.id, "preserve this exact mounted draft")
+    await console._sync_native_console_chat_ui()
+    console._focus_console_composer_if_needed(force=True)
+    await pilot.pause()
+    return store, user
+
+
 @pytest.mark.asyncio
 async def test_rerun_over_settings_review_settings_returns_to_settings(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1677,6 +1774,164 @@ async def test_rerun_over_settings_start_chatting_navigates_to_chat(
             assert len(navigation_messages) == 1
             assert navigation_messages[0].screen_name == TAB_CHAT
             assert navigation_messages[0].screen_context == {}
+
+
+@pytest.mark.asyncio
+async def test_mounted_wizard_producer_to_console_consumer_preserves_user_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    _persist_complete_custom_provider_setup()
+    app = _build_test_app(first_run_setup_completed=True)
+    app._initial_tab_value = "chat"
+    staged: list[ConsoleFirstChatIntent] = []
+    real_stage = app.pending_handoffs.stage_reserved_console_first_chat
+
+    def record_producer_stage(intent: ConsoleFirstChatIntent) -> int:
+        staged.append(intent)
+        return real_stage(intent)
+
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "stage_reserved_console_first_chat",
+        record_producer_stage,
+    )
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(180, 55)) as pilot:
+            await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
+            console = app.screen
+            store, user = await _seed_live_console_user_draft(console, pilot)
+            existing_before = {
+                session.id: _live_first_chat_session_snapshot(session)
+                for session in store.sessions()
+            }
+            console, wizard_screen = await _open_rerun_wizard_over_console(
+                app, pilot
+            )
+
+            _press(wizard_screen, "#setup-exit-chat")
+            await _wait_until(pilot, lambda: len(staged) == 1)
+            target_id = staged[0].session_id
+            await _wait_until(
+                pilot,
+                lambda: app.screen is console
+                and store.active_session_id == target_id
+                and not app.pending_handoffs.has_pending(
+                    HandoffChannel.CONSOLE_FIRST_CHAT
+                ),
+            )
+
+            assert staged[0].provider == "custom"
+            assert staged[0].model == "model-a"
+            assert store.session_settings(target_id).provider == "custom"
+            assert store.session_settings(target_id).model == "model-a"
+            assert {
+                session.id: _live_first_chat_session_snapshot(session)
+                for session in store.sessions()
+                if session.id in existing_before
+            } == existing_before
+            assert store.session_draft(user.id) == "preserve this exact mounted draft"
+            assert _pending_first_chat(app) is None
+
+
+@pytest.mark.asyncio
+async def test_mounted_wizard_stage_failure_leaves_console_and_focus_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    _persist_complete_custom_provider_setup()
+    app = _build_test_app(first_run_setup_completed=True)
+    app._initial_tab_value = "chat"
+    stage_attempts: list[ConsoleFirstChatIntent] = []
+
+    def fail_producer_stage(intent: ConsoleFirstChatIntent) -> int:
+        stage_attempts.append(intent)
+        raise RuntimeError("injected stage failure")
+
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "stage_reserved_console_first_chat",
+        fail_producer_stage,
+    )
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(180, 55)) as pilot:
+            await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
+            console = app.screen
+            store, _user = await _seed_live_console_user_draft(console, pilot)
+            console_before = _live_console_projection(console)
+            console, wizard_screen = await _open_rerun_wizard_over_console(
+                app, pilot
+            )
+            start_button = wizard_screen.query_one("#setup-exit-chat", Button)
+            start_button.focus()
+            await pilot.pause()
+            focus_before = app.focused
+
+            start_button.press()
+            await _wait_until(pilot, lambda: len(stage_attempts) == 1)
+            await pilot.pause(0.2)
+
+            assert app.screen is wizard_screen
+            assert app.focused is focus_before is start_button
+            assert _live_console_projection(console) == console_before
+            assert store.active_session_id == console_before["active_session_id"]
+            assert _pending_first_chat(app) is None
+
+
+@pytest.mark.asyncio
+async def test_mounted_wizard_generation_race_rolls_back_and_retries_intent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    _persist_complete_custom_provider_setup()
+    app = _build_test_app(first_run_setup_completed=True)
+    app._initial_tab_value = "chat"
+    staged: list[ConsoleFirstChatIntent] = []
+    real_stage = app.pending_handoffs.stage_reserved_console_first_chat
+
+    def stage_then_publish(intent: ConsoleFirstChatIntent) -> int:
+        revision = real_stage(intent)
+        staged.append(intent)
+        assert save_settings_to_cli_config(
+            {"general": {"task5_generation_race": "published-after-stage"}}
+        )
+        return revision
+
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "stage_reserved_console_first_chat",
+        stage_then_publish,
+    )
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(180, 55)) as pilot:
+            await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
+            console = app.screen
+            store, _user = await _seed_live_console_user_draft(console, pilot)
+            console_before = _live_console_projection(console)
+            console, wizard_screen = await _open_rerun_wizard_over_console(
+                app, pilot
+            )
+
+            _press(wizard_screen, "#setup-exit-chat")
+            await _wait_until(pilot, lambda: len(staged) == 1)
+            await _wait_until(
+                pilot,
+                lambda: app.screen is console
+                and app.pending_handoffs.has_pending(
+                    HandoffChannel.CONSOLE_FIRST_CHAT
+                ),
+            )
+            await _wait_until(
+                pilot, lambda: _live_console_projection(console) == console_before
+            )
+
+            assert all(
+                session.id != staged[0].session_id for session in store.sessions()
+            )
+            assert _pending_first_chat(app) == staged[0]
 
 
 # ---------------------------------------------------------------------------

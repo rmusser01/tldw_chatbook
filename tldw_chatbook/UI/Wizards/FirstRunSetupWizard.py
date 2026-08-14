@@ -8968,24 +8968,17 @@ class SetupWizardContainer(WizardContainer):
                 return False
 
             session_id: str | None = None
-            console_owner_found = False
             for screen in reversed(tuple(self.app_instance.screen_stack)):
-                prepare = getattr(
+                eligible_session = getattr(
                     screen,
-                    "prepare_console_first_chat_target",
+                    "eligible_console_first_chat_session_id",
                     None,
                 )
-                if not callable(prepare):
+                if not callable(eligible_session):
                     continue
-                console_owner_found = True
-                session_id = prepare(
-                    provider=provider,
-                    model=model,
-                    config_revision=snapshot.generation,
-                )
+                session_id = eligible_session()
                 break
-            if console_owner_found and session_id is None:
-                return False
+            reserves_new_session = session_id is None
             if session_id is None:
                 session_id = str(uuid4())
             intent = ConsoleFirstChatIntent(
@@ -8994,14 +8987,14 @@ class SetupWizardContainer(WizardContainer):
                 model=model,
                 config_revision=snapshot.generation,
             )
-            if console_owner_found:
+            if reserves_new_session:
+                self.app_instance.pending_handoffs.stage_reserved_console_first_chat(
+                    intent
+                )
+            else:
                 self.app_instance.pending_handoffs.stage(
                     HandoffChannel.CONSOLE_FIRST_CHAT,
                     intent,
-                )
-            else:
-                self.app_instance.pending_handoffs.stage_reserved_console_first_chat(
-                    intent
                 )
         except Exception as exc:  # noqa: BLE001 - keep the UI boundary retryable
             logger.warning(

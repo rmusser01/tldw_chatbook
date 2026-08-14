@@ -421,6 +421,7 @@ from ...config import (
     get_cli_setting,
     get_runtime_config_snapshot,
     load_settings,
+    run_if_runtime_config_generation_current,
     save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
@@ -4297,97 +4298,30 @@ class ChatScreen(BaseAppScreen):
             return None
         return settings
 
-    def prepare_console_first_chat_target(
-        self,
-        *,
-        provider: str,
-        model: str,
-        config_revision: int,
-    ) -> str | None:
-        """Reserve the exact Console session a first-run handoff may activate."""
+    def eligible_console_first_chat_session_id(self) -> str | None:
+        """Return an exact untouched target without creating or changing Console."""
 
-        defaults = self._current_first_chat_defaults(
-            provider=provider,
-            model=model,
-            config_revision=config_revision,
-        )
-        if defaults is None:
+        store = self._console_chat_store
+        if store is None:
             return None
-        store = self._ensure_console_chat_store()
         active_id = store.active_session_id
-        if active_id is not None:
-            active = next(
-                (session for session in store.sessions() if session.id == active_id),
-                None,
-            )
-            baseline = (
-                active.canonical_settings_baseline if active is not None else None
-            )
-            if (
-                baseline is not None
-                and active.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
-                and store.is_pristine_session(
-                    active_id,
-                    expected_settings=baseline,
-                )
-            ):
-                if baseline != defaults:
-                    prior_updated_at = active.updated_at
-                    store.refresh_pristine_session_settings(
-                        active_id,
-                        prior_canonical_settings=baseline,
-                        current_canonical_settings=defaults,
-                    )
-                    current = self._current_first_chat_defaults(
-                        provider=provider,
-                        model=model,
-                        config_revision=config_revision,
-                    )
-                    if current != defaults or store.active_session_id != active_id:
-                        store.rollback_pristine_session_refresh(
-                            active_id,
-                            expected_current_settings=defaults,
-                            prior_settings=baseline,
-                            prior_canonical_settings=baseline,
-                            prior_updated_at=prior_updated_at,
-                        )
-                        return None
-                return active_id
-        prior_active_id = store.active_session_id
-        created = store.create_session(
-            workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
-            settings=defaults,
-            canonical_settings_baseline=defaults,
-            activate=False,
-        )
-        current = self._current_first_chat_defaults(
-            provider=provider,
-            model=model,
-            config_revision=config_revision,
-        )
-        if current != defaults or store.active_session_id != prior_active_id:
-            store.rollback_created_pristine_session(
-                created.id,
-                expected_session=created,
-                expected_settings=defaults,
-                prior_active_session_id=prior_active_id,
-            )
+        if active_id is None:
             return None
-        store.switch_session(created.id)
-        current = self._current_first_chat_defaults(
-            provider=provider,
-            model=model,
-            config_revision=config_revision,
+        active = next(
+            (session for session in store.sessions() if session.id == active_id),
+            None,
         )
-        if current != defaults or store.active_session_id != created.id:
-            store.rollback_created_pristine_session(
-                created.id,
-                expected_session=created,
-                expected_settings=defaults,
-                prior_active_session_id=prior_active_id,
+        baseline = active.canonical_settings_baseline if active is not None else None
+        if (
+            baseline is None
+            or active.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
+            or not store.is_pristine_session(
+                active_id,
+                expected_settings=baseline,
             )
+        ):
             return None
-        return created.id
+        return active_id
 
     def _release_first_chat_claim(self, claim, message: str) -> bool:
         """Release a retryable claim and show at most one warning per revision."""
@@ -4623,7 +4557,10 @@ class ChatScreen(BaseAppScreen):
                 claim,
                 "Console changed before the first chat finished opening. It will retry.",
             )
-        if not self.app_instance.pending_handoffs.acknowledge_current(claim):
+        if not run_if_runtime_config_generation_current(
+            intent.config_revision,
+            lambda: self.app_instance.pending_handoffs.acknowledge_current(claim),
+        ):
             rollback_mutation()
             return self._release_first_chat_claim(
                 claim,
