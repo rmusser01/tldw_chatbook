@@ -32,7 +32,9 @@ against them) moved to ``test_llm_screen_lab_adoption.py``, against
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -43,8 +45,10 @@ from textual import on
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
-from textual.widgets import Button, Static
+from textual.widgets import Button, Collapsible, Static
+from textual.widgets._collapsible import CollapsibleTitle
 
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Model_Artifacts import (
     ArtifactDescriptor,
     ArtifactFile,
@@ -65,6 +69,12 @@ class _ViewApp(ConsolidatedCSSApp):
 
     def compose(self) -> ComposeResult:
         yield self.view
+
+
+class _StyledViewApp(_ViewApp):
+    """Curated harness using the exact production stylesheet bundle."""
+
+    CSS_PATH = TldwCli.CSS_PATH
 
 
 async def _wait_until(condition, *, pilot, attempts: int = 100) -> bool:
@@ -104,7 +114,10 @@ def _descriptor(
         runtime_version_constraint="==0.12.0",
         supported_os=("linux", "macos", "windows"),
         supported_architectures=("x86-64", "arm64"),
-        provenance=(ProvenanceClass.CHATBOOK_CURATED, ProvenanceClass.LOCAL_INTEGRITY_RECORDED),
+        provenance=(
+            ProvenanceClass.CHATBOOK_CURATED,
+            ProvenanceClass.LOCAL_INTEGRITY_RECORDED,
+        ),
         files=files,
         dependencies=(),
         expected_installed_bytes=sum(f.size_bytes for f in files),
@@ -116,7 +129,10 @@ def _registry_with(*descriptors: ArtifactDescriptor) -> CuratedRegistry:
     for descriptor in descriptors:
         registry.register(
             descriptor,
-            sources={file.path: f"https://example.test/{file.path}" for file in descriptor.files},
+            sources={
+                file.path: f"https://example.test/{file.path}"
+                for file in descriptor.files
+            },
         )
     return registry
 
@@ -127,6 +143,42 @@ def _all_text(app: App) -> str:
 
 def _install_buttons(app: App) -> list[Button]:
     return list(app.screen.query(".curated-install").results(Button))
+
+
+def _painted_style_of_text(app: App, region, needle: str):
+    """Return the compositor style carrying one visible label glyph."""
+    strips = app.screen._compositor.render_strips()
+    for y in range(region.y, region.bottom):
+        cursor = 0
+        for segment in strips[y]:
+            next_cursor = cursor + segment.cell_length
+            start = max(cursor, region.x)
+            end = min(next_cursor, region.right)
+            if start < end and needle in segment.text:
+                return segment.style
+            cursor = next_cursor
+    return None
+
+
+def _relative_luminance(color) -> float:
+    triplet = color.get_truecolor()
+
+    def channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(triplet.red)
+        + 0.7152 * channel(triplet.green)
+        + 0.0722 * channel(triplet.blue)
+    )
+
+
+def _contrast(first, second) -> float:
+    lighter, darker = sorted(
+        (_relative_luminance(first), _relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +283,9 @@ async def test_ensure_loaded_without_force_does_not_rerun_the_expensive_reads(
     registry = _registry_with(_descriptor(ArtifactRef("model-a", "a" * 40, "int8")))
     service = ModelArtifactService(tmp_path / "store")
 
-    view = CuratedView(service_factory=lambda: service, registry_factory=lambda: registry)
+    view = CuratedView(
+        service_factory=lambda: service, registry_factory=lambda: registry
+    )
     app = _ViewApp(view)
     async with app.run_test() as pilot:
         view.ensure_loaded()
@@ -263,7 +317,9 @@ async def test_no_user_visible_string_contains_artifact(tmp_path: Path) -> None:
     """
     registry = _registry_with(_descriptor(ArtifactRef("model-a", "a" * 40, "int8")))
     service = ModelArtifactService(tmp_path / "store")
-    view = CuratedView(service_factory=lambda: service, registry_factory=lambda: registry)
+    view = CuratedView(
+        service_factory=lambda: service, registry_factory=lambda: registry
+    )
     app = _ViewApp(view)
     async with app.run_test() as pilot:
         view.ensure_loaded()
@@ -299,7 +355,9 @@ async def test_install_click_posts_install_requested_with_the_resolved_service_a
     registry = _registry_with(descriptor)
     service = ModelArtifactService(tmp_path / "store")
 
-    view = CuratedView(service_factory=lambda: service, registry_factory=lambda: registry)
+    view = CuratedView(
+        service_factory=lambda: service, registry_factory=lambda: registry
+    )
 
     class _CapturingApp(ConsolidatedCSSApp):
         def __init__(self, view: CuratedView) -> None:
@@ -368,7 +426,9 @@ def test_cancel_pending_install_clears_the_indicator_without_reloading() -> None
     view.ensure_loaded.assert_not_called()
 
 
-def test_finish_install_clears_the_indicator_and_reloads_despite_a_missing_progress_widget() -> None:
+def test_finish_install_clears_the_indicator_and_reloads_despite_a_missing_progress_widget() -> (
+    None
+):
     """``finish_install()`` always reloads (a just-installed row must stop
     offering a redundant Install), and tolerates the progress widget being
     momentarily unfindable mid-recompose -- the same tolerance
@@ -528,9 +588,13 @@ async def test_audio_cpp_mode_filters_catalog_and_exposes_joined_recipe_facts(
         assert ordinary.model_id not in text
         assert audio_descriptor.model_id in text
         assert audio_descriptor.model_family in text
-        assert "Speech tasks:" in text
+        assert "Available: Downloadable" in text
+        assert "Integrity: Manifest checksums recorded" in text
+        assert "Recipe: Matched" in text
         assert "Compatibility:" in text
-        assert "Required package files:" in text
+        assert "Configured: Not selected here" in text
+        assert "Running: Not observed here" in text
+        assert view.query_one(".audio-cpp-companions", Collapsible)
         assert "audiocpp_server is not included" in text
 
 
@@ -609,3 +673,168 @@ async def test_installed_audio_cpp_row_outside_handoff_is_not_a_return_action(
         button = _install_buttons(app)[0]
         assert str(button.label) == "Installed"
         assert button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_row_is_truthful_expandable_and_keyboard_reachable_at_80x24(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One dense row keeps six lifecycle dimensions and its action reachable."""
+    import tldw_chatbook.TTS.audio_cpp_recipes as recipes_module
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    recipe = next(
+        item
+        for item in recipes_module.AUDIO_CPP_RECIPE_REGISTRY.recipes
+        if descriptor.reference.artifact_id in item.model_library_artifact_ids
+    )
+    signal = recipe.required_files[0]
+    companion_paths = tuple(
+        f"companions/voice-assets/reviewed-file-{index:02d}.json" for index in range(12)
+    )
+    recipe = replace(
+        recipe,
+        display_name=("Extremely long reviewed audio.cpp family and model name " * 3),
+        required_files=recipe.required_files
+        + tuple(replace(signal, relative_path=path) for path in companion_paths),
+    )
+    monkeypatch.setattr(
+        recipes_module,
+        "AUDIO_CPP_RECIPE_REGISTRY",
+        SimpleNamespace(recipes=(recipe,)),
+    )
+    descriptor = replace(
+        descriptor,
+        model_id=("audio-cpp/very-long-reviewed-model-name-" * 5),
+        model_family=("long-family-name-" * 5),
+    )
+    registry = _registry_with()
+    registry.register(descriptor, sources=sources)
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _StyledViewApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        text = _all_text(app)
+        for fact in (
+            descriptor.model_id,
+            "Available: Downloadable",
+            "Integrity: Manifest checksums recorded",
+            f"Recipe: Matched — {recipe.recipe_id} rev {recipe.recipe_revision}",
+            "Compatibility:",
+            "Configured: Not selected here — review in Guided Settings",
+            "Running: Not observed here — check Speech Lab",
+            "Model package only — audiocpp_server is not included",
+        ):
+            assert fact in text
+        assert "Active" not in text
+
+        class _ComposeMustNotReadRecipes:
+            @property
+            def recipes(self):
+                raise AssertionError("compose read the mutable recipe registry")
+
+        monkeypatch.setattr(
+            recipes_module,
+            "AUDIO_CPP_RECIPE_REGISTRY",
+            _ComposeMustNotReadRecipes(),
+        )
+        view.refresh(recompose=True)
+        await pilot.pause()
+        assert f"Recipe: Matched — {recipe.recipe_id}" in _all_text(app)
+
+        disclosure = view.query_one(".audio-cpp-companions", Collapsible)
+        assert str(disclosure.title) == "Companion files (12)"
+        assert disclosure.collapsed is True
+        refresh = view.query_one("#curated-models-refresh", Button)
+        app.screen.set_focus(refresh)
+        await pilot.press("tab")
+        title = disclosure.query_one(CollapsibleTitle)
+        assert title.has_focus
+        await pilot.press("enter")
+        assert disclosure.collapsed is False
+        assert all(path in _all_text(app) for path in companion_paths)
+
+        await pilot.press("tab")
+        install = view.query_one(".curated-install", Button)
+        assert install.has_focus
+        assert install in app.screen._compositor.visible_widgets
+        assert install.region.right <= view.region.right
+        assert install.region.bottom <= view.region.bottom
+
+
+@pytest.mark.parametrize(
+    "theme",
+    ("textual-dark", "textual-light", "tokyo-night", "monokai", "dracula"),
+)
+@pytest.mark.asyncio
+async def test_disabled_installed_audio_cpp_action_has_reason_and_three_to_one_contrast(
+    tmp_path: Path,
+    theme: str,
+) -> None:
+    """Installed is readable and explains why it is inert in every target theme."""
+    descriptor = _descriptor(
+        ArtifactRef("audio-cpp-model", "a" * 40, "f16"),
+        b"audio-package",
+        consumer="audio_cpp",
+    )
+    registry = _registry_with(descriptor)
+    service = ModelArtifactService(tmp_path / "store")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "model.bin").write_bytes(b"audio-package")
+    service.install(descriptor, source)
+    view = CuratedView(
+        service_factory=lambda: service, registry_factory=lambda: registry
+    )
+    app = _StyledViewApp(view)
+    app.theme = theme
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        button = view.query_one(".curated-install", Button)
+        assert button.disabled is True
+        assert button.styles.opacity == 1.0
+        assert button.tooltip == (
+            "Already installed — open Guided Settings to review this package."
+        )
+        painted = _painted_style_of_text(app, button.region, "Installed")
+        assert painted is not None
+        assert painted.color is not None and painted.bgcolor is not None
+        ratio = _contrast(painted.color, painted.bgcolor)
+        assert ratio >= 3.0, f"Installed is {ratio:.2f}:1 under {theme}"
+
+
+@pytest.mark.asyncio
+async def test_refresh_restores_focus_after_curated_worker_recompose(
+    tmp_path: Path,
+) -> None:
+    """Keyboard refresh returns focus to the newly mounted Refresh control."""
+    descriptor = _descriptor(ArtifactRef("model-a", "a" * 40, "int8"))
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: _registry_with(descriptor),
+    )
+    app = _StyledViewApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        refresh = view.query_one("#curated-models-refresh", Button)
+        app.screen.set_focus(refresh)
+        await pilot.press("enter")
+        assert await _wait_until(
+            lambda: (
+                not view._loading
+                and view.query_one("#curated-models-refresh", Button).has_focus
+            ),
+            pilot=pilot,
+        )

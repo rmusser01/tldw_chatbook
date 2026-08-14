@@ -546,6 +546,10 @@ class LLMManagementWindow(Container):
         self._server_active_states = {
             provider: False for provider in self.SERVER_CONTROLS
         }
+        self._model_library_focus_ids = {
+            "curated": "curated-models-refresh",
+            "installed": "installed-models-refresh",
+        }
 
         # Map navigation button IDs to view IDs. Order matters: it drives the
         # [/] cycling and the position indicator, so it matches the sidebar's
@@ -1899,6 +1903,17 @@ class LLMManagementWindow(Container):
         """React to active view changes."""
         logger.debug(f"LLM view changing from '{old_view}' to '{new_view}'")
 
+        if old_view in self._model_library_focus_ids:
+            focused = self.app.focused
+            old_id = self.view_mapping.get(old_view)
+            if focused is not None and focused.id and old_id is not None:
+                try:
+                    old_widget = self.query_one(f"#{old_id}")
+                except QueryError:
+                    old_widget = None
+                if old_widget is not None and old_widget in focused.ancestors_with_self:
+                    self._model_library_focus_ids[old_view] = focused.id
+
         # Update view visibility
         for view_id in self.view_mapping.values():
             try:
@@ -1918,8 +1933,36 @@ class LLMManagementWindow(Container):
                 # Populate help text for specific views
                 self._populate_help_text(new_view, target_view)
                 self._start_view_work(new_view, target_view)
+                if new_view in self._model_library_focus_ids:
+                    self.call_after_refresh(
+                        self._restore_model_library_focus,
+                        new_view,
+                    )
             except QueryError:
                 logger.error(f"Target view #{target_view_id} not found")
+
+    def _restore_model_library_focus(self, view_name: str) -> None:
+        """Move focus into the visible model-library pane after switching."""
+
+        if self.active_view != view_name:
+            return
+        target_id = self.view_mapping[view_name]
+        try:
+            target = self.query_one(f"#{target_id}")
+        except QueryError:
+            return
+        control_id = self._model_library_focus_ids[view_name]
+        try:
+            control = target.query_one(f"#{control_id}", Button)
+        except QueryError:
+            control = next(
+                (button for button in target.query(Button) if not button.disabled),
+                None,
+            )
+        if control is None or control.disabled:
+            return
+        control.focus()
+        control.scroll_visible(animate=False, immediate=True, force=True)
 
     def _start_view_work(self, view_name: str, view_widget) -> None:
         """Kick off work a view should only do once it is actually shown."""

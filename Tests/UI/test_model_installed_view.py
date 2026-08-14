@@ -2652,6 +2652,128 @@ async def test_curated_view_performs_no_io_at_compose_time(tmp_path: Path) -> No
     registry_factory.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_installed_audio_cpp_row_separates_package_truth_at_80x24(
+    tmp_path: Path,
+) -> None:
+    """Installed package state never impersonates configured or running state."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    descriptor, _sources = audio_cpp_curated_entries()[0]
+    installed = InstalledArtifact(
+        path=tmp_path / "managed-package",
+        descriptor=descriptor,
+        ready=True,
+        active=True,
+        error=None,
+    )
+
+    class Service:
+        def list_installed(self):
+            return (installed,)
+
+        def disk_usage(self):
+            return ArtifactDiskUsage(
+                descriptor.expected_installed_bytes,
+                0,
+                64 * 1024 * 1024,
+            )
+
+    view = InstalledView(service_factory=Service, legacy_dir=tmp_path)
+    app = _StyledInstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        await _wait_until(pilot, lambda: view._loaded)
+        text = _rendered_static_text(view)
+        for fact in (
+            "Available: Installed locally",
+            "Integrity: Verified",
+            "Recipe: Matched",
+            "Compatibility:",
+            "Configured: Not observed here — review Guided Settings",
+            "Running: Not observed here — check Speech Lab",
+            "Model package only — audiocpp_server is not included",
+        ):
+            assert fact in text
+        assert "Active" not in text
+        assert not view.query(".model-activate")
+        delete = view.query_one(".model-delete", Button)
+        delete.focus()
+        await pilot.pause()
+        assert delete in app.screen._compositor.visible_widgets
+        assert delete.region.right <= view.region.right
+        assert delete.region.bottom <= view.region.bottom
+
+
+@pytest.mark.asyncio
+async def test_blocked_audio_cpp_removal_paints_recovery_and_restores_delete_focus(
+    tmp_path: Path,
+) -> None:
+    """A live generation blocks removal inline and returns focus to retry."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRemovalAvailability
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+    )
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    descriptor, _sources = audio_cpp_curated_entries()[0]
+    reference = descriptor.reference
+    installed = InstalledArtifact(
+        path=tmp_path / "managed-package",
+        descriptor=descriptor,
+        ready=True,
+        active=False,
+        error=None,
+    )
+    evidence = AudioCppArtifactRemovalEvidence(
+        reference,
+        staged_runtime_ids=("staged-generation",),
+    )
+
+    class Service:
+        def list_installed(self):
+            return (installed,)
+
+        def disk_usage(self):
+            return ArtifactDiskUsage(1, 0, 64 * 1024 * 1024)
+
+    class Coordinator:
+        async def probe_removal_availability(self, exact):
+            assert exact == reference
+            return ArtifactRemovalAvailability.AVAILABLE
+
+    view = InstalledView(service_factory=Service, legacy_dir=tmp_path)
+
+    class BlockedApp(_StyledInstalledApp):
+        async def _audio_cpp_artifact_removal_evidence(self, exact):
+            assert exact == reference
+            return evidence
+
+        def _ensure_audio_cpp_artifact_lease_coordinator(self):
+            return Coordinator()
+
+    app = BlockedApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        await _wait_until(pilot, lambda: view._loaded)
+        view.query_one(".model-delete", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: "Package in use" in _rendered_static_text(view),
+        )
+        status = view.query_one("#installed-lifecycle-status", Static)
+        assert "Shut down or discard active work, then review removal again." in str(
+            status.renderable
+        )
+        delete = view.query_one(".model-delete", Button)
+        assert delete.has_focus
+        assert delete in app.screen._compositor.visible_widgets
+
+
 def test_curated_progress_tolerates_recompose_gap() -> None:
     """A progress event is retained while its widget is temporarily absent.
 

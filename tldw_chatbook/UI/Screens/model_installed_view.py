@@ -14,9 +14,10 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.events import DescendantFocus
 from textual.screen import Screen
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import Button, Collapsible, Static
 
 from tldw_chatbook.Model_Artifacts.gguf_admission import (
     GGUFBoundsError,
@@ -49,6 +50,10 @@ from tldw_chatbook.UI.Screens.model_browser_state import (
     UnmanagedRow,
     format_mib,
     inventory_rows,
+)
+from tldw_chatbook.UI.Screens.model_curated_view import (
+    AudioCppPackageProjection,
+    audio_cpp_package_projection,
 )
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
@@ -247,6 +252,8 @@ class InstalledView(Widget):
         self._loading = False
         self._reload_after_load = False
         self._load_error: str | None = None
+        self._audio_cpp_projections: dict[ArtifactRef, AudioCppPackageProjection] = {}
+        self._lifecycle_status: str | None = None
         self._install_active = False
         self._install_progress: AcquisitionProgress | None = None
         self._operation_reference: ArtifactRef | None = None
@@ -331,6 +338,13 @@ class InstalledView(Widget):
                 id="installed-gguf-import-status",
                 markup=False,
             )
+        if self._lifecycle_status is not None:
+            yield Static(
+                self._lifecycle_status,
+                id="installed-lifecycle-status",
+                classes="installed-recovery-status",
+                markup=False,
+            )
         if self._import_active:
             with Horizontal(classes="installed-import-actions"):
                 yield Button(
@@ -356,7 +370,7 @@ class InstalledView(Widget):
         else:
             yield self._summary()
 
-        with VerticalScroll(classes="installed-list"):
+        with VerticalScroll(classes="installed-list", can_focus=False):
             if self._loaded and not self._rows:
                 yield Static(
                     "No managed or legacy models found. Use Import GGUF… for a "
@@ -414,6 +428,11 @@ class InstalledView(Widget):
 
     def _row_widget(self, row: InventoryRow) -> Vertical:
         """Build one inventory row from pure render state."""
+        audio_cpp = (
+            self._audio_cpp_projections.get(row.reference)
+            if row.reference is not None
+            else None
+        )
         children: list[Widget] = [
             Static(row.model_label, classes="installed-model-title", markup=False),
             Static(row.provenance, classes="installed-model-muted", markup=False),
@@ -438,7 +457,10 @@ class InstalledView(Widget):
                 )
         if row.size_bytes is not None:
             children.append(Static(f"Size: {format_mib(row.size_bytes)}"))
-        children.append(Static(row.action_hint, markup=False))
+        if audio_cpp is None:
+            children.append(Static(row.action_hint, markup=False))
+        else:
+            children.extend(self._audio_cpp_facts(row, audio_cpp))
         if row.reference == self._operation_reference:
             recovery_text = _DELETE_RECOVERY_TEXT.get(self._operation_name or "")
             if recovery_text is not None:
@@ -450,15 +472,18 @@ class InstalledView(Widget):
                     )
                 )
         if row.reference is not None and not row.is_broken:
-            children.append(
-                ModelActivationControls(
-                    row.reference,
-                    active=row.active,
-                    ready=row.ready,
-                    allow_activation=row.activation_allowed,
-                    pending=self._lifecycle_pending(),
-                )
+            controls = ModelActivationControls(
+                row.reference,
+                active=row.active,
+                ready=row.ready,
+                allow_activation=(
+                    False if audio_cpp is not None else row.activation_allowed
+                ),
+                pending=self._lifecycle_pending(),
             )
+            if audio_cpp is not None:
+                controls.add_class("audio-cpp-actions")
+            children.append(controls)
         elif row.is_unmanaged and row.path.suffix.casefold() == ".gguf":
             children.append(
                 LocalGGUFImportControls(
@@ -466,7 +491,48 @@ class InstalledView(Widget):
                     pending=self._lifecycle_pending(),
                 )
             )
-        return Vertical(*children, classes="installed-model-row")
+        classes = (
+            "installed-model-row audio-cpp-model-row"
+            if audio_cpp is not None
+            else "installed-model-row"
+        )
+        return Vertical(*children, classes=classes)
+
+    @staticmethod
+    def _audio_cpp_facts(
+        row: InventoryRow,
+        projection: AudioCppPackageProjection,
+    ) -> tuple[Widget, ...]:
+        """Render package truth without inferring configuration or runtime use."""
+
+        companions = Collapsible(
+            Static("\n".join(projection.companion_paths) or "None", markup=False),
+            title=f"Companion files ({len(projection.companion_paths)})",
+            classes="audio-cpp-companions",
+            collapsed=True,
+        )
+        return (
+            Static("Available: Installed locally", markup=False),
+            Static(
+                "Integrity: Verified"
+                if row.ready
+                else "Integrity: Verification required",
+                markup=False,
+            ),
+            Static(f"Recipe: {projection.recipe}", markup=False),
+            Static(f"Compatibility: {projection.compatibility}", markup=False),
+            Static(
+                "Configured: Not observed here — review Guided Settings",
+                markup=False,
+            ),
+            Static("Running: Not observed here — check Speech Lab", markup=False),
+            companions,
+            Static(
+                "Model package only — audiocpp_server is not included",
+                classes="installed-model-muted audio-cpp-package-copy",
+                markup=False,
+            ),
+        )
 
     @staticmethod
     def scan_unmanaged(
@@ -562,6 +628,13 @@ class InstalledView(Widget):
                 excluded_root=getattr(service, "artifacts_path", None),
             )
             rows = inventory_rows(installed, usage, unmanaged)
+            audio_cpp = {
+                item.descriptor.reference: projection
+                for item in installed
+                if item.descriptor is not None
+                and (projection := audio_cpp_package_projection(item.descriptor))
+                is not None
+            }
         except Exception:
             logger.opt(exception=True).error(
                 "Managed model inventory load failed; legacy_scan_configured={}",
@@ -574,13 +647,14 @@ class InstalledView(Widget):
                 "The local model inventory could not be loaded.",
             )
             return
-        self.app.call_from_thread(self._apply_inventory, rows, usage, None)
+        self.app.call_from_thread(self._apply_inventory, rows, usage, None, audio_cpp)
 
     def _apply_inventory(
         self,
         rows: tuple[InventoryRow, ...],
         usage: ArtifactDiskUsage | None,
         error: str | None,
+        audio_cpp: dict[ArtifactRef, AudioCppPackageProjection] | None = None,
     ) -> None:
         """Apply a completed inventory read on the Textual event loop."""
         self._rows = rows
@@ -588,6 +662,8 @@ class InstalledView(Widget):
         self._loading = False
         self._loaded = error is None
         self._load_error = error
+        if audio_cpp is not None:
+            self._audio_cpp_projections = audio_cpp
         reload_after_load = self._reload_after_load
         self._reload_after_load = False
         if reload_after_load:
@@ -610,6 +686,11 @@ class InstalledView(Widget):
             if not control.disabled:
                 control.focus()
                 return
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Keep keyboard-selected disclosures and actions inside the viewport."""
+
+        event.widget.scroll_visible(animate=False, immediate=True, force=True)
 
     @on(Button.Pressed, "#installed-models-import-gguf")
     def _header_import_pressed(self) -> None:
@@ -1040,6 +1121,7 @@ class InstalledView(Widget):
         event.stop()
         if self._lifecycle_pending():
             return
+        self._lifecycle_status = None
         blocked = self._may_delete(event.reference)
         if blocked is not None:
             self.notify(blocked, severity="warning")
@@ -1129,7 +1211,11 @@ class InstalledView(Widget):
                 "Package dependencies could not be reviewed. Retry removal.",
                 severity="error",
             )
+            self._lifecycle_status = (
+                "Dependency review failed — removal was not attempted. Retry removal."
+            )
             self.refresh(recompose=True)
+            self.call_after_refresh(self._focus_delete, reference)
             return
         if preview.staged_or_live or preview.generic_lease_blocked:
             self._operation_reference = None
@@ -1142,12 +1228,31 @@ class InstalledView(Widget):
                 ),
                 severity="warning",
             )
+            self._lifecycle_status = (
+                "Package in use — removal blocked. Shut down or discard active work, "
+                "then review removal again."
+            )
             self.refresh(recompose=True)
+            self.call_after_refresh(self._focus_delete, reference)
             return
         self._operation_reference = None
         self._operation_name = None
         self._pending_removal_preview = preview
         self._show_delete_confirmation(reference, preview)
+
+    def _focus_delete(self, reference: ArtifactRef) -> None:
+        """Restore focus to the exact package action after recovery paint."""
+
+        for controls in self.query(ModelActivationControls):
+            if controls.reference != reference:
+                continue
+            try:
+                button = controls.query_one(".model-delete", Button)
+            except NoMatches:
+                return
+            button.focus()
+            button.scroll_visible(animate=False, immediate=True, force=True)
+            return
 
     def _confirm_deletion(self, confirmed: bool) -> None:
         """Start deletion only after the confirmation dialog accepts it."""
@@ -1399,6 +1504,7 @@ class InstalledView(Widget):
         """Complete a lifecycle operation and refresh inventory."""
         self._operation_reference = None
         self._operation_name = None
+        self._lifecycle_status = None
         if error is not None:
             self.notify(error, severity="error")
         else:

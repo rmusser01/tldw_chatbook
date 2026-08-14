@@ -10,9 +10,10 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.events import DescendantFocus
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import Button, Collapsible, Static
 
 from tldw_chatbook.Model_Artifacts.curated_registry import (
     CuratedRegistry,
@@ -35,11 +36,58 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class AudioCppPackageProjection:
+    """Immutable recipe facts safe to render without registry access."""
+
+    recipe: str
+    compatibility: str
+    companion_paths: tuple[str, ...]
+
+
+def audio_cpp_package_projection(
+    descriptor: ArtifactDescriptor,
+) -> AudioCppPackageProjection | None:
+    """Join a reviewed audio.cpp descriptor to its frozen recipe facts."""
+
+    if descriptor.consumer != "audio_cpp":
+        return None
+    from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+
+    recipe = next(
+        (
+            item
+            for item in AUDIO_CPP_RECIPE_REGISTRY.recipes
+            if descriptor.reference.artifact_id in item.model_library_artifact_ids
+        ),
+        None,
+    )
+    if recipe is None:
+        return AudioCppPackageProjection("Unmatched", "Unknown", ())
+    evidence = ", ".join(
+        f"{item.system}/{item.architecture}/{item.backend.value}: {item.state.value}"
+        for item in recipe.backend_evidence
+    )
+    model_path = recipe.projection.model_relative_path
+    companions = tuple(
+        item.relative_path
+        for item in (*recipe.required_files, *recipe.optional_files)
+        if item.relative_path != model_path
+    )
+    return AudioCppPackageProjection(
+        recipe=f"Matched — {recipe.recipe_id} rev {recipe.recipe_revision}",
+        compatibility=f"{recipe.audio_cpp_release} · {evidence}",
+        companion_paths=companions,
+    )
+
+
+@dataclass(frozen=True)
 class CuratedRow:
     """One curated descriptor cross-referenced with installed inventory."""
 
     descriptor: ArtifactDescriptor
     installed: bool
+    integrity: str = "Manifest checksums recorded"
+    audio_cpp: AudioCppPackageProjection | None = None
 
 
 class CuratedView(Widget):
@@ -186,6 +234,7 @@ class CuratedView(Widget):
         self._progress: "AcquisitionProgress | None" = None
         self._consumer_filter: str | None = None
         self._allow_installed_return = False
+        self._restore_focus_after_load = False
         super().__init__(id=id)
 
     def compose(self) -> ComposeResult:
@@ -203,9 +252,11 @@ class CuratedView(Widget):
         elif self._load_error:
             yield Static(self._load_error, markup=False)
         elif not self._loaded:
-            yield Static("Open Curated to load the offline model catalog.", markup=False)
+            yield Static(
+                "Open Curated to load the offline model catalog.", markup=False
+            )
 
-        with VerticalScroll(classes="curated-list"):
+        with VerticalScroll(classes="curated-list", can_focus=False):
             for row in self._rows:
                 yield self._row_widget(row)
 
@@ -230,6 +281,12 @@ class CuratedView(Widget):
         )
         install.reference = descriptor.reference
         install.already_installed = row.installed
+        if row.installed and not audio_cpp_return:
+            install.tooltip = (
+                "Already installed — open Guided Settings to review this package."
+            )
+        elif self._operation_reference is not None:
+            install.tooltip = "Another model package operation is in progress."
         actions = [install]
         if self._external_key(descriptor.reference) is not None:
             use_from_disk = Button(
@@ -259,78 +316,48 @@ class CuratedView(Widget):
                 markup=False,
             ),
         ]
-        if descriptor.consumer == "audio_cpp":
-            details.extend(self._audio_cpp_facts(descriptor))
-        details.append(Horizontal(*actions, classes="curated-actions"))
-        return Vertical(*details, classes="curated-model-row")
+        if row.audio_cpp is not None:
+            details.extend(self._audio_cpp_facts(row))
+            details.append(
+                Vertical(*actions, classes="curated-actions audio-cpp-actions")
+            )
+            classes = "curated-model-row audio-cpp-model-row"
+        else:
+            details.append(Horizontal(*actions, classes="curated-actions"))
+            classes = "curated-model-row"
+        return Vertical(*details, classes=classes)
 
     @staticmethod
-    def _audio_cpp_facts(descriptor: ArtifactDescriptor) -> tuple[Static, ...]:
-        """Project joined recipe facts for one reviewed audio.cpp descriptor."""
+    def _audio_cpp_facts(row: CuratedRow) -> tuple[Widget, ...]:
+        """Render only the immutable audio.cpp package projection."""
 
-        from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
-
-        recipe = next(
-            (
-                item
-                for item in AUDIO_CPP_RECIPE_REGISTRY.recipes
-                if descriptor.reference.artifact_id in item.model_library_artifact_ids
-            ),
-            None,
-        )
-        if recipe is None:
-            return (
-                Static(
-                    "Model package only — audiocpp_server is not included",
-                    classes="curated-model-muted",
-                    markup=False,
-                ),
-            )
-        tasks = ", ".join(
-            capability.upper()
-            for capability in recipe.capabilities
-            if capability in {"tts", "clone"}
-        )
-        compatibility = ", ".join(
-            f"{evidence.system}/{evidence.architecture}/{evidence.backend.value}:"
-            f" {evidence.state.value}"
-            for evidence in recipe.backend_evidence
-        )
-        required = ", ".join(item.relative_path for item in recipe.required_files)
-        model_path = recipe.projection.model_relative_path
-        companions = (
-            ", ".join(
-                item.relative_path
-                for item in (*recipe.required_files, *recipe.optional_files)
-                if item.relative_path != model_path
-            )
-            or "None"
+        projection = row.audio_cpp
+        assert projection is not None
+        companions = Collapsible(
+            Static("\n".join(projection.companion_paths) or "None", markup=False),
+            title=f"Companion files ({len(projection.companion_paths)})",
+            classes="audio-cpp-companions",
+            collapsed=True,
         )
         return (
-            Static(f"Speech tasks: {tasks}", markup=False),
             Static(
-                f"Recipe variant: {recipe.package_variant}",
-                classes="curated-model-muted",
+                "Available: Installed locally"
+                if row.installed
+                else "Available: Downloadable",
                 markup=False,
             ),
+            Static(f"Integrity: {row.integrity}", markup=False),
+            Static(f"Recipe: {projection.recipe}", markup=False),
+            Static(f"Compatibility: {projection.compatibility}", markup=False),
             Static(
-                f"Compatibility: {recipe.audio_cpp_release} · {compatibility}",
-                classes="curated-model-muted",
+                "Configured: Not selected here — review in Guided Settings",
                 markup=False,
             ),
-            Static(
-                f"Required package files: {required}",
-                classes="curated-model-muted",
-                markup=False,
-            ),
-            Static(
-                f"Companion files: {companions}",
-                classes="curated-model-muted",
-                markup=False,
-            ),
+            Static("Running: Not observed here — check Speech Lab", markup=False),
+            companions,
             Static(
                 "Model package only — audiocpp_server is not included",
-                classes="curated-model-muted",
+                classes="curated-model-muted audio-cpp-package-copy",
                 markup=False,
             ),
         )
@@ -399,13 +426,25 @@ class CuratedView(Widget):
         try:
             registry = self._registry_for_worker()
             installed = self._service_for_worker().list_installed()
-            installed_refs = {
-                item.descriptor.reference
+            installed_by_ref = {
+                item.descriptor.reference: item
                 for item in installed
                 if item.descriptor is not None
             }
             rows = tuple(
-                CuratedRow(descriptor, descriptor.reference in installed_refs)
+                CuratedRow(
+                    descriptor,
+                    descriptor.reference in installed_by_ref,
+                    (
+                        "Verified"
+                        if descriptor.reference in installed_by_ref
+                        and installed_by_ref[descriptor.reference].ready
+                        else "Verification required"
+                        if descriptor.reference in installed_by_ref
+                        else "Manifest checksums recorded"
+                    ),
+                    audio_cpp_package_projection(descriptor),
+                )
                 for descriptor in registry.list()
                 if descriptor.role is ArtifactRole.ROOT
                 and (
@@ -433,9 +472,28 @@ class CuratedView(Widget):
         self._loaded = error is None
         self._load_error = error
         self.refresh(recompose=True)
+        if self._restore_focus_after_load:
+            self._restore_focus_after_load = False
+            self.call_after_refresh(self._restore_refresh_focus)
+
+    def _restore_refresh_focus(self) -> None:
+        """Return keyboard focus to the remounted Refresh button."""
+
+        try:
+            refresh = self.query_one("#curated-models-refresh", Button)
+        except NoMatches:
+            return
+        refresh.focus()
+        refresh.scroll_visible(animate=False, immediate=True, force=True)
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Keep keyboard-selected disclosures and actions inside the viewport."""
+
+        event.widget.scroll_visible(animate=False, immediate=True, force=True)
 
     @on(Button.Pressed, "#curated-models-refresh")
     def _refresh_pressed(self) -> None:
+        self._restore_focus_after_load = True
         self.ensure_loaded(force=True)
 
     @on(Button.Pressed, ".curated-install")

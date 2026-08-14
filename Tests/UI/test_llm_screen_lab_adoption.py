@@ -4619,6 +4619,42 @@ async def test_local_import_terminal_releases_host_ownership(tmp_path, fail):
         screen._run_curated_preflight.assert_called_once_with()
 
 
+@pytest.mark.asyncio
+async def test_model_library_view_switch_restores_keyboard_focus_at_80x24(
+    monkeypatch,
+):
+    """A hidden model-library pane must not retain the live keyboard focus."""
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    monkeypatch.setattr(CuratedView, "ensure_loaded", lambda self: None)
+    monkeypatch.setattr(InstalledView, "ensure_loaded", lambda self: None)
+    app = _app()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#installed-models-view")),
+            pilot,
+        )
+        window = screen.query_one(LLMManagementWindow)
+
+        window.active_view = "installed"
+        await pilot.pause()
+        repair = window.query_one("#installed-models-repair", Button)
+        repair.focus()
+        await pilot.pause()
+        assert app.focused is repair
+
+        window.active_view = "curated"
+        await pilot.pause()
+        assert app.focused is window.query_one("#curated-models-refresh", Button)
+
+        window.active_view = "installed"
+        await pilot.pause()
+        assert app.focused is window.query_one("#installed-models-repair", Button)
+
+
 # Windows Proactor event-loop setup owns an internal loopback socket pair.
 @pytest.mark.allow_network
 @pytest.mark.asyncio
