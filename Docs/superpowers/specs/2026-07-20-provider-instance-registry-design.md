@@ -70,11 +70,11 @@ temperature = 0.7
 max_tokens = 4096
 
 [provider_instances.vllm-1.keys.production]
-value = "sk-..."
+value = "<API_KEY_HERE>"
 default = true
 
 [provider_instances.vllm-1.keys.staging]
-value = "sk-..."
+value = "<API_KEY_HERE>"
 ```
 
 ## Components

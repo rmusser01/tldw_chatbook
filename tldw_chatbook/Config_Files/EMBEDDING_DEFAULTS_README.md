@@ -27,10 +27,11 @@ Embedding settings can be configured in multiple places (in order of priority):
    - `RAG_DEVICE` - Force specific device (cuda/mps/cpu)
    - `OPENAI_API_KEY` - For OpenAI embeddings
 
-2. **Embedding Configuration** in `config.toml`:
+2. **Embedding Configuration** in `config.toml` (example: switching the
+   shipped `e5-small-v2` default to a higher-quality model):
    ```toml
    [embedding_config]
-   default_model_id = "mxbai-embed-large-v1"
+   default_model_id = "mxbai-embed-large-v1"  # overrides the shipped e5-small-v2 default
    
    [embedding_config.models.mxbai-embed-large-v1]
    provider = "huggingface"
