@@ -853,6 +853,27 @@ def test_search_excerpts_center_matches_and_browse_uses_leading_preview(
     assert browse["evidence"]["snippet"].startswith("LEADING-PREVIEW")
 
 
+def test_search_excerpt_keeps_match_after_casefold_expansion(
+    db: SubscriptionsDB,
+) -> None:
+    source_id = _source(db, "Casefold expansion")
+    item_id = _item(
+        db,
+        source_id,
+        "casefold-expansion",
+        title="İ" * 3_000 + " NEEDLE",
+        content="ordinary body",
+    )
+
+    item = _payload(_service(db).search_items({"query": "needle", "limit": 1}))[
+        "items"
+    ][0]
+
+    assert item["id"] == f"local:watchlist_item:{item_id}"
+    assert "NEEDLE" in item["evidence"]["snippet"]
+    assert len(item["evidence"]["snippet"].encode("utf-8")) <= 4_096
+
+
 def test_search_preserves_hostile_shaped_evidence_as_escaped_untrusted_data(
     db: SubscriptionsDB,
 ) -> None:
@@ -952,6 +973,37 @@ def test_detail_keeps_null_article_truthful_and_change_evidence_explicit(
     serialized = json.dumps(change_item, allow_nan=False)
     assert "Infinity" not in serialized
     assert "NaN" not in serialized
+
+
+@pytest.mark.parametrize("empty_content", ("", " \t\n "))
+def test_detail_uses_change_evidence_when_normalized_article_body_is_empty(
+    db: SubscriptionsDB, empty_content: str
+) -> None:
+    source_id = _source(db, f"Empty article {len(empty_content)}")
+    item_id = _item(
+        db,
+        source_id,
+        f"empty-article-{len(empty_content)}",
+        content=empty_content,
+        content_format="diff",
+        content_kind="change",
+        diff_summary="- old\n+ new",
+        change_percentage=25.0,
+        change_type="content",
+    )
+
+    evidence = _payload(
+        _service(db).get_item({"item_id": f"local:watchlist_item:{item_id}"})
+    )["item"]["evidence"]
+
+    assert evidence == {
+        "content_is_untrusted": True,
+        "change_summary": "- old\n+ new",
+        "change_summary_truncated": False,
+        "change_type": "content",
+        "change_percentage": 25.0,
+        "change_percentage_invalid": False,
+    }
 
 
 def _assert_emitted_urls_are_safe(value: object) -> None:

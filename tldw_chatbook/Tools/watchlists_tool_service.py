@@ -293,13 +293,15 @@ class WatchlistsToolService:
         )[int(row["subscription_id"])]
         item = self._shape_item_metadata(row, membership)
         if row["content"] is not None:
-            item["evidence"] = {
-                "content_is_untrusted": True,
-                "content": readable_body_text(row["content"]),
-                "content_normalized": True,
-                "content_truncated": False,
-            }
-            return self._fit_detail_content(item)
+            normalized_content = readable_body_text(row["content"])
+            if normalized_content.strip():
+                item["evidence"] = {
+                    "content_is_untrusted": True,
+                    "content": normalized_content,
+                    "content_normalized": True,
+                    "content_truncated": False,
+                }
+                return self._fit_detail_content(item)
         if row["diff_summary"] is not None:
             summary, summary_truncated = self._bounded_text(
                 row["diff_summary"], _MAX_CHANGE_SUMMARY_BYTES
@@ -896,12 +898,21 @@ class WatchlistsToolService:
             if value is None:
                 continue
             text = str(value)
-            lowered = text.casefold()
+            folded_parts: list[str] = []
+            original_positions: list[int] = []
+            for position, character in enumerate(text):
+                folded_character = character.casefold()
+                folded_parts.append(folded_character)
+                original_positions.extend([position] * len(folded_character))
+            folded_text = "".join(folded_parts)
             for needle in needles:
-                index = lowered.find(needle.casefold())
-                if index >= 0:
+                folded_needle = needle.casefold()
+                folded_index = folded_text.find(folded_needle)
+                if folded_index >= 0:
+                    start = original_positions[folded_index]
+                    end = original_positions[folded_index + len(folded_needle) - 1] + 1
                     return WatchlistsToolService._centered_excerpt(
-                        text, index, len(needle)
+                        text, start, end - start
                     )
         return WatchlistsToolService._bounded_text(
             row["content_match_context"], _MAX_SNIPPET_BYTES
