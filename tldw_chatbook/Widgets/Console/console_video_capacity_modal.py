@@ -10,6 +10,11 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
+    CancelConfirmationDialog,
+)
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
 CapacityReason = Literal["over_capacity", "store_failure"]
 CapacityAction = Literal["keep", "save_external", "discard"]
 
@@ -20,7 +25,7 @@ def _format_bytes(size_bytes: int) -> str:
     return f"{mib:.1f} MiB"
 
 
-class ConsoleVideoCapacityModal(ModalScreen[CapacityAction]):
+class ConsoleVideoCapacityModal(SafeModalDismissMixin, ModalScreen[CapacityAction]):
     """Ask where to put a generated video that is not in the managed store."""
 
     DEFAULT_CSS = """
@@ -66,7 +71,8 @@ class ConsoleVideoCapacityModal(ModalScreen[CapacityAction]):
     }
     """
 
-    BINDINGS = [("escape", "discard", "Discard")]
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#video-capacity-dialog"
 
     def __init__(
         self,
@@ -88,6 +94,7 @@ class ConsoleVideoCapacityModal(ModalScreen[CapacityAction]):
         self._reason = reason
         self._size_bytes = size_bytes
         self._max_bytes = max_bytes
+        self._discard_confirmation_open = False
 
     def compose(self) -> ComposeResult:
         """Compose the reason-specific copy and three terminal actions."""
@@ -137,6 +144,11 @@ class ConsoleVideoCapacityModal(ModalScreen[CapacityAction]):
 
     def on_mount(self) -> None:
         """Focus the safest reason-specific default action."""
+        super().on_mount()
+        self._focus_safe_default()
+
+    def _focus_safe_default(self) -> None:
+        """Focus the safest action for the current storage failure."""
         button_id = (
             "video-capacity-save"
             if self._reason == "over_capacity"
@@ -144,9 +156,33 @@ class ConsoleVideoCapacityModal(ModalScreen[CapacityAction]):
         )
         self.query_one(f"#{button_id}", Button).focus()
 
-    def action_discard(self) -> None:
-        """Treat Escape as an explicit discard decision."""
-        self.dismiss("discard")
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        """Require explicit confirmation before a generic discard request."""
+        del source
+        if self._discard_confirmation_open:
+            return
+        self._discard_confirmation_open = True
+        self.app.push_screen(
+            CancelConfirmationDialog(
+                title="Discard generated video?",
+                message=(
+                    "Discard this generated video? The generated result will be "
+                    "lost and cannot be recovered."
+                ),
+                confirm_text="Discard",
+                cancel_text="Continue",
+            ),
+            callback=self._apply_discard_confirmation,
+        )
+
+    def _apply_discard_confirmation(self, confirmed: bool | None) -> None:
+        """Apply only an explicit confirmation as a discard action."""
+        self._discard_confirmation_open = False
+        if confirmed is True:
+            self.dismiss_safe_once("discard")
+            return
+        if self.is_mounted and self.app.screen is self:
+            self.call_after_refresh(self._focus_safe_default)
 
     @on(Button.Pressed, "#video-capacity-keep")
     def _keep(self, event: Button.Pressed) -> None:

@@ -107,6 +107,9 @@ from tldw_chatbook.Widgets.Console.console_skill_picker_modal import (
 from tldw_chatbook.Widgets.Console.console_style_picker_modal import (
     ConsoleStylePickerModal,
 )
+from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
+    ConsoleVideoCapacityModal,
+)
 from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
@@ -802,6 +805,17 @@ def test_task4_transitive_modal_contract_table_is_complete_and_adopted() -> None
     launch_source = inspect.getsource(ChangeReviewScreen._confirm_and_revert)
     launch_source += inspect.getsource(ChangeReviewScreen.action_undo_all)
     assert "ChangeRevertConfirmModal(" in launch_source
+
+
+def test_capacity_modal_uses_guarded_safe_dismissal_contract() -> None:
+    assert issubclass(ConsoleVideoCapacityModal, SafeModalDismissMixin)
+    assert ConsoleVideoCapacityModal.SAFE_MODAL_CONTENT == "#video-capacity-dialog"
+    assert [
+        action
+        for binding in ConsoleVideoCapacityModal.BINDINGS
+        for key, action in [_binding_key_action(binding)]
+        if key == "escape"
+    ] == ["request_safe_cancel"]
 
 
 def test_task5_prompt_workbench_transition_table_is_complete_and_adopted() -> None:
