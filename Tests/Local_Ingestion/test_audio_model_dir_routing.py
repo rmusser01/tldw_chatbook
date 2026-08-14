@@ -48,6 +48,14 @@ def test_audio_processor_passes_model_directory_to_transcription(
             "local_files_only": True,
             "batch_route_resolved": True,
             "progress_callback": None,
+            "model_path": None,
+            "attempt_id": None,
+            "batch_id": None,
+            "job_id": None,
+            "retry_of_attempt_id": None,
+            "retry_of_job_id": None,
+            "retry_source_failure_provenance": None,
+            "timestamps": True,
         }
     ]
 
