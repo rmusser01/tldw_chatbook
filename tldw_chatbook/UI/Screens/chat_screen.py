@@ -14815,7 +14815,18 @@ class ChatScreen(BaseAppScreen):
         """
         if not self.is_mounted:
             return
-        self._start_console_transcript_sync_timer()
+        # Hop through the message pump before creating the timer. Textual's
+        # ``Timer._tick`` reads the ``active_app`` ContextVar, and an
+        # asyncio task inherits the context it was CREATED in -- this hook
+        # can run in a bare ``call_soon_threadsafe`` callback context (the
+        # coordinator's drain intake hops from the child's thread, whose
+        # copied context has no active_app), where a directly-created
+        # timer's task dies on its first tick without ever beating.
+        # Observed live (task-15862 diagnosis): "arm-poll" logged, zero
+        # beats, transcript frozen through the whole wake turn. A
+        # ``Callback`` message runs inside the pump's own task, which
+        # carries the app context, so the timer it creates ticks.
+        self.call_later(self._start_console_transcript_sync_timer)
 
     def _console_wake_turn_active(self, session_id: str | None) -> bool:
         """Whether the auto-wake coordinator is delivering into ``session_id``.

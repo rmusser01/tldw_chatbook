@@ -32,6 +32,7 @@ itself again.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
 import pytest
@@ -60,6 +61,28 @@ async def _settle(pilot, predicate, seconds: float = 8.0) -> bool:
             return True
         await pilot.pause(0.05)
     return bool(predicate())
+
+
+def _drain_from_child_thread(wake, drain) -> None:
+    """Deliver the drain from a plain thread, as production does.
+
+    The bridge fan-out fires on the CHILD's daemon thread, so
+    ``retry_soon``'s ``call_soon_threadsafe`` copies THAT thread's
+    context -- which carries no Textual ``active_app``. The task-15862
+    live diagnosis caught a transcript-poll timer created straight from
+    that bare callback context dying on its very first tick (Textual's
+    ``Timer._tick`` reads the ``active_app`` ContextVar, and an asyncio
+    task inherits the context it was created in): "arm-poll" logged,
+    zero beats, frozen transcript. This suite's first version injected
+    the drain from the test coroutine -- whose context HAS active_app
+    under ``run_test`` -- and passed against that broken arming. Every
+    delivery-driving injection here must therefore come from a plain
+    thread, so the screen's arming is exercised in the context
+    production gives it.
+    """
+    thread = threading.Thread(target=lambda: wake.on_fleet_drained(drain))
+    thread.start()
+    thread.join(5)
 
 
 async def _mounted_wake_rig(pilot, host, *, reply: str = "wake reply"):
@@ -118,8 +141,9 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
         gate = asyncio.Event()
         gateway.stream_gate = gate
 
-        controller.fleet_wake.on_fleet_drained(
-            _drain(target.id, _survivor(run_id, session_id=target.id))
+        _drain_from_child_thread(
+            controller.fleet_wake,
+            _drain(target.id, _survivor(run_id, session_id=target.id)),
         )
         assert await _settle(pilot, lambda: gateway.payloads), (
             "the wake turn never started streaming"
@@ -181,8 +205,9 @@ async def test_wake_reply_reaches_the_viewed_transcript_without_a_switch(
         session = store.ensure_session()
         _parent, run_id = _terminal_subagent_run(bridge.runs_db, session.id)
 
-        controller.fleet_wake.on_fleet_drained(
-            _drain(session.id, _survivor(run_id, session_id=session.id))
+        _drain_from_child_thread(
+            controller.fleet_wake,
+            _drain(session.id, _survivor(run_id, session_id=session.id)),
         )
         stamped = await _settle(
             pilot,
@@ -243,8 +268,9 @@ async def test_composer_blocked_copy_names_the_wake_not_provider_setup(
         gate = asyncio.Event()
         gateway.stream_gate = gate
 
-        controller.fleet_wake.on_fleet_drained(
-            _drain(session.id, _survivor(run_id, session_id=session.id))
+        _drain_from_child_thread(
+            controller.fleet_wake,
+            _drain(session.id, _survivor(run_id, session_id=session.id)),
         )
         assert await _settle(pilot, lambda: gateway.payloads), (
             "the wake turn never started streaming"
