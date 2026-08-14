@@ -28,6 +28,28 @@ top of the test, and cover its truth table plus the default skip reason. That
 makes default collection safe while ensuring the opt-in command can actually
 reach the code it claims to verify.
 
+---
+
+## A targeted async completion must not rebuild a surface that is transitioning away
+
+**TASK-15706, 2026-08-13.** Database Notes began loading its folder tree in a
+background worker. If the user switched to File Notes before that worker
+finished, the completion path tried to synchronize `#library-notes-canvas`.
+That canvas was legitimately absent during the source transition, so the shared
+sync helper used its generic full-screen recompose fallback. The fallback
+invalidated the just-pressed Files source control and intermittently left the
+transition without its retained File Notes surface. Folder-tree tests all
+passed; only the production-shell source-switch tests reproduced the race.
+
+**What to do.** An async completion that owns one optional child surface should
+first confirm that exact surface is still mounted. If it is absent because the
+user navigated away, treat the result as cached state and skip the paint; do not
+invoke a generic whole-screen fallback. Verify the fix through the real route
+transition, and compare the same test against the untouched baseline before
+attributing nearby focus failures to the branch.
+
+---
+
 ## A schema-version label does not make a synthetic database historical
 
 **TASK-15705/TASK-15707, 2026-08-12.** Raising ChaChaNotes from v35 to v36
@@ -768,6 +790,23 @@ This is the fourth instance of one shape in a single session: a closed import
 cycle, a flag gating the only executor, a prompt surface with no consumer, and
 now a log sink with no admitted caller. Each was built, wired, and given nothing
 to carry — and each read as live to a grep.
+
+---
+
+## Run source-inspection tests on a supported interpreter before changing them
+
+**TASK-15706, 2026-08-13.** A repository-wide collection under Python 3.14
+failed in `test_profile_store_lock.py` because the test compared integer source
+lines with `None`. The production code and test were unchanged from `dev`;
+inspection showed Python 3.14 emitted 12 `dis.findlinestarts()` entries whose
+line is `None`. The same repository collected all 42,613 tests under the
+installed, project-supported Python 3.12 interpreter.
+
+**What to do.** When a test derives source locations from bytecode or
+introspection APIs, check the interpreter version and inspect the raw API output
+before patching application code. Re-run collection under a supported project
+interpreter to distinguish an interpreter-assumption failure from a product
+regression, and record both results.
 
 ---
 

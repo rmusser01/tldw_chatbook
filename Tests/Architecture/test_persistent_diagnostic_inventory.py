@@ -116,6 +116,15 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Pending sidebar-state write failed": ("type(error).__name__",),
     },
     "tldw_chatbook/UI/Screens/library_screen.py": {
+        "Failed to continue the Database Notes folder navigator": (
+            "type(exc).__name__",
+        ),
+        "Failed to load the Database Notes folder navigator": ("type(exc).__name__",),
+        "Database Notes move kept both placements": ("type(exc).__name__",),
+        "Database Notes tree mutation": (
+            "operation",
+            "type(exc).__name__",
+        ),
         "in bulk delete": (),
         "Failed to restore a Library media item in bulk-delete undo": (
             "type(exc).__name__",

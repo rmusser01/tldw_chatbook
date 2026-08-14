@@ -275,8 +275,29 @@ class NotesScopeService:
         folder_offset: int = 0,
         membership_limit: int = 1000,
         membership_offset: int = 0,
+        load_notes: bool = True,
         user_id: str | None = None,
     ) -> NoteFolderPage:
+        """Load one bounded local folder-tree page off the event loop.
+
+        Args:
+            scope: Note scope to query.
+            expanded_folder_ids: Folders whose immediate contents should load.
+            note_limit: Maximum notes in the page.
+            note_offset: Offset into the note page.
+            folder_limit: Maximum child folders in the page.
+            folder_offset: Offset into the folder page.
+            membership_limit: Maximum memberships in the page.
+            membership_offset: Offset into the membership page.
+            load_notes: Whether to query notes and memberships for this page.
+            user_id: Local database user identifier.
+
+        Returns:
+            The normalized bounded folder-tree page.
+
+        Raises:
+            FolderCapabilityError: If the scope does not support folder listing.
+        """
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="list", operation="list"
         )
@@ -289,6 +310,7 @@ class NotesScopeService:
             folder_offset=folder_offset,
             membership_limit=membership_limit,
             membership_offset=membership_offset,
+            load_notes=load_notes,
         )
 
     async def create_note_folder(
@@ -306,6 +328,24 @@ class NotesScopeService:
             repository.create_folder,
             name=name,
             parent_id=parent_id,
+        )
+
+    async def load_note_folder_search(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_ids: Sequence[str],
+        folder_query: str = "",
+        user_id: str | None = None,
+    ) -> NoteFolderPage:
+        """Load matching placements and ancestors for a bounded note search."""
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.load_tree_search,
+            note_ids=tuple(note_ids),
+            folder_query=folder_query,
         )
 
     async def rename_note_folder(

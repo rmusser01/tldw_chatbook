@@ -97,6 +97,9 @@ class NoteFolderPage:
     next_folder_offset: int | None = None
     total_memberships: int = 0
     next_membership_offset: int | None = None
+    managed_folder_ids: tuple[str, ...] = ()
+    inactive_managed_folder_ids: tuple[str, ...] = ()
+    unfiled_note_ids: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -126,9 +129,21 @@ class FolderPlacementId:
         return f"folder:{quote(folder_id, safe='')}"
 
     @staticmethod
-    def note(folder_id: str, note_id: str) -> str:
-        """Return the tree placement identifier for a note in one folder."""
-        return f"note:{quote(folder_id, safe='')}:{quote(note_id, safe='')}"
+    def note(folder_id: str, note_id: str, membership_id: str | None = None) -> str:
+        """Return a folder/note identity, optionally for one exact membership.
+
+        Args:
+            folder_id: Folder containing the note placement.
+            note_id: Note represented by the placement.
+            membership_id: Exact membership identity for duplicate placements.
+
+        Returns:
+            A URL-escaped, stable tree placement identifier.
+        """
+        placement = f"note:{quote(folder_id, safe='')}:{quote(note_id, safe='')}"
+        if membership_id is None:
+            return placement
+        return f"{placement}:{quote(membership_id, safe='')}"
 
     @staticmethod
     def unfiled(note_id: str) -> str:

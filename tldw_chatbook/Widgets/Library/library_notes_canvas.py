@@ -17,22 +17,26 @@ from tldw_chatbook.Library.library_notes_state import (
     build_library_note_template_rows,
     ellipsize_note_title_cells,
 )
-from tldw_chatbook.Library.library_shell_state import (
-    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
-    LIBRARY_EXPORT_SELECTED_TOOLTIP,
-    LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
-    library_disabled_action_label,
-)
 from tldw_chatbook.Library.library_notes_sync_state import (
     LibraryNotesSyncState,
     auto_sync_label,
     sync_conflict_label,
     sync_direction_label,
 )
+from tldw_chatbook.Library.library_notes_tree_state import (
+    LibraryNotesTreeProjection,
+    LibraryNotesTreeRow,
+)
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
+    library_disabled_action_label,
+)
+from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
 )
-from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
@@ -123,6 +127,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         mode: str = "list",
         presentation_state: LibraryNotePresentationState | None = None,
         sync_panel_state: LibraryNotesSyncState | None = None,
+        tree_projection: LibraryNotesTreeProjection | None = None,
+        tree_selected_placement_id: str = "",
+        tree_deleted_folder_available: bool = False,
         title_placeholder_only: bool = False,
         compact: bool = False,
         create_running: bool = False,
@@ -141,6 +148,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 or sync.
             presentation_state: Canonical editor snapshot and UI-only flags.
             sync_panel_state: Display state for the sync surface.
+            tree_projection: Placement-aware folder rows for list mode.
+            tree_selected_placement_id: Context row for folder actions.
+            tree_deleted_folder_available: Whether Undo folder removal is available.
             title_placeholder_only: Render an empty title with an Untitled
                 placeholder for a pristine newly-created note.
             compact: Whether 60-column-safe controls and labels are active.
@@ -157,6 +167,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.mode = mode
         self.presentation_state = presentation_state
         self.sync_panel_state = sync_panel_state
+        self.tree_projection = tree_projection
+        self.tree_selected_placement_id = tree_selected_placement_id
+        self.tree_deleted_folder_available = tree_deleted_folder_available
         self.title_placeholder_only = title_placeholder_only
         self.compact = compact
         self.create_running = create_running
@@ -207,6 +220,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         mode: str,
         presentation_state: LibraryNotePresentationState | None,
         sync_panel_state: LibraryNotesSyncState | None,
+        tree_projection: LibraryNotesTreeProjection | None,
+        tree_selected_placement_id: str,
+        tree_deleted_folder_available: bool,
         title_placeholder_only: bool,
         compact: bool,
         create_running: bool,
@@ -229,6 +245,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             mode: Canvas surface to render.
             presentation_state: Note editor/create presentation snapshot.
             sync_panel_state: Notes folder-sync panel snapshot.
+            tree_projection: Placement-aware folder rows for list mode.
+            tree_selected_placement_id: Context row for folder actions.
+            tree_deleted_folder_available: Whether Undo folder removal is available.
             title_placeholder_only: Whether the title is placeholder-only.
             compact: Whether compact editor controls are enabled.
             create_running: Whether note creation is in progress.
@@ -243,6 +262,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.mode = mode
         self.presentation_state = presentation_state
         self.sync_panel_state = sync_panel_state
+        self.tree_projection = tree_projection
+        self.tree_selected_placement_id = tree_selected_placement_id
+        self.tree_deleted_folder_available = tree_deleted_folder_available
         self.title_placeholder_only = title_placeholder_only
         self.compact = compact
         self.create_running = create_running
@@ -319,7 +341,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # Gate/label off the RENDERED rows, not any total-count field -- only
         # rendered rows are selectable, matching the media/conversations
         # canvases' ``len(rows)`` convention.
-        rendered_count = len(list_state.rows)
+        rendered_note_ids = (
+            {
+                row.note_id
+                for row in self.tree_projection.rows
+                if row.kind == "note" and row.note_id
+            }
+            if self.tree_projection is not None
+            else {row.note_id for row in list_state.rows}
+        )
+        rendered_count = len(rendered_note_ids)
         if select_mode:
             action_row = Horizontal(
                 id="library-notes-selection-actions", classes="ds-toolbar"
@@ -463,6 +494,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         compact=True,
                         disabled=list_state.operation_running,
                     )
+            if self.tree_projection is not None:
+                yield from self._compose_tree_actions(
+                    operation_running=list_state.operation_running
+                )
         status_row = Horizontal(id="library-notes-status-row")
         status_row.styles.height = "auto"
         status_row.display = not select_mode
@@ -511,6 +546,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     compact=True,
                     disabled=list_state.operation_running,
                 )
+        if self.tree_projection is not None:
+            yield from self._compose_tree_rows(list_state)
+            return
         if not list_state.rows:
             yield Static(list_state.empty_copy, id="library-notes-empty", markup=False)
             return
@@ -548,6 +586,181 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # user titles).
                 button._library_row_label_rest = label_rest
                 yield button
+
+    def _compose_tree_rows(self, list_state: LibraryNotesListState) -> ComposeResult:
+        """Render placement-aware rows while retaining legacy note handlers."""
+        projection = self.tree_projection
+        if projection is None:
+            return
+        if not projection.rows:
+            yield Static(
+                list_state.empty_copy,
+                id="library-notes-empty",
+                markup=False,
+            )
+            return
+        checked_ids = {row.note_id for row in list_state.rows if row.checked}
+        with Vertical(id="library-notes-list", classes="library-notes-tree"):
+            for index, row in enumerate(projection.rows):
+                indent = "  " * row.depth
+                if row.kind in {"folder", "unfiled"}:
+                    glyph = "▾" if row.expanded else "▸"
+                    label = f"{indent}{glyph} {escape_markup(row.label)}"
+                    if row.status_text:
+                        label = f"{label}  {row.status_text}"
+                    classes = "library-notes-folder-row"
+                    if row.semantic_status == "connected":
+                        classes += " library-notes-tree-connected"
+                    elif row.semantic_status == "needs_attention":
+                        classes += " library-notes-tree-needs-attention"
+                    button = Button(
+                        label,
+                        id=f"library-notes-tree-folder-{index}",
+                        classes=classes,
+                        compact=True,
+                        tooltip=row.breadcrumb,
+                    )
+                    if row.placement_id == self.tree_selected_placement_id:
+                        button.add_class("is-selected")
+                    self._set_tree_row_metadata(button, row)
+                    yield button
+                    continue
+
+                title = f"{indent}{escape_markup(row.label)}"
+                if self.filter_value and row.breadcrumb:
+                    parent_breadcrumb = row.breadcrumb.rsplit(" / ", 1)[0]
+                    title = f"{title}  — {escape_markup(parent_breadcrumb)}"
+                if row.status_text:
+                    title = f"{title}  {row.status_text}"
+                if list_state.select_mode:
+                    marker = "☑ " if row.note_id in checked_ids else "☐ "
+                    label_rest = title
+                    label = f"{marker}{label_rest}"
+                else:
+                    label_rest = title
+                    label = label_rest
+                classes = "library-notes-row library-notes-tree-note-row"
+                if row.semantic_status == "connected":
+                    classes += " library-notes-tree-connected"
+                elif row.semantic_status == "needs_attention":
+                    classes += " library-notes-tree-needs-attention"
+                button = Button(
+                    label,
+                    id=f"library-notes-tree-note-{index}",
+                    classes=classes,
+                    compact=True,
+                    tooltip=row.breadcrumb,
+                )
+                if row.placement_id == self.tree_selected_placement_id:
+                    button.add_class("is-selected")
+                self._set_tree_row_metadata(button, row)
+                button._library_row_label_rest = label_rest
+                yield button
+        if projection.has_more:
+            yield Button(
+                "Load more folder contents",
+                id="library-notes-tree-more",
+                classes="library-canvas-action",
+                compact=True,
+            )
+
+    def _compose_tree_actions(self, *, operation_running: bool) -> ComposeResult:
+        """Render actions appropriate to the selected folder-tree placement."""
+        projection = self.tree_projection
+        selected = (
+            projection.row(self.tree_selected_placement_id)
+            if projection is not None and self.tree_selected_placement_id
+            else None
+        )
+        selected_folder_protected = bool(
+            selected is not None and selected.kind == "folder" and selected.protected
+        )
+        protected_reason = (
+            "This folder is managed by sync; change its sync root instead."
+        )
+        with Horizontal(id="library-notes-tree-actions", classes="ds-toolbar"):
+            yield Button(
+                "New folder",
+                id="library-notes-folder-new",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=operation_running or selected_folder_protected,
+                tooltip=(protected_reason if selected_folder_protected else None),
+            )
+            if selected is not None and selected.kind == "folder":
+                for label, button_id in (
+                    ("Rename", "library-notes-folder-rename"),
+                    ("Move", "library-notes-folder-move"),
+                    ("Remove", "library-notes-folder-remove"),
+                ):
+                    yield Button(
+                        label,
+                        id=button_id,
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=operation_running or selected.protected,
+                        tooltip=protected_reason if selected.protected else None,
+                    )
+            elif selected is not None and selected.kind == "note":
+                protected = selected.protected
+                protected_placement_reason = (
+                    "This placement is managed by sync; change its sync root instead."
+                )
+                yield Button(
+                    "Add to folder",
+                    id="library-notes-placement-add",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=operation_running,
+                )
+                yield Button(
+                    "Move note",
+                    id="library-notes-placement-move",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=operation_running or protected,
+                    tooltip=protected_placement_reason if protected else None,
+                )
+                yield Button(
+                    "Remove placement",
+                    id="library-notes-placement-remove",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=(
+                        operation_running or protected or not selected.membership_id
+                    ),
+                    tooltip=(
+                        protected_placement_reason
+                        if protected
+                        else (
+                            "Unfiled is shown automatically; move the note into a folder."
+                            if not selected.membership_id
+                            else None
+                        )
+                    ),
+                )
+            if self.tree_deleted_folder_available:
+                yield Button(
+                    "Restore folder",
+                    id="library-notes-folder-restore",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=operation_running,
+                )
+
+    @staticmethod
+    def _set_tree_row_metadata(button: Button, row: LibraryNotesTreeRow) -> None:
+        """Attach stable domain identities without encoding them in DOM ids."""
+        button.tree_kind = row.kind
+        button.placement_id = row.placement_id
+        button.note_id = row.note_id or ""
+        button.folder_id = row.folder_id or ""
+        button.membership_id = row.membership_id or ""
+        button.breadcrumb = row.breadcrumb
+        button.ownership = row.ownership or ""
+        button.owner_active = row.owner_active
+        button.protected_placement = row.protected
+        button.folder_version = row.version
 
     def _compose_editor(self) -> ComposeResult:
         """Mount every editor-session presentation surface exactly once."""

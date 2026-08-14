@@ -8,18 +8,25 @@ from textual.app import App
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button
 
-from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-from tldw_chatbook.Library.row_selection import RowSelection
 from tldw_chatbook.Library.library_export_scope import ExportScope
-from tldw_chatbook.Library.library_notes_state import (
-    LibraryNotesListRow,
-    LibraryNotesListState,
-)
-from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
 from tldw_chatbook.Library.library_notes_session import (
     NoteFlushOutcome,
     NoteFlushOutcomeKind,
 )
+from tldw_chatbook.Library.library_notes_state import (
+    LibraryNotesListRow,
+    LibraryNotesListState,
+)
+from tldw_chatbook.Library.library_notes_tree_state import (
+    LibraryNotesTreeProjection,
+    LibraryNotesTreeRow,
+)
+from tldw_chatbook.Library.row_selection import RowSelection
+from tldw_chatbook.UI.Screens.library_screen import (
+    LibraryScreen,
+    _apply_library_row_toggle,
+)
+from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
 
 
 def _fake(select_mode):
@@ -69,6 +76,74 @@ async def test_notes_export_selected_scope():
     assert fake._opened == [ExportScope(kind="notes", ids=("n1", "n2"))]
 
 
+def test_notes_select_all_uses_unique_note_ids_visible_in_folder_tree():
+    fake = _fake(True)
+    fake._build_library_notes_state = lambda: LibraryNotesListState(
+        rows=(
+            LibraryNotesListRow("n1", "One", "", False),
+            LibraryNotesListRow("n2", "Two", "", False),
+            LibraryNotesListRow("hidden", "Hidden", "", False),
+        ),
+        header_copy="Notes (3)",
+        status_copy="",
+        empty_copy="",
+    )
+    fake._build_library_notes_tree_projection = lambda: LibraryNotesTreeProjection(
+        rows=(
+            LibraryNotesTreeRow("p1", "note", "One", 1, note_id="n1"),
+            LibraryNotesTreeRow("p2", "note", "One", 1, note_id="n1"),
+            LibraryNotesTreeRow("p3", "note", "Two", 1, note_id="n2"),
+        )
+    )
+    fake.refresh = lambda **kwargs: None
+
+    LibraryScreen.handle_library_notes_select_all(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert fake._library_notes_row_selection.ids == frozenset({"n1", "n2"})
+
+
+def test_tree_selection_is_not_pruned_by_unrelated_legacy_note_page(monkeypatch):
+    fake = _fake(True)
+    fake._library_notes_row_selection.select_all(["tree-note"])
+    fake._library_notes_filter_records = None
+    fake._local_source_records = {"notes": ({"id": "legacy-note"},)}
+    fake._local_source_counts = {"notes": 200}
+    fake._library_notes_sort = "newest"
+    fake._library_notes_filter = ""
+    fake._library_notes_sort_choices_visible = False
+    fake._library_notes_notice = ""
+    fake._library_notes_tree_error = ""
+    fake._library_notes_tree_loading = False
+    fake._library_note_delete_receipt = None
+    fake._library_notes_operation_for_active_region = lambda: None
+    fake._build_library_notes_tree_projection = lambda: LibraryNotesTreeProjection(
+        rows=(
+            LibraryNotesTreeRow(
+                "tree-placement",
+                "note",
+                "Tree note",
+                1,
+                note_id="tree-note",
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.build_library_notes_list_state",
+        lambda *args, **kwargs: LibraryNotesListState(
+            rows=(LibraryNotesListRow("legacy-note", "Legacy", "", False),),
+            header_copy="Notes (200)",
+            status_copy="",
+            empty_copy="",
+        ),
+    )
+
+    LibraryScreen._build_library_notes_state(fake)
+
+    assert fake._library_notes_row_selection.ids == frozenset({"tree-note"})
+
+
 # -- F-018: "Export selected" explains its disabled state -----------------
 
 
@@ -100,6 +175,57 @@ class _NotesCanvasApp(ConsolidatedCSSApp):
             list_state=_select_mode_notes_state(self._selected_count),
             id="library-notes-canvas",
         )
+
+
+class _DuplicatePlacementNotesCanvasApp(App):
+    def __init__(self):
+        super().__init__()
+        self._library_notes_row_selection = RowSelection("notes")
+
+    def compose(self):
+        state = LibraryNotesListState(
+            rows=(
+                LibraryNotesListRow(
+                    note_id="n1",
+                    title="Shared note",
+                    age_label="today",
+                    checked=False,
+                ),
+            ),
+            header_copy="Notes (1)",
+            status_copy="",
+            empty_copy="",
+            select_mode=True,
+            selected_count=0,
+        )
+        projection = LibraryNotesTreeProjection(
+            rows=(
+                LibraryNotesTreeRow(
+                    "placement-a", "note", "Shared note", 1, note_id="n1"
+                ),
+                LibraryNotesTreeRow(
+                    "placement-b", "note", "Shared note", 1, note_id="n1"
+                ),
+            )
+        )
+        yield LibraryNotesCanvas(
+            list_state=state,
+            tree_projection=projection,
+            id="library-notes-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_toggling_duplicate_placement_updates_every_visible_checkbox():
+    app = _DuplicatePlacementNotesCanvasApp()
+    async with app.run_test() as pilot:
+        rows = list(app.query(".library-notes-row"))
+        app._library_notes_row_selection.toggle("n1")
+
+        _apply_library_row_toggle(app, "notes", rows[0], "n1")
+        await pilot.pause()
+
+        assert all(str(row.label).startswith("☑ ") for row in rows)
 
 
 @pytest.mark.asyncio

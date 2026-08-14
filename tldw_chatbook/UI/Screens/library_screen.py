@@ -177,6 +177,14 @@ from ...Library.library_notes_sync_state import (
     sync_conflict_label,
     sync_status_line,
 )
+from ...Library.library_notes_tree_state import (
+    LibraryNotesTreeIdentity,
+    LibraryNotesTreeProjection,
+    build_library_notes_tree,
+    empty_note_folder_page,
+    merge_note_folder_pages,
+    reconcile_library_notes_tree_identity,
+)
 from ...Library.library_prompts_state import (
     PromptBrowseResult,
     PromptBrowseScope,
@@ -300,6 +308,14 @@ from ...Local_Ingestion.parakeet_v2_artifact import (
 )
 from ...Local_Ingestion.stt_batch_routing import resolve_batch_stt_route
 from ...Library.row_selection import RowSelection
+from ...Notes.note_folder_models import (
+    FolderCapabilityError,
+    FolderCollisionError,
+    FolderConflictError,
+    FolderPlacementId,
+    FolderValidationError,
+    NoteFolderPage,
+)
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from ...Skills_Interop.skill_remote_fetch import (
@@ -388,6 +404,10 @@ from ...Widgets.Library import (
 )
 from ...Widgets.Library.library_file_notes_workspace import (
     LibraryFileNotesWorkspace,
+)
+from ...Widgets.Library.library_note_folder_dialog import (
+    LibraryNoteFolderNameDialog,
+    LibraryNoteFolderTargetDialog,
 )
 from ...Widgets.Library.library_notes_canvas import LibraryNotePresentationState
 from ...Widgets.ModelArtifacts import (
@@ -646,6 +666,15 @@ class _LibraryNotesRestoreGuard:
     recompose_generation: int | None = None
     scroll_generation: int | None = None
     focus_generation: int | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class _LibraryNotesDeletedFolderReceipt:
+    """One-session recovery authority for the last removed folder subtree."""
+
+    folder_id: str
+    name: str
+    expected_version: int
 
 
 # PR-3 Task 4: the retrieval outcomes phase two runs on. `ready` is the
@@ -1293,9 +1322,18 @@ def _apply_library_row_toggle(
         # (PR #665 review; same escape lesson as the Library redesign). A
         # missing stash (unexpected widget shape) raises into the fallback
         # full recompose below.
-        label_rest = button._library_row_label_rest
         glyph = f"{marker} " if kind == "notes" else marker
-        button.label = f"{glyph}{label_rest}"
+        if kind == "notes":
+            matching_buttons = tuple(
+                candidate
+                for candidate in screen.query(".library-notes-row")
+                if str(getattr(candidate, "note_id", "") or "") == row_id
+            )
+        else:
+            matching_buttons = (button,)
+        for matching_button in matching_buttons:
+            label_rest = matching_button._library_row_label_rest
+            matching_button.label = f"{glyph}{label_rest}"
         count_static.update(f"{selection.count} selected")
         export_button.disabled = selection.count == 0
         # F-018: the reason/action tooltip flips in place with `disabled`
@@ -2915,7 +2953,17 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sort_choices_visible: bool = False
         self._library_notes_filter: str = ""
         self._library_notes_filter_records: list | None = None
+        self._library_notes_tree_search_page: NoteFolderPage | None = None
         self._library_notes_notice: str = ""
+        self._library_notes_tree_root_page = None
+        self._library_notes_tree_expanded_page = None
+        self._library_notes_tree_expanded_ids: set[str] = set()
+        self._library_notes_tree_membership_note_offset: int = 0
+        self._library_notes_tree_generation: int = 0
+        self._library_notes_tree_loading: bool = False
+        self._library_notes_tree_error: str = ""
+        self._library_notes_tree_selected_placement_id: str = ""
+        self._library_notes_deleted_folder_receipt = None
         self._library_note_create_counter: int = 0
         self._library_note_create_token: str | None = None
         self._library_note_create_running: bool = False
@@ -3909,7 +3957,14 @@ class LibraryScreen(BaseAppScreen):
             return f"library-row:{row_id}"
         note_id = str(getattr(focused, "note_id", "") or "")
         if note_id and focused.has_class("library-notes-row"):
+            placement_id = str(getattr(focused, "placement_id", "") or "")
+            if placement_id:
+                return f"note-placement:{placement_id}"
             return f"note-row:{note_id}"
+        if focused.has_class("library-notes-folder-row"):
+            placement_id = str(getattr(focused, "placement_id", "") or "")
+            if placement_id:
+                return f"folder-placement:{placement_id}"
         template_key = str(getattr(focused, "template_key", "") or "")
         if template_key:
             return f"create-template:{template_key}"
@@ -3990,6 +4045,8 @@ class LibraryScreen(BaseAppScreen):
         role = self._library_notes_semantic_role(focused)
         snapshot = self._library_note_session.snapshot
         note_id = snapshot.note_id if snapshot is not None else None
+        if note_id is None and region == "navigator":
+            note_id = str(getattr(focused, "note_id", "") or "") or None
         selection_start: tuple[int, int] | None = None
         selection_end: tuple[int, int] | None = None
         if region in {"editor", "preview", "context"}:
@@ -4125,6 +4182,16 @@ class LibraryScreen(BaseAppScreen):
             row_id = role.removeprefix("library-row:")
             for row in self.query(".library-rail-row"):
                 if str(getattr(row, "row_id", "") or "") == row_id:
+                    return row
+        elif role.startswith("note-placement:"):
+            placement_id = role.removeprefix("note-placement:")
+            for row in self.query(".library-notes-row"):
+                if str(getattr(row, "placement_id", "") or "") == placement_id:
+                    return row
+        elif role.startswith("folder-placement:"):
+            placement_id = role.removeprefix("folder-placement:")
+            for row in self.query(".library-notes-folder-row"):
+                if str(getattr(row, "placement_id", "") or "") == placement_id:
                     return row
         elif role.startswith("note-row:"):
             note_id = role.removeprefix("note-row:")
@@ -5388,6 +5455,11 @@ class LibraryScreen(BaseAppScreen):
                 # paint.
                 self.refresh(recompose=True)
         self._refresh_local_source_snapshot()
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+        ):
+            self._request_library_notes_tree_refresh(refresh_root=True)
         if (
             self._library_selected_row_id
             in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT)
@@ -9302,7 +9374,14 @@ class LibraryScreen(BaseAppScreen):
             operation_status=(
                 operation.status_line
                 if operation is not None
-                else self._library_notes_notice
+                else (
+                    getattr(self, "_library_notes_tree_error", "")
+                    or (
+                        "Loading folders…"
+                        if getattr(self, "_library_notes_tree_loading", False)
+                        else self._library_notes_notice
+                    )
+                )
             ),
             operation_running=(
                 bool(operation and operation.running)
@@ -9311,8 +9390,501 @@ class LibraryScreen(BaseAppScreen):
             delete_receipt=self._library_note_delete_receipt,
         )
         if self._library_notes_select_mode:
-            self._library_notes_row_selection.reconcile(r.note_id for r in state.rows)
+            projection = self._build_library_notes_tree_projection()
+            if projection is None:
+                visible_note_ids = (row.note_id for row in state.rows)
+            else:
+                visible_note_ids = (
+                    row.note_id
+                    for row in projection.rows
+                    if row.kind == "note" and row.note_id
+                )
+            self._library_notes_row_selection.reconcile(visible_note_ids)
         return state
+
+    def _build_library_notes_tree_projection(
+        self,
+    ) -> LibraryNotesTreeProjection | None:
+        """Build the visible tree only after its bounded root batch arrives."""
+        filter_text = getattr(self, "_library_notes_filter", "")
+        search_page = getattr(self, "_library_notes_tree_search_page", None)
+        root_page = (
+            search_page
+            if filter_text.strip() and search_page is not None
+            else getattr(self, "_library_notes_tree_root_page", None)
+        )
+        if root_page is None and getattr(self, "_library_notes_tree_error", ""):
+            # Degraded hosts used by older/local-only integrations keep the
+            # pre-folder flat browser available with an explicit warning.
+            return None
+        return build_library_notes_tree(
+            root_page=root_page or empty_note_folder_page(),
+            expanded_page=(
+                search_page
+                if filter_text.strip() and search_page is not None
+                else (
+                    getattr(self, "_library_notes_tree_expanded_page", None)
+                    or empty_note_folder_page()
+                )
+            ),
+            expanded_folder_ids=getattr(
+                self, "_library_notes_tree_expanded_ids", set()
+            ),
+            filter_text=filter_text,
+            matched_note_ids=(
+                frozenset(
+                    note_id
+                    for record in root_page.notes
+                    if (note_id := self._source_record_id(record))
+                )
+                if filter_text.strip() and search_page is not None
+                else None
+            ),
+        )
+
+    def _request_library_notes_tree_refresh(self, *, refresh_root: bool) -> None:
+        """Start one generation-gated normalized tree load."""
+        self._library_notes_tree_generation += 1
+        generation = self._library_notes_tree_generation
+        self._library_notes_tree_loading = True
+        self._library_notes_tree_error = ""
+        self.run_worker(
+            self._load_library_notes_tree(
+                generation=generation,
+                refresh_root=refresh_root,
+            ),
+            exclusive=True,
+            group="library_notes_folder_tree",
+        )
+
+    def _sync_library_notes_tree_canvas_if_present(self) -> None:
+        """Patch a mounted Notes canvas without tearing down a transitioning shell."""
+        if not self.is_mounted:
+            return
+        try:
+            self.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        except (NoMatches, QueryError):
+            return
+        _sync_library_canvas(self, "notes")
+
+    def _request_library_notes_tree_more(self) -> None:
+        """Continue every non-exhausted root/expanded cursor in bounded pages."""
+        if self._library_notes_tree_loading:
+            return
+        self._library_notes_tree_generation += 1
+        generation = self._library_notes_tree_generation
+        self._library_notes_tree_loading = True
+        self.run_worker(
+            self._load_more_library_notes_tree(generation=generation),
+            exclusive=True,
+            group="library_notes_folder_tree",
+        )
+
+    async def _load_more_library_notes_tree(self, *, generation: int) -> None:
+        """Merge the next bounded page for visible root and expanded scopes."""
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        load_batch = getattr(service, "load_note_folder_tree_batch", None)
+        if not callable(load_batch):
+            self._library_notes_tree_loading = False
+            self._library_notes_tree_error = "Folder navigation is unavailable."
+            LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+            return
+        common = {
+            "scope": "local_note",
+            "note_limit": 250,
+            "folder_limit": 250,
+            "membership_limit": 500,
+            "user_id": self._library_notes_user_id(),
+        }
+        root_page = self._library_notes_tree_root_page
+        expanded_page = self._library_notes_tree_expanded_page
+        membership_note_offset = getattr(
+            self, "_library_notes_tree_membership_note_offset", 0
+        )
+        try:
+            if root_page is not None and any(
+                cursor is not None
+                for cursor in (root_page.next_offset, root_page.next_folder_offset)
+            ):
+                root_note_cursor = root_page.next_offset
+                root_folder_cursor = root_page.next_folder_offset
+                incoming = await load_batch(
+                    expanded_folder_ids=(),
+                    note_offset=root_note_cursor or 0,
+                    folder_offset=root_folder_cursor or 0,
+                    load_notes=root_note_cursor is not None,
+                    **common,
+                )
+                root_page = merge_note_folder_pages(root_page, incoming)
+                root_page = dataclasses.replace(
+                    root_page,
+                    next_offset=(
+                        root_page.next_offset
+                        if root_note_cursor is not None
+                        else None
+                    ),
+                    next_folder_offset=(
+                        root_page.next_folder_offset
+                        if root_folder_cursor is not None
+                        else None
+                    ),
+                )
+            if expanded_page is not None and any(
+                cursor is not None
+                for cursor in (
+                    expanded_page.next_offset,
+                    expanded_page.next_folder_offset,
+                    expanded_page.next_membership_offset,
+                )
+            ):
+                expanded_note_cursor = expanded_page.next_offset
+                expanded_folder_cursor = expanded_page.next_folder_offset
+                expanded_membership_cursor = (
+                    expanded_page.next_membership_offset
+                )
+                continuing_memberships = (
+                    expanded_membership_cursor is not None
+                )
+                note_offset = (
+                    membership_note_offset
+                    if continuing_memberships
+                    else (
+                        expanded_note_cursor
+                        if expanded_note_cursor is not None
+                        else membership_note_offset
+                    )
+                )
+                incoming = await load_batch(
+                    expanded_folder_ids=tuple(
+                        sorted(self._library_notes_tree_expanded_ids)
+                    ),
+                    note_offset=note_offset,
+                    folder_offset=expanded_folder_cursor or 0,
+                    membership_offset=expanded_membership_cursor or 0,
+                    load_notes=(
+                        continuing_memberships
+                        or expanded_note_cursor is not None
+                    ),
+                    **common,
+                )
+                expanded_page = merge_note_folder_pages(expanded_page, incoming)
+                expanded_page = dataclasses.replace(
+                    expanded_page,
+                    next_offset=(
+                        expanded_page.next_offset
+                        if expanded_note_cursor is not None
+                        else None
+                    ),
+                    next_folder_offset=(
+                        expanded_page.next_folder_offset
+                        if expanded_folder_cursor is not None
+                        else None
+                    ),
+                    next_membership_offset=(
+                        expanded_page.next_membership_offset
+                        if (
+                            continuing_memberships
+                            or expanded_note_cursor is not None
+                        )
+                        else None
+                    ),
+                )
+                if not continuing_memberships:
+                    membership_note_offset = note_offset
+        except Exception as exc:  # noqa: BLE001 - normalized service boundary
+            logger.warning(
+                "Failed to continue the Database Notes folder navigator; "
+                "error_type={}",
+                type(exc).__name__,
+            )
+            if generation == self._library_notes_tree_generation:
+                self._library_notes_tree_error = (
+                    "Could not load more folder contents — try again."
+                )
+                self._library_notes_tree_loading = False
+                LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+            return
+        if generation != self._library_notes_tree_generation:
+            return
+        self._library_notes_tree_root_page = root_page
+        self._library_notes_tree_expanded_page = expanded_page
+        self._library_notes_tree_membership_note_offset = membership_note_offset
+        self._library_notes_tree_loading = False
+        self._library_notes_tree_error = ""
+        LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+
+    async def _load_library_notes_tree(
+        self,
+        *,
+        generation: int,
+        refresh_root: bool,
+    ) -> None:
+        """Load root and expanded branches through bounded bulk service calls."""
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        load_batch = getattr(service, "load_note_folder_tree_batch", None)
+        if not callable(load_batch):
+            if generation == self._library_notes_tree_generation:
+                self._library_notes_tree_loading = False
+                self._library_notes_tree_error = "Folder navigation is unavailable."
+                LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+            return
+        call_kwargs = {
+            "scope": "local_note",
+            "note_limit": 250,
+            "folder_limit": 250,
+            "membership_limit": 500,
+            "user_id": self._library_notes_user_id(),
+        }
+        try:
+            root_page = self._library_notes_tree_root_page
+            if refresh_root or root_page is None:
+                root_page = await load_batch(
+                    expanded_folder_ids=(),
+                    **call_kwargs,
+                )
+            expanded_page = empty_note_folder_page()
+            expanded_ids = tuple(sorted(self._library_notes_tree_expanded_ids))
+            if expanded_ids:
+                expanded_page = await load_batch(
+                    expanded_folder_ids=expanded_ids,
+                    **call_kwargs,
+                )
+        except Exception as exc:  # noqa: BLE001 - normalized service boundary
+            logger.warning(
+                "Failed to load the Database Notes folder navigator; error_type={}",
+                type(exc).__name__,
+            )
+            if generation == self._library_notes_tree_generation:
+                self._library_notes_tree_loading = False
+                self._library_notes_tree_error = (
+                    "Could not load note folders — retry from the navigator."
+                )
+                LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+            return
+        if generation != self._library_notes_tree_generation:
+            return
+        previous_projection = LibraryScreen._build_library_notes_tree_projection(self)
+        selected_id = getattr(self, "_library_notes_tree_selected_placement_id", "")
+        previous_row = (
+            previous_projection.row(selected_id)
+            if previous_projection is not None and selected_id
+            else None
+        )
+        self._library_notes_tree_root_page = root_page
+        self._library_notes_tree_expanded_page = expanded_page
+        self._library_notes_tree_membership_note_offset = 0
+        self._library_notes_tree_loading = False
+        self._library_notes_tree_error = ""
+        if selected_id:
+            reconciled = reconcile_library_notes_tree_identity(
+                LibraryScreen._build_library_notes_tree_projection(self)
+                or LibraryNotesTreeProjection(rows=()),
+                LibraryNotesTreeIdentity(
+                    placement_id=selected_id,
+                    note_id=previous_row.note_id if previous_row is not None else None,
+                ),
+            )
+            self._library_notes_tree_selected_placement_id = (
+                reconciled.placement_id if reconciled is not None else ""
+            )
+        LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+
+    async def _execute_library_notes_tree_mutation(
+        self,
+        operation: str,
+        **payload: Any,
+    ) -> bool:
+        """Run one guarded normalized folder or placement mutation."""
+        preclaimed = bool(payload.pop("_preclaimed", False))
+        if payload.get("protected"):
+            self._library_notes_notice = (
+                "This item is managed by sync; change its sync root instead."
+            )
+            if preclaimed:
+                self._library_notes_mutation_in_flight = False
+            return False
+        if self._library_notes_mutation_in_flight and not preclaimed:
+            return False
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        methods = {
+            "create_folder": "create_note_folder",
+            "rename_folder": "rename_note_folder",
+            "move_folder": "move_note_folder",
+            "delete_folder": "delete_note_folder",
+            "restore_folder": "restore_note_folder",
+            "add_placement": "attach_note_to_folder",
+            "detach_placement": "detach_note_from_folder",
+        }
+        required_methods = (
+            ("attach_note_to_folder", "detach_note_from_folder")
+            if operation == "move_placement"
+            else (methods.get(operation, ""),)
+        )
+        if not required_methods[0] or any(
+            not callable(getattr(service, method_name, None))
+            for method_name in required_methods
+        ):
+            self._library_notes_notice = "That folder action is unavailable."
+            if preclaimed:
+                self._library_notes_mutation_in_flight = False
+            return False
+
+        common = {
+            "scope": "local_note",
+            "user_id": self._library_notes_user_id(),
+        }
+        self._library_notes_mutation_in_flight = True
+        try:
+            result: Any = None
+            if operation == "move_placement":
+                note_id = str(payload["note_id"])
+                destination_id = str(payload["destination_folder_id"])
+                source_id = str(payload.get("source_folder_id") or "")
+                await service.attach_note_to_folder(
+                    **common,
+                    folder_id=destination_id,
+                    note_id=note_id,
+                )
+                if source_id and source_id != destination_id:
+                    try:
+                        result = await service.detach_note_from_folder(
+                            **common,
+                            folder_id=source_id,
+                            note_id=note_id,
+                            expected_version=int(payload["membership_version"]),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - preserve placements
+                        logger.warning(
+                            "Database Notes move kept both placements after "
+                            "the source detach failed; error_type={}",
+                            type(exc).__name__,
+                        )
+                        self._library_notes_notice = (
+                            "Note added to the new folder, but the original "
+                            "changed; it remains safely in both folders."
+                        )
+                        self._request_library_notes_tree_refresh(refresh_root=True)
+                        return True
+                else:
+                    result = True
+            else:
+                method = getattr(service, methods[operation])
+                kwargs = {key: value for key, value in payload.items() if key != "protected"}
+                result = await method(**common, **kwargs)
+
+            if operation == "delete_folder":
+                folder = result.folder
+                self._library_notes_deleted_folder_receipt = (
+                    _LibraryNotesDeletedFolderReceipt(
+                        folder_id=folder.folder_id,
+                        name=folder.name,
+                        expected_version=folder.version,
+                    )
+                )
+                self._library_notes_tree_selected_placement_id = ""
+            elif operation == "restore_folder":
+                self._library_notes_deleted_folder_receipt = None
+                folder = result.folder
+                self._library_notes_tree_selected_placement_id = (
+                    FolderPlacementId.folder(folder.folder_id)
+                )
+            elif operation == "create_folder":
+                self._library_notes_tree_selected_placement_id = (
+                    FolderPlacementId.folder(result.folder_id)
+                )
+            self._library_notes_notice = "Folder organization updated."
+            self._request_library_notes_tree_refresh(refresh_root=True)
+            return True
+        except FolderCollisionError:
+            self._library_notes_notice = (
+                "A folder with that name already exists in this location."
+            )
+            return False
+        except FolderConflictError:
+            self._library_notes_notice = (
+                "That folder changed elsewhere — refresh and try again."
+            )
+            return False
+        except FolderValidationError:
+            self._library_notes_notice = (
+                "That folder name or destination is not valid."
+            )
+            return False
+        except FolderCapabilityError as exc:
+            self._library_notes_notice = exc.user_message
+            return False
+        except PolicyDeniedError as exc:
+            self._library_notes_notice = exc.user_message
+            return False
+        except Exception as exc:  # noqa: BLE001 - render a safe mutation failure
+            logger.warning(
+                "Database Notes tree mutation {!r} failed; error_type={}",
+                operation,
+                type(exc).__name__,
+            )
+            self._library_notes_notice = (
+                "Could not update folder organization — refresh and try again."
+            )
+            return False
+        finally:
+            self._library_notes_mutation_in_flight = False
+            LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+
+    def _schedule_library_notes_tree_mutation(
+        self, operation: str, **payload: Any
+    ) -> None:
+        """Synchronously claim the mutation interlock before starting a worker."""
+        if self._library_notes_mutation_in_flight:
+            return
+        self._library_notes_mutation_in_flight = True
+        self.run_worker(
+            self._execute_library_notes_tree_mutation(
+                operation,
+                _preclaimed=True,
+                **payload,
+            ),
+            exclusive=True,
+            group="library_note_mutation",
+        )
+        if self.is_mounted:
+            _sync_library_canvas(self, "notes")
+
+    def _selected_library_notes_tree_row(self):
+        """Return the selected visible placement, if it still survives."""
+        projection = self._build_library_notes_tree_projection()
+        if projection is None:
+            return None
+        return projection.row(self._library_notes_tree_selected_placement_id)
+
+    def _library_notes_folder_target_options(
+        self, *, exclude_folder_id: str | None = None
+    ) -> tuple[tuple[str, str], ...]:
+        """Return bounded loaded folder choices, excluding a moved subtree."""
+        pages = (
+            self._library_notes_tree_root_page,
+            self._library_notes_tree_expanded_page,
+        )
+        folders = {
+            folder.folder_id: folder
+            for page in pages
+            if page is not None
+            for folder in page.folders
+        }
+        excluded_path = (
+            folders[exclude_folder_id].normalized_path
+            if exclude_folder_id in folders
+            else ""
+        )
+        choices = [
+            (folder.path.strip("/").replace("/", " / "), folder.folder_id)
+            for folder in folders.values()
+            if folder.folder_id != exclude_folder_id
+            and not (
+                excluded_path
+                and folder.normalized_path.startswith(f"{excluded_path}/")
+            )
+        ]
+        return tuple(sorted(choices, key=lambda item: (item[0].casefold(), item[1])))
 
     def _remove_library_note_source_record(self, note_id: str) -> None:
         """Patch one successful delete into the cached Notes rows and count."""
@@ -9352,6 +9924,14 @@ class LibraryScreen(BaseAppScreen):
             "mode": "list",
             "presentation_state": None,
             "sync_panel_state": None,
+            "tree_projection": self._build_library_notes_tree_projection(),
+            "tree_selected_placement_id": getattr(
+                self, "_library_notes_tree_selected_placement_id", ""
+            ),
+            "tree_deleted_folder_available": (
+                getattr(self, "_library_notes_deleted_folder_receipt", None)
+                is not None
+            ),
             "title_placeholder_only": False,
             "compact": self._library_notes_compact,
             "create_running": self._library_note_create_running,
@@ -13474,6 +14054,11 @@ class LibraryScreen(BaseAppScreen):
             # failure must not leak into a later fresh Create entry.
             self._library_note_create_status = ""
         self._library_selected_row_id = row_id
+        if (
+            row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+        ):
+            self._request_library_notes_tree_refresh(refresh_root=True)
         try:
             shell_width = self.query_one("#library-shell-grid").region.width
         except (NoMatches, QueryError):
@@ -13512,6 +14097,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_mode = "raw"
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
+        self._library_notes_tree_search_page = None
         self._reset_library_note_editor_state()
         self._reset_library_prompt_editor_state()
         self._reset_library_skills_import_state()
@@ -14678,6 +15264,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
+        self._library_notes_tree_search_page = None
         self._library_notes_sort_choices_visible = False
         self._library_notes_select_mode = False
         self._library_notes_row_selection.clear()
@@ -14695,10 +15282,13 @@ class LibraryScreen(BaseAppScreen):
         if submitted == self._library_notes_filter:
             return
         self._library_notes_filter = submitted
+        self._library_notes_filter_records = None
+        self._library_notes_tree_search_page = None
         self._library_notes_select_mode = False
         self._library_notes_row_selection.clear()
         if not submitted:
             self._library_notes_filter_records = None
+            self._library_notes_tree_search_page = None
             _sync_library_canvas(self, "notes")
             return
         self.run_worker(
@@ -14736,12 +15326,46 @@ class LibraryScreen(BaseAppScreen):
                 or "default_user",
                 isolate_in_worker=True,
             )
+            if query != self._library_notes_filter:
+                return
+            filtered_records = list(records or [])
+            load_search = getattr(service, "load_note_folder_search", None)
+            if callable(load_search):
+                search_page = await load_search(
+                    scope="local_note",
+                    note_ids=tuple(
+                        note_id
+                        for record in filtered_records
+                        if (note_id := self._source_record_id(record))
+                    ),
+                    folder_query=query,
+                    user_id=getattr(self.app_instance, "notes_user_id", None)
+                    or "default_user",
+                )
+            else:
+                # Older/local integrations can still provide the original
+                # flat search capability. Keep their loaded tree available
+                # instead of replacing it with an artificial empty page.
+                search_page = None
+            if search_page is not None:
+                seen_note_ids = {
+                    note_id
+                    for record in filtered_records
+                    if (note_id := self._source_record_id(record))
+                }
+                for record in search_page.notes:
+                    note_id = self._source_record_id(record)
+                    if not note_id or note_id in seen_note_ids:
+                        continue
+                    filtered_records.append(record)
+                    seen_note_ids.add(note_id)
         except Exception:
             logger.opt(exception=True).warning("Library notes filter failed.")
             return
         if query != self._library_notes_filter:
             return
-        self._library_notes_filter_records = list(records or [])
+        self._library_notes_filter_records = filtered_records
+        self._library_notes_tree_search_page = search_page
         _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
 
     def _focus_library_notes_filter_input(self) -> None:
@@ -24854,6 +25478,9 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_notes_mutation_in_flight:
             return
+        self._library_notes_tree_selected_placement_id = str(
+            getattr(event.button, "placement_id", "") or ""
+        )
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
@@ -24871,6 +25498,239 @@ class LibraryScreen(BaseAppScreen):
         if note_id:
             self._begin_library_note_load(note_id)
         _sync_library_canvas(self, "notes")
+
+    @on(Button.Pressed, ".library-notes-folder-row")
+    def handle_library_notes_folder_row(self, event: Button.Pressed) -> None:
+        """Expand or collapse one real folder through stable folder identity."""
+        event.stop()
+        folder_id = str(getattr(event.button, "folder_id", "") or "")
+        if not folder_id:
+            return
+        self._library_notes_tree_selected_placement_id = str(
+            getattr(event.button, "placement_id", "") or ""
+        )
+        if folder_id in self._library_notes_tree_expanded_ids:
+            self._library_notes_tree_expanded_ids.remove(folder_id)
+        else:
+            self._library_notes_tree_expanded_ids.add(folder_id)
+        _sync_library_canvas(self, "notes")
+        self._request_library_notes_tree_refresh(refresh_root=False)
+
+    @on(Button.Pressed, "#library-notes-tree-more")
+    def handle_library_notes_tree_more(self, event: Button.Pressed) -> None:
+        """Continue bounded folder, note, and membership cursors."""
+        event.stop()
+        self._request_library_notes_tree_more()
+
+    @on(Button.Pressed, "#library-notes-folder-new")
+    def handle_library_notes_folder_new(self, event: Button.Pressed) -> None:
+        """Create a root folder or a child of the selected folder.
+
+        Args:
+            event: Press event from the new-folder action button.
+        """
+        event.stop()
+        selected = self._selected_library_notes_tree_row()
+        if selected is not None and selected.kind == "folder" and selected.protected:
+            self._library_notes_notice = (
+                "This folder is managed by sync; change its sync root instead."
+            )
+            _sync_library_canvas(self, "notes")
+            return
+        parent_id = (
+            selected.folder_id
+            if selected is not None and selected.kind == "folder"
+            else None
+        )
+        self.app.push_screen(
+            LibraryNoteFolderNameDialog(title="New folder"),
+            lambda name: (
+                self._schedule_library_notes_tree_mutation(
+                    "create_folder", name=name, parent_id=parent_id
+                )
+                if name
+                else None
+            ),
+        )
+
+    @on(Button.Pressed, "#library-notes-folder-rename")
+    def handle_library_notes_folder_rename(self, event: Button.Pressed) -> None:
+        """Rename the selected manual folder with optimistic locking."""
+        event.stop()
+        selected = self._selected_library_notes_tree_row()
+        if (
+            selected is None
+            or selected.kind != "folder"
+            or selected.version is None
+            or selected.protected
+        ):
+            return
+        self.app.push_screen(
+            LibraryNoteFolderNameDialog(
+                title="Rename folder", initial_name=selected.label
+            ),
+            lambda name: (
+                self._schedule_library_notes_tree_mutation(
+                    "rename_folder",
+                    folder_id=selected.folder_id,
+                    name=name,
+                    expected_version=selected.version,
+                    protected=selected.protected,
+                )
+                if name
+                else None
+            ),
+        )
+
+    @on(Button.Pressed, "#library-notes-folder-move")
+    def handle_library_notes_folder_move(self, event: Button.Pressed) -> None:
+        """Move the selected folder beneath another loaded folder or root."""
+        event.stop()
+        selected = self._selected_library_notes_tree_row()
+        if (
+            selected is None
+            or selected.kind != "folder"
+            or selected.version is None
+            or selected.protected
+        ):
+            return
+        self.app.push_screen(
+            LibraryNoteFolderTargetDialog(
+                title=f"Move {selected.label}",
+                folders=self._library_notes_folder_target_options(
+                    exclude_folder_id=selected.folder_id
+                ),
+                include_root=True,
+            ),
+            lambda target_id: (
+                self._schedule_library_notes_tree_mutation(
+                    "move_folder",
+                    folder_id=selected.folder_id,
+                    parent_id=target_id or None,
+                    expected_version=selected.version,
+                    protected=selected.protected,
+                )
+                if target_id is not None
+                else None
+            ),
+        )
+
+    @on(Button.Pressed, "#library-notes-folder-remove")
+    def handle_library_notes_folder_remove(self, event: Button.Pressed) -> None:
+        """Require confirmation before removing a folder subtree organization."""
+        event.stop()
+        selected = self._selected_library_notes_tree_row()
+        if (
+            selected is None
+            or selected.kind != "folder"
+            or selected.version is None
+            or selected.protected
+        ):
+            return
+        modal = ConfirmationDialog(
+            title="Remove folder organization?",
+            message=(
+                f"Remove {selected.label} and its nested folder organization? "
+                "Notes are not deleted; they remain in other folders or Unfiled."
+            ),
+            confirm_label="Remove folder",
+            cancel_label="Cancel",
+        )
+        self.app.push_screen(
+            modal,
+            lambda confirmed: (
+                self._schedule_library_notes_tree_mutation(
+                    "delete_folder",
+                    folder_id=selected.folder_id,
+                    expected_version=selected.version,
+                    protected=selected.protected,
+                )
+                if confirmed
+                else None
+            ),
+        )
+
+    @on(Button.Pressed, "#library-notes-folder-restore")
+    def handle_library_notes_folder_restore(self, event: Button.Pressed) -> None:
+        """Restore the exact last removed folder subtree."""
+        event.stop()
+        receipt = self._library_notes_deleted_folder_receipt
+        if receipt is None:
+            return
+        self._schedule_library_notes_tree_mutation(
+            "restore_folder",
+            folder_id=receipt.folder_id,
+            expected_version=receipt.expected_version,
+        )
+
+    def _choose_library_notes_placement_target(self, *, move: bool) -> None:
+        """Open a destination picker for adding or moving one note placement."""
+        selected = self._selected_library_notes_tree_row()
+        if selected is None or selected.kind != "note" or not selected.note_id:
+            return
+        if move and selected.protected:
+            self._library_notes_notice = (
+                "This placement is managed by sync; change its sync root instead."
+            )
+            _sync_library_canvas(self, "notes")
+            return
+        self.app.push_screen(
+            LibraryNoteFolderTargetDialog(
+                title="Move note" if move else "Add note to folder",
+                folders=self._library_notes_folder_target_options(),
+            ),
+            lambda target_id: (
+                self._schedule_library_notes_tree_mutation(
+                    "move_placement" if move else "add_placement",
+                    **(
+                        {
+                            "note_id": selected.note_id,
+                            "destination_folder_id": target_id,
+                            "source_folder_id": selected.folder_id,
+                            "membership_version": selected.version,
+                            "protected": selected.protected,
+                        }
+                        if move
+                        else {
+                            "folder_id": target_id,
+                            "note_id": selected.note_id,
+                        }
+                    ),
+                )
+                if target_id is not None
+                else None
+            ),
+        )
+
+    @on(Button.Pressed, "#library-notes-placement-add")
+    def handle_library_notes_placement_add(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._choose_library_notes_placement_target(move=False)
+
+    @on(Button.Pressed, "#library-notes-placement-move")
+    def handle_library_notes_placement_move(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._choose_library_notes_placement_target(move=True)
+
+    @on(Button.Pressed, "#library-notes-placement-remove")
+    def handle_library_notes_placement_remove(self, event: Button.Pressed) -> None:
+        """Detach one manual placement without deleting the note."""
+        event.stop()
+        selected = self._selected_library_notes_tree_row()
+        if (
+            selected is None
+            or selected.kind != "note"
+            or not selected.folder_id
+            or selected.version is None
+        ):
+            return
+        self._schedule_library_notes_tree_mutation(
+            "detach_placement",
+            folder_id=selected.folder_id,
+            note_id=selected.note_id,
+            expected_version=selected.version,
+            protected=selected.protected,
+        )
 
     @on(Button.Pressed, "#library-notes-select-toggle")
     async def handle_library_notes_select_toggle(self, event: Button.Pressed) -> None:
@@ -24905,8 +25765,18 @@ class LibraryScreen(BaseAppScreen):
         Rebuilds only the mounted Notes canvas.
         """
         event.stop()
-        rows = self._build_library_notes_state().rows
-        self._library_notes_row_selection.select_all(r.note_id for r in rows)
+        projection = self._build_library_notes_tree_projection()
+        if projection is None:
+            note_ids = (
+                row.note_id for row in self._build_library_notes_state().rows
+            )
+        else:
+            note_ids = (
+                row.note_id
+                for row in projection.rows
+                if row.kind == "note" and row.note_id
+            )
+        self._library_notes_row_selection.select_all(note_ids)
         _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-select-clear")
@@ -24972,11 +25842,16 @@ class LibraryScreen(BaseAppScreen):
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return False
         navigation_generation = self._supersede_library_notes_navigation()
+        placement_id = self._library_notes_tree_selected_placement_id
         identity = LibraryNotesFocusIdentity(
             stage="notes",
             region="navigator",
             note_id=note_id or None,
-            semantic_role=f"note-row:{note_id}" if note_id else "filter",
+            semantic_role=(
+                f"note-placement:{placement_id}"
+                if note_id and placement_id
+                else (f"note-row:{note_id}" if note_id else "filter")
+            ),
         )
         self._library_notes_pending_focus_identity = identity
         self._library_notes_pending_focus_waits_for_snapshot = True
@@ -25313,6 +26188,7 @@ class LibraryScreen(BaseAppScreen):
         # rendering as a ghost row until the filter box is resubmitted.
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
+        self._library_notes_tree_search_page = None
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -25742,6 +26618,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
                 self._library_notes_filter = ""
                 self._library_notes_filter_records = None
+                self._library_notes_tree_search_page = None
             if self.is_mounted:
                 self.refresh(recompose=True)
             return LibraryNoteCreateOutcome("created_not_opened", created_id)
@@ -25750,6 +26627,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
+        self._library_notes_tree_search_page = None
         self._selected_note_id = created_id
         self._library_notes_view = "editor"
         self._library_note_load_state = "loaded"
@@ -25858,6 +26736,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
+        self._library_notes_tree_search_page = None
         self._remove_library_note_source_record(admission.note_id)
         if self.is_mounted:
             self.refresh(recompose=True)

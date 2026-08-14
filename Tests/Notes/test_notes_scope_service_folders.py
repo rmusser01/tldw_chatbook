@@ -53,6 +53,7 @@ class RecordingFolderRepository:
         folder_offset: int,
         membership_limit: int,
         membership_offset: int,
+        load_notes: bool,
     ) -> NoteFolderPage:
         self._record(
             (
@@ -64,8 +65,15 @@ class RecordingFolderRepository:
                 folder_offset,
                 membership_limit,
                 membership_offset,
+                load_notes,
             )
         )
+        return _empty_page()
+
+    def load_tree_search(
+        self, *, note_ids: tuple[str, ...], folder_query: str
+    ) -> NoteFolderPage:
+        self._record(("load_tree_search", note_ids, folder_query))
         return _empty_page()
 
     def create_folder(self, *, name: str, parent_id: str | None) -> NoteFolder:
@@ -223,9 +231,16 @@ LOCAL_FOLDER_CASES = [
             "folder_offset": 10,
             "membership_limit": 60,
             "membership_offset": 30,
+            "load_notes": False,
         },
         "notes.list.local",
-        ("load_tree_batch", ("folder-1",), 100, 20, 40, 10, 60, 30),
+        ("load_tree_batch", ("folder-1",), 100, 20, 40, 10, 60, 30, False),
+    ),
+    (
+        "load_note_folder_search",
+        {"note_ids": ("note-1", "note-2"), "folder_query": "work"},
+        "notes.list.local",
+        ("load_tree_search", ("note-1", "note-2"), "work"),
     ),
     (
         "create_note_folder",
@@ -501,6 +516,7 @@ async def test_local_folder_methods_fail_closed_when_repository_is_missing(
         == {
             "list_note_folder_children": "list",
             "load_note_folder_tree_batch": "list",
+            "load_note_folder_search": "list",
             "create_note_folder": "create",
             "rename_note_folder": "rename",
             "move_note_folder": "move",
@@ -552,6 +568,7 @@ async def test_unsupported_folder_scopes_fail_closed_without_backend_calls(
     operation = {
         "list_note_folder_children": "list",
         "load_note_folder_tree_batch": "list",
+        "load_note_folder_search": "list",
         "create_note_folder": "create",
         "rename_note_folder": "rename",
         "move_note_folder": "move",
